@@ -1,7 +1,335 @@
-//! This module provides a sum-check precompile for verifying the execution of the convolution operator.
+use crate::{
+    field::JoltField,
+    jolt_onnx::precompiles::{
+        conv::computation::conv2d_simple, conv::computation::Tensor,
+        sumcheck_engine::BatchableSumcheckInstance,
+    },
+    poly::{
+        dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, multilinear_polynomial::BindingOrder,
+    },
+    utils::{math::Math, transcript::Transcript},
+};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use itertools::Itertools;
+use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
+
+// TODO: refactor duplicate code between this module and matmult.rs
+
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
+pub struct Conv2DProverState<F>
+where
+    F: JoltField,
+{
+    /// X(r, m) evaluations over the boolean hypercube
+    pub x: DensePolynomial<F>,
+    /// k multilinear polynomial
+    pub k: DensePolynomial<F>,
+    /// Evaluation at point r for multilinear polynomial Y
+    pub input_claim: F,
+    /// Number of rounds in the sum-check precompile
+    pub num_rounds: usize,
+}
+
+impl<F> Conv2DProverState<F>
+where
+    F: JoltField,
+{
+    #[tracing::instrument(skip_all)]
+    /// Create a new instance of [`Conv2DProverState`].
+    /// We compute the evaluations of the polynomials X(r, m) over the boolean hypercube,
+    /// and also compute the input claim Y(r) = A(rx, k) * B(ry, k).
+    ///
+    /// These X(r, m) evaluations & k polynomial serve as the witness for the matrix multiplication precompile.
+    pub fn initialize<ProofTranscript>(
+        input: &Conv2DPrecompile,
+        transcript: &mut ProofTranscript,
+    ) -> Self
+    where
+        ProofTranscript: Transcript,
+    {
+        let dims = input.dims();
+        let ri: Vec<F> = transcript.challenge_scalar_powers(dims.h_out.log_2());
+        let rj: Vec<F> = transcript.challenge_scalar_powers(dims.w_out.log_2());
+        let X_r = Self::X_bounded(&input.image, &ri, &rj, dims);
+        let k = Self::kernel_polynomial(&input.kernel);
+        let input_claim = Self::input_claim(input, &ri, &rj);
+        transcript.append_scalar(&input_claim);
+        #[cfg(test)]
+        {
+            let sum: F = X_r.Z.iter().zip_eq(k.Z.iter()).map(|(x, k)| *x * k).sum();
+            assert_eq!(sum, input_claim)
+        }
+        let num_rounds = (dims.k_h * dims.k_w).log_2();
+        Self {
+            x: X_r,
+            k,
+            input_claim,
+            num_rounds,
+        }
+    }
+
+    fn input_claim(input: &Conv2DPrecompile, ri: &[F], rj: &[F]) -> F {
+        input.y_poly().evaluate(&[ri, rj].concat())
+    }
+
+    fn X_bounded(X: &Tensor, ri: &[F], rj: &[F], dims: Conv2DPrecompileDims) -> DensePolynomial<F> {
+        let w_in = X.shape[3];
+        let Conv2DPrecompileDims {
+            k_h,
+            k_w,
+            h_out,
+            w_out,
+        } = dims;
+        let mut X_r = vec![F::zero(); k_h * k_w];
+        let eq_ri_evals = EqPolynomial::evals(ri);
+        let eq_rj_evals = EqPolynomial::evals(rj);
+        for i in 0..h_out {
+            for j in 0..w_out {
+                for m in 0..k_h {
+                    for n in 0..k_w {
+                        let x_index = (i + m) * w_in + (j + n);
+                        X_r[m * k_w + n] += eq_ri_evals[i]
+                            * eq_rj_evals[j]
+                            * F::from_i64(*X.data.get(x_index).unwrap_or(&0) as i64);
+                    }
+                }
+            }
+        }
+        DensePolynomial::new(X_r)
+    }
+
+    fn kernel_polynomial(kernel: &Tensor) -> DensePolynomial<F> {
+        DensePolynomial::new(
+            kernel
+                .data
+                .iter()
+                .map(|d| F::from_i64(*d as i64))
+                .collect_vec(),
+        )
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, Copy)]
+/// Specifies the dimensions in the Conv2D precompile to compute the challenges.
+pub struct Conv2DPrecompileDims {
+    /// Kernel spatial height dimension
+    pub k_h: usize,
+    /// Kernel spatial width dimension
+    pub k_w: usize,
+    /// Output spatial height dimension
+    pub h_out: usize,
+    /// Output spatial width dimension
+    pub w_out: usize,
+}
+
+/// # Note: We assume tensors are appropriately padded here
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct Conv2DPrecompile {
+    image: Tensor,
+    kernel: Tensor,
+}
+
+impl Conv2DPrecompile {
+    /// Create a new instance of [`Conv2DPrecompile`].
+    pub fn new(image: Tensor, kernel: Tensor) -> Self {
+        Self { image, kernel }
+    }
+
+    /// # Returns
+    ///   - `dims`: An instance of [`Conv2DPrecompileDims`] containing the kernel and output dimensions.
+    ///
+    /// # Note: we "pad" the output dims to next nearest power of two
+    fn dims(&self) -> Conv2DPrecompileDims {
+        let h_in = self.image.shape[2];
+        let w_in = self.image.shape[3];
+        let k_h = self.kernel.shape[2];
+        let k_w = self.kernel.shape[3];
+        let h_out = (h_in - k_h + 1).next_power_of_two();
+        let w_out = (w_in - k_w + 1).next_power_of_two();
+        Conv2DPrecompileDims {
+            k_h,
+            k_w,
+            h_out,
+            w_out,
+        }
+    }
+
+    fn y_poly<F>(&self) -> DensePolynomial<F>
+    where
+        F: JoltField,
+    {
+        let (y, _) = conv2d_simple(&self.image, &self.kernel);
+        DensePolynomial::new(y.iter().map(|&x| F::from_i64(x as i64)).collect_vec())
+    }
+}
+
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
+pub struct Conv2DVerifierState<F>
+where
+    F: JoltField,
+{
+    num_rounds: usize,
+    input_claim: F,
+}
+
+impl<F> Conv2DVerifierState<F>
+where
+    F: JoltField,
+{
+    #[tracing::instrument(skip_all)]
+    /// Create a new instance of [`Conv2DVerifierState`].
+    /// # Note: we mainly update the state by computing the necessary challenges used in the sum-check conv protocol.
+    ///         We also append the input claim to the transcript.
+    pub fn initialize<ProofTranscript>(
+        dims: Conv2DPrecompileDims,
+        input_claim: F,
+        transcript: &mut ProofTranscript,
+    ) -> Self
+    where
+        ProofTranscript: Transcript,
+    {
+        let num_rounds = (dims.k_h * dims.k_w).log_2();
+        let _ri: Vec<F> = transcript.challenge_scalar_powers(dims.h_out.log_2());
+        let _rj: Vec<F> = transcript.challenge_scalar_powers(dims.w_out.log_2());
+        transcript.append_scalar(&input_claim);
+        Self {
+            num_rounds,
+            input_claim,
+        }
+    }
+}
+
+/// The final claims for the conv sum-check precompile.
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
+pub struct Conv2DClaims<F>
+where
+    F: JoltField,
+{
+    x: F,
+    k: F,
+}
+
+/// Batchable sum-check instance for conv precompile.
+/// Used to construct the [`PrecompileProof`] by passing in these instances into [`BatchedSumcheck`].
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
+pub struct Conv2DSumcheck<F>
+where
+    F: JoltField,
+{
+    /// Handles state for prover portion of the sum-check protocol.
+    pub prover_state: Option<Conv2DProverState<F>>,
+    /// Handles state for verifier portion of the sum-check protocol.
+    pub verifier_state: Option<Conv2DVerifierState<F>>,
+    /// Holds the final claims for the conv sum-check precompile.
+    pub claims: Option<Conv2DClaims<F>>,
+}
+
+impl<F> Conv2DSumcheck<F>
+where
+    F: JoltField,
+{
+    /// Create a new instance of [`Conv2DSumcheck`]
+    pub fn new(
+        prover_state: Option<Conv2DProverState<F>>,
+        verifier_state: Option<Conv2DVerifierState<F>>,
+        claims: Option<Conv2DClaims<F>>,
+    ) -> Self {
+        Self {
+            prover_state,
+            verifier_state,
+            claims,
+        }
+    }
+}
+
+impl<F, ProofTranscript> BatchableSumcheckInstance<F, ProofTranscript> for Conv2DSumcheck<F>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+{
+    #[inline(always)]
+    fn degree(&self) -> usize {
+        2
+    }
+
+    fn num_rounds(&self) -> usize {
+        if self.prover_state.is_some() {
+            self.prover_state.as_ref().unwrap().num_rounds
+        } else if self.verifier_state.is_some() {
+            self.verifier_state.as_ref().unwrap().num_rounds
+        } else {
+            panic!("Neither prover state nor verifier state is initialized");
+        }
+    }
+
+    fn input_claim(&self) -> F {
+        if self.prover_state.is_some() {
+            self.prover_state.as_ref().unwrap().input_claim
+        } else if self.verifier_state.is_some() {
+            self.verifier_state.as_ref().unwrap().input_claim
+        } else {
+            panic!("Neither prover state nor verifier state is initialized");
+        }
+    }
+
+    #[tracing::instrument(skip_all)]
+    fn compute_prover_message(&self, _: usize) -> Vec<F> {
+        let Conv2DProverState { x, k, .. } = self.prover_state.as_ref().unwrap();
+        let len = x.len() / 2;
+        let univariate_poly_evals: [F; 2] = (0..len)
+            .into_par_iter()
+            .map(|i| {
+                let poly_X_bound_point = x[i + len] + x[i + len] - x[i];
+                let poly_K_bound_point = k[i + len] + k[i + len] - k[i];
+                [x[i] * k[i], poly_X_bound_point * poly_K_bound_point]
+            })
+            .reduce(
+                || [F::zero(); 2],
+                |running, new| [running[0] + new[0], running[1] + new[1]],
+            );
+        univariate_poly_evals.to_vec()
+    }
+
+    #[tracing::instrument(skip_all)]
+    fn bind(&mut self, r_j: F, _: usize) {
+        let Conv2DProverState { x, k, .. } = self.prover_state.as_mut().unwrap();
+        rayon::join(
+            || x.bind_parallel(r_j, BindingOrder::HighToLow),
+            || k.bind_parallel(r_j, BindingOrder::HighToLow),
+        );
+    }
+
+    fn cache_openings(&mut self) {
+        debug_assert!(self.claims.is_none());
+        let Conv2DProverState { x, k, .. } = self.prover_state.as_ref().unwrap();
+        self.claims = Some(Conv2DClaims { x: x[0], k: k[0] });
+    }
+
+    fn expected_output_claim(&self, _: &[F]) -> F {
+        let Conv2DClaims { x, k } = self.claims.as_ref().unwrap();
+        *x * k
+    }
+}
 
 pub mod computation {
     use serde::{Deserialize, Serialize};
+
+    #[derive(Clone, Serialize, Deserialize, Debug)]
+    pub struct Tensor {
+        pub data: Vec<i8>,
+        pub shape: Vec<usize>, // Always [N, C, H, W]
+    }
+
+    impl Tensor {
+        /// Return an randomly initialized quantized tensor with the given shape.
+        pub fn random(mut rng: impl rand_core::RngCore, shape: Vec<usize>) -> Self {
+            // Generate random f32 data for the tensor.
+            let size = shape.iter().product::<usize>();
+            let data: Vec<i8> = (0..size).map(|_| rng.next_u32() as i8).collect();
+            Self { shape, data }
+        }
+    }
 
     /// Computes the ONNX Convolution integer operation.
     ///
@@ -45,7 +373,7 @@ pub mod computation {
     ///   Since i and j are zero-based, we add 1 to count all valid positions:
     ///     H_out = (H_in - kH) + 1
     ///     W_out = (W_in - kW) + 1
-    fn conv2d_simple(input: &Tensor, kernel: &Tensor) -> Tensor {
+    pub fn conv2d_simple(input: &Tensor, kernel: &Tensor) -> (Vec<i32>, Vec<usize>) {
         // Extract input spatial dimensions
         let h_in = input.shape[2];
         let w_in = input.shape[3];
@@ -55,189 +383,108 @@ pub mod computation {
         let k_w = kernel.shape[3];
 
         // Compute output spatial dimensions
-        let h_out = h_in - k_h + 1;
-        let w_out = w_in - k_w + 1;
+        // # Note: We need to evaluate the mle of the resulting matrix at a random point, thus we need to pad the output shape.
+        let h_out = (h_in - k_h + 1).next_power_of_two();
+        let w_out = (w_in - k_w + 1).next_power_of_two();
 
         // Create output tensor with correct shape and zero-initialized data
-        let mut output = Tensor {
-            data: vec![0; h_out * w_out],
-            shape: vec![1, 1, h_out, w_out],
-        };
+        let mut output = vec![0i32; h_out * w_out];
 
-        // Loop over each output pixel position (i, j)
+        // Perform the convolution operation
+
+        //  Y(i, j) = Σₘₙ X(i + m, j + n) · K(m, n)
         for i in 0..h_out {
             for j in 0..w_out {
-                let mut acc = 0i32;
-
-                // At this point, we're computing Y(i, j)
-
-                // Loop over each kernel position (m, n)
+                let mut sum = 0i32;
                 for m in 0..k_h {
                     for n in 0..k_w {
-                        // X(i + m, j + n) from the input
-                        let x = input.get4d(0, 0, i + m, j + n) as i32;
-
-                        // K(m, n) from the kernel
-                        let k = kernel.get4d(0, 0, m, n) as i32;
-
-                        // Multiply and accumulate: X(i + m, j + n) · K(m, n)
-                        acc += x * k;
+                        let x_index = (i + m) * w_in + (j + n);
+                        let k_index = m * k_w + n;
+                        sum += *input.data.get(x_index).unwrap_or(&0) as i32
+                            * kernel.data[k_index] as i32;
                     }
                 }
-
-                // Store the result of Y(i, j), clamped to i8 range
-                output.set4d(0, 0, i, j, acc.clamp(i8::MIN as i32, i8::MAX as i32) as i8);
+                output[i * w_out + j] = sum;
             }
         }
-        output
+        let shape = vec![1, 1, h_out, w_out];
+        (output, shape)
     }
+}
 
-    fn conv2d_sample_code(input: &Tensor, weight: &Tensor) -> Tensor {
-        // - n: batch size
-        // - c_in: input channels
-        // - img_h: input height
-        // - img_w: input width
-        let [n, c_in, img_h, img_w] = input.shape[..] else {
-            panic!("Expected input shape NCHW");
-        };
+#[cfg(test)]
+mod tests {
+    use ark_bn254::Fr;
+    use ark_std::test_rng;
+    use itertools::Itertools;
+    use rand_core::RngCore;
 
-        // - c_out: output channels
-        // - c_in: input channels (should match input)
-        // - k_h: kernel height
-        // - k_w: kernel width
-        let [c_out, _c_in, k_h, k_w] = weight.shape[..] else {
-            panic!("Expected weight shape [C_out, C_in, kH, kW]");
-        };
-        let [n, c_in, h_in, w_in] = input.shape[..] else {
-            panic!("Expected input shape NCHW");
-        };
-        let [c_out, _, k_h, k_w] = weight.shape[..] else {
-            panic!("Expected weight shape [C_out, C_in, kH, kW]");
-        };
+    use crate::{
+        jolt_onnx::precompiles::{
+            conv::computation::Tensor,
+            conv::{
+                Conv2DPrecompile, Conv2DPrecompileDims, Conv2DProverState, Conv2DSumcheck,
+                Conv2DVerifierState,
+            },
+            sumcheck_engine::{BatchableSumcheckInstance, BatchedSumcheck},
+        },
+        utils::transcript::{KeccakTranscript, Transcript},
+    };
 
-        let h_out = h_in - k_h + 1;
-        let w_out = w_in - k_w + 1;
-
-        let mut output = Tensor {
-            data: vec![0; n * c_out * h_out * w_out],
-            shape: vec![n, c_out, h_out, w_out],
-        };
-
-        // batch size
-        for b in 0..n {
-            // output channels
-            for co in 0..c_out {
-                // output height
-                for ho in 0..h_out {
-                    // output width
-                    for wo in 0..w_out {
-                        let mut acc: i32 = 0;
-                        // input channels
-                        for ci in 0..c_in {
-                            // kernel height
-                            for kh in 0..k_h {
-                                // kernel width
-                                for kw in 0..k_w {
-                                    let ih = ho + kh;
-                                    let iw = wo + kw;
-                                    let x = input.get4d(b, ci, ih, iw) as i32;
-                                    let w = weight.get4d(co, ci, kh, kw) as i32;
-                                    acc += x * w;
-                                }
-                            }
-                        }
-                        // Clamping the result to i8 range
-                        output.set4d(
-                            b,
-                            co,
-                            ho,
-                            wo,
-                            acc.clamp(i8::MIN as i32, i8::MAX as i32) as i8,
-                        );
-                    }
-                }
-            }
+    #[test]
+    fn test_random_execution_trace() {
+        let mut rng = test_rng();
+        let trace_length = 10;
+        let mut pp: Vec<Conv2DPrecompileDims> = Vec::with_capacity(trace_length);
+        let mut ptranscript = KeccakTranscript::new(b"test");
+        let mut sumcheck_instances = Vec::with_capacity(trace_length);
+        for _ in 0..trace_length {
+            let h_in = (rng.next_u32() as usize % 200 + 50).next_power_of_two();
+            let w_in = (rng.next_u32() as usize % 200 + 50).next_power_of_two();
+            let k_h = (rng.next_u32() as usize % 20 + 1).next_power_of_two();
+            let k_w = (rng.next_u32() as usize % 20 + 1).next_power_of_two();
+            let image = Tensor::random(&mut rng, vec![1, 1, h_in, w_in]);
+            let kernel = Tensor::random(&mut rng, vec![1, 1, k_h, k_w]);
+            let precompile = Conv2DPrecompile::new(image, kernel);
+            pp.push(precompile.dims());
+            let prover_state = Conv2DProverState::<Fr>::initialize(&precompile, &mut ptranscript);
+            let sumcheck_instance = Conv2DSumcheck::new(Some(prover_state), None, None);
+            sumcheck_instances.push(sumcheck_instance);
         }
-
-        output
-    }
-
-    #[derive(Clone, Serialize, Deserialize, Debug)]
-    pub struct Tensor {
-        pub data: Vec<i8>,
-        pub shape: Vec<usize>, // Always [N, C, H, W]
-    }
-
-    impl Tensor {
-        /// Returns the value at position (n, c, h, w)
-        pub fn get4d(&self, n: usize, c: usize, h: usize, w: usize) -> i8 {
-            // Destructure the shape for clarity: [batch, channels, height, width]
-            let [n_dim, c_dim, h_dim, w_dim] = self.shape[..] else {
-                panic!("Shape must be 4D");
-            };
-
-            // Compute the flat 1D index for a 4D tensor stored in row-major (NCHW) order:
-            //
-            // Index = n * C * H * W        → skip to the right batch
-            //       + c * H * W            → skip to the right channel
-            //       + h * W                → skip to the correct row
-            //       + w                    → pick the exact element
-            //
-            // Note: this matches NCHW layout used in ONNX/PyTorch
-            let index = n * c_dim * h_dim * w_dim + c * h_dim * w_dim + h * w_dim + w;
-
-            self.data[index]
+        let init_claims = sumcheck_instances
+            .iter()
+            .map(|p| p.prover_state.as_ref().unwrap().input_claim)
+            .collect_vec();
+        let trait_objects: Vec<&mut dyn BatchableSumcheckInstance<Fr, KeccakTranscript>> =
+            sumcheck_instances
+                .iter_mut()
+                .map(|p| p as &mut dyn BatchableSumcheckInstance<Fr, KeccakTranscript>)
+                .collect();
+        let (sumcheck_proof, _rsc) = BatchedSumcheck::prove(trait_objects, &mut ptranscript);
+        let final_claims = sumcheck_instances
+            .iter()
+            .map(|p| p.claims.as_ref().unwrap().clone())
+            .collect_vec();
+        let mut vtranscript = KeccakTranscript::new(b"test");
+        let mut vsumcheck_instances = Vec::with_capacity(trace_length);
+        for ((dims, init_claim), final_claim) in pp
+            .iter()
+            .zip_eq(init_claims.iter())
+            .zip_eq(final_claims.iter())
+        {
+            let verifier_state =
+                Conv2DVerifierState::<Fr>::initialize(*dims, *init_claim, &mut vtranscript);
+            vsumcheck_instances.push(Conv2DSumcheck::new(
+                None,
+                Some(verifier_state),
+                Some(final_claim.clone()),
+            ))
         }
-
-        /// Sets the value at position (n, c, h, w)
-        pub fn set4d(&mut self, n: usize, c: usize, h: usize, w: usize, value: i8) {
-            let [n_dim, c_dim, h_dim, w_dim] = self.shape[..] else {
-                panic!("Shape must be 4D");
-            };
-
-            let index = n * c_dim * h_dim * w_dim + c * h_dim * w_dim + h * w_dim + w;
-
-            self.data[index] = value;
-        }
-
-        /// Return an randomly initialized quantized tensor with the given shape.
-        pub fn random(mut rng: impl rand_core::RngCore, shape: Vec<usize>) -> Self {
-            // Generate random f32 data for the tensor.
-            let size = shape.iter().product::<usize>();
-            let data: Vec<i8> = (0..size).map(|_| rng.next_u32() as i8).collect();
-            Self { shape, data }
-        }
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-
-        #[test]
-        fn test_conv2d() {
-            // Input: shape [1, 1, 3, 3]
-            let input = Tensor {
-                data: vec![1, 2, 3, 4, 5, 6, 7, 8, 9],
-                shape: vec![1, 1, 3, 3],
-            };
-
-            // Kernel: shape [1, 1, 2, 2]
-            let weight = Tensor {
-                data: vec![1, 0, 0, -1],
-                shape: vec![1, 1, 2, 2],
-            };
-
-            let output = conv2d_sample_code(&input, &weight);
-
-            println!("Output shape: {:?}", output.shape);
-            println!("Output data:");
-
-            for h in 0..output.shape[2] {
-                for w in 0..output.shape[3] {
-                    print!("{:>4}", output.get4d(0, 0, h, w));
-                }
-                println!();
-            }
-        }
+        let trait_objects: Vec<&dyn BatchableSumcheckInstance<Fr, KeccakTranscript>> =
+            vsumcheck_instances
+                .iter()
+                .map(|p| p as &dyn BatchableSumcheckInstance<Fr, KeccakTranscript>)
+                .collect();
+        let _r = BatchedSumcheck::verify(&sumcheck_proof, trait_objects, &mut vtranscript).unwrap();
     }
 }

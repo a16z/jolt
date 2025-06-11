@@ -1,8 +1,6 @@
 //! This module provides the specialized sum-check precompile operators for Jolt's ONNX execution.
 
 pub mod conv;
-pub mod conv1d;
-pub mod conv2d;
 pub mod matmult;
 pub mod sumcheck_engine;
 
