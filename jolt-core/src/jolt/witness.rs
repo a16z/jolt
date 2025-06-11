@@ -187,7 +187,15 @@ impl CommittedPolynomials {
                         *k
                     })
                     .collect();
-                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(addresses))
+                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
+                    addresses,
+                    preprocessing
+                        .shared
+                        .bytecode
+                        .virtual_address_map
+                        .len()
+                        .next_power_of_two(),
+                ))
             }
             CommittedPolynomials::RamRa => {
                 let addresses: Vec<usize> = trace
@@ -207,7 +215,14 @@ impl CommittedPolynomials {
                         }
                     })
                     .collect();
-                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(addresses))
+                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
+                    addresses,
+                    preprocessing
+                        .shared
+                        .memory_layout
+                        .memory_size
+                        .next_power_of_two() as usize,
+                ))
             }
             CommittedPolynomials::RdInc => {
                 let increments: Vec<(usize, i64)> = trace
@@ -259,7 +274,7 @@ impl CommittedPolynomials {
                         k as usize
                     })
                     .collect();
-                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(addresses))
+                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(addresses, 1 << 16))
             }
         }
     }

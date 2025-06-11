@@ -135,7 +135,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                 .iter()
                 .filter_map(|polynomial| match polynomial {
                     MultilinearPolynomial::Sparse(poly) => Some(poly.num_rows),
-                    MultilinearPolynomial::OneHot(poly) => Some(poly.num_rows),
+                    MultilinearPolynomial::OneHot(poly) => Some(poly.K),
                     _ => None,
                 })
                 .max()
