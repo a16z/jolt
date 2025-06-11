@@ -14,7 +14,7 @@ use itertools::Itertools;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-// TODO: refactor duplicate code between this module and matmult.rs
+// TODO: refactor duplicate code between this module and matmult.rs, not doing it atm since code is subject to heavy change with padding, strides and dilations support
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
 pub struct Conv2DProverState<F>
