@@ -6,7 +6,6 @@ use model::QuantizedONNXModel;
 use std::path::PathBuf;
 
 pub mod model;
-pub mod ops;
 pub mod tensor;
 pub mod trace;
 

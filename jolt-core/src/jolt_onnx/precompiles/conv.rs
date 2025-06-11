@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 // TODO: refactor duplicate code between this module and matmult.rs, not doing it atm since code is subject to heavy change with padding, strides and dilations support
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
-pub struct Conv2DProverState<F>
+pub struct ConvProverState<F>
 where
     F: JoltField,
 {
@@ -31,18 +31,18 @@ where
     pub num_rounds: usize,
 }
 
-impl<F> Conv2DProverState<F>
+impl<F> ConvProverState<F>
 where
     F: JoltField,
 {
     #[tracing::instrument(skip_all)]
-    /// Create a new instance of [`Conv2DProverState`].
+    /// Create a new instance of [`ConvProverState`].
     /// We compute the evaluations of the polynomials X(r, m) over the boolean hypercube,
     /// and also compute the input claim Y(r) = A(rx, k) * B(ry, k).
     ///
     /// These X(r, m) evaluations & k polynomial serve as the witness for the matrix multiplication precompile.
     pub fn initialize<ProofTranscript>(
-        input: &Conv2DPrecompile,
+        input: &ConvPrecompile,
         transcript: &mut ProofTranscript,
     ) -> Self
     where
@@ -69,13 +69,13 @@ where
         }
     }
 
-    fn input_claim(input: &Conv2DPrecompile, ri: &[F], rj: &[F]) -> F {
+    fn input_claim(input: &ConvPrecompile, ri: &[F], rj: &[F]) -> F {
         input.y_poly().evaluate(&[ri, rj].concat())
     }
 
-    fn X_bounded(X: &Tensor, ri: &[F], rj: &[F], dims: Conv2DPrecompileDims) -> DensePolynomial<F> {
+    fn X_bounded(X: &Tensor, ri: &[F], rj: &[F], dims: ConvPrecompileDims) -> DensePolynomial<F> {
         let w_in = X.shape[3];
-        let Conv2DPrecompileDims {
+        let ConvPrecompileDims {
             k_h,
             k_w,
             h_out,
@@ -111,8 +111,8 @@ where
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Copy)]
-/// Specifies the dimensions in the Conv2D precompile to compute the challenges.
-pub struct Conv2DPrecompileDims {
+/// Specifies the dimensions in the Conv precompile to compute the challenges.
+pub struct ConvPrecompileDims {
     /// Kernel spatial height dimension
     pub k_h: usize,
     /// Kernel spatial width dimension
@@ -125,29 +125,29 @@ pub struct Conv2DPrecompileDims {
 
 /// # Note: We assume tensors are appropriately padded here
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct Conv2DPrecompile {
+pub struct ConvPrecompile {
     image: Tensor,
     kernel: Tensor,
 }
 
-impl Conv2DPrecompile {
-    /// Create a new instance of [`Conv2DPrecompile`].
+impl ConvPrecompile {
+    /// Create a new instance of [`ConvPrecompile`].
     pub fn new(image: Tensor, kernel: Tensor) -> Self {
         Self { image, kernel }
     }
 
     /// # Returns
-    ///   - `dims`: An instance of [`Conv2DPrecompileDims`] containing the kernel and output dimensions.
+    ///   - `dims`: An instance of [`ConvPrecompileDims`] containing the kernel and output dimensions.
     ///
     /// # Note: we "pad" the output dims to next nearest power of two
-    fn dims(&self) -> Conv2DPrecompileDims {
+    fn dims(&self) -> ConvPrecompileDims {
         let h_in = self.image.shape[2];
         let w_in = self.image.shape[3];
         let k_h = self.kernel.shape[2];
         let k_w = self.kernel.shape[3];
         let h_out = (h_in - k_h + 1).next_power_of_two();
         let w_out = (w_in - k_w + 1).next_power_of_two();
-        Conv2DPrecompileDims {
+        ConvPrecompileDims {
             k_h,
             k_w,
             h_out,
@@ -165,7 +165,7 @@ impl Conv2DPrecompile {
 }
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
-pub struct Conv2DVerifierState<F>
+pub struct ConvVerifierState<F>
 where
     F: JoltField,
 {
@@ -173,16 +173,16 @@ where
     input_claim: F,
 }
 
-impl<F> Conv2DVerifierState<F>
+impl<F> ConvVerifierState<F>
 where
     F: JoltField,
 {
     #[tracing::instrument(skip_all)]
-    /// Create a new instance of [`Conv2DVerifierState`].
+    /// Create a new instance of [`ConvVerifierState`].
     /// # Note: we mainly update the state by computing the necessary challenges used in the sum-check conv protocol.
     ///         We also append the input claim to the transcript.
     pub fn initialize<ProofTranscript>(
-        dims: Conv2DPrecompileDims,
+        dims: ConvPrecompileDims,
         input_claim: F,
         transcript: &mut ProofTranscript,
     ) -> Self
@@ -202,7 +202,7 @@ where
 
 /// The final claims for the conv sum-check precompile.
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
-pub struct Conv2DClaims<F>
+pub struct ConvClaims<F>
 where
     F: JoltField,
 {
@@ -213,27 +213,27 @@ where
 /// Batchable sum-check instance for conv precompile.
 /// Used to construct the [`PrecompileProof`] by passing in these instances into [`BatchedSumcheck`].
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
-pub struct Conv2DSumcheck<F>
+pub struct ConvSumcheck<F>
 where
     F: JoltField,
 {
     /// Handles state for prover portion of the sum-check protocol.
-    pub prover_state: Option<Conv2DProverState<F>>,
+    pub prover_state: Option<ConvProverState<F>>,
     /// Handles state for verifier portion of the sum-check protocol.
-    pub verifier_state: Option<Conv2DVerifierState<F>>,
+    pub verifier_state: Option<ConvVerifierState<F>>,
     /// Holds the final claims for the conv sum-check precompile.
-    pub claims: Option<Conv2DClaims<F>>,
+    pub claims: Option<ConvClaims<F>>,
 }
 
-impl<F> Conv2DSumcheck<F>
+impl<F> ConvSumcheck<F>
 where
     F: JoltField,
 {
-    /// Create a new instance of [`Conv2DSumcheck`]
+    /// Create a new instance of [`ConvSumcheck`]
     pub fn new(
-        prover_state: Option<Conv2DProverState<F>>,
-        verifier_state: Option<Conv2DVerifierState<F>>,
-        claims: Option<Conv2DClaims<F>>,
+        prover_state: Option<ConvProverState<F>>,
+        verifier_state: Option<ConvVerifierState<F>>,
+        claims: Option<ConvClaims<F>>,
     ) -> Self {
         Self {
             prover_state,
@@ -243,7 +243,7 @@ where
     }
 }
 
-impl<F, ProofTranscript> BatchableSumcheckInstance<F, ProofTranscript> for Conv2DSumcheck<F>
+impl<F, ProofTranscript> BatchableSumcheckInstance<F, ProofTranscript> for ConvSumcheck<F>
 where
     F: JoltField,
     ProofTranscript: Transcript,
@@ -275,7 +275,7 @@ where
 
     #[tracing::instrument(skip_all)]
     fn compute_prover_message(&self, _: usize) -> Vec<F> {
-        let Conv2DProverState { x, k, .. } = self.prover_state.as_ref().unwrap();
+        let ConvProverState { x, k, .. } = self.prover_state.as_ref().unwrap();
         let len = x.len() / 2;
         let univariate_poly_evals: [F; 2] = (0..len)
             .into_par_iter()
@@ -293,7 +293,7 @@ where
 
     #[tracing::instrument(skip_all)]
     fn bind(&mut self, r_j: F, _: usize) {
-        let Conv2DProverState { x, k, .. } = self.prover_state.as_mut().unwrap();
+        let ConvProverState { x, k, .. } = self.prover_state.as_mut().unwrap();
         rayon::join(
             || x.bind_parallel(r_j, BindingOrder::HighToLow),
             || k.bind_parallel(r_j, BindingOrder::HighToLow),
@@ -302,12 +302,12 @@ where
 
     fn cache_openings(&mut self) {
         debug_assert!(self.claims.is_none());
-        let Conv2DProverState { x, k, .. } = self.prover_state.as_ref().unwrap();
-        self.claims = Some(Conv2DClaims { x: x[0], k: k[0] });
+        let ConvProverState { x, k, .. } = self.prover_state.as_ref().unwrap();
+        self.claims = Some(ConvClaims { x: x[0], k: k[0] });
     }
 
     fn expected_output_claim(&self, _: &[F]) -> F {
-        let Conv2DClaims { x, k } = self.claims.as_ref().unwrap();
+        let ConvClaims { x, k } = self.claims.as_ref().unwrap();
         *x * k
     }
 }
@@ -423,8 +423,8 @@ mod tests {
         jolt_onnx::precompiles::{
             conv::computation::Tensor,
             conv::{
-                Conv2DPrecompile, Conv2DPrecompileDims, Conv2DProverState, Conv2DSumcheck,
-                Conv2DVerifierState,
+                ConvPrecompile, ConvPrecompileDims, ConvProverState, ConvSumcheck,
+                ConvVerifierState,
             },
             sumcheck_engine::{BatchableSumcheckInstance, BatchedSumcheck},
         },
@@ -435,7 +435,7 @@ mod tests {
     fn test_random_execution_trace() {
         let mut rng = test_rng();
         let trace_length = 10;
-        let mut pp: Vec<Conv2DPrecompileDims> = Vec::with_capacity(trace_length);
+        let mut pp: Vec<ConvPrecompileDims> = Vec::with_capacity(trace_length);
         let mut ptranscript = KeccakTranscript::new(b"test");
         let mut sumcheck_instances = Vec::with_capacity(trace_length);
         for _ in 0..trace_length {
@@ -445,10 +445,10 @@ mod tests {
             let k_w = (rng.next_u32() as usize % 20 + 1).next_power_of_two();
             let image = Tensor::random(&mut rng, vec![1, 1, h_in, w_in]);
             let kernel = Tensor::random(&mut rng, vec![1, 1, k_h, k_w]);
-            let precompile = Conv2DPrecompile::new(image, kernel);
+            let precompile = ConvPrecompile::new(image, kernel);
             pp.push(precompile.dims());
-            let prover_state = Conv2DProverState::<Fr>::initialize(&precompile, &mut ptranscript);
-            let sumcheck_instance = Conv2DSumcheck::new(Some(prover_state), None, None);
+            let prover_state = ConvProverState::<Fr>::initialize(&precompile, &mut ptranscript);
+            let sumcheck_instance = ConvSumcheck::new(Some(prover_state), None, None);
             sumcheck_instances.push(sumcheck_instance);
         }
         let init_claims = sumcheck_instances
@@ -473,8 +473,8 @@ mod tests {
             .zip_eq(final_claims.iter())
         {
             let verifier_state =
-                Conv2DVerifierState::<Fr>::initialize(*dims, *init_claim, &mut vtranscript);
-            vsumcheck_instances.push(Conv2DSumcheck::new(
+                ConvVerifierState::<Fr>::initialize(*dims, *init_claim, &mut vtranscript);
+            vsumcheck_instances.push(ConvSumcheck::new(
                 None,
                 Some(verifier_state),
                 Some(final_claim.clone()),

@@ -56,29 +56,3 @@ fn test_perceptron() {
 fn test_perceptron_2() {
     run_perceptron_test("onnx/mlp/perceptron_2.onnx", 4);
 }
-
-#[test]
-fn test_simple_perceptron_quant() {
-    let path = "onnx/mlp/simple_perceptron.quant.onnx";
-    let size = 10;
-    let rng = test_rng();
-
-    // Build the ONNX model using tract
-    let model = tract_onnx::onnx()
-        .model_for_path(path)
-        .unwrap()
-        .into_optimized()
-        .unwrap()
-        .into_runnable()
-        .unwrap();
-
-    // Get some random input data
-    let data = random_floatvec(rng, size);
-    let input = Tensor::from_shape(&[1, size], &data).unwrap();
-
-    // Get expected output from the ONNX model
-    let output = model.run(tvec!(input.into_tvalue())).unwrap();
-    let output = output[0].to_array_view::<i8>().unwrap();
-    let _expected = output.as_slice().unwrap();
-    println!("expected: {:?}", _expected);
-}
