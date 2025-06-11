@@ -197,8 +197,8 @@ impl Sha256SequenceBuilder {
                 || (self.round == 2 && !['A', 'B', 'E', 'F'].contains(&shift))
                 || (self.round == 3 && !['A', 'B', 'C', 'E', 'F', 'G'].contains(&shift)))
         {
-            // Our values are getting shifted each round, so we substract round_id
-            // for exaple in round 1 we have B equal to A from round 0.
+            // Our values are getting shifted each round, so we subtract round_id
+            // for example in round 1 we have B equal to A from round 0.
             let shift = shift as i32 - 'A' as i32;
             return Imm(BLOCK[(shift - self.round).rem_euclid(8) as usize]);
         }

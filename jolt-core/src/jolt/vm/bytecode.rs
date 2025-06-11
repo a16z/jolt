@@ -235,7 +235,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
         let core_piop_sumcheck_proof = SumcheckInstanceProof::new(compressed_polys);
 
         let (booleanity_sumcheck_proof, _r_address_prime, _r_cycle_prime, ra_claim_prime) =
-            prove_booleanity(&preprocessing, trace, &r_address, E, F, transcript);
+            prove_booleanity(preprocessing, trace, &r_address, E, F, transcript);
 
         // TODO: Reduce 2 ra claims to 1 (Section 4.5.2 of Proofs, Arguments, and Zero-Knowledge)
         // TODO: Append to opening proof accumulator

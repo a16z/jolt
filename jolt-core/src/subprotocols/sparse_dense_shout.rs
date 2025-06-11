@@ -285,6 +285,7 @@ fn compute_sumcheck_prover_message<const WORD_SIZE: usize, F: JoltField>(
     [eval_0, eval_2_right + eval_2_right - eval_2_left]
 }
 
+#[allow(clippy::type_complexity)]
 pub fn prove_sparse_dense_shout<
     const WORD_SIZE: usize,
     F: JoltField,

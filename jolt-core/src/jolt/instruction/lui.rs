@@ -37,7 +37,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<LUI> {
             #[cfg(test)]
             8 => (self.instruction.operands.imm as u8).into(),
             32 => (self.instruction.operands.imm as u32).into(),
-            64 => self.instruction.operands.imm as u64,
+            64 => self.instruction.operands.imm,
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }

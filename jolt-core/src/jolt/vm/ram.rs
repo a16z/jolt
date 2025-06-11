@@ -1247,7 +1247,7 @@ fn remap_address(address: u64, memory_layout: &MemoryLayout) -> u64 {
     if address >= memory_layout.input_start {
         (address - memory_layout.input_start) / 4 + 1
     } else {
-        panic!("Unexpected address {}", address)
+        panic!("Unexpected address {address}")
     }
 }
 

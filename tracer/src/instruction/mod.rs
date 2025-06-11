@@ -414,7 +414,7 @@ impl CanonicalDeserialize for RV32IMInstruction {
             .read_exact(&mut bytes)
             .map_err(|_| SerializationError::InvalidData)?;
         serde_json::from_slice(&bytes).map_err(|e| {
-            println!("Deserialization error: {}", e);
+            println!("Deserialization error: {e}");
             SerializationError::InvalidData
         })
     }

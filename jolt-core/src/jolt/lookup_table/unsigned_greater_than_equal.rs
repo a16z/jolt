@@ -23,7 +23,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for UnsignedGreaterThanEqualTable<W
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
-        F::one() - UnsignedLessThanTable::<WORD_SIZE>::default().evaluate_mle::<F>(r)
+        F::one() - UnsignedLessThanTable::<WORD_SIZE>.evaluate_mle::<F>(r)
     }
 }
 

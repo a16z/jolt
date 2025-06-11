@@ -2,7 +2,6 @@
 #![allow(dead_code)]
 
 use crate::field::JoltField;
-use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{
     ProverOpeningAccumulator, ReducedOpeningProof, VerifierOpeningAccumulator,
 };
@@ -14,20 +13,17 @@ use common::jolt_device::MemoryLayout;
 use instruction_lookups::LookupsProof;
 use ram::{RAMPreprocessing, RAMTwistProof};
 use registers::RegistersTwistProof;
-use serde::{Deserialize, Serialize};
 use std::{
     fs::File,
     io::{Read, Write},
     path::Path,
 };
-use strum::EnumCount;
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
 use tracer::JoltDevice;
 
 use crate::msm::icicle;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::utils::errors::ProofVerifyError;
-use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
@@ -335,7 +331,7 @@ where
 
     #[tracing::instrument(skip_all)]
     fn verify(
-        mut preprocessing: JoltVerifierPreprocessing<F, PCS, ProofTranscript>,
+        preprocessing: JoltVerifierPreprocessing<F, PCS, ProofTranscript>,
         proof: JoltProof<WORD_SIZE, F, PCS, ProofTranscript>,
         // commitments: JoltCommitments<PCS, ProofTranscript>,
         program_io: JoltDevice,

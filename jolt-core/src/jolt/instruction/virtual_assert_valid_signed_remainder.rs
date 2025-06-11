@@ -54,7 +54,6 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE>
             64 => {
                 let (remainder, divisor) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
                 let remainder = remainder as i64;
-                let divisor = divisor as i64;
                 let is_remainder_zero = remainder == 0;
                 let is_divisor_zero = divisor == 0;
 

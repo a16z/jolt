@@ -92,7 +92,7 @@ where
         let log_T = trace.len().log_2();
         let r_cycle: Vec<F> = transcript.challenge_vector(log_T);
         let (read_checking_sumcheck, rv_claim, ra_claims, flag_claims, eq_r_cycle) =
-            prove_sparse_dense_shout::<WORD_SIZE, _, _>(&trace, r_cycle, transcript);
+            prove_sparse_dense_shout::<WORD_SIZE, _, _>(trace, r_cycle, transcript);
         let read_checking_proof = ReadCheckingProof {
             sumcheck_proof: read_checking_sumcheck,
             rv_claim,
@@ -244,15 +244,15 @@ fn prove_ra_booleanity<F: JoltField, ProofTranscript: Transcript>(
                 let k = lookup_index % K as u64;
                 result[3][k as usize] += eq_r_cycle[j];
 
-                lookup_index = lookup_index >> LOG_K;
+                lookup_index >>= LOG_K;
                 let k = lookup_index % K as u64;
                 result[2][k as usize] += eq_r_cycle[j];
 
-                lookup_index = lookup_index >> LOG_K;
+                lookup_index >>= LOG_K;
                 let k = lookup_index % K as u64;
                 result[1][k as usize] += eq_r_cycle[j];
 
-                lookup_index = lookup_index >> LOG_K;
+                lookup_index >>= LOG_K;
                 let k = lookup_index % K as u64;
                 result[0][k as usize] += eq_r_cycle[j];
                 j += 1;
@@ -578,15 +578,15 @@ fn prove_ra_hamming_weight<F: JoltField, ProofTranscript: Transcript>(
                 let k = lookup_index % K as u64;
                 result[3][k as usize] += eq_r_cycle[j];
 
-                lookup_index = lookup_index >> LOG_K;
+                lookup_index >>= LOG_K;
                 let k = lookup_index % K as u64;
                 result[2][k as usize] += eq_r_cycle[j];
 
-                lookup_index = lookup_index >> LOG_K;
+                lookup_index >>= LOG_K;
                 let k = lookup_index % K as u64;
                 result[1][k as usize] += eq_r_cycle[j];
 
-                lookup_index = lookup_index >> LOG_K;
+                lookup_index >>= LOG_K;
                 let k = lookup_index % K as u64;
                 result[0][k as usize] += eq_r_cycle[j];
                 j += 1;
