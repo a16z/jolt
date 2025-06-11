@@ -210,7 +210,7 @@ where
             poly_evals[0] * poly_evals[1]
         };
 
-        let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) =
+        let (inner_sumcheck_proof, _inner_sumcheck_r, _claims_inner) =
             SumcheckInstanceProof::prove_arbitrary(
                 &claim_inner_joint,
                 num_rounds_inner_sumcheck,
@@ -225,7 +225,7 @@ where
         // Evaluate all witness polynomials P_i at r_cycle for the verifier
         // Verifier computes: z(r_inner, r_cycle) = Σ_i eq(r_inner, i) * P_i(r_cycle)
         let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
-        let (claimed_witness_evals, chis) =
+        let (claimed_witness_evals, _chis) =
             MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
 
         /*  Sumcheck 3: Shift sumcheck for NextPC verification
@@ -271,7 +271,7 @@ where
         // );
 
         // For shift sumcheck, we need PC evaluation at shift_r
-        let (shift_sumcheck_witness_evals_partial, chis2) =
+        let (shift_sumcheck_witness_evals_partial, _chis2) =
             MultilinearPolynomial::batch_evaluate(&[&input_polys[pc_index]], &shift_sumcheck_r);
         let shift_sumcheck_witness_eval = shift_sumcheck_witness_evals_partial[0];
 

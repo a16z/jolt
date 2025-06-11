@@ -204,8 +204,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let const_eval = if self.uniform_r1cs.num_vars < num_vars && with_const {
             let const_position_bits =
                 index_to_field_bitvector(self.uniform_r1cs.num_vars as u64, var_bits);
-            let eq_const = EqPolynomial::new(r.to_vec()).evaluate(&const_position_bits);
-            eq_const
+            EqPolynomial::new(r.to_vec()).evaluate(&const_position_bits)
         } else {
             F::zero()
         };

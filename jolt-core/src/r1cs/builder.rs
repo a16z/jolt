@@ -1,9 +1,9 @@
 use super::ops::{Term, Variable, LC};
+use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::{
     field::JoltField,
     r1cs::key::{SparseConstraints, UniformR1CS},
 };
-use crate::{poly::multilinear_polynomial::MultilinearPolynomial, r1cs::inputs::JoltR1CSInputs};
 use std::marker::PhantomData;
 
 /// Constraints over a single row. Each variable points to a single item in Z and the corresponding coefficient.
@@ -19,7 +19,7 @@ impl Constraint {
     pub(crate) fn _pretty_fmt<F: JoltField>(
         &self,
         f: &mut String,
-        flattened_polynomials: &[MultilinearPolynomial<F>],
+        flattened_polynomials: &[crate::poly::multilinear_polynomial::MultilinearPolynomial<F>],
         step_index: usize,
     ) -> std::fmt::Result {
         use std::fmt::Write as _;
