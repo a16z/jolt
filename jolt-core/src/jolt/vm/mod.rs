@@ -294,7 +294,7 @@ where
 
         #[cfg(test)]
         {
-            let shard_len = std::cmp::min(2048, trace_length) as usize;
+            let shard_len = std::cmp::min(2048, trace_length.next_power_of_two()) as usize;
             r1cs_proof = UniformSpartanProof::prove_streaming::<PCS>(
                 &preprocessing,
                 &constraint_builder,

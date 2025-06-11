@@ -3,11 +3,7 @@ use super::{
     sparse_interleaved_poly::SparseCoefficient, split_eq_poly::GruenSplitEqPolynomial,
     unipoly::CompressedUniPoly,
 };
-use crate::jolt::vm::JoltProverPreprocessing;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::unipoly::UniPoly;
 use crate::r1cs::builder::shard_last_step_eval_offset_lc;
-use crate::r1cs::inputs::ALL_R1CS_INPUTS;
 use crate::r1cs::spartan::R1CSInputsOracle;
 use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
 use crate::utils::streaming::Oracle;
@@ -23,9 +19,7 @@ use crate::{
 use ark_ff::Zero;
 use ark_std::iterable::Iterable;
 use rayon::prelude::*;
-use std::ops::Mul;
 use std::time::Instant;
-use tracer::instruction::RV32IMCycle;
 
 pub const TOTAL_NUM_ACCUMS: usize = svo_helpers::total_num_accums(NUM_SVO_ROUNDS);
 pub const NUM_NONTRIVIAL_TERNARY_POINTS: usize =
@@ -283,12 +277,14 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
                                 let global_r1cs_idx =
                                     2 *
+
                                         (current_step_idx * padded_num_constraints +
                                             original_uniform_idx_in_step);
 
                                 if !constraint.a.terms().is_empty() {
                                     let az = constraint.a.evaluate_row(
                                         flattened_polynomials,
+
                                         current_step_idx,
                                     );
                                     if !az.is_zero() {
@@ -300,6 +296,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                 if !constraint.b.terms().is_empty() {
                                     let bz = constraint.b.evaluate_row(
                                         flattened_polynomials,
+
                                         current_step_idx,
                                     );
                                     if !bz.is_zero() {
@@ -325,7 +322,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                     &binary_az_block,
                                     &binary_bz_block,
                                     E_in_val,
-                                    &mut tA_sum_for_current_x_out,
+                                    &mut tA_sum_for_current_x_out
                                 );
 
                                 current_x_in_constraint_val += 1;
@@ -354,13 +351,13 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                 &constraint.a,
                                 flattened_polynomials,
                                 current_step_idx,
-                                next_step_index_opt,
+                                next_step_index_opt
                             );
                             let eq_b_eval = eval_offset_lc(
                                 &constraint.b,
                                 flattened_polynomials,
                                 current_step_idx,
-                                next_step_index_opt,
+                                next_step_index_opt
                             );
                             let az = eq_a_eval - eq_b_eval;
                             if !az.is_zero() {
@@ -372,7 +369,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                     &constraint.cond,
                                     flattened_polynomials,
                                     current_step_idx,
-                                    next_step_index_opt,
+                                    next_step_index_opt
                                 );
                                 if !bz.is_zero() {
                                     binary_bz_block[block_idx] = bz;
@@ -391,7 +388,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             &binary_az_block,
                             &binary_bz_block,
                             E_in_val_phase2, // Use E_in_val specific to this phase/block
-                            &mut tA_sum_for_current_x_out,
+                            &mut tA_sum_for_current_x_out
                         );
                     } // End x_in_step_val loop
 
@@ -401,7 +398,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         x_out_val,
                         E_out_vec,
                         &mut current_x_out_svo_zero,
-                        &mut current_x_out_svo_infty,
+                        &mut current_x_out_svo_infty
                     );
 
                     // Accumulate SVO contributions for this x_out_val into chunk accumulators
@@ -1250,7 +1247,6 @@ impl<'a, F: JoltField> SpartanInterleavedPolynomialOracle<'a, NUM_SVO_ROUNDS, F>
                             }
 
                             // Process the cross-step constraints
-
                             let next_step_index =
                                 if step_index + shard_idx * shard_length + 1 < total_num_steps {
                                     Some(step_index + 1)
@@ -1470,6 +1466,7 @@ impl<'a, F: JoltField> SpartanInterleavedPolynomialOracle<'a, NUM_SVO_ROUNDS, F>
 
         // Without parallelisation, if is twice as slow as the else case.
         // If we remove parallelisation from new_with_precompute(), it is slower than the else case.
+
         if num_shard_vars <= NUM_SVO_ROUNDS + iter_num_x_in_vars {
             println!("Shard smaller than an x_out_val block");
             // There are multiple shards for every value of x_out_vars. So we iterate over every value of x_out_vars
@@ -1633,7 +1630,6 @@ impl<'a, F: JoltField> SpartanInterleavedPolynomialOracle<'a, NUM_SVO_ROUNDS, F>
                     let mut tA_sum_for_current_x_out = [F::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
                     let mut current_x_out_svo_zero = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
                     let mut current_x_out_svo_infty = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
-
                     let svo_blocks = x_out_val_block
                         .chunk_by(|a, b| {
                             (a.index >> (NUM_SVO_ROUNDS + 1)) == (b.index >> (NUM_SVO_ROUNDS + 1))

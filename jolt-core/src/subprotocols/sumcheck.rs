@@ -1,24 +1,19 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
-use crate::field::JoltField;
-use crate::jolt::vm::JoltProverPreprocessing;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::field::{JoltField, OptimizedMul};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
-
-use crate::r1cs::spartan::{BindZRyVarOracle, R1CSInputsOracle};
-
-use crate::poly::sparse_interleaved_poly::SparseCoefficient;
 use crate::poly::spartan_interleaved_poly::{
     SpartanInterleavedPolynomial, SpartanInterleavedPolynomialOracle,
 };
 use crate::poly::split_eq_poly::{GruenSplitEqPolynomial, SplitEqPolynomial};
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::r1cs::builder::{Constraint, OffsetEqConstraint};
+use crate::r1cs::spartan::{BindZRyVarOracle, R1CSInputsOracle};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 use crate::utils::mul_0_optimized;
@@ -33,7 +28,6 @@ use ark_serialize::*;
 use rayon::prelude::*;
 use std::marker::PhantomData;
 use tokio::time::Instant;
-use tracer::instruction::RV32IMCycle;
 
 pub trait Bindable<F: JoltField>: Sync {
     fn bind(&mut self, r: F);
@@ -540,6 +534,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
 
         #[cfg(test)]
         {
+            use crate::poly::sparse_interleaved_poly::SparseCoefficient;
             let now = Instant::now();
             // First, precompute the accumulators and also the `SpartanInterleavedPolynomial`
             let (accums_zero_non_streaming, accums_infty_non_streaming, mut az_bz_cz_poly) =
@@ -998,8 +993,6 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         };
 
         let mut eq_eval_idx_s_vec = vec![vec![F::one(); 2]; degree + 1];
-        let mut witness_eval = vec![vec![F::zero(); degree + 1]; num_polys];
-
         let num_x1_bits = eq_rx_step.E1_len.log_2();
         let x1_bitmask = (1 << (num_x1_bits)) - 1;
 
@@ -1029,34 +1022,73 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                 ));
                 let chunk_size = 1 << (round + 1);
                 let no_of_chunks = shard_length / chunk_size;
-                (0..no_of_chunks).for_each(|chunk_iter| {
-                    let base_chunk_idx = chunk_iter * chunk_size;
-                    for idx_in_chunk in 0..chunk_size {
-                        let idx_in_shard = base_chunk_idx + idx_in_chunk;
-                        let idx_in_poly = base_poly_idx + idx_in_shard;
-                        let bit = (idx_in_poly >> round) & 1;
-                        witness_eval
-                            .iter_mut()
-                            .zip(polys.iter())
-                            .for_each(|(eval, poly)| {
-                                let coeff = poly.get_coeff(idx_in_shard);
-                                let eval_1 = evals_1[idx_in_poly & mask];
-                                eval.iter_mut().zip(eq_eval_idx_s_vec.iter()).for_each(
-                                    |(e, eq_eval)| {
-                                        *e += eval_1 * eq_eval[bit] * coeff;
-                                    },
-                                );
-                            });
-                    }
-                    accumulator.iter_mut().enumerate().for_each(|(s, acc)| {
-                        *acc += comb_func(
-                            &(0..num_polys)
-                                .map(|k| witness_eval[k][s])
-                                .collect::<Vec<F>>(),
-                        );
-                    });
-                    witness_eval = vec![vec![F::zero(); degree + 1]; num_polys];
-                });
+                let acc = (0..no_of_chunks)
+                    .into_par_iter()
+                    .map(|chunk_iter| {
+                        let base_chunk_idx = chunk_iter * chunk_size;
+                        let witness_eval = (0..chunk_size)
+                            .map(|idx_in_chunk| {
+                                let idx_in_shard = base_chunk_idx + idx_in_chunk;
+                                let idx_in_poly = base_poly_idx + idx_in_shard;
+                                let bit = (idx_in_poly >> round) & 1;
+                                polys
+                                    .iter()
+                                    .map(|poly| {
+                                        let coeff = poly.get_coeff(idx_in_shard);
+                                        let eval_1 = evals_1[idx_in_poly & mask];
+                                        (0..=degree)
+                                            .map(|s| {
+                                                eval_1
+                                                    * eq_eval_idx_s_vec[s][bit]
+                                                        .mul_01_optimized(coeff)
+                                            })
+                                            .collect::<Vec<F>>()
+                                    })
+                                    .collect::<Vec<Vec<F>>>()
+                            })
+                            .fold(
+                                (|| vec![vec![F::zero(); degree + 1]; num_polys])(),
+                                |mut acc, x| {
+                                    for i in 0..num_polys {
+                                        for j in 0..=degree {
+                                            acc[i][j] += x[i][j];
+                                        }
+                                    }
+                                    acc
+                                },
+                            );
+                        (0..=degree)
+                            .map(|s| {
+                                comb_func(
+                                    &(0..num_polys)
+                                        .map(|k| witness_eval[k][s])
+                                        .collect::<Vec<F>>(),
+                                )
+                            })
+                            .collect::<Vec<F>>()
+                    })
+                    .fold(
+                        || vec![F::zero(); degree + 1],
+                        |mut acc, x| {
+                            acc.iter_mut()
+                                .zip(x.iter())
+                                .for_each(|(acc, eval)| *acc += *eval);
+                            acc
+                        },
+                    )
+                    .reduce(
+                        || vec![F::zero(); degree + 1],
+                        |mut acc, x| {
+                            acc.iter_mut()
+                                .zip(x.iter())
+                                .for_each(|(acc, eval)| *acc += *eval);
+                            acc
+                        },
+                    );
+                accumulator
+                    .iter_mut()
+                    .zip(acc.iter())
+                    .for_each(|(acc, eval)| *acc += *eval);
             }
 
             let univariate_poly = UniPoly::from_evals(&accumulator);
@@ -1078,7 +1110,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         let mut bind_poly1 = Vec::with_capacity(num_shards * no_of_chunks);
         let mut bind_poly2 = Vec::with_capacity(num_shards * no_of_chunks);
         for _ in 0..num_shards {
-            let mut polys = Vec::with_capacity(2);
+            let mut polys = Vec::with_capacity(num_polys);
             polys.push(stream_poly.next_shard());
 
             let step = stream_poly.get_step();
@@ -1127,7 +1159,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
 
         let (mut second_half_proof, mut second_half_r, _) = SumcheckInstanceProof::prove_arbitrary(
             &second_half_claim,
-            (num_rounds - mid),
+            num_rounds - mid,
             &mut bind_polys,
             comb_func,
             2,

@@ -12,7 +12,6 @@ use crate::utils::math::Math;
 use crate::utils::streaming::Oracle;
 use crate::utils::thread::drop_in_background_thread;
 use std::marker::PhantomData;
-
 use tracer::instruction::RV32IMCycle;
 use tracing::{span, Level};
 
@@ -418,6 +417,7 @@ where
             .par_iter()
             .map(|var| var.generate_witness(trace, preprocessing))
             .collect();
+
         println!("generate_witness: {:?}", now.elapsed());
 
         let num_rounds_x = key.num_rows_bits();
