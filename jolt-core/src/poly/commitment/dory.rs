@@ -2,7 +2,7 @@ use super::commitment_scheme::CommitmentScheme;
 use crate::{
     field::JoltField,
     msm::{Icicle, VariableBaseMSM},
-    poly::multilinear_polynomial::MultilinearPolynomial,
+    poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     utils::{
         errors::ProofVerifyError,
         transcript::{AppendToTranscript, Transcript},
@@ -688,22 +688,10 @@ where
         self.len()
     }
 
-    //     fn commit_rows<M1: DoryMultiScalarMul<JoltGroupWrapper<G>>>(
-    //         &self,
-    //         g1_generators: &[JoltGroupWrapper<G>],
-    //         row_len: usize,
-    //     ) -> Vec<JoltGroupWrapper<G>> {
-    //         todo!()
-    //     }
-
-    //     fn vector_matrix_product(
-    //         &self,
-    //         left_vec: &[JoltFieldWrapper<F>],
-    //         sigma: usize,
-    //         nu: usize,
-    //     ) -> Vec<JoltFieldWrapper<F>> {
-    //         todo!()
-    //     }
+    fn evaluate(&self, point: &[JoltFieldWrapper<F>]) -> JoltFieldWrapper<F> {
+        let point: Vec<_> = point.iter().rev().map(|x| x.0).collect();
+        JoltFieldWrapper(PolynomialEvaluation::evaluate(self, &point))
+    }
 }
 
 // Note that we have this `Option<&'a mut T>` so that we can derive Default, which is required.
@@ -847,8 +835,12 @@ where
         opening_point: &[Self::Field],
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
-        let point_dory: Vec<JoltFieldWrapper<Self::Field>> =
-            opening_point.iter().map(|&p| JoltFieldWrapper(p)).collect();
+        // Dory uses the opposite endian-ness as Jolt
+        let point_dory: Vec<JoltFieldWrapper<Self::Field>> = opening_point
+            .iter()
+            .rev()
+            .map(|&p| JoltFieldWrapper(p))
+            .collect();
 
         let num_vars = poly.get_num_vars();
         let sigma = (num_vars + 1) / 2;
@@ -885,8 +877,12 @@ where
         opening: &Self::Field,
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
-        let opening_point_dory: Vec<JoltFieldWrapper<Self::Field>> =
-            opening_point.iter().map(|&p| JoltFieldWrapper(p)).collect();
+        // Dory uses the opposite endian-ness as Jolt
+        let opening_point_dory: Vec<JoltFieldWrapper<Self::Field>> = opening_point
+            .iter()
+            .rev()
+            .map(|&p| JoltFieldWrapper(p))
+            .collect();
 
         let claimed_opening = JoltFieldWrapper(*opening);
         let dory_transcript = JoltToDoryTranscriptRef::<Self::Field, _>::new(transcript);
@@ -991,14 +987,12 @@ mod tests {
 
         println!(" Commit time: {:?}", commit_time);
 
-        // Compute the evaluation using the DoryPolynomial trait's evaluate method
-        let opening_point_dory: Vec<JoltFieldWrapper<Fr>> =
-            opening_point.iter().map(|&p| JoltFieldWrapper(p)).collect();
-        let evaluation = <MultilinearPolynomial<Fr> as DoryPolynomial<
-            JoltFieldWrapper<Fr>,
-            JoltGroupWrapper<G1Projective>,
-        >>::evaluate(&poly, &opening_point_dory)
-        .0;
+        let mut reversed_opening_point = opening_point.clone();
+        reversed_opening_point.reverse();
+        let evaluation = <MultilinearPolynomial<Fr> as PolynomialEvaluation<Fr>>::evaluate(
+            &poly,
+            &reversed_opening_point,
+        );
 
         let mut prove_transcript = KeccakTranscript::new(b"dory_test");
         let prove_start = Instant::now();

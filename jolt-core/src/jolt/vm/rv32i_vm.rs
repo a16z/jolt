@@ -117,14 +117,13 @@ mod tests {
             1 << 20,
             1 << 20,
         );
-        let (proof, commitments, debug_info) = <RV32IJoltVM as Jolt<
-            32,
-            Fr,
-            HyperKZG<Bn254, KeccakTranscript>,
-            KeccakTranscript,
-        >>::prove(
-            io_device, trace, preprocessing.clone()
-        );
+        let (proof, commitments, debug_info) =
+            <RV32IJoltVM as Jolt<
+                32,
+                Fr,
+                DoryCommitmentScheme<KeccakTranscript>,
+                KeccakTranscript,
+            >>::prove(io_device, trace, preprocessing.clone());
         let verification_result =
             RV32IJoltVM::verify(preprocessing.shared, proof, commitments, debug_info);
         assert!(
@@ -140,8 +139,8 @@ mod tests {
     }
 
     #[test]
-    fn fib_e2e_zeromorph() {
-        fib_e2e::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>();
+    fn fib_e2e_dory() {
+        fib_e2e::<Fr, DoryCommitmentScheme<KeccakTranscript>, KeccakTranscript>();
     }
 
     #[test]
