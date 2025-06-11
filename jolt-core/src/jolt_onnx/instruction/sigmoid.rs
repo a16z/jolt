@@ -9,7 +9,9 @@ use crate::jolt_onnx::subtable::sigmoid::{
     SigmoidSubtable, INPUT_SCALE, INPUT_ZERO_POINT, OUTPUT_SCALE, OUTPUT_ZERO_POINT,
     QUANTIZED_SIGMOID_TABLE,
 };
+use crate::poly::eq_poly::EqPolynomial;
 use crate::utils::instruction_utils::chunk_operand_usize;
+use itertools::Itertools;
 use rand::prelude::StdRng;
 use serde::{Deserialize, Serialize};
 
@@ -99,12 +101,12 @@ impl JoltInstruction for SigmoidInstruction {
             f_eval[i] = F::from_u8(QUANTIZED_SIGMOID_TABLE[i]);
         }
 
-        let mut idx = F::zero();
-        for i in 0..point.len() {
-            idx += F::from_u64(1u64 << i) * point[point.len() - 1 - i];
-        }
-        let result = f_eval[idx.to_u64().unwrap() as usize];
-        result
+        let eq_evals = EqPolynomial::evals(point);
+        f_eval
+            .iter()
+            .zip_eq(eq_evals.iter())
+            .map(|(x, e)| *x * e)
+            .sum()
     }
 }
 
