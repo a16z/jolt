@@ -56,7 +56,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<MUL> {
             #[cfg(test)]
             8 => (x as i8).wrapping_mul(y as i8) as u8 as u64,
             32 => (x as i32).wrapping_mul(y as i32) as u32 as u64,
-            64 => (x as i64).wrapping_mul(y as i64) as u64,
+            64 => (x as i64).wrapping_mul(y) as u64,
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }

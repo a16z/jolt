@@ -43,7 +43,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualMove> 
             #[cfg(test)]
             8 => (self.register_state.rs1 as u8).into(),
             32 => (self.register_state.rs1 as u32).into(),
-            64 => self.register_state.rs1 as u64,
+            64 => self.register_state.rs1,
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }

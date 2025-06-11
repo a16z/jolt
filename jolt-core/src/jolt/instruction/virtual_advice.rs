@@ -40,7 +40,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualAdvice
             #[cfg(test)]
             8 => (self.instruction.advice as u8).into(),
             32 => (self.instruction.advice as u32).into(),
-            64 => self.instruction.advice as u64,
+            64 => self.instruction.advice,
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }

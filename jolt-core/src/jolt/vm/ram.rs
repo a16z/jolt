@@ -137,7 +137,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         trace: &[RV32IMCycle],
         program_io: &JoltDevice,
         K: usize,
-        opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
+        _opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> RAMTwistProof<F, ProofTranscript> {
         let log_T = trace.len().log_2();
@@ -311,7 +311,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             "Booleanity sumcheck failed"
         );
 
-        let (sumcheck_claim, r_hamming_weight) =
+        let (sumcheck_claim, _r_hamming_weight) =
             self.hamming_weight_proof
                 .sumcheck_proof
                 .verify(F::one(), log_K, 1, transcript)?;
@@ -1247,7 +1247,7 @@ fn remap_address(address: u64, memory_layout: &MemoryLayout) -> u64 {
     if address >= memory_layout.input_start {
         (address - memory_layout.input_start) / 4 + 1
     } else {
-        panic!("Unexpected address {}", address)
+        panic!("Unexpected address {address}")
     }
 }
 

@@ -9,7 +9,6 @@ use crate::jolt::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
 use crate::jolt::vm::JoltProverPreprocessing;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::utils::transcript::Transcript;
 
 use super::key::UniformSpartanKey;
@@ -266,7 +265,7 @@ impl JoltR1CSInputs {
             JoltR1CSInputs::LookupOutput => {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
-                    .map(|cycle| LookupQuery::<32>::to_lookup_output(cycle))
+                    .map(LookupQuery::<32>::to_lookup_output)
                     .collect();
                 coeffs.into()
             }

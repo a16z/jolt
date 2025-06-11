@@ -126,7 +126,7 @@ impl VirtualInstructionSequence for LH {
             },
             virtual_sequence_remaining: Some(3),
         };
-        sequence.extend(slli.virtual_sequence().into_iter());
+        sequence.extend(slli.virtual_sequence());
 
         let sll = SLL {
             address: self.address,
@@ -137,7 +137,7 @@ impl VirtualInstructionSequence for LH {
             },
             virtual_sequence_remaining: Some(2),
         };
-        sequence.extend(sll.virtual_sequence().into_iter());
+        sequence.extend(sll.virtual_sequence());
 
         let srai = SRAI {
             address: self.address,
@@ -148,7 +148,7 @@ impl VirtualInstructionSequence for LH {
             },
             virtual_sequence_remaining: Some(0),
         };
-        sequence.extend(srai.virtual_sequence().into_iter());
+        sequence.extend(srai.virtual_sequence());
 
         sequence
     }
