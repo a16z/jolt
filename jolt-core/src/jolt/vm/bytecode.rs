@@ -53,12 +53,15 @@ impl BytecodePreprocessing {
         }
 
         // Bytecode: Prepend a single no-op instruction
-        bytecode.insert(0, RV32IMInstruction::NoOp);
+        bytecode.insert(0, RV32IMInstruction::NoOp(0));
         assert_eq!(virtual_address_map.insert((0, 0), 0), None);
 
         // Bytecode: Pad to nearest power of 2
+        // Get last address
+        let last_address = bytecode.last().unwrap().normalize().address;
         let code_size = bytecode.len().next_power_of_two();
-        bytecode.resize(code_size, RV32IMInstruction::NoOp);
+        let padding = code_size - bytecode.len();
+        bytecode.extend((0..padding).map(|i| RV32IMInstruction::NoOp(last_address + 4 * (i + 1))));
 
         Self {
             bytecode,
@@ -140,7 +143,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
                     let k = preprocessing
                         .virtual_address_map
                         .get(&(instr.address, instr.virtual_sequence_remaining.unwrap_or(0)))
-                        .unwrap();
+                        .unwrap_or(&0);
                     result[*k] += E[j];
                     j += 1;
                 }
@@ -463,7 +466,7 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
             let k = preprocessing
                 .virtual_address_map
                 .get(&(instr.address, instr.virtual_sequence_remaining.unwrap_or(0)))
-                .unwrap();
+                .unwrap_or(&0);
             F[*k]
         })
         .collect();

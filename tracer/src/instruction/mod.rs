@@ -252,7 +252,8 @@ macro_rules! define_rv32im_enums {
     ) => {
         #[derive(Debug, IntoStaticStr, From, Clone, Serialize, Deserialize)]
         pub enum RV32IMInstruction {
-            NoOp,
+            /// No-operation instruction (address)
+            NoOp(usize),
             UNIMPL,
             $(
                 $instr($instr),
@@ -263,7 +264,8 @@ macro_rules! define_rv32im_enums {
             From, Debug, Copy, Clone, Serialize, Deserialize, IntoStaticStr, EnumIter, EnumCountMacro,
         )]
         pub enum RV32IMCycle {
-            NoOp,
+            /// No-operation cycle (address)
+            NoOp(usize),
             $(
                 $instr(RISCVCycle<$instr>),
             )*
@@ -272,7 +274,7 @@ macro_rules! define_rv32im_enums {
         impl RV32IMCycle {
             pub fn ram_access(&self) -> RAMAccess {
                 match self {
-                    RV32IMCycle::NoOp => RAMAccess::NoOp,
+                    RV32IMCycle::NoOp(_) => RAMAccess::NoOp,
                     $(
                         RV32IMCycle::$instr(cycle) => cycle.ram_access.into(),
                     )*
@@ -281,7 +283,7 @@ macro_rules! define_rv32im_enums {
 
             pub fn rs1_read(&self) -> (usize, u64) {
                 match self {
-                    RV32IMCycle::NoOp => (0, 0),
+                    RV32IMCycle::NoOp(_) => (0, 0),
                     $(
                         RV32IMCycle::$instr(cycle) => (
                             cycle.instruction.operands.normalize().rs1,
@@ -293,7 +295,7 @@ macro_rules! define_rv32im_enums {
 
             pub fn rs2_read(&self) -> (usize, u64) {
                 match self {
-                    RV32IMCycle::NoOp => (0, 0),
+                    RV32IMCycle::NoOp(_) => (0, 0),
                     $(
                         RV32IMCycle::$instr(cycle) => (
                             cycle.instruction.operands.normalize().rs2,
@@ -305,7 +307,7 @@ macro_rules! define_rv32im_enums {
 
             pub fn rd_write(&self) -> (usize, u64, u64) {
                 match self {
-                    RV32IMCycle::NoOp => (0, 0, 0),
+                    RV32IMCycle::NoOp(_) => (0, 0, 0),
                     $(
                         RV32IMCycle::$instr(cycle) => (
                             cycle.instruction.operands.normalize().rd,
@@ -318,7 +320,7 @@ macro_rules! define_rv32im_enums {
 
             pub fn instruction(&self) -> RV32IMInstruction {
                 match self {
-                    RV32IMCycle::NoOp => RV32IMInstruction::NoOp,
+                    RV32IMCycle::NoOp(address) => RV32IMInstruction::NoOp(*address),
                     $(
                         RV32IMCycle::$instr(cycle) => cycle.instruction.into(),
                     )*
@@ -329,7 +331,7 @@ macro_rules! define_rv32im_enums {
         impl RV32IMInstruction {
             pub fn trace(&self, cpu: &mut Cpu) {
                 match self {
-                    RV32IMInstruction::NoOp => panic!("Unsupported instruction: {:?}", self),
+                    RV32IMInstruction::NoOp(_) => panic!("Unsupported instruction: {:?}", self),
                     RV32IMInstruction::UNIMPL => panic!("Unsupported instruction: {:?}", self),
                     $(
                         RV32IMInstruction::$instr(instr) => instr.trace(cpu),
@@ -339,7 +341,12 @@ macro_rules! define_rv32im_enums {
 
             pub fn normalize(&self) -> NormalizedInstruction {
                 match self {
-                    RV32IMInstruction::NoOp => Default::default(),
+                    RV32IMInstruction::NoOp(address) => {
+                        NormalizedInstruction {
+                            address: *address,
+                            ..Default::default()
+                        }
+                    },
                     RV32IMInstruction::UNIMPL => panic!("Unsupported instruction: {:?}", self),
                     $(
                         RV32IMInstruction::$instr(instr) => NormalizedInstruction {
@@ -353,7 +360,7 @@ macro_rules! define_rv32im_enums {
 
             pub fn set_virtual_sequence_remaining(&mut self, remaining: Option<usize>) {
                 match self {
-                    RV32IMInstruction::NoOp => (),
+                    RV32IMInstruction::NoOp(_) => (),
                     RV32IMInstruction::UNIMPL => (),
                     $(
                         RV32IMInstruction::$instr(instr) => {instr.virtual_sequence_remaining = remaining;}
@@ -429,7 +436,7 @@ impl Valid for RV32IMInstruction {
 impl RV32IMInstruction {
     pub fn is_real(&self) -> bool {
         // ignore no-op
-        if matches!(self, RV32IMInstruction::NoOp) {
+        if matches!(self, RV32IMInstruction::NoOp(_)) {
             return false;
         }
 
@@ -610,5 +617,17 @@ impl<T: RISCVInstruction> RISCVCycle<T> {
             ram_access: Default::default(),
             register_state,
         }
+    }
+}
+
+impl RV32IMCycle {
+    pub fn last_jalr(address: usize) -> Self {
+        Self::JALR(RISCVCycle {
+            instruction: JALR {
+                address: address as u64,
+                ..Default::default()
+            },
+            ..Default::default()
+        })
     }
 }
