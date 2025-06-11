@@ -77,7 +77,6 @@ pub struct UniformSpartanProof<F: JoltField, ProofTranscript: Transcript> {
     pub(crate) outer_sumcheck_claims: (F, F, F),
     pub(crate) inner_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub(crate) shift_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    pub(crate) shift_sumcheck_claim: F,
     pub(crate) claimed_witness_evals: Vec<F>,
     pub(crate) shift_sumcheck_witness_eval: F,
     _marker: PhantomData<ProofTranscript>,
@@ -223,6 +222,12 @@ where
 
         drop_in_background_thread(polys);
 
+        // Evaluate all witness polynomials P_i at r_cycle for the verifier
+        // Verifier computes: z(r_inner, r_cycle) = Σ_i eq(r_inner, i) * P_i(r_cycle)
+        let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
+        let (claimed_witness_evals, chis) =
+            MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
+
         /*  Sumcheck 3: Shift sumcheck for NextPC verification
             Proves: NextPC(r_cycle) = \sum_t PC(t) * eq_plus_one(r_cycle, t)
 
@@ -242,16 +247,8 @@ where
         drop(_guard);
         drop(span);
 
-        let shift_sumcheck_claim = (0..1 << num_rounds_shift_sumcheck)
-            .into_par_iter()
-            .map(|i| {
-                let params: Vec<F> = shift_sumcheck_polys
-                    .iter()
-                    .map(|poly| poly.get_coeff(i))
-                    .collect();
-                comb_func(&params)
-            })
-            .reduce(|| F::zero(), |acc, x| acc + x);
+        let pc_next_index = JoltR1CSInputs::NextPC.to_index();
+        let shift_sumcheck_claim = claimed_witness_evals[pc_next_index];
 
         let (shift_sumcheck_proof, shift_sumcheck_r, _shift_sumcheck_claims) =
             SumcheckInstanceProof::prove_arbitrary(
@@ -264,12 +261,6 @@ where
             );
 
         drop_in_background_thread(shift_sumcheck_polys);
-
-        // Evaluate all witness polynomials P_i at r_cycle for the verifier
-        // Verifier computes: z(r_inner, r_cycle) = Σ_i eq(r_inner, i) * P_i(r_cycle)
-        let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
-        let (claimed_witness_evals, chis) =
-            MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
 
         // opening_accumulator.append(
         //     &flattened_polys_ref,
@@ -302,7 +293,6 @@ where
             outer_sumcheck_claims,
             inner_sumcheck_proof,
             shift_sumcheck_proof,
-            shift_sumcheck_claim,
             claimed_witness_evals,
             shift_sumcheck_witness_eval,
             _marker: PhantomData,
@@ -393,10 +383,12 @@ where
         */
 
         let num_rounds_shift_sumcheck = num_cycles_bits;
+        let pc_next_index = JoltR1CSInputs::NextPC.to_index();
+        let shift_sumcheck_claim = self.claimed_witness_evals[pc_next_index];
         let (claim_shift_sumcheck, shift_sumcheck_r) = self
             .shift_sumcheck_proof
             .verify(
-                self.shift_sumcheck_claim,
+                shift_sumcheck_claim,
                 num_rounds_shift_sumcheck,
                 2,
                 transcript,
