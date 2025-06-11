@@ -170,7 +170,7 @@ where
 
         let (eq_r_cycle, eq_plus_one_r_cycle) = EqPlusOnePolynomial::evals(r_cycle, None);
 
-        // Evaluate A_small, B_small, C_small combined with RLC at point r_var
+        // Evaluate A_small, B_small, C_small combined with RLC at point rx_var
         let poly_abc_small =
             DensePolynomial::new(key.evaluate_small_matrix_rlc(rx_var, inner_sumcheck_RLC));
 
