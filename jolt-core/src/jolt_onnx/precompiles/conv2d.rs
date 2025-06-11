@@ -432,10 +432,10 @@ mod tests {
     fn test_init_vec() {
         let mut rng = test_rng();
         let mut ptranscript = KeccakTranscript::new(b"test");
-        let h_in = (rng.next_u32() as usize % 100 + 100).next_power_of_two();
-        let w_in = 1;
-        let k_h = (rng.next_u32() as usize % 10 + 1).next_power_of_two();
-        let k_w = 1;
+        let h_in = 1;
+        let w_in = (rng.next_u32() as usize % 100 + 100).next_power_of_two();
+        let k_h = 1;
+        let k_w = (rng.next_u32() as usize % 10 + 1).next_power_of_two();
         let image = Tensor::random(&mut rng, vec![1, 1, h_in, w_in]);
         let kernel = Tensor::random(&mut rng, vec![1, 1, k_h, k_w]);
         let precompile = Conv2DPrecompile::new(image, kernel);
