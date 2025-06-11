@@ -1,3 +1,6 @@
+//! A sum-check precompile implementation for convolution.
+//! Used for proving correctness of the execution of the conv ONNX operator.
+
 use crate::{
     field::JoltField,
     jolt_onnx::precompiles::{

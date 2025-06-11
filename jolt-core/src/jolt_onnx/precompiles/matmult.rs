@@ -1,5 +1,16 @@
 //! A sum-check precompile for matrix multiplication (where the rhs matrix is implicitly transposed).
-//! Used when proving correctness of ONNX operators that do matrix multiplication.
+//! Used for proving correctness of ONNX operators that do a matrix multiplication.
+//! You can see it in action in [`crate::jolt_onnx::vm::precompiles`]
+//!
+//! # Overview:
+//!   - [`MatMultPrecompile`] - We specify the precompile for matrix multiplication, by defining the lhs and rhs matrices as [`QuantizedTensor`]s as fields.
+//!   - [`MatMultSumcheck`] - Defines the prover and verifier states that will be used to instantiate a [`super::sumcheck_engine::BatchedSumcheck`] instance.
+//!     These sum-check instances are then fed into [`super::sumcheck_engine::BatchedSumcheck::prove`] and [`super::sumcheck_engine::BatchedSumcheck::verify`].
+//!   - [`MatMultProverState`] - Handles/Defines the prover state for the matrix multiplication sum-check precompile (handles witness polynomials for sum-check prover).
+//!   - [`MatMultVerifierState`] - Handles/Defines the verifier state for the matrix multiplication sum-check precompile.
+//!
+//! # Note:
+//!   -  The MatMult protcol deviates slightly from the standard MatMult protocol as we implicitly transpose the rhs matrix B.
 
 use crate::{
     field::JoltField,
