@@ -252,42 +252,6 @@ impl R1CSBuilder {
     }
 }
 
-/// An Offset Linear Combination. If OffsetLC.0 is true, then the OffsetLC.1 refers to the next step in a uniform
-/// constraint system.
-pub type OffsetLC = (bool, LC);
-
-/// A conditional constraint that Linear Combinations a, b are equal where a and b need not be in the same step an a
-/// uniform constraint system.
-#[derive(Debug)]
-pub struct OffsetEqConstraint {
-    pub cond: OffsetLC,
-    pub a: OffsetLC,
-    pub b: OffsetLC,
-}
-
-impl OffsetEqConstraint {
-    pub fn new(
-        condition: (impl Into<LC>, bool),
-        a: (impl Into<LC>, bool),
-        b: (impl Into<LC>, bool),
-    ) -> Self {
-        Self {
-            cond: (condition.1, condition.0.into()),
-            a: (a.1, a.0.into()),
-            b: (b.1, b.0.into()),
-        }
-    }
-
-    #[cfg(test)]
-    pub fn empty() -> Self {
-        Self::new(
-            (LC::new(vec![]), false),
-            (LC::new(vec![]), false),
-            (LC::new(vec![]), false),
-        )
-    }
-}
-
 // TODO(sragss): Detailed documentation with wiki.
 pub struct CombinedUniformBuilder<F: JoltField> {
     _field: PhantomData<F>,
