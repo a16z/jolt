@@ -2,11 +2,14 @@
 
 use crate::field::JoltField;
 use crate::jolt::instruction::{JoltInstruction, SubtableIndices};
-use crate::jolt::subtable::{LassoSubtable};
+use crate::jolt::subtable::LassoSubtable;
 use crate::jolt_onnx::subtable::is_pos::IsPosSubtable;
 use crate::jolt_onnx::subtable::is_zero::IsZeroSubtable;
-use crate::jolt_onnx::subtable::sigmoid::{SigmoidSubtable, INPUT_SCALE, INPUT_ZERO_POINT, OUTPUT_SCALE, OUTPUT_ZERO_POINT, QUANTIZED_SIGMOID_TABLE};
-use crate::utils::instruction_utils::{chunk_operand_usize};
+use crate::jolt_onnx::subtable::sigmoid::{
+    SigmoidSubtable, INPUT_SCALE, INPUT_ZERO_POINT, OUTPUT_SCALE, OUTPUT_ZERO_POINT,
+    QUANTIZED_SIGMOID_TABLE,
+};
+use crate::utils::instruction_utils::chunk_operand_usize;
 use rand::prelude::StdRng;
 use serde::{Deserialize, Serialize};
 
@@ -19,11 +22,21 @@ impl JoltInstruction for SigmoidInstruction {
         (self.0, 0)
     }
 
+    /// We only care about small values since sigmoid goes to 0 or 1 exponentially fast.
+    /// We quantize the input 0 to 128. Any negative quantized value will point to an
+    /// unquantized value much smaller 0 whose sigmoid output will be certainly 0.
+    /// If you look at QUANTIZED_SIGMOID_TABLE, you will see that values are between 0 or 255.
+    /// Any value outside this table can only be 0 or 255. That is,
+    /// [0, ..., 0, QUANTIZED_SIGMOID_TABLE, 255, ..., 255].
+    ///
+    /// is_pos * is_small_pos checks that the inputs belong to this table QUANTIZED_SIGMOID_TABLE.
+    /// If it's positive but not small, then it will be 255. Otherwise it will be 0.
     fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, _M: usize) -> F {
         let is_pos = vals[0];
         let is_small_pos = vals[1..C].iter().fold(F::one(), |acc, x| acc * x);
 
-        is_pos * is_small_pos * vals[C] + is_pos * (F::one() - is_small_pos) * F::from_u64(u8::MAX as u64)
+        is_pos * is_small_pos * vals[C]
+            + is_pos * (F::one() - is_small_pos) * F::from_u64(u8::MAX as u64)
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
@@ -36,17 +49,14 @@ impl JoltInstruction for SigmoidInstruction {
         _M: usize,
     ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         vec![
-            (
-                Box::new(IsPosSubtable::new()),
-                SubtableIndices::from(0),
-            ),
+            (Box::new(IsPosSubtable::new()), SubtableIndices::from(0)),
             (
                 Box::new(IsZeroSubtable::new()),
-                SubtableIndices::from(0..C-1),
+                SubtableIndices::from(0..C - 1),
             ),
             (
                 Box::new(SigmoidSubtable::<F>::new()),
-                SubtableIndices::from(C-1),
+                SubtableIndices::from(C - 1),
             ),
         ]
     }
@@ -101,12 +111,13 @@ impl JoltInstruction for SigmoidInstruction {
 #[cfg(test)]
 mod test {
     use super::SigmoidInstruction;
-    use crate::jolt::instruction::test::{instruction_mle_full_hypercube_test, materialize_entry_test};
+    use crate::jolt::instruction::test::{
+        instruction_mle_full_hypercube_test, materialize_entry_test,
+    };
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
     use ark_bn254::Fr;
     use ark_std::rand::RngCore;
     use ark_std::test_rng;
-
 
     #[test]
     fn sigmoid_mle_full_hypercube() {
