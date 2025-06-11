@@ -140,8 +140,8 @@ impl R1CSBuilder {
 
         let constraint = Constraint {
             a: condition.clone(),
-            b: (result_true - result_false.clone()),
-            c: (alleged_result - result_false),
+            b: result_true - result_false.clone(),
+            c: alleged_result - result_false,
         };
         self.constraints.push(constraint);
     }
@@ -301,6 +301,22 @@ pub(crate) fn eval_offset_lc<F: JoltField>(
         offset.1.evaluate_row(flattened_polynomials, step)
     } else if let Some(next_step) = next_step_m {
         offset.1.evaluate_row(flattened_polynomials, next_step)
+    } else {
+        offset.1.constant_term_field()
+    }
+}
+
+pub(crate) fn shard_last_step_eval_offset_lc<F: JoltField>(
+    offset: &OffsetLC,
+    flattened_polynomials: &[MultilinearPolynomial<F>],
+    flattened_eval: &[MultilinearPolynomial<F>],
+    step: usize,
+    next_step_m: Option<usize>,
+) -> i128 {
+    if !offset.0 {
+        offset.1.evaluate_row(flattened_polynomials, step)
+    } else if next_step_m.is_some() {
+        offset.1.evaluate_row(flattened_eval, 0)
     } else {
         offset.1.constant_term_field()
     }

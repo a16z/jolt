@@ -10,6 +10,7 @@ pub mod math;
 pub mod profiling;
 pub mod small_value;
 pub mod sol_types;
+pub mod streaming;
 pub mod thread;
 pub mod transcript;
 
@@ -96,7 +97,7 @@ pub fn index_to_field_bitvector<F: JoltField>(value: u64, bits: usize) -> Vec<F>
     let mut bitvector: Vec<F> = Vec::with_capacity(bits);
 
     for i in (0..bits).rev() {
-        if (value >> i) & 1 == 1 {
+        if ((value >> i) & 1) == 1 {
             bitvector.push(F::one());
         } else {
             bitvector.push(F::zero());
@@ -202,17 +203,17 @@ pub fn uninterleave_bits(val: u64) -> (u32, u32) {
 
     // Compact the bits into the lower part of `x_bits`
     x_bits = (x_bits | (x_bits >> 1)) & 0x3333_3333_3333_3333;
-    x_bits = (x_bits | (x_bits >> 2)) & 0x0F0F_0F0F_0F0F_0F0F;
-    x_bits = (x_bits | (x_bits >> 4)) & 0x00FF_00FF_00FF_00FF;
-    x_bits = (x_bits | (x_bits >> 8)) & 0x0000_FFFF_0000_FFFF;
-    x_bits = (x_bits | (x_bits >> 16)) & 0x0000_0000_FFFF_FFFF;
+    x_bits = (x_bits | (x_bits >> 2)) & 0x0f0f_0f0f_0f0f_0f0f;
+    x_bits = (x_bits | (x_bits >> 4)) & 0x00ff_00ff_00ff_00ff;
+    x_bits = (x_bits | (x_bits >> 8)) & 0x0000_ffff_0000_ffff;
+    x_bits = (x_bits | (x_bits >> 16)) & 0x0000_0000_ffff_ffff;
 
     // And do the same for `y_bits`
     y_bits = (y_bits | (y_bits >> 1)) & 0x3333_3333_3333_3333;
-    y_bits = (y_bits | (y_bits >> 2)) & 0x0F0F_0F0F_0F0F_0F0F;
-    y_bits = (y_bits | (y_bits >> 4)) & 0x00FF_00FF_00FF_00FF;
-    y_bits = (y_bits | (y_bits >> 8)) & 0x0000_FFFF_0000_FFFF;
-    y_bits = (y_bits | (y_bits >> 16)) & 0x0000_0000_FFFF_FFFF;
+    y_bits = (y_bits | (y_bits >> 2)) & 0x0f0f_0f0f_0f0f_0f0f;
+    y_bits = (y_bits | (y_bits >> 4)) & 0x00ff_00ff_00ff_00ff;
+    y_bits = (y_bits | (y_bits >> 8)) & 0x0000_ffff_0000_ffff;
+    y_bits = (y_bits | (y_bits >> 16)) & 0x0000_0000_ffff_ffff;
 
     (x_bits as u32, y_bits as u32)
 }
@@ -239,17 +240,17 @@ pub fn uninterleave_bits(val: u64) -> (u32, u32) {
 pub fn interleave_bits(even_bits: u32, odd_bits: u32) -> u64 {
     // Insert zeros between each bit of `x_bits`
     let mut x_bits = even_bits as u64;
-    x_bits = (x_bits | (x_bits << 16)) & 0x0000_FFFF_0000_FFFF;
-    x_bits = (x_bits | (x_bits << 8)) & 0x00FF_00FF_00FF_00FF;
-    x_bits = (x_bits | (x_bits << 4)) & 0x0F0F_0F0F_0F0F_0F0F;
+    x_bits = (x_bits | (x_bits << 16)) & 0x0000_ffff_0000_ffff;
+    x_bits = (x_bits | (x_bits << 8)) & 0x00ff_00ff_00ff_00ff;
+    x_bits = (x_bits | (x_bits << 4)) & 0x0f0f_0f0f_0f0f_0f0f;
     x_bits = (x_bits | (x_bits << 2)) & 0x3333_3333_3333_3333;
     x_bits = (x_bits | (x_bits << 1)) & 0x5555_5555_5555_5555;
 
     // And do the same for `y_bits`
     let mut y_bits = odd_bits as u64;
-    y_bits = (y_bits | (y_bits << 16)) & 0x0000_FFFF_0000_FFFF;
-    y_bits = (y_bits | (y_bits << 8)) & 0x00FF_00FF_00FF_00FF;
-    y_bits = (y_bits | (y_bits << 4)) & 0x0F0F_0F0F_0F0F_0F0F;
+    y_bits = (y_bits | (y_bits << 16)) & 0x0000_ffff_0000_ffff;
+    y_bits = (y_bits | (y_bits << 8)) & 0x00ff_00ff_00ff_00ff;
+    y_bits = (y_bits | (y_bits << 4)) & 0x0f0f_0f0f_0f0f_0f0f;
     y_bits = (y_bits | (y_bits << 2)) & 0x3333_3333_3333_3333;
     y_bits = (y_bits | (y_bits << 1)) & 0x5555_5555_5555_5555;
 

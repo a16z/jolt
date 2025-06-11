@@ -40,7 +40,7 @@ impl BytecodePreprocessing {
         let mut virtual_address = 1; // Account for no-op instruction prepended to bytecode
         for instruction in bytecode.iter() {
             let instr = instruction.normalize();
-            debug_assert!(instr.address >= RAM_START_ADDRESS as usize);
+            debug_assert!(instr.address >= (RAM_START_ADDRESS as usize));
             debug_assert!(instr.address % BYTES_PER_INSTRUCTION == 0);
             assert_eq!(
                 virtual_address_map.insert(
@@ -152,7 +152,9 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
                     running
                         .par_iter_mut()
                         .zip(new.into_par_iter())
-                        .for_each(|(x, y)| *x += y);
+                        .for_each(|(x, y)| {
+                            *x += y;
+                        });
                     running
                 },
             );

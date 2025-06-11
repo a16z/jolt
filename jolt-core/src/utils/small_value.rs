@@ -9,6 +9,8 @@ pub const NUM_SVO_ROUNDS: usize = 3;
 
 pub mod svo_helpers {
     use super::*;
+    use crate::poly::sparse_interleaved_poly::SparseCoefficient;
+    use crate::poly::spartan_interleaved_poly::Y_SVO_SPACE_SIZE;
     use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
     use crate::poly::unipoly::CompressedUniPoly;
     use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
@@ -1520,6 +1522,32 @@ pub mod svo_helpers {
             k_ternary_idx += 1;
         }
         infos
+    }
+
+    pub fn process_svo_block<F: JoltField>(
+        block: &[SparseCoefficient<i128>],
+        tA_sum_for_current_x_out: &mut [F],
+        E_in_val: F,
+    ) {
+        let mut az_binary_evals = [0 as i128; Y_SVO_SPACE_SIZE];
+        let mut bz_binary_evals = [0 as i128; Y_SVO_SPACE_SIZE];
+
+        for sparce_coeff in block {
+            if sparce_coeff.index % 2 == 0 {
+                az_binary_evals[(sparce_coeff.index >> 1) % Y_SVO_SPACE_SIZE] = sparce_coeff.value;
+            } else {
+                bz_binary_evals[(sparce_coeff.index >> 1) % Y_SVO_SPACE_SIZE] = sparce_coeff.value;
+            }
+        }
+
+        let block_idx = block[0].index >> (NUM_SVO_ROUNDS + 1);
+
+        svo_helpers::compute_and_update_tA_inplace_generic::<NUM_SVO_ROUNDS, F>(
+            &az_binary_evals,
+            &bz_binary_evals,
+            &E_in_val,
+            tA_sum_for_current_x_out,
+        );
     }
 }
 

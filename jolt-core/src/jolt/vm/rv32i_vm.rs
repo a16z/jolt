@@ -228,6 +228,48 @@ mod tests {
     }
 
     #[test]
+    fn sha3_chain_e2e_hyperkzg() {
+        let guard = SHA3_FILE_LOCK.lock().unwrap();
+
+        let mut program = host::Program::new("sha3-chain-guest");
+        let (bytecode, memory_init) = program.decode();
+        let mut input_vec = vec![5u8; 32];
+        input_vec.push(32);
+        let inputs = postcard::to_stdvec(&input_vec).unwrap();
+        let (io_device, trace) = program.trace(&inputs);
+        drop(guard);
+
+        let preprocessing = RV32IJoltVM::prover_preprocess(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            memory_init,
+            1 << 20,
+            1 << 20,
+            1 << 20,
+        );
+        let (jolt_proof, jolt_commitments, debug_info) = <RV32IJoltVM as Jolt<
+            32,
+            Fr,
+            HyperKZG<Bn254, KeccakTranscript>,
+            KeccakTranscript,
+        >>::prove(
+            io_device, trace, preprocessing.clone()
+        );
+
+        let verification_result = RV32IJoltVM::verify(
+            preprocessing.shared,
+            jolt_proof,
+            jolt_commitments,
+            debug_info,
+        );
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+    }
+
+    #[test]
     fn memory_ops_e2e_hyperkzg() {
         let mut program = host::Program::new("memory-ops-guest");
         let (bytecode, memory_init) = program.decode();

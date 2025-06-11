@@ -7,7 +7,9 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_interleaved_poly::DenseInterleavedPolynomial;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
+use crate::poly::multilinear_polynomial::{
+    BindingOrder, MultilinearPolynomial, PolynomialEvaluation,
+};
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::subprotocols::QuarkHybridLayerDepth;
 use crate::utils::math::Math;
@@ -403,6 +405,7 @@ where
                 &mut sumcheck_polys,
                 output_check_fn,
                 3,
+                BindingOrder::HighToLow,
                 transcript,
             );
 
