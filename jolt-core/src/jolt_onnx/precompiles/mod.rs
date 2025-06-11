@@ -2,6 +2,7 @@
 
 pub mod conv;
 pub mod conv1d;
+pub mod conv2d;
 pub mod matmult;
 pub mod sumcheck_engine;
 

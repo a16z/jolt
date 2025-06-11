@@ -16,6 +16,11 @@ use serde::{Deserialize, Serialize};
 
 // TODO: refactor duplicate code between this module and matmult.rs
 
+/// Specifies the dimensions in the Conv1D precompile to compute the challenges.
+///
+/// (k_w, w_out) where:
+///   - `k_w`: Kernel spatial dimension
+///   - `w_out`: Output spatial dimension
 pub type Conv1DPrecompileDims = (usize, usize);
 
 /// # Note: We assume tensors are appropriately padded here
@@ -32,9 +37,9 @@ impl Conv1DPrecompile {
     }
 
     /// # Returns
-    /// - `w_in`: Input spatial dimension
-    /// - `k_w`: Kernel spatial dimension
-    /// - `w_out`: Output spatial dimension
+    ///   - `w_in`: Input spatial dimension
+    ///   - `k_w`: Kernel spatial dimension
+    ///   - `w_out`: Output spatial dimension
     fn dims(&self) -> (usize, usize, usize) {
         // Extract input spatial dimension
         let w_in = self.image.shape[2];
@@ -92,7 +97,7 @@ where
         // --- Calculate the evaluation's for X(r, m) over the boolean hypercube ---
         let (_w_in, k_w, w_out) = input.dims();
         let r: Vec<F> = transcript.challenge_scalar_powers(w_out.next_power_of_two().log_2());
-        let X_r = Self::X_bounded(&input.image, &r, w_out, k_w);
+        let X_r = Self::X_bounded(&input.image, &r, (k_w, w_out));
         let k = Self::kernel_polynomial(&input.kernel);
         let input_claim = Self::input_claim(input, &r);
         transcript.append_scalar(&input_claim);
@@ -113,7 +118,8 @@ where
         input.y_poly().evaluate(r)
     }
 
-    fn X_bounded(X: &Tensor, r: &[F], w_out: usize, k_w: usize) -> DensePolynomial<F> {
+    fn X_bounded(X: &Tensor, r: &[F], dims: Conv1DPrecompileDims) -> DensePolynomial<F> {
+        let (k_w, w_out) = dims;
         let mut X_r = vec![F::zero(); k_w];
         let eq_r_evals = EqPolynomial::evals(r);
         for j in 0..w_out {
