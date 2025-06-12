@@ -33,4 +33,4 @@ where
 $$
 g^{(i)}_z(p) = \widetilde{\text{eq}}_{s_i}(z, p) \cdot \widetilde{V}_{i+1}(p,0) \cdot \widetilde{V}_{i+1}(p,1)
 $$
-GKR is utilized in [memory-checking](./memory-checking.html) for the multi-set permutation check.
+GKR is utilized in [memory-checking](./memory-checking.md) for the multi-set permutation check.
