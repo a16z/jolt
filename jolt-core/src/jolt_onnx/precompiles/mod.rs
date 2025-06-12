@@ -1,6 +1,8 @@
 //! This module provides the specialized sum-check precompile operators for Jolt's ONNX execution.
 //! These precompile's are designed for when it is more efficient to prove an ONNX operator with a direct sum-check protocol,
 //! rather than via lookups.
+//!
+//! On the provers end precompiles are typically defined by their witness values in the execution trace.
 
 pub mod conv;
 pub mod matmult;

@@ -1,12 +1,17 @@
-//! A sum-check precompile implementation for convolution.
+//! A sum-check precompile implementation for convolution operation.
 //! Used for proving correctness of the execution of the conv ONNX operator.
+//! You can see it in action in [`crate::jolt_onnx::vm::precompiles`]
+//!
+//! # Overview:
+//!   - [`ConvPrecompile`] - We specify the precompile for conv op, by defining the input (image) tensor and the kernel tensor.
+//!   - [`ConvSumcheck`] - Defines the prover and verifier states that will be used to instantiate a [`super::sumcheck_engine::BatchedSumcheck`] instance.
+//!     These sum-check instances are then fed into [`super::sumcheck_engine::BatchedSumcheck::prove`] and [`super::sumcheck_engine::BatchedSumcheck::verify`].
+//!   - [`ConvProverState`] - Handles/Defines the prover state for the conv sum-check precompile (handles witness polynomials for sum-check prover).
+//!   - [`ConvVerifierState`] - Handles/Defines the verifier state for the conv sum-check precompile.
 
 use crate::{
     field::JoltField,
-    jolt_onnx::precompiles::{
-        conv::computation::conv2d_simple, conv::computation::Tensor,
-        sumcheck_engine::BatchableSumcheckInstance,
-    },
+    jolt_onnx::precompiles::sumcheck_engine::BatchableSumcheckInstance,
     poly::{
         dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, multilinear_polynomial::BindingOrder,
     },
@@ -19,6 +24,156 @@ use serde::{Deserialize, Serialize};
 
 // TODO: refactor duplicate code between this module and matmult.rs, not doing it atm since code is subject to heavy change with padding, strides and dilations support
 
+/// This is how we define the conv precompile in the execution trace.
+///
+/// We define the conv precompile by its input tensors:
+///   - `image`: The input tensor representing the image.
+///   - `kernel`: The kernel tensor used for the convolution operation.
+///
+/// These inputs are processed and passed into as inputs to a sum-check instance
+///
+/// # Note: We assume tensors are appropriately padded here
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct ConvPrecompile {
+    image: Tensor,
+    kernel: Tensor,
+}
+
+impl ConvPrecompile {
+    /// Create a new instance of [`ConvPrecompile`].
+    pub fn new(image: Tensor, kernel: Tensor) -> Self {
+        Self { image, kernel }
+    }
+
+    /// Determine the dimensions used in the conv precompile.
+    /// This function computes the input image & kernel dimensions and the output dimensions.
+    ///
+    /// # Returns
+    ///   - A tuple containing:
+    ///     - `h_in`: The height of the input/image tensor.
+    ///     - `w_in`: The width of the input/image tensor.
+    ///   - `dims`: An instance of [`ConvPrecompileDims`] containing the kernel and output dimensions.
+    ///
+    /// # Note: we "pad" the output dims to next nearest power of two
+    fn dims(&self) -> (usize, usize, ConvPrecompileDims) {
+        // We assume tensors are in the format [N, C, H, W]
+        // where N is batch size, C is number of channels, H is height and W is width.
+
+        // Extract input spatial dimensions
+        let h_in = self.image.shape[2];
+        let w_in = self.image.shape[3];
+
+        // Extract kernel spatial dimensions
+        let k_h = self.kernel.shape[2];
+        let k_w = self.kernel.shape[3];
+
+        // Compute output spatial dimensions
+        // # Note: We need to evaluate the mle of the resulting matrix at a random point, thus we need to pad the output shape.
+        let h_out = (h_in - k_h + 1).next_power_of_two();
+        let w_out = (w_in - k_w + 1).next_power_of_two();
+        (
+            h_in,
+            w_in,
+            ConvPrecompileDims {
+                k_h,
+                k_w,
+                h_out,
+                w_out,
+            },
+        )
+    }
+
+    /// Returns the y polynomial in the Convolution operation
+    /// Y(i, j) = Σₘₙ X(i + m, j + n) · K(m, n).
+    ///
+    /// Used to compute the input claim Y(r_i, r_j) for the Conv protocol.
+    fn y_poly<F>(&self) -> DensePolynomial<F>
+    where
+        F: JoltField,
+    {
+        let y = self.execute_conv();
+        DensePolynomial::new(y.iter().map(|&x| F::from_i64(x as i64)).collect_vec())
+    }
+
+    /// Computes the ONNX Convolution integer operation.
+    ///
+    /// The output pixel at (i, j) is computed as:
+    ///
+    ///     Y(i, j) = Σₘₙ X(i + m, j + n) · K(m, n)
+    ///
+    /// Where:
+    ///   • i ∈ [0, H_out - 1]
+    ///   • j ∈ [0, W_out - 1]
+    ///   • m ∈ [0, kH - 1]
+    ///   • n ∈ [0, kW - 1]
+    ///
+    /// For each output pixel Y(i, j), we apply the kernel K(m, n)
+    /// to the corresponding input region X(i + m, j + n).
+    ///
+    /// Performs 2D convolution assuming:
+    ///   - Batch size = 1
+    ///   - Input channels = 1
+    ///   - Output channels = 1
+    ///   - No padding, stride = 1, dilation = 1
+    ///   
+    /// Therefore:
+    ///   - Input shape: [1, 1, H_in, W_in]
+    ///   - Kernel shape: [1, 1, kH, kW]
+    ///   - Output shape: [1, 1, H_out, W_out]
+    ///
+    /// The output spatial dimensions are computed as:
+    ///   H_out = H_in - kH + 1
+    ///   W_out = W_in - kW + 1
+    ///
+    /// Explanation:
+    ///   The kernel has spatial size (kH x kW) and must fully fit inside the input
+    ///   image to compute a valid dot product. At each output position (i, j),
+    ///   the kernel is aligned with a (kH x kW) region of the input starting at (i, j).
+    ///
+    ///   The last valid top-left position for the kernel is at:
+    ///     i = H_in - kH
+    ///     j = W_in - kW
+    ///
+    ///   Since i and j are zero-based, we add 1 to count all valid positions:
+    ///     H_out = (H_in - kH) + 1
+    ///     W_out = (W_in - kW) + 1
+    pub fn execute_conv(&self) -> Vec<i32> {
+        let (
+            _,
+            w_in,
+            ConvPrecompileDims {
+                k_h,
+                k_w,
+                h_out,
+                w_out,
+            },
+        ) = self.dims();
+
+        // Create output tensor with correct shape and zero-initialized data
+        let mut output = vec![0i32; h_out * w_out];
+
+        // Perform the convolution operation
+
+        //  Y(i, j) = Σₘₙ X(i + m, j + n) · K(m, n)
+        for i in 0..h_out {
+            for j in 0..w_out {
+                let mut sum = 0i32;
+                for m in 0..k_h {
+                    for n in 0..k_w {
+                        let x_index = (i + m) * w_in + (j + n);
+                        let k_index = m * k_w + n;
+                        sum += *self.image.data.get(x_index).unwrap_or(&0) as i32
+                            * self.kernel.data[k_index] as i32;
+                    }
+                }
+                output[i * w_out + j] = sum;
+            }
+        }
+        output
+    }
+}
+
+/// Container type to manage the prover state in the [`BatchableSumcheckInstance`] for the conv precompile.
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
 pub struct ConvProverState<F>
 where
@@ -40,10 +195,10 @@ where
 {
     #[tracing::instrument(skip_all)]
     /// Create a new instance of [`ConvProverState`].
-    /// We compute the evaluations of the polynomials X(r, m) over the boolean hypercube,
-    /// and also compute the input claim Y(r) = A(rx, k) * B(ry, k).
+    /// We compute the evaluations of the polynomial X(m, n, ri rj) over the boolean hypercube,
+    /// and also compute the input claim Y(ri, rj) = Σₘₙ X(m, n, ri rj) * K(m, n).
     ///
-    /// These X(r, m) evaluations & k polynomial serve as the witness for the matrix multiplication precompile.
+    /// These X(r, m) evaluations & k polynomial serve as the witness for the conv precompile protocol.
     pub fn initialize<ProofTranscript>(
         input: &ConvPrecompile,
         transcript: &mut ProofTranscript,
@@ -51,11 +206,16 @@ where
     where
         ProofTranscript: Transcript,
     {
-        let dims = input.dims();
+        // Compute challenge vectors to bound the input polynomial X(i, j, m, n).
+        let (_, _, dims) = input.dims();
         let ri: Vec<F> = transcript.challenge_scalar_powers(dims.h_out.log_2());
         let rj: Vec<F> = transcript.challenge_scalar_powers(dims.w_out.log_2());
         let X_r = Self::X_bounded(&input.image, &ri, &rj, dims);
+
+        // Convert the kernel tensor into a multilinear polynomial to be fed into the sum-check protocol.
         let k = Self::kernel_polynomial(&input.kernel);
+
+        // Compute the sum-check input claim Y(ri, rj) and send to verifier.
         let input_claim = Self::input_claim(input, &ri, &rj);
         transcript.append_scalar(&input_claim);
         #[cfg(test)]
@@ -72,11 +232,15 @@ where
         }
     }
 
+    /// Given the challenge vectors compute Y(ri, rj)
     fn input_claim(input: &ConvPrecompile, ri: &[F], rj: &[F]) -> F {
         input.y_poly().evaluate(&[ri, rj].concat())
     }
 
+    /// Compute the boolean evaluations for the polynomial X_{ri, rj}(m, n).
+    /// Used as input to the conv sum-check-precompile protocol.
     fn X_bounded(X: &Tensor, ri: &[F], rj: &[F], dims: ConvPrecompileDims) -> DensePolynomial<F> {
+        // Used to index into the input/image tensor
         let w_in = X.shape[3];
         let ConvPrecompileDims {
             k_h,
@@ -84,6 +248,8 @@ where
             h_out,
             w_out,
         } = dims;
+
+        // X is a log(k_H) + log(k_W) degree polynomial
         let mut X_r = vec![F::zero(); k_h * k_w];
         let eq_ri_evals = EqPolynomial::evals(ri);
         let eq_rj_evals = EqPolynomial::evals(rj);
@@ -102,6 +268,8 @@ where
         DensePolynomial::new(X_r)
     }
 
+    /// Convert kernel tensor into a multilinear polynomial to be accessible by the sum-check protocol.
+    #[inline(always)]
     fn kernel_polynomial(kernel: &Tensor) -> DensePolynomial<F> {
         DensePolynomial::new(
             kernel
@@ -114,7 +282,16 @@ where
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Copy)]
-/// Specifies the dimensions in the Conv precompile to compute the challenges.
+/// Used as preprocessing material in the [`crate::jolt_onnx::vm::precompiles::PrecompileProof`]
+/// Prover uses these dimensions for multiple things, such as:
+///  - Determine the challenge vector lengths.
+///  - Iterating over the input image and kernel tensors for bounding the input (x) polynomial to the challenges.
+///  - Computing the number of rounds in the sum-check precompile.
+///
+/// For the verifier this specifies the lengths of the precompile challenge vectors.
+///
+/// # Note:
+///   - Verifier does not need to know the height and width of the input image tensor
 pub struct ConvPrecompileDims {
     /// Kernel spatial height dimension
     pub k_h: usize,
@@ -126,47 +303,7 @@ pub struct ConvPrecompileDims {
     pub w_out: usize,
 }
 
-/// # Note: We assume tensors are appropriately padded here
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct ConvPrecompile {
-    image: Tensor,
-    kernel: Tensor,
-}
-
-impl ConvPrecompile {
-    /// Create a new instance of [`ConvPrecompile`].
-    pub fn new(image: Tensor, kernel: Tensor) -> Self {
-        Self { image, kernel }
-    }
-
-    /// # Returns
-    ///   - `dims`: An instance of [`ConvPrecompileDims`] containing the kernel and output dimensions.
-    ///
-    /// # Note: we "pad" the output dims to next nearest power of two
-    fn dims(&self) -> ConvPrecompileDims {
-        let h_in = self.image.shape[2];
-        let w_in = self.image.shape[3];
-        let k_h = self.kernel.shape[2];
-        let k_w = self.kernel.shape[3];
-        let h_out = (h_in - k_h + 1).next_power_of_two();
-        let w_out = (w_in - k_w + 1).next_power_of_two();
-        ConvPrecompileDims {
-            k_h,
-            k_w,
-            h_out,
-            w_out,
-        }
-    }
-
-    fn y_poly<F>(&self) -> DensePolynomial<F>
-    where
-        F: JoltField,
-    {
-        let (y, _) = conv2d_simple(&self.image, &self.kernel);
-        DensePolynomial::new(y.iter().map(|&x| F::from_i64(x as i64)).collect_vec())
-    }
-}
-
+/// Container type to manage the verifier state in the [`BatchableSumcheckInstance`] for the conv precompile.
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
 pub struct ConvVerifierState<F>
 where
@@ -203,13 +340,20 @@ where
     }
 }
 
+/// Store the final claims/openings to later prove the openings.
 /// The final claims for the conv sum-check precompile.
+///
+/// Stores the evaluations of the (bounded) X and kernel polynomials at `r_sc`
+/// Where:
+///   - `rs_c` ∈ F^{log(k_H) + log(k_W)}
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
 pub struct ConvClaims<F>
 where
     F: JoltField,
 {
+    /// X(r_i, r_j, r_sc)
     x: F,
+    /// k(r_sc)
     k: F,
 }
 
@@ -315,116 +459,30 @@ where
     }
 }
 
-pub mod computation {
-    use serde::{Deserialize, Serialize};
+/// Represents a quantized tensor used in the ONNX execution trace.
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct Tensor {
+    /// The quantized data of the tensor, stored as a vector of i8.
+    pub data: Vec<i8>,
+    /// The shape of the tensor, represented as a vector of usize.
+    pub shape: Vec<usize>, // Always [N, C, H, W]
+}
 
-    #[derive(Clone, Serialize, Deserialize, Debug)]
-    pub struct Tensor {
-        pub data: Vec<i8>,
-        pub shape: Vec<usize>, // Always [N, C, H, W]
-    }
-
-    impl Tensor {
-        /// Return an randomly initialized quantized tensor with the given shape.
-        pub fn random(mut rng: impl rand_core::RngCore, shape: Vec<usize>) -> Self {
-            // Generate random f32 data for the tensor.
-            let size = shape.iter().product::<usize>();
-            let data: Vec<i8> = (0..size).map(|_| rng.next_u32() as i8).collect();
-            Self { shape, data }
-        }
-    }
-
-    /// Computes the ONNX Convolution integer operation.
-    ///
-    /// The output pixel at (i, j) is computed as:
-    ///
-    ///     Y(i, j) = Σₘₙ X(i + m, j + n) · K(m, n)
-    ///
-    /// Where:
-    ///   • i ∈ [0, H_out - 1]
-    ///   • j ∈ [0, W_out - 1]
-    ///   • m ∈ [0, kH - 1]
-    ///   • n ∈ [0, kW - 1]
-    ///
-    /// For each output pixel Y(i, j), we apply the kernel K(m, n)
-    /// to the corresponding input region X(i + m, j + n).
-    ///
-    /// Performs 2D convolution assuming:
-    ///   - Batch size = 1
-    ///   - Input channels = 1
-    ///   - Output channels = 1
-    ///   - No padding, stride = 1, dilation = 1
-    ///   
-    /// Therefore:
-    ///   - Input shape: [1, 1, H_in, W_in]
-    ///   - Kernel shape: [1, 1, kH, kW]
-    ///   - Output shape: [1, 1, H_out, W_out]
-    ///
-    /// The output spatial dimensions are computed as:
-    ///   H_out = H_in - kH + 1
-    ///   W_out = W_in - kW + 1
-    ///
-    /// Explanation:
-    ///   The kernel has spatial size (kH x kW) and must fully fit inside the input
-    ///   image to compute a valid dot product. At each output position (i, j),
-    ///   the kernel is aligned with a (kH x kW) region of the input starting at (i, j).
-    ///
-    ///   The last valid top-left position for the kernel is at:
-    ///     i = H_in - kH
-    ///     j = W_in - kW
-    ///
-    ///   Since i and j are zero-based, we add 1 to count all valid positions:
-    ///     H_out = (H_in - kH) + 1
-    ///     W_out = (W_in - kW) + 1
-    pub fn conv2d_simple(input: &Tensor, kernel: &Tensor) -> (Vec<i32>, Vec<usize>) {
-        // Extract input spatial dimensions
-        let h_in = input.shape[2];
-        let w_in = input.shape[3];
-
-        // Extract kernel spatial dimensions
-        let k_h = kernel.shape[2];
-        let k_w = kernel.shape[3];
-
-        // Compute output spatial dimensions
-        // # Note: We need to evaluate the mle of the resulting matrix at a random point, thus we need to pad the output shape.
-        let h_out = (h_in - k_h + 1).next_power_of_two();
-        let w_out = (w_in - k_w + 1).next_power_of_two();
-
-        // Create output tensor with correct shape and zero-initialized data
-        let mut output = vec![0i32; h_out * w_out];
-
-        // Perform the convolution operation
-
-        //  Y(i, j) = Σₘₙ X(i + m, j + n) · K(m, n)
-        for i in 0..h_out {
-            for j in 0..w_out {
-                let mut sum = 0i32;
-                for m in 0..k_h {
-                    for n in 0..k_w {
-                        let x_index = (i + m) * w_in + (j + n);
-                        let k_index = m * k_w + n;
-                        sum += *input.data.get(x_index).unwrap_or(&0) as i32
-                            * kernel.data[k_index] as i32;
-                    }
-                }
-                output[i * w_out + j] = sum;
-            }
-        }
-        let shape = vec![1, 1, h_out, w_out];
-        (output, shape)
+impl Tensor {
+    /// Return an randomly initialized quantized tensor with the given shape.
+    pub fn random(mut rng: impl rand_core::RngCore, shape: Vec<usize>) -> Self {
+        // Generate random f32 data for the tensor.
+        let size = shape.iter().product::<usize>();
+        let data: Vec<i8> = (0..size).map(|_| rng.next_u32() as i8).collect();
+        Self { shape, data }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use ark_bn254::Fr;
-    use ark_std::test_rng;
-    use itertools::Itertools;
-    use rand_core::RngCore;
-
+    use super::Tensor;
     use crate::{
         jolt_onnx::precompiles::{
-            conv::computation::Tensor,
             conv::{
                 ConvPrecompile, ConvPrecompileDims, ConvProverState, ConvSumcheck,
                 ConvVerifierState,
@@ -433,6 +491,10 @@ mod tests {
         },
         utils::transcript::{KeccakTranscript, Transcript},
     };
+    use ark_bn254::Fr;
+    use ark_std::test_rng;
+    use itertools::Itertools;
+    use rand_core::RngCore;
 
     #[test]
     fn test_random_execution_trace() {
@@ -449,7 +511,7 @@ mod tests {
             let image = Tensor::random(&mut rng, vec![1, 1, h_in, w_in]);
             let kernel = Tensor::random(&mut rng, vec![1, 1, k_h, k_w]);
             let precompile = ConvPrecompile::new(image, kernel);
-            pp.push(precompile.dims());
+            pp.push(precompile.dims().2);
             let prover_state = ConvProverState::<Fr>::initialize(&precompile, &mut ptranscript);
             let sumcheck_instance = ConvSumcheck::new(Some(prover_state), None, None);
             sumcheck_instances.push(sumcheck_instance);
