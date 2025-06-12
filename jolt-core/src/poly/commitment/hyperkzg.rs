@@ -427,6 +427,10 @@ where
         .trim(max_poly_len)
     }
 
+    fn srs_size(setup: &Self::Setup) -> usize {
+        setup.0.kzg_pk.g1_powers().len()
+    }
+
     #[tracing::instrument(skip_all, name = "HyperKZG::commit")]
     fn commit(poly: &MultilinearPolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
         assert!(

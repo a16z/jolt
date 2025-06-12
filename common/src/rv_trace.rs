@@ -202,7 +202,7 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ELFInstruction {
     pub address: u64,
     pub opcode: RV32IM,
@@ -216,6 +216,16 @@ pub struct ELFInstruction {
     /// `virtual_sequence_remaining` will be Some(0); if this is the penultimate instruction
     /// in the sequence, `virtual_sequence_remaining` will be Some(1); etc.
     pub virtual_sequence_remaining: Option<usize>,
+}
+
+impl core::fmt::Debug for ELFInstruction {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "ELFInstruction {{ address: {:X}, opcode: {:?}, rs1: {:?}, rs2: {:?}, rd: {:?}, imm: {:?}, virtual_sequence_remaining: {:?} }}",
+            self.address, self.opcode, self.rs1, self.rs2, self.rd, self.imm, self.virtual_sequence_remaining
+        )
+    }
 }
 
 /// Boolean flags used in Jolt's R1CS constraints (`opflags` in the Jolt paper).

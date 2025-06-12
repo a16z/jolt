@@ -20,6 +20,14 @@ use std::{
 use strum::EnumCount;
 use timestamp_range_check::TimestampRangeCheckStuff;
 
+use self::bytecode::{BytecodePreprocessing, BytecodeProof, BytecodeRow, BytecodeStuff};
+use self::instruction_lookups::{
+    InstructionLookupStuff, InstructionLookupsPreprocessing, InstructionLookupsProof,
+};
+use self::read_write_memory::{
+    ReadWriteMemoryPolynomials, ReadWriteMemoryPreprocessing, ReadWriteMemoryProof,
+    ReadWriteMemoryStuff,
+};
 use crate::join_conditional;
 use crate::jolt::{
     instruction::{
@@ -37,20 +45,12 @@ use crate::msm::icicle;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::r1cs::inputs::{ConstraintInput, R1CSPolynomials, R1CSProof, R1CSStuff};
 use crate::utils::errors::ProofVerifyError;
+use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 use common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,
     rv_trace::{ELFInstruction, JoltDevice, MemoryOp},
-};
-
-use self::bytecode::{BytecodePreprocessing, BytecodeProof, BytecodeRow, BytecodeStuff};
-use self::instruction_lookups::{
-    InstructionLookupStuff, InstructionLookupsPreprocessing, InstructionLookupsProof,
-};
-use self::read_write_memory::{
-    ReadWriteMemoryPolynomials, ReadWriteMemoryPreprocessing, ReadWriteMemoryProof,
-    ReadWriteMemoryStuff,
 };
 
 use super::instruction::lb::LBInstruction;
@@ -364,7 +364,7 @@ where
         memory_layout: MemoryLayout,
         memory_init: Vec<(u64, u8)>,
         max_bytecode_size: usize,
-        max_memory_address: usize,
+        max_memory_size: usize,
         max_trace_length: usize,
     ) -> JoltVerifierPreprocessing<C, F, PCS, ProofTranscript> {
         icicle::icicle_init();
@@ -401,7 +401,7 @@ where
         let max_poly_len: usize = [
             (max_bytecode_size + 1).next_power_of_two(), // Account for no-op prepended to bytecode
             max_trace_length.next_power_of_two(),
-            max_memory_address.next_power_of_two(),
+            max_memory_size.next_power_of_two(),
             M,
         ]
         .into_iter()
@@ -424,21 +424,19 @@ where
         memory_layout: MemoryLayout,
         memory_init: Vec<(u64, u8)>,
         max_bytecode_size: usize,
-        max_memory_address: usize,
+        max_memory_size: usize,
         max_trace_length: usize,
     ) -> JoltProverPreprocessing<C, F, PCS, ProofTranscript> {
         let small_value_lookup_tables = F::compute_lookup_tables();
         F::initialize_lookup_tables(small_value_lookup_tables.clone());
-
         let shared = Self::verifier_preprocess(
             bytecode,
             memory_layout,
             memory_init,
             max_bytecode_size,
-            max_memory_address,
+            max_memory_size,
             max_trace_length,
         );
-
         JoltProverPreprocessing {
             shared,
             field: small_value_lookup_tables,
@@ -468,7 +466,20 @@ where
         icicle::icicle_init();
         let trace_length = trace.len();
         let padded_trace_length = trace_length.next_power_of_two();
-        println!("Trace length: {trace_length}");
+        let srs_size = PCS::srs_size(&preprocessing.shared.generators);
+        let padded_log2 = padded_trace_length.log_2();
+        let srs_log2 = srs_size.log_2();
+
+        println!(
+            "Trace length: {trace_length} (2^{})",
+            trace_length.next_power_of_two().log_2()
+        );
+
+        if padded_trace_length > srs_size {
+            panic!(
+                "Padded trace length {padded_trace_length} (2^{padded_log2}) exceeds SRS size {srs_size} (2^{srs_log2}). Consider increasing the max_trace_length."
+            );
+        }
 
         F::initialize_lookup_tables(std::mem::take(&mut preprocessing.field));
 

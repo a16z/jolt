@@ -11,6 +11,8 @@ pub const DEFAULT_MEMORY_SIZE: u64 = 10 * 1024 * 1024;
 pub const DEFAULT_STACK_SIZE: u64 = 4096;
 pub const DEFAULT_MAX_INPUT_SIZE: u64 = 4096;
 pub const DEFAULT_MAX_OUTPUT_SIZE: u64 = 4096;
+pub const DEFAULT_MAX_BYTECODE_SIZE: u64 = 1 << 20;
+pub const DEFAULT_MAX_TRACE_LENGTH: u64 = 1 << 24;
 
 pub const fn virtual_register_index(index: u64) -> u64 {
     index + VIRTUAL_REGISTER_COUNT
