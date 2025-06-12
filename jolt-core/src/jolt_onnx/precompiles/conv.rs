@@ -198,7 +198,7 @@ where
     #[tracing::instrument(skip_all)]
     /// Create a new instance of [`ConvProverState`].
     ///
-    /// We want to apply sum-check to the log(kH) + log(kW) degree polynomial g(m, n) = X(rᵢ, rⱼ, m, n) * K(m, n)
+    /// We want to apply sum-check to the log(kH) + log(kW) variate polynomial g(m, n) = X(rᵢ, rⱼ, m, n) * K(m, n)
     ///
     /// We compute the evaluations of the polynomial X(m, n, ri rj) over the boolean hypercube,
     /// and also compute the input claim Y(ri, rj) = Σₘₙ X(m, n, ri rj) * K(m, n).
@@ -262,7 +262,7 @@ where
             w_out,
         } = dims;
 
-        // X is a log(k_H) + log(k_W) degree polynomial
+        // X is a log(k_H) + log(k_W) variate polynomial
         let mut X_r = vec![F::zero(); k_h * k_w];
         let eq_ri_evals = EqPolynomial::evals(ri);
         let eq_rj_evals = EqPolynomial::evals(rj);
