@@ -142,7 +142,7 @@ impl ConvPrecompile {
     ///
     /// # Note:
     ///   - We return a 32 bit integer vector as output instead of 8 bit integers,
-    ///     because how these linear operators (conv and sum-check) work is: they take the quantized inputs and accumulate the sum in 32 bits — i.e., the output of these operators will be 32 bits.
+    ///     because how these linear operators (conv and matmult) work is: they take the quantized inputs and accumulate the sum in 32 bits — i.e., the output of these operators will be 32 bits.
     ///     Later, this output will be fed into a requant operator to convert it to 8-bit. We’ll use a lookup to prove the requant op.
     pub fn execute_conv(&self) -> Vec<i32> {
         let (
