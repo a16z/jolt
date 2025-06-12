@@ -3,6 +3,7 @@ use tracer::instruction::RV32IMCycle;
 use tracing::{span, Level};
 
 use crate::field::JoltField;
+use crate::jolt::instruction::CircuitFlags;
 use crate::jolt::vm::JoltProverPreprocessing;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
@@ -228,35 +229,64 @@ where
         let (claimed_witness_evals, _chis) =
             MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
 
-        /*  Sumcheck 3: Shift sumcheck for NextPC verification
-            Proves: NextPC(r_cycle) = \sum_t PC(t) * eq_plus_one(r_cycle, t)
+        /*  Sumcheck 3: Batched sumcheck for NextPC and virtual sequence verification
+            Proves: \sum_t (pc(t) + r * virtual_flag(t) * (address(t) + 1 - address(r_cycle))) * eq_plus_one(r_cycle, t)
 
-            Verifies PC advancement without a separate NextPC opening proof.
+            This batched sumcheck simultaneously proves:
+            1. NextPC(r_cycle) = \sum_t PC(t) * eq_plus_one(r_cycle, t)
+            2. Virtual sequence constraint equals 0
         */
         let span = span!(Level::INFO, "shift_sumcheck_pc");
         let _guard = span.enter();
 
+        // Get random challenge r for batching
+        let r: F = transcript.challenge_scalar();
+
         let num_rounds_shift_sumcheck = num_cycles_bits;
 
+        // Get polynomial indices
         let pc_index = JoltR1CSInputs::RealInstructionAddress.to_index();
+        let virtual_address_index = JoltR1CSInputs::PC.to_index();
+        let virtual_flag_index = JoltR1CSInputs::OpFlags(CircuitFlags::Virtual).to_index();
+
+        // Get address(r_cycle) evaluation
+        let address_r_cycle = claimed_witness_evals[virtual_address_index];
+
+        // Prepare polynomials for batched sumcheck
         let mut shift_sumcheck_polys = vec![
-            input_polys[pc_index].clone(), // RealInstructionAddress/PC
-            MultilinearPolynomial::from(eq_plus_one_r_cycle),
+            input_polys[pc_index].clone(),                    // pc(t)
+            input_polys[virtual_flag_index].clone(),          // virtual_flag(t)
+            input_polys[virtual_address_index].clone(),       // address(t)
+            MultilinearPolynomial::from(eq_plus_one_r_cycle), // eq_plus_one(r_cycle, t)
         ];
+
+        // Define the batched combining function:
+        // (pc(t) + r * virtual_flag(t) * (address(t) + 1 - address(r_cycle))) * eq_plus_one(r_cycle, t)
+        let batched_comb_func = move |poly_evals: &[F]| -> F {
+            assert_eq!(poly_evals.len(), 4);
+            let pc_eval = poly_evals[0];
+            let flag_eval = poly_evals[1];
+            let addr_eval = poly_evals[2];
+            let eq_eval = poly_evals[3];
+
+            let batched_eval = pc_eval + r * flag_eval * (addr_eval + F::one() - address_r_cycle);
+            batched_eval * eq_eval
+        };
 
         drop(_guard);
         drop(span);
 
+        // The batched claim equals NextPC(r_cycle) + r * 0 (since virtual sequence constraint equals 0)
         let pc_next_index = JoltR1CSInputs::NextPC.to_index();
         let shift_sumcheck_claim = claimed_witness_evals[pc_next_index];
 
-        let (shift_sumcheck_proof, shift_sumcheck_r, _shift_sumcheck_claims) =
+        let (shift_sumcheck_proof, _shift_sumcheck_r, shift_sumcheck_claims) =
             SumcheckInstanceProof::prove_arbitrary(
                 &shift_sumcheck_claim,
                 num_rounds_shift_sumcheck,
                 &mut shift_sumcheck_polys,
-                comb_func,
-                2,
+                batched_comb_func,
+                4, // Combined degree is 4 (multiplying 4 polynomials)
                 transcript,
             );
 
@@ -270,10 +300,18 @@ where
         //     transcript,
         // );
 
-        // For shift sumcheck, we need PC evaluation at shift_r
-        let (shift_sumcheck_witness_evals_partial, _chis2) =
-            MultilinearPolynomial::batch_evaluate(&[&input_polys[pc_index]], &shift_sumcheck_r);
-        let shift_sumcheck_witness_eval = shift_sumcheck_witness_evals_partial[0];
+        // For batched shift sumcheck, get the individual polynomial evaluations at shift_r
+        // The shift_sumcheck_claims should contain evaluations of [pc, virtual_flag, virtual_address, eq_plus_one]
+        let pc_eval_at_shift_r = shift_sumcheck_claims[0];
+        let virtual_flag_eval_at_shift_r = shift_sumcheck_claims[1];
+        let virtual_address_eval_at_shift_r = shift_sumcheck_claims[2];
+        let eq_plus_one_eval_at_shift_r = shift_sumcheck_claims[3];
+
+        // Compute the batched evaluation for verification
+        let batched_eval = pc_eval_at_shift_r
+            + r * virtual_flag_eval_at_shift_r
+                * (virtual_address_eval_at_shift_r + F::one() - address_r_cycle);
+        let shift_sumcheck_witness_eval = batched_eval * eq_plus_one_eval_at_shift_r;
 
         // opening_accumulator.append(
         //     &flattened_polys_ref,

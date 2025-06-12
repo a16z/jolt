@@ -30,13 +30,13 @@ pub struct R1CSProof<F: JoltField, ProofTranscript: Transcript> {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum JoltR1CSInputs {
-    VirtualInstructionAddress, // Virtual (bytecode raf)
-    RealInstructionAddress,    // Virtual (bytecode rv)
-    Rd,                        // Virtual (bytecode rv)
-    Imm,                       // Virtual (bytecode rv)
-    RamAddress,                // Virtual (RAM raf)
-    Rs1Value,                  // Virtual (registers rv)
-    Rs2Value,                  // Virtual (registers rv)
+    PC,                     // Virtual (bytecode raf)
+    RealInstructionAddress, // Virtual (bytecode rv)
+    Rd,                     // Virtual (bytecode rv)
+    Imm,                    // Virtual (bytecode rv)
+    RamAddress,             // Virtual (RAM raf)
+    Rs1Value,               // Virtual (registers rv)
+    Rs2Value,               // Virtual (registers rv)
     RdWriteValue,
     RamReadValue, // Virtual (RAM rv)
     RamWriteValue,
@@ -56,7 +56,7 @@ pub enum JoltR1CSInputs {
 /// This const serves to define a canonical ordering over inputs (and thus indices
 /// for each input). This is needed for sumcheck.
 pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 36] = [
-    JoltR1CSInputs::VirtualInstructionAddress,
+    JoltR1CSInputs::PC,
     JoltR1CSInputs::RealInstructionAddress,
     JoltR1CSInputs::Rd,
     JoltR1CSInputs::Imm,
@@ -125,7 +125,7 @@ impl JoltR1CSInputs {
         ProofTranscript: Transcript,
     {
         match self {
-            JoltR1CSInputs::VirtualInstructionAddress => {
+            JoltR1CSInputs::PC => {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
                     .enumerate()
