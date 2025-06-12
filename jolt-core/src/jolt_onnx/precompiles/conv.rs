@@ -22,6 +22,7 @@ use itertools::Itertools;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
+// TODO: Padding, strides and dilations support
 // TODO: refactor duplicate code between this module and matmult.rs, not doing it atm since code is subject to heavy change with padding, strides and dilations support
 
 /// A type defining the conv precompile in the execution trace.
