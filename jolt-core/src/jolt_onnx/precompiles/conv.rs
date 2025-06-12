@@ -196,6 +196,9 @@ where
 {
     #[tracing::instrument(skip_all)]
     /// Create a new instance of [`ConvProverState`].
+    ///
+    /// We want to apply sum-check to the log(kH) + log(kW) degree polynomial g(m, n) = X(rᵢ, rⱼ, m, n) * K(m, n)
+    ///
     /// We compute the evaluations of the polynomial X(m, n, ri rj) over the boolean hypercube,
     /// and also compute the input claim Y(ri, rj) = Σₘₙ X(m, n, ri rj) * K(m, n).
     ///
@@ -240,6 +243,14 @@ where
 
     /// Compute the boolean evaluations for the polynomial X_{ri, rj}(m, n).
     /// Used as input to the conv sum-check-precompile protocol.
+    ///
+    /// Bounds the input polynomial X as follows:
+    ///
+    ///     X(rᵢrⱼ, mn) = ∑_{uv}^{kH,kW} eq(uv, mn) · X_{mn}(rᵢrⱼ)
+    ///
+    /// where:
+    ///
+    ///     X_{mn}(rᵢrⱼ) = ∑_{p,q}^{H_out,W_out} eq(p, i) · eq(q, j) · x_{i+m, j+n}
     fn X_bounded(X: &Tensor, ri: &[F], rj: &[F], dims: ConvPrecompileDims) -> DensePolynomial<F> {
         // Used to index into the input/image tensor
         let w_in = X.shape[3];
