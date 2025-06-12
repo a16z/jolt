@@ -1334,7 +1334,6 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
 
         #[cfg(test)]
         {
-            println!("round: {:?}", round);
             assert_eq!(eval_1 + acc[0], prev_claim);
         }
 
@@ -1427,7 +1426,7 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
         // For the write-checking sumcheck.
         z_eq_r.bind_parallel(r_j, BindingOrder::LowToHigh);
     }
-    panic!("test");
+    panic!("success");
 
     // TODO: remaining rounds.
     let span = tracing::span!(tracing::Level::INFO, "Remaining rounds of sumcheck");
@@ -1486,15 +1485,21 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
                 let wv_evals = wv.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
                 let val_j_evals = val_j.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
 
-                // TODO: add the write-checking sum-check.
                 [
-                    eq_r_evals[0] * ra_evals[0] * val_j_evals[0]
-                        + z_eq_r * wa_evals[0] * (wv_evals[0] - val_j_evals[0]),
-                    eq_r_evals[1] * ra_evals[1] * val_j_evals[1]
-                        + z_eq_r * wa_evals[1] * (wv_evals[1] - val_j_evals[1]),
-                    eq_r_evals[2] * ra_evals[2] * val_j_evals[2]
-                        + z_eq_r * wa_evals[2] * (wv_evals[2] - val_j_evals[2]),
+                    eq_r_evals[0] * ra_evals[0] * val_j_evals[0],
+                    eq_r_evals[1] * ra_evals[1] * val_j_evals[1],
+                    eq_r_evals[2] * ra_evals[2] * val_j_evals[2],
                 ]
+
+                // TODO: add the write-checking sum-check.
+                // [
+                //     eq_r_evals[0] * ra_evals[0] * val_j_evals[0]
+                //         + z_eq_r * wa_evals[0] * (wv_evals[0] - val_j_evals[0]),
+                //     eq_r_evals[1] * ra_evals[1] * val_j_evals[1]
+                //         + z_eq_r * wa_evals[1] * (wv_evals[1] - val_j_evals[1]),
+                //     eq_r_evals[2] * ra_evals[2] * val_j_evals[2]
+                //         + z_eq_r * wa_evals[2] * (wv_evals[2] - val_j_evals[2]),
+                // ]
             })
             .reduce(
                 || [F::zero(); DEGREE],
@@ -1514,6 +1519,37 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
             univariate_poly_evals[2],
         ]);
 
+        #[cfg(test)]
+        {
+            let test_evals = (0..T / (round + 1).pow2())
+                .into_par_iter()
+                .map(|j| {
+                    let test_eq_r_evals = eq_r.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+                    let test_ra_evals = test_ra.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+                    let test_val_evals =
+                        test_val.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+
+                    [
+                        test_eq_r_evals[0] * test_ra_evals[0] * test_val_evals[0],
+                        test_eq_r_evals[1] * test_ra_evals[1] * test_val_evals[1],
+                        test_eq_r_evals[2] * test_ra_evals[2] * test_val_evals[2],
+                    ]
+                })
+                .reduce(
+                    || [F::zero(); DEGREE],
+                    |running, new| {
+                        [
+                            running[0] + new[0],
+                            running[1] + new[1],
+                            running[2] + new[2],
+                        ]
+                    },
+                );
+
+            println!("Checking round: {:?}", round);
+            assert_eq!(test_evals, univariate_poly_evals);
+        }
+
         drop(_inner_guard);
         drop(inner_span);
 
@@ -1527,7 +1563,13 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
         // Bind polynomials
         [&mut eq_r, &mut ra, &mut wa, &mut wv, &mut val_j]
             .iter_mut()
-            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
+
+        #[cfg(test)]
+        {
+            test_ra.bind_parallel(r_j, BindingOrder::LowToHigh);
+            test_val.bind_parallel(r_j, BindingOrder::LowToHigh);
+        }
     }
 
     drop(_guard);
