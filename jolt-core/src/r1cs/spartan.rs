@@ -245,7 +245,7 @@ where
         let num_rounds_shift_sumcheck = num_cycles_bits;
 
         // Get polynomial indices
-        let pc_index = JoltR1CSInputs::RealInstructionAddress.to_index();
+        let pc_index = JoltR1CSInputs::UnexpandedPC.to_index();
         let virtual_address_index = JoltR1CSInputs::PC.to_index();
         let virtual_flag_index = JoltR1CSInputs::OpFlags(CircuitFlags::Virtual).to_index();
 
@@ -277,7 +277,7 @@ where
         drop(span);
 
         // The batched claim equals NextPC(r_cycle) + r * 0 (since virtual sequence constraint equals 0)
-        let pc_next_index = JoltR1CSInputs::NextPC.to_index();
+        let pc_next_index = JoltR1CSInputs::NextUnexpandedPC.to_index();
         let shift_sumcheck_claim = claimed_witness_evals[pc_next_index];
 
         let (shift_sumcheck_proof, _shift_sumcheck_r, shift_sumcheck_claims) =
@@ -421,7 +421,7 @@ where
         */
 
         let num_rounds_shift_sumcheck = num_cycles_bits;
-        let pc_next_index = JoltR1CSInputs::NextPC.to_index();
+        let pc_next_index = JoltR1CSInputs::NextUnexpandedPC.to_index();
         let shift_sumcheck_claim = self.claimed_witness_evals[pc_next_index];
         let (claim_shift_sumcheck, shift_sumcheck_r) = self
             .shift_sumcheck_proof
