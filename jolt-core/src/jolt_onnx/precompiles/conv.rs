@@ -471,6 +471,8 @@ where
     }
 }
 
+// # TODO: This is a temp tensor, when we fully furnish our ONNX runtime we will use the runtimes tensor type.
+
 /// Represents a quantized tensor used in the ONNX execution trace.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Tensor {
