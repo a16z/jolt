@@ -24,7 +24,8 @@ use serde::{Deserialize, Serialize};
 
 // TODO: refactor duplicate code between this module and matmult.rs, not doing it atm since code is subject to heavy change with padding, strides and dilations support
 
-/// This is how we define the conv precompile in the execution trace.
+/// A type defining the conv precompile in the execution trace.
+/// The type is used to intialize the [`ConvProverState`]
 ///
 /// We define the conv precompile by its input tensors:
 ///   - `image`: The input tensor representing the image.
