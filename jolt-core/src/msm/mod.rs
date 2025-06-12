@@ -36,7 +36,7 @@ where
         scalars: &[u8],
         max_num_bits: Option<usize>,
     ) -> Result<Self, ProofVerifyError> {
-        (bases.len() == scalars.len())
+        (bases.len() >= scalars.len())
             .then(|| {
                 let max_num_bits =
                     max_num_bits.unwrap_or((*scalars.iter().max().unwrap() as usize).num_bits());
@@ -56,7 +56,7 @@ where
         max_num_bits: Option<usize>,
         use_icicle: bool,
     ) -> Result<Self, ProofVerifyError> {
-        (bases.len() == scalars.len())
+        (bases.len() >= scalars.len())
             .then(|| {
                 let max_num_bits =
                     max_num_bits.unwrap_or((*scalars.iter().max().unwrap() as usize).num_bits());
@@ -77,7 +77,7 @@ where
         max_num_bits: Option<usize>,
         use_icicle: bool,
     ) -> Result<Self, ProofVerifyError> {
-        (bases.len() == scalars.len())
+        (bases.len() >= scalars.len())
             .then(|| {
                 let max_num_bits =
                     max_num_bits.unwrap_or((*scalars.iter().max().unwrap() as usize).num_bits());
@@ -98,7 +98,7 @@ where
         max_num_bits: Option<usize>,
         use_icicle: bool,
     ) -> Result<Self, ProofVerifyError> {
-        (bases.len() == scalars.len())
+        (bases.len() >= scalars.len())
             .then(|| {
                 let max_num_bits =
                     max_num_bits.unwrap_or((*scalars.iter().max().unwrap() as usize).num_bits());
@@ -119,7 +119,7 @@ where
         max_num_bits: Option<usize>,
         use_icicle: bool,
     ) -> Result<Self, ProofVerifyError> {
-        (bases.len() == scalars.len())
+        (bases.len() >= scalars.len())
             .then(|| {
                 let max_num_bits =
                     max_num_bits.unwrap_or((*scalars.iter().max().unwrap()).num_bits() as usize);

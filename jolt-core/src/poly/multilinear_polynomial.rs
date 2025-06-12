@@ -31,7 +31,7 @@ pub enum MultilinearPolynomial<F: JoltField> {
     U64Scalars(CompactPolynomial<u64, F>),
     I64Scalars(CompactPolynomial<i64, F>),
     Sparse(SparseMatrixPolynomial<F>),
-    OneHot(OneHotPolynomial<F>),
+    OneHot(OneHotPolynomial),
 }
 
 /// The order in which polynomial variables are bound in sumcheck

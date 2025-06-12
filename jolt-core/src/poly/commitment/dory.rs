@@ -2,9 +2,13 @@ use super::commitment_scheme::CommitmentScheme;
 use crate::{
     field::JoltField,
     msm::{Icicle, VariableBaseMSM},
-    poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
+    poly::{
+        multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
+        sparse_matrix_polynomial::{get_max_num_vars, get_num_columns},
+    },
     utils::{
         errors::ProofVerifyError,
+        math::Math,
         transcript::{AppendToTranscript, Transcript},
     },
 };
@@ -482,6 +486,7 @@ where
         JoltGTWrapper(gt)
     }
 
+    #[tracing::instrument(skip_all)]
     fn multi_pair(ps: &[Self::G1], qs: &[Self::G2]) -> Self::GT {
         // Delegate to the cached version with no caches
         Self::multi_pair_cached(Some(ps), None, None, Some(qs), None, None)
@@ -692,6 +697,78 @@ where
         let point: Vec<_> = point.iter().rev().map(|x| x.0).collect();
         JoltFieldWrapper(PolynomialEvaluation::evaluate(self, &point))
     }
+
+    #[tracing::instrument(skip_all)]
+    fn commit_rows<M1: DoryMultiScalarMul<JoltGroupWrapper<G>>>(
+        &self,
+        g1_generators: &[JoltGroupWrapper<G>],
+        row_len: usize,
+    ) -> Vec<JoltGroupWrapper<G>> {
+        let bases: Vec<_> = g1_generators
+            .par_iter()
+            .map(|g| g.0.into_affine())
+            .collect();
+        debug_assert_eq!(get_num_columns(), row_len);
+
+        match self {
+            MultilinearPolynomial::LargeScalars(poly) => poly
+                .Z
+                .par_chunks(row_len)
+                .map(|row| {
+                    JoltGroupWrapper(
+                        VariableBaseMSM::msm_field_elements(&bases, None, row, None, false)
+                            .unwrap(),
+                    )
+                })
+                .collect(),
+            MultilinearPolynomial::U8Scalars(poly) => poly
+                .coeffs
+                .par_chunks(row_len)
+                .map(|row| JoltGroupWrapper(VariableBaseMSM::msm_u8(&bases, row, None).unwrap()))
+                .collect(),
+            MultilinearPolynomial::U16Scalars(poly) => poly
+                .coeffs
+                .par_chunks(row_len)
+                .map(|row| {
+                    JoltGroupWrapper(
+                        VariableBaseMSM::msm_u16(&bases, None, row, None, false).unwrap(),
+                    )
+                })
+                .collect(),
+            MultilinearPolynomial::U32Scalars(poly) => poly
+                .coeffs
+                .par_chunks(row_len)
+                .map(|row| {
+                    JoltGroupWrapper(
+                        VariableBaseMSM::msm_u32(&bases, None, row, None, false).unwrap(),
+                    )
+                })
+                .collect(),
+            MultilinearPolynomial::U64Scalars(poly) => poly
+                .coeffs
+                .par_chunks(row_len)
+                .map(|row| {
+                    JoltGroupWrapper(
+                        VariableBaseMSM::msm_u64(&bases, None, row, None, false).unwrap(),
+                    )
+                })
+                .collect(),
+            MultilinearPolynomial::I64Scalars(poly) => poly
+                .coeffs
+                .par_chunks(row_len)
+                .map(|row| {
+                    // TODO(moodlezoup): This can be optimized
+                    let scalars: Vec<_> = row.iter().map(|x| F::from_i64(*x)).collect();
+                    JoltGroupWrapper(
+                        VariableBaseMSM::msm_field_elements(&bases, None, &scalars, None, false)
+                            .unwrap(),
+                    )
+                })
+                .collect(),
+            MultilinearPolynomial::Sparse(poly) => todo!(),
+            MultilinearPolynomial::OneHot(poly) => todo!(),
+        }
+    }
 }
 
 // Note that we have this `Option<&'a mut T>` so that we can derive Default, which is required.
@@ -813,8 +890,7 @@ where
 
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::commit")]
     fn commit(poly: &MultilinearPolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
-        let num_vars = poly.get_num_vars();
-        let sigma = (num_vars + 1) / 2;
+        let sigma = get_num_columns().log_2();
 
         let commitment_val = commit::<JoltBn254, JoltMsmG1, _>(poly, 0, sigma, &setup.prover_setup);
         DoryCommitment(commitment_val)
@@ -842,8 +918,7 @@ where
             .map(|&p| JoltFieldWrapper(p))
             .collect();
 
-        let num_vars = poly.get_num_vars();
-        let sigma = (num_vars + 1) / 2;
+        let sigma = get_num_columns().log_2();
         let dory_transcript = JoltToDoryTranscriptRef::<Self::Field, _>::new(transcript);
 
         // dory evaluate returns the opening but in this case we don't use it, we pass directly the opening to verify()

@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 use crate::field::JoltField;
+use crate::jolt::vm::ram::remap_address;
 use crate::jolt::witness::ALL_COMMITTED_POLYNOMIALS;
 use crate::poly::opening_proof::{
     ProverOpeningAccumulator, ReducedOpeningProof, VerifierOpeningAccumulator,
@@ -162,16 +163,20 @@ where
         let bytecode_preprocessing = BytecodePreprocessing::preprocess(bytecode);
         let ram_preprocessing = RAMPreprocessing::preprocess(memory_init);
 
-        // TODO(moodlezoup): Update for Twist+Shout
-        let max_poly_len: usize = [
-            (max_bytecode_size + 1).next_power_of_two(), // Account for no-op prepended to bytecode
-            max_trace_length.next_power_of_two(),
+        let max_K = [
+            bytecode_preprocessing.code_size.next_power_of_two(),
             max_memory_address.next_power_of_two(),
+            1 << 16, // instruction lookups Shout
         ]
         .into_iter()
         .max()
         .unwrap();
-        let generators = PCS::setup(max_poly_len.log_2());
+        let max_T = max_trace_length.next_power_of_two();
+
+        println!("setup...");
+        // TODO(moodlezoup): Change setup parameter to # variables everywhere
+        let generators = PCS::setup(max_K.log_2() + max_T.log_2());
+        println!("setup done");
 
         JoltVerifierPreprocessing {
             generators,
@@ -231,7 +236,33 @@ where
         let padded_trace_length = trace_length.next_power_of_two();
         trace.resize(padded_trace_length, RV32IMCycle::NoOp);
 
-        SparseMatrixPolynomial::<F>::initialize(1 << 16, padded_trace_length);
+        let ram_addresses: Vec<usize> = trace
+            .par_iter()
+            .map(|cycle| {
+                let ram_op = cycle.ram_access();
+                match ram_op {
+                    tracer::instruction::RAMAccess::Read(read) => {
+                        remap_address(read.address, &preprocessing.shared.memory_layout) as usize
+                    }
+                    tracer::instruction::RAMAccess::Write(write) => {
+                        remap_address(write.address, &preprocessing.shared.memory_layout) as usize
+                    }
+                    tracer::instruction::RAMAccess::NoOp => 0,
+                }
+            })
+            .collect();
+
+        let K = [
+            preprocessing.shared.bytecode.code_size,
+            ram_addresses.par_iter().max().unwrap().next_power_of_two(),
+            1 << 16, // K for instruction lookups Shout
+        ]
+        .into_iter()
+        .max()
+        .unwrap();
+        println!("T = {padded_trace_length}, K = {K}");
+
+        SparseMatrixPolynomial::<F>::initialize(K, padded_trace_length);
 
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
         let mut opening_accumulator: ProverOpeningAccumulator<F, ProofTranscript> =
