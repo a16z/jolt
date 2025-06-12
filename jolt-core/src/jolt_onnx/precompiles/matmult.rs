@@ -1,6 +1,6 @@
 //! A sum-check precompile for matrix multiplication (where the rhs matrix is implicitly transposed).
 //! Used for proving correctness of ONNX operators that do a matrix multiplication.
-//! You can see it in action in [`crate::jolt_onnx::vm::precompiles`]
+//! You can see it in action in [`crate::jolt_onnx::vm::precompiles`].
 //!
 //! # Overview:
 //!   - [`MatMultPrecompile`] - We specify the precompile for matrix multiplication, by defining the lhs and rhs matrices as [`QuantizedTensor`]s as fields.
@@ -11,6 +11,7 @@
 //!
 //! # Note:
 //!   -  The MatMult protcol deviates slightly from the standard MatMult protocol as we implicitly transpose the rhs matrix B.
+//!   -  See https://people.cs.georgetown.edu/jthaler/blogpost.pdf for the original MatMult protocol.
 
 use crate::{
     field::JoltField,
