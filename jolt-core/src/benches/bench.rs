@@ -344,7 +344,7 @@ where
 
     let mut inputs = vec![];
     inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
-    inputs.append(&mut postcard::to_stdvec(&1000u32).unwrap());
+    inputs.append(&mut postcard::to_stdvec(&1500u32).unwrap());
 
     let task = move || {
         let (io_device, trace) = program.trace(&inputs);
@@ -355,9 +355,9 @@ where
                 bytecode.clone(),
                 io_device.memory_layout.clone(),
                 memory_init,
-                1 << 22,
-                1 << 22,
-                1 << 22,
+                1 << 20,
+                1 << 20,
+                1 << 24,
             );
 
         let (jolt_proof, program_io, _) = <RV32IJoltVM as Jolt<32, _, PCS, ProofTranscript>>::prove(

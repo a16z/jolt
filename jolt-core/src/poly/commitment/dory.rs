@@ -31,7 +31,7 @@ use dory::{
         Field as DoryField, Group as DoryGroup, MultiScalarMul as DoryMultiScalarMul,
         Pairing as DoryPairing,
     },
-    commit, evaluate, setup as dory_setup,
+    commit, evaluate, setup as dory_setup, setup_with_srs_file,
     transcript::Transcript as DoryTranscript,
     verify, DoryProof, DoryProofBuilder, Polynomial as DoryPolynomial, ProverSetup, VerifierSetup,
 };
@@ -186,15 +186,17 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G1Projective>> for JoltMsmG1 {
         bases: &[JoltGroupWrapper<G1Projective>],
         scalars: &[JoltFieldWrapper<Fr>],
     ) -> JoltGroupWrapper<G1Projective> {
-        
-        let projective_points: Vec<G1Projective> = bases.iter().map(|w| w.0).collect();
+        // # Safety
+        // JoltGroupWrapper always has same memory layout as underlying G1Projective here.
+        let projective_points: &[G1Projective] = unsafe {
+            std::slice::from_raw_parts(bases.as_ptr() as *const G1Projective, bases.len())
+        };
         let affines = G1Projective::normalize_batch(&projective_points);
 
         // # Safety
         // JoltFieldWrapper always has same memory layout as underlying Fr here.
-        let raw_scalars: &[Fr] = unsafe {
-            std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len())
-        };
+        let raw_scalars: &[Fr] =
+            unsafe { std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len()) };
 
         let result = G1Projective::msm_field_elements(&affines, None, raw_scalars, None, false)
             .expect("msm_field_elements should not fail");
@@ -214,14 +216,14 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G1Projective>> for JoltMsmG1 {
 
         // # Safety
         // JoltFieldWrapper always has same memory layout as underlying Fr
-        let raw_scalars: &[Fr] = unsafe {
-            std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len())
-        };
+        let raw_scalars: &[Fr] =
+            unsafe { std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len()) };
 
         // Use `jolt-optimizations`` fixed_base_vector_msm_g1
         let results_proj = jolt_optimizations::fixed_base_vector_msm_g1(&base.0, raw_scalars);
 
-        results_proj.into_iter()
+        results_proj
+            .into_iter()
             .map(|proj| JoltGroupWrapper(proj))
             .collect()
     }
@@ -280,7 +282,11 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G1Projective>> for JoltMsmG1 {
         addends: &[JoltGroupWrapper<G1Projective>],
         scalar: &JoltFieldWrapper<Fr>,
     ) {
-        assert_eq!(vs.len(), addends.len(), "vs and addends must have same length");
+        assert_eq!(
+            vs.len(),
+            addends.len(),
+            "vs and addends must have same length"
+        );
 
         // # Safety
         // JoltGroupWrapper is repr(transparent) so has same memory layout as G1Projective
@@ -292,11 +298,7 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G1Projective>> for JoltMsmG1 {
         };
 
         // Use `jolt-optimizations`: v[i] = scalar * v[i] + gamma[i]
-        jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
-            vs_proj,
-            scalar.0,
-            addends_proj,
-        );
+        jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(vs_proj, scalar.0, addends_proj);
     }
 }
 
@@ -311,9 +313,8 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
 
         // # Safety
         // JoltFieldWrapper always has same memory layout as underlying Fr here.
-        let raw_scalars: &[Fr] = unsafe {
-            std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len())
-        };
+        let raw_scalars: &[Fr] =
+            unsafe { std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len()) };
 
         let result = G2Projective::msm_field_elements(&affines, None, raw_scalars, None, false)
             .expect("msm_field_elements should not fail");
@@ -333,9 +334,8 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
 
         // # Safety
         // JoltFieldWrapper always has same memory layout as underlying Fr
-        let raw_scalars: &[Fr] = unsafe {
-            std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len())
-        };
+        let raw_scalars: &[Fr] =
+            unsafe { std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len()) };
 
         // Check if we have cached GLV tables for g_fin
         if let Some(glv_tables) = g2_cache.and_then(|cache| cache.get_g_fin_glv_tables()) {
@@ -348,7 +348,8 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
                 })
                 .collect();
 
-            results_proj.into_iter()
+            results_proj
+                .into_iter()
                 .map(|proj| JoltGroupWrapper(proj))
                 .collect()
         } else {
@@ -361,7 +362,8 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
                 })
                 .collect();
 
-            results_proj.into_iter()
+            results_proj
+                .into_iter()
                 .map(|proj| JoltGroupWrapper(proj))
                 .collect()
         }
@@ -419,7 +421,11 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
         addends: &[JoltGroupWrapper<G2Projective>],
         scalar: &JoltFieldWrapper<Fr>,
     ) {
-        assert_eq!(vs.len(), addends.len(), "vs and addends must have same length");
+        assert_eq!(
+            vs.len(),
+            addends.len(),
+            "vs and addends must have same length"
+        );
 
         // # Safety
         // JoltGroupWrapper is repr(transparent) so has same memory layout as G2Projective
@@ -431,11 +437,7 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
         };
 
         // Use jolt-optimizations function: v[i] = scalar * v[i] + gamma[i]
-        jolt_optimizations::vector_scalar_mul_add_gamma_g2_online(
-            vs_proj,
-            scalar.0,
-            addends_proj,
-        );
+        jolt_optimizations::vector_scalar_mul_add_gamma_g2_online(vs_proj, scalar.0, addends_proj);
     }
 }
 
@@ -445,6 +447,7 @@ where
     P: ArkPairing,
     P::ScalarField: JoltField,
 {
+    #[tracing::instrument(skip_all, name = "GT MSM")]
     fn msm(
         bases: &[JoltGTWrapper<P>],
         scalars: &[JoltFieldWrapper<P::ScalarField>],
@@ -481,6 +484,7 @@ where
     type G2 = JoltGroupWrapper<E::G2>;
     type GT = JoltGTWrapper<E>;
 
+    #[tracing::instrument(skip_all)]
     fn pair(p: &Self::G1, q: &Self::G2) -> Self::GT {
         let gt = E::pairing(p.0, q.0).0;
         JoltGTWrapper(gt)
@@ -509,17 +513,21 @@ where
                 }
 
                 // Extract prepared values from caches - no allocation needed
-                let g1_prepared: Vec<&BnG1Prepared> = (0..g1_c).map(|i| {
-                    g1_cache
-                        .get_prepared(i)
-                        .expect("Index out of bounds in G1 cache")
-                }).collect();
+                let g1_prepared: Vec<&BnG1Prepared> = (0..g1_c)
+                    .map(|i| {
+                        g1_cache
+                            .get_prepared(i)
+                            .expect("Index out of bounds in G1 cache")
+                    })
+                    .collect();
 
-                let g2_prepared: Vec<&BnG2Prepared> = (0..g2_c).map(|i| {
-                    g2_cache
-                        .get_prepared(i)
-                        .expect("Index out of bounds in G2 cache")
-                }).collect();
+                let g2_prepared: Vec<&BnG2Prepared> = (0..g2_c)
+                    .map(|i| {
+                        g2_cache
+                            .get_prepared(i)
+                            .expect("Index out of bounds in G2 cache")
+                    })
+                    .collect();
 
                 // Use Bn254 directly since caches are BN254-specific
                 let ml_result = Bn254::multi_miller_loop(g1_prepared, g2_prepared).0;
@@ -531,7 +539,7 @@ where
                 // When E = Bn254, JoltGTWrapper<Bn254> has same memory layout as JoltGTWrapper<E>
                 // since JoltGTWrapper is repr(transparent) and E::TargetField = Bn254::TargetField
                 let bn_result = JoltGTWrapper::<Bn254>(pairing_result.0);
-                unsafe { 
+                unsafe {
                     let ptr = &bn_result as *const JoltGTWrapper<Bn254> as *const Self::GT;
                     (*ptr).clone()
                 }
@@ -548,22 +556,30 @@ where
                     return Self::GT::identity();
                 }
 
-                // G1 from cache 
-                let g1_prepared: Vec<&BnG1Prepared> = (0..g1_c).map(|i| {
-                    g1_cache
-                        .get_prepared(i)
-                        .expect("Index out of bounds in G1 cache")
-                }).collect();
+                // G1 from cache
+                let g1_prepared: Vec<&BnG1Prepared> = (0..g1_c)
+                    .map(|i| {
+                        g1_cache
+                            .get_prepared(i)
+                            .expect("Index out of bounds in G1 cache")
+                    })
+                    .collect();
 
                 // # Safety
                 // JoltGroupWrapper is repr(transparent) so has same memory layout as E::G2
                 // When E = Bn254, E::G2 = G2Projective
                 let g2_inner: &[G2Projective] = unsafe {
-                    std::slice::from_raw_parts(g2_points.as_ptr() as *const G2Projective, g2_points.len())
+                    std::slice::from_raw_parts(
+                        g2_points.as_ptr() as *const G2Projective,
+                        g2_points.len(),
+                    )
                 };
-                
+
                 let g2_affine = G2Projective::normalize_batch(g2_inner);
-                let g2_prepared = g2_affine.par_iter().map(BnG2Prepared::from).collect::<Vec<_>>();
+                let g2_prepared = g2_affine
+                    .par_iter()
+                    .map(BnG2Prepared::from)
+                    .collect::<Vec<_>>();
 
                 // Use Bn254 directly since caches are BN254-specific
                 let ml_result = Bn254::multi_miller_loop(g1_prepared, g2_prepared).0;
@@ -575,7 +591,7 @@ where
                 // When E = Bn254, JoltGTWrapper<Bn254> has same memory layout as JoltGTWrapper<E>
                 // since JoltGTWrapper is repr(transparent) and E::TargetField = Bn254::TargetField
                 let bn_result = JoltGTWrapper::<Bn254>(pairing_result.0);
-                unsafe { 
+                unsafe {
                     let ptr = &bn_result as *const JoltGTWrapper<Bn254> as *const Self::GT;
                     (*ptr).clone()
                 }
@@ -596,18 +612,26 @@ where
                 // JoltGroupWrapper is repr(transparent) so has same memory layout as E::G1
                 // When E = Bn254, E::G1 = G1Projective
                 let g1_inner: &[G1Projective] = unsafe {
-                    std::slice::from_raw_parts(g1_points.as_ptr() as *const G1Projective, g1_points.len())
+                    std::slice::from_raw_parts(
+                        g1_points.as_ptr() as *const G1Projective,
+                        g1_points.len(),
+                    )
                 };
-                
+
                 let g1_affine = G1Projective::normalize_batch(g1_inner);
-                let g1_prepared = g1_affine.par_iter().map(BnG1Prepared::from).collect::<Vec<_>>();
+                let g1_prepared = g1_affine
+                    .par_iter()
+                    .map(BnG1Prepared::from)
+                    .collect::<Vec<_>>();
 
                 // G2 from cache
-                let g2_prepared: Vec<&BnG2Prepared> = (0..g2_c).map(|i| {
-                    g2_cache
-                        .get_prepared(i)
-                        .expect("Index out of bounds in G2 cache")
-                }).collect();
+                let g2_prepared: Vec<&BnG2Prepared> = (0..g2_c)
+                    .map(|i| {
+                        g2_cache
+                            .get_prepared(i)
+                            .expect("Index out of bounds in G2 cache")
+                    })
+                    .collect();
 
                 // Use Bn254 directly since caches are BN254-specific
                 let ml_result = Bn254::multi_miller_loop(g1_prepared, g2_prepared).0;
@@ -619,7 +643,7 @@ where
                 // When E = Bn254, JoltGTWrapper<Bn254> has same memory layout as JoltGTWrapper<E>
                 // since JoltGTWrapper is repr(transparent) and E::TargetField = Bn254::TargetField
                 let bn_result = JoltGTWrapper::<Bn254>(pairing_result.0);
-                unsafe { 
+                unsafe {
                     let ptr = &bn_result as *const JoltGTWrapper<Bn254> as *const Self::GT;
                     (*ptr).clone()
                 }
@@ -878,8 +902,13 @@ where
     type BatchedProof = DoryBatchedProof;
 
     fn setup(max_num_vars: usize) -> Self::Setup {
-        let (prover_setup, verifier_setup) =
-            dory_setup::<JoltBn254, _>(ark_std::rand::thread_rng(), max_num_vars);
+        let srs_file_name = format!("dory_srs_{max_num_vars}_variables.srs");
+        let (mut prover_setup, verifier_setup) = setup_with_srs_file::<JoltBn254, _>(
+            &mut ark_std::rand::thread_rng(),
+            max_num_vars,
+            Some(&srs_file_name), // Will load if exists, generate and save if not
+        );
+        prover_setup.init_cache();
 
         DorySetup {
             prover_setup,
