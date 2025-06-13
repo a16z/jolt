@@ -255,7 +255,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         //     assert!(NextPC == PC + 1)
         // }
         cs.constrain_eq_conditional(
-            JoltR1CSInputs::OpFlags(CircuitFlags::Inline),
+            JoltR1CSInputs::OpFlags(CircuitFlags::InlineSequenceInstruction),
             JoltR1CSInputs::NextPC,
             JoltR1CSInputs::PC + 1,
         );

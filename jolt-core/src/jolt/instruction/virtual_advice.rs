@@ -15,7 +15,8 @@ impl InstructionFlags for VirtualAdvice {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
         flags[CircuitFlags::Advice as usize] = true;
         flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
-        flags[CircuitFlags::Inline as usize] = self.virtual_sequence_remaining.is_some();
+        flags[CircuitFlags::InlineSequenceInstruction as usize] =
+            self.virtual_sequence_remaining.is_some();
         flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
             self.virtual_sequence_remaining.unwrap_or(0) != 0;
         flags

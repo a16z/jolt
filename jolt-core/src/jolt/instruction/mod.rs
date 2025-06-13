@@ -64,7 +64,7 @@ pub enum CircuitFlags {
     /// 1 if the lookup output is to be stored in `rd` at the end of the step.
     WriteLookupOutputToRD,
     /// 1 if the instruction is "inline", as defined in Section 6.1 of the Jolt paper.
-    Inline,
+    InlineSequenceInstruction,
     /// 1 if the instruction is an assert, as defined in Section 6.1.1 of the Jolt paper.
     Assert,
     /// Used in virtual sequences; the program counter should be the same for the full sequence.
