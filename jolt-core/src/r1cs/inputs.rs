@@ -48,9 +48,9 @@ pub enum JoltR1CSInputs {
     WriteLookupOutputToRD,
     WritePCtoRD,
     ShouldBranch,
-    NextUnexpandedPC,
-    NextPC,       // Next PC for inline sequences
-    LookupOutput, // Virtual (instruction rv)
+    NextUnexpandedPC, // Virtual (spartan shift sumcheck)
+    NextPC,           // Virtual (spartan shift sumcheck)
+    LookupOutput,     // Virtual (instruction rv)
     OpFlags(CircuitFlags),
 }
 
