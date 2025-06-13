@@ -1105,8 +1105,6 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
     let K = r.len().pow2();
     let T = r_prime.len().pow2();
 
-    let K_CHUNK_SIZE = K / D;
-
     debug_assert_eq!(read_addresses.len(), T);
     debug_assert_eq!(read_values.len(), T);
     debug_assert_eq!(write_addresses.len(), T);
@@ -1446,21 +1444,6 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
                         ]
                     },
                 );
-
-            // for k in 0..K / round.pow2() {
-            //     assert_eq!(
-            //         C_k[k],
-            //         test_val.get_bound_coeff(test_val.len() - (K / round.pow2()) + k),
-            //         "C_k: {:?}, test_val: {:?}",
-            //         C_k,
-            //         (0..K / round.pow2())
-            //             .into_par_iter()
-            //             .map(|k| {
-            //                 test_val.get_bound_coeff(test_val.len() - (K / round.pow2()) + k)
-            //             })
-            //             .collect::<Vec<F>>(),
-            //     );
-            // }
             let test_univariate_poly = UniPoly::from_evals(&[
                 test_evals[0],
                 prev_claim - test_evals[0],
@@ -1546,7 +1529,6 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
     );
 
     let mut eq_r = MultilinearPolynomial::from(B.0.clone());
-
     let z_eq_r = z_eq_r.get_coeff(0);
 
     for round in 0..num_rounds - K.log_2() {
@@ -1555,23 +1537,11 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
 
         #[cfg(test)]
         {
-            let len = eq_r.len().log_2();
-            assert_eq!(len, T.log_2() - round);
-            assert_eq!(len, ra.len().log_2());
-            assert_eq!(len, wa.len().log_2());
-            assert_eq!(len, val_j.len().log_2());
-            assert_eq!(len, wv.len().log_2());
-        }
-
-        #[cfg(test)]
-        {
             assert_eq!(T / (round + 1).pow2(), eq_r.len() / 2);
             (0..eq_r.len() / 2)
                 .into_par_iter()
                 .for_each(|j| assert_eq!(test_val.get_bound_coeff(j), val_j.get_bound_coeff(j)));
         }
-        #[cfg(test)]
-        let mut eval_1 = F::zero();
 
         let univariate_poly_evals: [F; 3] = (0..eq_r.len() / 2)
             .into_par_iter()
@@ -1582,15 +1552,6 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
                 let wa_evals = wa.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
                 let wv_evals = wv.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
                 let val_j_evals = val_j.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
-
-                #[cfg(test)]
-                {
-                    let ra_eval1 = ra_evals[1] - ra_evals[0];
-                    let wa_eval1 = wa_evals[1] - wa_evals[0];
-                    let val_j_eval1 = val_j_evals[1] - val_j_evals[0];
-                    let wv_eval1 = wv_evals[1] - wv_evals[0];
-                    let eq_r_eval1 = eq_r_evals[1] - eq_r_evals[0];
-                }
 
                 [
                     eq_r_evals[0] * ra_evals[0] * val_j_evals[0]
@@ -2126,5 +2087,4 @@ mod tests {
             [eval_0, Fr::from_u16(2), Fr::from_u16(3), Fr::from_u16(4)]
         );
     }
-
 }
