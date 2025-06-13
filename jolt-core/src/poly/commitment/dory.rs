@@ -793,6 +793,48 @@ where
             MultilinearPolynomial::OneHot(poly) => todo!(),
         }
     }
+
+    #[tracing::instrument(skip_all)]
+    fn vector_matrix_product(
+        &self,
+        left_vec: &[JoltFieldWrapper<F>],
+        sigma: usize,
+        nu: usize,
+    ) -> Vec<JoltFieldWrapper<F>> {
+        // # Safety
+        // JoltFieldWrapper always has same memory layout as underlying F here.
+        let left_vec: &[F] =
+            unsafe { std::slice::from_raw_parts(left_vec.as_ptr() as *const F, left_vec.len()) };
+
+        let num_columns = get_num_columns();
+        println!("sigma: {sigma}");
+        println!("nu: {nu}");
+        println!("num_columns: {num_columns}");
+
+        match self {
+            MultilinearPolynomial::LargeScalars(poly) => (0..num_columns)
+                .into_par_iter()
+                .map(|col_index| {
+                    JoltFieldWrapper(
+                        poly.Z
+                            .iter()
+                            .skip(col_index)
+                            .step_by(num_columns)
+                            .zip(left_vec.iter())
+                            .map(|(&a, &b)| -> F { a * b })
+                            .sum::<F>(),
+                    )
+                })
+                .collect(),
+            MultilinearPolynomial::U8Scalars(poly) => todo!(),
+            MultilinearPolynomial::U16Scalars(poly) => todo!(),
+            MultilinearPolynomial::U32Scalars(poly) => todo!(),
+            MultilinearPolynomial::U64Scalars(poly) => todo!(),
+            MultilinearPolynomial::I64Scalars(poly) => todo!(),
+            MultilinearPolynomial::Sparse(poly) => todo!(),
+            MultilinearPolynomial::OneHot(poly) => todo!(),
+        }
+    }
 }
 
 // Note that we have this `Option<&'a mut T>` so that we can derive Default, which is required.
