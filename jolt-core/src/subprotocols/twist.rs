@@ -1117,8 +1117,8 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
     // (see Section 4.2.1)
 
     let num_rounds = K.log_2() + T.log_2();
-    let r_cycle: Vec<F> = Vec::with_capacity(T.log_2());
-    let r_address: Vec<F> = Vec::with_capacity(K.log_2());
+    let mut r_cycle: Vec<F> = Vec::with_capacity(T.log_2());
+    let mut r_address: Vec<F> = Vec::with_capacity(K.log_2());
 
     let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
     let chunk_size = T / num_chunks;
@@ -1488,6 +1488,7 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
 
         // For the write-`checking sumcheck.
         z_eq_r.bind_parallel(r_j, BindingOrder::LowToHigh);
+        r_address.push(r_j);
 
         #[cfg(test)]
         {
@@ -1516,13 +1517,10 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
             assert_eq!(test_prev_claim, prev_claim);
         }
     }
-    panic!("success");
 
     // TODO: remaining rounds.
     let span = tracing::span!(tracing::Level::INFO, "Remaining rounds of sumcheck");
     let _guard = span.enter();
-
-    let mut wv: MultilinearPolynomial<F> = MultilinearPolynomial::from(write_values);
 
     // By this time eq(r_j, t) has been bounded for all {r_j}s, so .
     let mut val_j: Vec<F> = unsafe_allocate_zero_vec(T);
@@ -1565,6 +1563,16 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
             assert_eq!(len, wv.len().log_2());
         }
 
+        #[cfg(test)]
+        {
+            assert_eq!(T / (round + 1).pow2(), eq_r.len() / 2);
+            (0..eq_r.len() / 2)
+                .into_par_iter()
+                .for_each(|j| assert_eq!(test_val.get_bound_coeff(j), val_j.get_bound_coeff(j)));
+        }
+        #[cfg(test)]
+        let mut eval_1 = F::zero();
+
         let univariate_poly_evals: [F; 3] = (0..eq_r.len() / 2)
             .into_par_iter()
             .map(|j| {
@@ -1575,21 +1583,23 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
                 let wv_evals = wv.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
                 let val_j_evals = val_j.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
 
-                [
-                    eq_r_evals[0] * ra_evals[0] * val_j_evals[0],
-                    eq_r_evals[1] * ra_evals[1] * val_j_evals[1],
-                    eq_r_evals[2] * ra_evals[2] * val_j_evals[2],
-                ]
+                #[cfg(test)]
+                {
+                    let ra_eval1 = ra_evals[1] - ra_evals[0];
+                    let wa_eval1 = wa_evals[1] - wa_evals[0];
+                    let val_j_eval1 = val_j_evals[1] - val_j_evals[0];
+                    let wv_eval1 = wv_evals[1] - wv_evals[0];
+                    let eq_r_eval1 = eq_r_evals[1] - eq_r_evals[0];
+                }
 
-                // TODO: add the write-checking sum-check.
-                // [
-                //     eq_r_evals[0] * ra_evals[0] * val_j_evals[0]
-                //         + z_eq_r * wa_evals[0] * (wv_evals[0] - val_j_evals[0]),
-                //     eq_r_evals[1] * ra_evals[1] * val_j_evals[1]
-                //         + z_eq_r * wa_evals[1] * (wv_evals[1] - val_j_evals[1]),
-                //     eq_r_evals[2] * ra_evals[2] * val_j_evals[2]
-                //         + z_eq_r * wa_evals[2] * (wv_evals[2] - val_j_evals[2]),
-                // ]
+                [
+                    eq_r_evals[0] * ra_evals[0] * val_j_evals[0]
+                        + z_eq_r * eq_r_evals[0] * wa_evals[0] * (wv_evals[0] - val_j_evals[0]),
+                    eq_r_evals[1] * ra_evals[1] * val_j_evals[1]
+                        + z_eq_r * eq_r_evals[1] * wa_evals[1] * (wv_evals[1] - val_j_evals[1]),
+                    eq_r_evals[2] * ra_evals[2] * val_j_evals[2]
+                        + z_eq_r * eq_r_evals[2] * wa_evals[2] * (wv_evals[2] - val_j_evals[2]),
+                ]
             })
             .reduce(
                 || [F::zero(); DEGREE],
@@ -1616,13 +1626,27 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
                 .map(|j| {
                     let test_eq_r_evals = eq_r.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
                     let test_ra_evals = test_ra.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+                    let test_wa_evals = test_wa.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+                    let test_wv_evals = wv.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
                     let test_val_evals =
                         test_val.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
 
                     [
-                        test_eq_r_evals[0] * test_ra_evals[0] * test_val_evals[0],
-                        test_eq_r_evals[1] * test_ra_evals[1] * test_val_evals[1],
-                        test_eq_r_evals[2] * test_ra_evals[2] * test_val_evals[2],
+                        test_eq_r_evals[0] * test_ra_evals[0] * test_val_evals[0]
+                            + z_eq_r
+                                * test_eq_r_evals[0]
+                                * test_wa_evals[0]
+                                * (test_wv_evals[0] - test_val_evals[0]),
+                        test_eq_r_evals[1] * test_ra_evals[1] * test_val_evals[1]
+                            + z_eq_r
+                                * test_eq_r_evals[1]
+                                * test_wa_evals[1]
+                                * (test_wv_evals[1] - test_val_evals[1]),
+                        test_eq_r_evals[2] * test_ra_evals[2] * test_val_evals[2]
+                            + z_eq_r
+                                * test_eq_r_evals[2]
+                                * test_wa_evals[2]
+                                * (test_wv_evals[2] - test_val_evals[2]),
                     ]
                 })
                 .reduce(
@@ -1636,7 +1660,6 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
                     },
                 );
 
-            println!("Checking round: {:?}", round);
             assert_eq!(test_evals, univariate_poly_evals);
         }
 
@@ -1649,6 +1672,7 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
 
         let r_j = transcript.challenge_scalar::<F>();
         prev_claim = univariate_poly.evaluate(&r_j);
+        r_cycle.push(r_j);
 
         // Bind polynomials
         [&mut eq_r, &mut ra, &mut wa, &mut wv, &mut val_j]
@@ -1658,6 +1682,7 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
         #[cfg(test)]
         {
             test_ra.bind_parallel(r_j, BindingOrder::LowToHigh);
+            test_wa.bind_parallel(r_j, BindingOrder::LowToHigh);
             test_val.bind_parallel(r_j, BindingOrder::LowToHigh);
         }
     }
