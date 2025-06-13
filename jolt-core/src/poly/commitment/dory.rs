@@ -28,7 +28,7 @@ use dory::{
         Field as DoryField, Group as DoryGroup, MultiScalarMul as DoryMultiScalarMul,
         Pairing as DoryPairing,
     },
-    commit, evaluate, setup as dory_setup,
+    commit, evaluate, setup as dory_setup, setup_with_srs_file,
     transcript::Transcript as DoryTranscript,
     verify, DoryProof, DoryProofBuilder, Polynomial as DoryPolynomial, ProverSetup, VerifierSetup,
 };
@@ -182,11 +182,16 @@ where
     G: CurveGroup + VariableBaseMSM,
     G::ScalarField: JoltField,
 {
+    #[tracing::instrument(skip_all, name = "G1/G2 MSM")]
     fn msm(
         bases: &[JoltGroupWrapper<G>],
         scalars: &[JoltFieldWrapper<G::ScalarField>],
     ) -> JoltGroupWrapper<G> {
-        let affines: Vec<_> = bases.iter().map(|w| w.0.into_affine()).collect();
+        // # Safety
+        // JoltGroupWrapper always has same memory layout as underlying G here.
+        let raw_bases: &[G] =
+            unsafe { std::slice::from_raw_parts(bases.as_ptr() as *const G, bases.len()) };
+        let bases_affine = G::normalize_batch(raw_bases);
 
         // # Safety
         // JoltFieldWrapper always has same memory layout as underlying G::ScalarField here.
@@ -194,7 +199,7 @@ where
             std::slice::from_raw_parts(scalars.as_ptr() as *const G::ScalarField, scalars.len())
         };
 
-        let result = G::msm_field_elements(&affines, None, raw_scalars, None, false)
+        let result = G::msm_field_elements(&bases_affine, None, raw_scalars, None, false)
             .expect("msm_field_elements should not fail");
 
         JoltGroupWrapper(result)
@@ -207,6 +212,7 @@ where
     P: ArkPairing,
     P::ScalarField: JoltField,
 {
+    #[tracing::instrument(skip_all, name = "GT MSM")]
     fn msm(
         bases: &[JoltGTWrapper<P>],
         scalars: &[JoltFieldWrapper<P::ScalarField>],
@@ -243,6 +249,7 @@ where
     type G2 = JoltGroupWrapper<E::G2>;
     type GT = JoltGTWrapper<E>;
 
+    #[tracing::instrument(skip_all)]
     fn pair(p: &Self::G1, q: &Self::G2) -> Self::GT {
         let gt = E::pairing(p.0, q.0).0;
         JoltGTWrapper(gt)
@@ -250,6 +257,7 @@ where
 
     #[tracing::instrument(skip_all)]
     fn multi_pair(ps: &[Self::G1], qs: &[Self::G2]) -> Self::GT {
+        println!("Multipairing length: {}", ps.len());
         assert_eq!(
             ps.len(),
             qs.len(),
@@ -260,22 +268,23 @@ where
             return Self::GT::identity();
         }
 
-        let g1_inner: Vec<E::G1> = ps.iter().map(|p| p.0).collect();
-        let g2_inner: Vec<E::G2> = qs.iter().map(|q| q.0).collect();
+        // # Safety
+        // JoltGroupWrapper always has same memory layout as underlying G here.
+        let g1_inner: &[E::G1] =
+            unsafe { std::slice::from_raw_parts(ps.as_ptr() as *const E::G1, ps.len()) };
+        let g2_inner: &[E::G2] =
+            unsafe { std::slice::from_raw_parts(qs.as_ptr() as *const E::G2, qs.len()) };
 
         let aff_left = E::G1::normalize_batch(&g1_inner);
         let aff_right = E::G2::normalize_batch(&g2_inner);
 
-        let left: Vec<_> = aff_left.par_iter().map(E::G1Prepared::from).collect();
-        let right: Vec<_> = aff_right.par_iter().map(E::G2Prepared::from).collect();
-
         let num_chunks = rayon::current_num_threads();
-        let chunk_size = (left.len() / num_chunks.max(1)).max(1);
+        let chunk_size = (aff_left.len() / num_chunks.max(1)).max(1);
 
-        let ml_result = left
+        let ml_result = aff_left
             .par_chunks(chunk_size)
-            .zip(right.par_chunks(chunk_size))
-            .map(|(aa, bb)| E::multi_miller_loop(aa.iter().cloned(), bb.iter().cloned()).0)
+            .zip(aff_right.par_chunks(chunk_size))
+            .map(|(aa, bb)| E::multi_miller_loop(aa, bb).0)
             .product();
 
         let pairing_result = E::final_exponentiation(MillerLoopOutput(ml_result))
@@ -492,8 +501,12 @@ where
     type BatchedProof = DoryBatchedProof;
 
     fn setup(max_num_vars: usize) -> Self::Setup {
-        let (prover_setup, verifier_setup) =
-            dory_setup::<JoltBn254, _>(ark_std::rand::thread_rng(), max_num_vars);
+        let srs_file_name = format!("dory_srs_{max_num_vars}_variables.srs");
+        let (prover_setup, verifier_setup) = setup_with_srs_file::<JoltBn254, _>(
+            &mut ark_std::rand::thread_rng(),
+            max_num_vars,
+            Some(&srs_file_name), // Will load if exists, generate and save if not
+        );
 
         DorySetup {
             prover_setup,

@@ -404,7 +404,7 @@ where
             .registers
             .verify(padded_trace_length, &mut transcript)?;
         proof.ram.verify(
-            1 << 16,
+            1 << 16, // TODO(moodlezoup)
             padded_trace_length,
             &preprocessing.ram,
             &program_io,
@@ -434,7 +434,6 @@ where
     ) {
         transcript.append_u64(trace_length as u64);
         transcript.append_u64(WORD_SIZE as u64);
-        // transcript.append_u64(Self::InstructionSet::COUNT as u64);
         transcript.append_u64(memory_layout.max_input_size);
         transcript.append_u64(memory_layout.max_output_size);
         transcript.append_bytes(&program_io.inputs);
