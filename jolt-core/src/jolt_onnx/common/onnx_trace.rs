@@ -1,5 +1,7 @@
 //! This module provides the types that are used to construct the execution trace from an ONNX runtime context.
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use tract_onnx::pb::NodeProto;
 
@@ -30,7 +32,7 @@ pub struct ONNXInstruction {
     /// The operator that this instruction represents
     pub opcode: Operator,
     /// Optional attributes for the operator, such as alpha and beta for MatMul
-    pub attributes: Option<Vec<f32>>,
+    pub attributes: Option<HashMap<String, Vec<u64>>>,
     /// The inputs to the operator, which are the names of the tensors
     pub inputs: Vec<String>,
     /// The outputs of the operator, which are the names of the tensors
@@ -59,13 +61,37 @@ impl ONNXInstruction {
                 self.decorate_matmul(node_proto);
             }
             Operator::Relu => {}
+            Operator::Conv => {
+                self.decorate_conv(node_proto);
+            }
         }
     }
 
     /// Add the alpha and beta values to the instruction's attributes
     fn decorate_matmul(&mut self, node_proto: &NodeProto) {
         let (alpha, beta) = alpha_beta(node_proto);
-        self.attributes = Some(vec![alpha, beta]);
+        self.attributes = Some(HashMap::from([
+            ("alpha".to_string(), vec![alpha.to_bits() as u64]),
+            ("beta".to_string(), vec![beta.to_bits() as u64]),
+        ]));
+    }
+
+    ///
+    fn decorate_conv(&mut self, node_proto: &NodeProto) {
+        let get_attr = |name: &str| -> Vec<i64> {
+            node_proto
+                .attribute
+                .iter()
+                .find(|x| x.name.contains(name))
+                .map_or_else(Vec::new, |x| x.ints.clone())
+        };
+
+        let (strides, pads, _kernel_shape, dilations) = (
+            get_attr("strides"),
+            get_attr("pads"),
+            get_attr("kernel_shape"),
+            get_attr("dilations"),
+        );
     }
 }
 
@@ -78,6 +104,8 @@ pub enum Operator {
     /// This is a non-linear activation function that outputs the input directly if it is positive;
     /// otherwise, it outputs zero.
     Relu,
+    /// Convolution operator
+    Conv,
 }
 
 /// Used to decorate the matmul operator with its attributes.

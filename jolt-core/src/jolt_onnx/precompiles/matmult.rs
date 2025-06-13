@@ -1,5 +1,17 @@
 //! A sum-check precompile for matrix multiplication (where the rhs matrix is implicitly transposed).
-//! Used when proving correctness of ONNX operators that do matrix multiplication.
+//! Used for proving correctness of ONNX operators that do a matrix multiplication.
+//! You can see it in action in [`crate::jolt_onnx::vm::precompiles`].
+//!
+//! # Overview:
+//!   - [`MatMultPrecompile`] - We specify the precompile for matrix multiplication, by defining the lhs and rhs matrices as [`QuantizedTensor`]s as fields.
+//!   - [`MatMultSumcheck`] - Defines the prover and verifier states that will be used to instantiate a [`super::sumcheck_engine::BatchedSumcheck`] instance.
+//!     These sum-check instances are then fed into [`super::sumcheck_engine::BatchedSumcheck::prove`] and [`super::sumcheck_engine::BatchedSumcheck::verify`].
+//!   - [`MatMultProverState`] - Handles/Defines the prover state for the matrix multiplication sum-check precompile (handles witness polynomials for sum-check prover).
+//!   - [`MatMultVerifierState`] - Handles/Defines the verifier state for the matrix multiplication sum-check precompile.
+//!
+//! # Note:
+//!   -  The MatMult protcol deviates slightly from the standard MatMult protocol as we implicitly transpose the rhs matrix B.
+//!   -  See https://people.cs.georgetown.edu/jthaler/blogpost.pdf for the original MatMult protocol.
 
 use crate::{
     field::JoltField,
@@ -18,6 +30,8 @@ use super::sumcheck_engine::BatchableSumcheckInstance;
 
 /// This struct represents a precompile for matrix multiplication (where we implicitly transpose B).
 /// Used to generate the witness for matrix multiplication in Jolt's ONNX execution.
+///
+/// # Note: We assume tensors are appropriately padded here.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct MatMultPrecompile {
     a: QuantizedTensor,
@@ -107,7 +121,7 @@ where
     #[tracing::instrument(skip_all)]
     /// Create a new instance of [`MatMultProverState`].
     /// We compute the evaluations of the polynomials A(rx, k) and B(ry, k) over the boolean hypercube,
-    /// and also compute the input claim C(rx, ry) = A(rx, k) * B(ry, k).
+    /// and also compute the input claim C(rx, ry) = Σₖ A(rx, k) * B(ry, k).
     ///
     /// These A(rx, k) and B(ry, k) evaluations serve as the witness for the matrix multiplication precompile.
     ///
@@ -177,7 +191,7 @@ where
 }
 
 /// Batchable sum-check instance for matrix multiplication precompile.
-/// Used to construct the [`PrecompileProof`] by passing in these instrances into [`BatchedSumcheck`].
+/// Used to construct the [`PrecompileProof`] by passing in these instances into [`BatchedSumcheck`].
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
 pub struct MatMultSumcheck<F>
 where
