@@ -14,8 +14,9 @@ impl InstructionFlags for SW {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
         flags[CircuitFlags::Store as usize] = true;
-        flags[CircuitFlags::Virtual as usize] = self.virtual_sequence_remaining.is_some();
-        flags[CircuitFlags::DoNotUpdatePC as usize] =
+        flags[CircuitFlags::InlineSequenceInstruction as usize] =
+            self.virtual_sequence_remaining.is_some();
+        flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
             self.virtual_sequence_remaining.unwrap_or(0) != 0;
         flags
     }

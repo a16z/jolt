@@ -30,11 +30,11 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::Rs1Value,
         );
 
-        // if LeftOperandIsPC { assert!(LeftInstructionInput == RealInstructionAddress) }
+        // if LeftOperandIsPC { assert!(LeftInstructionInput == UnexpandedPC) }
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsPC),
             JoltR1CSInputs::LeftInstructionInput,
-            JoltR1CSInputs::RealInstructionAddress,
+            JoltR1CSInputs::UnexpandedPC,
         );
 
         // if !(LeftOperandIsRs1Value || LeftOperandIsPC)  {
@@ -200,7 +200,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         );
 
         // if Rd != 0 && Jump {
-        //     assert!(RdWriteValue == RealInstructionAddress + 4)
+        //     assert!(RdWriteValue == UnexpandedPC + 4)
         // }
         cs.constrain_prod(
             JoltR1CSInputs::Rd,
@@ -210,20 +210,20 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         cs.constrain_eq_conditional(
             JoltR1CSInputs::WritePCtoRD,
             JoltR1CSInputs::RdWriteValue,
-            JoltR1CSInputs::RealInstructionAddress + 4,
+            JoltR1CSInputs::UnexpandedPC + 4,
         );
 
         // if Jump {
-        //     assert!(NextPC == LookupOutput)
+        //     assert!(NextUnexpandedPC == LookupOutput)
         // }
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::Jump),
-            JoltR1CSInputs::NextPC,
+            JoltR1CSInputs::NextUnexpandedPC,
             JoltR1CSInputs::LookupOutput,
         );
 
         // if Branch && LookupOutput {
-        //     assert!(NextPC == RealInstructionAddress + Imm)
+        //     assert!(NextUnexpandedPC == UnexpandedPC + Imm)
         // }
         cs.constrain_prod(
             JoltR1CSInputs::OpFlags(CircuitFlags::Branch),
@@ -232,23 +232,32 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         );
         cs.constrain_eq_conditional(
             JoltR1CSInputs::ShouldBranch,
-            JoltR1CSInputs::NextPC,
-            JoltR1CSInputs::RealInstructionAddress + JoltR1CSInputs::Imm,
+            JoltR1CSInputs::NextUnexpandedPC,
+            JoltR1CSInputs::UnexpandedPC + JoltR1CSInputs::Imm,
         );
 
         // if !(ShouldBranch || Jump) {
         //     if DoNotUpdatePC {
-        //         assert!(NextPC == RealInstructionAddress)
+        //         assert!(NextUnexpandedPC == UnexpandedPC)
         //     } else {
-        //         assert!(NextPC == RealInstructionAddress + 4)
+        //         assert!(NextUnexpandedPC == UnexpandedPC + 4)
         //     }
         // }
         // Note that Branch and Jump instructions are mutually exclusive
         cs.constrain_eq_conditional(
             1 - JoltR1CSInputs::ShouldBranch - JoltR1CSInputs::OpFlags(CircuitFlags::Jump),
+            JoltR1CSInputs::NextUnexpandedPC,
+            JoltR1CSInputs::UnexpandedPC + 4
+                - 4 * JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC),
+        );
+
+        // if Inline {
+        //     assert!(NextPC == PC + 1)
+        // }
+        cs.constrain_eq_conditional(
+            JoltR1CSInputs::OpFlags(CircuitFlags::InlineSequenceInstruction),
             JoltR1CSInputs::NextPC,
-            JoltR1CSInputs::RealInstructionAddress + 4
-                - 4 * JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdatePC),
+            JoltR1CSInputs::PC + 1,
         );
     }
 }
