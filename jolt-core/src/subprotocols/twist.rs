@@ -3,7 +3,7 @@ use core::panic;
 use super::sumcheck::SumcheckInstanceProof;
 use crate::{
     field::{JoltField, OptimizedMul},
-    jolt::vm::rv32i_vm::C,
+    jolt::vm::{rv32i_vm::C, Jolt},
     poly::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{
@@ -1128,65 +1128,6 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
     // rv(r')
     let rv_eval = rv.evaluate(r_prime);
 
-    let z: F = transcript.challenge_scalar();
-    let mut eq_r_k = EqTable::<F>::new(K);
-    let mut z_eq_r = MultilinearPolynomial::from(EqPolynomial::evals_parallel(r, Some(z)));
-
-    let span = tracing::span!(tracing::Level::INFO, "compute Inc(r, r')");
-    let _guard = span.enter();
-
-    // TODO: do we need to do this for alternative algorithm?
-    let eq_r_prime = MultilinearPolynomial::from(EqPolynomial::evals(r_prime));
-    // z * Inc(r, r')
-    let inc_eval: F = write_addresses
-        .par_iter()
-        .zip(write_increments.par_iter())
-        .enumerate()
-        .map(|(cycle, (address, increment))| {
-            z_eq_r.get_coeff(*address) * eq_r_prime.get_coeff(cycle) * F::from_i64(*increment)
-        })
-        .sum();
-
-    drop(_guard);
-    drop(span);
-
-    // let mut prev_claim: F = rv_eval + inc_eval;
-    let mut prev_claim: F = rv_eval;
-
-    let mut B = EqTable::<F>::new(T);
-    for (round, r_i) in r_prime.iter().rev().enumerate() {
-        B.update(r_i, &round);
-    }
-
-    // For now just implement D = 1
-    let mut A = EqTable::<F>::new(K);
-
-    // C_k_0 stores C(k, 0) for all k \in {0, 1}^log K. The original paper does not mention this, but it seems to be implied to maintain this table at the beginning of every round, which takes time O(K) throughout all rounds.
-    let mut C_k: Vec<F> = unsafe_allocate_zero_vec(K);
-
-    // Testing correctness incrementally by doing the sum-check in the naive way.
-
-    #[cfg(test)]
-    let mut test_ra = {
-        // Higher bits represent cycle variables.
-        let mut test_ra: Vec<F> = unsafe_allocate_zero_vec(T * K);
-        for (j, addr) in read_addresses.iter().enumerate() {
-            test_ra[j * K + addr] = F::from_u16(1);
-        }
-        let test_ra = MultilinearPolynomial::from(test_ra);
-        test_ra
-    };
-
-    #[cfg(test)]
-    let mut test_wa = {
-        let mut test_wa: Vec<F> = unsafe_allocate_zero_vec(T * K);
-        for (j, addr) in write_addresses.iter().enumerate() {
-            test_wa[j * K + addr] = F::from_u16(1);
-        }
-        let test_wa = MultilinearPolynomial::from(test_wa);
-        test_wa
-    };
-
     #[cfg(test)]
     let mut test_val = {
         let test_val: MultilinearPolynomial<F> = {
@@ -1200,7 +1141,7 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
                     for j in 0..T {
                         val_k[j] = current_val;
                         if write_addresses[j] == k {
-                            current_val = write_values[j];
+                            current_val = write_values[j].clone();
                         }
                     }
                 });
@@ -1264,29 +1205,89 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
     };
 
     #[cfg(test)]
+    let mut test_ra = {
+        // Higher bits represent cycle variables.
+        let mut test_ra: Vec<F> = unsafe_allocate_zero_vec(T * K);
+        for (j, addr) in read_addresses.iter().enumerate() {
+            test_ra[j * K + addr] = F::from_u16(1);
+        }
+        let test_ra = MultilinearPolynomial::from(test_ra);
+        test_ra
+    };
+
+    #[cfg(test)]
+    let mut test_wa = {
+        let mut test_wa: Vec<F> = unsafe_allocate_zero_vec(T * K);
+        for (j, addr) in write_addresses.iter().enumerate() {
+            test_wa[j * K + addr] = F::from_u16(1);
+        }
+        let test_wa = MultilinearPolynomial::from(test_wa);
+        test_wa
+    };
+
+    let mut wv = MultilinearPolynomial::<F>::from(write_values);
+
+    let z: F = transcript.challenge_scalar();
+    let mut eq_r_k = EqTable::<F>::new(K);
+    let mut z_eq_r = MultilinearPolynomial::from(EqPolynomial::evals_parallel(r, Some(z)));
+
+    let span = tracing::span!(tracing::Level::INFO, "compute Inc(r, r')");
+    let _guard = span.enter();
+
+    // TODO: do we need to do this for alternative algorithm?
+    let eq_r_prime = MultilinearPolynomial::from(EqPolynomial::evals(r_prime));
+    // z * Inc(r, r')
+    let inc_eval: F = write_addresses
+        .par_iter()
+        .zip(write_increments.par_iter())
+        .enumerate()
+        .map(|(cycle, (address, increment))| {
+            z_eq_r.get_coeff(*address) * eq_r_prime.get_coeff(cycle) * F::from_i64(*increment)
+        })
+        .sum();
+
+    drop(_guard);
+    drop(span);
+
+    #[cfg(test)]
     {
-        let test_rv_eval = (0..(T * K))
+        let test_sum = (0..T * K)
             .into_par_iter()
             .map(|idx| {
-                let t = idx / K;
-                let ra_eval = test_ra.get_coeff(idx);
+                let t = idx >> K.log_2();
+                let k = idx & !(!0 << K.log_2());
+                let eq_r_prime_eval = eq_r_prime.get_coeff(t);
+                let z_eq_r_eval = z_eq_r.get_coeff(k);
+                let wv_eval = wv.get_coeff(t);
                 let val_eval = test_val.get_coeff(idx);
-                ra_eval * val_eval * B.0[t]
+                let wa_eval = test_wa.get_coeff(idx);
+
+                eq_r_prime_eval * z_eq_r_eval * wa_eval * (wv_eval - val_eval)
             })
             .reduce(|| F::zero(), |running, new| running + new);
-        assert_eq!(test_rv_eval, rv_eval,);
+        assert_eq!(test_sum, inc_eval);
     }
+
+    let mut prev_claim: F = rv_eval + inc_eval;
+
+    let mut B = EqTable::<F>::new(T);
+    for (round, r_i) in r_prime.iter().rev().enumerate() {
+        B.update(r_i, &round);
+    }
+
+    // For now just implement D = 1
+    let mut A = EqTable::<F>::new(K);
+
+    // C_k_0 stores C(k, 0) for all k \in {0, 1}^log K. The original paper does not mention this, but it seems to be implied to maintain this table at the beginning of every round, which takes time O(K) throughout all rounds.
+    let mut C_k: Vec<F> = unsafe_allocate_zero_vec(K);
 
     for round in 0..K.log_2() {
         // Evaluation of the sum-check polynomial at 1.
         #[cfg(test)]
         let mut eval_1 = F::zero();
-        // Evaluation of the sum-check polynomial at 0 and 2.
-        let mut acc = [F::zero(); 2];
-        let mut write_acc = [F::zero(); 2];
+        // Evaluation of the sum-check polynomial at 0, 2, and 3.
+        let mut acc = [F::zero(); DEGREE];
 
-        println!("C_k: {:?}", C_k);
-        println!("eq_r_k: {:?}", eq_r_k.0);
         for j in 0..T {
             let read_arr = read_addresses[j];
             let read_addr_unbounded = read_arr >> round;
@@ -1307,7 +1308,28 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
             } else {
                 F::zero()
             };
-            let ra_eval_2 = ra_eval_1 + ra_eval_1 - ra_eval_0;
+
+            let wa_eval_0 = if write_addr_unbounded % 2 == 0 {
+                eq_r_k.0[write_addr_bounded]
+            } else {
+                F::zero()
+            };
+            let wa_eval_1 = if write_addr_unbounded % 2 != 0 {
+                eq_r_k.0[write_addr_bounded]
+            } else {
+                F::zero()
+            };
+
+            let z_eq_r_eval_0 = if write_addr_unbounded % 2 == 0 {
+                z_eq_r.get_coeff(write_addr_unbounded)
+            } else {
+                z_eq_r.get_coeff(write_addr_unbounded - 1)
+            };
+            let z_eq_r_eval_1 = if write_addr_unbounded % 2 != 0 {
+                z_eq_r.get_coeff(write_addr_unbounded)
+            } else {
+                z_eq_r.get_coeff(write_addr_unbounded + 1)
+            };
 
             let val_eval_0 = if read_addr_unbounded % 2 == 0 {
                 C_k[read_addr_unbounded]
@@ -1319,13 +1341,52 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
             } else {
                 C_k[read_addr_unbounded + 1]
             };
-            let val_eval_2 = val_eval_1 + val_eval_1 - val_eval_0;
 
-            acc[0] += ra_eval_0 * val_eval_0 * B.0[j];
-            acc[1] += ra_eval_2 * val_eval_2 * B.0[j];
+            let write_val_eval_0 = if write_addr_unbounded % 2 == 0 {
+                C_k[write_addr_unbounded]
+            } else {
+                C_k[write_addr_unbounded - 1]
+            };
+            let write_val_eval_1 = if write_addr_unbounded % 2 != 0 {
+                C_k[write_addr_unbounded]
+            } else {
+                C_k[write_addr_unbounded + 1]
+            };
+
             #[cfg(test)]
             {
                 eval_1 += ra_eval_1 * val_eval_1 * B.0[j];
+                eval_1 += z_eq_r_eval_1
+                    * eq_r_prime.get_coeff(j)
+                    * wa_eval_1
+                    * (wv.get_coeff(j) - write_val_eval_1);
+            }
+
+            let ra_evals = compute_evals::<F, DEGREE>(ra_eval_0, ra_eval_1);
+            let wa_evals = compute_evals::<F, DEGREE>(wa_eval_0, wa_eval_1);
+            let z_eq_r_evals = compute_evals::<F, DEGREE>(z_eq_r_eval_0, z_eq_r_eval_1);
+            let val_evals = compute_evals::<F, DEGREE>(val_eval_0, val_eval_1);
+            let write_val_evals = compute_evals::<F, DEGREE>(write_val_eval_0, write_val_eval_1);
+
+            // p.46 equation (33)
+            // Read-checking sumcheck.
+            for i in 0..=DEGREE {
+                let k = if i < 1 { i } else { i - 1 };
+                if i != 1 {
+                    acc[k] += ra_evals[k] * val_evals[k] * B.0[j];
+                }
+            }
+
+            // p.46 equation (34)
+            // Write-checking sumcheck.
+            for i in 0..=DEGREE {
+                let k = if i < 1 { i } else { i - 1 };
+                if i != 1 {
+                    acc[k] += z_eq_r_evals[k]
+                        * eq_r_prime.get_coeff(j)
+                        * wa_evals[k]
+                        * (wv.get_coeff(j) - write_val_evals[k]);
+                }
             }
 
             C_k[write_addr_unbounded] +=
@@ -1345,17 +1406,45 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
                     let t = idx >> (K.log_2() - round - 1);
                     let B_val = B.0[t];
                     let ra_evals = test_ra
-                        .sumcheck_evals(idx, 2, BindingOrder::LowToHigh)
+                        .sumcheck_evals(idx, DEGREE, BindingOrder::LowToHigh)
                         .into_iter()
-                        .map(|val| val * B_val)
+                        .map(|val| val)
                         .collect::<Vec<F>>();
-                    let val_evals = test_val.sumcheck_evals(idx, 2, BindingOrder::LowToHigh);
+                    let val_evals = test_val.sumcheck_evals(idx, DEGREE, BindingOrder::LowToHigh);
 
-                    [ra_evals[0] * val_evals[0], ra_evals[1] * val_evals[1]]
+                    let wa_evals = test_wa.sumcheck_evals(idx, DEGREE, BindingOrder::LowToHigh);
+
+                    let k_idx = idx & !(!0 << (K.log_2() - round - 1));
+                    let z_eq_r_evals =
+                        z_eq_r.sumcheck_evals(k_idx, DEGREE, BindingOrder::LowToHigh);
+
+                    [
+                        B_val * ra_evals[0] * val_evals[0]
+                            + B_val
+                                * z_eq_r_evals[0]
+                                * wa_evals[0]
+                                * (wv.get_coeff(t) - val_evals[0]),
+                        B_val * ra_evals[1] * val_evals[1]
+                            + B_val
+                                * z_eq_r_evals[1]
+                                * wa_evals[1]
+                                * (wv.get_coeff(t) - val_evals[1]),
+                        B_val * ra_evals[2] * val_evals[2]
+                            + B_val
+                                * z_eq_r_evals[2]
+                                * wa_evals[2]
+                                * (wv.get_coeff(t) - val_evals[2]),
+                    ]
                 })
                 .reduce(
-                    || [F::zero(); 2],
-                    |running, new| [running[0] + new[0], running[1] + new[1]],
+                    || [F::zero(); DEGREE],
+                    |running, new| {
+                        [
+                            running[0] + new[0],
+                            running[1] + new[1],
+                            running[2] + new[2],
+                        ]
+                    },
                 );
 
             // for k in 0..K / round.pow2() {
@@ -1372,19 +1461,17 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
             //             .collect::<Vec<F>>(),
             //     );
             // }
-            let test_univariate_poly =
-                UniPoly::from_evals(&[test_evals[0], prev_claim - test_evals[0], test_evals[1]]);
-            assert_eq!(
-                test_univariate_poly.eval_at_one() + test_univariate_poly.eval_at_zero(),
-                prev_claim
-            );
-            let my_poly = UniPoly::from_evals(&[acc[0], prev_claim - acc[0], acc[1]]);
-            assert_eq!(my_poly.eval_at_one() + my_poly.eval_at_zero(), prev_claim);
+            let test_univariate_poly = UniPoly::from_evals(&[
+                test_evals[0],
+                prev_claim - test_evals[0],
+                test_evals[1],
+                test_evals[2],
+            ]);
             assert_eq!(test_evals, acc);
             test_univariate_poly
         };
 
-        let univariate_poly = UniPoly::from_evals(&[acc[0], prev_claim - acc[0], acc[1]]);
+        let univariate_poly = UniPoly::from_evals(&[acc[0], prev_claim - acc[0], acc[1], acc[2]]);
         let compressed_poly: CompressedUniPoly<F> = univariate_poly.compress();
         compressed_poly.append_to_transcript(transcript);
         compressed_polys.push(compressed_poly);
@@ -1392,39 +1479,42 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
         let r_j = transcript.challenge_scalar::<F>();
         prev_claim = univariate_poly.evaluate(&r_j);
 
+        // Update tables and bind variables.
+        // TODO: need to change to tables A to support D > 1.
+        eq_r_k.update(&r_j, &round);
+
+        // TODO: not sure if should do this to zero out C_k..
+        C_k = unsafe_allocate_zero_vec(C_k.len() / 2);
+
+        // For the write-`checking sumcheck.
+        z_eq_r.bind_parallel(r_j, BindingOrder::LowToHigh);
+
         #[cfg(test)]
         {
-            assert_eq!(
-                test_univariate_poly.eval_at_zero(),
-                univariate_poly.eval_at_zero()
-            );
-
             test_ra.bind_parallel(r_j, BindingOrder::LowToHigh);
             test_wa.bind_parallel(r_j, BindingOrder::LowToHigh);
             test_val.bind_parallel(r_j, BindingOrder::LowToHigh);
 
-            let size = T * K / (round).pow2();
-            let test_prev_claim = (0..size / 2)
+            let size = T * K / (round + 1).pow2();
+            let test_prev_claim = (0..size)
                 .into_par_iter()
                 .map(|idx| {
                     let t = idx >> (K.log_2() - (round + 1));
+                    let k = idx & !(!0 << (K.log_2() - (round + 1)));
+
                     let ra_eval = test_ra.get_coeff(idx);
                     let wa_eval = test_wa.get_coeff(idx);
                     let val_eval = test_val.get_bound_coeff(idx);
+                    let z_eq_r_eval = z_eq_r.get_bound_coeff(k);
+                    let wv_eval = wv.get_coeff(t);
                     ra_eval * val_eval * B.0[t]
+                        + z_eq_r_eval * wa_eval * (wv_eval - val_eval) * B.0[t]
                 })
                 .reduce(|| F::zero(), |running, new| running + new);
-            assert_eq!(test_prev_claim, test_univariate_poly.evaluate(&r_j));
+
+            assert_eq!(test_univariate_poly.evaluate(&r_j), prev_claim);
             assert_eq!(test_prev_claim, prev_claim);
         }
-
-        // Update tables and bind variables.
-        // TODO: need to change to tables A to support D > 1.
-        eq_r_k.update(&r_j, &round);
-        // TODO: not sure if should do this to zero out C_k..
-        C_k = unsafe_allocate_zero_vec(C_k.len() / 2);
-        // For the write-checking sumcheck.
-        z_eq_r.bind_parallel(r_j, BindingOrder::LowToHigh);
     }
     panic!("success");
 
@@ -1714,6 +1804,19 @@ pub fn prove_val_evaluation<F: JoltField, ProofTranscript: Transcript>(
     (proof, r_cycle_prime)
 }
 
+fn compute_evals<F: JoltField, const DEGREE: usize>(eval0: F, eval1: F) -> [F; DEGREE] {
+    assert!(DEGREE > 2);
+    let mut ret = [F::zero(); DEGREE];
+    ret[0] = eval0;
+    let m = eval1 - eval0;
+    let mut last = eval1;
+    for i in 1..DEGREE {
+        last += m;
+        ret[i] = last;
+    }
+    ret
+}
+
 impl<F: JoltField> EqTable<F> {
     fn new(size: usize) -> Self {
         assert!(size > 0);
@@ -1986,6 +2089,17 @@ mod tests {
         let _r_prime: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
 
         proof.verify(r, r_prime, &mut verifier_transcript);
+    }
+
+    #[test]
+    fn compute_evals_test() {
+        let eval_0 = Fr::from_u64(0);
+        let eval_1 = Fr::from_u64(1);
+        let evals = compute_evals::<Fr, 4>(eval_0, eval_1);
+        assert_eq!(
+            evals,
+            [eval_0, Fr::from_u16(2), Fr::from_u16(3), Fr::from_u16(4)]
+        );
     }
 
     // fn prove_read_write_checking_naive<F: JoltField, ProofTranscript: Transcript>(
