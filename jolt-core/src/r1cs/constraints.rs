@@ -248,7 +248,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             1 - JoltR1CSInputs::ShouldBranch - JoltR1CSInputs::OpFlags(CircuitFlags::Jump),
             JoltR1CSInputs::NextUnexpandedPC,
             JoltR1CSInputs::UnexpandedPC + 4
-                - 4 * JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdatePC),
+                - 4 * JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC),
         );
     }
 }

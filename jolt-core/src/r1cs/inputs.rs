@@ -88,9 +88,9 @@ pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 36] = [
     JoltR1CSInputs::OpFlags(CircuitFlags::Jump),
     JoltR1CSInputs::OpFlags(CircuitFlags::Branch),
     JoltR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD),
-    JoltR1CSInputs::OpFlags(CircuitFlags::Virtual),
+    JoltR1CSInputs::OpFlags(CircuitFlags::Inline),
     JoltR1CSInputs::OpFlags(CircuitFlags::Assert),
-    JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdatePC),
+    JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC),
     JoltR1CSInputs::OpFlags(CircuitFlags::Advice),
 ];
 
@@ -294,7 +294,7 @@ impl JoltR1CSInputs {
                             let is_jump =
                                 cycle.instruction().circuit_flags()[CircuitFlags::Jump as usize];
                             let do_not_update_pc = cycle.instruction().circuit_flags()
-                                [CircuitFlags::DoNotUpdatePC as usize];
+                                [CircuitFlags::DoNotUpdateUnexpandedPC as usize];
                             if is_jump {
                                 LookupQuery::<32>::to_lookup_output(cycle)
                             } else if do_not_update_pc {

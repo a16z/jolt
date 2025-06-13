@@ -17,8 +17,8 @@ impl InstructionFlags for VirtualMove {
         flags[CircuitFlags::RightOperandIsImm as usize] = true;
         flags[CircuitFlags::AddOperands as usize] = true;
         flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
-        flags[CircuitFlags::Virtual as usize] = self.virtual_sequence_remaining.is_some();
-        flags[CircuitFlags::DoNotUpdatePC as usize] =
+        flags[CircuitFlags::Inline as usize] = self.virtual_sequence_remaining.is_some();
+        flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
             self.virtual_sequence_remaining.unwrap_or(0) != 0;
         flags
     }

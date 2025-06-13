@@ -247,7 +247,7 @@ where
         // Get polynomial indices
         let unexpanded_pc_index = JoltR1CSInputs::UnexpandedPC.to_index();
         let pc_index = JoltR1CSInputs::PC.to_index();
-        let inline_flag_index = JoltR1CSInputs::OpFlags(CircuitFlags::Virtual).to_index(); // Virtual flag indicates inline sequences
+        let inline_flag_index = JoltR1CSInputs::OpFlags(CircuitFlags::Inline).to_index();
 
         // Get PC(r_cycle) evaluation
         let pc_r_cycle = claimed_witness_evals[pc_index];
