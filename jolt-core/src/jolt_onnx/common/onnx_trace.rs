@@ -76,7 +76,11 @@ impl ONNXInstruction {
         ]));
     }
 
-    ///
+    /// Decorate the conv op with the following attributes:
+    /// - strides
+    /// - pads
+    /// - kernel_shape
+    /// - dilations
     fn decorate_conv(&mut self, node_proto: &NodeProto) {
         let get_attr = |name: &str| -> Vec<i64> {
             node_proto
@@ -86,12 +90,13 @@ impl ONNXInstruction {
                 .map_or_else(Vec::new, |x| x.ints.clone())
         };
 
-        let (strides, pads, _kernel_shape, dilations) = (
+        let (_strides, _pads, _kernel_shape, _dilations) = (
             get_attr("strides"),
             get_attr("pads"),
             get_attr("kernel_shape"),
             get_attr("dilations"),
         );
+        todo!()
     }
 }
 

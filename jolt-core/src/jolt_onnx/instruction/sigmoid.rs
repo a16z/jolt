@@ -75,8 +75,7 @@ impl JoltInstruction for SigmoidInstruction {
         let x_dequant = (self.0 as i64 - INPUT_ZERO_POINT) as f32 * INPUT_SCALE;
         let sigmoid = 1.0 / (1.0 + (-x_dequant).exp());
         let x_requant = (sigmoid / OUTPUT_SCALE + OUTPUT_ZERO_POINT as f32).round();
-        let res = x_requant.clamp(0.0, 255.0) as u64;
-        res
+        x_requant.clamp(0.0, 255.0) as u64
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
