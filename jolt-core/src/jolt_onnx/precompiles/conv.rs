@@ -256,7 +256,7 @@ where
     ///
     /// where:
     ///
-    ///     X_{mn}(rᵢrⱼ) = ∑_{p,q}^{H_out,W_out} eq(p, i) · eq(q, j) · x_{i+m, j+n}
+    ///     X_{mn}(rᵢrⱼ) = ∑_{p,q}^{H_out,W_out} eq(p, ri) · eq(q, rj) · x_{i+m, j+n}
     fn X_bounded(X: &Tensor, ri: &[F], rj: &[F], dims: ConvPrecompileDims) -> DensePolynomial<F> {
         // Used to index into the input/image tensor
         let w_in = X.shape[3];
