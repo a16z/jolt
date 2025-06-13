@@ -49,13 +49,14 @@ pub enum JoltR1CSInputs {
     WritePCtoRD,
     ShouldBranch,
     NextUnexpandedPC,
+    NextPC,       // Next PC for inline sequences
     LookupOutput, // Virtual (instruction rv)
     OpFlags(CircuitFlags),
 }
 
 /// This const serves to define a canonical ordering over inputs (and thus indices
 /// for each input). This is needed for sumcheck.
-pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 36] = [
+pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 37] = [
     JoltR1CSInputs::PC,
     JoltR1CSInputs::UnexpandedPC,
     JoltR1CSInputs::Rd,
@@ -75,6 +76,7 @@ pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 36] = [
     JoltR1CSInputs::WritePCtoRD,
     JoltR1CSInputs::ShouldBranch,
     JoltR1CSInputs::NextUnexpandedPC,
+    JoltR1CSInputs::NextPC,
     JoltR1CSInputs::LookupOutput,
     JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsRs1Value),
     JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsRs2Value),
@@ -126,26 +128,19 @@ impl JoltR1CSInputs {
     {
         match self {
             JoltR1CSInputs::PC => {
-                let coeffs: Vec<u64> = trace
-                    .par_iter()
-                    .enumerate()
-                    .map(|(i, cycle)| {
-                        let instr = cycle.instruction().normalize();
-                        if matches!(cycle, tracer::instruction::RV32IMCycle::NoOp(_))
-                            || i == trace.len() - 1
-                        {
-                            // Padding are not in a virtual cycle regardless, so constraint
-                            // would pass
-                            // And this constraint would be removed later regardless.
-                            return 0;
-                        }
-                        *preprocessing
-                            .shared
-                            .bytecode
-                            .virtual_address_map
-                            .get(&(instr.address, instr.virtual_sequence_remaining.unwrap_or(0)))
-                            .unwrap() as u64
-                    })
+                let coeffs: Vec<u64> = preprocessing
+                    .shared
+                    .bytecode
+                    .map_trace_to_pc(trace)
+                    .collect();
+                coeffs.into()
+            }
+            JoltR1CSInputs::NextPC => {
+                let coeffs: Vec<u64> = preprocessing
+                    .shared
+                    .bytecode
+                    .map_trace_to_pc(&trace[1..])
+                    .chain(rayon::iter::once(0))
                     .collect();
                 coeffs.into()
             }

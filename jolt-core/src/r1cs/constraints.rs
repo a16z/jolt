@@ -250,5 +250,14 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::UnexpandedPC + 4
                 - 4 * JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC),
         );
+
+        // if Inline {
+        //     assert!(NextPC == PC + 1)
+        // }
+        cs.constrain_eq_conditional(
+            JoltR1CSInputs::OpFlags(CircuitFlags::Inline),
+            JoltR1CSInputs::NextPC,
+            JoltR1CSInputs::PC + 1,
+        );
     }
 }
