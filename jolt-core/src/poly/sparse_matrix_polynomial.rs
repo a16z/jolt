@@ -54,7 +54,7 @@ fn get_T() -> usize {
     GLOBAL_T.get().cloned().expect("GLOBAL_T is uninitialized")
 }
 
-fn get_K() -> usize {
+pub fn get_K() -> usize {
     GLOBAL_K.get().cloned().expect("GLOBAL_K is uninitialized")
 }
 
@@ -249,6 +249,12 @@ pub struct OneHotPolynomial {
 }
 
 impl OneHotPolynomial {
+    pub fn num_rows(&self) -> usize {
+        let T = self.nonzero_indices.len() as u128;
+        let row_length = get_num_columns() as u128;
+        (T * self.K as u128 / row_length) as usize
+    }
+
     // pub fn from_increments(increments: Vec<(usize, i64)>) -> Self {
     //     let T = get_T();
     //     let global_K = get_K();

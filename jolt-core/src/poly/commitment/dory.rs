@@ -4,7 +4,7 @@ use crate::{
     msm::{Icicle, VariableBaseMSM},
     poly::{
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
-        sparse_matrix_polynomial::get_num_columns,
+        sparse_matrix_polynomial::{get_K, get_num_columns},
     },
     utils::{
         errors::ProofVerifyError,
@@ -790,7 +790,31 @@ where
                 })
                 .collect(),
             MultilinearPolynomial::Sparse(_) => todo!(),
-            MultilinearPolynomial::OneHot(_) => todo!(),
+            MultilinearPolynomial::OneHot(poly) => {
+                let num_rows = poly.num_rows();
+                let K = get_K();
+                println!("# rows = {num_rows}");
+                (0..num_rows)
+                    .into_par_iter()
+                    .map(|row_index| {
+                        let row_commitment = poly
+                            .nonzero_indices
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(t, k)| {
+                                let global_index = *k as u128 * K as u128 + t as u128;
+                                if global_index / row_len as u128 == row_index as u128 {
+                                    let col_index = global_index % row_len as u128;
+                                    Some(bases[col_index as usize])
+                                } else {
+                                    None
+                                }
+                            })
+                            .fold(G::zero(), |sum, base| sum + base);
+                        JoltGroupWrapper(row_commitment)
+                    })
+                    .collect()
+            }
         }
     }
 
