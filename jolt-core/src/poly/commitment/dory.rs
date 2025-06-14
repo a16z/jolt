@@ -2,12 +2,19 @@ use super::commitment_scheme::CommitmentScheme;
 use crate::{
     field::JoltField,
     msm::{Icicle, VariableBaseMSM},
-    poly::multilinear_polynomial::MultilinearPolynomial,
-    utils::{errors::ProofVerifyError, transcript::Transcript},
+    poly::{
+        multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
+        sparse_matrix_polynomial::{get_max_num_vars, get_num_columns},
+    },
+    utils::{
+        errors::ProofVerifyError,
+        math::Math,
+        transcript::{AppendToTranscript, Transcript},
+    },
 };
 use ark_bn254::{Bn254, Fr, G1Projective, G2Projective};
 use ark_ec::{
-    pairing::{MillerLoopOutput, Pairing as ArkPairing},
+    pairing::{MillerLoopOutput, Pairing as ArkPairing, PairingOutput},
     CurveGroup,
 };
 use ark_ff::{Field, One, PrimeField, UniformRand};
@@ -21,7 +28,7 @@ use dory::{
         Field as DoryField, Group as DoryGroup, MultiScalarMul as DoryMultiScalarMul,
         Pairing as DoryPairing,
     },
-    commit, evaluate, setup as dory_setup,
+    commit, evaluate, setup as dory_setup, setup_with_srs_file,
     transcript::Transcript as DoryTranscript,
     verify, DoryProof, DoryProofBuilder, Polynomial as DoryPolynomial, ProverSetup, VerifierSetup,
 };
@@ -109,6 +116,18 @@ where
 #[derive(Debug, Clone, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltGTWrapper<P: ArkPairing>(pub P::TargetField);
 
+impl<P: ArkPairing> From<PairingOutput<P>> for JoltGTWrapper<P> {
+    fn from(value: PairingOutput<P>) -> Self {
+        Self(value.0)
+    }
+}
+
+impl<P: ArkPairing> Into<PairingOutput<P>> for JoltGTWrapper<P> {
+    fn into(self) -> PairingOutput<P> {
+        PairingOutput(self.0)
+    }
+}
+
 impl<P> DoryGroup for JoltGTWrapper<P>
 where
     P: ArkPairing,
@@ -163,11 +182,16 @@ where
     G: CurveGroup + VariableBaseMSM,
     G::ScalarField: JoltField,
 {
+    #[tracing::instrument(skip_all, name = "G1/G2 MSM")]
     fn msm(
         bases: &[JoltGroupWrapper<G>],
         scalars: &[JoltFieldWrapper<G::ScalarField>],
     ) -> JoltGroupWrapper<G> {
-        let affines: Vec<_> = bases.iter().map(|w| w.0.into_affine()).collect();
+        // # Safety
+        // JoltGroupWrapper always has same memory layout as underlying G here.
+        let raw_bases: &[G] =
+            unsafe { std::slice::from_raw_parts(bases.as_ptr() as *const G, bases.len()) };
+        let bases_affine = G::normalize_batch(raw_bases);
 
         // # Safety
         // JoltFieldWrapper always has same memory layout as underlying G::ScalarField here.
@@ -175,7 +199,7 @@ where
             std::slice::from_raw_parts(scalars.as_ptr() as *const G::ScalarField, scalars.len())
         };
 
-        let result = G::msm_field_elements(&affines, None, raw_scalars, None, false)
+        let result = G::msm_field_elements(&bases_affine, None, raw_scalars, None, false)
             .expect("msm_field_elements should not fail");
 
         JoltGroupWrapper(result)
@@ -188,6 +212,7 @@ where
     P: ArkPairing,
     P::ScalarField: JoltField,
 {
+    #[tracing::instrument(skip_all, name = "GT MSM")]
     fn msm(
         bases: &[JoltGTWrapper<P>],
         scalars: &[JoltFieldWrapper<P::ScalarField>],
@@ -224,12 +249,15 @@ where
     type G2 = JoltGroupWrapper<E::G2>;
     type GT = JoltGTWrapper<E>;
 
+    #[tracing::instrument(skip_all)]
     fn pair(p: &Self::G1, q: &Self::G2) -> Self::GT {
         let gt = E::pairing(p.0, q.0).0;
         JoltGTWrapper(gt)
     }
 
+    #[tracing::instrument(skip_all)]
     fn multi_pair(ps: &[Self::G1], qs: &[Self::G2]) -> Self::GT {
+        println!("Multipairing length: {}", ps.len());
         assert_eq!(
             ps.len(),
             qs.len(),
@@ -240,22 +268,23 @@ where
             return Self::GT::identity();
         }
 
-        let g1_inner: Vec<E::G1> = ps.iter().map(|p| p.0).collect();
-        let g2_inner: Vec<E::G2> = qs.iter().map(|q| q.0).collect();
+        // # Safety
+        // JoltGroupWrapper always has same memory layout as underlying G here.
+        let g1_inner: &[E::G1] =
+            unsafe { std::slice::from_raw_parts(ps.as_ptr() as *const E::G1, ps.len()) };
+        let g2_inner: &[E::G2] =
+            unsafe { std::slice::from_raw_parts(qs.as_ptr() as *const E::G2, qs.len()) };
 
         let aff_left = E::G1::normalize_batch(&g1_inner);
         let aff_right = E::G2::normalize_batch(&g2_inner);
 
-        let left: Vec<_> = aff_left.par_iter().map(E::G1Prepared::from).collect();
-        let right: Vec<_> = aff_right.par_iter().map(E::G2Prepared::from).collect();
-
         let num_chunks = rayon::current_num_threads();
-        let chunk_size = (left.len() / num_chunks.max(1)).max(1);
+        let chunk_size = (aff_left.len() / num_chunks.max(1)).max(1);
 
-        let ml_result = left
+        let ml_result = aff_left
             .par_chunks(chunk_size)
-            .zip(right.par_chunks(chunk_size))
-            .map(|(aa, bb)| E::multi_miller_loop(aa.iter().cloned(), bb.iter().cloned()).0)
+            .zip(aff_right.par_chunks(chunk_size))
+            .map(|(aa, bb)| E::multi_miller_loop(aa, bb).0)
             .product();
 
         let pairing_result = E::final_exponentiation(MillerLoopOutput(ml_result))
@@ -285,6 +314,125 @@ where
 
     fn len(&self) -> usize {
         self.len()
+    }
+
+    fn evaluate(&self, point: &[JoltFieldWrapper<F>]) -> JoltFieldWrapper<F> {
+        let point: Vec<_> = point.iter().rev().map(|x| x.0).collect();
+        JoltFieldWrapper(PolynomialEvaluation::evaluate(self, &point))
+    }
+
+    #[tracing::instrument(skip_all)]
+    fn commit_rows<M1: DoryMultiScalarMul<JoltGroupWrapper<G>>>(
+        &self,
+        g1_generators: &[JoltGroupWrapper<G>],
+        row_len: usize,
+    ) -> Vec<JoltGroupWrapper<G>> {
+        let bases: Vec<_> = g1_generators
+            .par_iter()
+            .map(|g| g.0.into_affine())
+            .collect();
+        debug_assert_eq!(get_num_columns(), row_len);
+
+        match self {
+            MultilinearPolynomial::LargeScalars(poly) => poly
+                .Z
+                .par_chunks(row_len)
+                .map(|row| {
+                    JoltGroupWrapper(
+                        VariableBaseMSM::msm_field_elements(&bases, None, row, None, false)
+                            .unwrap(),
+                    )
+                })
+                .collect(),
+            MultilinearPolynomial::U8Scalars(poly) => poly
+                .coeffs
+                .par_chunks(row_len)
+                .map(|row| JoltGroupWrapper(VariableBaseMSM::msm_u8(&bases, row, None).unwrap()))
+                .collect(),
+            MultilinearPolynomial::U16Scalars(poly) => poly
+                .coeffs
+                .par_chunks(row_len)
+                .map(|row| {
+                    JoltGroupWrapper(
+                        VariableBaseMSM::msm_u16(&bases, None, row, None, false).unwrap(),
+                    )
+                })
+                .collect(),
+            MultilinearPolynomial::U32Scalars(poly) => poly
+                .coeffs
+                .par_chunks(row_len)
+                .map(|row| {
+                    JoltGroupWrapper(
+                        VariableBaseMSM::msm_u32(&bases, None, row, None, false).unwrap(),
+                    )
+                })
+                .collect(),
+            MultilinearPolynomial::U64Scalars(poly) => poly
+                .coeffs
+                .par_chunks(row_len)
+                .map(|row| {
+                    JoltGroupWrapper(
+                        VariableBaseMSM::msm_u64(&bases, None, row, None, false).unwrap(),
+                    )
+                })
+                .collect(),
+            MultilinearPolynomial::I64Scalars(poly) => poly
+                .coeffs
+                .par_chunks(row_len)
+                .map(|row| {
+                    // TODO(moodlezoup): This can be optimized
+                    let scalars: Vec<_> = row.iter().map(|x| F::from_i64(*x)).collect();
+                    JoltGroupWrapper(
+                        VariableBaseMSM::msm_field_elements(&bases, None, &scalars, None, false)
+                            .unwrap(),
+                    )
+                })
+                .collect(),
+            MultilinearPolynomial::Sparse(poly) => todo!(),
+            MultilinearPolynomial::OneHot(poly) => todo!(),
+        }
+    }
+
+    #[tracing::instrument(skip_all)]
+    fn vector_matrix_product(
+        &self,
+        left_vec: &[JoltFieldWrapper<F>],
+        sigma: usize,
+        nu: usize,
+    ) -> Vec<JoltFieldWrapper<F>> {
+        // # Safety
+        // JoltFieldWrapper always has same memory layout as underlying F here.
+        let left_vec: &[F] =
+            unsafe { std::slice::from_raw_parts(left_vec.as_ptr() as *const F, left_vec.len()) };
+
+        let num_columns = get_num_columns();
+        println!("sigma: {sigma}");
+        println!("nu: {nu}");
+        println!("num_columns: {num_columns}");
+
+        match self {
+            MultilinearPolynomial::LargeScalars(poly) => (0..num_columns)
+                .into_par_iter()
+                .map(|col_index| {
+                    JoltFieldWrapper(
+                        poly.Z
+                            .iter()
+                            .skip(col_index)
+                            .step_by(num_columns)
+                            .zip(left_vec.iter())
+                            .map(|(&a, &b)| -> F { a * b })
+                            .sum::<F>(),
+                    )
+                })
+                .collect(),
+            MultilinearPolynomial::U8Scalars(poly) => todo!(),
+            MultilinearPolynomial::U16Scalars(poly) => todo!(),
+            MultilinearPolynomial::U32Scalars(poly) => todo!(),
+            MultilinearPolynomial::U64Scalars(poly) => todo!(),
+            MultilinearPolynomial::I64Scalars(poly) => todo!(),
+            MultilinearPolynomial::Sparse(poly) => todo!(),
+            MultilinearPolynomial::OneHot(poly) => todo!(),
+        }
     }
 }
 
@@ -395,8 +543,12 @@ where
     type BatchedProof = DoryBatchedProof;
 
     fn setup(max_num_vars: usize) -> Self::Setup {
-        let (prover_setup, verifier_setup) =
-            dory_setup::<JoltBn254, _>(ark_std::rand::thread_rng(), max_num_vars);
+        let srs_file_name = format!("dory_srs_{max_num_vars}_variables.srs");
+        let (prover_setup, verifier_setup) = setup_with_srs_file::<JoltBn254, _>(
+            &mut ark_std::rand::thread_rng(),
+            max_num_vars,
+            Some(&srs_file_name), // Will load if exists, generate and save if not
+        );
 
         DorySetup {
             prover_setup,
@@ -405,9 +557,9 @@ where
         }
     }
 
+    #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::commit")]
     fn commit(poly: &MultilinearPolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
-        let num_vars = poly.get_num_vars();
-        let sigma = (num_vars + 1) / 2;
+        let sigma = get_num_columns().log_2();
 
         let commitment_val = commit::<JoltBn254, JoltMSM, _>(poly, 0, sigma, &setup.prover_setup);
         DoryCommitment(commitment_val)
@@ -420,17 +572,22 @@ where
         todo!("Batch commit not yet implemented for Dory")
     }
 
+    // Note that Dory implementation sometimes uses the term 'evaluation'/'evaluate' -- this is same as 'opening'/'open'
+    #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::prove")]
     fn prove(
         setup: &Self::Setup,
         poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[Self::Field],
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
-        let point_dory: Vec<JoltFieldWrapper<Self::Field>> =
-            opening_point.iter().map(|&p| JoltFieldWrapper(p)).collect();
+        // Dory uses the opposite endian-ness as Jolt
+        let point_dory: Vec<JoltFieldWrapper<Self::Field>> = opening_point
+            .iter()
+            .rev()
+            .map(|&p| JoltFieldWrapper(p))
+            .collect();
 
-        let num_vars = poly.get_num_vars();
-        let sigma = (num_vars + 1) / 2;
+        let sigma = get_num_columns().log_2();
         let dory_transcript = JoltToDoryTranscriptRef::<Self::Field, _>::new(transcript);
 
         // dory evaluate returns the opening but in this case we don't use it, we pass directly the opening to verify()
@@ -464,8 +621,12 @@ where
         opening: &Self::Field,
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
-        let opening_point_dory: Vec<JoltFieldWrapper<Self::Field>> =
-            opening_point.iter().map(|&p| JoltFieldWrapper(p)).collect();
+        // Dory uses the opposite endian-ness as Jolt
+        let opening_point_dory: Vec<JoltFieldWrapper<Self::Field>> = opening_point
+            .iter()
+            .rev()
+            .map(|&p| JoltFieldWrapper(p))
+            .collect();
 
         let claimed_opening = JoltFieldWrapper(*opening);
         let dory_transcript = JoltToDoryTranscriptRef::<Self::Field, _>::new(transcript);
@@ -494,12 +655,27 @@ where
         }
     }
 
+    fn combine_commitments(
+        commitments: &[&Self::Commitment],
+        coeffs: &[Self::Field],
+    ) -> Self::Commitment {
+        let combined_commitment: PairingOutput<_> = commitments
+            .iter()
+            .zip(coeffs.iter())
+            .map(|(commitment, coeff)| {
+                let g: PairingOutput<_> = commitment.0.clone().into();
+                g * coeff
+            })
+            .sum();
+        DoryCommitment(JoltGTWrapper::from(combined_commitment))
+    }
+
     fn protocol_name() -> &'static [u8] {
         b"dory_commitment_scheme"
     }
 }
 
-impl crate::utils::transcript::AppendToTranscript for DoryCommitment {
+impl AppendToTranscript for DoryCommitment {
     fn append_to_transcript<PT: Transcript>(&self, transcript: &mut PT) {
         transcript.append_serializable(&self.0);
     }
@@ -537,6 +713,8 @@ mod tests {
             MultilinearPolynomial::U32Scalars(compact) => compact.coeffs.len(),
             MultilinearPolynomial::U64Scalars(compact) => compact.coeffs.len(),
             MultilinearPolynomial::I64Scalars(compact) => compact.coeffs.len(),
+            MultilinearPolynomial::Sparse(_) => todo!(),
+            MultilinearPolynomial::OneHot(_) => todo!(),
         };
 
         println!(
@@ -553,14 +731,12 @@ mod tests {
 
         println!(" Commit time: {:?}", commit_time);
 
-        // Compute the evaluation using the DoryPolynomial trait's evaluate method
-        let opening_point_dory: Vec<JoltFieldWrapper<Fr>> =
-            opening_point.iter().map(|&p| JoltFieldWrapper(p)).collect();
-        let evaluation = <MultilinearPolynomial<Fr> as DoryPolynomial<
-            JoltFieldWrapper<Fr>,
-            JoltGroupWrapper<G1Projective>,
-        >>::evaluate(&poly, &opening_point_dory)
-        .0;
+        let mut reversed_opening_point = opening_point.clone();
+        reversed_opening_point.reverse();
+        let evaluation = <MultilinearPolynomial<Fr> as PolynomialEvaluation<Fr>>::evaluate(
+            &poly,
+            &reversed_opening_point,
+        );
 
         let mut prove_transcript = KeccakTranscript::new(b"dory_test");
         let prove_start = Instant::now();

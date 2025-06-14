@@ -25,6 +25,7 @@ use tracer::instruction::{NormalizedInstruction, RV32IMCycle, RV32IMInstruction}
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BytecodePreprocessing {
+    pub code_size: usize,
     bytecode: Vec<RV32IMInstruction>,
     /// Maps the memory address of each instruction in the bytecode to its "virtual" address.
     /// See Section 6.1 of the Jolt paper, "Reflecting the program counter". The virtual address
@@ -61,6 +62,7 @@ impl BytecodePreprocessing {
         bytecode.resize(code_size, RV32IMInstruction::NoOp);
 
         Self {
+            code_size,
             bytecode,
             virtual_address_map,
         }
