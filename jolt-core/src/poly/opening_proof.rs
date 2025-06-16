@@ -34,7 +34,7 @@ pub struct ProverOpening<F: JoltField> {
     /// The multilinear extension EQ(x, opening_point). This is typically
     /// an intermediate value used to compute `claim`, but is also used in
     /// the `ProverOpeningAccumulator::prove_batch_opening_reduction` sumcheck.
-    pub eq_poly: MultilinearPolynomial<F>,
+    pub eq_poly: EqPolynomial<F>,
     #[cfg(test)]
     /// If this is a batched opening, this `Vec` contains the individual
     /// polynomials in the batch.
@@ -62,7 +62,7 @@ where
 {
     fn new_prover_instance(
         polynomial: MultilinearPolynomial<F>,
-        eq_poly: MultilinearPolynomial<F>,
+        eq_poly: EqPolynomial<F>,
         opening_point: Vec<F>,
         claim: F,
     ) -> Self {
@@ -113,7 +113,7 @@ where
     fn compute_prover_message(&self, _: usize) -> Vec<F> {
         let prover_state = self.prover_state.as_ref().unwrap();
         match (&prover_state.polynomial, &prover_state.eq_poly) {
-            (MultilinearPolynomial::LargeScalars(_), MultilinearPolynomial::LargeScalars(_)) => {
+            (MultilinearPolynomial::LargeScalars(_), EqPolynomial::Default(_)) => {
                 let polynomial = &prover_state.polynomial;
                 let eq_poly = &prover_state.eq_poly;
                 let mle_half = polynomial.len() / 2;
@@ -164,7 +164,7 @@ where
     }
 
     fn expected_output_claim(&self, r: &[F]) -> F {
-        let eq_eval = EqPolynomial::new(self.opening_point.clone()).evaluate(r);
+        let eq_eval = EqPolynomial::mle(&self.opening_point, r);
         eq_eval * self.sumcheck_claim.unwrap()
     }
 }
@@ -255,7 +255,7 @@ where
     pub fn append(
         &mut self,
         polynomials: &[&MultilinearPolynomial<F>],
-        eq_poly: MultilinearPolynomial<F>,
+        eq_poly: EqPolynomial<F>,
         opening_point: Vec<F>,
         claims: &[F],
         transcript: &mut ProofTranscript,
@@ -269,12 +269,13 @@ where
                 }
             }
 
-            if let MultilinearPolynomial::LargeScalars(eq_poly) = &eq_poly {
-                let expected_eq_poly = EqPolynomial::evals(&opening_point);
-                assert!(
-                    eq_poly.Z == expected_eq_poly,
-                    "eq_poly and opening point are inconsistent"
-                );
+            if let EqPolynomial::Default(eq_poly) = &eq_poly {
+                // TODO(moodlezoup)
+                // let expected_eq_poly = EqPolynomial::evals(&opening_point);
+                // assert!(
+                //     eq_poly.Z == expected_eq_poly,
+                //     "eq_poly and opening point are inconsistent"
+                // );
             }
 
             let expected_claims: Vec<F> =

@@ -686,7 +686,7 @@ pub fn verify_sparse_dense_shout<
     let val_evals: Vec<_> = LookupTables::<WORD_SIZE>::iter()
         .map(|table| table.evaluate_mle(&r_address))
         .collect();
-    let eq_eval_cycle = EqPolynomial::new(r_cycle).evaluate(&r_cycle_prime);
+    let eq_eval_cycle = EqPolynomial::mle(&r_cycle, &r_cycle_prime);
 
     assert_eq!(
         eq_eval_cycle

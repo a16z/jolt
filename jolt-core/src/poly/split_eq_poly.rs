@@ -28,6 +28,7 @@ pub struct GruenSplitEqPolynomial<F> {
 
 /// Old struct for split equality polynomial, without Gruen's optimization
 /// TODO: remove all usage of this struct with the new one
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct SplitEqPolynomial<F> {
     num_vars: usize,
     pub(crate) E1: Vec<F>,

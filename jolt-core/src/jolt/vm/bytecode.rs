@@ -337,9 +337,9 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
             self.booleanity_sumcheck
                 .verify(F::zero(), K.log_2() + T.log_2(), 3, transcript)?;
         let (r_address_prime, r_cycle_prime) = r_booleanity.split_at(K.log_2());
-        let eq_eval_address = EqPolynomial::new(r_address).evaluate(r_address_prime);
+        let eq_eval_address = EqPolynomial::mle(&r_address, r_address_prime);
         let r_cycle: Vec<_> = r_cycle.iter().copied().rev().collect();
-        let eq_eval_cycle = EqPolynomial::new(r_cycle).evaluate(r_cycle_prime);
+        let eq_eval_cycle = EqPolynomial::mle(&r_cycle, r_cycle_prime);
 
         assert_eq!(
             eq_eval_address * eq_eval_cycle * (self.ra_claim_prime.square() - self.ra_claim_prime),

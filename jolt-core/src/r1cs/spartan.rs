@@ -6,6 +6,7 @@ use crate::field::JoltField;
 use crate::jolt::vm::JoltCommitments;
 use crate::jolt::vm::JoltProverPreprocessing;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::ProverOpeningAccumulator;
@@ -24,10 +25,7 @@ use ark_serialize::CanonicalSerialize;
 use thiserror::Error;
 
 use crate::{
-    poly::{
-        dense_mlpoly::DensePolynomial,
-        eq_poly::{EqPlusOnePolynomial, EqPolynomial},
-    },
+    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPlusOnePolynomial},
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::small_value::NUM_SVO_ROUNDS,
 };
@@ -311,7 +309,7 @@ where
 
         opening_accumulator.append(
             &committed_polys,
-            MultilinearPolynomial::from(chis),
+            EqPolynomial::from_evals(chis),
             r_cycle.to_vec(),
             &committed_poly_claims,
             transcript,
@@ -365,7 +363,7 @@ where
         let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
 
         let (claim_Az, claim_Bz, claim_Cz) = self.outer_sumcheck_claims;
-        let taus_bound_rx = EqPolynomial::new(tau).evaluate(&outer_sumcheck_r);
+        let taus_bound_rx = EqPolynomial::mle(&tau, &outer_sumcheck_r);
         let claim_outer_final_expected = taus_bound_rx * (claim_Az * claim_Bz - claim_Cz);
         if claim_outer_final != claim_outer_final_expected {
             return Err(SpartanError::InvalidOuterSumcheckClaim);

@@ -1,5 +1,8 @@
 use crate::{
-    poly::sparse_matrix_polynomial::{OneHotPolynomial, SparseMatrixPolynomial},
+    poly::{
+        sparse_matrix_polynomial::{OneHotPolynomial, SparseMatrixPolynomial},
+        split_eq_poly::SplitEqPolynomial,
+    },
     utils::{compute_dotproduct, math::Math},
 };
 use ark_serialize::{

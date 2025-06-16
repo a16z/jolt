@@ -445,10 +445,10 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
 
         let (r_address_prime, r_cycle_prime) = r_booleanity.split_at(log_K);
 
-        let eq_eval_address = EqPolynomial::new(r_address).evaluate(r_address_prime);
+        let eq_eval_address = EqPolynomial::mle(&r_address, r_address_prime);
         let r_cycle_prime: Vec<_> = r_cycle_prime.iter().copied().rev().collect();
         // let r_cycle: Vec<_> = r_cycle.iter().copied().rev().collect();
-        let eq_eval_cycle = EqPolynomial::new(r_prime).evaluate(&r_cycle_prime);
+        let eq_eval_cycle = EqPolynomial::mle(&r_prime, &r_cycle_prime);
 
         assert_eq!(
             eq_eval_address
@@ -1242,9 +1242,9 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let r_address = r_sumcheck[T.log_2()..].to_vec();
 
         // eq(r', r_cycle)
-        let eq_eval_cycle = EqPolynomial::new(r_prime).evaluate(&r_cycle);
+        let eq_eval_cycle = EqPolynomial::mle(&r_prime, &r_cycle);
         // eq(r, r_address)
-        let eq_eval_address = EqPolynomial::new(r).evaluate(&r_address);
+        let eq_eval_address = EqPolynomial::mle(&r, &r_address);
 
         assert_eq!(
             eq_eval_cycle * self.ra_claim * self.val_claim
