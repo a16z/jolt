@@ -251,15 +251,48 @@ impl<F: JoltField, ProofTranscript: Transcript> RafEvaluationProof<F, ProofTrans
         claimed_ram_address: F,
         K: usize,
         transcript: &mut ProofTranscript,
+        memory_layout: &MemoryLayout,
     ) -> Result<Vec<F>, ProofVerifyError> {
         const DEGREE: usize = 2;
 
         // Verify the sumcheck proof
-        let (_, r_address) =
+        // Returns (e, r) where e is the sumcheck claim and r is r_raf_sumcheck
+        let (sumcheck_claim, r_raf_sumcheck) =
             self.sumcheck_proof
                 .verify(claimed_ram_address, K.log_2(), DEGREE, transcript)?;
 
-        Ok(r_address)
+        // Compute unmap_MLE(r_raf_sumcheck)
+        // unmap_MLE(b_0, ..., b_{log K - 1}) = 4 * sum_{i=0}^{log K - 1} 2^i * b_i + (input_start - 4) * (1 - prod_{i=0}^{log K - 1} (1 - b_i))
+
+        // First compute sum_{i=0}^{log K - 1} 2^i * b_i
+        let mut sum = F::zero();
+        let mut power_of_two = F::one();
+        for &b_i in r_raf_sumcheck.iter() {
+            sum += power_of_two * b_i;
+            power_of_two = power_of_two + power_of_two; // power_of_two *= 2
+        }
+
+        // Compute prod_{i=0}^{log K - 1} (1 - b_i)
+        let mut prod = F::one();
+        for &b_i in r_raf_sumcheck.iter() {
+            prod *= F::one() - b_i;
+        }
+
+        // Compute the full unmapping MLE evaluation
+        let unmap_eval =
+            F::from_u64(4) * sum + F::from_u64(memory_layout.input_start - 4) * (F::one() - prod);
+
+        // Verify the relationship: claimed_ram_address = sumcheck_claim
+        // which should be: raf(r_cycle) = unmap(r_raf_sumcheck) * ra(r_raf_sumcheck, r_cycle)
+        // The sumcheck proved: sum_k unmap(k) * ra(k, r_cycle) = claimed_ram_address
+        // So we need to verify: unmap_eval * self.ra_claim = sumcheck_claim
+        let expected_product = unmap_eval * self.ra_claim;
+
+        if expected_product != sumcheck_claim {
+            return Err(ProofVerifyError::InternalError);
+        }
+
+        Ok(r_raf_sumcheck)
     }
 }
 
@@ -468,9 +501,13 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         );
 
         // Verify RAF evaluation proof
-        let _r_address_raf =
-            self.raf_evaluation_proof
-                .verify(&r_cycle, claimed_ram_address, K, transcript)?;
+        let _r_address_raf = self.raf_evaluation_proof.verify(
+            &r_cycle,
+            claimed_ram_address,
+            K,
+            transcript,
+            &program_io.memory_layout,
+        )?;
 
         // TODO: Add opening proof verification for ra(r_address_raf, r_cycle)
 
@@ -1830,8 +1867,13 @@ mod tests {
         let mut verifier_transcript = KeccakTranscript::new(b"test_raf_evaluation");
         let _: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
 
-        let r_address_result =
-            proof.verify(&r_cycle, expected_ram_address, K, &mut verifier_transcript);
+        let r_address_result = proof.verify(
+            &r_cycle,
+            expected_ram_address,
+            K,
+            &mut verifier_transcript,
+            &memory_layout,
+        );
 
         assert!(
             r_address_result.is_ok(),
@@ -1886,8 +1928,13 @@ mod tests {
         let mut verifier_transcript = KeccakTranscript::new(b"test_no_ops");
         let _: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
 
-        let r_address_result =
-            proof.verify(&r_cycle, expected_ram_address, K, &mut verifier_transcript);
+        let r_address_result = proof.verify(
+            &r_cycle,
+            expected_ram_address,
+            K,
+            &mut verifier_transcript,
+            &memory_layout,
+        );
 
         assert!(
             r_address_result.is_ok(),
@@ -1940,16 +1987,18 @@ mod tests {
         let _: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
 
         let incorrect_claim = Fr::one(); // Any non-zero claim should fail
-        let r_address_result = proof.verify(&r_cycle, incorrect_claim, K, &mut verifier_transcript);
-
-        // The sumcheck will succeed but return a different final evaluation
-        // In a complete implementation, the opening proof verification would catch the mismatch
-        assert!(
-            r_address_result.is_ok(),
-            "Sumcheck verification should succeed structurally"
+        let r_address_result = proof.verify(
+            &r_cycle,
+            incorrect_claim,
+            K,
+            &mut verifier_transcript,
+            &memory_layout,
         );
 
-        // TODO: In the complete implementation, the opening proof verification
-        // at r_address_raf would fail because ra(r_address_raf, r_cycle) != ra_claim
+        // With the proper verification, using an incorrect claim should fail
+        assert!(
+            r_address_result.is_err(),
+            "Verification should fail with incorrect claim"
+        );
     }
 }
