@@ -77,6 +77,7 @@ pub struct RAMTwistProof<F: JoltField, ProofTranscript: Transcript> {
 
     booleanity_proof: BooleanityProof<F, ProofTranscript>,
     hamming_weight_proof: HammingWeightProof<F, ProofTranscript>,
+    raf_evaluation_proof: RafEvaluationProof<F, ProofTranscript>,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
@@ -128,6 +129,36 @@ where
 {
     sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     ra_claim: F,
+}
+
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
+pub struct RafEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
+    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
+    ra_claim: F,
+}
+
+impl<F: JoltField, ProofTranscript: Transcript> RafEvaluationProof<F, ProofTranscript> {
+    #[tracing::instrument(skip_all, name = "RafEvaluationProof::prove")]
+    pub fn prove(
+        _trace: &[RV32IMCycle],
+        _memory_layout: &MemoryLayout,
+        _r_cycle: Vec<F>,
+        _claimed_ram_address: F,
+        _K: usize,
+        _transcript: &mut ProofTranscript,
+    ) -> Self {
+        todo!("Implement RAF evaluation prove method")
+    }
+
+    pub fn verify(
+        &self,
+        _r_cycle: &[F],
+        _claimed_ram_address: F,
+        _K: usize,
+        _transcript: &mut ProofTranscript,
+    ) -> Result<F, ProofVerifyError> {
+        todo!("Implement RAF evaluation verify method")
+    }
 }
 
 impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript> {
@@ -211,11 +242,18 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
 
         // TODO: Append to opening proof accumulator
 
+        // TODO: Implement RAF evaluation proof
+        let raf_evaluation_proof = RafEvaluationProof {
+            sumcheck_proof: SumcheckInstanceProof::new(vec![]),
+            ra_claim: F::zero(),
+        };
+
         RAMTwistProof {
             read_write_checking_proof,
             val_evaluation_proof,
             booleanity_proof,
             hamming_weight_proof,
+            raf_evaluation_proof,
         }
     }
 
