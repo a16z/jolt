@@ -140,24 +140,124 @@ pub struct RafEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
 impl<F: JoltField, ProofTranscript: Transcript> RafEvaluationProof<F, ProofTranscript> {
     #[tracing::instrument(skip_all, name = "RafEvaluationProof::prove")]
     pub fn prove(
-        _trace: &[RV32IMCycle],
-        _memory_layout: &MemoryLayout,
-        _r_cycle: Vec<F>,
-        _claimed_ram_address: F,
-        _K: usize,
-        _transcript: &mut ProofTranscript,
+        trace: &[RV32IMCycle],
+        memory_layout: &MemoryLayout,
+        r_cycle: Vec<F>,
+        claimed_ram_address: F,
+        K: usize,
+        transcript: &mut ProofTranscript,
     ) -> Self {
-        todo!("Implement RAF evaluation prove method")
+        let T = trace.len();
+        debug_assert_eq!(T.log_2(), r_cycle.len());
+
+        // Compute eq polynomial evaluations at r_cycle
+        let eq_r_cycle: Vec<F> = EqPolynomial::evals(&r_cycle);
+
+        // Compute ra(k, r_cycle) for each address k
+        let ra_evals: Vec<F> = (0..K)
+            .into_par_iter()
+            .map(|k| {
+                trace
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(cycle, t)| {
+                        let address =
+                            remap_address(t.ram_access().address() as u64, memory_layout) as usize;
+                        if address == k {
+                            Some(eq_r_cycle[cycle])
+                        } else {
+                            None
+                        }
+                    })
+                    .sum::<F>()
+            })
+            .collect();
+
+        // Create unmapping MLE polynomial
+        let unmap_evals: Vec<F> = (0..K)
+            .into_par_iter()
+            .map(|k| {
+                if k == 0 {
+                    F::zero() // no-op handling
+                } else {
+                    F::from_u64((k as u64 - 1) * 4 + memory_layout.input_start)
+                }
+            })
+            .collect();
+
+        let mut ra_poly = MultilinearPolynomial::from(ra_evals);
+        let mut unmap_poly = MultilinearPolynomial::from(unmap_evals);
+
+        let num_rounds = K.log_2();
+        let mut r_address: Vec<F> = Vec::with_capacity(num_rounds);
+        let mut previous_claim = claimed_ram_address;
+
+        const DEGREE: usize = 2;
+        let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
+
+        for _ in 0..num_rounds {
+            // Compute univariate polynomial evaluations for degree-2 sumcheck
+            let univariate_poly_evals: [F; 2] = (0..ra_poly.len() / 2)
+                .into_par_iter()
+                .map(|i| {
+                    let ra_evals = ra_poly.sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
+                    let unmap_evals = unmap_poly.sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
+
+                    // Compute the product evaluations at points 0 and 2
+                    [ra_evals[0] * unmap_evals[0], ra_evals[2] * unmap_evals[2]]
+                })
+                .reduce(
+                    || [F::zero(); 2],
+                    |running, new| [running[0] + new[0], running[1] + new[1]],
+                );
+
+            // For degree-2 polynomial, construct from evaluations at 0, 1, 2
+            // where eval at 1 is derived from the sumcheck relation
+            let univariate_poly = UniPoly::from_evals(&[
+                univariate_poly_evals[0],
+                previous_claim - univariate_poly_evals[0],
+                univariate_poly_evals[1],
+            ]);
+
+            let compressed_poly = univariate_poly.compress();
+            compressed_poly.append_to_transcript(transcript);
+            compressed_polys.push(compressed_poly);
+
+            let r_j = transcript.challenge_scalar::<F>();
+            r_address.push(r_j);
+
+            previous_claim = univariate_poly.evaluate(&r_j);
+
+            // Bind both polynomials in parallel
+            rayon::join(
+                || ra_poly.bind_parallel(r_j, BindingOrder::LowToHigh),
+                || unmap_poly.bind_parallel(r_j, BindingOrder::LowToHigh),
+            );
+        }
+
+        let ra_claim = ra_poly.final_sumcheck_claim();
+
+        Self {
+            sumcheck_proof: SumcheckInstanceProof::new(compressed_polys),
+            ra_claim,
+        }
     }
 
     pub fn verify(
         &self,
         _r_cycle: &[F],
-        _claimed_ram_address: F,
-        _K: usize,
-        _transcript: &mut ProofTranscript,
-    ) -> Result<F, ProofVerifyError> {
-        todo!("Implement RAF evaluation verify method")
+        claimed_ram_address: F,
+        K: usize,
+        transcript: &mut ProofTranscript,
+    ) -> Result<Vec<F>, ProofVerifyError> {
+        const DEGREE: usize = 2;
+
+        // Verify the sumcheck proof
+        let (_, r_address) =
+            self.sumcheck_proof
+                .verify(claimed_ram_address, K.log_2(), DEGREE, transcript)?;
+
+        Ok(r_address)
     }
 }
 
@@ -168,6 +268,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         trace: &[RV32IMCycle],
         program_io: &JoltDevice,
         K: usize,
+        claimed_ram_address: F,
         _opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> RAMTwistProof<F, ProofTranscript> {
@@ -216,6 +317,16 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         let init: MultilinearPolynomial<F> = MultilinearPolynomial::from(initial_memory_state);
         let init_eval = init.evaluate(&r_address);
 
+        // Create RAF evaluation proof before r_cycle is moved
+        let raf_evaluation_proof = RafEvaluationProof::prove(
+            trace,
+            &program_io.memory_layout,
+            r_cycle.clone(),
+            claimed_ram_address,
+            K,
+            transcript,
+        );
+
         let (val_evaluation_proof, _r_cycle_prime) = prove_val_evaluation(
             trace,
             &program_io.memory_layout,
@@ -242,12 +353,6 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
 
         // TODO: Append to opening proof accumulator
 
-        // TODO: Implement RAF evaluation proof
-        let raf_evaluation_proof = RafEvaluationProof {
-            sumcheck_proof: SumcheckInstanceProof::new(vec![]),
-            ra_claim: F::zero(),
-        };
-
         RAMTwistProof {
             read_write_checking_proof,
             val_evaluation_proof,
@@ -263,6 +368,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         T: usize,
         preprocessing: &RAMPreprocessing,
         program_io: &JoltDevice,
+        claimed_ram_address: F,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let log_K = K.log_2();
@@ -358,6 +464,13 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             self.hamming_weight_proof.ra_claim, sumcheck_claim,
             "Hamming weight sumcheck failed"
         );
+
+        // Verify RAF evaluation proof
+        let _r_address_raf =
+            self.raf_evaluation_proof
+                .verify(&r_cycle, claimed_ram_address, K, transcript)?;
+
+        // TODO: Add opening proof verification for ra(r_address_raf, r_cycle)
 
         Ok(())
     }
