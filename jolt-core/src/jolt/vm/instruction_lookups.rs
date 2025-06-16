@@ -85,7 +85,7 @@ where
     #[tracing::instrument(skip_all, name = "LookupsProof::prove")]
     pub fn prove(
         trace: &[RV32IMCycle],
-        _opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
+        _opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Self {
         let log_T = trace.len().log_2();

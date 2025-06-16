@@ -3,12 +3,14 @@ use std::collections::BTreeMap;
 use crate::{
     field::JoltField,
     poly::{
+        commitment::commitment_scheme::CommitmentScheme,
         compact_polynomial::SmallScalar,
         eq_poly::EqPolynomial,
         identity_poly::IdentityPolynomial,
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
+        opening_proof::ProverOpeningAccumulator,
         unipoly::{CompressedUniPoly, UniPoly},
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
@@ -137,9 +139,10 @@ pub struct BytecodeShoutProof<F: JoltField, ProofTranscript: Transcript> {
 
 impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTranscript> {
     #[tracing::instrument(skip_all, name = "BytecodeShoutProof::prove")]
-    pub fn prove(
+    pub fn prove<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
         preprocessing: &BytecodePreprocessing,
         trace: &[RV32IMCycle],
+        _opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Self {
         let K = preprocessing.bytecode.len().next_power_of_two();

@@ -148,7 +148,7 @@ where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
 {
     pub(crate) transcript: ProofTranscript,
-    pub(crate) opening_accumulator: ProverOpeningAccumulator<F, ProofTranscript>,
+    pub(crate) opening_accumulator: ProverOpeningAccumulator<F, PCS, ProofTranscript>,
     pub(crate) prover_setup: PCS::ProverSetup,
 }
 
@@ -313,7 +313,7 @@ where
         SparseMatrixPolynomial::<F>::initialize(K, padded_trace_length);
 
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
-        let mut opening_accumulator: ProverOpeningAccumulator<F, ProofTranscript> =
+        let mut opening_accumulator: ProverOpeningAccumulator<F, PCS, ProofTranscript> =
             ProverOpeningAccumulator::new();
 
         Self::fiat_shamir_preamble(
@@ -368,12 +368,16 @@ where
             &mut transcript,
         );
 
-        let bytecode_proof =
-            BytecodeShoutProof::prove(&preprocessing.shared.bytecode, &trace, &mut transcript);
+        let bytecode_proof = BytecodeShoutProof::prove(
+            &preprocessing.shared.bytecode,
+            &trace,
+            &mut opening_accumulator,
+            &mut transcript,
+        );
 
         // Batch-prove all openings
         let opening_proof =
-            opening_accumulator.reduce_and_prove::<PCS>(&preprocessing.generators, &mut transcript);
+            opening_accumulator.reduce_and_prove(&preprocessing.generators, &mut transcript);
 
         let jolt_proof = JoltProof {
             trace_length,

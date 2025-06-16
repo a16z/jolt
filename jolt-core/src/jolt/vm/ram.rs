@@ -1,6 +1,7 @@
 use crate::{
     field::{JoltField, OptimizedMul},
     poly::{
+        commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         identity_poly::UnmapRamAddressPolynomial,
         multilinear_polynomial::{
@@ -274,12 +275,12 @@ impl<F: JoltField, ProofTranscript: Transcript> RafEvaluationProof<F, ProofTrans
 
 impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript> {
     #[tracing::instrument(skip_all, name = "RAMTwistProof::prove")]
-    pub fn prove(
+    pub fn prove<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
         preprocessing: &RAMPreprocessing,
         trace: &[RV32IMCycle],
         program_io: &JoltDevice,
         K: usize,
-        _opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
+        _opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> RAMTwistProof<F, ProofTranscript> {
         let log_T = trace.len().log_2();

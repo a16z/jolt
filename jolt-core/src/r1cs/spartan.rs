@@ -116,7 +116,7 @@ where
         constraint_builder: &CombinedUniformBuilder<F>,
         key: &UniformSpartanKey<F>,
         trace: &[RV32IMCycle],
-        opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<Self, SpartanError>
     where
@@ -311,7 +311,7 @@ where
 
         opening_accumulator.append(
             &committed_polys,
-            DensePolynomial::new(chis),
+            MultilinearPolynomial::from(chis),
             r_cycle.to_vec(),
             &committed_poly_claims,
             transcript,

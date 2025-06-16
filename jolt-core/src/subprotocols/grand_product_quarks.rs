@@ -151,7 +151,7 @@ where
     #[tracing::instrument(skip_all, name = "BatchedGrandProduct::prove_grand_product")]
     fn prove_grand_product(
         &mut self,
-        opening_accumulator: Option<&mut ProverOpeningAccumulator<F, ProofTranscript>>,
+        opening_accumulator: Option<&mut ProverOpeningAccumulator<F, PCS, ProofTranscript>>,
         transcript: &mut ProofTranscript,
         setup: Option<&PCS::ProverSetup>,
     ) -> (BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>) {
@@ -192,7 +192,7 @@ where
     #[tracing::instrument(skip_all, name = "QuarkGrandProduct::prove_grand_product")]
     pub fn prove_quark_grand_product<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
         grand_product: &mut impl BatchedGrandProduct<F, PCS, ProofTranscript>,
-        opening_accumulator: Option<&mut ProverOpeningAccumulator<F, ProofTranscript>>,
+        opening_accumulator: Option<&mut ProverOpeningAccumulator<F, PCS, ProofTranscript>>,
         transcript: &mut ProofTranscript,
         setup: Option<&PCS::ProverSetup>,
     ) -> (BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>) {
@@ -308,7 +308,7 @@ where
         v: &[PCS::Field],
         r_outputs: Vec<PCS::Field>,
         claim: PCS::Field,
-        opening_accumulator: &mut ProverOpeningAccumulator<PCS::Field, ProofTranscript>,
+        opening_accumulator: &mut ProverOpeningAccumulator<PCS::Field, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
         setup: &PCS::ProverSetup,
     ) -> (Self, Vec<PCS::Field>, PCS::Field) {
@@ -415,7 +415,7 @@ where
             MultilinearPolynomial::batch_evaluate(&[&g_polynomial], &r_sumcheck);
         opening_accumulator.append(
             &[&g_polynomial],
-            DensePolynomial::new(chis_r),
+            MultilinearPolynomial::from(chis_r),
             r_sumcheck.clone(),
             &g_r_sumcheck,
             transcript,
@@ -444,7 +444,7 @@ where
             line_reduce::<PCS::Field, ProofTranscript>(&r_prime, &g_polynomial, transcript);
         opening_accumulator.append(
             &[&g_polynomial],
-            DensePolynomial::new(EqPolynomial::evals(&reduced_opening_point_g)),
+            MultilinearPolynomial::from(EqPolynomial::evals(&reduced_opening_point_g)),
             reduced_opening_point_g,
             &[reduced_opening_g],
             transcript,
@@ -688,8 +688,11 @@ mod quark_grand_product_tests {
                 Zeromorph<Bn254, KeccakTranscript>,
                 KeccakTranscript,
             >>::construct_with_config((v, 2), config);
-        let mut prover_accumulator: ProverOpeningAccumulator<Fr, KeccakTranscript> =
-            ProverOpeningAccumulator::new();
+        let mut prover_accumulator: ProverOpeningAccumulator<
+            Fr,
+            Zeromorph<Bn254, KeccakTranscript>,
+            KeccakTranscript,
+        > = ProverOpeningAccumulator::new();
         let proof: BatchedGrandProductProof<Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript> =
             hybrid_grand_product
                 .prove_grand_product(
