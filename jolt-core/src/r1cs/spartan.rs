@@ -59,6 +59,14 @@ pub enum SpartanError {
     #[error("InvalidInnerSumcheckClaim")]
     InvalidInnerSumcheckClaim,
 
+    /// returned when the recursive sumcheck proof fails
+    #[error("InvalidShiftSumcheckProof")]
+    InvalidShiftSumcheckProof,
+
+    /// returned when the final sumcheck opening proof fails
+    #[error("InvalidShiftSumcheckClaim")]
+    InvalidShiftSumcheckClaim,
+
     /// returned if the supplied witness is not of the right length
     #[error("InvalidWitnessLength")]
     InvalidWitnessLength,
@@ -78,7 +86,7 @@ pub struct UniformSpartanProof<F: JoltField, ProofTranscript: Transcript> {
     pub(crate) inner_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub(crate) shift_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub(crate) claimed_witness_evals: Vec<F>,
-    pub(crate) shift_sumcheck_witness_eval: F,
+    pub(crate) shift_sumcheck_witness_eval: Vec<F>,
     _marker: PhantomData<ProofTranscript>,
 }
 
@@ -228,34 +236,58 @@ where
         let (claimed_witness_evals, _chis) =
             MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
 
-        /*  Sumcheck 3: Shift sumcheck for NextPC verification
-            Proves: NextPC(r_cycle) = \sum_t PC(t) * eq_plus_one(r_cycle, t)
+        /*  Sumcheck 3: Batched sumcheck for NextUnexpandedPC and NextPC verification
+            Proves: NextUnexpandedPC(r_cycle) + r * NextPC(r_cycle) =
+                    \sum_t (UnexpandedPC(t) + r * PC(t)) * eq_plus_one(r_cycle, t)
 
-            Verifies PC advancement without a separate NextPC opening proof.
+            This batched sumcheck simultaneously proves:
+            1. NextUnexpandedPC(r_cycle) = \sum_t UnexpandedPC(t) * eq_plus_one(r_cycle, t)
+            2. NextPC(r_cycle) = \sum_t PC(t) * eq_plus_one(r_cycle, t)
         */
         let span = span!(Level::INFO, "shift_sumcheck_pc");
         let _guard = span.enter();
 
+        // Get random challenge r for batching
+        let r: F = transcript.challenge_scalar();
+
         let num_rounds_shift_sumcheck = num_cycles_bits;
 
-        let pc_index = JoltR1CSInputs::RealInstructionAddress.to_index();
+        let unexpanded_pc_index = JoltR1CSInputs::UnexpandedPC.to_index();
+        let pc_index = JoltR1CSInputs::PC.to_index();
+        let next_unexpanded_pc_index = JoltR1CSInputs::NextUnexpandedPC.to_index();
+        let next_pc_index = JoltR1CSInputs::NextPC.to_index();
+
         let mut shift_sumcheck_polys = vec![
-            input_polys[pc_index].clone(), // RealInstructionAddress/PC
+            input_polys[unexpanded_pc_index].clone(),
+            input_polys[pc_index].clone(),
             MultilinearPolynomial::from(eq_plus_one_r_cycle),
         ];
+
+        // Define the batched combining function:
+        // (unexpanded_pc(t) + r * pc(t)) * eq_plus_one(r_cycle, t)
+        let batched_comb_func = move |poly_evals: &[F]| -> F {
+            assert_eq!(poly_evals.len(), 3);
+            let unexpanded_pc_eval = poly_evals[0];
+            let pc_eval = poly_evals[1];
+            let eq_eval = poly_evals[2];
+
+            let batched_eval = unexpanded_pc_eval + r * pc_eval;
+            batched_eval * eq_eval
+        };
 
         drop(_guard);
         drop(span);
 
-        let pc_next_index = JoltR1CSInputs::NextPC.to_index();
-        let shift_sumcheck_claim = claimed_witness_evals[pc_next_index];
+        // The batched claim equals NextUnexpandedPC(r_cycle) + r * NextPC(r_cycle)
+        let shift_sumcheck_claim = claimed_witness_evals[next_unexpanded_pc_index]
+            + r * claimed_witness_evals[next_pc_index];
 
-        let (shift_sumcheck_proof, shift_sumcheck_r, _shift_sumcheck_claims) =
+        let (shift_sumcheck_proof, _shift_sumcheck_r, shift_sumcheck_claims) =
             SumcheckInstanceProof::prove_arbitrary(
                 &shift_sumcheck_claim,
                 num_rounds_shift_sumcheck,
                 &mut shift_sumcheck_polys,
-                comb_func,
+                batched_comb_func,
                 2,
                 transcript,
             );
@@ -270,14 +302,13 @@ where
         //     transcript,
         // );
 
-        // For shift sumcheck, we need PC evaluation at shift_r
-        let (shift_sumcheck_witness_evals_partial, _chis2) =
-            MultilinearPolynomial::batch_evaluate(&[&input_polys[pc_index]], &shift_sumcheck_r);
-        let shift_sumcheck_witness_eval = shift_sumcheck_witness_evals_partial[0];
+        let unexpanded_pc_eval_at_shift_r = shift_sumcheck_claims[0];
+        let pc_eval_at_shift_r = shift_sumcheck_claims[1];
+        let shift_sumcheck_witness_eval = vec![unexpanded_pc_eval_at_shift_r, pc_eval_at_shift_r];
 
         // opening_accumulator.append(
-        //     &flattened_polys_ref,
-        //     DensePolynomial::new(chis2),
+        //     &todo!(), // only unexpanded_pc and pc
+        //     DensePolynomial::new(chis2), // chis2 need to be computed as EqPolynomial
         //     shift_sumcheck_r.to_vec(),
         //     &shift_sumcheck_witness_eval,
         //     transcript,
@@ -378,13 +409,21 @@ where
             return Err(SpartanError::InvalidInnerSumcheckClaim);
         }
 
-        /* Sumcheck 3: Shift sumcheck for NextPC verification
-           Verifies the claimed NextPC value by checking the relation with PC values
+        /* Sumcheck 3: Batched sumcheck for NextUnexpandedPC and NextPC verification
+           Verifies the batched constraint for both NextUnexpandedPC and NextPC
         */
 
+        // Get random challenge r for batching
+        let r: F = transcript.challenge_scalar();
+
         let num_rounds_shift_sumcheck = num_cycles_bits;
-        let pc_next_index = JoltR1CSInputs::NextPC.to_index();
-        let shift_sumcheck_claim = self.claimed_witness_evals[pc_next_index];
+        let next_unexpanded_pc_index = JoltR1CSInputs::NextUnexpandedPC.to_index();
+        let next_pc_index = JoltR1CSInputs::NextPC.to_index();
+
+        // The batched claim equals NextUnexpandedPC(r_cycle) + r * NextPC(r_cycle)
+        let shift_sumcheck_claim = self.claimed_witness_evals[next_unexpanded_pc_index]
+            + r * self.claimed_witness_evals[next_pc_index];
+
         let (claim_shift_sumcheck, shift_sumcheck_r) = self
             .shift_sumcheck_proof
             .verify(
@@ -393,17 +432,21 @@ where
                 2,
                 transcript,
             )
-            .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
+            .map_err(|_| SpartanError::InvalidShiftSumcheckProof)?;
 
-        let eval_pc_at_shift_r = self.shift_sumcheck_witness_eval;
-
+        let unexpanded_pc_eval_at_shift_r = self.shift_sumcheck_witness_eval[0];
+        let pc_eval_at_shift_r = self.shift_sumcheck_witness_eval[1];
+        let batched_eval_at_shift_r = unexpanded_pc_eval_at_shift_r + r * pc_eval_at_shift_r;
         let eq_plus_one_shift_sumcheck =
             EqPlusOnePolynomial::new(r_cycle.to_vec()).evaluate(&shift_sumcheck_r);
-        let claim_shift_sumcheck_expected = eval_pc_at_shift_r * eq_plus_one_shift_sumcheck;
+
+        let claim_shift_sumcheck_expected = batched_eval_at_shift_r * eq_plus_one_shift_sumcheck;
 
         if claim_shift_sumcheck != claim_shift_sumcheck_expected {
-            return Err(SpartanError::InvalidInnerSumcheckClaim);
+            return Err(SpartanError::InvalidShiftSumcheckClaim);
         }
+
+        // TODO: In the openings must also verify that shift_witness_evals are correct
 
         // TODO(moodlezoup): Openings
 

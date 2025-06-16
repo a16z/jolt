@@ -30,7 +30,7 @@ pub struct BytecodePreprocessing {
     /// See Section 6.1 of the Jolt paper, "Reflecting the program counter". The virtual address
     /// is the one used to keep track of the next (potentially virtual) instruction to execute.
     /// Key: (ELF address, virtual sequence index or 0)
-    pub(crate) virtual_address_map: BTreeMap<(usize, usize), usize>,
+    virtual_address_map: BTreeMap<(usize, usize), usize>,
 }
 
 impl BytecodePreprocessing {
@@ -67,6 +67,27 @@ impl BytecodePreprocessing {
             bytecode,
             virtual_address_map,
         }
+    }
+
+    pub fn get_pc(&self, cycle: &RV32IMCycle, is_last: bool) -> usize {
+        let instr = cycle.instruction().normalize();
+        if matches!(cycle, tracer::instruction::RV32IMCycle::NoOp(_)) || is_last {
+            return 0;
+        }
+        *self
+            .virtual_address_map
+            .get(&(instr.address, instr.virtual_sequence_remaining.unwrap_or(0)))
+            .unwrap()
+    }
+
+    pub fn map_trace_to_pc<'a, 'b>(
+        &'b self,
+        trace: &'a [RV32IMCycle],
+    ) -> impl rayon::iter::ParallelIterator<Item = u64> + use<'a, 'b> {
+        let (_, init) = trace.split_last().unwrap();
+        init.par_iter()
+            .map(|cycle| self.get_pc(cycle, false) as u64)
+            .chain(rayon::iter::once(0))
     }
 }
 
@@ -139,12 +160,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
                 let mut result: Vec<F> = unsafe_allocate_zero_vec(K);
                 let mut j = chunk_index * chunk_size;
                 for cycle in trace_chunk {
-                    let instr = cycle.instruction().normalize();
-                    let k = preprocessing
-                        .virtual_address_map
-                        .get(&(instr.address, instr.virtual_sequence_remaining.unwrap_or(0)))
-                        .unwrap_or(&0);
-                    result[*k] += E[j];
+                    let k = preprocessing.get_pc(cycle, j == trace.len() - 1);
+                    result[k] += E[j];
                     j += 1;
                 }
                 result
@@ -459,16 +476,9 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
     let _guard = span.enter();
 
     let eq_r_r = B.final_sumcheck_claim();
-    let H: Vec<F> = trace
-        .par_iter()
-        .map(|cycle| {
-            let instr = cycle.instruction().normalize();
-            let k = preprocessing
-                .virtual_address_map
-                .get(&(instr.address, instr.virtual_sequence_remaining.unwrap_or(0)))
-                .unwrap_or(&0);
-            F[*k]
-        })
+    let H: Vec<F> = preprocessing
+        .map_trace_to_pc(trace)
+        .map(|pc| F[pc as usize])
         .collect();
     let mut H = MultilinearPolynomial::from(H);
     let mut D = MultilinearPolynomial::from(D);
