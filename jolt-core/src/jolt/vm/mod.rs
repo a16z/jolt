@@ -2,9 +2,14 @@
 #![allow(dead_code)]
 
 use crate::field::JoltField;
+use crate::jolt::vm::rv32i_vm::Serializable;
+use crate::msm::icicle;
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::r1cs::constraints::R1CSConstraints;
 use crate::r1cs::spartan::UniformSpartanProof;
+use crate::utils::errors::ProofVerifyError;
+use crate::utils::transcript::Transcript;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use bytecode::{BytecodePreprocessing, BytecodeShoutProof};
 use common::jolt_device::MemoryLayout;
@@ -19,19 +24,14 @@ use std::{
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
 use tracer::JoltDevice;
 
-use crate::msm::icicle;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::utils::errors::ProofVerifyError;
-use crate::utils::transcript::Transcript;
-
-#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltSharedPreprocessing {
     pub bytecode: BytecodePreprocessing,
     pub ram: RAMPreprocessing,
     pub memory_layout: MemoryLayout,
 }
 
-#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltVerifierPreprocessing<F, PCS, ProofTranscript>
 where
     F: JoltField,
@@ -40,6 +40,14 @@ where
 {
     pub generators: PCS::VerifierSetup,
     pub shared: JoltSharedPreprocessing,
+}
+
+impl<F, PCS, ProofTranscript> Serializable for JoltVerifierPreprocessing<F, PCS, ProofTranscript>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
 }
 
 impl<F, PCS, ProofTranscript> JoltVerifierPreprocessing<F, PCS, ProofTranscript>
@@ -76,6 +84,14 @@ where
     pub generators: PCS::ProverSetup,
     pub shared: JoltSharedPreprocessing,
     field: F::SmallValueLookupTables,
+}
+
+impl<F, PCS, ProofTranscript> Serializable for JoltProverPreprocessing<F, PCS, ProofTranscript>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
 }
 
 impl<F, PCS, ProofTranscript> JoltProverPreprocessing<F, PCS, ProofTranscript>
@@ -129,7 +145,7 @@ where
     pub(crate) prover_setup: PCS::ProverSetup,
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct JoltProof<const WORD_SIZE: usize, F, PCS, ProofTranscript>
 where
     F: JoltField,

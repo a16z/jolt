@@ -67,7 +67,7 @@ pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
 
 pub type ProofTranscript = KeccakTranscript;
 pub type PCS = HyperKZG<Bn254, ProofTranscript>;
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Clone)]
 pub struct JoltHyperKZGProof {
     pub proof: RV32IJoltProof<Fr, PCS, ProofTranscript>,
     // pub commitments: JoltCommitments<PCS, ProofTranscript>,

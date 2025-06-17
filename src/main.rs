@@ -215,7 +215,7 @@ const HOST_MAIN: &str = r#"pub fn main() {
     let program = guest::compile_fib(target_dir);
 
     let prover_preprocessing = guest::preprocess_prover_fib(&program);
-    let verifier_preprocessing = guest::preprocess_verifier_fib(&program);
+    let verifier_preprocessing = guest::verifier_preprocessing_from_prover_fib(&prover_preprocessing);
 
     let prove_fib = guest::build_prover_fib(program, prover_preprocessing);
     let verify_fib = guest::build_verifier_fib(verifier_preprocessing);
