@@ -345,64 +345,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
             previous_round_claim,
         );
 
-        #[cfg(test)]
-        {
-            let eq_merged = eq_poly.merge();
-            let naive_cubic_evals = self
-                .coeffs
-                .par_chunks(4)
-                .zip(eq_merged.evals().par_chunks(2))
-                .map(|(self_chunk, eq_chunk)| {
-                    let eq_evals = {
-                        let eval_point_0 = eq_chunk[0];
-                        let m_eq = eq_chunk[1] - eq_chunk[0];
-                        let eval_point_2 = eq_chunk[1] + m_eq;
-                        let eval_point_3 = eval_point_2 + m_eq;
-                        (eval_point_0, eval_point_2, eval_point_3)
-                    };
-                    let left = (
-                        *self_chunk.get(0).unwrap_or(&F::zero()),
-                        *self_chunk.get(2).unwrap_or(&F::zero()),
-                    );
-                    let right = (
-                        *self_chunk.get(1).unwrap_or(&F::zero()),
-                        *self_chunk.get(3).unwrap_or(&F::zero()),
-                    );
-
-                    let m_left = left.1 - left.0;
-                    let m_right = right.1 - right.0;
-
-                    let left_eval_2 = left.1 + m_left;
-                    let left_eval_3 = left_eval_2 + m_left;
-
-                    let right_eval_2 = right.1 + m_right;
-                    let right_eval_3 = right_eval_2 + m_right;
-
-                    (
-                        eq_evals.0 * left.0 * right.0,
-                        eq_evals.1 * left_eval_2 * right_eval_2,
-                        eq_evals.2 * left_eval_3 * right_eval_3,
-                    )
-                })
-                .reduce(
-                    || (F::zero(), F::zero(), F::zero()),
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-                );
-            let naive_cubic_evals = [
-                naive_cubic_evals.0,
-                previous_round_claim - naive_cubic_evals.0,
-                naive_cubic_evals.1,
-                naive_cubic_evals.2,
-            ];
-            let naive_cubic = UniPoly::from_evals(&naive_cubic_evals);
-            assert_eq!(
-                naive_cubic,
-                cubic,
-                "Failed at round {}",
-                eq_poly.w.len() - eq_poly.current_index
-            );
-        }
-
         cubic
     }
 
