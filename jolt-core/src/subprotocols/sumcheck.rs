@@ -29,7 +29,11 @@ where
     F: JoltField,
     ProofTranscript: Transcript,
 {
-    fn compute_cubic(&self, eq_poly: &GruenSplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F>;
+    fn compute_cubic(
+        &self,
+        eq_poly: &GruenSplitEqPolynomial<F>,
+        previous_round_claim: F,
+    ) -> UniPoly<F>;
     fn final_claims(&self) -> (F, F);
 
     #[cfg(test)]

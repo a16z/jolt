@@ -397,7 +397,11 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
     /// 3. Flags/fingerprints aren't coalesced, and E1 is fully bound
     /// 4. Flags/fingerprints aren't coalesced, and E1 isn't fully bound
     #[tracing::instrument(skip_all, name = "BatchedGrandProductToggleLayer::compute_cubic")]
-    fn compute_cubic(&self, eq_poly: &GruenSplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
+    fn compute_cubic(
+        &self,
+        eq_poly: &GruenSplitEqPolynomial<F>,
+        previous_round_claim: F,
+    ) -> UniPoly<F> {
         if let Some(coalesced_flags) = &self.coalesced_flags {
             let coalesced_fingerprints = self.coalesced_fingerprints.as_ref().unwrap();
 
@@ -414,7 +418,9 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
 
                         (
                             *E_out_eval * (flags[0] * fingerprints[0] + F::one() - flags[0]),
-                            *E_out_eval * (flag_eval_at_infty * fingerprint_eval_at_infty + F::one() - flag_eval_at_infty),
+                            *E_out_eval
+                                * (flag_eval_at_infty * fingerprint_eval_at_infty + F::one()
+                                    - flag_eval_at_infty),
                         )
                     })
                     .reduce(
@@ -424,35 +430,36 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
             } else {
                 // 2. Flags/fingerprints are coalesced, and E1 isn't fully bound
                 // This is similar to the else case of `DenseInterleavedPolynomial::compute_cubic`
-                let flag_chunk_size = coalesced_flags.len().next_power_of_two() / eq_poly.E_out_current_len();
+                let flag_chunk_size =
+                    coalesced_flags.len().next_power_of_two() / eq_poly.E_out_current_len();
                 let fingerprint_chunk_size =
                     coalesced_fingerprints.len().next_power_of_two() / eq_poly.E_out_current_len();
 
-                eq_poly.E_out_current()
+                eq_poly
+                    .E_out_current()
                     .par_iter()
                     .zip(coalesced_flags.par_chunks(flag_chunk_size))
                     .zip(coalesced_fingerprints.par_chunks(fingerprint_chunk_size))
                     .map(|((E_out_eval, flag_x_out), fingerprint_x_out)| {
                         let mut inner_sum = (F::zero(), F::zero(), F::zero());
-                        for ((E_in_eval, flag_chunk), fingerprint_chunk) in eq_poly.E_in_current()
+                        for ((E_in_eval, flag_chunk), fingerprint_chunk) in eq_poly
+                            .E_in_current()
                             .iter()
                             .zip(flag_x_out.chunks(2))
                             .zip(fingerprint_x_out.chunks(2))
                         {
                             let flag_eval_at_infty = flag_chunk[1] - flag_chunk[0];
-                            let fingerprint_eval_at_infty = fingerprint_chunk[1] - fingerprint_chunk[0];
+                            let fingerprint_eval_at_infty =
+                                fingerprint_chunk[1] - fingerprint_chunk[0];
 
                             inner_sum.0 += *E_in_eval
                                 * (flag_chunk[0] * fingerprint_chunk[0] + F::one() - flag_chunk[0]);
                             inner_sum.1 += *E_in_eval
-                                * (flag_eval_at_infty * fingerprint_eval_at_infty
-                                    + F::one() - flag_eval_at_infty);
+                                * (flag_eval_at_infty * fingerprint_eval_at_infty + F::one()
+                                    - flag_eval_at_infty);
                         }
 
-                        (
-                            *E_out_eval * inner_sum.0,
-                            *E_out_eval * inner_sum.1,
-                        )
+                        (*E_out_eval * inner_sum.0, *E_out_eval * inner_sum.1)
                     })
                     .reduce(
                         || (F::zero(), F::zero()),
@@ -465,8 +472,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
             return UniPoly::from_linear_times_quadratic_with_hint(
                 // The coefficients of `eq(w[(n - i)..], r[..i]) * eq(w[n - i - 1], X)`
                 [
-                eq_poly.current_scalar - scalar_times_w_i,
-                scalar_times_w_i + scalar_times_w_i - eq_poly.current_scalar,
+                    eq_poly.current_scalar - scalar_times_w_i,
+                    scalar_times_w_i + scalar_times_w_i - eq_poly.current_scalar,
                 ],
                 quadratic_evals.0,
                 quadratic_evals.1,
@@ -548,7 +555,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                         delta.0 += E_out_eval
                             .mul_0_optimized(flags.0.mul_01_optimized(fingerprints.0) - flags.0);
                         delta.1 += E_out_eval.mul_0_optimized(
-                            flag_eval_at_infty.mul_01_optimized(fingerprint_eval_at_infty) - flag_eval_at_infty,
+                            flag_eval_at_infty.mul_01_optimized(fingerprint_eval_at_infty)
+                                - flag_eval_at_infty,
                         );
                     }
 
@@ -560,10 +568,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                 );
             // eq_eval_sum + ∆ = Σ eq_evals[i] + Σ eq_evals[i] * (flag[i] * fingerprint[i] - flag[i]))
             //                 = Σ eq_evals[j] * (flag[i] * fingerprint[i] + 1 - flag[i])
-            (
-                E_out_eval_sum + deltas.0,
-                E_out_eval_sum + deltas.1,
-            )
+            (E_out_eval_sum + deltas.0, E_out_eval_sum + deltas.1)
         } else {
             // 4. Flags/fingerprints aren't coalesced, and E1 isn't fully bound
             // This is similar to the else case of `SparseInterleavedPolynomial::compute_cubic`
@@ -650,7 +655,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                         inner_sum.0 += eq_poly.E_in_current()[x_in]
                             .mul_0_optimized(flags.0.mul_01_optimized(fingerprints.0) - flags.0);
                         inner_sum.1 += eq_poly.E_in_current()[x_in].mul_0_optimized(
-                            flag_eval_at_infty.mul_01_optimized(fingerprint_eval_at_infty) - flag_eval_at_infty,
+                            flag_eval_at_infty.mul_01_optimized(fingerprint_eval_at_infty)
+                                - flag_eval_at_infty,
                         );
                     }
 
@@ -682,7 +688,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                 //   = 1 * E1_eval_sums
                 E_in_eval_sum
             } else {
-                let chunk_size = self.batched_layer_len.next_power_of_two() / eq_poly.E_out_current_len();
+                let chunk_size =
+                    self.batched_layer_len.next_power_of_two() / eq_poly.E_out_current_len();
                 let num_all_one_chunks = self.batched_layer_len / chunk_size;
                 let E_out_sum: F = eq_poly.E_out_current()[..num_all_one_chunks].iter().sum();
                 if self.batched_layer_len % chunk_size == 0 {
@@ -702,8 +709,12 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                     // e.g. 1 1 1 1 1 1 1 1 0 0 0 0
                     //
                     // This handles this last chunk:
-                    let last_chunk_evals: F = eq_poly.E_in_current()[..(self.batched_layer_len % chunk_size) / 4].into_iter().sum();
-                    E_out_sum * E_in_eval_sum + eq_poly.E_out_current()[num_all_one_chunks] * last_chunk_evals
+                    let last_chunk_evals: F = eq_poly.E_in_current()
+                        [..(self.batched_layer_len % chunk_size) / 4]
+                        .into_iter()
+                        .sum();
+                    E_out_sum * E_in_eval_sum
+                        + eq_poly.E_out_current()[num_all_one_chunks] * last_chunk_evals
                 }
             };
 

@@ -450,7 +450,11 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
     /// If `self` is not coalesced, we basically do the same thing but with with the
     /// sparse vectors in `self.coeffs`, some fancy optimizations, and many more cases to check 😬
     #[tracing::instrument(skip_all, name = "SparseInterleavedPolynomial::compute_cubic")]
-    fn compute_cubic(&self, eq_poly: &GruenSplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
+    fn compute_cubic(
+        &self,
+        eq_poly: &GruenSplitEqPolynomial<F>,
+        previous_round_claim: F,
+    ) -> UniPoly<F> {
         if let Some(coalesced) = &self.coalesced {
             return BatchedCubicSumcheck::<F, ProofTranscript>::compute_cubic(
                 coalesced,
@@ -495,7 +499,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
 
                             let E_out_eval = eq_poly.E_out_current()[block_index];
                             (
-                                E_out_eval.mul_0_optimized(left.0.mul_1_optimized(right.0) - F::one()),
+                                E_out_eval
+                                    .mul_0_optimized(left.0.mul_1_optimized(right.0) - F::one()),
                                 E_out_eval * (left_eval_at_infty * right_eval_at_infty - F::one()),
                             )
                         })
@@ -505,10 +510,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
                 );
 
-            (
-                E_out_eval_sum + deltas.0,
-                E_out_eval_sum + deltas.1,
-            )
+            (E_out_eval_sum + deltas.0, E_out_eval_sum + deltas.1)
         } else {
             // This is a more complicated version of the `else` case in
             // `DenseInterleavedPolynomial::compute_cubic`. Read that one first.
@@ -552,9 +554,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                                     eq_poly.E_in_current()[x_in].mul_0_optimized(
                                         left.0.mul_1_optimized(right.0) - F::one(),
                                     ),
-                                    eq_poly.E_in_current()[x_in] * (
-                                        left_eval_at_infty * right_eval_at_infty - F::one()
-                                    ),
+                                    eq_poly.E_in_current()[x_in]
+                                        * (left_eval_at_infty * right_eval_at_infty - F::one()),
                                 );
                                 inner_sum.0 += delta.0;
                                 inner_sum.1 += delta.1;
@@ -608,7 +609,10 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                     // e.g. 1 1 1 1 1 1 1 1 0 0 0 0
                     //
                     // This handles this last chunk:
-                    let last_chunk_eval: F = eq_poly.E_in_current()[..(self.dense_len % chunk_size) / 4].into_iter().sum();
+                    let last_chunk_eval: F = eq_poly.E_in_current()
+                        [..(self.dense_len % chunk_size) / 4]
+                        .into_iter()
+                        .sum();
                     E_out_sum * E_in_eval_sum
                         + eq_poly.E_out_current()[num_all_one_chunks] * last_chunk_eval
                 }

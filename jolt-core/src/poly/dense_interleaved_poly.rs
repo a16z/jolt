@@ -209,7 +209,11 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
     ///    left(0, 0, 0, ..., x_b=0) |  |  right(0, 0, 0, ..., x_b=1)
     ///     right(0, 0, 0, ..., x_b=0)  left(0, 0, 0, ..., x_b=1)
     #[tracing::instrument(skip_all, name = "DenseInterleavedPolynomial::compute_cubic")]
-    fn compute_cubic(&self, eq_poly: &GruenSplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
+    fn compute_cubic(
+        &self,
+        eq_poly: &GruenSplitEqPolynomial<F>,
+        previous_round_claim: F,
+    ) -> UniPoly<F> {
         // We use the Dao-Thaler and Gruen optimizations for the EQ polynomial, so there are two
         // cases we must handle. For details, refer to Section 3 of
         // https://eprint.iacr.org/2024/1210.pdf
@@ -257,14 +261,16 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
             //
             // because it has better memory locality.
             let chunk_size = (self.len.next_power_of_two() / eq_poly.E_out_current_len()).max(1);
-            eq_poly.E_out_current()
+            eq_poly
+                .E_out_current()
                 .par_iter()
                 .zip(self.par_chunks(chunk_size))
                 .map(|(E_out_eval, P_x_out)| {
                     // The for-loop below corresponds to the inner sum:
                     // \sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2))
                     let mut inner_sum = (F::zero(), F::zero());
-                    for (E_in_eval, P_chunk) in eq_poly.E_in_current().iter().zip(P_x_out.chunks(4)) {
+                    for (E_in_eval, P_chunk) in eq_poly.E_in_current().iter().zip(P_x_out.chunks(4))
+                    {
                         let left = (
                             *P_chunk.first().unwrap_or(&F::zero()),
                             *P_chunk.get(2).unwrap_or(&F::zero()),
@@ -281,10 +287,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                     }
 
                     // Multiply the inner sum by E2[x2]
-                    (
-                        *E_out_eval * inner_sum.0,
-                        *E_out_eval * inner_sum.1,
-                    )
+                    (*E_out_eval * inner_sum.0, *E_out_eval * inner_sum.1)
                 })
                 .reduce(
                     || (F::zero(), F::zero()),
@@ -294,8 +297,10 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
 
         #[cfg(test)]
         {
-            let eq_evals = crate::poly::eq_poly::EqPolynomial::evals(&eq_poly.w[..eq_poly.current_index - 1]);
-            let naive_quadratic_evals = self.par_chunks(4)
+            let eq_evals =
+                crate::poly::eq_poly::EqPolynomial::evals(&eq_poly.w[..eq_poly.current_index - 1]);
+            let naive_quadratic_evals = self
+                .par_chunks(4)
                 .zip(eq_evals.par_iter())
                 .map(|(layer_chunk, eq_eval)| {
                     let left = (
@@ -319,7 +324,12 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                     || (F::zero(), F::zero()),
                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
                 );
-            assert_eq!(quadratic_evals, naive_quadratic_evals, "Failed at round {}", eq_poly.w.len() - eq_poly.current_index)
+            assert_eq!(
+                quadratic_evals,
+                naive_quadratic_evals,
+                "Failed at round {}",
+                eq_poly.w.len() - eq_poly.current_index
+            )
         }
 
         let scalar_times_w_i = eq_poly.current_scalar * eq_poly.w[eq_poly.current_index - 1];
@@ -338,7 +348,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
         #[cfg(test)]
         {
             let eq_merged = eq_poly.merge();
-            let naive_cubic_evals = self.coeffs
+            let naive_cubic_evals = self
+                .coeffs
                 .par_chunks(4)
                 .zip(eq_merged.evals().par_chunks(2))
                 .map(|(self_chunk, eq_chunk)| {
@@ -384,7 +395,12 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                 naive_cubic_evals.2,
             ];
             let naive_cubic = UniPoly::from_evals(&naive_cubic_evals);
-            assert_eq!(naive_cubic, cubic, "Failed at round {}", eq_poly.w.len() - eq_poly.current_index);
+            assert_eq!(
+                naive_cubic,
+                cubic,
+                "Failed at round {}",
+                eq_poly.w.len() - eq_poly.current_index
+            );
         }
 
         cubic
