@@ -95,7 +95,8 @@ where
 {
     type Field = P::ScalarField;
 
-    type Setup = (KZGProverKey<P>, KZGVerifierKey<P>);
+    type ProverSetup = KZGProverKey<P>;
+    type VerifierSetup = KZGVerifierKey<P>;
 
     type Commitment = HyperBmmtvCommitment<P>;
 
@@ -104,29 +105,38 @@ where
     type BatchedProof = ();
 
     #[tracing::instrument(skip_all, name = "HyperBmmtv::setup")]
-    fn setup(max_len: usize) -> Self::Setup {
+    fn setup_prover(max_len: usize) -> Self::ProverSetup {
         let mut rng = ChaCha20Rng::from_seed(*b"HyperBMMTV_POLY_COMMITMENTSCHEME");
         let srs =
             UnivariatePolynomialCommitment::<P, ProofTranscript>::setup(&mut rng, max_len - 1)
                 .unwrap();
         let powers_len = srs.g1_powers.len();
 
-        SRS::trim(Arc::new(srs), powers_len - 1)
+        SRS::trim(Arc::new(srs), powers_len - 1).0
+    }
+
+    #[tracing::instrument(skip_all, name = "HyperBmmtv::setup_verifier")]
+    fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup {
+        KZGVerifierKey::<P>::from(setup)
+    }
+
+    fn srs_size(setup: &Self::ProverSetup) -> usize {
+        setup.g1_powers().len()
     }
 
     #[tracing::instrument(skip_all, name = "HyperBmmtv::commit")]
     fn commit(
         poly: &MultilinearPolynomial<Self::Field>,
-        (p_srs, _): &Self::Setup,
+        setup: &Self::ProverSetup,
     ) -> Self::Commitment {
         let unipoly: UniPoly<Self::Field> = poly.into();
         let commitment =
-            UnivariatePolynomialCommitment::<P, ProofTranscript>::commit(p_srs, &unipoly).unwrap();
+            UnivariatePolynomialCommitment::<P, ProofTranscript>::commit(setup, &unipoly).unwrap();
         HyperBmmtvCommitment(commitment.0, commitment.1)
     }
 
     #[tracing::instrument(skip_all, name = "HyperBmmtv::batch_commit")]
-    fn batch_commit<U>(polys: &[U], gens: &Self::Setup) -> Vec<Self::Commitment>
+    fn batch_commit<U>(polys: &[U], gens: &Self::ProverSetup) -> Vec<Self::Commitment>
     where
         U: Borrow<MultilinearPolynomial<Self::Field>> + Sync,
     {
@@ -138,12 +148,12 @@ where
 
     #[tracing::instrument(skip_all, name = "HyperBmmtv::prove")]
     fn prove(
-        (p_srs, _): &Self::Setup,
+        setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
-        point: &[Self::Field], // point at which the polynomial is evaluated
+        opening_point: &[Self::Field], // point at which the polynomial is evaluated
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
-        let ell = point.len();
+        let ell = opening_point.len();
         let n = poly.len();
         assert_eq!(n, 1 << ell); // Below we assume that n is a power of two
 
@@ -158,7 +168,7 @@ where
             let previous_poly: &UniPoly<P::ScalarField> = &polys[i];
             let Pi_len = previous_poly.coeffs.len() / 2;
             let mut Pi = vec![P::ScalarField::zero(); Pi_len];
-            let x = point[ell - i - 1];
+            let x = opening_point[ell - i - 1];
 
             Pi.par_iter_mut().enumerate().for_each(|(j, Pi_j)| {
                 let Peven = previous_poly[2 * j + 1];
@@ -178,7 +188,7 @@ where
         let com_list: Vec<_> = polys[1..]
             .par_iter()
             .map(|poly| {
-                UnivariatePolynomialCommitment::<P, ProofTranscript>::commit(p_srs, poly).unwrap()
+                UnivariatePolynomialCommitment::<P, ProofTranscript>::commit(setup, poly).unwrap()
             })
             .collect();
 
@@ -196,7 +206,7 @@ where
 
         // TODO Get this from the Commitment
         let (_, kzg_comms) =
-            UnivariatePolynomialCommitment::<P, ProofTranscript>::commit(p_srs, &polys[0]).unwrap();
+            UnivariatePolynomialCommitment::<P, ProofTranscript>::commit(setup, &polys[0]).unwrap();
 
         let (sub_polynomials_commitments, com_list): (Vec<_>, Vec<_>) =
             com_list.into_iter().unzip();
@@ -211,7 +221,7 @@ where
                 let y = polynomial.evaluate(&r.square());
                 SubProof {
                     proof: UnivariatePolynomialCommitment::open(
-                        p_srs, polynomial, comm, &r, transcript,
+                        setup, polynomial, comm, &r, transcript,
                     )
                     .unwrap(), // opening
                     y,
@@ -230,13 +240,13 @@ where
     #[tracing::instrument(skip_all, name = "HyperBmmtv::verify")]
     fn verify(
         proof: &Self::Proof,
-        (_, v_srs): &Self::Setup,
+        setup: &Self::VerifierSetup,
         transcript: &mut ProofTranscript,
-        point: &[Self::Field], // point at which the polynomial is evaluated
-        opening: &Self::Field, // evaluation \widetilde{Z}(r)
+        opening_point: &[Self::Field], // point at which the polynomial is evaluated
+        opening: &Self::Field,         // evaluation \widetilde{Z}(r)
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
-        let ell = point.len();
+        let ell = opening_point.len();
 
         if proof.polynomials_proof.len() != ell {
             return Err(ProofVerifyError::InternalError);
@@ -268,7 +278,7 @@ where
 
         let two = P::ScalarField::from(2u64);
         for (i, SubProof { y_pos, y_neg, .. }) in proof.polynomials_proof.iter().enumerate() {
-            let x = point[ell - i - 1];
+            let x = opening_point[ell - i - 1];
             let y_pos = *y_pos;
             let y_neg = *y_neg;
             let y_next = Y[i + 1];
@@ -298,7 +308,7 @@ where
                 )| {
                     let n = 1 << (ell - i);
                     UnivariatePolynomialCommitment::verify(
-                        v_srs,
+                        setup,
                         n - 1, // degree = len(coeff) - 1
                         *commitment,
                         r,
@@ -349,7 +359,8 @@ mod tests {
 
         let poly = MultilinearPolynomial::from(poly_raw.clone());
 
-        let setup = HyperTest::setup(poly.len());
+        let setup = HyperTest::setup_prover(poly.len());
+        let verifier_setup = HyperTest::setup_verifier(&setup);
 
         let commit = HyperTest::commit(&poly, &setup);
 
@@ -367,7 +378,7 @@ mod tests {
         let opening = poly.evaluate(&point);
         HyperTest::verify(
             &proof,
-            &setup,
+            &verifier_setup,
             &mut verifier_transcript,
             &point,
             &opening,

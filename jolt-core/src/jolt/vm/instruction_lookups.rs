@@ -84,7 +84,6 @@ where
 
     #[tracing::instrument(skip_all, name = "LookupsProof::prove")]
     pub fn prove(
-        _generators: &PCS::Setup,
         trace: &[RV32IMCycle],
         _opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
         transcript: &mut ProofTranscript,

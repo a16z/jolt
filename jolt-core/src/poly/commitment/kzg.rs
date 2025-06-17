@@ -117,17 +117,8 @@ where
             max_degree < params.g1_powers.len(),
             "SRS length is less than size"
         );
-        let g1 = params.g1_powers[0];
-        let g2 = params.g2_powers[0];
-        let alpha_g1 = params.g1_powers[1];
-        let beta_g2 = params.g2_powers[1];
         let pk = KZGProverKey::new(params, 0, max_degree + 1);
-        let vk = KZGVerifierKey {
-            g1,
-            g2,
-            beta_g2,
-            alpha_g1,
-        };
+        let vk = KZGVerifierKey::from(&pk);
         (pk, vk)
     }
 }
@@ -137,11 +128,11 @@ pub struct KZGProverKey<P: Pairing>
 where
     P::G1: Icicle,
 {
-    srs: Arc<SRS<P>>,
+    pub(crate) srs: Arc<SRS<P>>,
     // offset to read into SRS
     offset: usize,
     // max size of srs
-    supported_size: usize,
+    pub(crate) supported_size: usize,
 }
 
 impl<P: Pairing> KZGProverKey<P>
@@ -189,6 +180,24 @@ pub struct KZGVerifierKey<P: Pairing> {
     pub g2: P::G2Affine,
     pub alpha_g1: P::G1Affine,
     pub beta_g2: P::G2Affine,
+}
+
+impl<P: Pairing> From<&KZGProverKey<P>> for KZGVerifierKey<P>
+where
+    P::G1: Icicle,
+{
+    fn from(pk: &KZGProverKey<P>) -> Self {
+        let g1 = pk.g1_powers()[0];
+        let g2 = pk.g2_powers()[0];
+        let alpha_g1 = pk.g1_powers()[1];
+        let beta_g2 = pk.g2_powers()[1];
+        Self {
+            g1,
+            g2,
+            alpha_g1,
+            beta_g2,
+        }
+    }
 }
 
 /// Marker trait

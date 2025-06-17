@@ -5,7 +5,7 @@ use crate::field::JoltField;
 use crate::host;
 use crate::jolt::lookup_table::LookupTables;
 use crate::jolt::vm::rv32i_vm::RV32IJoltVM;
-use crate::jolt::vm::{Jolt, JoltProverPreprocessing};
+use crate::jolt::vm::{Jolt, JoltProverPreprocessing, JoltVerifierPreprocessing};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::poly::commitment::zeromorph::Zeromorph;
@@ -317,6 +317,9 @@ where
             preprocessing.clone(),
         );
 
+        let verifier_preprocessing =
+            JoltVerifierPreprocessing::<F, PCS, ProofTranscript>::from(&preprocessing);
+
         println!("Proof sizing:");
         // serialize_and_print_size("jolt_commitments", &jolt_commitments);
         serialize_and_print_size("jolt_proof", &jolt_proof);
@@ -330,7 +333,7 @@ where
         );
 
         let verification_result =
-            RV32IJoltVM::verify(preprocessing.shared, jolt_proof, program_io, None);
+            RV32IJoltVM::verify(verifier_preprocessing, jolt_proof, program_io, None);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -378,8 +381,12 @@ where
             trace,
             preprocessing.clone(),
         );
+
+        let verifier_preprocessing =
+            JoltVerifierPreprocessing::<F, PCS, ProofTranscript>::from(&preprocessing);
+
         let verification_result =
-            RV32IJoltVM::verify(preprocessing.shared, jolt_proof, program_io, None);
+            RV32IJoltVM::verify(verifier_preprocessing, jolt_proof, program_io, None);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
