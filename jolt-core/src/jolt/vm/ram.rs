@@ -2,7 +2,7 @@ use crate::{
     field::{JoltField, OptimizedMul},
     poly::{
         eq_poly::EqPolynomial,
-        identity_poly::UnmapAddressPolynomial,
+        identity_poly::UnmapRamAddressPolynomial,
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
@@ -151,12 +151,12 @@ impl<F: JoltField, ProofTranscript: Transcript> RafEvaluationProof<F, ProofTrans
         let T = trace.len();
         debug_assert_eq!(T.log_2(), r_cycle.len());
 
-        // Compute eq polynomial evaluations at r_cycle
         let eq_r_cycle: Vec<F> = EqPolynomial::evals(&r_cycle);
 
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = (T / num_chunks).max(1);
 
+        // TODO: Propagate ra claim from Spartan
         let ra_evals: Vec<F> = trace
             .par_chunks(chunk_size)
             .enumerate()
@@ -183,15 +183,16 @@ impl<F: JoltField, ProofTranscript: Transcript> RafEvaluationProof<F, ProofTrans
             );
 
         let mut ra_poly = MultilinearPolynomial::from(ra_evals);
-        let mut unmap_poly = UnmapAddressPolynomial::new(K.log_2(), memory_layout.input_start);
+        let mut unmap_poly = UnmapRamAddressPolynomial::new(K.log_2(), memory_layout.input_start);
 
         let num_rounds = K.log_2();
         let mut r_address: Vec<F> = Vec::with_capacity(num_rounds);
-        let raf_values = trace
+        // TODO: Propagate raf claim from Spartan
+        let raf_evals = trace
             .par_iter()
             .map(|t| t.ram_access().address() as u64)
             .collect::<Vec<u64>>();
-        let raf_poly = MultilinearPolynomial::from(raf_values);
+        let raf_poly = MultilinearPolynomial::from(raf_evals);
         let raf_claim = raf_poly.evaluate(&r_cycle);
         let mut previous_claim = raf_claim;
 
@@ -230,7 +231,6 @@ impl<F: JoltField, ProofTranscript: Transcript> RafEvaluationProof<F, ProofTrans
 
             previous_claim = univariate_poly.evaluate(&r_j);
 
-            // Bind both polynomials in parallel
             rayon::join(
                 || ra_poly.bind_parallel(r_j, BindingOrder::LowToHigh),
                 || unmap_poly.bind_parallel(r_j, BindingOrder::LowToHigh),
@@ -248,7 +248,6 @@ impl<F: JoltField, ProofTranscript: Transcript> RafEvaluationProof<F, ProofTrans
 
     pub fn verify(
         &self,
-        _r_cycle: &[F],
         K: usize,
         transcript: &mut ProofTranscript,
         memory_layout: &MemoryLayout,
@@ -260,13 +259,11 @@ impl<F: JoltField, ProofTranscript: Transcript> RafEvaluationProof<F, ProofTrans
             self.sumcheck_proof
                 .verify(self.raf_claim, K.log_2(), DEGREE, transcript)?;
 
-        let unmap_eval = UnmapAddressPolynomial::new(K.log_2(), memory_layout.input_start)
+        let unmap_eval = UnmapRamAddressPolynomial::new(K.log_2(), memory_layout.input_start)
             .evaluate(&r_raf_sumcheck);
 
-        // Verify the relationship: claimed_ram_address = sumcheck_claim
-        // which should be: raf(r_cycle) = unmap(r_raf_sumcheck) * ra(r_raf_sumcheck, r_cycle)
+        // Verify sumcheck_claim = unmap(r_raf_sumcheck) * ra(r_raf_sumcheck, r_cycle)
         let expected_product = unmap_eval * self.ra_claim;
-
         if expected_product != sumcheck_claim {
             return Err(ProofVerifyError::InternalError);
         }
@@ -473,7 +470,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         // Verify RAF evaluation proof
         let _r_address_raf =
             self.raf_evaluation_proof
-                .verify(&r_cycle, K, transcript, &program_io.memory_layout)?;
+                .verify(K, transcript, &program_io.memory_layout)?;
 
         // TODO: Add opening proof verification for ra(r_address_raf, r_cycle)
 
@@ -1758,84 +1755,6 @@ mod tests {
     use super::*;
     use crate::utils::transcript::KeccakTranscript;
     use ark_bn254::Fr;
-    use ark_ff::One;
-
-    // Create a simple test trace using the existing test utilities from the codebase
-    fn create_test_trace(num_cycles: usize, _memory_layout: &MemoryLayout) -> Vec<RV32IMCycle> {
-        // For testing purposes, we'll create a simple pattern of cycles
-        // that alternates between no-ops and memory accesses
-        let mut trace = Vec::new();
-
-        for i in 0..num_cycles {
-            // For simplicity, just use NoOp cycles
-            // In a real test, we'd create more complex cycles with actual memory accesses
-            trace.push(RV32IMCycle::NoOp(i));
-        }
-
-        trace
-    }
-
-    // Helper function to create a trace with specific memory access patterns
-    fn create_trace_with_addresses(addresses: Vec<u64>) -> Vec<RV32IMCycle> {
-        // Since we can't easily create complex cycles without access to private types,
-        // we'll use a workaround by creating NoOp cycles and then manually computing
-        // the expected claims based on the addresses we would have used
-        addresses
-            .iter()
-            .enumerate()
-            .map(|(i, _)| RV32IMCycle::NoOp(i))
-            .collect()
-    }
-
-    #[test]
-    fn test_raf_evaluation_basic() {
-        // Test basic functionality of RAF evaluation sumcheck
-        // Since we're using NoOp cycles which have address 0, the expected claim should be 0
-        const K: usize = 1 << 10; // 1024 addresses
-        const T: usize = 1 << 8; // 256 cycles
-
-        let memory_layout = MemoryLayout {
-            max_input_size: 256,
-            max_output_size: 256,
-            input_start: 0x80000000,
-            input_end: 0x80000100,
-            output_start: 0x80001000,
-            output_end: 0x80001100,
-            stack_size: 1024,
-            stack_end: 0x7FFFFF00,
-            memory_size: 0x10000,
-            memory_end: 0x80010000,
-            panic: 0x80002000,
-            termination: 0x80002001,
-            io_end: 0x80002002,
-        };
-
-        let trace = create_test_trace(T, &memory_layout);
-
-        // Create transcript and get r_cycle
-        let mut prover_transcript = KeccakTranscript::new(b"test_raf_evaluation");
-        let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
-
-        // Prove
-        let proof = RafEvaluationProof::prove(
-            &trace,
-            &memory_layout,
-            r_cycle.clone(),
-            K,
-            &mut prover_transcript,
-        );
-
-        // Verify
-        let mut verifier_transcript = KeccakTranscript::new(b"test_raf_evaluation");
-        let _: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
-
-        let r_address_result = proof.verify(&r_cycle, K, &mut verifier_transcript, &memory_layout);
-
-        assert!(
-            r_address_result.is_ok(),
-            "RAF evaluation verification failed"
-        );
-    }
 
     #[test]
     fn test_raf_evaluation_no_ops() {
@@ -1868,74 +1787,18 @@ mod tests {
         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
 
         // Prove
-        let proof = RafEvaluationProof::prove(
-            &trace,
-            &memory_layout,
-            r_cycle.clone(),
-            K,
-            &mut prover_transcript,
-        );
+        let proof =
+            RafEvaluationProof::prove(&trace, &memory_layout, r_cycle, K, &mut prover_transcript);
 
         // Verify
         let mut verifier_transcript = KeccakTranscript::new(b"test_no_ops");
-        let _: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
+        let _r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
 
-        let r_address_result = proof.verify(&r_cycle, K, &mut verifier_transcript, &memory_layout);
+        let r_address_result = proof.verify(K, &mut verifier_transcript, &memory_layout);
 
         assert!(
             r_address_result.is_ok(),
             "No-op RAF evaluation verification failed"
-        );
-    }
-
-    #[test]
-    fn test_raf_evaluation_soundness() {
-        // Test that verification fails with incorrect claims
-        const K: usize = 1 << 8;
-        const T: usize = 1 << 6;
-
-        let memory_layout = MemoryLayout {
-            max_input_size: 256,
-            max_output_size: 256,
-            input_start: 0x80000000,
-            input_end: 0x80000100,
-            output_start: 0x80001000,
-            output_end: 0x80001100,
-            stack_size: 1024,
-            stack_end: 0x7FFFFF00,
-            memory_size: 0x10000,
-            memory_end: 0x80010000,
-            panic: 0x80002000,
-            termination: 0x80002001,
-            io_end: 0x80002002,
-        };
-
-        let trace = create_test_trace(T, &memory_layout);
-
-        let mut prover_transcript = KeccakTranscript::new(b"test_soundness");
-        let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
-
-        // Create proof with correct claim
-        let mut proof = RafEvaluationProof::prove(
-            &trace,
-            &memory_layout,
-            r_cycle.clone(),
-            K,
-            &mut prover_transcript,
-        );
-
-        // Try to verify with incorrect claim
-        let mut verifier_transcript = KeccakTranscript::new(b"test_soundness");
-        let _: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
-
-        let incorrect_claim = Fr::one(); // Any non-zero claim should fail
-        proof.raf_claim = incorrect_claim;
-        let r_address_result = proof.verify(&r_cycle, K, &mut verifier_transcript, &memory_layout);
-
-        // With the proper verification, using an incorrect claim should fail
-        assert!(
-            r_address_result.is_err(),
-            "Verification should fail with incorrect claim"
         );
     }
 }

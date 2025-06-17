@@ -83,7 +83,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for IdentityPolynomial<F> {
 }
 
 /// Polynomial that unmaps RAM addresses: k -> (k-1)*4 + input_start for k > 0, and 0 for k = 0
-pub struct UnmapAddressPolynomial<F: JoltField> {
+pub struct UnmapRamAddressPolynomial<F: JoltField> {
     num_vars: usize,
     num_bound_vars: usize,
     input_start: u64,
@@ -93,9 +93,9 @@ pub struct UnmapAddressPolynomial<F: JoltField> {
     product_term: F,
 }
 
-impl<F: JoltField> UnmapAddressPolynomial<F> {
+impl<F: JoltField> UnmapRamAddressPolynomial<F> {
     pub fn new(num_vars: usize, input_start: u64) -> Self {
-        UnmapAddressPolynomial {
+        UnmapRamAddressPolynomial {
             num_vars,
             num_bound_vars: 0,
             input_start,
@@ -105,7 +105,7 @@ impl<F: JoltField> UnmapAddressPolynomial<F> {
     }
 }
 
-impl<F: JoltField> PolynomialBinding<F> for UnmapAddressPolynomial<F> {
+impl<F: JoltField> PolynomialBinding<F> for UnmapRamAddressPolynomial<F> {
     fn is_bound(&self) -> bool {
         self.num_bound_vars != 0
     }
@@ -138,7 +138,7 @@ impl<F: JoltField> PolynomialBinding<F> for UnmapAddressPolynomial<F> {
     }
 }
 
-impl<F: JoltField> PolynomialEvaluation<F> for UnmapAddressPolynomial<F> {
+impl<F: JoltField> PolynomialEvaluation<F> for UnmapRamAddressPolynomial<F> {
     fn evaluate(&self, r: &[F]) -> F {
         let len = r.len();
         assert_eq!(len, self.num_vars);
@@ -257,7 +257,7 @@ mod tests {
         const INPUT_START: u64 = 0x80000000;
 
         // Test that UnmapAddressPolynomial evaluates correctly on boolean hypercube
-        let unmap_poly = UnmapAddressPolynomial::<Fr>::new(NUM_VARS, INPUT_START);
+        let unmap_poly = UnmapRamAddressPolynomial::<Fr>::new(NUM_VARS, INPUT_START);
 
         // Test a few specific points
         // k=0 should map to 0
@@ -286,7 +286,7 @@ mod tests {
         const NUM_VARS: usize = 4;
         const INPUT_START: u64 = 0x80000000;
 
-        let mut unmap_poly = UnmapAddressPolynomial::<Fr>::new(NUM_VARS, INPUT_START);
+        let mut unmap_poly = UnmapRamAddressPolynomial::<Fr>::new(NUM_VARS, INPUT_START);
 
         let K = 1 << NUM_VARS;
         let unmap_evals: Vec<Fr> = (0..K)
