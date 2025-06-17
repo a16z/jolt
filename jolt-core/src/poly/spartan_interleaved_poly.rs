@@ -3,8 +3,11 @@ use super::{
     sparse_interleaved_poly::SparseCoefficient, split_eq_poly::GruenSplitEqPolynomial,
     unipoly::CompressedUniPoly,
 };
+
+use crate::jolt::vm::JoltProverPreprocessing;
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::r1cs::builder::shard_last_step_eval_offset_lc;
-use crate::r1cs::spartan::R1CSInputsOracle;
+use crate::r1cs::inputs::ALL_R1CS_INPUTS;
 use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
 use crate::utils::streaming::Oracle;
 use crate::{
@@ -17,9 +20,12 @@ use crate::{
     },
 };
 use ark_ff::Zero;
-use ark_std::iterable::Iterable;
 use rayon::prelude::*;
-use std::time::Instant;
+
+use rayon::ThreadPoolBuilder;
+use std::ops::Mul;
+use std::time::{Duration, Instant};
+use tracer::instruction::RV32IMCycle;
 
 pub const TOTAL_NUM_ACCUMS: usize = svo_helpers::total_num_accums(NUM_SVO_ROUNDS);
 pub const NUM_NONTRIVIAL_TERNARY_POINTS: usize =
@@ -277,14 +283,12 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
                                 let global_r1cs_idx =
                                     2 *
-
                                         (current_step_idx * padded_num_constraints +
                                             original_uniform_idx_in_step);
 
                                 if !constraint.a.terms().is_empty() {
                                     let az = constraint.a.evaluate_row(
                                         flattened_polynomials,
-
                                         current_step_idx,
                                     );
                                     if !az.is_zero() {
@@ -296,7 +300,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                 if !constraint.b.terms().is_empty() {
                                     let bz = constraint.b.evaluate_row(
                                         flattened_polynomials,
-
                                         current_step_idx,
                                     );
                                     if !bz.is_zero() {
@@ -322,7 +325,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                     &binary_az_block,
                                     &binary_bz_block,
                                     E_in_val,
-                                    &mut tA_sum_for_current_x_out
+                                    &mut tA_sum_for_current_x_out,
                                 );
 
                                 current_x_in_constraint_val += 1;
@@ -351,13 +354,13 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                 &constraint.a,
                                 flattened_polynomials,
                                 current_step_idx,
-                                next_step_index_opt
+                                next_step_index_opt,
                             );
                             let eq_b_eval = eval_offset_lc(
                                 &constraint.b,
                                 flattened_polynomials,
                                 current_step_idx,
-                                next_step_index_opt
+                                next_step_index_opt,
                             );
                             let az = eq_a_eval - eq_b_eval;
                             if !az.is_zero() {
@@ -369,7 +372,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                     &constraint.cond,
                                     flattened_polynomials,
                                     current_step_idx,
-                                    next_step_index_opt
+                                    next_step_index_opt,
                                 );
                                 if !bz.is_zero() {
                                     binary_bz_block[block_idx] = bz;
@@ -388,7 +391,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             &binary_az_block,
                             &binary_bz_block,
                             E_in_val_phase2, // Use E_in_val specific to this phase/block
-                            &mut tA_sum_for_current_x_out
+                            &mut tA_sum_for_current_x_out,
                         );
                     } // End x_in_step_val loop
 
@@ -398,7 +401,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         x_out_val,
                         E_out_vec,
                         &mut current_x_out_svo_zero,
-                        &mut current_x_out_svo_infty
+                        &mut current_x_out_svo_infty,
                     );
 
                     // Accumulate SVO contributions for this x_out_val into chunk accumulators
@@ -1175,13 +1178,13 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 }
 
 pub struct SpartanInterleavedPolynomialOracle<'a, const NUM_SVO_ROUNDS: usize, F: JoltField> {
-    pub input_polys_oracle: R1CSInputsOracle<'a, F>,
+    pub step: usize,
+    pub trace: &'a [RV32IMCycle],
+    pub shard_length: usize,
     pub func: Box<
-        dyn (Fn(
-                usize,
-                Vec<MultilinearPolynomial<F>>,
-                Vec<MultilinearPolynomial<F>>,
-            ) -> Vec<SparseCoefficient<i128>>)
+        dyn (Fn(usize, &[RV32IMCycle], Option<&[RV32IMCycle]>) -> Vec<SparseCoefficient<i128>>)
+            + Send
+            + Sync
             + 'a,
     >,
 
@@ -1191,23 +1194,44 @@ pub struct SpartanInterleavedPolynomialOracle<'a, const NUM_SVO_ROUNDS: usize, F
 }
 
 impl<'a, F: JoltField> SpartanInterleavedPolynomialOracle<'a, NUM_SVO_ROUNDS, F> {
-    pub fn new(
+    pub fn new<PCS, ProofTranscript>(
         padded_num_constraints: usize,
         uniform_constraints: &'a [Constraint],
         cross_step_constraints: &'a [OffsetEqConstraint],
         tau: &[F],
-        input_polys_oracle: R1CSInputsOracle<'a, F>,
-    ) -> Self {
-        let total_num_steps = input_polys_oracle.get_len();
+        trace: &'a [RV32IMCycle],
+        shard_length: usize,
+        preprocessing: &'a JoltProverPreprocessing<F, PCS, ProofTranscript>,
+    ) -> Self
+    where
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+        ProofTranscript: Transcript,
+    {
+        let total_num_steps = trace.len();
 
         let func = Box::new(
             move |shard_idx: usize,
-                  input_polys_shard: Vec<MultilinearPolynomial<F>>,
-                  input_polys_peek: Vec<MultilinearPolynomial<F>>| {
-                let shard_length = input_polys_shard[0].len();
+                  trace_shard: &[RV32IMCycle],
+                  trace_peek: Option<&[RV32IMCycle]>| {
+                let shard_length = trace_shard.len();
+                let input_polys_shard: Vec<MultilinearPolynomial<F>> = ALL_R1CS_INPUTS
+                    .par_iter()
+                    .map(|var| var.generate_witness(trace_shard, preprocessing))
+                    .collect();
+                let input_polys_peek: Vec<MultilinearPolynomial<F>> = if trace_peek.is_some() {
+                    ALL_R1CS_INPUTS
+                        .par_iter()
+                        .map(|var| var.generate_witness(trace_peek.unwrap(), preprocessing))
+                        .collect()
+                } else {
+                    Default::default()
+                };
 
-                let num_chunks = rayon::current_num_threads().next_power_of_two() * 4;
-                let chunk_size = shard_length.div_ceil(num_chunks);
+                let num_chunks = std::cmp::min(
+                    shard_length,
+                    rayon::current_num_threads().next_power_of_two() * 8,
+                );
+                let chunk_size = shard_length / num_chunks;
 
                 let az_bz_coeffs: Vec<SparseCoefficient<i128>> = (0..num_chunks)
                     .into_par_iter()
@@ -1339,7 +1363,9 @@ impl<'a, F: JoltField> SpartanInterleavedPolynomialOracle<'a, NUM_SVO_ROUNDS, F>
         );
 
         SpartanInterleavedPolynomialOracle {
-            input_polys_oracle,
+            step: 0,
+            trace,
+            shard_length,
             func,
             bound_coeffs: vec![],
             binding_scratch_space: vec![],
@@ -1421,12 +1447,12 @@ impl<'a, F: JoltField> SpartanInterleavedPolynomialOracle<'a, NUM_SVO_ROUNDS, F>
         // TODO: remove this assertion by handling the switchover point more generally
         // Currently, it should not fail with 3 or 4 SVO rounds
         assert!(
-                rem_num_uniform_r1cs_constraints + num_cross_step_constraints < Y_SVO_SPACE_SIZE,
-                "The last block of {} uniform constraints + {} cross step constraints must fit in a single block of size {}",
-                rem_num_uniform_r1cs_constraints,
-                num_cross_step_constraints,
-                Y_SVO_SPACE_SIZE
-            );
+            rem_num_uniform_r1cs_constraints + num_cross_step_constraints < Y_SVO_SPACE_SIZE,
+            "The last block of {} uniform constraints + {} cross step constraints must fit in a single block of size {}",
+            rem_num_uniform_r1cs_constraints,
+            num_cross_step_constraints,
+            Y_SVO_SPACE_SIZE
+        );
 
         // --- Setup: E_in and E_out tables ---
         // Call GruenSplitEqPolynomial::new_for_small_value with the determined variable splits.
@@ -1466,7 +1492,6 @@ impl<'a, F: JoltField> SpartanInterleavedPolynomialOracle<'a, NUM_SVO_ROUNDS, F>
 
         // Without parallelisation, if is twice as slow as the else case.
         // If we remove parallelisation from new_with_precompute(), it is slower than the else case.
-
         if num_shard_vars <= NUM_SVO_ROUNDS + iter_num_x_in_vars {
             println!("Shard smaller than an x_out_val block");
             // There are multiple shards for every value of x_out_vars. So we iterate over every value of x_out_vars
@@ -1502,12 +1527,10 @@ impl<'a, F: JoltField> SpartanInterleavedPolynomialOracle<'a, NUM_SVO_ROUNDS, F>
                         .collect::<Vec<&[SparseCoefficient<i128>]>>();
                     time_to_chunk_and_collect += now.elapsed();
 
-                    let num_parallel_chunks =
-                        if svo_blocks.len() < rayon::current_num_threads().next_power_of_two() {
-                            1
-                        } else {
-                            rayon::current_num_threads().next_power_of_two()
-                        };
+                    let num_parallel_chunks = std::cmp::min(
+                        svo_blocks.len(),
+                        rayon::current_num_threads().next_power_of_two() * 4,
+                    );
 
                     let now = Instant::now();
                     let tA_sum_for_current_x_out_shard = svo_blocks
@@ -1636,12 +1659,10 @@ impl<'a, F: JoltField> SpartanInterleavedPolynomialOracle<'a, NUM_SVO_ROUNDS, F>
                         })
                         .collect::<Vec<&[SparseCoefficient<i128>]>>();
 
-                    let num_parallel_chunks =
-                        if svo_blocks.len() < rayon::current_num_threads().next_power_of_two() {
-                            1
-                        } else {
-                            rayon::current_num_threads().next_power_of_two()
-                        };
+                    let num_parallel_chunks = std::cmp::min(
+                        svo_blocks.len(),
+                        rayon::current_num_threads().next_power_of_two() * 4,
+                    );
 
                     let now = Instant::now();
                     tA_sum_for_current_x_out = svo_blocks
@@ -1732,196 +1753,550 @@ impl<'a, F: JoltField> SpartanInterleavedPolynomialOracle<'a, NUM_SVO_ROUNDS, F>
         claim: &mut F,
         transcript: &mut ProofTranscript,
     ) {
+        let total_time = Instant::now();
         let mut partially_bound_coeffs = Vec::<SparseCoefficient<F>>::new();
-        for round in streaming_rounds_start..=streaming_rounds_end {
-            // println!("Streaming round {}", round);
+        let mut time_to_collect = Duration::ZERO;
+        let mut time_to_stream_shards = Duration::ZERO;
+        let mut time_for_sum_check = Duration::ZERO;
+        let now = Instant::now();
+        let mut shard = self.next_shard();
+        time_to_stream_shards += now.elapsed();
 
+        let current_num_threads = rayon::current_num_threads();
+        // let pool_1_num_threads = (2 * current_num_threads).div_ceil(3);
+        // let pool_2_num_threads = current_num_threads - pool_1_num_threads;
+
+        println!("Total threads: {}", current_num_threads);
+        let pool_1_num_threads = (2 * current_num_threads).div_ceil(3);
+        let pool_2_num_threads = current_num_threads - pool_1_num_threads;
+        println!("Pool 1 threads: {}", pool_1_num_threads);
+        println!("Pool 2 threads: {}", pool_2_num_threads);
+
+        let pool_1 = ThreadPoolBuilder::new()
+            .num_threads(pool_1_num_threads)
+            .build()
+            .unwrap();
+        let pool_2 = ThreadPoolBuilder::new()
+            .num_threads(pool_2_num_threads)
+            .build()
+            .unwrap();
+
+        for round in streaming_rounds_start..=streaming_rounds_end {
             let block_size = 1 << (round + 1);
 
             let mut eval_at_zero = F::zero();
             let mut eval_at_infinity = F::zero();
 
+            // for i in 0..num_shards {
+            //     let now = Instant::now();
+            //     let shard = self.next_shard();
+            //     time_to_stream_shards += now.elapsed();
+            //
+            //     let now = Instant::now();
+            //     // TODO: Refactor. Put this in a sepearte funciton or closure.
+            //     let num_x_in_vars = eq_poly.E_in_current_len().log_2();
+            //     // let num_x_out_vars = eq_poly.E_out_current_len().log_2();
+            //
+            //     let now = Instant::now();
+            //     let blocks = shard
+            //         .chunk_by(|c1, c2| c1.index / (2 * block_size) == c2.index / (2 * block_size))
+            //         .collect::<Vec<&[SparseCoefficient<i128>]>>();
+            //     time_to_collect += now.elapsed();
+            //
+            //     let num_parallel_chunks = std::cmp::min(
+            //         blocks.len(),
+            //         rayon::current_num_threads().next_power_of_two() * 4,
+            //     );
+            //
+            //     let chunk_size = blocks.len() / num_parallel_chunks;
+            //
+            //     let (
+            //     eval_at_zero_shard,
+            //     eval_at_infinity_shard,
+            //     partially_bound_coeffs_shard,
+            // ) = (0..num_parallel_chunks)
+            //     .into_par_iter()
+            //     .map(|chunk_idx| {
+            //         let mut eval_at_zero_local = F::zero();
+            //         let mut eval_at_infinity_local = F::zero();
+            //         let mut partially_bound_coeffs_local =
+            //             Vec::<SparseCoefficient<F>>::new();
+            //         for block_idx in chunk_idx * chunk_size..(chunk_idx + 1) *
+            //             chunk_size {
+            //             let block = blocks[block_idx];
+            //             let current_block_id = block[0].index / (2 * block_size);
+            //
+            //             let x_in_val =
+            //                 current_block_id & ((1 << num_x_in_vars) - 1);
+            //             // println!("x_in_val = {}", x_in_val);
+            //             let x_out_val = current_block_id >> num_x_in_vars;
+            //
+            //             let e_out_val = eq_poly.E_out_current()[x_out_val];
+            //             let e_in_val = if eq_poly.E_in_current_len() > 1 {
+            //                 eq_poly.E_in_current()[x_in_val]
+            //             } else if eq_poly.E_in_current_len() == 1 {
+            //                 eq_poly.E_in_current()[0]
+            //             } else {
+            //                 // E_in_current_len() == 0, meaning no x_in variables for eq_poly
+            //                 F::one() // Effective contribution of E_in is 1
+            //             };
+            //
+            //             let mut az0_at_r = F::zero();
+            //             let mut az1_at_r = F::zero();
+            //             let mut bz0_at_r = F::zero();
+            //             let mut bz1_at_r = F::zero();
+            //             let mut cz0_at_r = F::zero();
+            //             let mut cz1_at_r = F::zero();
+            //
+            //             let mut coeff_idx_in_block = 0;
+            //             while coeff_idx_in_block < block.len() {
+            //                 let current_coeff = &block[coeff_idx_in_block];
+            //                 let local_offset =
+            //                     current_coeff.index % (2 * block_size);
+            //                 let current_is_B = local_offset % 2 == 1;
+            //                 let y_val_idx = (local_offset / 2) % (1 << round);
+            //                 let x_next_val = local_offset / block_size; // 0 or 1
+            //                 let eq_r_y = eq_r_evals[y_val_idx];
+            //
+            //                 if current_is_B {
+            //                     // Current coefficient is Bz
+            //                     let bz_orig_val = current_coeff.value;
+            //                     match x_next_val {
+            //                         0 => {
+            //                             bz0_at_r +=
+            //                                 eq_r_y.mul_i128_1_optimized(
+            //                                     bz_orig_val
+            //                                 );
+            //                         }
+            //                         1 => {
+            //                             bz1_at_r +=
+            //                                 eq_r_y.mul_i128_1_optimized(
+            //                                     bz_orig_val
+            //                                 );
+            //                         }
+            //                         _ => unreachable!(),
+            //                     }
+            //                     coeff_idx_in_block += 1;
+            //                 } else {
+            //                     // Current coefficient is Az
+            //                     let az_orig_val = current_coeff.value;
+            //                     let mut bz_orig_for_this_az = 0i128;
+            //
+            //                     match x_next_val {
+            //                         0 => {
+            //                             az0_at_r +=
+            //                                 eq_r_y.mul_i128_1_optimized(
+            //                                     az_orig_val
+            //                                 );
+            //                         }
+            //                         1 => {
+            //                             az1_at_r +=
+            //                                 eq_r_y.mul_i128_1_optimized(
+            //                                     az_orig_val
+            //                                 );
+            //                         }
+            //                         _ => unreachable!(),
+            //                     }
+            //
+            //                     if coeff_idx_in_block + 1 < block.len() {
+            //                         let next_coeff = &block[coeff_idx_in_block + 1];
+            //                         if next_coeff.index == current_coeff.index + 1 {
+            //                             bz_orig_for_this_az = next_coeff.value;
+            //                             let next_local_offset =
+            //                                 next_coeff.index % (2 * block_size);
+            //                             let next_x_next_val =
+            //                                 next_local_offset / block_size;
+            //                             debug_assert_eq!(
+            //                                 x_next_val,
+            //                                 next_x_next_val,
+            //                                 "Paired Az/Bz should share x_next_val. Current idx {}, next idx {}, current x_next {}, next x_next {}",
+            //                                 current_coeff.index,
+            //                                 next_coeff.index,
+            //                                 x_next_val,
+            //                                 next_x_next_val
+            //                             );
+            //
+            //                             match x_next_val {
+            //                                 // x_next_val of the current Az
+            //                                 0 => {
+            //                                     bz0_at_r +=
+            //                                         eq_r_y.mul_i128_1_optimized(
+            //                                             bz_orig_for_this_az
+            //                                         );
+            //                                 }
+            //                                 1 => {
+            //                                     bz1_at_r +=
+            //                                         eq_r_y.mul_i128_1_optimized(
+            //                                             bz_orig_for_this_az
+            //                                         );
+            //                                 }
+            //                                 _ => unreachable!(),
+            //                             }
+            //                             coeff_idx_in_block += 1; // Consumed the Bz coefficient as well
+            //                         }
+            //                     }
+            //                     coeff_idx_in_block += 1; // Consumed the Az coefficient
+            //
+            //                     if
+            //                     !az_orig_val.is_zero() &&
+            //                         !bz_orig_for_this_az.is_zero()
+            //                     {
+            //                         let cz_orig_val =
+            //                             az_orig_val.wrapping_mul(
+            //                                 bz_orig_for_this_az
+            //                             );
+            //                         match x_next_val {
+            //                             // x_next_val of the current Az
+            //                             0 => {
+            //                                 cz0_at_r +=
+            //                                     eq_r_y.mul_i128(cz_orig_val);
+            //                             }
+            //                             1 => {
+            //                                 cz1_at_r +=
+            //                                     eq_r_y.mul_i128(cz_orig_val);
+            //                             }
+            //                             _ => unreachable!(),
+            //                         }
+            //                     }
+            //                 }
+            //             }
+            //
+            //             let p_at_xk0 = az0_at_r * bz0_at_r - cz0_at_r;
+            //             let az_eval_infinity = az1_at_r - az0_at_r;
+            //             let bz_eval_infinity = bz1_at_r - bz0_at_r;
+            //             let p_slope_term = az_eval_infinity * bz_eval_infinity;
+            //
+            //             eval_at_zero_local += e_out_val * e_in_val * p_at_xk0;
+            //             eval_at_infinity_local +=
+            //                 e_out_val * e_in_val * p_slope_term;
+            //
+            //             if round == streaming_rounds_end {
+            //                 if !az0_at_r.is_zero() {
+            //                     partially_bound_coeffs_local.push(
+            //                         (6 * current_block_id, az0_at_r).into()
+            //                     );
+            //                 }
+            //                 if !bz0_at_r.is_zero() {
+            //                     partially_bound_coeffs_local.push(
+            //                         (6 * current_block_id + 1, bz0_at_r).into()
+            //                     );
+            //                 }
+            //                 if !cz0_at_r.is_zero() {
+            //                     partially_bound_coeffs_local.push(
+            //                         (6 * current_block_id + 2, cz0_at_r).into()
+            //                     );
+            //                 }
+            //                 if !az1_at_r.is_zero() {
+            //                     partially_bound_coeffs_local.push(
+            //                         (6 * current_block_id + 3, az1_at_r).into()
+            //                     );
+            //                 }
+            //                 if !bz1_at_r.is_zero() {
+            //                     partially_bound_coeffs_local.push(
+            //                         (6 * current_block_id + 4, bz1_at_r).into()
+            //                     );
+            //                 }
+            //                 if !cz1_at_r.is_zero() {
+            //                     partially_bound_coeffs_local.push(
+            //                         (6 * current_block_id + 5, cz1_at_r).into()
+            //                     );
+            //                 }
+            //             }
+            //         }
+            //         (
+            //             eval_at_zero_local,
+            //             eval_at_infinity_local,
+            //             partially_bound_coeffs_local,
+            //         )
+            //     })
+            //     .reduce(
+            //         || (F::zero(), F::zero(), Vec::<SparseCoefficient<F>>::new()),
+            //         |(
+            //              eval_at_zero_shard_acc,
+            //              eval_at_infinity_shard_acc,
+            //              mut partially_bound_coeffs_shard_acc,
+            //          ),
+            //          (eval_at_zero_local, eval_at_infinity_local,
+            //              mut partially_bound_coeffs_local,
+            //          )| { partially_bound_coeffs_shard_acc.extend(
+            //                 partially_bound_coeffs_local
+            //             );
+            //             (
+            //                 eval_at_zero_shard_acc + eval_at_zero_local,
+            //                 eval_at_infinity_shard_acc + eval_at_infinity_local,
+            //                 partially_bound_coeffs_shard_acc,
+            //             )
+            //         },
+            //     );
+            //
+            //     eval_at_zero += eval_at_zero_shard;
+            //     eval_at_infinity += eval_at_infinity_shard;
+            //     partially_bound_coeffs.extend(partially_bound_coeffs_shard);
+            //
+            //     time_for_sum_check += now.elapsed();
+            // }
+
             for i in 0..num_shards {
-                let shard = self.next_shard();
+                (shard, _) = rayon::join(
+                    || {
+                        pool_1.install(|| {
+                            let now = Instant::now();
+                            let shard = self.next_shard();
+                            time_to_stream_shards += now.elapsed();
+                            shard
+                        })
+                    },
+                    || {
+                        pool_2.install(|| {
+                            let now = Instant::now();
+                            // TODO: Refactor. Put this in a sepearte funciton or closure.
+                            let num_x_in_vars = eq_poly.E_in_current_len().log_2();
+                            // let num_x_out_vars = eq_poly.E_out_current_len().log_2();
+                            let now = Instant::now();
+                            let blocks = shard
+                                .chunk_by(|c1, c2| {
+                                    c1.index / (2 * block_size) == c2.index / (2 * block_size)
+                                })
+                                .collect::<Vec<&[SparseCoefficient<i128>]>>();
+                            time_to_collect += now.elapsed();
 
-                let num_x_in_vars = eq_poly.E_in_current_len().log_2();
-                // let num_x_out_vars = eq_poly.E_out_current_len().log_2();
+                            let num_parallel_chunks = std::cmp::min(
+                                blocks.len(),
+                                rayon::current_num_threads().next_power_of_two() * 4,
+                            );
 
-                let blocks = shard
-                    .chunk_by(|c1, c2| c1.index / (2 * block_size) == c2.index / (2 * block_size));
+                            let chunk_size = blocks.len() / num_parallel_chunks;
 
-                // TODO: Parallelise the following.
-                for block in blocks {
-                    let current_block_id = block[0].index / (2 * block_size);
-                    // println!(
-                    //     "Index = {}, current_block_id = {}, num_x_in_vars = {}",
-                    //     block[0].index, current_block_id, num_x_in_vars
-                    // );
+                            let (
+                                eval_at_zero_shard,
+                                eval_at_infinity_shard,
+                                partially_bound_coeffs_shard,
+                            ) = (0..num_parallel_chunks)
+                                .into_par_iter()
+                                .map(|chunk_idx| {
+                                    let mut eval_at_zero_local = F::zero();
+                                    let mut eval_at_infinity_local = F::zero();
+                                    let mut partially_bound_coeffs_local =
+                                        Vec::<SparseCoefficient<F>>::new();
+                                    for block_idx in chunk_idx * chunk_size..(chunk_idx + 1) *
+                                        chunk_size {
+                                        let block = blocks[block_idx];
+                                        let current_block_id = block[0].index / (2 * block_size);
 
-                    let x_in_val = current_block_id & ((1 << num_x_in_vars) - 1);
-                    // println!("x_in_val = {}", x_in_val);
-                    let x_out_val = current_block_id >> num_x_in_vars;
+                                        let x_in_val =
+                                            current_block_id & ((1 << num_x_in_vars) - 1);
+                                        // println!("x_in_val = {}", x_in_val);
+                                        let x_out_val = current_block_id >> num_x_in_vars;
 
-                    let e_out_val = eq_poly.E_out_current()[x_out_val];
-                    let e_in_val = if eq_poly.E_in_current_len() > 1 {
-                        eq_poly.E_in_current()[x_in_val]
-                    } else if eq_poly.E_in_current_len() == 1 {
-                        eq_poly.E_in_current()[0]
-                    } else {
-                        // E_in_current_len() == 0, meaning no x_in variables for eq_poly
-                        F::one() // Effective contribution of E_in is 1
-                    };
+                                        let e_out_val = eq_poly.E_out_current()[x_out_val];
+                                        let e_in_val = if eq_poly.E_in_current_len() > 1 {
+                                            eq_poly.E_in_current()[x_in_val]
+                                        } else if eq_poly.E_in_current_len() == 1 {
+                                            eq_poly.E_in_current()[0]
+                                        } else {
+                                            // E_in_current_len() == 0, meaning no x_in variables for eq_poly
+                                            F::one() // Effective contribution of E_in is 1
+                                        };
 
-                    let mut az0_at_r = F::zero();
-                    let mut az1_at_r = F::zero();
-                    let mut bz0_at_r = F::zero();
-                    let mut bz1_at_r = F::zero();
-                    let mut cz0_at_r = F::zero();
-                    let mut cz1_at_r = F::zero();
+                                        let mut az0_at_r = F::zero();
+                                        let mut az1_at_r = F::zero();
+                                        let mut bz0_at_r = F::zero();
+                                        let mut bz1_at_r = F::zero();
+                                        let mut cz0_at_r = F::zero();
+                                        let mut cz1_at_r = F::zero();
 
-                    let mut coeff_idx_in_block = 0;
-                    while coeff_idx_in_block < block.len() {
-                        let current_coeff = &block[coeff_idx_in_block];
-                        let local_offset = current_coeff.index % (2 * block_size);
-                        let current_is_B = local_offset % 2 == 1;
-                        let y_val_idx = (local_offset / 2) % (1 << round);
-                        let x_next_val = local_offset / block_size; // 0 or 1
-                        let eq_r_y = eq_r_evals[y_val_idx];
-                        // if round <= streaming_rounds_start + 1 {
-                        //     println!(
-                        //         "block_idx = {}, x_in_val = {}, x_out_val = {}, x_next_val = {}, y_val_idx = {}",
-                        //         current_block_id,
-                        //         x_in_val,
-                        //         x_out_val,
-                        //         x_next_val,
-                        //         y_val_idx
-                        //     );
-                        // }
+                                        let mut coeff_idx_in_block = 0;
+                                        while coeff_idx_in_block < block.len() {
+                                            let current_coeff = &block[coeff_idx_in_block];
+                                            let local_offset =
+                                                current_coeff.index % (2 * block_size);
+                                            let current_is_B = local_offset % 2 == 1;
+                                            let y_val_idx = (local_offset / 2) % (1 << round);
+                                            let x_next_val = local_offset / block_size; // 0 or 1
+                                            let eq_r_y = eq_r_evals[y_val_idx];
 
-                        if current_is_B {
-                            // Current coefficient is Bz
-                            let bz_orig_val = current_coeff.value;
-                            match x_next_val {
-                                0 => {
-                                    bz0_at_r += eq_r_y.mul_i128_1_optimized(bz_orig_val);
-                                }
-                                1 => {
-                                    bz1_at_r += eq_r_y.mul_i128_1_optimized(bz_orig_val);
-                                }
-                                _ => unreachable!(),
-                            }
-                            coeff_idx_in_block += 1;
-                        } else {
-                            // Current coefficient is Az
-                            let az_orig_val = current_coeff.value;
-                            let mut bz_orig_for_this_az = 0i128;
+                                            if current_is_B {
+                                                // Current coefficient is Bz
+                                                let bz_orig_val = current_coeff.value;
+                                                match x_next_val {
+                                                    0 => {
+                                                        bz0_at_r +=
+                                                            eq_r_y.mul_i128_1_optimized(
+                                                                bz_orig_val
+                                                            );
+                                                    }
+                                                    1 => {
+                                                        bz1_at_r +=
+                                                            eq_r_y.mul_i128_1_optimized(
+                                                                bz_orig_val
+                                                            );
+                                                    }
+                                                    _ => unreachable!(),
+                                                }
+                                                coeff_idx_in_block += 1;
+                                            } else {
+                                                // Current coefficient is Az
+                                                let az_orig_val = current_coeff.value;
+                                                let mut bz_orig_for_this_az = 0i128;
 
-                            match x_next_val {
-                                0 => {
-                                    az0_at_r += eq_r_y.mul_i128_1_optimized(az_orig_val);
-                                }
-                                1 => {
-                                    az1_at_r += eq_r_y.mul_i128_1_optimized(az_orig_val);
-                                }
-                                _ => unreachable!(),
-                            }
+                                                match x_next_val {
+                                                    0 => {
+                                                        az0_at_r +=
+                                                            eq_r_y.mul_i128_1_optimized(
+                                                                az_orig_val
+                                                            );
+                                                    }
+                                                    1 => {
+                                                        az1_at_r +=
+                                                            eq_r_y.mul_i128_1_optimized(
+                                                                az_orig_val
+                                                            );
+                                                    }
+                                                    _ => unreachable!(),
+                                                }
 
-                            if coeff_idx_in_block + 1 < block.len() {
-                                let next_coeff = &block[coeff_idx_in_block + 1];
-                                if next_coeff.index == current_coeff.index + 1 {
-                                    bz_orig_for_this_az = next_coeff.value;
-                                    let next_local_offset = next_coeff.index % (2 * block_size);
-                                    let next_x_next_val = next_local_offset / block_size;
-                                    debug_assert_eq!(
-                                        x_next_val,
-                                        next_x_next_val,
-                                        "Paired Az/Bz should share x_next_val. Current idx {}, next idx {}, current x_next {}, next x_next {}",
-                                        current_coeff.index,
-                                        next_coeff.index,
-                                        x_next_val,
-                                        next_x_next_val
-                                    );
+                                                if coeff_idx_in_block + 1 < block.len() {
+                                                    let next_coeff = &block[coeff_idx_in_block + 1];
+                                                    if next_coeff.index == current_coeff.index + 1 {
+                                                        bz_orig_for_this_az = next_coeff.value;
+                                                        let next_local_offset =
+                                                            next_coeff.index % (2 * block_size);
+                                                        let next_x_next_val =
+                                                            next_local_offset / block_size;
+                                                        debug_assert_eq!(
+                                                            x_next_val,
+                                                            next_x_next_val,
+                                                            "Paired Az/Bz should share x_next_val. Current idx {}, next idx {}, current x_next {}, next x_next {}",
+                                                            current_coeff.index,
+                                                            next_coeff.index,
+                                                            x_next_val,
+                                                            next_x_next_val
+                                                        );
 
-                                    match x_next_val {
-                                        // x_next_val of the current Az
-                                        0 => {
-                                            bz0_at_r +=
-                                                eq_r_y.mul_i128_1_optimized(bz_orig_for_this_az);
+                                                        match x_next_val {
+                                                            // x_next_val of the current Az
+                                                            0 => {
+                                                                bz0_at_r +=
+                                                                    eq_r_y.mul_i128_1_optimized(
+                                                                        bz_orig_for_this_az
+                                                                    );
+                                                            }
+                                                            1 => {
+                                                                bz1_at_r +=
+                                                                    eq_r_y.mul_i128_1_optimized(
+                                                                        bz_orig_for_this_az
+                                                                    );
+                                                            }
+                                                            _ => unreachable!(),
+                                                        }
+                                                        coeff_idx_in_block += 1; // Consumed the Bz coefficient as well
+                                                    }
+                                                }
+                                                coeff_idx_in_block += 1; // Consumed the Az coefficient
+
+                                                if
+                                                !az_orig_val.is_zero() &&
+                                                    !bz_orig_for_this_az.is_zero()
+                                                {
+                                                    let cz_orig_val =
+                                                        az_orig_val.wrapping_mul(
+                                                            bz_orig_for_this_az
+                                                        );
+                                                    match x_next_val {
+                                                        // x_next_val of the current Az
+                                                        0 => {
+                                                            cz0_at_r +=
+                                                                eq_r_y.mul_i128(cz_orig_val);
+                                                        }
+                                                        1 => {
+                                                            cz1_at_r +=
+                                                                eq_r_y.mul_i128(cz_orig_val);
+                                                        }
+                                                        _ => unreachable!(),
+                                                    }
+                                                }
+                                            }
                                         }
-                                        1 => {
-                                            bz1_at_r +=
-                                                eq_r_y.mul_i128_1_optimized(bz_orig_for_this_az);
+
+                                        let p_at_xk0 = az0_at_r * bz0_at_r - cz0_at_r;
+                                        let az_eval_infinity = az1_at_r - az0_at_r;
+                                        let bz_eval_infinity = bz1_at_r - bz0_at_r;
+                                        let p_slope_term = az_eval_infinity * bz_eval_infinity;
+
+                                        eval_at_zero_local += e_out_val * e_in_val * p_at_xk0;
+                                        eval_at_infinity_local +=
+                                            e_out_val * e_in_val * p_slope_term;
+
+                                        if round == streaming_rounds_end {
+                                            if !az0_at_r.is_zero() {
+                                                partially_bound_coeffs_local.push(
+                                                    (6 * current_block_id, az0_at_r).into()
+                                                );
+                                            }
+                                            if !bz0_at_r.is_zero() {
+                                                partially_bound_coeffs_local.push(
+                                                    (6 * current_block_id + 1, bz0_at_r).into()
+                                                );
+                                            }
+                                            if !cz0_at_r.is_zero() {
+                                                partially_bound_coeffs_local.push(
+                                                    (6 * current_block_id + 2, cz0_at_r).into()
+                                                );
+                                            }
+                                            if !az1_at_r.is_zero() {
+                                                partially_bound_coeffs_local.push(
+                                                    (6 * current_block_id + 3, az1_at_r).into()
+                                                );
+                                            }
+                                            if !bz1_at_r.is_zero() {
+                                                partially_bound_coeffs_local.push(
+                                                    (6 * current_block_id + 4, bz1_at_r).into()
+                                                );
+                                            }
+                                            if !cz1_at_r.is_zero() {
+                                                partially_bound_coeffs_local.push(
+                                                    (6 * current_block_id + 5, cz1_at_r).into()
+                                                );
+                                            }
                                         }
-                                        _ => unreachable!(),
                                     }
-                                    coeff_idx_in_block += 1; // Consumed the Bz coefficient as well
-                                }
-                            }
-                            coeff_idx_in_block += 1; // Consumed the Az coefficient
+                                    (
+                                        eval_at_zero_local,
+                                        eval_at_infinity_local,
+                                        partially_bound_coeffs_local,
+                                    )
+                                })
+                                .reduce(
+                                    || (F::zero(), F::zero(), Vec::<SparseCoefficient<F>>::new()),
+                                    |(
+                                         eval_at_zero_shard_acc,
+                                         eval_at_infinity_shard_acc,
+                                         mut partially_bound_coeffs_shard_acc,
+                                     ),
+                                     (
+                                         eval_at_zero_local,
+                                         eval_at_infinity_local,
+                                         mut partially_bound_coeffs_local,
+                                     )| {
+                                        partially_bound_coeffs_shard_acc.extend(
+                                            partially_bound_coeffs_local
+                                        );
+                                        (
+                                            eval_at_zero_shard_acc + eval_at_zero_local,
+                                            eval_at_infinity_shard_acc + eval_at_infinity_local,
+                                            partially_bound_coeffs_shard_acc,
+                                        )
+                                    },
+                                );
 
-                            if !az_orig_val.is_zero() && !bz_orig_for_this_az.is_zero() {
-                                let cz_orig_val = az_orig_val.wrapping_mul(bz_orig_for_this_az);
-                                match x_next_val {
-                                    // x_next_val of the current Az
-                                    0 => {
-                                        cz0_at_r += eq_r_y.mul_i128(cz_orig_val);
-                                    }
-                                    1 => {
-                                        cz1_at_r += eq_r_y.mul_i128(cz_orig_val);
-                                    }
-                                    _ => unreachable!(),
-                                }
-                            }
-                        }
-                    }
+                            eval_at_zero += eval_at_zero_shard;
+                            eval_at_infinity += eval_at_infinity_shard;
+                            partially_bound_coeffs.extend(partially_bound_coeffs_shard);
 
-                    let p_at_xk0 = az0_at_r * bz0_at_r - cz0_at_r;
-                    let az_eval_infinity = az1_at_r - az0_at_r;
-                    let bz_eval_infinity = bz1_at_r - bz0_at_r;
-                    let p_slope_term = az_eval_infinity * bz_eval_infinity;
-
-                    eval_at_zero += e_out_val * e_in_val * p_at_xk0;
-                    eval_at_infinity += e_out_val * e_in_val * p_slope_term;
-
-                    if round == streaming_rounds_end {
-                        if !az0_at_r.is_zero() {
-                            partially_bound_coeffs.push((6 * current_block_id, az0_at_r).into());
-                        }
-                        if !bz0_at_r.is_zero() {
-                            partially_bound_coeffs
-                                .push((6 * current_block_id + 1, bz0_at_r).into());
-                        }
-                        if !cz0_at_r.is_zero() {
-                            partially_bound_coeffs
-                                .push((6 * current_block_id + 2, cz0_at_r).into());
-                        }
-                        if !az1_at_r.is_zero() {
-                            partially_bound_coeffs
-                                .push((6 * current_block_id + 3, az1_at_r).into());
-                        }
-                        if !bz1_at_r.is_zero() {
-                            partially_bound_coeffs
-                                .push((6 * current_block_id + 4, bz1_at_r).into());
-                        }
-                        if !cz1_at_r.is_zero() {
-                            partially_bound_coeffs
-                                .push((6 * current_block_id + 5, cz1_at_r).into());
-                        }
-                    }
-
-                    // if round == streaming_rounds_start {
-                    //     println!(
-                    //         "block_idx = {}, az_1_at_0 = {}, bz_1_at_0 = {}, az_1_at_r = {}, bz_1_at_r = {}, eval_at_zero = {}, eval_at_infinity = {}",
-                    //         current_block_id,
-                    //         az0_at_r,
-                    //         bz0_at_r,
-                    //         az1_at_r,
-                    //         bz1_at_r,
-                    //         eval_at_zero,
-                    //         eval_at_infinity
-                    //     );
-                    // }
-                }
+                            time_for_sum_check += now.elapsed();
+                        })
+                    },
+                );
             }
 
             let r_i = process_eq_sumcheck_round(
@@ -1938,10 +2313,13 @@ impl<'a, F: JoltField> SpartanInterleavedPolynomialOracle<'a, NUM_SVO_ROUNDS, F>
                 eq_r_evals.push(temp);
                 eq_r_evals[i] -= temp;
             }
-
-            self.reset();
         }
 
+        println!("Total time to collect = {:?}", time_to_collect);
+        println!("Total time to stream shards = {:?}", time_to_stream_shards);
+        println!("Total time for sum-check = {:?}", time_for_sum_check);
+
+        let time_to_bind = Instant::now();
         let mut binding_output_len = 0;
 
         for block in partially_bound_coeffs.chunk_by(|c1, c2| c1.index / 6 == c2.index / 6) {
@@ -2015,6 +2393,11 @@ impl<'a, F: JoltField> SpartanInterleavedPolynomialOracle<'a, NUM_SVO_ROUNDS, F>
             }
         }
         std::mem::swap(&mut self.bound_coeffs, &mut self.binding_scratch_space);
+        println!("Total time to bind = {:?}", time_to_bind.elapsed());
+        println!(
+            "Streaming time for rounds 3 to {streaming_rounds_end} = {:?}",
+            total_time.elapsed()
+        );
     }
 
     pub fn remaining_sumcheck_rounds<ProofTranscript: Transcript>(
@@ -2294,1141 +2677,27 @@ impl<'a, F: JoltField> Oracle for SpartanInterleavedPolynomialOracle<'a, NUM_SVO
     type Shard = Vec<SparseCoefficient<i128>>;
 
     fn next_shard(&mut self) -> Self::Shard {
-        let shard_idx = self.input_polys_oracle.get_step() / self.input_polys_oracle.shard_length;
-        let input_polys_shard = self.input_polys_oracle.next_shard();
-
-        if self.input_polys_oracle.peek().is_some() {
-            let input_polys_peek = self.input_polys_oracle.peek().unwrap();
-            (self.func)(shard_idx, input_polys_shard, input_polys_peek)
+        let shard_idx = self.step / self.shard_length;
+        let trace_shard = &self.trace[self.step..self.step + self.shard_length];
+        self.step = (self.step + self.shard_length) % self.trace.len();
+        let trace_peek = if self.step < self.trace.len() {
+            Some(&self.trace[self.step..self.step + 1])
         } else {
-            (self.func)(shard_idx, input_polys_shard, Default::default())
-        }
+            None
+        };
+
+        (self.func)(shard_idx, trace_shard, trace_peek)
     }
 
     fn reset(&mut self) {
-        self.input_polys_oracle.reset();
+        self.step = 0;
     }
 
     fn get_len(&self) -> usize {
-        self.input_polys_oracle.get_len()
+        self.trace.len()
     }
 
     fn get_step(&self) -> usize {
-        self.input_polys_oracle.get_step()
+        self.step
     }
 }
-
-// pub struct SpartanInterleavedPolynomialOracle<'a, const NUM_SVO_ROUNDS: usize, F: JoltField> {
-//     pub step: usize,
-//     pub trace: &'a [RV32IMCycle],
-//     pub func: Box<
-//         dyn (Fn(usize, &[RV32IMCycle], Option<&[RV32IMCycle]>) -> Vec<SparseCoefficient<i128>>)
-//             + 'a,
-//     >,
-//
-//     pub bound_coeffs: Vec<SparseCoefficient<F>>,
-//
-//     binding_scratch_space: Vec<SparseCoefficient<F>>,
-// }
-//
-// impl<'a, F: JoltField> SpartanInterleavedPolynomialOracle<'a, NUM_SVO_ROUNDS, F> {
-//     pub fn new<PCS, ProofTranscript>(
-//         padded_num_constraints: usize,
-//         uniform_constraints: &'a [Constraint],
-//         cross_step_constraints: &'a [OffsetEqConstraint],
-//         tau: &[F],
-//         trace: &'a [RV32IMCycle],
-//         preprocessing: &'a JoltProverPreprocessing<F, PCS, ProofTranscript>,
-//     ) -> Self
-//     where
-//         PCS: CommitmentScheme<ProofTranscript, Field = F>,
-//         ProofTranscript: Transcript,
-//     {
-//         let total_num_steps = trace.len();
-//
-//         let func = Box::new(
-//             move |shard_idx: usize,
-//                   trace_shard: &[RV32IMCycle],
-//                   trace_peek: Option<&[RV32IMCycle]>| {
-//                 let shard_length = trace_shard.len();
-//                 let input_polys_shard: Vec<MultilinearPolynomial<F>> = ALL_R1CS_INPUTS
-//                     .par_iter()
-//                     .map(|var| var.generate_witness(trace_shard, preprocessing))
-//                     .collect();
-//                 let input_polys_peek: Vec<MultilinearPolynomial<F>> = if trace_peek.is_some() {
-//                     ALL_R1CS_INPUTS
-//                         .par_iter()
-//                         .map(|var| var.generate_witness(trace_peek.unwrap(), preprocessing))
-//                         .collect()
-//                 } else {
-//                     Default::default()
-//                 };
-//
-//                 let num_chunks = rayon::current_num_threads().next_power_of_two() * 4;
-//                 let chunk_size = shard_length.div_ceil(num_chunks);
-//
-//                 let az_bz_coeffs: Vec<SparseCoefficient<i128>> = (0..num_chunks)
-//                     .into_par_iter()
-//                     .flat_map_iter(|chunk_index| {
-//                         let mut local_az_bz_coeffs =
-//                             Vec::with_capacity(2 * chunk_size * padded_num_constraints);
-//
-//                         for step_index in chunk_size * chunk_index..chunk_size * (chunk_index + 1) {
-//                             // Process the uniform constraints
-//                             for (constraint_index, constraint) in
-//                                 uniform_constraints.iter().enumerate()
-//                             {
-//                                 let global_index = 2
-//                                     * ((step_index + shard_idx * shard_length)
-//                                         * padded_num_constraints
-//                                         + constraint_index);
-//
-//                                 // Az
-//                                 let mut az_coeff = 0;
-//                                 if !constraint.a.terms().is_empty() {
-//                                     az_coeff =
-//                                         constraint.a.evaluate_row(&input_polys_shard, step_index);
-//                                     if !az_coeff.is_zero() {
-//                                         local_az_bz_coeffs.push((global_index, az_coeff).into());
-//                                     }
-//                                 }
-//                                 // Bz
-//                                 let mut bz_coeff = 0;
-//                                 if !constraint.b.terms().is_empty() {
-//                                     bz_coeff =
-//                                         constraint.b.evaluate_row(&input_polys_shard, step_index);
-//                                     if !bz_coeff.is_zero() {
-//                                         local_az_bz_coeffs
-//                                             .push((global_index + 1, bz_coeff).into());
-//                                     }
-//                                 }
-//                             }
-//
-//                             // Process the cross-step constraints
-//                             let next_step_index =
-//                                 if step_index + shard_idx * shard_length + 1 < total_num_steps {
-//                                     Some(step_index + 1)
-//                                 } else {
-//                                     None
-//                                 };
-//
-//                             for (constraint_index, constraint) in
-//                                 cross_step_constraints.iter().enumerate()
-//                             {
-//                                 let global_index = 2
-//                                     * ((step_index + shard_idx * shard_length)
-//                                         * padded_num_constraints
-//                                         + uniform_constraints.len()
-//                                         + constraint_index);
-//
-//                                 if next_step_index.is_none()
-//                                     || (next_step_index.is_some()
-//                                         && next_step_index.unwrap() < shard_length)
-//                                 {
-//                                     // Az
-//                                     let eq_a_eval = eval_offset_lc(
-//                                         &constraint.a,
-//                                         &input_polys_shard,
-//                                         step_index,
-//                                         next_step_index,
-//                                     );
-//                                     let eq_b_eval = eval_offset_lc(
-//                                         &constraint.b,
-//                                         &input_polys_shard,
-//                                         step_index,
-//                                         next_step_index,
-//                                     );
-//                                     let az_coeff = eq_a_eval - eq_b_eval;
-//                                     if !az_coeff.is_zero() {
-//                                         local_az_bz_coeffs.push((global_index, az_coeff).into());
-//                                     } else {
-//                                         let bz_coeff = eval_offset_lc(
-//                                             &constraint.cond,
-//                                             &input_polys_shard,
-//                                             step_index,
-//                                             next_step_index,
-//                                         );
-//                                         if !bz_coeff.is_zero() {
-//                                             local_az_bz_coeffs
-//                                                 .push((global_index + 1, bz_coeff).into());
-//                                         }
-//                                     }
-//                                 } else {
-//                                     let eq_a_eval = shard_last_step_eval_offset_lc(
-//                                         &constraint.a,
-//                                         &input_polys_shard,
-//                                         &input_polys_peek,
-//                                         step_index,
-//                                         next_step_index,
-//                                     );
-//                                     let eq_b_eval = shard_last_step_eval_offset_lc(
-//                                         &constraint.b,
-//                                         &input_polys_shard,
-//                                         &input_polys_peek,
-//                                         step_index,
-//                                         next_step_index,
-//                                     );
-//
-//                                     let az_coeff = eq_a_eval - eq_b_eval;
-//                                     if !az_coeff.is_zero() {
-//                                         local_az_bz_coeffs.push((global_index, az_coeff).into());
-//                                     } else {
-//                                         let bz_coeff = shard_last_step_eval_offset_lc(
-//                                             &constraint.cond,
-//                                             &input_polys_shard,
-//                                             &input_polys_peek,
-//                                             step_index,
-//                                             next_step_index,
-//                                         );
-//                                         if !bz_coeff.is_zero() {
-//                                             local_az_bz_coeffs
-//                                                 .push((global_index + 1, bz_coeff).into());
-//                                         }
-//                                     }
-//                                 }
-//                             }
-//                         }
-//                         local_az_bz_coeffs
-//                     })
-//                     .collect();
-//
-//                 az_bz_coeffs
-//             },
-//         );
-//
-//         SpartanInterleavedPolynomialOracle {
-//             step: 0,
-//             trace,
-//             func,
-//             bound_coeffs: vec![],
-//             binding_scratch_space: vec![],
-//         }
-//     }
-//
-//     pub fn compute_accumulators(
-//         &mut self,
-//         padded_num_constraints: usize,
-//         uniform_constraints: &[Constraint],
-//         cross_step_constraints: &[OffsetEqConstraint],
-//         tau: &[F],
-//         shard_length: usize,
-//     ) -> ([F; NUM_ACCUMS_EVAL_ZERO], [F; NUM_ACCUMS_EVAL_INFTY]) {
-//         // 1. Stream a shard of self.
-//         // 2. Divide the shard using chunk_by()
-//         // 3. Call svo_helpers::compute_and_update_tA_inplace_generic() on each chunk to compute
-//         //    temp_A (tA) values.
-//         // 4. Distribute the tA values to evals of 0 and infinity.
-//         // 5. Add evals of 0 and infinity to the global accumulator.
-//
-//         assert!(shard_length.is_power_of_two());
-//
-//         let total_num_vars = (self.get_len() * padded_num_constraints).ilog2() as usize;
-//         let num_step_vars = self.get_len().ilog2() as usize;
-//         let num_constraint_vars = if padded_num_constraints > 0 {
-//             padded_num_constraints.log_2()
-//         } else {
-//             0
-//         };
-//
-//         assert_eq!(total_num_vars, num_constraint_vars + num_step_vars);
-//         assert_eq!(
-//             tau.len(),
-//             total_num_vars,
-//             "tau length ({}) mismatch with R1CS variable count (step_vars {} + constraint_vars {})",
-//             tau.len(),
-//             num_step_vars,
-//             num_constraint_vars
-//         );
-//         assert!(
-//             NUM_SVO_ROUNDS <= num_constraint_vars,
-//             "NUM_SVO_ROUNDS ({}) cannot exceed total constraint variables ({})",
-//             NUM_SVO_ROUNDS,
-//             num_constraint_vars
-//         );
-//
-//         // Number of constraint variables that are NOT part of the SVO prefix Y.
-//         let num_non_svo_constraint_vars = num_constraint_vars.saturating_sub(NUM_SVO_ROUNDS);
-//         let num_non_svo_z_vars = num_step_vars + num_non_svo_constraint_vars;
-//         assert_eq!(
-//             num_non_svo_z_vars,
-//             total_num_vars - NUM_SVO_ROUNDS,
-//             "num_non_svo_z_vars ({}) + NUM_SVO_ROUNDS ({}) must be == total_num_vars ({})",
-//             num_non_svo_z_vars,
-//             NUM_SVO_ROUNDS,
-//             total_num_vars
-//         );
-//
-//         // --- Define Iteration Spaces for Non-SVO Z variables (x_out_val, x_in_val) ---
-//         let potential_x_out_vars = total_num_vars / 2 - NUM_SVO_ROUNDS;
-//         let iter_num_x_out_vars = std::cmp::min(potential_x_out_vars, num_step_vars);
-//         let iter_num_x_in_vars = num_non_svo_z_vars - iter_num_x_out_vars;
-//
-//         let iter_num_x_in_step_vars = num_step_vars - iter_num_x_out_vars;
-//         let iter_num_x_in_constraint_vars = num_non_svo_constraint_vars;
-//         assert_eq!(
-//             iter_num_x_in_vars,
-//             iter_num_x_in_step_vars + iter_num_x_in_constraint_vars
-//         );
-//         assert_eq!(num_non_svo_z_vars, iter_num_x_out_vars + iter_num_x_in_vars);
-//
-//         // Assertions about the layout of uniform + offset constraints
-//         let num_cross_step_constraints = cross_step_constraints.len();
-//         let num_uniform_r1cs_constraints = uniform_constraints.len();
-//         let constraints_per_cycle = num_uniform_r1cs_constraints + num_cross_step_constraints;
-//         let rem_num_uniform_r1cs_constraints = num_uniform_r1cs_constraints % Y_SVO_SPACE_SIZE;
-//
-//         // TODO: remove this assertion by handling the switchover point more generally
-//         // Currently, it should not fail with 3 or 4 SVO rounds
-//         assert!(
-//             rem_num_uniform_r1cs_constraints + num_cross_step_constraints < Y_SVO_SPACE_SIZE,
-//             "The last block of {} uniform constraints + {} cross step constraints must fit in a single block of size {}",
-//             rem_num_uniform_r1cs_constraints,
-//             num_cross_step_constraints,
-//             Y_SVO_SPACE_SIZE
-//         );
-//
-//         // --- Setup: E_in and E_out tables ---
-//         // Call GruenSplitEqPolynomial::new_for_small_value with the determined variable splits.
-//         let eq_poly = GruenSplitEqPolynomial::new_for_small_value(
-//             tau,
-//             iter_num_x_out_vars,
-//             iter_num_x_in_vars,
-//             NUM_SVO_ROUNDS,
-//         );
-//         let E_in_evals = eq_poly.E_in_current();
-//         let E_out_vec = &eq_poly.E_out_vec;
-//
-//         assert_eq!(E_out_vec.len(), NUM_SVO_ROUNDS);
-//
-//         let num_x_out_vals = 1usize << iter_num_x_out_vars;
-//         let num_x_in_step_vals = 1usize << iter_num_x_in_step_vars;
-//         let _num_x_in_non_svo_constraint_vals: usize = 1usize << iter_num_x_in_constraint_vars;
-//
-//         assert_eq!(
-//             1usize << iter_num_x_in_vars,
-//             E_in_evals.len(),
-//             "num_x_in_vals ({}) != E_in_evals.len ({})",
-//             1usize << iter_num_x_in_vars,
-//             E_in_evals.len()
-//         );
-//
-//         let num_shards = self.get_len() / shard_length;
-//         assert!(num_shards > 0);
-//         let num_shard_vars = (shard_length.ilog2() + padded_num_constraints.ilog2()) as usize;
-//         // println!(
-//         //     "num_shards: {}, num_shard_vars: {}",
-//         //     num_shards, num_shard_vars
-//         // );
-//
-//         let mut svo_accums_zero = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
-//         let mut svo_accums_infty = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
-//
-//         // Without parallelisation, if is twice as slow as the else case.
-//         // If we remove parallelisation from new_with_precompute(), it is slower than the else case.
-//         if num_shard_vars <= NUM_SVO_ROUNDS + iter_num_x_in_vars {
-//             println!("Shard smaller than an x_out_val block");
-//             // There are multiple shards for every value of x_out_vars. So we iterate over every value of x_out_vars
-//             // and stream all shards corresponding to that value of x_out_vars.
-//             let shards_per_x_out_val = num_shards / num_x_out_vals;
-//             // println!("shards_per_x_out_val: {}", shards_per_x_out_val);
-//             // println!("num_shards: {}", num_shards);
-//             // println!("num_x_out_vals: {}", num_x_out_vals);
-//             // 1 << (NUM_SVO_ROUNDS + iter_num_x_in_vars - num_shard_vars)
-//             let mut time_to_stream_shards = std::time::Duration::ZERO;
-//             let mut time_to_chunk_and_collect = std::time::Duration::ZERO;
-//             let mut time_to_compute_preprocessing = std::time::Duration::ZERO;
-//
-//             for x_out_val in 0..num_x_out_vals {
-//                 // Accumulator for SUM_{x_in} E_in * P_ext for this specific x_out_val.
-//                 let mut tA_sum_for_current_x_out = [F::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
-//                 // let mut tA_sum_for_current_x_out_parallel =
-//                 //     [F::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
-//                 let mut current_x_out_svo_zero = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
-//                 let mut current_x_out_svo_infty = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
-//
-//                 for shard_idx in 0..shards_per_x_out_val {
-//                     let now = Instant::now();
-//                     let shard = self.next_shard(shard_length);
-//                     time_to_stream_shards += now.elapsed();
-//
-//                     // TODO: Process entries in a single shard in parallel.
-//
-//                     let svo_blocks = shard.chunk_by(|a, b| {
-//                         (a.index >> (NUM_SVO_ROUNDS + 1)) == (b.index >> (NUM_SVO_ROUNDS + 1))
-//                     });
-//                     // println!("Time to chunk by: {:?}", now.elapsed());
-//
-//                     let now = Instant::now();
-//                     let blocks = svo_blocks.collect::<Vec<&[SparseCoefficient<i128>]>>();
-//                     time_to_chunk_and_collect += now.elapsed();
-//
-//                     let num_parallel_chunks =
-//                         if blocks.len() < rayon::current_num_threads().next_power_of_two() {
-//                             1
-//                         } else {
-//                             rayon::current_num_threads().next_power_of_two()
-//                         };
-//
-//                     let now = Instant::now();
-//                     let tA_sum_for_current_x_out_shard = blocks
-//                         .par_chunks(blocks.len() / num_parallel_chunks)
-//                         .map(|chunk| {
-//                             let mut tA_sum_for_current_x_out_chunk =
-//                                 [F::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
-//                             for block in chunk {
-//                                 let block_idx = block[0].index >> (NUM_SVO_ROUNDS + 1);
-//                                 let x_in_val = block_idx & ((1 << iter_num_x_in_vars) - 1);
-//                                 let E_in_val = E_in_evals[x_in_val];
-//
-//                                 svo_helpers::process_svo_block(
-//                                     block,
-//                                     &mut tA_sum_for_current_x_out_chunk,
-//                                     E_in_val,
-//                                 );
-//                             }
-//                             tA_sum_for_current_x_out_chunk
-//                         })
-//                         .reduce(
-//                             || [F::zero(); NUM_NONTRIVIAL_TERNARY_POINTS],
-//                             |tA_sum_for_current_x_out_acc, tA_sum_for_current_x_out_chunk| {
-//                                 let mut updated_tA_sum_for_current_x_out_acc =
-//                                     tA_sum_for_current_x_out_acc;
-//                                 for i in 0..NUM_NONTRIVIAL_TERNARY_POINTS {
-//                                     updated_tA_sum_for_current_x_out_acc[i] +=
-//                                         tA_sum_for_current_x_out_chunk[i];
-//                                 }
-//                                 updated_tA_sum_for_current_x_out_acc
-//                             },
-//                         );
-//
-//                     for i in 0..NUM_NONTRIVIAL_TERNARY_POINTS {
-//                         tA_sum_for_current_x_out[i] += tA_sum_for_current_x_out_shard[i];
-//                     }
-//
-//                     time_to_compute_preprocessing += now.elapsed();
-//
-//                     // println!(
-//                     //     "tA_sum_for_current_x_out parallel = {:?}",
-//                     //     tA_sum_for_current_x_out_parallel
-//                     // );
-//                     //
-//                     // let svo_blocks = shard.chunk_by(|a, b| {
-//                     //     (a.index >> (NUM_SVO_ROUNDS + 1)) == (b.index >> (NUM_SVO_ROUNDS + 1))
-//                     // });
-//                     //
-//                     // for block in svo_blocks {
-//                     //     let block_idx = block[0].index >> (NUM_SVO_ROUNDS + 1);
-//                     //     let x_in_val = block_idx & ((1 << iter_num_x_in_vars) - 1);
-//                     //     let E_in_val = E_in_evals[x_in_val];
-//                     //
-//                     //     svo_helpers::process_svo_block(
-//                     //         block,
-//                     //         &mut tA_sum_for_current_x_out,
-//                     //         E_in_val,
-//                     //     );
-//                     // }
-//                     //
-//                     // println!(
-//                     //     "tA_sum_for_current_x_out serialised = {:?}",
-//                     //     tA_sum_for_current_x_out
-//                     // );
-//                     //
-//                     // for i in 0..NUM_NONTRIVIAL_TERNARY_POINTS {
-//                     //     assert_eq!(
-//                     //         tA_sum_for_current_x_out[i], tA_sum_for_current_x_out_parallel[i],
-//                     //         "x_out_val = {}, shard_idx = {}, i = {}",
-//                     //         x_out_val, shard_idx, i
-//                     //     );
-//                     // }
-//                 }
-//
-//                 // All shards corresponding to x_out_val have been processed.
-//                 // Distribute the accumulated tA values to the SVO accumulators
-//                 svo_helpers::distribute_tA_to_svo_accumulators_generic::<NUM_SVO_ROUNDS, F>(
-//                     &tA_sum_for_current_x_out,
-//                     x_out_val,
-//                     E_out_vec,
-//                     &mut current_x_out_svo_zero,
-//                     &mut current_x_out_svo_infty,
-//                 );
-//
-//                 // Add current_x_out_svo_zero and current_x_out_svo_infty to svo_accums_zero and svo_accums_infty
-//                 for i in 0..NUM_ACCUMS_EVAL_ZERO {
-//                     svo_accums_zero[i] += current_x_out_svo_zero[i];
-//                 }
-//                 for i in 0..NUM_ACCUMS_EVAL_INFTY {
-//                     svo_accums_infty[i] += current_x_out_svo_infty[i];
-//                 }
-//             }
-//             println!("Time to stream shards: {:?}", time_to_stream_shards);
-//             println!("Time to chunk and collect: {:?}", time_to_chunk_and_collect);
-//             println!(
-//                 "Time to compute pre-processing: {:?}",
-//                 time_to_compute_preprocessing
-//             );
-//         } else {
-//             // There are multiple values of x_out_vars in the same shard. So we stream a shard and divide it into blocks
-//             // based on the value of x_out_vars.
-//             let num_x_out_vals_per_shard = num_x_out_vals / num_shards;
-//
-//             for shard_idx in 0..num_shards {
-//                 let shard = self.next_shard(shard_length);
-//
-//                 // TODO: Below we use chunk_by() twice, one for x_out_val and another for x_in_val.
-//                 // This means we are iterating over the shard twice. Rewrite the code to go over the shard only once.
-//                 let x_out_val_blocks = shard.chunk_by(|a, b| {
-//                     (a.index >> (NUM_SVO_ROUNDS + iter_num_x_in_vars + 1))
-//                         == (b.index >> (NUM_SVO_ROUNDS + iter_num_x_in_vars + 1))
-//                 });
-//
-//                 for x_out_val_block in x_out_val_blocks {
-//                     // Accumulator for SUM_{x_in} E_in * P_ext for this specific x_out_val.
-//                     let mut tA_sum_for_current_x_out = [F::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
-//                     let mut current_x_out_svo_zero = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
-//                     let mut current_x_out_svo_infty = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
-//
-//                     let svo_blocks = x_out_val_block.chunk_by(|a, b| {
-//                         (a.index >> (NUM_SVO_ROUNDS + 1)) == (b.index >> (NUM_SVO_ROUNDS + 1))
-//                     });
-//
-//                     for block in svo_blocks {
-//                         let block_idx = block[0].index >> (NUM_SVO_ROUNDS + 1);
-//                         let x_in_val = block_idx & ((1 << iter_num_x_in_vars) - 1);
-//                         let E_in_val = E_in_evals[x_in_val];
-//
-//                         svo_helpers::process_svo_block(
-//                             block,
-//                             &mut tA_sum_for_current_x_out,
-//                             E_in_val,
-//                         );
-//                     }
-//
-//                     // All blocks corresponding to x_out_val have been processed.
-//                     // Distribute the accumulated tA values to the SVO accumulators.
-//                     let x_out_val =
-//                         x_out_val_block[0].index >> (NUM_SVO_ROUNDS + iter_num_x_in_vars + 1);
-//                     svo_helpers::distribute_tA_to_svo_accumulators_generic::<NUM_SVO_ROUNDS, F>(
-//                         &tA_sum_for_current_x_out,
-//                         x_out_val,
-//                         E_out_vec,
-//                         &mut current_x_out_svo_zero,
-//                         &mut current_x_out_svo_infty,
-//                     );
-//
-//                     // Add current_x_out_svo_zero and current_x_out_svo_infty to svo_accums_zero and svo_accums_infty
-//                     for i in 0..NUM_ACCUMS_EVAL_ZERO {
-//                         svo_accums_zero[i] += current_x_out_svo_zero[i];
-//                     }
-//                     for i in 0..NUM_ACCUMS_EVAL_INFTY {
-//                         svo_accums_infty[i] += current_x_out_svo_infty[i];
-//                     }
-//                 }
-//             }
-//         }
-//         (svo_accums_zero, svo_accums_infty)
-//     }
-//
-//     // TODO: Implement Dao-Thaler optimisation.
-//     pub fn streaming_rounds<ProofTranscript: Transcript>(
-//         &mut self,
-//         trace_shard_len: usize,
-//         num_shards: usize,
-//         streaming_rounds_start: usize,
-//         streaming_rounds_end: usize,
-//         eq_poly: &mut GruenSplitEqPolynomial<F>,
-//         r: &mut Vec<F>,
-//         eq_r_evals: &mut Vec<F>,
-//         polys: &mut Vec<CompressedUniPoly<F>>,
-//         claim: &mut F,
-//         transcript: &mut ProofTranscript,
-//     ) {
-//         let mut partially_bound_coeffs = Vec::<SparseCoefficient<F>>::new();
-//         for round in streaming_rounds_start..=streaming_rounds_end {
-//             // println!("Streaming round {}", round);
-//
-//             let block_size = 1 << (round + 1);
-//
-//             let mut eval_at_zero = F::zero();
-//             let mut eval_at_infinity = F::zero();
-//
-//             for i in 0..num_shards {
-//                 let shard = self.next_shard(trace_shard_len);
-//
-//                 let num_x_in_vars = eq_poly.E_in_current_len().log_2();
-//                 // let num_x_out_vars = eq_poly.E_out_current_len().log_2();
-//
-//                 let blocks = shard
-//                     .chunk_by(|c1, c2| c1.index / (2 * block_size) == c2.index / (2 * block_size));
-//
-//                 // TODO: Parallelise the following.
-//                 for block in blocks {
-//                     let current_block_id = block[0].index / (2 * block_size);
-//                     // println!(
-//                     //     "Index = {}, current_block_id = {}, num_x_in_vars = {}",
-//                     //     block[0].index, current_block_id, num_x_in_vars
-//                     // );
-//
-//                     let x_in_val = current_block_id & ((1 << num_x_in_vars) - 1);
-//                     // println!("x_in_val = {}", x_in_val);
-//                     let x_out_val = current_block_id >> num_x_in_vars;
-//
-//                     let e_out_val = eq_poly.E_out_current()[x_out_val];
-//                     let e_in_val = if eq_poly.E_in_current_len() > 1 {
-//                         eq_poly.E_in_current()[x_in_val]
-//                     } else if eq_poly.E_in_current_len() == 1 {
-//                         eq_poly.E_in_current()[0]
-//                     } else {
-//                         // E_in_current_len() == 0, meaning no x_in variables for eq_poly
-//                         F::one() // Effective contribution of E_in is 1
-//                     };
-//
-//                     let mut az0_at_r = F::zero();
-//                     let mut az1_at_r = F::zero();
-//                     let mut bz0_at_r = F::zero();
-//                     let mut bz1_at_r = F::zero();
-//                     let mut cz0_at_r = F::zero();
-//                     let mut cz1_at_r = F::zero();
-//
-//                     let mut coeff_idx_in_block = 0;
-//                     while coeff_idx_in_block < block.len() {
-//                         let current_coeff = &block[coeff_idx_in_block];
-//                         let local_offset = current_coeff.index % (2 * block_size);
-//                         let current_is_B = local_offset % 2 == 1;
-//                         let y_val_idx = (local_offset / 2) % (1 << round);
-//                         let x_next_val = local_offset / block_size; // 0 or 1
-//                         let eq_r_y = eq_r_evals[y_val_idx];
-//                         // if round <= streaming_rounds_start + 1 {
-//                         //     println!(
-//                         //         "block_idx = {}, x_in_val = {}, x_out_val = {}, x_next_val = {}, y_val_idx = {}",
-//                         //         current_block_id,
-//                         //         x_in_val,
-//                         //         x_out_val,
-//                         //         x_next_val,
-//                         //         y_val_idx
-//                         //     );
-//                         // }
-//
-//                         if current_is_B {
-//                             // Current coefficient is Bz
-//                             let bz_orig_val = current_coeff.value;
-//                             match x_next_val {
-//                                 0 => {
-//                                     bz0_at_r += eq_r_y.mul_i128_1_optimized(bz_orig_val);
-//                                 }
-//                                 1 => {
-//                                     bz1_at_r += eq_r_y.mul_i128_1_optimized(bz_orig_val);
-//                                 }
-//                                 _ => unreachable!(),
-//                             }
-//                             coeff_idx_in_block += 1;
-//                         } else {
-//                             // Current coefficient is Az
-//                             let az_orig_val = current_coeff.value;
-//                             let mut bz_orig_for_this_az = 0i128;
-//
-//                             match x_next_val {
-//                                 0 => {
-//                                     az0_at_r += eq_r_y.mul_i128_1_optimized(az_orig_val);
-//                                 }
-//                                 1 => {
-//                                     az1_at_r += eq_r_y.mul_i128_1_optimized(az_orig_val);
-//                                 }
-//                                 _ => unreachable!(),
-//                             }
-//
-//                             if coeff_idx_in_block + 1 < block.len() {
-//                                 let next_coeff = &block[coeff_idx_in_block + 1];
-//                                 if next_coeff.index == current_coeff.index + 1 {
-//                                     bz_orig_for_this_az = next_coeff.value;
-//                                     let next_local_offset = next_coeff.index % (2 * block_size);
-//                                     let next_x_next_val = next_local_offset / block_size;
-//                                     debug_assert_eq!(
-//                                         x_next_val,
-//                                         next_x_next_val,
-//                                         "Paired Az/Bz should share x_next_val. Current idx {}, next idx {}, current x_next {}, next x_next {}",
-//                                         current_coeff.index,
-//                                         next_coeff.index,
-//                                         x_next_val,
-//                                         next_x_next_val
-//                                     );
-//
-//                                     match x_next_val {
-//                                         // x_next_val of the current Az
-//                                         0 => {
-//                                             bz0_at_r +=
-//                                                 eq_r_y.mul_i128_1_optimized(bz_orig_for_this_az);
-//                                         }
-//                                         1 => {
-//                                             bz1_at_r +=
-//                                                 eq_r_y.mul_i128_1_optimized(bz_orig_for_this_az);
-//                                         }
-//                                         _ => unreachable!(),
-//                                     }
-//                                     coeff_idx_in_block += 1; // Consumed the Bz coefficient as well
-//                                 }
-//                             }
-//                             coeff_idx_in_block += 1; // Consumed the Az coefficient
-//
-//                             if !az_orig_val.is_zero() && !bz_orig_for_this_az.is_zero() {
-//                                 let cz_orig_val = az_orig_val.wrapping_mul(bz_orig_for_this_az);
-//                                 match x_next_val {
-//                                     // x_next_val of the current Az
-//                                     0 => {
-//                                         cz0_at_r += eq_r_y.mul_i128(cz_orig_val);
-//                                     }
-//                                     1 => {
-//                                         cz1_at_r += eq_r_y.mul_i128(cz_orig_val);
-//                                     }
-//                                     _ => unreachable!(),
-//                                 }
-//                             }
-//                         }
-//                     }
-//
-//                     let p_at_xk0 = az0_at_r * bz0_at_r - cz0_at_r;
-//                     let az_eval_infinity = az1_at_r - az0_at_r;
-//                     let bz_eval_infinity = bz1_at_r - bz0_at_r;
-//                     let p_slope_term = az_eval_infinity * bz_eval_infinity;
-//
-//                     eval_at_zero += e_out_val * e_in_val * p_at_xk0;
-//                     eval_at_infinity += e_out_val * e_in_val * p_slope_term;
-//
-//                     if round == streaming_rounds_end {
-//                         if !az0_at_r.is_zero() {
-//                             partially_bound_coeffs.push((6 * current_block_id, az0_at_r).into());
-//                         }
-//                         if !bz0_at_r.is_zero() {
-//                             partially_bound_coeffs
-//                                 .push((6 * current_block_id + 1, bz0_at_r).into());
-//                         }
-//                         if !cz0_at_r.is_zero() {
-//                             partially_bound_coeffs
-//                                 .push((6 * current_block_id + 2, cz0_at_r).into());
-//                         }
-//                         if !az1_at_r.is_zero() {
-//                             partially_bound_coeffs
-//                                 .push((6 * current_block_id + 3, az1_at_r).into());
-//                         }
-//                         if !bz1_at_r.is_zero() {
-//                             partially_bound_coeffs
-//                                 .push((6 * current_block_id + 4, bz1_at_r).into());
-//                         }
-//                         if !cz1_at_r.is_zero() {
-//                             partially_bound_coeffs
-//                                 .push((6 * current_block_id + 5, cz1_at_r).into());
-//                         }
-//                     }
-//
-//                     // if round == streaming_rounds_start {
-//                     //     println!(
-//                     //         "block_idx = {}, az_1_at_0 = {}, bz_1_at_0 = {}, az_1_at_r = {}, bz_1_at_r = {}, eval_at_zero = {}, eval_at_infinity = {}",
-//                     //         current_block_id,
-//                     //         az0_at_r,
-//                     //         bz0_at_r,
-//                     //         az1_at_r,
-//                     //         bz1_at_r,
-//                     //         eval_at_zero,
-//                     //         eval_at_infinity
-//                     //     );
-//                     // }
-//                 }
-//             }
-//
-//             let r_i = process_eq_sumcheck_round(
-//                 (eval_at_zero, eval_at_infinity),
-//                 eq_poly,
-//                 polys,
-//                 r,
-//                 claim,
-//                 transcript,
-//             );
-//             let eq_r_evals_mid = eq_r_evals.len();
-//             for i in 0..eq_r_evals_mid {
-//                 let temp = r_i * eq_r_evals[i];
-//                 eq_r_evals.push(temp);
-//                 eq_r_evals[i] -= temp;
-//             }
-//
-//             self.reset();
-//         }
-//
-//         let mut binding_output_len = 0;
-//
-//         for block in partially_bound_coeffs.chunk_by(|c1, c2| c1.index / 6 == c2.index / 6) {
-//             binding_output_len += Self::binding_output_length(&block);
-//         }
-//
-//         // Prepare binding_scratch_space
-//         if self.binding_scratch_space.capacity() < binding_output_len {
-//             self.binding_scratch_space
-//                 .reserve_exact(binding_output_len - self.binding_scratch_space.capacity());
-//         }
-//         unsafe {
-//             self.binding_scratch_space.set_len(binding_output_len);
-//         }
-//
-//         let mut scratch_space_idx = 0;
-//         for block in partially_bound_coeffs.chunk_by(|c1, c2| c1.index / 6 == c2.index / 6) {
-//             if block.is_empty() {
-//                 continue;
-//             }
-//
-//             let new_block_idx = block[0].index / 6;
-//             let mut az0 = F::zero();
-//             let mut bz0 = F::zero();
-//             let mut cz0 = F::zero();
-//             let mut az1 = F::zero();
-//             let mut bz1 = F::zero();
-//             let mut cz1 = F::zero();
-//
-//             for coeff in block {
-//                 match coeff.index % 6 {
-//                     0 => {
-//                         az0 = coeff.value;
-//                     }
-//                     1 => {
-//                         bz0 = coeff.value;
-//                     }
-//                     2 => {
-//                         cz0 = coeff.value;
-//                     }
-//                     3 => {
-//                         az1 = coeff.value;
-//                     }
-//                     4 => {
-//                         bz1 = coeff.value;
-//                     }
-//                     5 => {
-//                         cz1 = coeff.value;
-//                     }
-//                     _ => unreachable!(),
-//                 }
-//             }
-//
-//             let bound_az = az0 + r[streaming_rounds_end] * (az1 - az0);
-//             if !bound_az.is_zero() {
-//                 self.binding_scratch_space[scratch_space_idx] =
-//                     (3 * new_block_idx, bound_az).into();
-//                 scratch_space_idx += 1;
-//             }
-//             let bound_bz = bz0 + r[streaming_rounds_end] * (bz1 - bz0);
-//             if !bound_bz.is_zero() {
-//                 self.binding_scratch_space[scratch_space_idx] =
-//                     (3 * new_block_idx + 1, bound_bz).into();
-//                 scratch_space_idx += 1;
-//             }
-//             let bound_cz = cz0 + r[streaming_rounds_end] * (cz1 - cz0);
-//             if !bound_cz.is_zero() {
-//                 self.binding_scratch_space[scratch_space_idx] =
-//                     (3 * new_block_idx + 2, bound_cz).into();
-//                 scratch_space_idx += 1;
-//             }
-//         }
-//         std::mem::swap(&mut self.bound_coeffs, &mut self.binding_scratch_space);
-//     }
-//
-//     pub fn remaining_sumcheck_rounds<ProofTranscript: Transcript>(
-//         &mut self,
-//         eq_poly: &mut GruenSplitEqPolynomial<F>,
-//         transcript: &mut ProofTranscript,
-//         r_challenges: &mut Vec<F>,
-//         round_polys: &mut Vec<CompressedUniPoly<F>>,
-//         current_claim: &mut F,
-//     ) {
-//         // In order to parallelize, we do a first pass over the coefficients to
-//         // determine how to divide it into chunks that can be processed independently.
-//         // In particular, coefficients whose indices are the same modulo 6 cannot
-//         // be processed independently.
-//         let block_size = self
-//             .bound_coeffs
-//             .len()
-//             .div_ceil(rayon::current_num_threads())
-//             .next_multiple_of(6);
-//         let chunks: Vec<_> = self
-//             .bound_coeffs
-//             .par_chunk_by(|x, y| x.index / block_size == y.index / block_size)
-//             .collect();
-//
-//         // If `E_in` is fully bound, then we simply sum over `E_out`
-//         let quadratic_evals = if eq_poly.E_in_current_len() == 1 {
-//             let evals: (F, F) = chunks
-//                 .par_iter()
-//                 .flat_map_iter(|chunk| {
-//                     chunk
-//                         .chunk_by(|x, y| x.index / 6 == y.index / 6)
-//                         .map(|sparse_block| {
-//                             let block_index = sparse_block[0].index / 6;
-//                             let mut block = [F::zero(); 6];
-//                             for coeff in sparse_block {
-//                                 block[coeff.index % 6] = coeff.value;
-//                             }
-//
-//                             let az = (block[0], block[3]);
-//                             let bz = (block[1], block[4]);
-//                             let cz0 = block[2];
-//
-//                             let az_eval_infty = az.1 - az.0;
-//                             let bz_eval_infty = bz.1 - bz.0;
-//
-//                             let eq_evals = eq_poly.E_out_current()[block_index];
-//
-//                             (
-//                                 eq_evals.mul_0_optimized(az.0.mul_0_optimized(bz.0) - cz0),
-//                                 eq_evals
-//                                     .mul_0_optimized(az_eval_infty.mul_0_optimized(bz_eval_infty)),
-//                             )
-//                         })
-//                 })
-//                 .reduce(
-//                     || (F::zero(), F::zero()),
-//                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
-//                 );
-//             evals
-//         } else {
-//             // If `E_in` is not fully bound, then we have to collect the sum over `E_out` as well
-//             let num_x1_bits = eq_poly.E_in_current_len().log_2();
-//             let x1_bitmask = (1 << num_x1_bits) - 1;
-//
-//             let evals: (F, F) = chunks
-//                 .par_iter()
-//                 .map(|chunk| {
-//                     let mut eval_point_0 = F::zero();
-//                     let mut eval_point_infty = F::zero();
-//
-//                     let mut inner_sums = (F::zero(), F::zero());
-//                     let mut prev_x2 = 0;
-//
-//                     for sparse_block in chunk.chunk_by(|x, y| x.index / 6 == y.index / 6) {
-//                         let block_index = sparse_block[0].index / 6;
-//                         let x1 = block_index & x1_bitmask;
-//                         let E_in_evals = eq_poly.E_in_current()[x1];
-//                         let x2 = block_index >> num_x1_bits;
-//
-//                         if x2 != prev_x2 {
-//                             eval_point_0 += eq_poly.E_out_current()[prev_x2] * inner_sums.0;
-//                             eval_point_infty += eq_poly.E_out_current()[prev_x2] * inner_sums.1;
-//
-//                             inner_sums = (F::zero(), F::zero());
-//                             prev_x2 = x2;
-//                         }
-//
-//                         let mut block = [F::zero(); 6];
-//                         for coeff in sparse_block {
-//                             block[coeff.index % 6] = coeff.value;
-//                         }
-//
-//                         let az = (block[0], block[3]);
-//                         let bz = (block[1], block[4]);
-//                         let cz0 = block[2];
-//
-//                         let az_eval_infty = az.1 - az.0;
-//                         let bz_eval_infty = bz.1 - bz.0;
-//
-//                         inner_sums.0 +=
-//                             E_in_evals.mul_0_optimized(az.0.mul_0_optimized(bz.0) - cz0);
-//                         inner_sums.1 += E_in_evals
-//                             .mul_0_optimized(az_eval_infty.mul_0_optimized(bz_eval_infty));
-//                     }
-//
-//                     eval_point_0 += eq_poly.E_out_current()[prev_x2] * inner_sums.0;
-//                     eval_point_infty += eq_poly.E_out_current()[prev_x2] * inner_sums.1;
-//
-//                     (eval_point_0, eval_point_infty)
-//                 })
-//                 .reduce(
-//                     || (F::zero(), F::zero()),
-//                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
-//                 );
-//             evals
-//         };
-//
-//         // Use the helper function to process the rest of the sumcheck round
-//         let r_i = process_eq_sumcheck_round(
-//             quadratic_evals, // (t_i(0), t_i(infty))
-//             eq_poly,         // Helper will bind this
-//             round_polys,
-//             r_challenges,
-//             current_claim,
-//             transcript,
-//         );
-//
-//         let output_sizes: Vec<_> = chunks
-//             .par_iter()
-//             .map(|chunk| Self::binding_output_length(chunk))
-//             .collect();
-//
-//         let total_output_len = output_sizes.iter().sum();
-//         if self.binding_scratch_space.is_empty() {
-//             self.binding_scratch_space = Vec::with_capacity(total_output_len);
-//         }
-//         unsafe {
-//             self.binding_scratch_space.set_len(total_output_len);
-//         }
-//
-//         let mut output_slices: Vec<&mut [SparseCoefficient<F>]> = Vec::with_capacity(chunks.len());
-//         let mut remainder = self.binding_scratch_space.as_mut_slice();
-//         for slice_len in output_sizes {
-//             let (first, second) = remainder.split_at_mut(slice_len);
-//             output_slices.push(first);
-//             remainder = second;
-//         }
-//         debug_assert_eq!(remainder.len(), 0);
-//
-//         chunks
-//             .par_iter()
-//             .zip_eq(output_slices.into_par_iter())
-//             .for_each(|(coeffs, output_slice)| {
-//                 let mut output_index = 0;
-//                 for block in coeffs.chunk_by(|x, y| x.index / 6 == y.index / 6) {
-//                     let block_index = block[0].index / 6;
-//
-//                     let mut az_coeff: (Option<F>, Option<F>) = (None, None);
-//                     let mut bz_coeff: (Option<F>, Option<F>) = (None, None);
-//                     let mut cz_coeff: (Option<F>, Option<F>) = (None, None);
-//
-//                     for coeff in block {
-//                         match coeff.index % 6 {
-//                             0 => {
-//                                 az_coeff.0 = Some(coeff.value);
-//                             }
-//                             1 => {
-//                                 bz_coeff.0 = Some(coeff.value);
-//                             }
-//                             2 => {
-//                                 cz_coeff.0 = Some(coeff.value);
-//                             }
-//                             3 => {
-//                                 az_coeff.1 = Some(coeff.value);
-//                             }
-//                             4 => {
-//                                 bz_coeff.1 = Some(coeff.value);
-//                             }
-//                             5 => {
-//                                 cz_coeff.1 = Some(coeff.value);
-//                             }
-//                             _ => unreachable!(),
-//                         }
-//                     }
-//                     if az_coeff != (None, None) {
-//                         let (low, high) = (
-//                             az_coeff.0.unwrap_or(F::zero()),
-//                             az_coeff.1.unwrap_or(F::zero()),
-//                         );
-//                         output_slice[output_index] =
-//                             (3 * block_index, low + r_i * (high - low)).into();
-//                         output_index += 1;
-//                     }
-//                     if bz_coeff != (None, None) {
-//                         let (low, high) = (
-//                             bz_coeff.0.unwrap_or(F::zero()),
-//                             bz_coeff.1.unwrap_or(F::zero()),
-//                         );
-//                         output_slice[output_index] =
-//                             (3 * block_index + 1, low + r_i * (high - low)).into();
-//                         output_index += 1;
-//                     }
-//                     if cz_coeff != (None, None) {
-//                         let (low, high) = (
-//                             cz_coeff.0.unwrap_or(F::zero()),
-//                             cz_coeff.1.unwrap_or(F::zero()),
-//                         );
-//                         output_slice[output_index] =
-//                             (3 * block_index + 2, low + r_i * (high - low)).into();
-//                         output_index += 1;
-//                     }
-//                 }
-//                 debug_assert_eq!(output_index, output_slice.len())
-//             });
-//
-//         std::mem::swap(&mut self.bound_coeffs, &mut self.binding_scratch_space);
-//     }
-//
-//     fn binding_output_length<T>(coeffs: &[SparseCoefficient<T>]) -> usize {
-//         let mut output_size = 0;
-//         for block in coeffs.chunk_by(|x, y| x.index / 6 == y.index / 6) {
-//             let mut Az_coeff_found = false;
-//             let mut Bz_coeff_found = false;
-//             let mut Cz_coeff_found = false;
-//             for coeff in block {
-//                 match coeff.index % 3 {
-//                     0 => {
-//                         if !Az_coeff_found {
-//                             Az_coeff_found = true;
-//                             output_size += 1;
-//                         }
-//                     }
-//                     1 => {
-//                         if !Bz_coeff_found {
-//                             Bz_coeff_found = true;
-//                             output_size += 1;
-//                         }
-//                     }
-//                     2 => {
-//                         if !Cz_coeff_found {
-//                             Cz_coeff_found = true;
-//                             output_size += 1;
-//                         }
-//                     }
-//                     _ => unreachable!(),
-//                 }
-//             }
-//         }
-//         output_size
-//     }
-//
-//     pub fn final_sumcheck_evals(&self) -> [F; 3] {
-//         let mut final_az_eval = F::zero();
-//         let mut final_bz_eval = F::zero();
-//         let mut final_cz_eval = F::zero();
-//         for i in 0..3 {
-//             if let Some(coeff) = self.bound_coeffs.get(i) {
-//                 match coeff.index {
-//                     0 => {
-//                         final_az_eval = coeff.value;
-//                     }
-//                     1 => {
-//                         final_bz_eval = coeff.value;
-//                     }
-//                     2 => {
-//                         final_cz_eval = coeff.value;
-//                     }
-//                     _ => {}
-//                 }
-//             }
-//         }
-//         [final_az_eval, final_bz_eval, final_cz_eval]
-//     }
-// }
-//
-// impl<'a, F: JoltField> Oracle for SpartanInterleavedPolynomialOracle<'a, NUM_SVO_ROUNDS, F> {
-//     type Shard = Vec<SparseCoefficient<i128>>;
-//
-//     fn next_shard(&mut self, shard_len: usize) -> Self::Shard {
-//         let shard_idx = self.step / shard_len;
-//         let trace_shard = &self.trace[self.step..self.step + shard_len];
-//         self.step += shard_len;
-//         let trace_peek = if self.step < self.trace.len() {
-//             Some(&self.trace[self.step..self.step + 1])
-//         } else {
-//             None
-//         };
-//
-//         (self.func)(shard_idx, trace_shard, trace_peek)
-//     }
-//
-//     fn reset(&mut self) {
-//         if self.step == self.trace.len() {
-//             self.step = 0;
-//         } else {
-//             panic!("Oracle can not be reset as trace hasn't been consumed completely");
-//         }
-//     }
-//
-//     fn get_len(&self) -> usize {
-//         self.trace.len()
-//     }
-//
-//     fn get_step(&self) -> usize {
-//         self.step
-//     }
-// }

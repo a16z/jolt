@@ -1,4 +1,4 @@
-pub trait Oracle {
+pub trait Oracle: Send + Sync {
     type Shard;
     fn next_shard(&mut self) -> Self::Shard;
 

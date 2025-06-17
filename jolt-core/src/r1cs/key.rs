@@ -191,6 +191,11 @@ impl<F: JoltField> UniformSpartanKey<F> {
         assert_eq!(r_step.len(), self.num_steps.log_2());
 
         let eq_rx_constr = EqPolynomial::evals(r_constr);
+        println!(
+            "r_constr len = {}, eq_rx_constr len = {}",
+            r_constr.len(),
+            eq_rx_constr.len()
+        );
         let first_cross_step_row = self.uniform_r1cs.num_rows;
         let constant_column = self.uniform_r1cs.num_vars.next_power_of_two();
 

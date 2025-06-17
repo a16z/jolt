@@ -2,6 +2,7 @@ use crate::utils::{compute_dotproduct, math::Math};
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
+use ark_std::iterable::Iterable;
 use rayon::prelude::*;
 use strum_macros::EnumIter;
 
@@ -640,7 +641,6 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::batch_evaluate")]
     fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<F>, Vec<F>) {
         let eq = EqPolynomial::evals(r);
-
         if polys
             .iter()
             .any(|poly| !matches!(poly, MultilinearPolynomial::LargeScalars(_)))
@@ -673,191 +673,202 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
         num_shards: usize,
         shard_length: usize,
     ) -> Vec<F> {
-        let peek_polys = oracle.peek().unwrap();
-        let num_polys = peek_polys.len();
+        let mut polys = oracle.next_shard();
+        let num_polys = polys.len();
 
         let eq = SplitEqPolynomial::new(r);
-        let e1_len = eq.E1_len;
-        let mask = e1_len - 1;
         let num_x1_bits = eq.E1_len.log_2();
         let x1_bitmask = (1 << (num_x1_bits)) - 1;
 
-        let mut int_evals = vec![F::zero(); num_polys];
         let mut final_evals = vec![F::zero(); num_polys];
+
         #[inline(always)]
         fn process_small_scalar_polys<F, T>(
             coeffs: &[T],
             final_eval: &mut F,
-            int_eval: &mut F,
             eq: &SplitEqPolynomial<F>,
             base_poly_idx: usize,
             x1_bitmask: usize,
             num_x1_bits: usize,
             shard_length: usize,
-            mask: usize,
         ) where
             F: JoltField,
             T: SmallScalar,
         {
             let e1 = &eq.E1;
             let e2 = &eq.E2;
-            (0..shard_length).for_each(|i| {
-                let poly_idx = base_poly_idx + i;
-                let x1 = poly_idx & x1_bitmask;
-                *int_eval += coeffs[i].field_mul(e1[x1]);
+            let chunk_size = e1.len();
+            let no_of_chunks = shard_length / chunk_size;
 
-                if (poly_idx + 1) & mask == 0 {
-                    let x2 = poly_idx >> num_x1_bits;
-                    *final_eval += *int_eval * e2[x2];
-                    *int_eval = F::zero();
-                }
-            });
+            *final_eval += (0..no_of_chunks)
+                .map(|chunk_iter| {
+                    let start_idx = chunk_iter * chunk_size;
+                    let end_idx = start_idx + chunk_size;
+                    let x2 = (base_poly_idx + (end_idx - 1)) >> num_x1_bits;
+                    (start_idx..end_idx)
+                        .map(|i| {
+                            let poly_idx = base_poly_idx + i;
+                            let x1 = poly_idx & x1_bitmask;
+                            coeffs[i].field_mul(e1[x1])
+                        })
+                        .fold(F::zero(), |acc, x| acc + x)
+                        * e2[x2]
+                })
+                .fold(F::zero(), |acc, x| acc + x);
         }
         #[inline(always)]
         fn process_large_scalar_polys<F>(
             coeffs: &Vec<F>,
             final_eval: &mut F,
-            int_eval: &mut F,
             eq: &SplitEqPolynomial<F>,
             base_poly_idx: usize,
             x1_bitmask: usize,
             num_x1_bits: usize,
             shard_length: usize,
-            mask: usize,
         ) where
             F: JoltField,
         {
             let e1 = &eq.E1;
             let e2 = &eq.E2;
-            (0..shard_length).for_each(|i| {
-                let poly_idx = base_poly_idx + i;
-                let x1 = poly_idx & x1_bitmask;
-                *int_eval += coeffs[i].mul_01_optimized(e1[x1]);
+            let chunk_size = e1.len();
+            let no_of_chunks = shard_length / chunk_size;
 
-                if (poly_idx + 1) & mask == 0 {
-                    let x2 = poly_idx >> num_x1_bits;
-                    *final_eval += *int_eval * e2[x2];
-                    *int_eval = F::zero();
-                }
-            });
+            *final_eval += (0..no_of_chunks)
+                .map(|chunk_iter| {
+                    let start_idx = chunk_iter * chunk_size;
+                    let end_idx = start_idx + chunk_size;
+                    let x2 = (base_poly_idx + (end_idx - 1)) >> num_x1_bits;
+                    (start_idx..end_idx)
+                        .map(|i| {
+                            let poly_idx = base_poly_idx + i;
+                            let x1 = poly_idx & x1_bitmask;
+                            coeffs[i].mul_01_optimized(e1[x1])
+                        })
+                        .fold(F::zero(), |acc, x| acc + x)
+                        * e2[x2]
+                })
+                .fold(F::zero(), |acc, x| acc + x);
         }
 
-        if peek_polys
+        if polys
             .iter()
             .any(|poly| !matches!(poly, MultilinearPolynomial::LargeScalars(_)))
         {
             for shard_idx in 0..num_shards {
-                let polys = oracle.next_shard();
                 let base_poly_idx = shard_idx * shard_length;
-
-                polys
-                    .par_iter()
-                    .zip(int_evals.par_iter_mut().zip(final_evals.par_iter_mut()))
-                    .for_each(|(poly, (int_eval, final_eval))| {
-                        match poly {
-                            MultilinearPolynomial::LargeScalars(poly) => {
-                                process_large_scalar_polys(
-                                    &poly.Z,
-                                    final_eval,
-                                    int_eval,
-                                    &eq,
-                                    base_poly_idx,
-                                    x1_bitmask,
-                                    num_x1_bits,
-                                    shard_length,
-                                    mask,
-                                );
-                            }
-                            MultilinearPolynomial::U8Scalars(poly) => {
-                                process_small_scalar_polys(
-                                    &poly.coeffs,
-                                    final_eval,
-                                    int_eval,
-                                    &eq,
-                                    base_poly_idx,
-                                    x1_bitmask,
-                                    num_x1_bits,
-                                    shard_length,
-                                    mask,
-                                );
-                            }
-                            MultilinearPolynomial::U16Scalars(poly) => {
-                                process_small_scalar_polys(
-                                    &poly.coeffs,
-                                    final_eval,
-                                    int_eval,
-                                    &eq,
-                                    base_poly_idx,
-                                    x1_bitmask,
-                                    num_x1_bits,
-                                    shard_length,
-                                    mask,
-                                );
-                            }
-                            MultilinearPolynomial::U32Scalars(poly) => {
-                                process_small_scalar_polys(
-                                    &poly.coeffs,
-                                    final_eval,
-                                    int_eval,
-                                    &eq,
-                                    base_poly_idx,
-                                    x1_bitmask,
-                                    num_x1_bits,
-                                    shard_length,
-                                    mask,
-                                );
-                            }
-                            MultilinearPolynomial::U64Scalars(poly) => {
-                                process_small_scalar_polys(
-                                    &poly.coeffs,
-                                    final_eval,
-                                    int_eval,
-                                    &eq,
-                                    base_poly_idx,
-                                    x1_bitmask,
-                                    num_x1_bits,
-                                    shard_length,
-                                    mask,
-                                );
-                            }
-                            MultilinearPolynomial::I64Scalars(poly) => {
-                                process_small_scalar_polys(
-                                    &poly.coeffs,
-                                    final_eval,
-                                    int_eval,
-                                    &eq,
-                                    base_poly_idx,
-                                    x1_bitmask,
-                                    num_x1_bits,
-                                    shard_length,
-                                    mask,
-                                );
-                            }
-                        };
-                    });
+                (_, polys) = rayon::join(
+                    || {
+                        polys.par_iter().zip(final_evals.par_iter_mut()).for_each(
+                            |(poly, final_eval)| {
+                                match poly {
+                                    MultilinearPolynomial::LargeScalars(poly) => {
+                                        process_large_scalar_polys(
+                                            &poly.Z,
+                                            final_eval,
+                                            &eq,
+                                            base_poly_idx,
+                                            x1_bitmask,
+                                            num_x1_bits,
+                                            shard_length,
+                                        );
+                                    }
+                                    MultilinearPolynomial::U8Scalars(poly) => {
+                                        process_small_scalar_polys(
+                                            &poly.coeffs,
+                                            final_eval,
+                                            &eq,
+                                            base_poly_idx,
+                                            x1_bitmask,
+                                            num_x1_bits,
+                                            shard_length,
+                                        );
+                                    }
+                                    MultilinearPolynomial::U16Scalars(poly) => {
+                                        process_small_scalar_polys(
+                                            &poly.coeffs,
+                                            final_eval,
+                                            &eq,
+                                            base_poly_idx,
+                                            x1_bitmask,
+                                            num_x1_bits,
+                                            shard_length,
+                                        );
+                                    }
+                                    MultilinearPolynomial::U32Scalars(poly) => {
+                                        process_small_scalar_polys(
+                                            &poly.coeffs,
+                                            final_eval,
+                                            &eq,
+                                            base_poly_idx,
+                                            x1_bitmask,
+                                            num_x1_bits,
+                                            shard_length,
+                                        );
+                                    }
+                                    MultilinearPolynomial::U64Scalars(poly) => {
+                                        process_small_scalar_polys(
+                                            &poly.coeffs,
+                                            final_eval,
+                                            &eq,
+                                            base_poly_idx,
+                                            x1_bitmask,
+                                            num_x1_bits,
+                                            shard_length,
+                                        );
+                                    }
+                                    MultilinearPolynomial::I64Scalars(poly) => {
+                                        process_small_scalar_polys(
+                                            &poly.coeffs,
+                                            final_eval,
+                                            &eq,
+                                            base_poly_idx,
+                                            x1_bitmask,
+                                            num_x1_bits,
+                                            shard_length,
+                                        );
+                                    }
+                                };
+                            },
+                        );
+                    },
+                    || {
+                        let mut polys = Vec::new();
+                        if shard_idx != num_shards - 1 {
+                            polys = oracle.next_shard()
+                        }
+                        polys
+                    },
+                );
             }
         } else {
             for shard_idx in 0..num_shards {
-                let shard = oracle.next_shard();
                 let base_poly_idx = shard_idx * shard_length;
-                let polys: Vec<&MultilinearPolynomial<F>> = shard.iter().map(|poly| poly).collect();
-                polys
-                    .into_par_iter()
-                    .zip(int_evals.par_iter_mut().zip(final_evals.par_iter_mut()))
-                    .for_each(|(poly, (int_eval, final_eval))| {
-                        let poly: &DensePolynomial<F> = poly.try_into().unwrap();
-                        process_large_scalar_polys(
-                            &poly.Z,
-                            final_eval,
-                            int_eval,
-                            &eq,
-                            base_poly_idx,
-                            x1_bitmask,
-                            num_x1_bits,
-                            shard_length,
-                            mask,
-                        );
-                    });
+                (_, polys) = rayon::join(
+                    || {
+                        polys
+                            .into_par_iter()
+                            .zip(final_evals.par_iter_mut())
+                            .for_each(|(poly, final_eval)| {
+                                let poly: &DensePolynomial<F> = (&poly).try_into().unwrap();
+                                process_large_scalar_polys(
+                                    &poly.Z,
+                                    final_eval,
+                                    &eq,
+                                    base_poly_idx,
+                                    x1_bitmask,
+                                    num_x1_bits,
+                                    shard_length,
+                                );
+                            });
+                    },
+                    || {
+                        let mut polys = Vec::new();
+                        if shard_idx != num_shards - 1 {
+                            polys = oracle.next_shard()
+                        }
+                        polys
+                    },
+                );
             }
         }
         final_evals.to_vec()

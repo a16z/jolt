@@ -47,7 +47,7 @@ impl<F: JoltField> EqPolynomial<F> {
     /// Computes the table of coefficients:
     ///     scaling_factor * eq(r, x) for all x in {0, 1}^n
     /// serially. More efficient for short `r`.
-    pub fn evals_serial(r: &[F], scaling_factor: Option<F>) -> Vec<F> {
+    fn evals_serial(r: &[F], scaling_factor: Option<F>) -> Vec<F> {
         let mut evals: Vec<F> = vec![scaling_factor.unwrap_or(F::one()); r.len().pow2()];
         let mut size = 1;
         for j in 0..r.len() {

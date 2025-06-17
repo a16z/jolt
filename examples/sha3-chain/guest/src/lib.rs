@@ -4,7 +4,7 @@ use sha3::{Digest, Keccak256};
 
 #[jolt::provable]
 fn sha3_chain(input: [u8; 32], num_iters: u8) -> [u8; 32] {
-    let num_iters_new = 128;
+    let num_iters_new = 2048;
     let mut hash = input;
     for _ in 0..num_iters_new {
         let mut hasher = Keccak256::new();
