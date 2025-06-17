@@ -263,7 +263,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                 .map(|(E_out_eval, P_x_out)| {
                     // The for-loop below corresponds to the inner sum:
                     // \sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2))
-                    let mut inner_sum = (F::zero(), F::zero(), F::zero());
+                    let mut inner_sum = (F::zero(), F::zero());
                     for (E_in_eval, P_chunk) in eq_poly.E_in_current().iter().zip(P_x_out.chunks(4)) {
                         let left = (
                             *P_chunk.first().unwrap_or(&F::zero()),
