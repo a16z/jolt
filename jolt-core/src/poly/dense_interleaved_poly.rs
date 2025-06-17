@@ -217,7 +217,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
         // We use the Dao-Thaler and Gruen optimizations for the EQ polynomial, so there are two
         // cases we must handle. For details, refer to Section 3 of
         // https://eprint.iacr.org/2024/1210.pdf
-        let quadratic_evals = if eq_poly.E_in_vec.is_empty() {
+        let quadratic_evals = if eq_poly.E_in_current_len() == 1 {
             // If `eq_poly.E_in` has been fully bound, we compute the cubic polynomial as we would
             // without the Dao-Thaler optimization, using the standard linear-time sumcheck
             // algorithm.
