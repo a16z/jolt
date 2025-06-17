@@ -4,7 +4,6 @@
 use crate::field::JoltField;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::r1cs::constraints::R1CSConstraints;
-use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::r1cs::spartan::UniformSpartanProof;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use bytecode::{BytecodePreprocessing, BytecodeShoutProof};
@@ -308,7 +307,6 @@ where
             &trace,
             &program_io,
             1 << 16, // TODO(moodlezoup)
-            r1cs_proof.claimed_witness_evals[JoltR1CSInputs::RamAddress.to_index()],
             &mut opening_accumulator,
             &mut transcript,
         );
@@ -397,7 +395,6 @@ where
             padded_trace_length,
             &preprocessing.ram,
             &program_io,
-            proof.r1cs.claimed_witness_evals[JoltR1CSInputs::RamAddress.to_index()],
             &mut transcript,
         )?;
         proof.bytecode.verify(
