@@ -75,7 +75,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTran
     pub fn prove(
         // generators: &PCS::Setup,
         trace: &[RV32IMCycle],
-        opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
+        _opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> RegistersTwistProof<F, ProofTranscript> {
         let log_T = trace.len().log_2();

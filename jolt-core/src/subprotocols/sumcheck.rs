@@ -12,7 +12,7 @@ use crate::poly::spartan_interleaved_poly::{
 };
 use crate::poly::split_eq_poly::{GruenSplitEqPolynomial, SplitEqPolynomial};
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
-use crate::r1cs::builder::{Constraint, OffsetEqConstraint};
+use crate::r1cs::builder::Constraint;
 use crate::r1cs::spartan::{BindZRyVarOracle, R1CSInputsOracle};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
@@ -445,7 +445,6 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         num_rounds: usize,
         padded_num_constraints: usize,
         uniform_constraints: &[Constraint],
-        cross_step_constraints: &[OffsetEqConstraint],
         flattened_polys: &[MultilinearPolynomial<F>],
         tau: &[F],
         transcript: &mut ProofTranscript,
@@ -459,7 +458,6 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             SpartanInterleavedPolynomial::<NUM_SVO_ROUNDS, F>::new_with_precompute(
                 padded_num_constraints,
                 uniform_constraints,
-                cross_step_constraints,
                 flattened_polys,
                 tau,
             );
@@ -514,97 +512,97 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         )
     }
 
-    pub fn prove_spartan_small_value_streaming<'a, const NUM_SVO_ROUNDS: usize, PCS>(
-        num_rounds: usize,
-        padded_num_constraints: usize,
-        uniform_constraints: &[Constraint],
-        cross_step_constraints: &[OffsetEqConstraint],
-        trace: &[RV32IMCycle],
-        preprocessing: &'a JoltProverPreprocessing<F, PCS, ProofTranscript>,
-        trace_shard_len: usize,
-        tau: &[F],
-        transcript: &mut ProofTranscript,
-    ) -> (Self, Vec<F>, [F; 3])
-    where
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    {
-        let mut r = Vec::new();
-        let mut polys = Vec::new();
-        let mut claim = F::zero();
-
-        let mut az_bz_poly_oracle = SpartanInterleavedPolynomialOracle::new(
-            padded_num_constraints,
-            uniform_constraints,
-            cross_step_constraints,
-            tau,
-            trace,
-            trace_shard_len,
-            preprocessing,
-        );
-
-        let now = Instant::now();
-        let (accums_zero, accums_infty) = az_bz_poly_oracle.compute_accumulators(
-            padded_num_constraints,
-            uniform_constraints,
-            cross_step_constraints,
-            tau,
-            trace_shard_len,
-        );
-        az_bz_poly_oracle.reset();
-        println!("Streaming SVO time = {:?}", now.elapsed());
-
-        let mut eq_poly = GruenSplitEqPolynomial::new(tau);
-        process_svo_sumcheck_rounds::<NUM_SVO_ROUNDS, F, ProofTranscript>(
-            &accums_zero,
-            &accums_infty,
-            &mut r,
-            &mut polys,
-            &mut claim,
-            transcript,
-            &mut eq_poly,
-        );
-
-        let potential_streaming_rounds_start = NUM_SVO_ROUNDS;
-        let binding_round = num_rounds - trace_shard_len.log_2();
-        // let binding_round = (trace_shard_len.log_2() + padded_num_constraints.log_2()) / 2;
-        let streaming_rounds_start =
-            std::cmp::min(potential_streaming_rounds_start, binding_round - 1);
-
-        println!("Binding round = {}", binding_round);
-
-        let mut r_rev = r.clone();
-        r_rev.reverse();
-        let mut eq_r_evals = EqPolynomial::evals(&r_rev);
-        let num_shards = az_bz_poly_oracle.get_len() / trace_shard_len;
-        az_bz_poly_oracle.streaming_rounds(
-            trace_shard_len,
-            num_shards,
-            streaming_rounds_start,
-            binding_round,
-            &mut eq_poly,
-            &mut r,
-            &mut eq_r_evals,
-            &mut polys,
-            &mut claim,
-            transcript,
-        );
-
-        for _ in binding_round + 1..num_rounds {
-            az_bz_poly_oracle.remaining_sumcheck_rounds(
-                &mut eq_poly,
-                transcript,
-                &mut r,
-                &mut polys,
-                &mut claim,
-            );
-        }
-
-        (
-            SumcheckInstanceProof::new(polys),
-            r,
-            az_bz_poly_oracle.final_sumcheck_evals(),
-        )
-    }
+    // pub fn prove_spartan_small_value_streaming<'a, const NUM_SVO_ROUNDS: usize, PCS>(
+    //     num_rounds: usize,
+    //     padded_num_constraints: usize,
+    //     uniform_constraints: &[Constraint],
+    //     cross_step_constraints: &[OffsetEqConstraint],
+    //     trace: &[RV32IMCycle],
+    //     preprocessing: &'a JoltProverPreprocessing<F, PCS, ProofTranscript>,
+    //     trace_shard_len: usize,
+    //     tau: &[F],
+    //     transcript: &mut ProofTranscript,
+    // ) -> (Self, Vec<F>, [F; 3])
+    // where
+    //     PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    // {
+    //     let mut r = Vec::new();
+    //     let mut polys = Vec::new();
+    //     let mut claim = F::zero();
+    //
+    //     let mut az_bz_poly_oracle = SpartanInterleavedPolynomialOracle::new(
+    //         padded_num_constraints,
+    //         uniform_constraints,
+    //         cross_step_constraints,
+    //         tau,
+    //         trace,
+    //         trace_shard_len,
+    //         preprocessing,
+    //     );
+    //
+    //     let now = Instant::now();
+    //     let (accums_zero, accums_infty) = az_bz_poly_oracle.compute_accumulators(
+    //         padded_num_constraints,
+    //         uniform_constraints,
+    //         cross_step_constraints,
+    //         tau,
+    //         trace_shard_len,
+    //     );
+    //     az_bz_poly_oracle.reset();
+    //     println!("Streaming SVO time = {:?}", now.elapsed());
+    //
+    //     let mut eq_poly = GruenSplitEqPolynomial::new(tau);
+    //     process_svo_sumcheck_rounds::<NUM_SVO_ROUNDS, F, ProofTranscript>(
+    //         &accums_zero,
+    //         &accums_infty,
+    //         &mut r,
+    //         &mut polys,
+    //         &mut claim,
+    //         transcript,
+    //         &mut eq_poly,
+    //     );
+    //
+    //     let potential_streaming_rounds_start = NUM_SVO_ROUNDS;
+    //     let binding_round = num_rounds - trace_shard_len.log_2();
+    //     // let binding_round = (trace_shard_len.log_2() + padded_num_constraints.log_2()) / 2;
+    //     let streaming_rounds_start =
+    //         std::cmp::min(potential_streaming_rounds_start, binding_round - 1);
+    //
+    //     println!("Binding round = {}", binding_round);
+    //
+    //     let mut r_rev = r.clone();
+    //     r_rev.reverse();
+    //     let mut eq_r_evals = EqPolynomial::evals(&r_rev);
+    //     let num_shards = az_bz_poly_oracle.get_len() / trace_shard_len;
+    //     az_bz_poly_oracle.streaming_rounds(
+    //         trace_shard_len,
+    //         num_shards,
+    //         streaming_rounds_start,
+    //         binding_round,
+    //         &mut eq_poly,
+    //         &mut r,
+    //         &mut eq_r_evals,
+    //         &mut polys,
+    //         &mut claim,
+    //         transcript,
+    //     );
+    //
+    //     for _ in binding_round + 1..num_rounds {
+    //         az_bz_poly_oracle.remaining_sumcheck_rounds(
+    //             &mut eq_poly,
+    //             transcript,
+    //             &mut r,
+    //             &mut polys,
+    //             &mut claim,
+    //         );
+    //     }
+    //
+    //     (
+    //         SumcheckInstanceProof::new(polys),
+    //         r,
+    //         az_bz_poly_oracle.final_sumcheck_evals(),
+    //     )
+    // }
 
     #[tracing::instrument(skip_all)]
     // A specialized sumcheck implementation with the 0th round unrolled from the rest of the

@@ -104,7 +104,7 @@ impl Emulator {
         println!("This elf file seems like a riscv-tests elf file. Running in test mode.");
         loop {
             let disas = self.cpu.disassemble_next_instruction();
-            println!("{}", disas);
+            println!("{disas}");
 
             self.tick();
 
@@ -117,8 +117,8 @@ impl Emulator {
             let endcode = self.cpu.get_mut_mmu().load_word_raw(self.tohost_addr);
             if endcode != 0 {
                 match endcode {
-                    1 => println!("Test Passed with {:X}\n", endcode),
-                    _ => println!("Test Failed with {:X}\n", endcode),
+                    1 => println!("Test Passed with {endcode:X}\n"),
+                    _ => println!("Test Failed with {endcode:X}\n"),
                 };
                 break;
             }

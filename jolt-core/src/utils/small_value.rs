@@ -268,7 +268,7 @@ pub mod svo_helpers {
                 temp_tA,
             ),
             _ => {
-                panic!("Unsupported number of SVO rounds: {}", NUM_SVO_ROUNDS);
+                panic!("Unsupported number of SVO rounds: {NUM_SVO_ROUNDS}");
             }
         }
     }
@@ -770,8 +770,7 @@ pub mod svo_helpers {
             );
             debug_assert!(
                 !ternary_point_info_table[k_target_idx].is_binary,
-                "Target for temp_tA[{}] (k={}) is unexpectedly binary.",
-                i_temp_tA, k_target_idx
+                "Target for temp_tA[{i_temp_tA}] (k={k_target_idx}) is unexpectedly binary."
             );
 
             let az_val = get_extended_eval::<NUM_SVO_ROUNDS, NUM_TERNARY_POINTS_CONST>(

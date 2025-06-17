@@ -1,3 +1,6 @@
+#![allow(unused_imports)]
+#![allow(clippy::extra_unused_type_parameters)]
+
 use crate::field::JoltField;
 use crate::host;
 use crate::jolt::lookup_table::LookupTables;

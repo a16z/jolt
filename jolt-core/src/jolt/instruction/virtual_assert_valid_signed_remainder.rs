@@ -18,8 +18,9 @@ impl InstructionFlags for VirtualAssertValidSignedRemainder {
         flags[CircuitFlags::Assert as usize] = true;
         flags[CircuitFlags::LeftOperandIsRs1Value as usize] = true;
         flags[CircuitFlags::RightOperandIsRs2Value as usize] = true;
-        flags[CircuitFlags::Virtual as usize] = self.virtual_sequence_remaining.is_some();
-        flags[CircuitFlags::DoNotUpdatePC as usize] =
+        flags[CircuitFlags::InlineSequenceInstruction as usize] =
+            self.virtual_sequence_remaining.is_some();
+        flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
             self.virtual_sequence_remaining.unwrap_or(0) != 0;
         flags
     }
@@ -54,7 +55,6 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE>
             64 => {
                 let (remainder, divisor) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
                 let remainder = remainder as i64;
-                let divisor = divisor as i64;
                 let is_remainder_zero = remainder == 0;
                 let is_divisor_zero = divisor == 0;
 

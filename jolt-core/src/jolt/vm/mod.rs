@@ -2,10 +2,7 @@
 #![allow(dead_code)]
 
 use crate::field::JoltField;
-use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-use crate::poly::opening_proof::{
-    ProverOpeningAccumulator, ReducedOpeningProof, VerifierOpeningAccumulator,
-};
+use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::r1cs::constraints::R1CSConstraints;
 use crate::r1cs::spartan::UniformSpartanProof;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -14,13 +11,11 @@ use common::jolt_device::MemoryLayout;
 use instruction_lookups::LookupsProof;
 use ram::{RAMPreprocessing, RAMTwistProof};
 use registers::RegistersTwistProof;
-use serde::{Deserialize, Serialize};
 use std::{
     fs::File,
     io::{Read, Write},
     path::Path,
 };
-use strum::EnumCount;
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
 use tracer::JoltDevice;
 
@@ -28,7 +23,6 @@ use crate::msm::icicle;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
-use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
@@ -248,7 +242,18 @@ where
 
         // TODO(JP): Drop padding on number of steps
         let padded_trace_length = trace_length.next_power_of_two();
-        trace.resize(padded_trace_length, RV32IMCycle::NoOp);
+        let padding = padded_trace_length - trace_length;
+        let last_address = trace.last().unwrap().instruction().normalize().address;
+        if padding != 0 {
+            // Pad with NoOps (with sequential addresses) followed by a final JALR
+            trace.extend((0..padding - 1).map(|i| RV32IMCycle::NoOp(last_address + 4 * i)));
+            // Final JALR sets NextUnexpandedPC = 0
+            trace.push(RV32IMCycle::last_jalr(last_address + 4 * (padding - 1)));
+        } else {
+            // Replace last JAL with JALR to set NextUnexpandedPC = 0
+            assert!(matches!(trace.last().unwrap(), RV32IMCycle::JAL(_)));
+            *trace.last_mut().unwrap() = RV32IMCycle::last_jalr(last_address);
+        }
 
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
         let mut opening_accumulator: ProverOpeningAccumulator<F, ProofTranscript> =
@@ -279,9 +284,7 @@ where
 
         let mut transcript_1 = transcript.clone();
 
-        let r1cs_proof: UniformSpartanProof<F, ProofTranscript>;
-
-        let _r1cs_proof = UniformSpartanProof::prove::<PCS>(
+        let r1cs_proof = UniformSpartanProof::prove::<PCS>(
             &preprocessing,
             &constraint_builder,
             &spartan_key,
@@ -299,17 +302,17 @@ where
                 1 << 20,
             ),
         );
-        r1cs_proof = UniformSpartanProof::prove_streaming::<PCS>(
-            &preprocessing,
-            &constraint_builder,
-            &spartan_key,
-            &trace,
-            shard_len,
-            &mut opening_accumulator,
-            &mut transcript,
-        )
-        .ok()
-        .unwrap();
+        // r1cs_proof = UniformSpartanProof::prove_streaming::<PCS>(
+        //     &preprocessing,
+        //     &constraint_builder,
+        //     &spartan_key,
+        //     &trace,
+        //     shard_len,
+        //     &mut opening_accumulator,
+        //     &mut transcript,
+        // )
+        // .ok()
+        // .unwrap();
 
         let instruction_proof = LookupsProof::prove(
             &preprocessing.shared.generators,
@@ -359,7 +362,7 @@ where
 
     #[tracing::instrument(skip_all)]
     fn verify(
-        mut preprocessing: JoltVerifierPreprocessing<F, PCS, ProofTranscript>,
+        preprocessing: JoltVerifierPreprocessing<F, PCS, ProofTranscript>,
         proof: JoltProof<WORD_SIZE, F, PCS, ProofTranscript>,
         // commitments: JoltCommitments<PCS, ProofTranscript>,
         program_io: JoltDevice,

@@ -1,7 +1,7 @@
 use crate::{field::JoltField, jolt::instruction::CircuitFlags};
 
 use super::{
-    builder::{CombinedUniformBuilder, OffsetEqConstraint, R1CSBuilder},
+    builder::{CombinedUniformBuilder, R1CSBuilder},
     inputs::JoltR1CSInputs,
 };
 
@@ -11,25 +11,13 @@ pub trait R1CSConstraints<F: JoltField> {
     fn construct_constraints(padded_trace_length: usize) -> CombinedUniformBuilder<F> {
         let mut uniform_builder = R1CSBuilder::new();
         Self::uniform_constraints(&mut uniform_builder);
-        let cross_step_constraints = Self::cross_step_constraints();
 
-        CombinedUniformBuilder::construct(
-            uniform_builder,
-            padded_trace_length,
-            cross_step_constraints,
-        )
+        CombinedUniformBuilder::construct(uniform_builder, padded_trace_length)
     }
     /// Constructs Jolt's uniform constraints.
     /// Uniform constraints are constraints that hold for each step of
     /// the execution trace.
     fn uniform_constraints(builder: &mut R1CSBuilder);
-    /// Construct's Jolt's cross-step constraints.
-    /// Cross-step constraints are constraints whose inputs involve witness
-    /// values from multiple steps of the execution trace.
-    /// Currently, all of Jolt's cross-step constraints are of the form
-    ///     if condition { some constraint on steps i and i+1 }
-    /// This structure is captured in `OffsetEqConstraint`.
-    fn cross_step_constraints() -> Vec<OffsetEqConstraint>;
 }
 
 pub struct JoltRV32IMConstraints;
@@ -42,11 +30,11 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::Rs1Value,
         );
 
-        // if LeftOperandIsPC { assert!(LeftInstructionInput == RealInstructionAddress) }
+        // if LeftOperandIsPC { assert!(LeftInstructionInput == UnexpandedPC) }
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsPC),
             JoltR1CSInputs::LeftInstructionInput,
-            JoltR1CSInputs::RealInstructionAddress,
+            JoltR1CSInputs::UnexpandedPC,
         );
 
         // if !(LeftOperandIsRs1Value || LeftOperandIsPC)  {
@@ -212,7 +200,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         );
 
         // if Rd != 0 && Jump {
-        //     assert!(RdWriteValue == RealInstructionAddress + 4)
+        //     assert!(RdWriteValue == UnexpandedPC + 4)
         // }
         cs.constrain_prod(
             JoltR1CSInputs::Rd,
@@ -222,20 +210,20 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         cs.constrain_eq_conditional(
             JoltR1CSInputs::WritePCtoRD,
             JoltR1CSInputs::RdWriteValue,
-            JoltR1CSInputs::RealInstructionAddress + 4,
+            JoltR1CSInputs::UnexpandedPC + 4,
         );
 
         // if Jump {
-        //     assert!(NextPC == LookupOutput)
+        //     assert!(NextUnexpandedPC == LookupOutput)
         // }
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::Jump),
-            JoltR1CSInputs::NextPC,
+            JoltR1CSInputs::NextUnexpandedPC,
             JoltR1CSInputs::LookupOutput,
         );
 
         // if Branch && LookupOutput {
-        //     assert!(NextPC == RealInstructionAddress + Imm)
+        //     assert!(NextUnexpandedPC == UnexpandedPC + Imm)
         // }
         cs.constrain_prod(
             JoltR1CSInputs::OpFlags(CircuitFlags::Branch),
@@ -244,48 +232,32 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         );
         cs.constrain_eq_conditional(
             JoltR1CSInputs::ShouldBranch,
-            JoltR1CSInputs::NextPC,
-            JoltR1CSInputs::RealInstructionAddress + JoltR1CSInputs::Imm,
+            JoltR1CSInputs::NextUnexpandedPC,
+            JoltR1CSInputs::UnexpandedPC + JoltR1CSInputs::Imm,
         );
 
         // if !(ShouldBranch || Jump) {
         //     if DoNotUpdatePC {
-        //         assert!(NextPC == RealInstructionAddress)
+        //         assert!(NextUnexpandedPC == UnexpandedPC)
         //     } else {
-        //         assert!(NextPC == RealInstructionAddress + 4)
+        //         assert!(NextUnexpandedPC == UnexpandedPC + 4)
         //     }
         // }
         // Note that Branch and Jump instructions are mutually exclusive
         cs.constrain_eq_conditional(
             1 - JoltR1CSInputs::ShouldBranch - JoltR1CSInputs::OpFlags(CircuitFlags::Jump),
+            JoltR1CSInputs::NextUnexpandedPC,
+            JoltR1CSInputs::UnexpandedPC + 4
+                - 4 * JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC),
+        );
+
+        // if Inline {
+        //     assert!(NextPC == PC + 1)
+        // }
+        cs.constrain_eq_conditional(
+            JoltR1CSInputs::OpFlags(CircuitFlags::InlineSequenceInstruction),
             JoltR1CSInputs::NextPC,
-            JoltR1CSInputs::RealInstructionAddress + 4
-                - 4 * JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdatePC),
+            JoltR1CSInputs::PC + 1,
         );
-    }
-
-    fn cross_step_constraints() -> Vec<OffsetEqConstraint> {
-        // If the next instruction's address is not zero (i.e. it's
-        // not padding), then check the PC update.
-        let pc_constraint = OffsetEqConstraint::new(
-            (JoltR1CSInputs::RealInstructionAddress, true),
-            (JoltR1CSInputs::NextPC, false),
-            (JoltR1CSInputs::RealInstructionAddress, true),
-        );
-
-        // If the current instruction is virtual, check that the next instruction
-        // in the trace is the next instruction in bytecode. Virtual sequences
-        // do not involve jumps or branches, so this should always hold,
-        // EXCEPT if we encounter a virtual instruction followed by a padding
-        // instruction. But that should never happen because the execution
-        // trace should always end with some return handling, which shouldn't involve
-        // any virtual sequences.
-        let virtual_sequence_constraint = OffsetEqConstraint::new(
-            (JoltR1CSInputs::OpFlags(CircuitFlags::Virtual), false),
-            (JoltR1CSInputs::VirtualInstructionAddress, true),
-            (JoltR1CSInputs::VirtualInstructionAddress + 1, false),
-        );
-
-        vec![pc_constraint, virtual_sequence_constraint]
     }
 }

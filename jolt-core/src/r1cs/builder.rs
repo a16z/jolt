@@ -1,12 +1,10 @@
-use super::{
-    key::{CrossStepR1CS, CrossStepR1CSConstraint, SparseEqualityItem},
-    ops::{Term, Variable, LC},
-};
+use super::ops::{Term, Variable, LC};
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::{
     field::JoltField,
     r1cs::key::{SparseConstraints, UniformR1CS},
 };
-use crate::{poly::multilinear_polynomial::MultilinearPolynomial, r1cs::inputs::JoltR1CSInputs};
 use std::marker::PhantomData;
 
 /// Constraints over a single row. Each variable points to a single item in Z and the corresponding coefficient.
@@ -22,7 +20,7 @@ impl Constraint {
     pub(crate) fn _pretty_fmt<F: JoltField>(
         &self,
         f: &mut String,
-        flattened_polynomials: &[MultilinearPolynomial<F>],
+        flattened_polynomials: &[crate::poly::multilinear_polynomial::MultilinearPolynomial<F>],
         step_index: usize,
     ) -> std::fmt::Result {
         use std::fmt::Write as _;
@@ -255,72 +253,21 @@ impl R1CSBuilder {
     }
 }
 
-/// An Offset Linear Combination. If OffsetLC.0 is true, then the OffsetLC.1 refers to the next step in a uniform
-/// constraint system.
-pub type OffsetLC = (bool, LC);
-
-/// A conditional constraint that Linear Combinations a, b are equal where a and b need not be in the same step an a
-/// uniform constraint system.
-#[derive(Debug)]
-pub struct OffsetEqConstraint {
-    pub cond: OffsetLC,
-    pub a: OffsetLC,
-    pub b: OffsetLC,
-}
-
-impl OffsetEqConstraint {
-    pub fn new(
-        condition: (impl Into<LC>, bool),
-        a: (impl Into<LC>, bool),
-        b: (impl Into<LC>, bool),
-    ) -> Self {
-        Self {
-            cond: (condition.1, condition.0.into()),
-            a: (a.1, a.0.into()),
-            b: (b.1, b.0.into()),
-        }
-    }
-
-    #[cfg(test)]
-    pub fn empty() -> Self {
-        Self::new(
-            (LC::new(vec![]), false),
-            (LC::new(vec![]), false),
-            (LC::new(vec![]), false),
-        )
-    }
-}
-
-pub(crate) fn eval_offset_lc<F: JoltField>(
-    offset: &OffsetLC,
-    flattened_polynomials: &[MultilinearPolynomial<F>],
-    step: usize,
-    next_step_m: Option<usize>,
-) -> i128 {
-    if !offset.0 {
-        offset.1.evaluate_row(flattened_polynomials, step)
-    } else if let Some(next_step) = next_step_m {
-        offset.1.evaluate_row(flattened_polynomials, next_step)
-    } else {
-        offset.1.constant_term_field()
-    }
-}
-
-pub(crate) fn shard_last_step_eval_offset_lc<F: JoltField>(
-    offset: &OffsetLC,
-    flattened_polynomials: &[MultilinearPolynomial<F>],
-    flattened_eval: &[MultilinearPolynomial<F>],
-    step: usize,
-    next_step_m: Option<usize>,
-) -> i128 {
-    if !offset.0 {
-        offset.1.evaluate_row(flattened_polynomials, step)
-    } else if next_step_m.is_some() {
-        offset.1.evaluate_row(flattened_eval, 0)
-    } else {
-        offset.1.constant_term_field()
-    }
-}
+// pub(crate) fn shard_last_step_eval_offset_lc<F: JoltField>(
+//     offset: &OffsetLC,
+//     flattened_polynomials: &[MultilinearPolynomial<F>],
+//     flattened_eval: &[MultilinearPolynomial<F>],
+//     step: usize,
+//     next_step_m: Option<usize>,
+// ) -> i128 {
+//     if !offset.0 {
+//         offset.1.evaluate_row(flattened_polynomials, step)
+//     } else if next_step_m.is_some() {
+//         offset.1.evaluate_row(flattened_eval, 0)
+//     } else {
+//         offset.1.constant_term_field()
+//     }
+// }
 
 // TODO(sragss): Detailed documentation with wiki.
 pub struct CombinedUniformBuilder<F: JoltField> {
@@ -329,30 +276,21 @@ pub struct CombinedUniformBuilder<F: JoltField> {
 
     /// Padded to the nearest power of 2
     pub(crate) uniform_repeat: usize, // TODO(JP): Remove padding of steps
-
-    pub(crate) offset_equality_constraints: Vec<OffsetEqConstraint>,
 }
 
 impl<F: JoltField> CombinedUniformBuilder<F> {
-    pub fn construct(
-        uniform_builder: R1CSBuilder,
-        uniform_repeat: usize,
-        offset_equality_constraints: Vec<OffsetEqConstraint>,
-    ) -> Self {
+    pub fn construct(uniform_builder: R1CSBuilder, uniform_repeat: usize) -> Self {
         assert!(uniform_repeat.is_power_of_two());
         Self {
             _field: PhantomData,
             uniform_builder,
             uniform_repeat,
-            offset_equality_constraints,
         }
     }
 
     /// Number of constraint rows per step, padded to the next power of two.
     pub(super) fn padded_rows_per_step(&self) -> usize {
-        let num_constraints =
-            self.uniform_builder.constraints.len() + self.offset_equality_constraints.len();
-        num_constraints.next_power_of_two()
+        self.uniform_builder.constraints.len().next_power_of_two()
     }
 
     /// Total number of rows used across all repeated constraints. Not padded to nearest power of two.
@@ -367,70 +305,5 @@ impl<F: JoltField> CombinedUniformBuilder<F> {
     /// Materializes the uniform constraints into sparse (value != 0) A, B, C matrices represented in (row, col, value) format.
     pub fn materialize_uniform(&self) -> UniformR1CS<F> {
         self.uniform_builder.materialize()
-    }
-
-    /// Converts builder::OffsetEqConstraints into key::CrossStepR1CSConstraint
-    pub fn materialize_offset_eq(&self) -> CrossStepR1CS<F> {
-        // (a - b) * condition == 0
-        // A: a - b
-        // B: condition
-        // C: 0
-
-        let mut constraints = Vec::with_capacity(self.offset_equality_constraints.len());
-        for constraint in &self.offset_equality_constraints {
-            let mut eq = SparseEqualityItem::<F>::empty();
-            let mut condition = SparseEqualityItem::<F>::empty();
-
-            constraint
-                .cond
-                .1
-                .terms()
-                .iter()
-                .for_each(|term| match term.0 {
-                    Variable::Input(inner) => {
-                        condition
-                            .offset_vars
-                            .push((inner, constraint.cond.0, F::from_i64(term.1)))
-                    }
-                    Variable::Constant => {}
-                });
-            if let Some(term) = constraint.cond.1.constant_term() {
-                condition.constant = F::from_i64(term.1);
-            }
-
-            // Can't simply combine like terms because of the offset
-            let lhs = constraint.a.1.clone();
-            let rhs = -constraint.b.1.clone();
-
-            lhs.terms().iter().for_each(|term| match term.0 {
-                Variable::Input(inner) => {
-                    eq.offset_vars
-                        .push((inner, constraint.a.0, F::from_i64(term.1)))
-                }
-                Variable::Constant => {}
-            });
-            rhs.terms().iter().for_each(|term| match term.0 {
-                Variable::Input(inner) => {
-                    eq.offset_vars
-                        .push((inner, constraint.b.0, F::from_i64(term.1)))
-                }
-                Variable::Constant => {}
-            });
-
-            // Handle constants
-            lhs.terms().iter().for_each(|term| {
-                assert!(
-                    !matches!(term.0, Variable::Constant),
-                    "Constants only supported in RHS"
-                )
-            });
-            if let Some(term) = rhs.constant_term() {
-                eq.constant = F::from_i64(term.1);
-            }
-
-            constraints.push(CrossStepR1CSConstraint::new(eq, condition));
-        }
-
-        CrossStepR1CS { constraints }
     }
 }

@@ -4,7 +4,7 @@ use crate::{
     jolt::{
         instruction::{InstructionLookup, LookupQuery},
         lookup_table::{
-            prefixes::{PrefixCheckpoint, Prefixes},
+            prefixes::{PrefixCheckpoint, PrefixEval, Prefixes},
             LookupTables,
         },
     },
@@ -285,6 +285,7 @@ fn compute_sumcheck_prover_message<const WORD_SIZE: usize, F: JoltField>(
     [eval_0, eval_2_right + eval_2_right - eval_2_left]
 }
 
+#[allow(clippy::type_complexity)]
 pub fn prove_sparse_dense_shout<
     const WORD_SIZE: usize,
     F: JoltField,
@@ -520,7 +521,7 @@ pub fn prove_sparse_dense_shout<
     );
     let _guard = span.enter();
 
-    let prefixes: Vec<_> = prefix_checkpoints
+    let prefixes: Vec<PrefixEval<F>> = prefix_checkpoints
         .into_iter()
         .map(|checkpoint| checkpoint.unwrap())
         .collect();
@@ -771,7 +772,7 @@ mod tests {
             RV32IMCycle::VirtualSRAI(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualSRL(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualSRLI(cycle) => cycle.random(rng).into(),
-            _ => RV32IMCycle::NoOp,
+            _ => RV32IMCycle::NoOp(0),
         }
     }
 
@@ -1032,6 +1033,11 @@ mod tests {
         test_sparse_dense_shout(Some(RV32IMCycle::VirtualShiftRightBitmaskI(
             Default::default(),
         )));
+    }
+
+    #[test]
+    fn test_virtualrotri() {
+        test_sparse_dense_shout(Some(RV32IMCycle::VirtualROTRI(Default::default())));
     }
 
     #[test]

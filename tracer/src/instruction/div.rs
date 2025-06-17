@@ -65,7 +65,7 @@ impl RISCVTrace for DIV {
             }
             Xlen::Bit64 => {
                 if y == 0 {
-                    (u64::MAX as u64, x as u64)
+                    (u64::MAX, x as u64)
                 } else {
                     let mut quotient = x / y;
                     let mut remainder = x % y;

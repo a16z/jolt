@@ -6,7 +6,7 @@ use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial};
 use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
-use crate::r1cs::inputs::ALL_R1CS_INPUTS;
+use crate::r1cs::inputs::{JoltR1CSInputs, ALL_R1CS_INPUTS};
 use crate::r1cs::key::UniformSpartanKey;
 use crate::utils::math::Math;
 use crate::utils::streaming::Oracle;
@@ -64,6 +64,14 @@ pub enum SpartanError {
     /// returned when the final sumcheck opening proof fails
     #[error("InvalidInnerSumcheckClaim")]
     InvalidInnerSumcheckClaim,
+
+    /// returned when the recursive sumcheck proof fails
+    #[error("InvalidShiftSumcheckProof")]
+    InvalidShiftSumcheckProof,
+
+    /// returned when the final sumcheck opening proof fails
+    #[error("InvalidShiftSumcheckClaim")]
+    InvalidShiftSumcheckClaim,
 
     /// returned if the supplied witness is not of the right length
     #[error("InvalidWitnessLength")]
@@ -148,9 +156,8 @@ pub struct UniformSpartanProof<F: JoltField, ProofTranscript: Transcript> {
     pub(crate) outer_sumcheck_claims: (F, F, F),
     pub(crate) inner_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub(crate) shift_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    pub(crate) shift_sumcheck_claim: F,
     pub(crate) claimed_witness_evals: Vec<F>,
-    pub(crate) shift_sumcheck_witness_evals: Vec<F>,
+    pub(crate) shift_sumcheck_witness_eval: Vec<F>,
     _marker: PhantomData<ProofTranscript>,
 }
 
@@ -177,7 +184,7 @@ where
         constraint_builder: &CombinedUniformBuilder<F>,
         key: &UniformSpartanKey<F>,
         trace: &[RV32IMCycle],
-        opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
+        _opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<Self, SpartanError>
     where
@@ -190,15 +197,24 @@ where
 
         let num_rounds_x = key.num_rows_bits();
 
-        /* Sumcheck 1: Outer sumcheck */
+        /* Sumcheck 1: Outer sumcheck
+           Proves: \sum_x eq(tau, x) * (Az(x) * Bz(x) - Cz(x)) = 0
+
+           The matrices A, B, C have a block-diagonal structure with repeated blocks
+           A_small, B_small, C_small corresponding to the uniform constraints.
+        */
 
         let tau: Vec<F> = transcript.challenge_vector(num_rounds_x);
+        let uniform_constraints_only_padded = constraint_builder
+            .uniform_builder
+            .constraints
+            .len()
+            .next_power_of_two();
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
             SumcheckInstanceProof::prove_spartan_small_value::<NUM_SVO_ROUNDS>(
                 num_rounds_x,
-                constraint_builder.padded_rows_per_step(),
+                uniform_constraints_only_padded,
                 &constraint_builder.uniform_builder.constraints,
-                &constraint_builder.offset_equality_constraints,
                 &input_polys,
                 &tau,
                 transcript,
@@ -206,8 +222,6 @@ where
         let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
 
         ProofTranscript::append_scalars(transcript, &outer_sumcheck_claims);
-        // claims from the end of sum-check
-        // claim_Az is the (scalar) value v_A = \sum_y A(r_x, y) * z(r_x) where r_x is the sumcheck randomness
         let (claim_Az, claim_Bz, claim_Cz): (F, F, F) = (
             outer_sumcheck_claims[0],
             outer_sumcheck_claims[1],
@@ -215,65 +229,58 @@ where
         );
 
         /* Sumcheck 2: Inner sumcheck
-            RLC of claims Az, Bz, Cz
-            where claim_Az = \sum_{y_var} A(rx, y_var || rx_step) * z(y_var || rx_step)
-                                + A_shift(..) * z_shift(..)
-            and shift denotes the values at the next time step "rx_step+1" for cross-step constraints
-            - A_shift(rx, y_var || rx_step) = \sum_t A(rx, y_var || t) * eq_plus_one(rx_step, t)
-            - z_shift(y_var || rx_step) = \sum_t z(y_var || t) * eq_plus_one(rx_step, t)
+           Proves: claim_Az + r * claim_Bz + r^2 * claim_Cz =
+                   \sum_y (A_small(rx, y) + r * B_small(rx, y) + r^2 * C_small(rx, y)) * z(y)
+
+           Evaluates the uniform constraint matrices A_small, B_small, C_small at the point
+           determined by the outer sumcheck.
         */
 
-        let num_steps = key.num_steps;
-        let num_steps_bits = num_steps.ilog2() as usize;
-        let num_vars_uniform = key.num_vars_uniform_padded().next_power_of_two();
+        let num_cycles = key.num_steps;
+        let num_cycles_bits = num_cycles.ilog2() as usize;
+        let num_vars_uniform = key.num_vars_uniform_padded();
 
         let inner_sumcheck_RLC: F = transcript.challenge_scalar();
         let claim_inner_joint =
             claim_Az + inner_sumcheck_RLC * claim_Bz + inner_sumcheck_RLC.square() * claim_Cz;
 
-        let (rx_step, rx_constr) = outer_sumcheck_r.split_at(num_steps_bits);
+        let (r_cycle, rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
-        let (eq_rx_step, eq_plus_one_rx_step) = EqPlusOnePolynomial::evals(rx_step, None);
+        let (eq_r_cycle, eq_plus_one_r_cycle) = EqPlusOnePolynomial::evals(r_cycle, None);
 
-        /* Compute the two polynomials provided as input to the second sumcheck:
-           - poly_ABC: A(r_x, y_var || rx_step), A_shift(..) at all variables y_var
-           - poly_z: z(y_var || rx_step), z_shift(..)
-        */
+        // Evaluate A_small, B_small, C_small combined with RLC at point rx_var
+        let poly_abc_small =
+            DensePolynomial::new(key.evaluate_small_matrix_rlc(rx_var, inner_sumcheck_RLC));
 
-        let poly_ABC = DensePolynomial::new(key.evaluate_matrix_mle_partial(
-            rx_constr,
-            rx_step,
-            inner_sumcheck_RLC,
-        ));
-
-        // Binding z and z_shift polynomials at point rx_step
-        let span = span!(Level::INFO, "binding_z_and_shift_z");
+        let span = span!(Level::INFO, "binding_z_second_sumcheck");
         let _guard = span.enter();
 
-        let mut bind_z = vec![F::zero(); num_vars_uniform * 2];
-        let mut bind_shift_z = vec![F::zero(); num_vars_uniform * 2];
+        // Bind witness polynomials z at point r_cycle
+        let mut bind_z = vec![F::zero(); num_vars_uniform];
 
         input_polys
             .par_iter()
-            .zip(bind_z.par_iter_mut().zip(bind_shift_z.par_iter_mut()))
-            .for_each(|(poly, (eval, eval_shifted))| {
-                *eval = poly.dot_product(&eq_rx_step);
-                *eval_shifted = poly.dot_product(&eq_plus_one_rx_step);
+            .take(num_vars_uniform)
+            .zip(bind_z.par_iter_mut())
+            .for_each(|(poly, eval)| {
+                *eval = poly.dot_product(&eq_r_cycle);
             });
 
-        bind_z[num_vars_uniform] = F::one();
+        // Set the constant value at the appropriate position
+        if key.uniform_r1cs.num_vars < num_vars_uniform {
+            bind_z[key.uniform_r1cs.num_vars] = F::one();
+        }
 
         drop(_guard);
         drop(span);
 
-        let poly_z =
-            DensePolynomial::new(bind_z.into_iter().chain(bind_shift_z.into_iter()).collect());
-        assert_eq!(poly_z.len(), poly_ABC.len());
+        let poly_z = DensePolynomial::new(bind_z);
+        assert_eq!(poly_z.len(), poly_abc_small.len());
 
-        let num_rounds_inner_sumcheck = poly_ABC.len().log_2();
+        let num_rounds_inner_sumcheck = poly_abc_small.len().log_2();
 
         let mut polys = vec![
-            MultilinearPolynomial::LargeScalars(poly_ABC),
+            MultilinearPolynomial::LargeScalars(poly_abc_small),
             MultilinearPolynomial::LargeScalars(poly_z),
         ];
 
@@ -282,7 +289,7 @@ where
             poly_evals[0] * poly_evals[1]
         };
 
-        let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) =
+        let (inner_sumcheck_proof, _inner_sumcheck_r, _claims_inner) =
             SumcheckInstanceProof::prove_arbitrary(
                 &claim_inner_joint,
                 num_rounds_inner_sumcheck,
@@ -295,57 +302,64 @@ where
 
         drop_in_background_thread(polys);
 
-        /*  Sumcheck 3: Shift sumcheck
-            sumcheck claim is = z_shift(ry_var || rx_step) = \sum_t z(ry_var || t) * eq_plus_one(rx_step, t)
+        // Evaluate all witness polynomials P_i at r_cycle for the verifier
+        // Verifier computes: z(r_inner, r_cycle) = Σ_i eq(r_inner, i) * P_i(r_cycle)
+        let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
+        let (claimed_witness_evals, _chis) =
+            MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
+
+        /*  Sumcheck 3: Batched sumcheck for NextUnexpandedPC and NextPC verification
+            Proves: NextUnexpandedPC(r_cycle) + r * NextPC(r_cycle) =
+                    \sum_t (UnexpandedPC(t) + r * PC(t)) * eq_plus_one(r_cycle, t)
+
+            This batched sumcheck simultaneously proves:
+            1. NextUnexpandedPC(r_cycle) = \sum_t UnexpandedPC(t) * eq_plus_one(r_cycle, t)
+            2. NextPC(r_cycle) = \sum_t PC(t) * eq_plus_one(r_cycle, t)
         */
-
-        let ry_var = inner_sumcheck_r[1..].to_vec();
-        let eq_ry_var = EqPolynomial::evals(&ry_var);
-        let eq_ry_var_r2 = EqPolynomial::evals(&ry_var);
-
-        let mut bind_z_ry_var: Vec<F> = Vec::with_capacity(num_steps);
-
-        let span = span!(Level::INFO, "bind_z_ry_var");
+        let span = span!(Level::INFO, "shift_sumcheck_pc");
         let _guard = span.enter();
-        let num_steps_unpadded = constraint_builder.uniform_repeat();
-        (0..num_steps_unpadded) // unpadded number of steps is sufficient
-            .into_par_iter()
-            .map(|t| {
-                input_polys
-                    .iter()
-                    .enumerate()
-                    .map(|(i, poly)| poly.scale_coeff(t, eq_ry_var[i], eq_ry_var_r2[i]))
-                    .sum()
-            })
-            .collect_into_vec(&mut bind_z_ry_var);
+
+        // Get random challenge r for batching
+        let r: F = transcript.challenge_scalar();
+
+        let num_rounds_shift_sumcheck = num_cycles_bits;
+
+        let unexpanded_pc_index = JoltR1CSInputs::UnexpandedPC.to_index();
+        let pc_index = JoltR1CSInputs::PC.to_index();
+        let next_unexpanded_pc_index = JoltR1CSInputs::NextUnexpandedPC.to_index();
+        let next_pc_index = JoltR1CSInputs::NextPC.to_index();
+
+        let mut shift_sumcheck_polys = vec![
+            input_polys[unexpanded_pc_index].clone(),
+            input_polys[pc_index].clone(),
+            MultilinearPolynomial::from(eq_plus_one_r_cycle),
+        ];
+
+        // Define the batched combining function:
+        // (unexpanded_pc(t) + r * pc(t)) * eq_plus_one(r_cycle, t)
+        let batched_comb_func = move |poly_evals: &[F]| -> F {
+            assert_eq!(poly_evals.len(), 3);
+            let unexpanded_pc_eval = poly_evals[0];
+            let pc_eval = poly_evals[1];
+            let eq_eval = poly_evals[2];
+
+            let batched_eval = unexpanded_pc_eval + r * pc_eval;
+            batched_eval * eq_eval
+        };
+
         drop(_guard);
         drop(span);
 
-        let num_rounds_shift_sumcheck = num_steps_bits;
-        assert_eq!(bind_z_ry_var.len(), eq_plus_one_rx_step.len());
+        // The batched claim equals NextUnexpandedPC(r_cycle) + r * NextPC(r_cycle)
+        let shift_sumcheck_claim = claimed_witness_evals[next_unexpanded_pc_index]
+            + r * claimed_witness_evals[next_pc_index];
 
-        let mut shift_sumcheck_polys = vec![
-            MultilinearPolynomial::from(bind_z_ry_var),
-            MultilinearPolynomial::from(eq_plus_one_rx_step),
-        ];
-
-        let shift_sumcheck_claim = (0..1 << num_rounds_shift_sumcheck)
-            .into_par_iter()
-            .map(|i| {
-                let params: Vec<F> = shift_sumcheck_polys
-                    .iter()
-                    .map(|poly| poly.get_coeff(i))
-                    .collect();
-                comb_func(&params)
-            })
-            .reduce(|| F::zero(), |acc, x| acc + x);
-
-        let (shift_sumcheck_proof, shift_sumcheck_r, _shift_sumcheck_claims) =
+        let (shift_sumcheck_proof, _shift_sumcheck_r, shift_sumcheck_claims) =
             SumcheckInstanceProof::prove_arbitrary(
                 &shift_sumcheck_claim,
                 num_rounds_shift_sumcheck,
                 &mut shift_sumcheck_polys,
-                comb_func,
+                batched_comb_func,
                 2,
                 BindingOrder::HighToLow,
                 transcript,
@@ -353,33 +367,26 @@ where
 
         drop_in_background_thread(shift_sumcheck_polys);
 
-        let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
-
-        // Inner sumcheck evaluations: evaluate z on rx_step
-        let (claimed_witness_evals, chis) =
-            MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, rx_step);
-
         // opening_accumulator.append(
         //     &flattened_polys_ref,
         //     DensePolynomial::new(chis),
-        //     rx_step.to_vec(),
+        //     r_cycle.to_vec(),
         //     &claimed_witness_evals,
         //     transcript,
         // );
 
-        // Shift sumcheck evaluations: evaluate z on ry_var
-        let (shift_sumcheck_witness_evals, chis2) =
-            MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, &shift_sumcheck_r);
+        let unexpanded_pc_eval_at_shift_r = shift_sumcheck_claims[0];
+        let pc_eval_at_shift_r = shift_sumcheck_claims[1];
+        let shift_sumcheck_witness_eval = vec![unexpanded_pc_eval_at_shift_r, pc_eval_at_shift_r];
 
         // opening_accumulator.append(
-        //     &flattened_polys_ref,
-        //     DensePolynomial::new(chis2),
+        //     &todo!(), // only unexpanded_pc and pc
+        //     DensePolynomial::new(chis2), // chis2 need to be computed as EqPolynomial
         //     shift_sumcheck_r.to_vec(),
-        //     &shift_sumcheck_witness_evals,
+        //     &shift_sumcheck_witness_eval,
         //     transcript,
         // );
 
-        // Outer sumcheck claims: [A(r_x), B(r_x), C(r_x)]
         let outer_sumcheck_claims = (
             outer_sumcheck_claims[0],
             outer_sumcheck_claims[1],
@@ -390,447 +397,446 @@ where
             outer_sumcheck_claims,
             inner_sumcheck_proof,
             shift_sumcheck_proof,
-            shift_sumcheck_claim,
             claimed_witness_evals,
-            shift_sumcheck_witness_evals,
+            shift_sumcheck_witness_eval,
             _marker: PhantomData,
         })
     }
 
-    #[tracing::instrument(skip_all, name = "Spartan::prove_streaming")]
-    pub fn prove_streaming<PCS>(
-        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
-        constraint_builder: &CombinedUniformBuilder<F>,
-        key: &UniformSpartanKey<F>,
-        trace: &[RV32IMCycle],
-        shard_length: usize,
-        opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
-        transcript: &mut ProofTranscript,
-    ) -> Result<Self, SpartanError>
-    where
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    {
-        // We require that shard length be at least 2^{ceil{trace length / 2}}.
-        assert!(shard_length >= 1 << (trace.len().log_2() - trace.len().log_2() / 2));
-        assert!(shard_length.is_power_of_two());
-
-        let num_rounds_x = key.num_rows_bits();
-
-        /* Sumcheck 1: Outer sumcheck */
-
-        let tau: Vec<F> = transcript.challenge_vector(num_rounds_x);
-
-        let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
-            SumcheckInstanceProof::prove_spartan_small_value_streaming::<NUM_SVO_ROUNDS, PCS>(
-                num_rounds_x,
-                constraint_builder.padded_rows_per_step(),
-                &constraint_builder.uniform_builder.constraints,
-                &constraint_builder.offset_equality_constraints,
-                trace,
-                preprocessing,
-                shard_length,
-                &tau,
-                transcript,
-            );
-        let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
-
-        ProofTranscript::append_scalars(transcript, &outer_sumcheck_claims);
-        // claims from the end of sum-check
-        // claim_Az is the (scalar) value v_A = \sum_y A(r_x, y) * z(r_x) where r_x is the sumcheck randomness
-        let (claim_Az, claim_Bz, claim_Cz): (F, F, F) = (
-            outer_sumcheck_claims[0],
-            outer_sumcheck_claims[1],
-            outer_sumcheck_claims[2],
-        );
-
-        /* Sumcheck 2: Inner sumcheck
-            RLC of claims Az, Bz, Cz
-            where claim_Az = \sum_{y_var} A(rx, y_var || rx_step) * z(y_var || rx_step)
-                                + A_shift(..) * z_shift(..)
-            and shift denotes the values at the next time step "rx_step+1" for cross-step constraints
-            - A_shift(rx, y_var || rx_step) = \sum_t A(rx, y_var || t) * eq_plus_one(rx_step, t)
-            - z_shift(y_var || rx_step) = \sum_t z(y_var || t) * eq_plus_one(rx_step, t)
-        */
-
-        let num_steps = key.num_steps;
-        let num_steps_bits = num_steps.ilog2() as usize;
-        let num_vars_uniform = key.num_vars_uniform_padded().next_power_of_two();
-
-        let inner_sumcheck_RLC: F = transcript.challenge_scalar();
-        let claim_inner_joint =
-            claim_Az + inner_sumcheck_RLC * claim_Bz + inner_sumcheck_RLC.square() * claim_Cz;
-
-        let (rx_step, rx_constr) = outer_sumcheck_r.split_at(num_steps_bits);
-
-        // let (eq_rx_step, eq_plus_one_rx_step) = EqPlusOnePolynomial::evals(rx_step, None);
-
-        /* Compute the two polynomials provided as input to the second sumcheck:
-           - poly_ABC: A(r_x, y_var || rx_step), A_shift(..) at all variables y_var
-           - poly_z: z(y_var || rx_step), z_shift(..)
-        */
-
-        let poly_ABC = DensePolynomial::new(key.evaluate_matrix_mle_partial(
-            rx_constr,
-            rx_step,
-            inner_sumcheck_RLC,
-        ));
-
-        // Binding z and z_shift polynomials at point rx_step
-        let span = span!(Level::INFO, "binding_z_and_shift_z");
-        let _guard = span.enter();
-        let mut input_polys_oracle = R1CSInputsOracle::new(shard_length, trace, preprocessing);
-        let num_shards = trace.len() / shard_length;
-        let num_polys = input_polys_oracle.peek().unwrap().len();
-
-        let mut bind_z_stream = vec![F::zero(); num_vars_uniform * 2];
-        let mut bind_shift_z_stream = vec![F::zero(); num_vars_uniform * 2];
-
-        let mut bind_z_int = vec![F::zero(); num_polys];
-        let mut bind_shift_z_int = vec![F::zero(); num_polys];
-
-        let eq_rx_step = SplitEqPolynomial::new(rx_step);
-        let e1_len = eq_rx_step.E1_len;
-        let num_x1_bits = eq_rx_step.E1_len.log_2();
-        let x1_bitmask = (1 << (num_x1_bits)) - 1;
-        #[inline(always)]
-        fn process_small_scalar_polys<F, T>(
-            coeffs: &[T],
-            bind_z_int_eval: &mut F,
-            bind_z_eval: &mut F,
-            bind_shift_z_int_eval: &mut F,
-            bind_shift_z_eval: &mut F,
-            shard_length: usize,
-            eq_rx_step: &SplitEqPolynomial<F>,
-            x1_bitmask: usize,
-            num_x1_bits: usize,
-            e1_len_minus_1: usize,
-            is_last_shard: bool,
-            base_poly_idx: usize,
-        ) where
-            F: JoltField,
-            T: SmallScalar,
-        {
-            for i in 0..shard_length {
-                let poly_idx = base_poly_idx + i;
-                let x1 = poly_idx & x1_bitmask;
-
-                *bind_z_int_eval += coeffs[i].field_mul(eq_rx_step.E1[x1]);
-
-                if poly_idx != 0 {
-                    let e1_index = x1.wrapping_sub(1) & x1_bitmask;
-                    *bind_shift_z_int_eval += coeffs[i].field_mul(eq_rx_step.E1[e1_index]);
-                }
-                let e1_last = x1 == e1_len_minus_1;
-                if e1_last {
-                    let x2 = poly_idx >> num_x1_bits;
-                    *bind_z_eval += *bind_z_int_eval * eq_rx_step.E2[x2];
-                    *bind_z_int_eval = F::zero();
-                }
-                let x1_is_zero = x1 == 0;
-                let boundary_case = x1_is_zero | (is_last_shard && e1_last);
-
-                if boundary_case && poly_idx != 0 {
-                    let x2 = poly_idx >> num_x1_bits;
-                    let e2_index = x2 - x1_is_zero as usize;
-                    *bind_shift_z_eval += *bind_shift_z_int_eval * eq_rx_step.E2[e2_index];
-                    *bind_shift_z_int_eval = F::zero();
-                }
-            }
-        }
-
-        let e1_len_minus_1 = e1_len - 1;
-        for shard_idx in 0..num_shards {
-            let is_last_shard = shard_idx == num_shards - 1;
-            let base_poly_idx = shard_idx * shard_length;
-            let polynomials = input_polys_oracle.next_shard();
-            polynomials
-                .par_iter()
-                .zip(
-                    bind_z_int
-                        .par_iter_mut()
-                        .zip(bind_z_stream.par_iter_mut().take(num_polys))
-                        .zip(
-                            bind_shift_z_int
-                                .par_iter_mut()
-                                .zip(bind_shift_z_stream.par_iter_mut().take(num_polys)),
-                        ),
-                )
-                .for_each(
-                    |(
-                        poly,
-                        (
-                            (bind_z_int_eval, bind_z_eval),
-                            (bind_shift_z_int_eval, bind_shift_z_eval),
-                        ),
-                    )| {
-                        match poly {
-                            MultilinearPolynomial::LargeScalars(poly) => {
-                                for i in 0..shard_length {
-                                    let poly_idx = base_poly_idx + i;
-                                    let x1 = poly_idx & x1_bitmask;
-                                    *bind_z_int_eval +=
-                                        poly.Z[i].mul_01_optimized(eq_rx_step.E1[x1]);
-
-                                    if poly_idx != 0 {
-                                        let e1_index = x1.wrapping_sub(1) & x1_bitmask;
-                                        *bind_shift_z_int_eval +=
-                                            poly.Z[i] * eq_rx_step.E1[e1_index];
-                                    }
-                                    let e1_end = x1 == e1_len_minus_1;
-                                    if x1 == e1_len_minus_1 {
-                                        let x2 = poly_idx >> num_x1_bits;
-                                        *bind_z_eval += *bind_z_int_eval * eq_rx_step.E2[x2];
-                                        *bind_z_int_eval = F::zero();
-                                    }
-                                    let x1_is_zero = x1 == 0;
-                                    let boundary_case = x1_is_zero | (is_last_shard && e1_end);
-
-                                    if boundary_case && poly_idx != 0 {
-                                        let x2 = poly_idx >> num_x1_bits;
-                                        let e2_index = x2 - x1_is_zero as usize;
-                                        *bind_shift_z_eval +=
-                                            *bind_shift_z_int_eval * eq_rx_step.E2[e2_index];
-                                        *bind_shift_z_int_eval = F::zero();
-                                    }
-                                }
-                            }
-
-                            MultilinearPolynomial::U8Scalars(poly) => {
-                                process_small_scalar_polys(
-                                    &poly.coeffs,
-                                    bind_z_int_eval,
-                                    bind_z_eval,
-                                    bind_shift_z_int_eval,
-                                    bind_shift_z_eval,
-                                    shard_length,
-                                    &eq_rx_step,
-                                    x1_bitmask,
-                                    num_x1_bits,
-                                    e1_len_minus_1,
-                                    is_last_shard,
-                                    base_poly_idx,
-                                );
-                            }
-                            MultilinearPolynomial::U16Scalars(poly) => {
-                                process_small_scalar_polys(
-                                    &poly.coeffs,
-                                    bind_z_int_eval,
-                                    bind_z_eval,
-                                    bind_shift_z_int_eval,
-                                    bind_shift_z_eval,
-                                    shard_length,
-                                    &eq_rx_step,
-                                    x1_bitmask,
-                                    num_x1_bits,
-                                    e1_len_minus_1,
-                                    is_last_shard,
-                                    base_poly_idx,
-                                );
-                            }
-                            MultilinearPolynomial::U32Scalars(poly) => {
-                                process_small_scalar_polys(
-                                    &poly.coeffs,
-                                    bind_z_int_eval,
-                                    bind_z_eval,
-                                    bind_shift_z_int_eval,
-                                    bind_shift_z_eval,
-                                    shard_length,
-                                    &eq_rx_step,
-                                    x1_bitmask,
-                                    num_x1_bits,
-                                    e1_len_minus_1,
-                                    is_last_shard,
-                                    base_poly_idx,
-                                );
-                            }
-                            MultilinearPolynomial::U64Scalars(poly) => {
-                                process_small_scalar_polys(
-                                    &poly.coeffs,
-                                    bind_z_int_eval,
-                                    bind_z_eval,
-                                    bind_shift_z_int_eval,
-                                    bind_shift_z_eval,
-                                    shard_length,
-                                    &eq_rx_step,
-                                    x1_bitmask,
-                                    num_x1_bits,
-                                    e1_len_minus_1,
-                                    is_last_shard,
-                                    base_poly_idx,
-                                );
-                            }
-                            MultilinearPolynomial::I64Scalars(poly) => {
-                                process_small_scalar_polys(
-                                    &poly.coeffs,
-                                    bind_z_int_eval,
-                                    bind_z_eval,
-                                    bind_shift_z_int_eval,
-                                    bind_shift_z_eval,
-                                    shard_length,
-                                    &eq_rx_step,
-                                    x1_bitmask,
-                                    num_x1_bits,
-                                    e1_len_minus_1,
-                                    is_last_shard,
-                                    base_poly_idx,
-                                );
-                            }
-                        };
-                    },
-                );
-        }
-        bind_z_stream[num_vars_uniform] = F::one();
-
-        input_polys_oracle.reset();
-
-        drop(_guard);
-        drop(span);
-
-        let poly_z = DensePolynomial::new(
-            bind_z_stream
-                .into_iter()
-                .chain(bind_shift_z_stream.into_iter())
-                .collect(),
-        );
-
-        assert_eq!(poly_z.len(), poly_ABC.len());
-        let num_rounds_inner_sumcheck = poly_ABC.len().log_2();
-
-        let mut polys = vec![
-            MultilinearPolynomial::LargeScalars(poly_ABC),
-            MultilinearPolynomial::LargeScalars(poly_z),
-        ];
-
-        let comb_func = |poly_evals: &[F]| -> F {
-            assert_eq!(poly_evals.len(), 2);
-            poly_evals[0] * poly_evals[1]
-        };
-
-        let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) =
-            SumcheckInstanceProof::prove_arbitrary(
-                &claim_inner_joint,
-                num_rounds_inner_sumcheck,
-                &mut polys,
-                comb_func,
-                2,
-                BindingOrder::HighToLow,
-                transcript,
-            );
-
-        drop_in_background_thread(polys);
-
-        /*  Sumcheck 3: Shift sumcheck
-            sumcheck claim is = z_shift(ry_var || rx_step) = \sum_t z(ry_var || t) * eq_plus_one(rx_step, t)
-        */
-
-        let ry_var = inner_sumcheck_r[1..].to_vec();
-        let eq_ry_var = EqPolynomial::evals(&ry_var);
-
-        let num_rounds_shift_sumcheck = num_steps_bits;
-
-        let mut bindZ_oracle =
-            BindZRyVarOracle::new(trace, shard_length, preprocessing, &eq_ry_var);
-
-        let eq_rx_step = SplitEqPolynomial::new(rx_step);
-
-        let num_x1_bits = eq_rx_step.E1_len.log_2();
-        let x1_bitmask = (1 << (num_x1_bits)) - 1;
-
-        let shift_sumcheck_claim: F = (0..num_shards)
-            .map(|j| {
-                let mut polys_shard = Vec::with_capacity(2);
-                polys_shard.push(bindZ_oracle.next_shard());
-                let step_shard = j * shard_length;
-
-                polys_shard.push(eq_plus_one_shards(
-                    step_shard,
-                    shard_length,
-                    &eq_rx_step,
-                    num_x1_bits,
-                    x1_bitmask,
-                ));
-
-                (0..shard_length)
-                    .into_par_iter()
-                    .map(|j| {
-                        let params: Vec<F> =
-                            polys_shard.iter().map(|poly| poly.get_coeff(j)).collect();
-                        comb_func(&params)
-                    })
-                    .sum::<F>()
-            })
-            .sum();
-
-        bindZ_oracle.reset();
-        let start_time = Instant::now();
-        let (shift_sumcheck_proof, shift_sumcheck_r) = SumcheckInstanceProof::shift_sumcheck(
-            num_rounds_shift_sumcheck,
-            &mut bindZ_oracle,
-            eq_rx_step,
-            comb_func,
-            shard_length,
-            transcript,
-        );
-        println!("shift_sumcheck_proof time: {:?}", start_time.elapsed());
-        let shift_sumcheck_r: Vec<F> = shift_sumcheck_r.iter().rev().copied().collect();
-
-        // Inner sumcheck evaluations: evaluate z on rx_step
-        let claimed_witness_evals = MultilinearPolynomial::stream_batch_evaluate(
-            &mut input_polys_oracle,
-            rx_step,
-            num_shards,
-            shard_length,
-        );
-        input_polys_oracle.reset();
-
-        // opening_accumulator.append(
-        //     &flattened_polys_ref,
-        //     DensePolynomial::new(chis),
-        //     rx_step.to_vec(),
-        //     &claimed_witness_evals,
-        //     transcript,
-        // );
-
-        // Shift sumcheck evaluations: evaluate z on ry_var
-        let shift_sumcheck_witness_evals = MultilinearPolynomial::stream_batch_evaluate(
-            &mut input_polys_oracle,
-            &shift_sumcheck_r,
-            num_shards,
-            shard_length,
-        );
-
-        // opening_accumulator.append(
-        //     &flattened_polys_ref,
-        //     DensePolynomial::new(chis2),
-        //     shift_sumcheck_r.to_vec(),
-        //     &shift_sumcheck_witness_evals,
-        //     transcript,
-        // );
-
-        // Outer sumcheck claims: [A(r_x), B(r_x), C(r_x)]
-        let outer_sumcheck_claims = (
-            outer_sumcheck_claims[0],
-            outer_sumcheck_claims[1],
-            outer_sumcheck_claims[2],
-        );
-        Ok(UniformSpartanProof {
-            outer_sumcheck_proof,
-            outer_sumcheck_claims,
-            inner_sumcheck_proof,
-            shift_sumcheck_proof,
-            shift_sumcheck_claim,
-            claimed_witness_evals,
-            shift_sumcheck_witness_evals,
-            _marker: PhantomData,
-        })
-    }
+    // #[tracing::instrument(skip_all, name = "Spartan::prove_streaming")]
+    // pub fn prove_streaming<PCS>(
+    //     preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
+    //     constraint_builder: &CombinedUniformBuilder<F>,
+    //     key: &UniformSpartanKey<F>,
+    //     trace: &[RV32IMCycle],
+    //     shard_length: usize,
+    //     opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
+    //     transcript: &mut ProofTranscript,
+    // ) -> Result<Self, SpartanError>
+    // where
+    //     PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    // {
+    //     // We require that shard length be at least 2^{ceil{trace length / 2}}.
+    //     assert!(shard_length >= 1 << (trace.len().log_2() - trace.len().log_2() / 2));
+    //     assert!(shard_length.is_power_of_two());
+    //
+    //     let num_rounds_x = key.num_rows_bits();
+    //
+    //     /* Sumcheck 1: Outer sumcheck */
+    //
+    //     let tau: Vec<F> = transcript.challenge_vector(num_rounds_x);
+    //
+    //     let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
+    //         SumcheckInstanceProof::prove_spartan_small_value_streaming::<NUM_SVO_ROUNDS, PCS>(
+    //             num_rounds_x,
+    //             constraint_builder.padded_rows_per_step(),
+    //             &constraint_builder.uniform_builder.constraints,
+    //             &constraint_builder.offset_equality_constraints,
+    //             trace,
+    //             preprocessing,
+    //             shard_length,
+    //             &tau,
+    //             transcript,
+    //         );
+    //     let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
+    //
+    //     ProofTranscript::append_scalars(transcript, &outer_sumcheck_claims);
+    //     // claims from the end of sum-check
+    //     // claim_Az is the (scalar) value v_A = \sum_y A(r_x, y) * z(r_x) where r_x is the sumcheck randomness
+    //     let (claim_Az, claim_Bz, claim_Cz): (F, F, F) = (
+    //         outer_sumcheck_claims[0],
+    //         outer_sumcheck_claims[1],
+    //         outer_sumcheck_claims[2],
+    //     );
+    //
+    //     /* Sumcheck 2: Inner sumcheck
+    //         RLC of claims Az, Bz, Cz
+    //         where claim_Az = \sum_{y_var} A(rx, y_var || rx_step) * z(y_var || rx_step)
+    //                             + A_shift(..) * z_shift(..)
+    //         and shift denotes the values at the next time step "rx_step+1" for cross-step constraints
+    //         - A_shift(rx, y_var || rx_step) = \sum_t A(rx, y_var || t) * eq_plus_one(rx_step, t)
+    //         - z_shift(y_var || rx_step) = \sum_t z(y_var || t) * eq_plus_one(rx_step, t)
+    //     */
+    //
+    //     let num_steps = key.num_steps;
+    //     let num_steps_bits = num_steps.ilog2() as usize;
+    //     let num_vars_uniform = key.num_vars_uniform_padded().next_power_of_two();
+    //
+    //     let inner_sumcheck_RLC: F = transcript.challenge_scalar();
+    //     let claim_inner_joint =
+    //         claim_Az + inner_sumcheck_RLC * claim_Bz + inner_sumcheck_RLC.square() * claim_Cz;
+    //
+    //     let (rx_step, rx_constr) = outer_sumcheck_r.split_at(num_steps_bits);
+    //
+    //     // let (eq_rx_step, eq_plus_one_rx_step) = EqPlusOnePolynomial::evals(rx_step, None);
+    //
+    //     /* Compute the two polynomials provided as input to the second sumcheck:
+    //        - poly_ABC: A(r_x, y_var || rx_step), A_shift(..) at all variables y_var
+    //        - poly_z: z(y_var || rx_step), z_shift(..)
+    //     */
+    //
+    //     let poly_ABC = DensePolynomial::new(key.evaluate_matrix_mle_partial(
+    //         rx_constr,
+    //         rx_step,
+    //         inner_sumcheck_RLC,
+    //     ));
+    //
+    //     // Binding z and z_shift polynomials at point rx_step
+    //     let span = span!(Level::INFO, "binding_z_and_shift_z");
+    //     let _guard = span.enter();
+    //     let mut input_polys_oracle = R1CSInputsOracle::new(shard_length, trace, preprocessing);
+    //     let num_shards = trace.len() / shard_length;
+    //     let num_polys = input_polys_oracle.peek().unwrap().len();
+    //
+    //     let mut bind_z_stream = vec![F::zero(); num_vars_uniform * 2];
+    //     let mut bind_shift_z_stream = vec![F::zero(); num_vars_uniform * 2];
+    //
+    //     let mut bind_z_int = vec![F::zero(); num_polys];
+    //     let mut bind_shift_z_int = vec![F::zero(); num_polys];
+    //
+    //     let eq_rx_step = SplitEqPolynomial::new(rx_step);
+    //     let e1_len = eq_rx_step.E1_len;
+    //     let num_x1_bits = eq_rx_step.E1_len.log_2();
+    //     let x1_bitmask = (1 << (num_x1_bits)) - 1;
+    //     #[inline(always)]
+    //     fn process_small_scalar_polys<F, T>(
+    //         coeffs: &[T],
+    //         bind_z_int_eval: &mut F,
+    //         bind_z_eval: &mut F,
+    //         bind_shift_z_int_eval: &mut F,
+    //         bind_shift_z_eval: &mut F,
+    //         shard_length: usize,
+    //         eq_rx_step: &SplitEqPolynomial<F>,
+    //         x1_bitmask: usize,
+    //         num_x1_bits: usize,
+    //         e1_len_minus_1: usize,
+    //         is_last_shard: bool,
+    //         base_poly_idx: usize,
+    //     ) where
+    //         F: JoltField,
+    //         T: SmallScalar,
+    //     {
+    //         for i in 0..shard_length {
+    //             let poly_idx = base_poly_idx + i;
+    //             let x1 = poly_idx & x1_bitmask;
+    //
+    //             *bind_z_int_eval += coeffs[i].field_mul(eq_rx_step.E1[x1]);
+    //
+    //             if poly_idx != 0 {
+    //                 let e1_index = x1.wrapping_sub(1) & x1_bitmask;
+    //                 *bind_shift_z_int_eval += coeffs[i].field_mul(eq_rx_step.E1[e1_index]);
+    //             }
+    //             let e1_last = x1 == e1_len_minus_1;
+    //             if e1_last {
+    //                 let x2 = poly_idx >> num_x1_bits;
+    //                 *bind_z_eval += *bind_z_int_eval * eq_rx_step.E2[x2];
+    //                 *bind_z_int_eval = F::zero();
+    //             }
+    //             let x1_is_zero = x1 == 0;
+    //             let boundary_case = x1_is_zero | (is_last_shard && e1_last);
+    //
+    //             if boundary_case && poly_idx != 0 {
+    //                 let x2 = poly_idx >> num_x1_bits;
+    //                 let e2_index = x2 - x1_is_zero as usize;
+    //                 *bind_shift_z_eval += *bind_shift_z_int_eval * eq_rx_step.E2[e2_index];
+    //                 *bind_shift_z_int_eval = F::zero();
+    //             }
+    //         }
+    //     }
+    //
+    //     let e1_len_minus_1 = e1_len - 1;
+    //     for shard_idx in 0..num_shards {
+    //         let is_last_shard = shard_idx == num_shards - 1;
+    //         let base_poly_idx = shard_idx * shard_length;
+    //         let polynomials = input_polys_oracle.next_shard();
+    //         polynomials
+    //             .par_iter()
+    //             .zip(
+    //                 bind_z_int
+    //                     .par_iter_mut()
+    //                     .zip(bind_z_stream.par_iter_mut().take(num_polys))
+    //                     .zip(
+    //                         bind_shift_z_int
+    //                             .par_iter_mut()
+    //                             .zip(bind_shift_z_stream.par_iter_mut().take(num_polys)),
+    //                     ),
+    //             )
+    //             .for_each(
+    //                 |(
+    //                     poly,
+    //                     (
+    //                         (bind_z_int_eval, bind_z_eval),
+    //                         (bind_shift_z_int_eval, bind_shift_z_eval),
+    //                     ),
+    //                 )| {
+    //                     match poly {
+    //                         MultilinearPolynomial::LargeScalars(poly) => {
+    //                             for i in 0..shard_length {
+    //                                 let poly_idx = base_poly_idx + i;
+    //                                 let x1 = poly_idx & x1_bitmask;
+    //                                 *bind_z_int_eval +=
+    //                                     poly.Z[i].mul_01_optimized(eq_rx_step.E1[x1]);
+    //
+    //                                 if poly_idx != 0 {
+    //                                     let e1_index = x1.wrapping_sub(1) & x1_bitmask;
+    //                                     *bind_shift_z_int_eval +=
+    //                                         poly.Z[i] * eq_rx_step.E1[e1_index];
+    //                                 }
+    //                                 let e1_end = x1 == e1_len_minus_1;
+    //                                 if x1 == e1_len_minus_1 {
+    //                                     let x2 = poly_idx >> num_x1_bits;
+    //                                     *bind_z_eval += *bind_z_int_eval * eq_rx_step.E2[x2];
+    //                                     *bind_z_int_eval = F::zero();
+    //                                 }
+    //                                 let x1_is_zero = x1 == 0;
+    //                                 let boundary_case = x1_is_zero | (is_last_shard && e1_end);
+    //
+    //                                 if boundary_case && poly_idx != 0 {
+    //                                     let x2 = poly_idx >> num_x1_bits;
+    //                                     let e2_index = x2 - x1_is_zero as usize;
+    //                                     *bind_shift_z_eval +=
+    //                                         *bind_shift_z_int_eval * eq_rx_step.E2[e2_index];
+    //                                     *bind_shift_z_int_eval = F::zero();
+    //                                 }
+    //                             }
+    //                         }
+    //
+    //                         MultilinearPolynomial::U8Scalars(poly) => {
+    //                             process_small_scalar_polys(
+    //                                 &poly.coeffs,
+    //                                 bind_z_int_eval,
+    //                                 bind_z_eval,
+    //                                 bind_shift_z_int_eval,
+    //                                 bind_shift_z_eval,
+    //                                 shard_length,
+    //                                 &eq_rx_step,
+    //                                 x1_bitmask,
+    //                                 num_x1_bits,
+    //                                 e1_len_minus_1,
+    //                                 is_last_shard,
+    //                                 base_poly_idx,
+    //                             );
+    //                         }
+    //                         MultilinearPolynomial::U16Scalars(poly) => {
+    //                             process_small_scalar_polys(
+    //                                 &poly.coeffs,
+    //                                 bind_z_int_eval,
+    //                                 bind_z_eval,
+    //                                 bind_shift_z_int_eval,
+    //                                 bind_shift_z_eval,
+    //                                 shard_length,
+    //                                 &eq_rx_step,
+    //                                 x1_bitmask,
+    //                                 num_x1_bits,
+    //                                 e1_len_minus_1,
+    //                                 is_last_shard,
+    //                                 base_poly_idx,
+    //                             );
+    //                         }
+    //                         MultilinearPolynomial::U32Scalars(poly) => {
+    //                             process_small_scalar_polys(
+    //                                 &poly.coeffs,
+    //                                 bind_z_int_eval,
+    //                                 bind_z_eval,
+    //                                 bind_shift_z_int_eval,
+    //                                 bind_shift_z_eval,
+    //                                 shard_length,
+    //                                 &eq_rx_step,
+    //                                 x1_bitmask,
+    //                                 num_x1_bits,
+    //                                 e1_len_minus_1,
+    //                                 is_last_shard,
+    //                                 base_poly_idx,
+    //                             );
+    //                         }
+    //                         MultilinearPolynomial::U64Scalars(poly) => {
+    //                             process_small_scalar_polys(
+    //                                 &poly.coeffs,
+    //                                 bind_z_int_eval,
+    //                                 bind_z_eval,
+    //                                 bind_shift_z_int_eval,
+    //                                 bind_shift_z_eval,
+    //                                 shard_length,
+    //                                 &eq_rx_step,
+    //                                 x1_bitmask,
+    //                                 num_x1_bits,
+    //                                 e1_len_minus_1,
+    //                                 is_last_shard,
+    //                                 base_poly_idx,
+    //                             );
+    //                         }
+    //                         MultilinearPolynomial::I64Scalars(poly) => {
+    //                             process_small_scalar_polys(
+    //                                 &poly.coeffs,
+    //                                 bind_z_int_eval,
+    //                                 bind_z_eval,
+    //                                 bind_shift_z_int_eval,
+    //                                 bind_shift_z_eval,
+    //                                 shard_length,
+    //                                 &eq_rx_step,
+    //                                 x1_bitmask,
+    //                                 num_x1_bits,
+    //                                 e1_len_minus_1,
+    //                                 is_last_shard,
+    //                                 base_poly_idx,
+    //                             );
+    //                         }
+    //                     };
+    //                 },
+    //             );
+    //     }
+    //     bind_z_stream[num_vars_uniform] = F::one();
+    //
+    //     input_polys_oracle.reset();
+    //
+    //     drop(_guard);
+    //     drop(span);
+    //
+    //     let poly_z = DensePolynomial::new(
+    //         bind_z_stream
+    //             .into_iter()
+    //             .chain(bind_shift_z_stream.into_iter())
+    //             .collect(),
+    //     );
+    //
+    //     assert_eq!(poly_z.len(), poly_ABC.len());
+    //     let num_rounds_inner_sumcheck = poly_ABC.len().log_2();
+    //
+    //     let mut polys = vec![
+    //         MultilinearPolynomial::LargeScalars(poly_ABC),
+    //         MultilinearPolynomial::LargeScalars(poly_z),
+    //     ];
+    //
+    //     let comb_func = |poly_evals: &[F]| -> F {
+    //         assert_eq!(poly_evals.len(), 2);
+    //         poly_evals[0] * poly_evals[1]
+    //     };
+    //
+    //     let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) =
+    //         SumcheckInstanceProof::prove_arbitrary(
+    //             &claim_inner_joint,
+    //             num_rounds_inner_sumcheck,
+    //             &mut polys,
+    //             comb_func,
+    //             2,
+    //             BindingOrder::HighToLow,
+    //             transcript,
+    //         );
+    //
+    //     drop_in_background_thread(polys);
+    //
+    //     /*  Sumcheck 3: Shift sumcheck
+    //         sumcheck claim is = z_shift(ry_var || rx_step) = \sum_t z(ry_var || t) * eq_plus_one(rx_step, t)
+    //     */
+    //
+    //     let ry_var = inner_sumcheck_r[1..].to_vec();
+    //     let eq_ry_var = EqPolynomial::evals(&ry_var);
+    //
+    //     let num_rounds_shift_sumcheck = num_steps_bits;
+    //
+    //     let mut bindZ_oracle =
+    //         BindZRyVarOracle::new(trace, shard_length, preprocessing, &eq_ry_var);
+    //
+    //     let eq_rx_step = SplitEqPolynomial::new(rx_step);
+    //
+    //     let num_x1_bits = eq_rx_step.E1_len.log_2();
+    //     let x1_bitmask = (1 << (num_x1_bits)) - 1;
+    //
+    //     let shift_sumcheck_claim: F = (0..num_shards)
+    //         .map(|j| {
+    //             let mut polys_shard = Vec::with_capacity(2);
+    //             polys_shard.push(bindZ_oracle.next_shard());
+    //             let step_shard = j * shard_length;
+    //
+    //             polys_shard.push(eq_plus_one_shards(
+    //                 step_shard,
+    //                 shard_length,
+    //                 &eq_rx_step,
+    //                 num_x1_bits,
+    //                 x1_bitmask,
+    //             ));
+    //
+    //             (0..shard_length)
+    //                 .into_par_iter()
+    //                 .map(|j| {
+    //                     let params: Vec<F> =
+    //                         polys_shard.iter().map(|poly| poly.get_coeff(j)).collect();
+    //                     comb_func(&params)
+    //                 })
+    //                 .sum::<F>()
+    //         })
+    //         .sum();
+    //
+    //     bindZ_oracle.reset();
+    //     let start_time = Instant::now();
+    //     let (shift_sumcheck_proof, shift_sumcheck_r) = SumcheckInstanceProof::shift_sumcheck(
+    //         num_rounds_shift_sumcheck,
+    //         &mut bindZ_oracle,
+    //         eq_rx_step,
+    //         comb_func,
+    //         shard_length,
+    //         transcript,
+    //     );
+    //     println!("shift_sumcheck_proof time: {:?}", start_time.elapsed());
+    //     let shift_sumcheck_r: Vec<F> = shift_sumcheck_r.iter().rev().copied().collect();
+    //
+    //     // Inner sumcheck evaluations: evaluate z on rx_step
+    //     let claimed_witness_evals = MultilinearPolynomial::stream_batch_evaluate(
+    //         &mut input_polys_oracle,
+    //         rx_step,
+    //         num_shards,
+    //         shard_length,
+    //     );
+    //     input_polys_oracle.reset();
+    //
+    //     // opening_accumulator.append(
+    //     //     &flattened_polys_ref,
+    //     //     DensePolynomial::new(chis),
+    //     //     rx_step.to_vec(),
+    //     //     &claimed_witness_evals,
+    //     //     transcript,
+    //     // );
+    //
+    //     // Shift sumcheck evaluations: evaluate z on ry_var
+    //     let shift_sumcheck_witness_evals = MultilinearPolynomial::stream_batch_evaluate(
+    //         &mut input_polys_oracle,
+    //         &shift_sumcheck_r,
+    //         num_shards,
+    //         shard_length,
+    //     );
+    //
+    //     // opening_accumulator.append(
+    //     //     &flattened_polys_ref,
+    //     //     DensePolynomial::new(chis2),
+    //     //     shift_sumcheck_r.to_vec(),
+    //     //     &shift_sumcheck_witness_evals,
+    //     //     transcript,
+    //     // );
+    //
+    //     // Outer sumcheck claims: [A(r_x), B(r_x), C(r_x)]
+    //     let outer_sumcheck_claims = (
+    //         outer_sumcheck_claims[0],
+    //         outer_sumcheck_claims[1],
+    //         outer_sumcheck_claims[2],
+    //     );
+    //     Ok(UniformSpartanProof {
+    //         outer_sumcheck_proof,
+    //         outer_sumcheck_claims,
+    //         inner_sumcheck_proof,
+    //         shift_sumcheck_proof,
+    //         // shift_sumcheck_claim,
+    //         claimed_witness_evals,
+    //         shift_sumcheck_witness_eval:    shift_sumcheck_witness_evals,
+    //         _marker: PhantomData,
+    //     })
+    // }
 
     #[tracing::instrument(skip_all, name = "Spartan::verify")]
     pub fn verify<PCS>(
         &self,
         key: &UniformSpartanKey<F>,
         // commitments: &JoltCommitments<PCS, ProofTranscript>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
+        _opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError>
     where
@@ -840,7 +846,8 @@ where
         let num_rounds_x = key.num_rows_total().log_2();
 
         /* Sumcheck 1: Outer sumcheck
-         */
+          Verifies: \sum_x eq(tau, x) * (Az(x) * Bz(x) - Cz(x)) = 0
+        */
         let tau: Vec<F> = transcript.challenge_vector(num_rounds_x);
 
         let (claim_outer_final, outer_sumcheck_r) = self
@@ -868,74 +875,79 @@ where
         );
 
         /* Sumcheck 2: Inner sumcheck
-           - claim is an RLC of claims_Az, Bz, Cz
-           where claim_Az = \sum_{y_var} A(rx, y_var || rx_step) * z(y_var || rx_step)
-                               + A_shift(..) * z_shift(..)
-           - verifying it involves computing each term with randomness ry_var
+           Verifies: claim_Az + r * claim_Bz + r^2 * claim_Cz =
+                    (A_small(rx, ry) + r * B_small(rx, ry) + r^2 * C_small(rx, ry)) * z(ry)
         */
         let inner_sumcheck_RLC: F = transcript.challenge_scalar();
         let claim_inner_joint = self.outer_sumcheck_claims.0
             + inner_sumcheck_RLC * self.outer_sumcheck_claims.1
             + inner_sumcheck_RLC.square() * self.outer_sumcheck_claims.2;
 
-        let num_rounds_inner_sumcheck = (2 * key.num_vars_uniform_padded()).log_2() + 1; // +1 for shift evals
+        let num_rounds_inner_sumcheck = key.num_vars_uniform_padded().log_2();
         let (claim_inner_final, inner_sumcheck_r) = self
             .inner_sumcheck_proof
             .verify(claim_inner_joint, num_rounds_inner_sumcheck, 2, transcript)
             .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
 
-        let num_steps_bits = key.num_steps.log_2();
+        let num_cycles_bits = key.num_steps.log_2();
 
-        let (rx_step, rx_constr) = outer_sumcheck_r.split_at(num_steps_bits);
+        let (r_cycle, rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
-        let r_is_cross_step = inner_sumcheck_r[0];
-        let ry_var = inner_sumcheck_r[1..].to_vec();
+        let ry_var = inner_sumcheck_r.to_vec();
         let eval_z =
             key.evaluate_z_mle_with_segment_evals(&self.claimed_witness_evals, &ry_var, true);
 
-        let (eval_a, eval_b, eval_c) =
-            key.evaluate_matrix_mle_full(rx_constr, &ry_var, &r_is_cross_step);
+        // Evaluate uniform matrices A_small, B_small, C_small at point (rx_constr, ry_var)
+        let eval_a = key.evaluate_uniform_a_at_point(rx_var, &ry_var);
+        let eval_b = key.evaluate_uniform_b_at_point(rx_var, &ry_var);
+        let eval_c = key.evaluate_uniform_c_at_point(rx_var, &ry_var);
 
         let left_expected =
             eval_a + inner_sumcheck_RLC * eval_b + inner_sumcheck_RLC * inner_sumcheck_RLC * eval_c;
-        let right_expected =
-            (F::one() - r_is_cross_step) * eval_z + r_is_cross_step * self.shift_sumcheck_claim;
 
-        let claim_inner_final_expected = left_expected * right_expected;
+        let claim_inner_final_expected = left_expected * eval_z;
         if claim_inner_final != claim_inner_final_expected {
             return Err(SpartanError::InvalidInnerSumcheckClaim);
         }
 
-        /* Sumcheck 3: Shift sumcheck
-            - claim = \sum_t z(ry_var || t) * eq_plus_one(rx_step, t)
-            - verifying it involves checking that claim = z(ry_var || r_t) * eq_plus_one(rx_step, r_t)
-            where r_t = shift_sumcheck_r
+        /* Sumcheck 3: Batched sumcheck for NextUnexpandedPC and NextPC verification
+           Verifies the batched constraint for both NextUnexpandedPC and NextPC
         */
 
-        let num_rounds_shift_sumcheck = num_steps_bits;
+        // Get random challenge r for batching
+        let r: F = transcript.challenge_scalar();
+
+        let num_rounds_shift_sumcheck = num_cycles_bits;
+        let next_unexpanded_pc_index = JoltR1CSInputs::NextUnexpandedPC.to_index();
+        let next_pc_index = JoltR1CSInputs::NextPC.to_index();
+
+        // The batched claim equals NextUnexpandedPC(r_cycle) + r * NextPC(r_cycle)
+        let shift_sumcheck_claim = self.claimed_witness_evals[next_unexpanded_pc_index]
+            + r * self.claimed_witness_evals[next_pc_index];
+
         let (claim_shift_sumcheck, shift_sumcheck_r) = self
             .shift_sumcheck_proof
             .verify(
-                self.shift_sumcheck_claim,
+                shift_sumcheck_claim,
                 num_rounds_shift_sumcheck,
                 2,
                 transcript,
             )
-            .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
-        let shift_sumcheck_r: Vec<F> = shift_sumcheck_r.iter().rev().copied().collect();
+            .map_err(|_| SpartanError::InvalidShiftSumcheckProof)?;
 
-        let eval_z_shift_sumcheck = key.evaluate_z_mle_with_segment_evals(
-            &self.shift_sumcheck_witness_evals,
-            &ry_var,
-            false,
-        );
+        let unexpanded_pc_eval_at_shift_r = self.shift_sumcheck_witness_eval[0];
+        let pc_eval_at_shift_r = self.shift_sumcheck_witness_eval[1];
+        let batched_eval_at_shift_r = unexpanded_pc_eval_at_shift_r + r * pc_eval_at_shift_r;
         let eq_plus_one_shift_sumcheck =
-            EqPlusOnePolynomial::new(rx_step.to_vec()).evaluate(&shift_sumcheck_r);
-        let claim_shift_sumcheck_expected = eval_z_shift_sumcheck * eq_plus_one_shift_sumcheck;
+            EqPlusOnePolynomial::new(r_cycle.to_vec()).evaluate(&shift_sumcheck_r);
+
+        let claim_shift_sumcheck_expected = batched_eval_at_shift_r * eq_plus_one_shift_sumcheck;
 
         if claim_shift_sumcheck != claim_shift_sumcheck_expected {
-            return Err(SpartanError::InvalidInnerSumcheckClaim);
+            return Err(SpartanError::InvalidShiftSumcheckClaim);
         }
+
+        // TODO: In the openings must also verify that shift_witness_evals are correct
 
         // TODO(moodlezoup): Openings
 

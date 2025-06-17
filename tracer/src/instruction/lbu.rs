@@ -114,7 +114,7 @@ impl VirtualInstructionSequence for LBU {
             },
             virtual_sequence_remaining: Some(3),
         };
-        sequence.extend(slli.virtual_sequence().into_iter());
+        sequence.extend(slli.virtual_sequence());
 
         let sll = SLL {
             address: self.address,
@@ -125,7 +125,7 @@ impl VirtualInstructionSequence for LBU {
             },
             virtual_sequence_remaining: Some(2),
         };
-        sequence.extend(sll.virtual_sequence().into_iter());
+        sequence.extend(sll.virtual_sequence());
 
         let srli = SRLI {
             address: self.address,
@@ -136,7 +136,7 @@ impl VirtualInstructionSequence for LBU {
             },
             virtual_sequence_remaining: Some(0),
         };
-        sequence.extend(srli.virtual_sequence().into_iter());
+        sequence.extend(srli.virtual_sequence());
 
         sequence
     }
