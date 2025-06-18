@@ -119,7 +119,7 @@ impl<F: JoltField> PolynomialBinding<F> for UnmapRamAddressPolynomial<F> {
         );
 
         // Update the linear term: add 4 * 2^i * r_i
-        self.linear_term += F::from_u64(4 * (1u64 << self.num_bound_vars)) * r;
+        self.linear_term += r.mul_u64(4 * (1u64 << self.num_bound_vars));
 
         // Update the product term: multiply by (1 - r_i)
         self.product_term *= F::one() - r;
