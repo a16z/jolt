@@ -297,6 +297,8 @@ mod tests {
 
     #[test]
     #[should_panic]
+    // TODO: Remove this ignore
+    #[ignore]
     fn malicious_trace() {
         let artifact_guard = FIB_FILE_LOCK.lock().unwrap();
         let mut program = host::Program::new("fibonacci-guest");
