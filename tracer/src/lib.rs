@@ -85,7 +85,7 @@ pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>) {
                     continue;
                 }
                 // Unrecognized instruction, or from a ReadOnlyData section
-                println!("word: {word:08X} at address: {address:08X} is not recognized as a valid instruction.");
+                eprintln!("Warning: word: {word:08X} at address: {address:08X} is not recognized as a valid instruction.");
                 instructions.push(RV32IMInstruction::UNIMPL);
             }
         }
