@@ -23,7 +23,7 @@ use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
 use rayon::prelude::*;
 use tracer::instruction::{NormalizedInstruction, RV32IMCycle, RV32IMInstruction};
 
-#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BytecodePreprocessing {
     bytecode: Vec<RV32IMInstruction>,
     /// Maps the memory address of each instruction in the bytecode to its "virtual" address.
@@ -118,7 +118,7 @@ fn bytecode_to_val<F: JoltField>(bytecode: &[RV32IMInstruction], gamma: F) -> Ve
         .collect()
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct BytecodeShoutProof<F: JoltField, ProofTranscript: Transcript> {
     core_piop_sumcheck: SumcheckInstanceProof<F, ProofTranscript>,
     booleanity_sumcheck: SumcheckInstanceProof<F, ProofTranscript>,

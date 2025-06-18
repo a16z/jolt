@@ -6,7 +6,8 @@ pub fn main() {
     let mut program = guest::compile_add(target_dir);
 
     let prover_preprocessing = guest::preprocess_prover_add(&mut program);
-    let verifier_preprocessing = guest::preprocess_verifier_add(&mut program);
+    let verifier_preprocessing =
+        guest::verifier_preprocessing_from_prover_add(&prover_preprocessing);
 
     let prove_add = guest::build_prover_add(program, prover_preprocessing);
     let verify_add = guest::build_verifier_add(verifier_preprocessing);

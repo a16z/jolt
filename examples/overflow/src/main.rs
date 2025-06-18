@@ -33,7 +33,9 @@ pub fn main() {
     let prover_preprocessing =
         guest::preprocess_prover_allocate_stack_with_increased_size(&mut program);
     let verifier_preprocessing =
-        guest::preprocess_verifier_allocate_stack_with_increased_size(&mut program);
+        guest::verifier_preprocessing_from_prover_allocate_stack_with_increased_size(
+            &prover_preprocessing,
+        );
 
     let prove_allocate_stack_with_increased_size =
         guest::build_prover_allocate_stack_with_increased_size(program, prover_preprocessing);

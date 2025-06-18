@@ -20,7 +20,7 @@ fn setup_bench<PCS, F, ProofTranscript>(
 ) -> (
     // Leaves
     Vec<Vec<F>>,
-    PCS::Setup,
+    PCS::ProverSetup,
     // Products of leaves
     Vec<F>,
 )
@@ -56,7 +56,7 @@ where
     // Compute known products (one per layer)
     let known_products: Vec<F> = leaves.iter().map(|layer| layer.iter().product()).collect();
 
-    let setup = PCS::setup(SRS_SIZE);
+    let setup = PCS::setup_prover(SRS_SIZE);
 
     (leaves, setup, known_products)
 }

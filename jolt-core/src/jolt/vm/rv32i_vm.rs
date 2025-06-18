@@ -67,7 +67,7 @@ pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
 
 pub type ProofTranscript = KeccakTranscript;
 pub type PCS = HyperKZG<Bn254, ProofTranscript>;
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Clone)]
 pub struct JoltHyperKZGProof {
     pub proof: RV32IJoltProof<Fr, PCS, ProofTranscript>,
     // pub commitments: JoltCommitments<PCS, ProofTranscript>,
@@ -84,6 +84,7 @@ mod tests {
     use crate::field::JoltField;
     use crate::host;
     use crate::jolt::vm::rv32i_vm::{Jolt, RV32IJoltVM};
+    use crate::jolt::vm::JoltVerifierPreprocessing;
     use crate::poly::commitment::commitment_scheme::CommitmentScheme;
     use crate::poly::commitment::hyperkzg::HyperKZG;
     use crate::poly::commitment::mock::MockCommitScheme;
@@ -116,16 +117,17 @@ mod tests {
             1 << 20,
             1 << 20,
         );
-        let (proof, commitments, debug_info) = <RV32IJoltVM as Jolt<
-            32,
-            Fr,
-            HyperKZG<Bn254, KeccakTranscript>,
-            KeccakTranscript,
-        >>::prove(
-            io_device, trace, preprocessing.clone()
-        );
+        let (proof, commitments, debug_info) =
+            <RV32IJoltVM as Jolt<32, F, PCS, ProofTranscript>>::prove(
+                io_device,
+                trace,
+                preprocessing.clone(),
+            );
+
+        let verifier_preprocessing =
+            JoltVerifierPreprocessing::<F, PCS, ProofTranscript>::from(&preprocessing);
         let verification_result =
-            RV32IJoltVM::verify(preprocessing.shared, proof, commitments, debug_info);
+            RV32IJoltVM::verify(verifier_preprocessing, proof, commitments, debug_info);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -174,8 +176,13 @@ mod tests {
             io_device, trace, preprocessing.clone()
         );
 
+        let verifier_preprocessing = JoltVerifierPreprocessing::<
+            Fr,
+            HyperKZG<Bn254, KeccakTranscript>,
+            KeccakTranscript,
+        >::from(&preprocessing);
         let verification_result = RV32IJoltVM::verify(
-            preprocessing.shared,
+            verifier_preprocessing,
             jolt_proof,
             jolt_commitments,
             debug_info,
@@ -213,9 +220,9 @@ mod tests {
         >>::prove(
             io_device, trace, preprocessing.clone()
         );
-
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result = RV32IJoltVM::verify(
-            preprocessing.shared,
+            verifier_preprocessing,
             jolt_proof,
             jolt_commitments,
             debug_info,
@@ -250,8 +257,9 @@ mod tests {
             io_device, trace, preprocessing.clone()
         );
 
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result = RV32IJoltVM::verify(
-            preprocessing.shared,
+            verifier_preprocessing,
             jolt_proof,
             jolt_commitments,
             debug_info,
@@ -291,8 +299,9 @@ mod tests {
         >>::prove(
             io_device, trace, preprocessing.clone()
         );
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let _verification_result =
-            RV32IJoltVM::verify(preprocessing.shared, proof, commitments, debug_info);
+            RV32IJoltVM::verify(verifier_preprocessing, proof, commitments, debug_info);
     }
 
     #[test]
@@ -331,7 +340,8 @@ mod tests {
         >>::prove(
             io_device, trace, preprocessing.clone()
         );
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let _verification_result =
-            RV32IJoltVM::verify(preprocessing.shared, proof, commitments, debug_info);
+            RV32IJoltVM::verify(verifier_preprocessing, proof, commitments, debug_info);
     }
 }

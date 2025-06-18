@@ -6,7 +6,8 @@ pub fn main() {
     let mut program = guest::compile_collatz_convergence(target_dir);
 
     let prover_preprocessing = guest::preprocess_prover_collatz_convergence(&mut program);
-    let verifier_preprocessing = guest::preprocess_verifier_collatz_convergence(&mut program);
+    let verifier_preprocessing =
+        guest::verifier_preprocessing_from_prover_collatz_convergence(&prover_preprocessing);
 
     let prove_collatz_single =
         guest::build_prover_collatz_convergence(program, prover_preprocessing);

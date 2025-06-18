@@ -27,7 +27,7 @@ use crate::{
     },
 };
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct LookupsProof<const WORD_SIZE: usize, F, PCS, ProofTranscript>
 where
     F: JoltField,
@@ -41,7 +41,7 @@ where
     _marker: PhantomData<PCS>,
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct ReadCheckingProof<F, ProofTranscript>
 where
     F: JoltField,
@@ -53,7 +53,7 @@ where
     flag_claims: Vec<F>,
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct BooleanityProof<F, ProofTranscript>
 where
     F: JoltField,
@@ -63,7 +63,7 @@ where
     ra_claims: [F; 4],
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct HammingWeightProof<F, ProofTranscript>
 where
     F: JoltField,
@@ -84,7 +84,6 @@ where
 
     #[tracing::instrument(skip_all, name = "LookupsProof::prove")]
     pub fn prove(
-        _generators: &PCS::Setup,
         trace: &[RV32IMCycle],
         _opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
         transcript: &mut ProofTranscript,

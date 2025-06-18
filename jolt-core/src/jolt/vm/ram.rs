@@ -25,7 +25,7 @@ use tracer::{
     JoltDevice,
 };
 
-#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct RAMPreprocessing {
     min_bytecode_address: u64,
     bytecode_words: Vec<u32>,
@@ -68,7 +68,7 @@ impl RAMPreprocessing {
     }
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct RAMTwistProof<F: JoltField, ProofTranscript: Transcript> {
     /// Proof for the read-checking and write-checking sumchecks
     /// (steps 3 and 4 of Figure 9).
@@ -81,7 +81,7 @@ pub struct RAMTwistProof<F: JoltField, ProofTranscript: Transcript> {
     raf_evaluation_proof: RafEvaluationProof<F, ProofTranscript>,
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct ReadWriteCheckingProof<F: JoltField, ProofTranscript: Transcript> {
     /// Joint sumcheck proof for the read-checking and write-checking sumchecks
     /// (steps 3 and 4 of Figure 9).
@@ -104,7 +104,7 @@ pub struct ReadWriteCheckingProof<F: JoltField, ProofTranscript: Transcript> {
     sumcheck_switch_index: usize,
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct ValEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
     /// Sumcheck proof for the Val-evaluation sumcheck (steps 6 of Figure 9).
     sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
@@ -112,7 +112,7 @@ pub struct ValEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
     inc_claim: F,
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct BooleanityProof<F, ProofTranscript>
 where
     F: JoltField,
@@ -122,7 +122,7 @@ where
     ra_claim: F,
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct HammingWeightProof<F, ProofTranscript>
 where
     F: JoltField,

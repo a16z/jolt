@@ -41,35 +41,35 @@ where
     ProofTranscript: Transcript,
 {
     type Field = F;
-    type Setup = ();
+    type ProverSetup = ();
+    type VerifierSetup = ();
     type Commitment = MockCommitment<F>;
     type Proof = MockProof<F>;
     type BatchedProof = MockProof<F>;
 
-    fn setup(_max_poly_len: usize) -> Self::Setup {}
-    fn commit(poly: &MultilinearPolynomial<Self::Field>, _setup: &Self::Setup) -> Self::Commitment {
+    fn setup_prover(_max_len: usize) -> Self::ProverSetup {}
+
+    fn setup_verifier(_setup: &Self::ProverSetup) -> Self::VerifierSetup {}
+
+    fn srs_size(_setup: &Self::ProverSetup) -> usize {
+        1 << 10
+    }
+
+    fn commit(
+        poly: &MultilinearPolynomial<Self::Field>,
+        _setup: &Self::ProverSetup,
+    ) -> Self::Commitment {
         MockCommitment { poly: poly.clone() }
     }
-    fn batch_commit<P>(polys: &[P], setup: &Self::Setup) -> Vec<Self::Commitment>
+    fn batch_commit<P>(polys: &[P], gens: &Self::ProverSetup) -> Vec<Self::Commitment>
     where
         P: Borrow<MultilinearPolynomial<Self::Field>>,
     {
         polys
             .iter()
-            .map(|poly| Self::commit(poly.borrow(), setup))
+            .map(|poly| Self::commit(poly.borrow(), gens))
             .collect()
     }
-    fn prove(
-        _setup: &Self::Setup,
-        _poly: &MultilinearPolynomial<Self::Field>,
-        opening_point: &[Self::Field],
-        _transcript: &mut ProofTranscript,
-    ) -> Self::Proof {
-        MockProof {
-            opening_point: opening_point.to_owned(),
-        }
-    }
-
     fn combine_commitments(
         commitments: &[&Self::Commitment],
         coeffs: &[Self::Field],
@@ -84,9 +84,20 @@ where
         }
     }
 
+    fn prove(
+        _setup: &Self::ProverSetup,
+        _poly: &MultilinearPolynomial<Self::Field>,
+        opening_point: &[Self::Field],
+        _transcript: &mut ProofTranscript,
+    ) -> Self::Proof {
+        MockProof {
+            opening_point: opening_point.to_owned(),
+        }
+    }
+
     fn verify(
         proof: &Self::Proof,
-        _setup: &Self::Setup,
+        _setup: &Self::VerifierSetup,
         _transcript: &mut ProofTranscript,
         opening_point: &[Self::Field],
         opening: &Self::Field,

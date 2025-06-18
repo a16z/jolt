@@ -128,7 +128,7 @@ where
     /// can detect any places where the openings don't match up.
     prover_openings: Option<Vec<ProverOpening<F>>>,
     #[cfg(test)]
-    pcs_setup: Option<PCS::Setup>,
+    pcs_setup: Option<PCS::ProverSetup>,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
@@ -238,7 +238,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::reduce_and_prove")]
     pub fn reduce_and_prove<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
         &mut self,
-        pcs_setup: &PCS::Setup,
+        pcs_setup: &PCS::ProverSetup,
         transcript: &mut ProofTranscript,
     ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
         // Generate coefficients for random linear combination
@@ -441,7 +441,7 @@ where
     pub fn compare_to(
         &mut self,
         prover_openings: ProverOpeningAccumulator<F, ProofTranscript>,
-        pcs_setup: &PCS::Setup,
+        pcs_setup: &PCS::ProverSetup,
     ) {
         self.prover_openings = Some(prover_openings.openings);
         self.pcs_setup = Some(pcs_setup.clone());
@@ -538,7 +538,7 @@ where
     /// and a single opening proof) indeed proves the openings accumulated.
     pub fn reduce_and_verify(
         &self,
-        pcs_setup: &PCS::Setup,
+        pcs_setup: &PCS::VerifierSetup,
         reduced_opening_proof: &ReducedOpeningProof<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
