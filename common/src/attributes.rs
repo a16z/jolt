@@ -17,12 +17,14 @@ pub struct Attributes {
     pub max_output_size: u64,
     pub max_bytecode_size: u64,
     pub max_trace_length: u64,
+    pub guest_only: bool,
 }
 
 #[cfg(feature = "std")]
 pub fn parse_attributes(attr: &Vec<NestedMeta>) -> Attributes {
     let mut attributes = HashMap::<_, u64>::new();
     let mut wasm = false;
+    let mut guest_only = false;
 
     for attr in attr {
         match attr {
@@ -44,6 +46,9 @@ pub fn parse_attributes(attr: &Vec<NestedMeta>) -> Attributes {
             }
             NestedMeta::Meta(Meta::Path(path)) if path.is_ident("wasm") => {
                 wasm = true;
+            }
+            NestedMeta::Meta(Meta::Path(path)) if path.is_ident("guest_only") => {
+                guest_only = true;
             }
             _ => panic!("expected integer literal"),
         }
@@ -74,5 +79,6 @@ pub fn parse_attributes(attr: &Vec<NestedMeta>) -> Attributes {
         max_output_size,
         max_bytecode_size,
         max_trace_length,
+        guest_only,
     }
 }
