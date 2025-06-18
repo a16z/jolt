@@ -222,7 +222,7 @@ pub trait RISCVTrace: RISCVInstruction
 where
     RISCVCycle<Self>: Into<RV32IMCycle>,
 {
-    fn trace(&self, cpu: &mut Cpu) {
+    fn trace(&self, cpu: &mut Cpu) -> Vec<RV32IMCycle> {
         let mut cycle: RISCVCycle<Self> = RISCVCycle {
             instruction: *self,
             register_state: Default::default(),
@@ -233,7 +233,8 @@ where
         self.execute(cpu, &mut cycle.ram_access);
         self.operands()
             .capture_post_execution_state(&mut cycle.register_state, cpu);
-        cpu.trace.push(cycle.into());
+        // cpu.trace.push(cycle.into());
+        return vec![cycle.into()];
     }
 }
 
@@ -322,7 +323,7 @@ macro_rules! define_rv32im_enums {
         }
 
         impl RV32IMInstruction {
-            pub fn trace(&self, cpu: &mut Cpu) {
+            pub fn trace(&self, cpu: &mut Cpu) -> Vec<RV32IMCycle>{
                 match self {
                     RV32IMInstruction::NoOp => panic!("Unsupported instruction: {:?}", self),
                     RV32IMInstruction::UNIMPL => panic!("Unsupported instruction: {:?}", self),

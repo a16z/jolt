@@ -18,7 +18,7 @@ use super::{
     virtual_assert_valid_div0::VirtualAssertValidDiv0,
     virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
     virtual_move::VirtualMove,
-    RISCVInstruction, RISCVTrace, RV32IMInstruction, VirtualInstructionSequence,
+    RISCVInstruction, RISCVTrace, RV32IMInstruction, RV32IMCycle, VirtualInstructionSequence,
 };
 
 declare_riscv_instr!(
@@ -42,7 +42,7 @@ impl DIVU {
 }
 
 impl RISCVTrace for DIVU {
-    fn trace(&self, cpu: &mut Cpu) {
+    fn trace(&self, cpu: &mut Cpu) -> Vec<RV32IMCycle> {
         // DIV operands
         let x = cpu.x[self.operands.rs1] as u64;
         let y = cpu.x[self.operands.rs2] as u64;
@@ -72,9 +72,11 @@ impl RISCVTrace for DIVU {
             panic!("Expected Advice instruction");
         }
 
+       let mut all_traces = Vec::new();
         for instr in virtual_sequence {
-            instr.trace(cpu);
+            all_traces.extend(instr.trace(cpu));
         }
+        all_traces
     }
 }
 

@@ -62,6 +62,11 @@ pub struct Emulator {
 // type alias EmulatorState to Emulator for now
 pub type EmulatorState = Emulator;
 
+// Create a new Emulator from a saved state.
+pub fn get_mut_emulator(state: &mut EmulatorState) -> &mut Emulator {
+    state
+}
+
 impl Emulator {
     /// Creates a new `Emulator`. [`Terminal`](terminal/trait.Terminal.html)
     /// is internally used for transferring input/output data to/from `Emulator`.
@@ -78,11 +83,6 @@ impl Emulator {
             is_test: false,
             tohost_addr: 0, // assuming tohost_addr is non-zero if exists
         }
-    }
-
-    // Create a new Emulator from a saved state.
-    pub fn from_state(state: &EmulatorState) -> Self {
-        state.clone()
     }
 
     pub fn save_state(&self) -> EmulatorState {
@@ -102,7 +102,7 @@ impl Emulator {
             let disas = self.cpu.disassemble_next_instruction();
             println!("{disas}");
 
-            self.tick(false);
+            self.tick();
 
             // It seems in riscv-tests ends with end code
             // written to a certain physical memory address
@@ -122,8 +122,8 @@ impl Emulator {
     }
 
     /// Runs CPU one cycle
-    pub fn tick(&mut self, tracing: bool) {
-        self.cpu.tick(tracing);
+    pub fn tick(&mut self) -> Vec<crate::instruction::RV32IMCycle> {
+        self.cpu.tick()
     }
 
     /// Sets up program run by the program. This method analyzes the passed content

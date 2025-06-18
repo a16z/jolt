@@ -96,7 +96,8 @@ pub struct Cpu {
     is_reservation_set: bool,
     _dump_flag: bool,
     unsigned_data_mask: u64,
-    pub trace: Vec<RV32IMCycle>,
+    // pub trace: Vec<RV32IMCycle>,
+    pub trace_len: usize,
     executed_instrs: u64, // “real” RV32IM cycles
     active_markers: FnvHashMap<u32, ActiveMarker>,
 }
@@ -259,7 +260,8 @@ impl Cpu {
             is_reservation_set: false,
             _dump_flag: false,
             unsigned_data_mask: 0xffffffffffffffff,
-            trace: Vec::with_capacity(1 << 24), // TODO(moodlezoup): make configurable
+            // trace: Vec::with_capacity(1 << 24), // TODO(moodlezoup): make configurable
+            trace_len: 0,
             executed_instrs: 0,
             active_markers: FnvHashMap::default(),
         };
@@ -312,12 +314,16 @@ impl Cpu {
     }
 
     /// Runs program one cycle. Fetch, decode, and execution are completed in a cycle so far.
-    pub fn tick(&mut self, tracing: bool) {
+    pub fn tick(&mut self) -> Vec<RV32IMCycle> {
         let instruction_address = self.pc;
-        match self.tick_operate(tracing) {
-            Ok(()) => {}
-            Err(e) => self.handle_exception(e, instruction_address),
-        }
+
+        let trace = match self.tick_operate() {
+            Ok(trace) => trace,
+            Err(e) => {
+                self.handle_exception(e, instruction_address);
+                vec![]
+            }
+        };
         self.mmu.tick();
         self.handle_interrupt(self.pc);
         self.clock = self.clock.wrapping_add(1);
@@ -326,15 +332,16 @@ impl Cpu {
         // just an arbitrary ratio.
         // @TODO: Implement more properly
         self.write_csr_raw(CSR_CYCLE_ADDRESS, self.clock * 8);
+        trace
     }
 
     // @TODO: Rename?
-    fn tick_operate(&mut self, tracing: bool) -> Result<(), Trap> {
+    fn tick_operate(&mut self) -> Result<Vec<RV32IMCycle>, Trap> {
         if self.wfi {
             if (self.read_csr_raw(CSR_MIE_ADDRESS) & self.read_csr_raw(CSR_MIP_ADDRESS)) != 0 {
                 self.wfi = false;
             }
-            return Ok(());
+            return Ok(vec![]);
         }
 
         let original_word = self.fetch()?;
@@ -353,9 +360,9 @@ impl Cpu {
         let instr = RV32IMInstruction::decode(word, instruction_address)
             .ok()
             .unwrap();
-        if tracing {
-            instr.trace(self);
-        }
+
+        let trace = instr.trace(self);
+        self.trace_len += trace.len();
 
         // check if current instruction is real or not for cycle profiling
         if instr.is_real() {
@@ -363,7 +370,7 @@ impl Cpu {
         }
         self.x[0] = 0; // hardwired zero
 
-        Ok(())
+        Ok(trace)
     }
 
     fn handle_interrupt(&mut self, instruction_address: u64) {
@@ -1469,7 +1476,7 @@ impl Cpu {
                     ActiveMarker {
                         label,
                         start_instrs: self.executed_instrs,
-                        start_trace_len: self.trace.len(),
+                        start_trace_len: self.trace_len,
                     },
                 );
             }
@@ -1477,7 +1484,7 @@ impl Cpu {
             JOLT_CYCLE_MARKER_END => {
                 if let Some(mark) = self.active_markers.remove(&ptr) {
                     let real = self.executed_instrs - mark.start_instrs;
-                    let virt = self.trace.len() - mark.start_trace_len;
+                    let virt = self.trace_len - mark.start_trace_len;
                     println!(
                         "\"{}\": {} RV32IM cycles, {} virtual cycles",
                         mark.label, real, virt
@@ -1693,8 +1700,8 @@ mod test_cpu {
         };
         assert_eq!(DRAM_BASE, cpu.read_pc());
         assert_eq!(0, cpu.read_register(10));
-        match cpu.tick_operate() {
-            Ok(()) => {}
+        match cpu.tick_operate(false) {
+            Ok(_) => {}
             Err(_e) => panic!("tick_operate() unexpectedly did panic"),
         };
         // .tick_operate() increments the program counter by 4 for

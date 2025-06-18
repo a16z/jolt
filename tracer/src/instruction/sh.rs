@@ -49,11 +49,13 @@ impl SH {
 }
 
 impl RISCVTrace for SH {
-    fn trace(&self, cpu: &mut Cpu) {
+    fn trace(&self, cpu: &mut Cpu) -> Vec<super::RV32IMCycle> {
         let virtual_sequence = self.virtual_sequence();
+        let mut all_traces = Vec::new();
         for instr in virtual_sequence {
-            instr.trace(cpu);
+            all_traces.extend(instr.trace(cpu));
         }
+        all_traces
     }
 }
 

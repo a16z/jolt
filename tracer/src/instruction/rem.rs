@@ -44,7 +44,7 @@ impl REM {
 }
 
 impl RISCVTrace for REM {
-    fn trace(&self, cpu: &mut Cpu) {
+    fn trace(&self, cpu: &mut Cpu) -> Vec<super::RV32IMCycle> {
         // REM operands
         let x = cpu.x[self.operands.rs1];
         let y = cpu.x[self.operands.rs2];
@@ -90,9 +90,11 @@ impl RISCVTrace for REM {
             panic!("Expected Advice instruction");
         }
 
+        let mut all_traces = Vec::new();
         for instr in virtual_sequence {
-            instr.trace(cpu);
+            all_traces.extend(instr.trace(cpu));
         }
+        all_traces
     }
 }
 

@@ -41,7 +41,7 @@ impl REMU {
 }
 
 impl RISCVTrace for REMU {
-    fn trace(&self, cpu: &mut Cpu) {
+    fn trace(&self, cpu: &mut Cpu) -> Vec<super::RV32IMCycle> {
         let mut virtual_sequence = self.virtual_sequence();
         if let RV32IMInstruction::VirtualAdvice(instr) = &mut virtual_sequence[0] {
             instr.advice = if cpu.unsigned_data(cpu.x[self.operands.rs2]) == 0 {
@@ -69,9 +69,11 @@ impl RISCVTrace for REMU {
             panic!("Expected Advice instruction");
         }
 
+        let mut all_traces = Vec::new();
         for instr in virtual_sequence {
-            instr.trace(cpu);
+            all_traces.extend(instr.trace(cpu));
         }
+        all_traces
     }
 }
 
