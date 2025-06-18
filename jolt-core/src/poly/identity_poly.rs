@@ -188,12 +188,14 @@ impl<F: JoltField> PolynomialEvaluation<F> for UnmapRamAddressPolynomial<F> {
 
         let m = F::from_u32(4 * (1 << self.num_bound_vars));
         let mut linear_eval = linear_evals[0] + m;
+        let mut product_eval = F::zero();
         for i in 1..degree {
             // Evaluate at point i+1
             linear_eval += m;
             linear_evals[i] = linear_eval;
             product_evals[i] = if index == 0 {
-                self.product_term * (-F::from_u32(i as u32))
+                product_eval -= self.product_term;
+                product_eval
             } else {
                 F::zero()
             };
