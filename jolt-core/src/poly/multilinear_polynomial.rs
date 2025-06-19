@@ -562,6 +562,8 @@ pub trait PolynomialEvaluation<F: JoltField> {
     fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<F>, Vec<F>);
     /// Computes this polynomial's contribution to the computation of a prover
     /// sumcheck message (i.e. a univariate polynomial of the given `degree`).
+    /// Returns the values of the polynomial at points 1, 2, ... , degree
+    /// (value at 1 is skipped for optimization).
     fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F>;
 }
 
