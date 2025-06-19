@@ -162,6 +162,7 @@ impl Memory {
     /// # Arguments
     /// * `address`
     pub fn validate_address(&self, address: u64) -> bool {
-        (address as usize) < self.data.len()
+        let word_index = (address >> 3) as usize;
+        word_index < self.data.len()
     }
 }
