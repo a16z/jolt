@@ -26,6 +26,9 @@ use dory::{
     verify, DoryProof, DoryProofBuilder, Polynomial as DoryPolynomial, ProverSetup, VerifierSetup,
 };
 
+// Import jolt_optimizations for MSM implementations
+use jolt_optimizations;
+
 // NewType wrappers for Jolt + arkworks types to interop with Dory traits
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
@@ -153,32 +156,277 @@ where
     }
 }
 
-// Dory accepts an MSM trait for Dory Group and F, so we provide it with one.
-// In the future, we can think about removing this trait in Dory (hence this wrapper)
-// and just use our arkworks fork smart MSM (the Dory crate already points to our arkworks fork)
-pub struct JoltMSM;
+// Specialized MSM implementations for G1 and G2 to leverage jolt-optimizations
+pub struct JoltMsmG1;
+pub struct JoltMsmG2;
+pub struct JoltMSM; // Keep for GT operations
 
-impl<G> DoryMultiScalarMul<JoltGroupWrapper<G>> for JoltMSM
-where
-    G: CurveGroup + VariableBaseMSM,
-    G::ScalarField: JoltField,
-{
+// G1 MSM implementation with jolt-optimizations
+impl DoryMultiScalarMul<JoltGroupWrapper<G1Projective>> for JoltMsmG1 {
     fn msm(
-        bases: &[JoltGroupWrapper<G>],
-        scalars: &[JoltFieldWrapper<G::ScalarField>],
-    ) -> JoltGroupWrapper<G> {
+        bases: &[JoltGroupWrapper<G1Projective>],
+        scalars: &[JoltFieldWrapper<Fr>],
+    ) -> JoltGroupWrapper<G1Projective> {
         let affines: Vec<_> = bases.iter().map(|w| w.0.into_affine()).collect();
 
         // # Safety
-        // JoltFieldWrapper always has same memory layout as underlying G::ScalarField here.
-        let raw_scalars: &[G::ScalarField] = unsafe {
-            std::slice::from_raw_parts(scalars.as_ptr() as *const G::ScalarField, scalars.len())
+        // JoltFieldWrapper always has same memory layout as underlying Fr here.
+        let raw_scalars: &[Fr] = unsafe {
+            std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len())
         };
 
-        let result = G::msm_field_elements(&affines, None, raw_scalars, None, false)
+        let result = G1Projective::msm_field_elements(&affines, None, raw_scalars, None, false)
             .expect("msm_field_elements should not fail");
 
         JoltGroupWrapper(result)
+    }
+
+    fn fixed_base_vector_msm(
+        base: &JoltGroupWrapper<G1Projective>,
+        scalars: &[JoltFieldWrapper<Fr>],
+        _g1_cache: Option<&dory::curve::G1Cache>,
+        _g2_cache: Option<&dory::curve::G2Cache>,
+    ) -> Vec<JoltGroupWrapper<G1Projective>> {
+        if scalars.is_empty() {
+            return vec![];
+        }
+
+        // # Safety
+        // JoltFieldWrapper always has same memory layout as underlying Fr
+        let raw_scalars: &[Fr] = unsafe {
+            std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len())
+        };
+
+        // Use jolt-optimizations fixed_base_vector_msm_g1
+        let results_proj = jolt_optimizations::fixed_base_vector_msm_g1(&base.0, raw_scalars);
+
+        // Convert results back to wrapped projective
+        results_proj.into_iter()
+            .map(|proj| JoltGroupWrapper(proj))
+            .collect()
+    }
+
+    fn fixed_scalar_variable_with_add(
+        bases: &[JoltGroupWrapper<G1Projective>],
+        vs: &mut [JoltGroupWrapper<G1Projective>],
+        scalar: &JoltFieldWrapper<Fr>,
+    ) {
+        assert_eq!(bases.len(), vs.len(), "bases and vs must have same length");
+
+        // Convert to native projective types
+        let mut vs_proj: Vec<G1Projective> = vs.iter().map(|v| v.0).collect();
+        let bases_proj: Vec<G1Projective> = bases.iter().map(|b| b.0).collect();
+
+        // Use jolt-optimizations function: v[i] = v[i] + scalar * generators[i]
+        jolt_optimizations::vector_add_scalar_mul_g1_online(&mut vs_proj, &bases_proj, scalar.0);
+
+        // Copy back to wrapped format
+        for (i, proj) in vs_proj.into_iter().enumerate() {
+            vs[i] = JoltGroupWrapper(proj);
+        }
+    }
+
+    fn fixed_scalar_variable_with_add_cached(
+        bases_count: usize,
+        g1_cache: Option<&dory::curve::G1Cache>,
+        _g2_cache: Option<&dory::curve::G2Cache>,
+        vs: &mut [JoltGroupWrapper<G1Projective>],
+        scalar: &JoltFieldWrapper<Fr>,
+    ) {
+        assert_eq!(bases_count, vs.len(), "bases_count must equal vs length");
+
+        if let Some(cache) = g1_cache {
+            // Get precomputed data from cache
+            let precomputed = cache.get_precomputed_slice(bases_count);
+
+            // Convert to native projective types
+            let mut vs_proj: Vec<G1Projective> = vs.iter().map(|v| v.0).collect();
+
+            // Use jolt-optimizations function with precomputed data
+            jolt_optimizations::vector_add_scalar_mul_g1_precomputed(
+                &mut vs_proj,
+                scalar.0,
+                precomputed,
+            );
+
+            // Copy back to wrapped format
+            for (i, proj) in vs_proj.into_iter().enumerate() {
+                vs[i] = JoltGroupWrapper(proj);
+            }
+        } else {
+            panic!("G1 cache not available for cached operation");
+        }
+    }
+
+    fn fixed_scalar_scale_with_add(
+        vs: &mut [JoltGroupWrapper<G1Projective>],
+        addends: &[JoltGroupWrapper<G1Projective>],
+        scalar: &JoltFieldWrapper<Fr>,
+    ) {
+        assert_eq!(vs.len(), addends.len(), "vs and addends must have same length");
+
+        // Convert to native projective types
+        let mut vs_proj: Vec<G1Projective> = vs.iter().map(|v| v.0).collect();
+        let addends_proj: Vec<G1Projective> = addends.iter().map(|a| a.0).collect();
+
+        // Use jolt-optimizations function: v[i] = scalar * v[i] + gamma[i]
+        jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
+            &mut vs_proj,
+            scalar.0,
+            &addends_proj,
+        );
+
+        // Copy back to wrapped format
+        for (i, proj) in vs_proj.into_iter().enumerate() {
+            vs[i] = JoltGroupWrapper(proj);
+        }
+    }
+}
+
+// G2 MSM implementation with jolt-optimizations
+impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
+    fn msm(
+        bases: &[JoltGroupWrapper<G2Projective>],
+        scalars: &[JoltFieldWrapper<Fr>],
+    ) -> JoltGroupWrapper<G2Projective> {
+        let affines: Vec<_> = bases.iter().map(|w| w.0.into_affine()).collect();
+
+        // # Safety
+        // JoltFieldWrapper always has same memory layout as underlying Fr here.
+        let raw_scalars: &[Fr] = unsafe {
+            std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len())
+        };
+
+        let result = G2Projective::msm_field_elements(&affines, None, raw_scalars, None, false)
+            .expect("msm_field_elements should not fail");
+
+        JoltGroupWrapper(result)
+    }
+
+    fn fixed_base_vector_msm(
+        base: &JoltGroupWrapper<G2Projective>,
+        scalars: &[JoltFieldWrapper<Fr>],
+        _g1_cache: Option<&dory::curve::G1Cache>,
+        g2_cache: Option<&dory::curve::G2Cache>,
+    ) -> Vec<JoltGroupWrapper<G2Projective>> {
+        if scalars.is_empty() {
+            return vec![];
+        }
+
+        // # Safety
+        // JoltFieldWrapper always has same memory layout as underlying Fr
+        let raw_scalars: &[Fr] = unsafe {
+            std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len())
+        };
+
+        // Check if we have cached GLV tables for g_fin
+        if let Some(glv_tables) = g2_cache.and_then(|cache| cache.get_g_fin_glv_tables()) {
+            // Use precomputed GLV tables
+            let results_proj: Vec<G2Projective> = raw_scalars
+                .par_iter()
+                .map(|&scalar| {
+                    // glv_four_scalar_mul returns a vector, we need the first element
+                    jolt_optimizations::glv_four_scalar_mul(glv_tables, scalar)[0]
+                })
+                .collect();
+
+            // Convert to wrapped format
+            results_proj.into_iter()
+                .map(|proj| JoltGroupWrapper(proj))
+                .collect()
+        } else {
+            // Fall back to online computation
+            let base_proj = base.0;
+
+            // Compute scalar multiplication for each scalar with the fixed base
+            let results_proj: Vec<G2Projective> = raw_scalars
+                .par_iter()
+                .map(|&scalar| {
+                    jolt_optimizations::glv_four_scalar_mul_online(scalar, &[base_proj])[0]
+                })
+                .collect();
+
+            // Convert to wrapped format
+            results_proj.into_iter()
+                .map(|proj| JoltGroupWrapper(proj))
+                .collect()
+        }
+    }
+
+    fn fixed_scalar_variable_with_add(
+        bases: &[JoltGroupWrapper<G2Projective>],
+        vs: &mut [JoltGroupWrapper<G2Projective>],
+        scalar: &JoltFieldWrapper<Fr>,
+    ) {
+        assert_eq!(bases.len(), vs.len(), "bases and vs must have same length");
+
+        // Convert to native projective types
+        let mut vs_proj: Vec<G2Projective> = vs.iter().map(|v| v.0).collect();
+        let bases_proj: Vec<G2Projective> = bases.iter().map(|b| b.0).collect();
+
+        // Use jolt-optimizations function: v[i] = v[i] + scalar * generators[i]
+        jolt_optimizations::vector_add_scalar_mul_g2_online(&mut vs_proj, &bases_proj, scalar.0);
+
+        // Copy back to wrapped format
+        for (i, proj) in vs_proj.into_iter().enumerate() {
+            vs[i] = JoltGroupWrapper(proj);
+        }
+    }
+
+    fn fixed_scalar_variable_with_add_cached(
+        bases_count: usize,
+        _g1_cache: Option<&dory::curve::G1Cache>,
+        g2_cache: Option<&dory::curve::G2Cache>,
+        vs: &mut [JoltGroupWrapper<G2Projective>],
+        scalar: &JoltFieldWrapper<Fr>,
+    ) {
+        assert_eq!(bases_count, vs.len(), "bases_count must equal vs length");
+
+        if let Some(cache) = g2_cache {
+            // Get precomputed data from cache
+            let precomputed = cache.get_precomputed_slice(bases_count);
+
+            // Convert to native projective types
+            let mut vs_proj: Vec<G2Projective> = vs.iter().map(|v| v.0).collect();
+
+            // Use jolt-optimizations function with precomputed data
+            jolt_optimizations::vector_add_scalar_mul_g2_precomputed(
+                &mut vs_proj,
+                scalar.0,
+                precomputed,
+            );
+
+            // Copy back to wrapped format
+            for (i, proj) in vs_proj.into_iter().enumerate() {
+                vs[i] = JoltGroupWrapper(proj);
+            }
+        } else {
+            panic!("G2 cache not available for cached operation");
+        }
+    }
+
+    fn fixed_scalar_scale_with_add(
+        vs: &mut [JoltGroupWrapper<G2Projective>],
+        addends: &[JoltGroupWrapper<G2Projective>],
+        scalar: &JoltFieldWrapper<Fr>,
+    ) {
+        assert_eq!(vs.len(), addends.len(), "vs and addends must have same length");
+
+        // Convert to native projective types
+        let mut vs_proj: Vec<G2Projective> = vs.iter().map(|v| v.0).collect();
+        let addends_proj: Vec<G2Projective> = addends.iter().map(|a| a.0).collect();
+
+        // Use jolt-optimizations function: v[i] = scalar * v[i] + gamma[i]
+        jolt_optimizations::vector_scalar_mul_add_gamma_g2_online(
+            &mut vs_proj,
+            scalar.0,
+            &addends_proj,
+        );
+
+        // Copy back to wrapped format
+        for (i, proj) in vs_proj.into_iter().enumerate() {
+            vs[i] = JoltGroupWrapper(proj);
+        }
     }
 }
 
@@ -262,6 +510,44 @@ where
             .expect("Final exponentiation should not fail");
 
         JoltGTWrapper(pairing_result.0)
+    }
+
+    fn multi_pair_cached(
+        g1_points: Option<&[Self::G1]>,
+        g1_count: Option<usize>,
+        _g1_cache: Option<&dory::curve::G1Cache>,
+        g2_points: Option<&[Self::G2]>,
+        g2_count: Option<usize>,
+        _g2_cache: Option<&dory::curve::G2Cache>,
+    ) -> Self::GT {
+        // For now, we'll use the non-cached version
+        // In the future, we can optimize this to use the cached prepared values
+        match (g1_points, g1_count, g2_points, g2_count) {
+            // Case 1: Both G1 and G2 use cached values (not yet implemented)
+            (None, Some(_g1_c), None, Some(_g2_c)) => {
+                // TODO: Implement cached version using prepared values from caches
+                panic!("Cached multi_pair not yet implemented for JoltPairing");
+            }
+            
+            // Case 2: G1 cached, G2 fresh points
+            (None, Some(_g1_c), Some(_g2_points), _) => {
+                // TODO: Implement partially cached version
+                panic!("Partially cached multi_pair not yet implemented for JoltPairing");
+            }
+            
+            // Case 3: G1 fresh points, G2 cached
+            (Some(_g1_points), _, None, Some(_g2_c)) => {
+                // TODO: Implement partially cached version
+                panic!("Partially cached multi_pair not yet implemented for JoltPairing");
+            }
+            
+            // Case 4: Both fresh points
+            (Some(g1_points), _, Some(g2_points), _) => {
+                Self::multi_pair(g1_points, g2_points)
+            }
+            
+            _ => panic!("Invalid combination of parameters provided to multi_pair_cached"),
+        }
     }
 }
 
@@ -409,7 +695,7 @@ where
         let num_vars = poly.get_num_vars();
         let sigma = (num_vars + 1) / 2;
 
-        let commitment_val = commit::<JoltBn254, JoltMSM, _>(poly, 0, sigma, &setup.prover_setup);
+        let commitment_val = commit::<JoltBn254, JoltMsmG1, _>(poly, 0, sigma, &setup.prover_setup);
         DoryCommitment(commitment_val)
     }
 
@@ -437,8 +723,8 @@ where
         let (_claimed_evaluation, proof_builder) = evaluate::<
             JoltBn254,
             JoltToDoryTranscriptRef<'_, Self::Field, ProofTranscript>,
-            JoltMSM,
-            JoltMSM,
+            JoltMsmG1,
+            JoltMsmG2,
             _,
         >(
             poly,
@@ -475,8 +761,8 @@ where
         let verify_result = verify::<
             JoltBn254,
             JoltToDoryTranscriptRef<'_, Self::Field, ProofTranscript>,
-            JoltMSM,
-            JoltMSM,
+            JoltMsmG1,
+            JoltMsmG2,
             JoltMSM,
         >(
             commitment.0.clone(),
