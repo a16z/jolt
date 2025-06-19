@@ -6,6 +6,9 @@ use crate::{
     utils::{errors::ProofVerifyError, transcript::Transcript},
 };
 use ark_bn254::{Bn254, Fr, G1Projective, G2Projective};
+use ark_ec::bn::{G1Prepared, G2Prepared};
+type BnG1Prepared = G1Prepared<ark_bn254::Config>;
+type BnG2Prepared = G2Prepared<ark_bn254::Config>;
 use ark_ec::{
     pairing::{MillerLoopOutput, Pairing as ArkPairing},
     CurveGroup,
@@ -25,9 +28,6 @@ use dory::{
     transcript::Transcript as DoryTranscript,
     verify, DoryProof, DoryProofBuilder, Polynomial as DoryPolynomial, ProverSetup, VerifierSetup,
 };
-
-// Import jolt_optimizations for MSM implementations
-use jolt_optimizations;
 
 // NewType wrappers for Jolt + arkworks types to interop with Dory traits
 #[repr(transparent)]
@@ -156,10 +156,10 @@ where
     }
 }
 
-// Specialized MSM implementations for G1 and G2 to leverage jolt-optimizations
+// Specialized MSM implementations for G1 and G2 to leverage `jolt-optimizations` in arkworks
 pub struct JoltMsmG1;
 pub struct JoltMsmG2;
-pub struct JoltMSM; // Keep for GT operations
+pub struct JoltMSM;
 
 // G1 MSM implementation with jolt-optimizations
 impl DoryMultiScalarMul<JoltGroupWrapper<G1Projective>> for JoltMsmG1 {
@@ -167,7 +167,9 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G1Projective>> for JoltMsmG1 {
         bases: &[JoltGroupWrapper<G1Projective>],
         scalars: &[JoltFieldWrapper<Fr>],
     ) -> JoltGroupWrapper<G1Projective> {
-        let affines: Vec<_> = bases.iter().map(|w| w.0.into_affine()).collect();
+        
+        let projective_points: Vec<G1Projective> = bases.iter().map(|w| w.0).collect();
+        let affines = G1Projective::normalize_batch(&projective_points);
 
         // # Safety
         // JoltFieldWrapper always has same memory layout as underlying Fr here.
@@ -197,10 +199,9 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G1Projective>> for JoltMsmG1 {
             std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len())
         };
 
-        // Use jolt-optimizations fixed_base_vector_msm_g1
+        // Use `jolt-optimizations`` fixed_base_vector_msm_g1
         let results_proj = jolt_optimizations::fixed_base_vector_msm_g1(&base.0, raw_scalars);
 
-        // Convert results back to wrapped projective
         results_proj.into_iter()
             .map(|proj| JoltGroupWrapper(proj))
             .collect()
@@ -213,17 +214,17 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G1Projective>> for JoltMsmG1 {
     ) {
         assert_eq!(bases.len(), vs.len(), "bases and vs must have same length");
 
-        // Convert to native projective types
-        let mut vs_proj: Vec<G1Projective> = vs.iter().map(|v| v.0).collect();
-        let bases_proj: Vec<G1Projective> = bases.iter().map(|b| b.0).collect();
+        // # Safety
+        // JoltGroupWrapper is repr(transparent) so has same memory layout as G1Projective
+        let vs_proj: &mut [G1Projective] = unsafe {
+            std::slice::from_raw_parts_mut(vs.as_mut_ptr() as *mut G1Projective, vs.len())
+        };
+        let bases_proj: &[G1Projective] = unsafe {
+            std::slice::from_raw_parts(bases.as_ptr() as *const G1Projective, bases.len())
+        };
 
-        // Use jolt-optimizations function: v[i] = v[i] + scalar * generators[i]
-        jolt_optimizations::vector_add_scalar_mul_g1_online(&mut vs_proj, &bases_proj, scalar.0);
-
-        // Copy back to wrapped format
-        for (i, proj) in vs_proj.into_iter().enumerate() {
-            vs[i] = JoltGroupWrapper(proj);
-        }
+        // Use `jolt-optimizations`: v[i] = v[i] + scalar * generators[i]
+        jolt_optimizations::vector_add_scalar_mul_g1_online(vs_proj, bases_proj, scalar.0);
     }
 
     fn fixed_scalar_variable_with_add_cached(
@@ -236,23 +237,20 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G1Projective>> for JoltMsmG1 {
         assert_eq!(bases_count, vs.len(), "bases_count must equal vs length");
 
         if let Some(cache) = g1_cache {
-            // Get precomputed data from cache
+            // Get precomputed data for dory from cache
             let precomputed = cache.get_precomputed_slice(bases_count);
 
-            // Convert to native projective types
-            let mut vs_proj: Vec<G1Projective> = vs.iter().map(|v| v.0).collect();
+            // # Safety
+            // JoltGroupWrapper is repr(transparent) so has same memory layout as G1Projective
+            let vs_proj: &mut [G1Projective] = unsafe {
+                std::slice::from_raw_parts_mut(vs.as_mut_ptr() as *mut G1Projective, vs.len())
+            };
 
-            // Use jolt-optimizations function with precomputed data
             jolt_optimizations::vector_add_scalar_mul_g1_precomputed(
-                &mut vs_proj,
+                vs_proj,
                 scalar.0,
                 precomputed,
             );
-
-            // Copy back to wrapped format
-            for (i, proj) in vs_proj.into_iter().enumerate() {
-                vs[i] = JoltGroupWrapper(proj);
-            }
         } else {
             panic!("G1 cache not available for cached operation");
         }
@@ -265,21 +263,21 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G1Projective>> for JoltMsmG1 {
     ) {
         assert_eq!(vs.len(), addends.len(), "vs and addends must have same length");
 
-        // Convert to native projective types
-        let mut vs_proj: Vec<G1Projective> = vs.iter().map(|v| v.0).collect();
-        let addends_proj: Vec<G1Projective> = addends.iter().map(|a| a.0).collect();
+        // # Safety
+        // JoltGroupWrapper is repr(transparent) so has same memory layout as G1Projective
+        let vs_proj: &mut [G1Projective] = unsafe {
+            std::slice::from_raw_parts_mut(vs.as_mut_ptr() as *mut G1Projective, vs.len())
+        };
+        let addends_proj: &[G1Projective] = unsafe {
+            std::slice::from_raw_parts(addends.as_ptr() as *const G1Projective, addends.len())
+        };
 
-        // Use jolt-optimizations function: v[i] = scalar * v[i] + gamma[i]
+        // Use `jolt-optimizations`: v[i] = scalar * v[i] + gamma[i]
         jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
-            &mut vs_proj,
+            vs_proj,
             scalar.0,
-            &addends_proj,
+            addends_proj,
         );
-
-        // Copy back to wrapped format
-        for (i, proj) in vs_proj.into_iter().enumerate() {
-            vs[i] = JoltGroupWrapper(proj);
-        }
     }
 }
 
@@ -289,7 +287,8 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
         bases: &[JoltGroupWrapper<G2Projective>],
         scalars: &[JoltFieldWrapper<Fr>],
     ) -> JoltGroupWrapper<G2Projective> {
-        let affines: Vec<_> = bases.iter().map(|w| w.0.into_affine()).collect();
+        let projective_points: Vec<G2Projective> = bases.iter().map(|w| w.0).collect();
+        let affines = G2Projective::normalize_batch(&projective_points);
 
         // # Safety
         // JoltFieldWrapper always has same memory layout as underlying Fr here.
@@ -330,15 +329,12 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
                 })
                 .collect();
 
-            // Convert to wrapped format
             results_proj.into_iter()
                 .map(|proj| JoltGroupWrapper(proj))
                 .collect()
         } else {
             // Fall back to online computation
             let base_proj = base.0;
-
-            // Compute scalar multiplication for each scalar with the fixed base
             let results_proj: Vec<G2Projective> = raw_scalars
                 .par_iter()
                 .map(|&scalar| {
@@ -346,7 +342,6 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
                 })
                 .collect();
 
-            // Convert to wrapped format
             results_proj.into_iter()
                 .map(|proj| JoltGroupWrapper(proj))
                 .collect()
@@ -360,17 +355,17 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
     ) {
         assert_eq!(bases.len(), vs.len(), "bases and vs must have same length");
 
-        // Convert to native projective types
-        let mut vs_proj: Vec<G2Projective> = vs.iter().map(|v| v.0).collect();
-        let bases_proj: Vec<G2Projective> = bases.iter().map(|b| b.0).collect();
+        // # Safety
+        // JoltGroupWrapper is repr(transparent) so has same memory layout as G2Projective
+        let vs_proj: &mut [G2Projective] = unsafe {
+            std::slice::from_raw_parts_mut(vs.as_mut_ptr() as *mut G2Projective, vs.len())
+        };
+        let bases_proj: &[G2Projective] = unsafe {
+            std::slice::from_raw_parts(bases.as_ptr() as *const G2Projective, bases.len())
+        };
 
-        // Use jolt-optimizations function: v[i] = v[i] + scalar * generators[i]
-        jolt_optimizations::vector_add_scalar_mul_g2_online(&mut vs_proj, &bases_proj, scalar.0);
-
-        // Copy back to wrapped format
-        for (i, proj) in vs_proj.into_iter().enumerate() {
-            vs[i] = JoltGroupWrapper(proj);
-        }
+        // Use `jolt-optimizations`: v[i] = v[i] + scalar * generators[i]
+        jolt_optimizations::vector_add_scalar_mul_g2_online(vs_proj, bases_proj, scalar.0);
     }
 
     fn fixed_scalar_variable_with_add_cached(
@@ -383,23 +378,18 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
         assert_eq!(bases_count, vs.len(), "bases_count must equal vs length");
 
         if let Some(cache) = g2_cache {
-            // Get precomputed data from cache
             let precomputed = cache.get_precomputed_slice(bases_count);
 
-            // Convert to native projective types
-            let mut vs_proj: Vec<G2Projective> = vs.iter().map(|v| v.0).collect();
-
-            // Use jolt-optimizations function with precomputed data
+            // # Safety
+            // JoltGroupWrapper is repr(transparent) so has same memory layout as G2Projective
+            let vs_proj: &mut [G2Projective] = unsafe {
+                std::slice::from_raw_parts_mut(vs.as_mut_ptr() as *mut G2Projective, vs.len())
+            };
             jolt_optimizations::vector_add_scalar_mul_g2_precomputed(
-                &mut vs_proj,
+                vs_proj,
                 scalar.0,
                 precomputed,
             );
-
-            // Copy back to wrapped format
-            for (i, proj) in vs_proj.into_iter().enumerate() {
-                vs[i] = JoltGroupWrapper(proj);
-            }
         } else {
             panic!("G2 cache not available for cached operation");
         }
@@ -412,21 +402,21 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
     ) {
         assert_eq!(vs.len(), addends.len(), "vs and addends must have same length");
 
-        // Convert to native projective types
-        let mut vs_proj: Vec<G2Projective> = vs.iter().map(|v| v.0).collect();
-        let addends_proj: Vec<G2Projective> = addends.iter().map(|a| a.0).collect();
+        // # Safety
+        // JoltGroupWrapper is repr(transparent) so has same memory layout as G2Projective
+        let vs_proj: &mut [G2Projective] = unsafe {
+            std::slice::from_raw_parts_mut(vs.as_mut_ptr() as *mut G2Projective, vs.len())
+        };
+        let addends_proj: &[G2Projective] = unsafe {
+            std::slice::from_raw_parts(addends.as_ptr() as *const G2Projective, addends.len())
+        };
 
         // Use jolt-optimizations function: v[i] = scalar * v[i] + gamma[i]
         jolt_optimizations::vector_scalar_mul_add_gamma_g2_online(
-            &mut vs_proj,
+            vs_proj,
             scalar.0,
-            &addends_proj,
+            addends_proj,
         );
-
-        // Copy back to wrapped format
-        for (i, proj) in vs_proj.into_iter().enumerate() {
-            vs[i] = JoltGroupWrapper(proj);
-        }
     }
 }
 
@@ -478,74 +468,184 @@ where
     }
 
     fn multi_pair(ps: &[Self::G1], qs: &[Self::G2]) -> Self::GT {
-        assert_eq!(
-            ps.len(),
-            qs.len(),
-            "multi_pair requires equal length vectors"
-        );
-
-        if ps.is_empty() {
-            return Self::GT::identity();
-        }
-
-        let g1_inner: Vec<E::G1> = ps.iter().map(|p| p.0).collect();
-        let g2_inner: Vec<E::G2> = qs.iter().map(|q| q.0).collect();
-
-        let aff_left = E::G1::normalize_batch(&g1_inner);
-        let aff_right = E::G2::normalize_batch(&g2_inner);
-
-        let left: Vec<_> = aff_left.par_iter().map(E::G1Prepared::from).collect();
-        let right: Vec<_> = aff_right.par_iter().map(E::G2Prepared::from).collect();
-
-        let num_chunks = rayon::current_num_threads();
-        let chunk_size = (left.len() / num_chunks.max(1)).max(1);
-
-        let ml_result = left
-            .par_chunks(chunk_size)
-            .zip(right.par_chunks(chunk_size))
-            .map(|(aa, bb)| E::multi_miller_loop(aa.iter().cloned(), bb.iter().cloned()).0)
-            .product();
-
-        let pairing_result = E::final_exponentiation(MillerLoopOutput(ml_result))
-            .expect("Final exponentiation should not fail");
-
-        JoltGTWrapper(pairing_result.0)
+        // Delegate to the cached version with no caches
+        Self::multi_pair_cached(Some(ps), None, None, Some(qs), None, None)
     }
 
     fn multi_pair_cached(
         g1_points: Option<&[Self::G1]>,
         g1_count: Option<usize>,
-        _g1_cache: Option<&dory::curve::G1Cache>,
+        g1_cache: Option<&dory::curve::G1Cache>,
         g2_points: Option<&[Self::G2]>,
         g2_count: Option<usize>,
-        _g2_cache: Option<&dory::curve::G2Cache>,
+        g2_cache: Option<&dory::curve::G2Cache>,
     ) -> Self::GT {
-        // For now, we'll use the non-cached version
-        // In the future, we can optimize this to use the cached prepared values
-        match (g1_points, g1_count, g2_points, g2_count) {
-            // Case 1: Both G1 and G2 use cached values (not yet implemented)
-            (None, Some(_g1_c), None, Some(_g2_c)) => {
-                // TODO: Implement cached version using prepared values from caches
-                panic!("Cached multi_pair not yet implemented for JoltPairing");
+        match (g1_points, g1_count, g1_cache, g2_points, g2_count, g2_cache) {
+            // Case 1: Both G1 and G2 use cached prepared values (fully optimized)
+            (None, Some(g1_c), Some(g1_cache), None, Some(g2_c), Some(g2_cache)) => {
+                assert_eq!(g1_c, g2_c, "G1 and G2 counts must be equal");
+                if g1_c == 0 {
+                    return Self::GT::identity();
+                }
+
+                // Extract prepared values from caches - no allocation needed
+                let g1_prepared: Vec<&BnG1Prepared> = (0..g1_c).map(|i| {
+                    g1_cache
+                        .get_prepared(i)
+                        .expect("Index out of bounds in G1 cache")
+                }).collect();
+
+                let g2_prepared: Vec<&BnG2Prepared> = (0..g2_c).map(|i| {
+                    g2_cache
+                        .get_prepared(i)
+                        .expect("Index out of bounds in G2 cache")
+                }).collect();
+
+                // Use Bn254 directly since caches are BN254-specific
+                let ml_result = Bn254::multi_miller_loop(g1_prepared, g2_prepared).0;
+
+                let pairing_result = Bn254::final_exponentiation(MillerLoopOutput(ml_result))
+                    .expect("Final exponentiation should not fail");
+
+                // # Safety
+                // When E = Bn254, JoltGTWrapper<Bn254> has same memory layout as JoltGTWrapper<E>
+                // since JoltGTWrapper is repr(transparent) and E::TargetField = Bn254::TargetField
+                let bn_result = JoltGTWrapper::<Bn254>(pairing_result.0);
+                unsafe { 
+                    let ptr = &bn_result as *const JoltGTWrapper<Bn254> as *const Self::GT;
+                    (*ptr).clone()
+                }
             }
-            
-            // Case 2: G1 cached, G2 fresh points
-            (None, Some(_g1_c), Some(_g2_points), _) => {
-                // TODO: Implement partially cached version
-                panic!("Partially cached multi_pair not yet implemented for JoltPairing");
+
+            // Case 2: G1 cached, G2 fresh points (partial optimization)
+            (None, Some(g1_c), Some(g1_cache), Some(g2_points), _, _) => {
+                assert_eq!(
+                    g1_c,
+                    g2_points.len(),
+                    "G1 count must equal G2 points length"
+                );
+                if g1_c == 0 {
+                    return Self::GT::identity();
+                }
+
+                // G1 from cache 
+                let g1_prepared: Vec<&BnG1Prepared> = (0..g1_c).map(|i| {
+                    g1_cache
+                        .get_prepared(i)
+                        .expect("Index out of bounds in G1 cache")
+                }).collect();
+
+                // # Safety
+                // JoltGroupWrapper is repr(transparent) so has same memory layout as E::G2
+                // When E = Bn254, E::G2 = G2Projective
+                let g2_inner: &[G2Projective] = unsafe {
+                    std::slice::from_raw_parts(g2_points.as_ptr() as *const G2Projective, g2_points.len())
+                };
+                
+                let g2_affine = G2Projective::normalize_batch(g2_inner);
+                let g2_prepared = g2_affine.par_iter().map(BnG2Prepared::from).collect::<Vec<_>>();
+
+                // Use Bn254 directly since caches are BN254-specific
+                let ml_result = Bn254::multi_miller_loop(g1_prepared, g2_prepared).0;
+
+                let pairing_result = Bn254::final_exponentiation(MillerLoopOutput(ml_result))
+                    .expect("Final exponentiation should not fail");
+
+                // # Safety
+                // When E = Bn254, JoltGTWrapper<Bn254> has same memory layout as JoltGTWrapper<E>
+                // since JoltGTWrapper is repr(transparent) and E::TargetField = Bn254::TargetField
+                let bn_result = JoltGTWrapper::<Bn254>(pairing_result.0);
+                unsafe { 
+                    let ptr = &bn_result as *const JoltGTWrapper<Bn254> as *const Self::GT;
+                    (*ptr).clone()
+                }
             }
-            
-            // Case 3: G1 fresh points, G2 cached
-            (Some(_g1_points), _, None, Some(_g2_c)) => {
-                // TODO: Implement partially cached version
-                panic!("Partially cached multi_pair not yet implemented for JoltPairing");
+
+            // Case 3: G1 fresh points, G2 cached (partial optimization)
+            (Some(g1_points), _, _, None, Some(g2_c), Some(g2_cache)) => {
+                assert_eq!(
+                    g1_points.len(),
+                    g2_c,
+                    "G1 points length must equal G2 count"
+                );
+                if g2_c == 0 {
+                    return Self::GT::identity();
+                }
+
+                // # Safety
+                // JoltGroupWrapper is repr(transparent) so has same memory layout as E::G1
+                // When E = Bn254, E::G1 = G1Projective
+                let g1_inner: &[G1Projective] = unsafe {
+                    std::slice::from_raw_parts(g1_points.as_ptr() as *const G1Projective, g1_points.len())
+                };
+                
+                let g1_affine = G1Projective::normalize_batch(g1_inner);
+                let g1_prepared = g1_affine.par_iter().map(BnG1Prepared::from).collect::<Vec<_>>();
+
+                // G2 from cache
+                let g2_prepared: Vec<&BnG2Prepared> = (0..g2_c).map(|i| {
+                    g2_cache
+                        .get_prepared(i)
+                        .expect("Index out of bounds in G2 cache")
+                }).collect();
+
+                // Use Bn254 directly since caches are BN254-specific
+                let ml_result = Bn254::multi_miller_loop(g1_prepared, g2_prepared).0;
+
+                let pairing_result = Bn254::final_exponentiation(MillerLoopOutput(ml_result))
+                    .expect("Final exponentiation should not fail");
+
+                // # Safety
+                // When E = Bn254, JoltGTWrapper<Bn254> has same memory layout as JoltGTWrapper<E>
+                // since JoltGTWrapper is repr(transparent) and E::TargetField = Bn254::TargetField
+                let bn_result = JoltGTWrapper::<Bn254>(pairing_result.0);
+                unsafe { 
+                    let ptr = &bn_result as *const JoltGTWrapper<Bn254> as *const Self::GT;
+                    (*ptr).clone()
+                }
             }
-            
-            // Case 4: Both fresh points
-            (Some(g1_points), _, Some(g2_points), _) => {
-                Self::multi_pair(g1_points, g2_points)
+
+            // Case 4: Both fresh points (no caching benefit)
+            (Some(g1_points), _, _, Some(g2_points), _, _) => {
+                assert_eq!(
+                    g1_points.len(),
+                    g2_points.len(),
+                    "G1 and G2 vectors must have equal length"
+                );
+                if g1_points.is_empty() {
+                    return Self::GT::identity();
+                }
+
+                // # Safety
+                // JoltGroupWrapper is repr(transparent) so has same memory layout as inner types
+                let g1_inner: &[E::G1] = unsafe {
+                    std::slice::from_raw_parts(g1_points.as_ptr() as *const E::G1, g1_points.len())
+                };
+                let g2_inner: &[E::G2] = unsafe {
+                    std::slice::from_raw_parts(g2_points.as_ptr() as *const E::G2, g2_points.len())
+                };
+
+                let aff_left = E::G1::normalize_batch(g1_inner);
+                let aff_right = E::G2::normalize_batch(g2_inner);
+
+                let left: Vec<_> = aff_left.par_iter().map(E::G1Prepared::from).collect();
+                let right: Vec<_> = aff_right.par_iter().map(E::G2Prepared::from).collect();
+
+                let num_chunks = rayon::current_num_threads();
+                let chunk_size = (left.len() / num_chunks.max(1)).max(1);
+
+                let ml_result = left
+                    .par_chunks(chunk_size)
+                    .zip(right.par_chunks(chunk_size))
+                    .map(|(aa, bb)| E::multi_miller_loop(aa.iter().cloned(), bb.iter().cloned()).0)
+                    .product();
+
+                let pairing_result = E::final_exponentiation(MillerLoopOutput(ml_result))
+                    .expect("Final exponentiation should not fail");
+
+                JoltGTWrapper(pairing_result.0)
             }
-            
+
             _ => panic!("Invalid combination of parameters provided to multi_pair_cached"),
         }
     }
