@@ -364,7 +364,7 @@ impl MacroBuilder {
                 let ret_val = ();
             },
             ReturnType::Type(_, ty) => quote! {
-                let ret_val = jolt::postcard::from_bytes::<#ty>(&output_io_device.outputs).unwrap();
+                let ret_val = jolt::postcard::from_bytes::<#ty>(&io_device.outputs).unwrap();
             },
         };
 
@@ -392,6 +392,7 @@ impl MacroBuilder {
                 #(#set_program_args;)*
 
                 let (io_device, trace) = program.trace(&input_bytes);
+                #handle_return
 
                 let (jolt_proof, /*jolt_commitments,*/ output_io_device, _) = RV32IJoltVM::prove(
                     io_device,
@@ -399,7 +400,6 @@ impl MacroBuilder {
                     preprocessing,
                 );
 
-                #handle_return
 
                 let proof = jolt::JoltHyperKZGProof {
                     proof: jolt_proof,
