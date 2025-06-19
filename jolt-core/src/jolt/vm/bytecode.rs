@@ -39,6 +39,10 @@ impl BytecodePreprocessing {
         let mut virtual_address_map = BTreeMap::new();
         let mut virtual_address = 1; // Account for no-op instruction prepended to bytecode
         for instruction in bytecode.iter() {
+            if instruction.normalize().address == 0 {
+                // ignore unimplemented instructions
+                continue;
+            }
             let instr = instruction.normalize();
             debug_assert!(instr.address >= RAM_START_ADDRESS as usize);
             debug_assert!(instr.address % BYTES_PER_INSTRUCTION == 0);
