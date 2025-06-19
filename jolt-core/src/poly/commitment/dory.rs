@@ -84,7 +84,7 @@ impl<F: JoltField> DoryField for JoltFieldWrapper<F> {
 }
 
 #[repr(transparent)]
-#[derive(Debug, Clone, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltGroupWrapper<G: CurveGroup>(pub G);
 
 impl<G> DoryGroup for JoltGroupWrapper<G>
@@ -114,6 +114,8 @@ where
         Self(G::rand(rng))
     }
 }
+
+
 
 #[repr(transparent)]
 #[derive(Debug, Clone, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
@@ -950,7 +952,29 @@ where
             max_num_vars,
             Some(&srs_file_name), // Will load if exists, generate and save if not
         );
-        prover_setup.init_cache();
+        // Initialize caches manually since init_cache requires traits we can't implement
+        // due to orphan rules. We'll directly create the caches from the setup's generators.
+        use ark_bn254::{G1Affine, G2Affine};
+        use dory::curve::{G1Cache, G2Cache};
+        
+        // Extract G1 affine points from the wrapped projective points
+        let g1_affines: Vec<G1Affine> = prover_setup.core.g1_vec
+            .iter()
+            .map(|wrapped| wrapped.0.into_affine())
+            .collect();
+        
+        // Extract G2 affine points from the wrapped projective points  
+        let g2_affines: Vec<G2Affine> = prover_setup.core.g2_vec
+            .iter()
+            .map(|wrapped| wrapped.0.into_affine())
+            .collect();
+            
+        // Extract g_fin as affine
+        let g_fin_affine: G2Affine = prover_setup.core.g_fin.0.into_affine();
+        
+        // Create and assign the caches
+        prover_setup.g1_cache = Some(G1Cache::new(&g1_affines));
+        prover_setup.g2_cache = Some(G2Cache::new(&g2_affines, Some(&g_fin_affine)));
 
         DorySetup {
             prover_setup,
