@@ -347,7 +347,7 @@ macro_rules! define_rv32im_enums {
                             ..Default::default()
                         }
                     },
-                    RV32IMInstruction::UNIMPL => panic!("Unsupported instruction: {:?}", self),
+                    RV32IMInstruction::UNIMPL => Default::default(),
                     $(
                         RV32IMInstruction::$instr(instr) => NormalizedInstruction {
                             address: instr.address as usize,
