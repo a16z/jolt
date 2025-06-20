@@ -39,7 +39,7 @@ icicle = [
 
 [dependencies]
 ark-bn254 = "0.5.0"
-jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "markos/4dim-glv" }
+jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-ec = { version = "0.5.0", default-features = false }
 ark-ff = { version = "0.5.0", default-features = false }
 ark-serialize = { version = "0.5.0", default-features = false, features = [
@@ -91,7 +91,7 @@ rand_distr = "0.4.3"
 anyhow = "1.0.97"
 derive_more = { version = "2.0.1", features = ["from"] }
 paste = "1.0.15"
-dory = { git = "https://github.com/spaceandtimefdn/sxt-dory", branch = "v1.0.0"}
+dory = { git = "https://github.com/spaceandtimefdn/sxt-dory", branch = "dev/twist-shout"}
 lazy_static = "1.5.0"
 
 [dev-dependencies]

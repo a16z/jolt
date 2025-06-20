@@ -98,10 +98,10 @@ inherits = "release"
 debug = false
 
 [patch.crates-io]
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "markos/4dim-glv" }
-ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "markos/4dim-glv" }
-ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "markos/4dim-glv" }
-ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "markos/4dim-glv" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]

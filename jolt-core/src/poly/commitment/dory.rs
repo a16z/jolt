@@ -36,7 +36,7 @@ use dory::{
     verify, DoryProof, DoryProofBuilder, Polynomial as DoryPolynomial, ProverSetup, VerifierSetup,
 };
 
-// Import windowed types for memory-efficient caching
+// memory-efficient caching utils (~20x precompute cost for size of srs)
 use jolt_optimizations::{
     Windowed2Signed2Data, Windowed2Signed4Data,
     glv_two_precompute_windowed2_signed, glv_four_precompute_windowed2_signed,
@@ -534,7 +534,7 @@ where
                     return Self::GT::identity();
                 }
 
-                // Extract prepared values from caches - no allocation needed
+                // Extract prepared values from caches 
                 let g1_prepared: Vec<&BnG1Prepared> = (0..g1_c)
                     .map(|i| {
                         g1_cache
@@ -717,9 +717,6 @@ where
     }
 }
 
-// Dory's Poly trait: right now it uses default implementations for the poly utilities. We will want to override them
-// for the sparse case or for further optimizations.
-// We implement get() and len() since they do not have default implementations.
 impl<F, G> DoryPolynomial<JoltFieldWrapper<F>, JoltGroupWrapper<G>> for MultilinearPolynomial<F>
 where
     F: JoltField + PrimeField,
@@ -973,29 +970,33 @@ where
             max_num_vars,
             Some(&srs_file_name), // Will load if exists, generate and save if not
         );
-        // Initialize caches manually since init_cache requires traits we can't implement
-        // due to orphan rules. We'll directly create the caches from the setup's generators.
-        use ark_bn254::{G1Affine, G2Affine};
-        use dory::curve::{G1Cache, G2Cache};
         
-        // Extract G1 affine points from the wrapped projective points
-        let g1_affines: Vec<G1Affine> = prover_setup.core.g1_vec
-            .iter()
-            .map(|wrapped| wrapped.0.into_affine())
-            .collect();
-        
-        // Extract G2 affine points from the wrapped projective points  
-        let g2_affines: Vec<G2Affine> = prover_setup.core.g2_vec
-            .iter()
-            .map(|wrapped| wrapped.0.into_affine())
-            .collect();
+        // @TODO:
+        // Due to orphan rule we directly create cache (dory does expose init_cache()). Currently cache is disabled due to
+        // bad performance from memory swaps -- further optimization needed to find a memory-balanced cache solution.
+        /*
+            use ark_bn254::{G1Affine, G2Affine};
+            use dory::curve::{G1Cache, G2Cache};
             
-        // Extract g_fin as affine
-        let g_fin_affine: G2Affine = prover_setup.core.g_fin.0.into_affine();
-        
-        // Create and assign the caches
-        prover_setup.g1_cache = Some(G1Cache::new(&g1_affines));
-        prover_setup.g2_cache = Some(G2Cache::new(&g2_affines, Some(&g_fin_affine)));
+            // Extract G1 affine points from the wrapped projective points
+            let g1_affines: Vec<G1Affine> = prover_setup.core.g1_vec
+                .iter()
+                .map(|wrapped| wrapped.0.into_affine())
+                .collect();
+            
+            // Extract G2 affine points from the wrapped projective points  
+            let g2_affines: Vec<G2Affine> = prover_setup.core.g2_vec
+                .iter()
+                .map(|wrapped| wrapped.0.into_affine())
+                .collect();
+                
+            // Extract g_fin as affine
+            let g_fin_affine: G2Affine = prover_setup.core.g_fin.0.into_affine();
+            
+            // Create and assign the caches
+            prover_setup.g1_cache = Some(G1Cache::new(&g1_affines));
+            prover_setup.g2_cache = Some(G2Cache::new(&g2_affines, Some(&g_fin_affine)));
+        */
 
         DorySetup {
             prover_setup,
