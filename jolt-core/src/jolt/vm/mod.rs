@@ -369,7 +369,7 @@ where
         );
 
         let bytecode_proof = BytecodeShoutProof::prove(
-            &preprocessing.shared.bytecode,
+            &preprocessing,
             &trace,
             &mut opening_accumulator,
             &mut transcript,
@@ -470,8 +470,10 @@ where
         )?;
         proof.bytecode.verify(
             &preprocessing.shared.bytecode,
+            &proof.commitments,
             padded_trace_length,
             &mut transcript,
+            &mut opening_accumulator,
         )?;
 
         // Batch-verify all openings

@@ -42,8 +42,14 @@ impl<F: JoltField> EqPolynomial<F> {
     pub fn bind_parallel(&mut self, r_j: F, order: BindingOrder) {
         match self {
             EqPolynomial::Default(eq_poly) => eq_poly.bind_parallel(r_j, order),
-            EqPolynomial::Split(eq_poly) => todo!(),
-            EqPolynomial::Gruen(eq_poly) => todo!(),
+            EqPolynomial::Split(eq_poly) => {
+                assert_eq!(order, BindingOrder::LowToHigh);
+                eq_poly.bind(r_j);
+            }
+            EqPolynomial::Gruen(eq_poly) => {
+                assert_eq!(order, BindingOrder::LowToHigh);
+                eq_poly.bind(r_j);
+            }
         }
     }
 

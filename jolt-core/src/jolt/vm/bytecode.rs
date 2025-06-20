@@ -2,6 +2,10 @@ use std::collections::BTreeMap;
 
 use crate::{
     field::JoltField,
+    jolt::{
+        vm::{JoltCommitments, JoltProverPreprocessing},
+        witness::CommittedPolynomials,
+    },
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         compact_polynomial::SmallScalar,
@@ -10,7 +14,8 @@ use crate::{
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
-        opening_proof::ProverOpeningAccumulator,
+        opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
+        split_eq_poly::SplitEqPolynomial,
         unipoly::{CompressedUniPoly, UniPoly},
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
@@ -140,12 +145,13 @@ pub struct BytecodeShoutProof<F: JoltField, ProofTranscript: Transcript> {
 impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTranscript> {
     #[tracing::instrument(skip_all, name = "BytecodeShoutProof::prove")]
     pub fn prove<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
-        preprocessing: &BytecodePreprocessing,
+        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
         trace: &[RV32IMCycle],
-        _opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Self {
-        let K = preprocessing.bytecode.len().next_power_of_two();
+        let bytecode_preprocessing = &preprocessing.shared.bytecode;
+        let K = bytecode_preprocessing.bytecode.len().next_power_of_two();
         let T = trace.len();
         // TODO: this should come from Spartan
         let r_cycle: Vec<F> = transcript.challenge_vector(T.log_2());
@@ -175,7 +181,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
                 let mut result_shift: Vec<F> = unsafe_allocate_zero_vec(K);
                 let mut j = chunk_index * chunk_size;
                 for cycle in trace_chunk {
-                    let k = preprocessing.get_pc(cycle, j == trace.len() - 1);
+                    let k = bytecode_preprocessing.get_pc(cycle, j == trace.len() - 1);
                     result[k] += E[j];
                     result_shift[k] += E_shift[j];
                     j += 1;
@@ -202,7 +208,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
         // Used to combine the various fields in each instruction into a single
         // field element.
         let gamma: F = transcript.challenge_scalar();
-        let val: Vec<F> = bytecode_to_val(&preprocessing.bytecode, gamma);
+        let val: Vec<F> = bytecode_to_val(&bytecode_preprocessing.bytecode, gamma);
 
         let rv_claim: F = F
             .par_iter()
@@ -273,15 +279,37 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
 
         let ra_claim = ra.final_sumcheck_claim();
 
+        let unbound_ra_poly =
+            CommittedPolynomials::BytecodeRa.generate_witness(preprocessing, trace);
+
+        let r_address_rev = r_address.iter().cloned().rev().collect::<Vec<_>>();
+        let eq_poly =
+            EqPolynomial::Split(SplitEqPolynomial::new_with_split(&r_cycle, &r_address_rev));
+
+        let r_concat = [r_cycle.as_slice(), r_address_rev.as_slice()].concat();
+        opening_accumulator.append(
+            &[&unbound_ra_poly],
+            eq_poly,
+            r_concat,
+            &[ra_claim],
+            transcript,
+        );
+
         let core_piop_sumcheck_proof = SumcheckInstanceProof::new(compressed_polys);
 
-        let (booleanity_sumcheck_proof, _r_address_prime, _r_cycle_prime, ra_claim_prime) =
-            prove_booleanity(preprocessing, trace, &r_address, E, F, transcript);
+        let (booleanity_sumcheck_proof, r_address_prime, r_cycle_prime, ra_claim_prime) =
+            prove_booleanity(&bytecode_preprocessing, trace, &r_address, E, F, transcript);
+
+        let r_address_prime = r_address_prime.iter().cloned().rev().collect::<Vec<_>>();
+        let eq_poly = EqPolynomial::Split(SplitEqPolynomial::new_with_split(
+            &r_cycle_prime.iter().rev().cloned().collect::<Vec<_>>(),
+            &r_address_prime,
+        ));
 
         let challenge: F = transcript.challenge_scalar();
         let raf_ra_shift = MultilinearPolynomial::from(F_shift);
         let raf_sumcheck = RafEvaluationProof::prove(
-            preprocessing,
+            bytecode_preprocessing,
             trace,
             raf_ra,
             raf_ra_shift,
@@ -292,7 +320,14 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
         );
 
         // TODO: Reduce 2 ra claims to 1 (Section 4.5.2 of Proofs, Arguments, and Zero-Knowledge)
-        // TODO: Append to opening proof accumulator
+        let r_concat = [r_cycle_prime, r_address_prime].concat();
+        opening_accumulator.append(
+            &[&unbound_ra_poly],
+            eq_poly,
+            r_concat,
+            &[ra_claim_prime],
+            transcript,
+        );
 
         Self {
             core_piop_sumcheck: core_piop_sumcheck_proof,
@@ -304,11 +339,13 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
         }
     }
 
-    pub fn verify(
+    pub fn verify<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
         &self,
         preprocessing: &BytecodePreprocessing,
+        commitments: &JoltCommitments<F, PCS, ProofTranscript>,
         T: usize,
         transcript: &mut ProofTranscript,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
     ) -> Result<(), ProofVerifyError> {
         let K = preprocessing.bytecode.len();
         // TODO: this should come from Spartan
@@ -333,6 +370,10 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
             "Core PIOP + Hamming weight sumcheck failed"
         );
 
+        let r_concat = [r_cycle.as_slice(), r_address.as_slice()].concat();
+        let ra_commitment = &commitments.commitments[CommittedPolynomials::BytecodeRa.to_index()];
+        opening_accumulator.append(&[ra_commitment], r_concat, &[&self.ra_claim], transcript);
+
         let (sumcheck_claim, r_booleanity) =
             self.booleanity_sumcheck
                 .verify(F::zero(), K.log_2() + T.log_2(), 3, transcript)?;
@@ -351,7 +392,15 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
         let _ = self.raf_sumcheck.verify(K, challenge, transcript)?;
 
         // TODO: Reduce 2 ra claims to 1 (Section 4.5.2 of Proofs, Arguments, and Zero-Knowledge)
-        // TODO: Append to opening proof accumulator
+        let r_address_prime = r_address_prime.iter().cloned().rev().collect::<Vec<_>>();
+        let r_concat = [r_cycle_prime, &r_address_prime].concat();
+        let ra_commitment = &commitments.commitments[CommittedPolynomials::BytecodeRa.to_index()];
+        opening_accumulator.append(
+            &[ra_commitment],
+            r_concat,
+            &[&self.ra_claim_prime],
+            transcript,
+        );
 
         Ok(())
     }

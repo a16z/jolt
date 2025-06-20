@@ -173,6 +173,28 @@ where
             .ok_or(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
     }
 
+    fn msm_field_elements_ref(
+        bases: &[&Self::MulBase],
+        gpu_bases: Option<&[GpuBaseType<Self>]>,
+        scalars: &[Self::ScalarField],
+        max_num_bits: Option<usize>,
+        use_icicle: bool,
+    ) -> Result<Self, ProofVerifyError> {
+        (bases.len() >= scalars.len())
+            .then(|| {
+                let scalars = scalars
+                    .par_iter()
+                    .map(|s| s.into_bigint())
+                    .collect::<Vec<_>>();
+                if Self::NEGATION_IS_CHEAP {
+                    msm_bigint_wnaf_ref(bases, &scalars, 254)
+                } else {
+                    todo!()
+                }
+            })
+            .ok_or(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
+    }
+
     #[tracing::instrument(skip_all)]
     fn msm(
         bases: &[Self::MulBase],
@@ -567,6 +589,67 @@ fn msm_bigint_wnaf<F: JoltField + PrimeField, V: VariableBaseMSM<ScalarField = F
                 match 0.cmp(&scalar) {
                     Ordering::Less => buckets[(scalar - 1) as usize] += base,
                     Ordering::Greater => buckets[(-scalar - 1) as usize] -= base,
+                    Ordering::Equal => (),
+                }
+            }
+
+            let mut running_sum = V::zero();
+            let mut res = V::zero();
+            buckets.into_iter().rev().for_each(|b| {
+                running_sum += &b;
+                res += &running_sum;
+            });
+            res
+        })
+        .collect();
+
+    // We store the sum for the lowest window.
+    let lowest = *window_sums.first().unwrap();
+
+    // We're traversing windows from high to low.
+    lowest
+        + window_sums[1..]
+            .iter()
+            .rev()
+            .fold(zero, |mut total, sum_i| {
+                total += sum_i;
+                for _ in 0..c {
+                    total.double_in_place();
+                }
+                total
+            })
+}
+
+// Compute msm using windowed non-adjacent form
+#[tracing::instrument(skip_all)]
+fn msm_bigint_wnaf_ref<F: JoltField + PrimeField, V: VariableBaseMSM<ScalarField = F>>(
+    bases: &[&V::MulBase],
+    scalars: &[<F as PrimeField>::BigInt],
+    max_num_bits: usize,
+) -> V {
+    let c = if bases.len() < 32 {
+        3
+    } else {
+        ln_without_floats(bases.len()) + 2
+    };
+
+    let num_bits = max_num_bits;
+    let digits_count = num_bits.div_ceil(c);
+    let scalar_digits = scalars
+        .into_par_iter()
+        .flat_map_iter(|s| make_digits_bigint(s, c, num_bits))
+        .collect::<Vec<_>>();
+    let zero = V::zero();
+    let window_sums: Vec<_> = (0..digits_count)
+        .into_par_iter()
+        .map(|i| {
+            let mut buckets = vec![zero; 1 << c];
+            for (digits, base) in scalar_digits.chunks(digits_count).zip(bases) {
+                // digits is the digits thing of the first scalar?
+                let scalar = digits[i];
+                match 0.cmp(&scalar) {
+                    Ordering::Less => buckets[(scalar - 1) as usize] += *base,
+                    Ordering::Greater => buckets[(-scalar - 1) as usize] -= *base,
                     Ordering::Equal => (),
                 }
             }

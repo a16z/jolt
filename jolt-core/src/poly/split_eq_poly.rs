@@ -242,6 +242,20 @@ impl<F: JoltField> SplitEqPolynomial<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "SplitEqPolynomial::new_with_split")]
+    pub fn new_with_split(w1: &[F], w2: &[F]) -> Self {
+        let (E1, E2) = rayon::join(|| EqPolynomial::evals(w1), || EqPolynomial::evals(w2));
+        let E1_len = E1.len();
+        let E2_len = E2.len();
+        Self {
+            num_vars: w1.len() + w2.len(),
+            E1,
+            E1_len,
+            E2,
+            E2_len,
+        }
+    }
+
     pub fn get_num_vars(&self) -> usize {
         self.num_vars
     }
@@ -280,6 +294,33 @@ impl<F: JoltField> SplitEqPolynomial<F> {
             }
         }
     }
+
+    // #[tracing::instrument(skip_all, name = "SplitEqPolynomial::bind_high_to_low")]
+    // pub fn bind_high_to_low(&mut self, r: F) {
+    //     if self.E1_len == 1 {
+    //         // E_1 is already completely bound, so we bind E_2 (high-order to low-order)
+    //         let n = self.E2_len / 2;
+    //         for i in 0..n {
+    //             self.E2[i] = (F::one() - r) * self.E2[i] + r * self.E2[i + n];
+    //         }
+    //         self.E2_len = n;
+    //     } else {
+    //         // Bind E_1 (high-order to low-order)
+    //         let n = self.E1_len / 2;
+    //         for i in 0..n {
+    //             self.E1[i] = (F::one() - r) * self.E1[i] + r * self.E1[i + n];
+    //         }
+    //         self.E1_len = n;
+
+    //         // If E_1 is now completely bound, we will be switching over to the
+    //         // linear-time sumcheck prover, using E_1 * E_2:
+    //         if self.E1_len == 1 {
+    //             self.E2[..self.E2_len]
+    //                 .iter_mut()
+    //                 .for_each(|eval| *eval *= self.E1[0]);
+    //         }
+    //     }
+    // }
 
     #[cfg(test)]
     pub fn merge(&self) -> DensePolynomial<F> {

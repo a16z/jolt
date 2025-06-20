@@ -9,6 +9,7 @@ use crate::{
     utils::{
         errors::ProofVerifyError,
         math::Math,
+        thread::unsafe_allocate_zero_vec,
         transcript::{AppendToTranscript, Transcript},
     },
 };
@@ -789,7 +790,48 @@ where
                     )
                 })
                 .collect(),
-            MultilinearPolynomial::Sparse(_) => todo!(),
+            MultilinearPolynomial::Sparse(poly) => {
+                let num_rows = poly.num_rows;
+                let K = get_K();
+                println!("# rows = {num_rows}");
+                let mut row_commitments: Vec<_> = (0..num_rows)
+                    .into_par_iter()
+                    .map(|row_index| {
+                        let (bases, scalars): (Vec<&G::Affine>, Vec<F>) = poly
+                            .sparse_coeffs
+                            .iter()
+                            .flat_map(|group| {
+                                group.iter().filter_map(|(t, k, coeff)| {
+                                    let global_index = *t as u128 * K as u128 + *k as u128;
+                                    if global_index / row_len as u128 == row_index as u128 {
+                                        let col_index = global_index % row_len as u128;
+                                        Some((&bases[col_index as usize], coeff))
+                                    } else {
+                                        None
+                                    }
+                                })
+                            })
+                            .unzip();
+
+                        let row_commitment: G = VariableBaseMSM::msm_field_elements_ref(
+                            &bases, None, &scalars, None, false,
+                        )
+                        .unwrap();
+                        JoltGroupWrapper(row_commitment)
+                    })
+                    .collect();
+                poly.dense_submatrix
+                    .par_chunks(row_len)
+                    .zip(row_commitments.par_iter_mut())
+                    .for_each(|(dense_row, commitment)| {
+                        let msm_result: G = VariableBaseMSM::msm_field_elements(
+                            &bases, None, dense_row, None, false,
+                        )
+                        .unwrap();
+                        *commitment = JoltGroupWrapper(commitment.0 + msm_result)
+                    });
+                row_commitments
+            }
             MultilinearPolynomial::OneHot(poly) => {
                 let num_rows = poly.num_rows();
                 let K = get_K();
@@ -800,9 +842,8 @@ where
                         let row_commitment = poly
                             .nonzero_indices
                             .iter()
-                            .enumerate()
                             .filter_map(|(t, k)| {
-                                let global_index = *k as u128 * K as u128 + t as u128;
+                                let global_index = *t as u128 * K as u128 + *k as u128;
                                 if global_index / row_len as u128 == row_index as u128 {
                                     let col_index = global_index % row_len as u128;
                                     Some(bases[col_index as usize])
@@ -850,7 +891,59 @@ where
                     )
                 })
                 .collect(),
-            _ => todo!(),
+            MultilinearPolynomial::U8Scalars(poly) => todo!(),
+            MultilinearPolynomial::U16Scalars(poly) => todo!(),
+            MultilinearPolynomial::U32Scalars(poly) => todo!(),
+            MultilinearPolynomial::U64Scalars(poly) => todo!(),
+            MultilinearPolynomial::I64Scalars(poly) => todo!(),
+            MultilinearPolynomial::Sparse(poly) => {
+                let K = get_K();
+                let row_len = num_columns;
+                let num_chunks = 4 * rayon::current_num_threads().next_power_of_two();
+                let chunk_size = std::cmp::max(1, num_columns / num_chunks);
+                let num_chunks = num_columns / chunk_size;
+                let mut product: Vec<_> = (0..num_chunks)
+                    .into_par_iter()
+                    .flat_map(|chunk_index| {
+                        let min_col_index = chunk_index * chunk_size;
+                        let max_col_index = min_col_index + chunk_size;
+                        let mut result: Vec<JoltFieldWrapper<F>> =
+                            vec![JoltFieldWrapper(F::zero()); chunk_size];
+                        for group in poly.sparse_coeffs.iter() {
+                            for (t, k, coeff) in group.iter() {
+                                let global_index = *t as u128 * K as u128 + *k as u128;
+                                let col_index = (global_index % row_len as u128) as usize;
+                                if col_index >= min_col_index && col_index < max_col_index {
+                                    let row_index = (global_index / row_len as u128) as usize;
+                                    result[col_index % chunk_size].0 +=
+                                        left_vec[row_index] * *coeff;
+                                }
+                            }
+                        }
+                        result
+                    })
+                    .collect();
+
+                product
+                    .par_iter_mut()
+                    .enumerate()
+                    .for_each(|(col_index, dot_product)| {
+                        *dot_product = JoltFieldWrapper(
+                            dot_product.0
+                                + poly
+                                    .dense_submatrix
+                                    .iter()
+                                    .skip(col_index)
+                                    .step_by(num_columns)
+                                    .zip(left_vec.iter())
+                                    .map(|(&a, &b)| -> F { a * b })
+                                    .sum::<F>(),
+                        );
+                    });
+
+                product
+            }
+            MultilinearPolynomial::OneHot(poly) => todo!(),
         }
     }
 }

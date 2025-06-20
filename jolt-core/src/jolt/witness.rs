@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use rayon::prelude::*;
 use tracer::instruction::RV32IMCycle;
 
@@ -72,6 +73,14 @@ impl CommittedPolynomials {
 
     pub fn from_index(index: usize) -> Self {
         ALL_COMMITTED_POLYNOMIALS[index]
+    }
+
+    pub fn to_index(&self) -> usize {
+        ALL_COMMITTED_POLYNOMIALS
+            .iter()
+            .find_position(|poly| *poly == self)
+            .unwrap()
+            .0
     }
 
     pub fn generate_witness<F, PCS, ProofTranscript>(

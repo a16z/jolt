@@ -33,7 +33,7 @@ pub enum MultilinearPolynomial<F: JoltField> {
     U64Scalars(CompactPolynomial<u64, F>),
     I64Scalars(CompactPolynomial<i64, F>),
     Sparse(SparseMatrixPolynomial<F>),
-    OneHot(OneHotPolynomial),
+    OneHot(OneHotPolynomial<F>),
 }
 
 /// The order in which polynomial variables are bound in sumcheck
@@ -387,6 +387,58 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::OneHot(_) => todo!(),
         }
     }
+
+    #[tracing::instrument(skip_all, name = "MultilinearPolynomial::evaluate_with_eq")]
+    pub fn evaluate_with_eq(&self, eq_poly: &EqPolynomial<F>) -> F {
+        match eq_poly {
+            EqPolynomial::Default(eq) => match self {
+                MultilinearPolynomial::LargeScalars(poly) => {
+                    poly.evaluate_at_chi_low_optimized(&eq.Z)
+                }
+                _ => self.dot_product(&eq.Z),
+            },
+            EqPolynomial::Split(split_eq) => match self {
+                MultilinearPolynomial::OneHot(poly) => {
+                    assert_eq!(poly.nonzero_indices.len(), split_eq.E1_len);
+                    poly.nonzero_indices
+                        .iter()
+                        .map(|(t, k)| split_eq.E1[*t] * split_eq.E2[*k])
+                        .sum()
+                }
+                _ => unimplemented!("Unexpected polynomial type"),
+            },
+            EqPolynomial::Gruen(gruen_split_eq) => todo!(),
+        }
+    }
+
+    #[tracing::instrument(skip_all, name = "MultilinearPolynomial::batch_evaluate_with_eq")]
+    pub fn batch_evaluate_with_eq(polys: &[&Self], eq_poly: &EqPolynomial<F>) -> Vec<F> {
+        match eq_poly {
+            EqPolynomial::Default(eq) => polys
+                .into_par_iter()
+                .map(|&poly| match poly {
+                    MultilinearPolynomial::LargeScalars(poly) => {
+                        poly.evaluate_at_chi_low_optimized(&eq.Z)
+                    }
+                    _ => poly.dot_product(&eq.Z),
+                })
+                .collect(),
+            EqPolynomial::Split(split_eq) => polys
+                .par_iter()
+                .map(|poly| match poly {
+                    MultilinearPolynomial::OneHot(poly) => {
+                        assert_eq!(poly.nonzero_indices.len(), split_eq.E1_len);
+                        poly.nonzero_indices
+                            .iter()
+                            .map(|(t, k)| split_eq.E1[*t] * split_eq.E2[*k])
+                            .sum()
+                    }
+                    _ => unimplemented!("Unexpected polynomial type"),
+                })
+                .collect(),
+            EqPolynomial::Gruen(gruen_split_eq) => todo!(),
+        }
+    }
 }
 
 impl<F: JoltField> From<Vec<F>> for MultilinearPolynomial<F> {
@@ -672,7 +724,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
             MultilinearPolynomial::U64Scalars(poly) => poly.bind_parallel(r, order),
             MultilinearPolynomial::I64Scalars(poly) => poly.bind_parallel(r, order),
             MultilinearPolynomial::Sparse(_) => todo!(),
-            MultilinearPolynomial::OneHot(_) => todo!(),
+            MultilinearPolynomial::OneHot(poly) => poly.bind_parallel(r, order),
         }
     }
 
@@ -688,7 +740,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
             MultilinearPolynomial::U64Scalars(poly) => poly.final_sumcheck_claim(),
             MultilinearPolynomial::I64Scalars(poly) => poly.final_sumcheck_claim(),
             MultilinearPolynomial::Sparse(_) => todo!(),
-            MultilinearPolynomial::OneHot(_) => todo!(),
+            MultilinearPolynomial::OneHot(poly) => poly.final_sumcheck_claim(),
         }
     }
 }
@@ -698,6 +750,10 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
     fn evaluate(&self, r: &[F]) -> F {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly.evaluate(r),
+            MultilinearPolynomial::Sparse(_) => {
+                // Not actually used
+                F::zero()
+            }
             _ => {
                 let chis = EqPolynomial::evals(r);
                 self.dot_product(&chis)
@@ -708,31 +764,16 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::batch_evaluate")]
     fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<F>, Vec<F>) {
         let eq = EqPolynomial::evals(r);
-
-        if polys
-            .iter()
-            .any(|poly| !matches!(poly, MultilinearPolynomial::LargeScalars(_)))
-        {
-            let evals: Vec<F> = polys
-                .into_par_iter()
-                .map(|&poly| match poly {
-                    MultilinearPolynomial::LargeScalars(poly) => {
-                        poly.evaluate_at_chi_low_optimized(&eq)
-                    }
-                    _ => poly.dot_product(&eq),
-                })
-                .collect();
-            (evals, eq)
-        } else {
-            let evals: Vec<F> = polys
-                .into_par_iter()
-                .map(|&poly| {
-                    let poly: &DensePolynomial<F> = poly.try_into().unwrap();
+        let evals: Vec<F> = polys
+            .into_par_iter()
+            .map(|&poly| match poly {
+                MultilinearPolynomial::LargeScalars(poly) => {
                     poly.evaluate_at_chi_low_optimized(&eq)
-                })
-                .collect();
-            (evals, eq)
-        }
+                }
+                _ => poly.dot_product(&eq),
+            })
+            .collect();
+        (evals, eq)
     }
 
     #[inline]

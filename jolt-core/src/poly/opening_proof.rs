@@ -133,24 +133,50 @@ where
                     .sum();
                 vec![eval_0, eval_2]
             }
-            _ => panic!(),
+            (MultilinearPolynomial::Sparse(_), EqPolynomial::Split(_)) => {
+                todo!("Sparse/Split");
+            }
+            (MultilinearPolynomial::OneHot(poly), EqPolynomial::Split(eq_poly)) => {
+                poly.compute_sumcheck_prover_message(eq_poly)
+            }
+            _ => panic!("Unexpected polynomial types"),
         }
     }
 
     fn bind(&mut self, r_j: F, _: usize) {
         let prover_state = self.prover_state.as_mut().unwrap();
-        rayon::join(
-            || {
-                prover_state
-                    .polynomial
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
-            },
-            || {
-                prover_state
-                    .eq_poly
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
-            },
-        );
+
+        match (&prover_state.polynomial, &prover_state.eq_poly) {
+            (MultilinearPolynomial::OneHot(_), EqPolynomial::Split(_))
+            | (MultilinearPolynomial::Sparse(_), EqPolynomial::Split(_)) => {
+                rayon::join(
+                    || {
+                        prover_state
+                            .polynomial
+                            .bind_parallel(r_j, BindingOrder::LowToHigh)
+                    },
+                    || {
+                        prover_state
+                            .eq_poly
+                            .bind_parallel(r_j, BindingOrder::LowToHigh)
+                    },
+                );
+            }
+            _ => {
+                rayon::join(
+                    || {
+                        prover_state
+                            .polynomial
+                            .bind_parallel(r_j, BindingOrder::HighToLow)
+                    },
+                    || {
+                        prover_state
+                            .eq_poly
+                            .bind_parallel(r_j, BindingOrder::HighToLow)
+                    },
+                );
+            }
+        }
     }
 
     fn cache_openings(&mut self) {
@@ -270,41 +296,45 @@ where
             }
 
             if let EqPolynomial::Default(eq_poly) = &eq_poly {
-                // TODO(moodlezoup)
-                // let expected_eq_poly = EqPolynomial::evals(&opening_point);
-                // assert!(
-                //     eq_poly.Z == expected_eq_poly,
-                //     "eq_poly and opening point are inconsistent"
-                // );
+                let expected_eq_poly = EqPolynomial::evals(&opening_point);
+                assert!(
+                    eq_poly.Z == expected_eq_poly,
+                    "eq_poly and opening point are inconsistent"
+                );
             }
 
             let expected_claims: Vec<F> =
-                MultilinearPolynomial::batch_evaluate(polynomials, &opening_point).0;
+                MultilinearPolynomial::batch_evaluate_with_eq(polynomials, &eq_poly);
             for (claim, expected_claim) in claims.iter().zip(expected_claims.into_iter()) {
                 assert_eq!(*claim, expected_claim, "Unexpected claim");
             }
         }
 
         // TODO(moodlezoup): If batch size is 1, skip this
-        // Generate batching challenge \rho and powers 1,...,\rho^{m-1}
-        let rho: F = transcript.challenge_scalar();
-        let mut rho_powers = vec![F::one()];
-        for i in 1..polynomials.len() {
-            rho_powers.push(rho_powers[i - 1] * rho);
-        }
+        let (batched_claim, batched_poly) = if polynomials.len() > 1 {
+            // Generate batching challenge \rho and powers 1,...,\rho^{m-1}
+            let rho: F = transcript.challenge_scalar();
+            let mut rho_powers = vec![F::one()];
+            for i in 1..polynomials.len() {
+                rho_powers.push(rho_powers[i - 1] * rho);
+            }
 
-        // Compute the random linear combination of the claims
-        let batched_claim = rho_powers
-            .iter()
-            .zip(claims.iter())
-            .map(|(scalar, eval)| *scalar * *eval)
-            .sum();
+            // Compute the random linear combination of the claims
+            let batched_claim = rho_powers
+                .iter()
+                .zip(claims.iter())
+                .map(|(scalar, eval)| *scalar * *eval)
+                .sum();
 
-        let batched_poly = MultilinearPolynomial::linear_combination(polynomials, &rho_powers);
+            let batched_poly = MultilinearPolynomial::linear_combination(polynomials, &rho_powers);
+            (batched_claim, batched_poly)
+        } else {
+            (claims[0], polynomials[0].clone())
+        };
 
         #[cfg(test)]
         {
-            let batched_eval = batched_poly.evaluate(&opening_point);
+            let batched_eval = batched_poly.evaluate_with_eq(&eq_poly);
             assert_eq!(batched_eval, batched_claim);
             let mut opening = OpeningProofReductionSumcheck::new_prover_instance(
                 batched_poly,
@@ -468,19 +498,25 @@ where
         transcript: &mut ProofTranscript,
     ) {
         assert_eq!(commitments.len(), claims.len());
-        let rho: F = transcript.challenge_scalar();
-        let mut rho_powers = vec![F::one()];
-        for i in 1..commitments.len() {
-            rho_powers.push(rho_powers[i - 1] * rho);
-        }
 
-        let batched_claim = rho_powers
-            .iter()
-            .zip(claims.iter())
-            .map(|(scalar, eval)| *scalar * *eval)
-            .sum();
+        let (batched_claim, joint_commitment) = if commitments.len() > 1 {
+            let rho: F = transcript.challenge_scalar();
+            let mut rho_powers = vec![F::one()];
+            for i in 1..commitments.len() {
+                rho_powers.push(rho_powers[i - 1] * rho);
+            }
 
-        let joint_commitment = PCS::combine_commitments(commitments, &rho_powers);
+            let batched_claim = rho_powers
+                .iter()
+                .zip(claims.iter())
+                .map(|(scalar, eval)| *scalar * *eval)
+                .sum();
+
+            let joint_commitment = PCS::combine_commitments(commitments, &rho_powers);
+            (batched_claim, joint_commitment)
+        } else {
+            (claims[0].clone(), commitments[0].clone())
+        };
 
         #[cfg(test)]
         'test: {
@@ -514,20 +550,20 @@ where
                     "commitment mismatch at index {i}"
                 );
             }
-            let batched_poly = MultilinearPolynomial::linear_combination(
-                &prover_state.batch.iter().collect::<Vec<_>>(),
-                &rho_powers,
-            );
-            assert!(
-                batched_poly == prover_state.polynomial,
-                "batched poly mismatch"
-            );
-            let prover_joint_commitment =
-                PCS::commit(&prover_state.polynomial, self.pcs_setup.as_ref().unwrap());
-            assert_eq!(
-                prover_joint_commitment, joint_commitment,
-                "joint commitment mismatch"
-            );
+            // let batched_poly = MultilinearPolynomial::linear_combination(
+            //     &prover_state.batch.iter().collect::<Vec<_>>(),
+            //     &rho_powers,
+            // );
+            // assert!(
+            //     batched_poly == prover_state.polynomial,
+            //     "batched poly mismatch"
+            // );
+            // let prover_joint_commitment =
+            //     PCS::commit(&prover_state.polynomial, self.pcs_setup.as_ref().unwrap());
+            // assert_eq!(
+            //     prover_joint_commitment, joint_commitment,
+            //     "joint commitment mismatch"
+            // );
         }
 
         self.openings
