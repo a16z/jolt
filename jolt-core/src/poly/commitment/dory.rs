@@ -115,8 +115,6 @@ where
     }
 }
 
-
-
 #[repr(transparent)]
 #[derive(Debug, Clone, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltGTWrapper<P: ArkPairing>(pub P::TargetField);
@@ -956,22 +954,34 @@ where
         // due to orphan rules. We'll directly create the caches from the setup's generators.
         use ark_bn254::{G1Affine, G2Affine};
         use dory::curve::{G1Cache, G2Cache};
-        
+
+        // # Safety
+        // JoltGroupWrapper always has same memory layout as underlying G1Projective here.
+        let g1_generators_raw: &[G1Projective] = unsafe {
+            std::slice::from_raw_parts(
+                prover_setup.core.g1_vec.as_ptr() as *const G1Projective,
+                prover_setup.core.g1_vec.len(),
+            )
+        };
+
         // Extract G1 affine points from the wrapped projective points
-        let g1_affines: Vec<G1Affine> = prover_setup.core.g1_vec
-            .iter()
-            .map(|wrapped| wrapped.0.into_affine())
-            .collect();
-        
-        // Extract G2 affine points from the wrapped projective points  
-        let g2_affines: Vec<G2Affine> = prover_setup.core.g2_vec
-            .iter()
-            .map(|wrapped| wrapped.0.into_affine())
-            .collect();
-            
+        let g1_affines: Vec<G1Affine> = G1Projective::normalize_batch(&g1_generators_raw);
+
+        // # Safety
+        // JoltGroupWrapper always has same memory layout as underlying G1Projective here.
+        let g2_generators_raw: &[G2Projective] = unsafe {
+            std::slice::from_raw_parts(
+                prover_setup.core.g2_vec.as_ptr() as *const G2Projective,
+                prover_setup.core.g2_vec.len(),
+            )
+        };
+
+        // Extract G2 affine points from the wrapped projective points
+        let g2_affines: Vec<G2Affine> = G2Projective::normalize_batch(&g2_generators_raw);
+
         // Extract g_fin as affine
         let g_fin_affine: G2Affine = prover_setup.core.g_fin.0.into_affine();
-        
+
         // Create and assign the caches
         prover_setup.g1_cache = Some(G1Cache::new(&g1_affines));
         prover_setup.g2_cache = Some(G2Cache::new(&g2_affines, Some(&g_fin_affine)));
