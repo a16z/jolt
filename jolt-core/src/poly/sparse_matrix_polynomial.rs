@@ -2,7 +2,7 @@ use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 use crate::field::JoltField;
 use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::eq_poly::{self, EqPolynomial};
+use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::split_eq_poly::SplitEqPolynomial;
 use crate::utils::compute_dotproduct;
 use crate::utils::math::Math;
@@ -254,40 +254,6 @@ impl<F: JoltField> OneHotPolynomial<F> {
         (T * self.K as u128 / row_length) as usize
     }
 
-    // pub fn from_increments(increments: Vec<(usize, i64)>) -> Self {
-    //     let T = get_T();
-    //     let global_K = get_K();
-    //     debug_assert_eq!(T, increments.len());
-
-    //     let num_columns = get_num_columns();
-    //     let column_height = get_max_num_rows();
-    //     let num_groups = num_columns / get_cycles_per_group();
-    //     let cycles_per_column = column_height / global_K;
-
-    //     // let column_groups: Vec<_> = increments
-    //     //     .par_iter()
-    //     //     .enumerate()
-    //     //     .chunks(T / num_groups)
-    //     //     .map(|chunk| {
-    //     //         chunk
-    //     //             .iter()
-    //     //             .map(|(t, (k, coeff))| {
-    //     //                 let column_index = t / cycles_per_column;
-    //     //                 let row_index = (t % cycles_per_column) * global_K + *k;
-    //     //                 (row_index, column_index, F::from_i64(*coeff))
-    //     //             })
-    //     //             .collect()
-    //     //     })
-    //     //     .collect();
-
-    //     let (nonzero_indices, nonzero_coeffs) = increments.into_iter().unzip();
-    //     Self {
-    //         K: global_K,
-    //         nonzero_indices,
-    //         nonzero_coeffs,
-    //     }
-    // }
-
     pub fn from_indices(indices: Vec<usize>, K: usize) -> Self {
         debug_assert_eq!(get_T(), indices.len());
 
@@ -318,23 +284,6 @@ impl<F: JoltField> OneHotPolynomial<F> {
             .par_iter()
             .map(|(t, k)| eq_left[*k] * eq_right[*t])
             .sum()
-
-        // if self.nonzero_coeffs.is_empty() {
-        //     // All nonzero coefficients are implicitly 1
-        //     self.nonzero_indices
-        //         .par_iter()
-        //         .enumerate()
-        //         .map(|(t, k)| eq_left[*k] * eq_right[t])
-        //         .sum()
-        // } else {
-        //     debug_assert_eq!(self.nonzero_indices.len(), self.nonzero_coeffs.len());
-        //     self.nonzero_indices
-        //         .par_iter()
-        //         .zip(self.nonzero_coeffs.par_iter())
-        //         .enumerate()
-        //         .map(|(t, (k, coeff))| eq_left[*k] * coeff.field_mul(eq_right[t]))
-        //         .sum()
-        // }
     }
 
     pub fn compute_sumcheck_prover_message(&self, eq_poly: &SplitEqPolynomial<F>) -> Vec<F> {
@@ -499,24 +448,6 @@ impl<F: JoltField> PolynomialBinding<F> for OneHotPolynomial<F> {
                 self.binding_scratch_space = self
                     .bound_coeffs
                     .par_chunk_by(|(_, k1, _), (_, k2, _)| k1 >> 1 == k2 >> 1)
-                    // .map(|chunk| {
-                    //     let mut sum_even_coeffs = F::zero();
-                    //     let mut sum_odd_coeffs = F::zero();
-                    //     for (t, k, coeff) in chunk {
-                    //         debug_assert_eq!(*t, 0);
-                    //         if k % 2 == 0 {
-                    //             sum_even_coeffs += *coeff;
-                    //         } else {
-                    //             sum_odd_coeffs += *coeff;
-                    //         }
-                    //     }
-                    //     let k_bound = chunk[0].1 / 2;
-                    //     (
-                    //         0,
-                    //         k_bound,
-                    //         sum_even_coeffs + (sum_odd_coeffs - sum_even_coeffs) * r,
-                    //     )
-                    // })
                     .map(|chunk| match chunk {
                         [(0, k, coeff)] => {
                             let bound_coeff = if *k % 2 == 0 {

@@ -118,16 +118,16 @@ where
                 let eq_poly = &prover_state.eq_poly;
                 let mle_half = polynomial.len() / 2;
                 let eval_0: F = (0..mle_half)
-                    .map(|i| polynomial.get_bound_coeff(i) * eq_poly.get_bound_coeff(i))
+                    .map(|i| polynomial.get_bound_coeff(2 * i) * eq_poly.get_bound_coeff(2 * i))
                     .sum();
                 let eval_2: F = (0..mle_half)
                     .map(|i| {
-                        let poly_bound_point = polynomial.get_bound_coeff(i + mle_half)
-                            + polynomial.get_bound_coeff(i + mle_half)
-                            - polynomial.get_bound_coeff(i);
-                        let eq_bound_point = eq_poly.get_bound_coeff(i + mle_half)
-                            + eq_poly.get_bound_coeff(i + mle_half)
-                            - eq_poly.get_bound_coeff(i);
+                        let poly_bound_point = polynomial.get_bound_coeff(2 * i + 1)
+                            + polynomial.get_bound_coeff(2 * i + 1)
+                            - polynomial.get_bound_coeff(2 * i);
+                        let eq_bound_point = eq_poly.get_bound_coeff(2 * i + 1)
+                            + eq_poly.get_bound_coeff(2 * i + 1)
+                            - eq_poly.get_bound_coeff(2 * i);
                         poly_bound_point * eq_bound_point
                     })
                     .sum();
@@ -145,38 +145,18 @@ where
 
     fn bind(&mut self, r_j: F, _: usize) {
         let prover_state = self.prover_state.as_mut().unwrap();
-
-        match (&prover_state.polynomial, &prover_state.eq_poly) {
-            (MultilinearPolynomial::OneHot(_), EqPolynomial::Split(_))
-            | (MultilinearPolynomial::Sparse(_), EqPolynomial::Split(_)) => {
-                rayon::join(
-                    || {
-                        prover_state
-                            .polynomial
-                            .bind_parallel(r_j, BindingOrder::LowToHigh)
-                    },
-                    || {
-                        prover_state
-                            .eq_poly
-                            .bind_parallel(r_j, BindingOrder::LowToHigh)
-                    },
-                );
-            }
-            _ => {
-                rayon::join(
-                    || {
-                        prover_state
-                            .polynomial
-                            .bind_parallel(r_j, BindingOrder::HighToLow)
-                    },
-                    || {
-                        prover_state
-                            .eq_poly
-                            .bind_parallel(r_j, BindingOrder::HighToLow)
-                    },
-                );
-            }
-        }
+        rayon::join(
+            || {
+                prover_state
+                    .polynomial
+                    .bind_parallel(r_j, BindingOrder::LowToHigh)
+            },
+            || {
+                prover_state
+                    .eq_poly
+                    .bind_parallel(r_j, BindingOrder::LowToHigh)
+            },
+        );
     }
 
     fn cache_openings(&mut self) {
@@ -190,7 +170,9 @@ where
     }
 
     fn expected_output_claim(&self, r: &[F]) -> F {
-        let eq_eval = EqPolynomial::mle(&self.opening_point, r);
+        // Need to reverse because polynomials are bound in LowToHigh order
+        let r_rev: Vec<_> = r.iter().cloned().rev().collect();
+        let eq_eval = EqPolynomial::mle(&self.opening_point, &r_rev);
         eq_eval * self.sumcheck_claim.unwrap()
     }
 }
@@ -381,7 +363,7 @@ where
             .collect::<Vec<_>>();
 
         // Use sumcheck reduce many openings to one
-        let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
+        let (sumcheck_proof, mut r_sumcheck, sumcheck_claims) =
             self.prove_batch_opening_reduction(transcript);
 
         transcript.append_scalars(&sumcheck_claims);
@@ -397,6 +379,8 @@ where
             &gamma_powers,
         );
 
+        // Need to reverse because polynomials are bound in LowToHigh order
+        r_sumcheck.reverse();
         // Reduced opening proof
         let joint_opening_proof = PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, transcript);
 
@@ -595,7 +579,7 @@ where
             .for_each(|(opening, claim)| opening.sumcheck_claim = Some(*claim));
 
         // Verify the sumcheck
-        let r_sumcheck =
+        let mut r_sumcheck =
             self.verify_batch_opening_reduction(&reduced_opening_proof.sumcheck_proof, transcript)?;
 
         transcript.append_scalars(&reduced_opening_proof.sumcheck_claims);
@@ -615,6 +599,10 @@ where
                 .collect::<Vec<_>>(),
             &gamma_powers,
         );
+
+        // Need to reverse because polynomials are bound in LowToHigh order
+        r_sumcheck.reverse();
+
         // Compute joint claim = ∑ᵢ γⁱ⋅ claimᵢ
         let joint_claim: F = gamma_powers
             .iter()

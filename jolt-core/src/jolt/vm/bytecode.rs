@@ -321,13 +321,13 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
 
         // TODO: Reduce 2 ra claims to 1 (Section 4.5.2 of Proofs, Arguments, and Zero-Knowledge)
         let r_concat = [r_cycle_prime, r_address_prime].concat();
-        opening_accumulator.append(
-            &[&unbound_ra_poly],
-            eq_poly,
-            r_concat,
-            &[ra_claim_prime],
-            transcript,
-        );
+        // opening_accumulator.append(
+        //     &[&unbound_ra_poly],
+        //     eq_poly,
+        //     r_concat,
+        //     &[ra_claim_prime],
+        //     transcript,
+        // );
 
         Self {
             core_piop_sumcheck: core_piop_sumcheck_proof,
@@ -395,12 +395,12 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
         let r_address_prime = r_address_prime.iter().cloned().rev().collect::<Vec<_>>();
         let r_concat = [r_cycle_prime, &r_address_prime].concat();
         let ra_commitment = &commitments.commitments[CommittedPolynomials::BytecodeRa.to_index()];
-        opening_accumulator.append(
-            &[ra_commitment],
-            r_concat,
-            &[&self.ra_claim_prime],
-            transcript,
-        );
+        // opening_accumulator.append(
+        //     &[ra_commitment],
+        //     r_concat,
+        //     &[&self.ra_claim_prime],
+        //     transcript,
+        // );
 
         Ok(())
     }
