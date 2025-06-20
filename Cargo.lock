@@ -226,7 +226,7 @@ dependencies = [
 [[package]]
 name = "ark-ec"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=markos%2F4dim-glv#cb55dac4ae15eb88bdaaafbc2fd415d9261f0fc0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=markos%2F4dim-glv#b814149bcc4c1b69bf426c8b6aefad3ec60ad3ce"
 dependencies = [
  "ahash",
  "ark-ff 0.5.0",
@@ -285,7 +285,7 @@ dependencies = [
 [[package]]
 name = "ark-ff"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=markos%2F4dim-glv#cb55dac4ae15eb88bdaaafbc2fd415d9261f0fc0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=markos%2F4dim-glv#b814149bcc4c1b69bf426c8b6aefad3ec60ad3ce"
 dependencies = [
  "ark-ff-asm 0.5.0",
  "ark-ff-macros 0.5.0",
@@ -325,7 +325,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-asm"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=markos%2F4dim-glv#cb55dac4ae15eb88bdaaafbc2fd415d9261f0fc0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=markos%2F4dim-glv#b814149bcc4c1b69bf426c8b6aefad3ec60ad3ce"
 dependencies = [
  "quote",
  "syn 2.0.103",
@@ -359,7 +359,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-macros"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=markos%2F4dim-glv#cb55dac4ae15eb88bdaaafbc2fd415d9261f0fc0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=markos%2F4dim-glv#b814149bcc4c1b69bf426c8b6aefad3ec60ad3ce"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -371,7 +371,7 @@ dependencies = [
 [[package]]
 name = "ark-poly"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=markos%2F4dim-glv#cb55dac4ae15eb88bdaaafbc2fd415d9261f0fc0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=markos%2F4dim-glv#b814149bcc4c1b69bf426c8b6aefad3ec60ad3ce"
 dependencies = [
  "ahash",
  "ark-ff 0.5.0",
@@ -406,7 +406,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=markos%2F4dim-glv#cb55dac4ae15eb88bdaaafbc2fd415d9261f0fc0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=markos%2F4dim-glv#b814149bcc4c1b69bf426c8b6aefad3ec60ad3ce"
 dependencies = [
  "ark-serialize-derive 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=markos%2F4dim-glv)",
  "ark-std 0.5.0",
@@ -430,7 +430,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize-derive"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=markos%2F4dim-glv#cb55dac4ae15eb88bdaaafbc2fd415d9261f0fc0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=markos%2F4dim-glv#b814149bcc4c1b69bf426c8b6aefad3ec60ad3ce"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1125,7 +1125,7 @@ dependencies = [
 [[package]]
 name = "dory"
 version = "1.0.0"
-source = "git+https://github.com/spaceandtimefdn/sxt-dory?rev=4979886259ad0e0bac82bd4282203bc951b180be#4979886259ad0e0bac82bd4282203bc951b180be"
+source = "git+https://github.com/spaceandtimefdn/sxt-dory?branch=v1.0.0#aa8706fcaa1da064d052ff7a2f2ad4fdddd4ca08"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -2100,7 +2100,7 @@ dependencies = [
 [[package]]
 name = "jolt-optimizations"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=markos%2F4dim-glv#cb55dac4ae15eb88bdaaafbc2fd415d9261f0fc0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=markos%2F4dim-glv#b814149bcc4c1b69bf426c8b6aefad3ec60ad3ce"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -4766,4 +4766,4 @@ dependencies = [
 [[patch.unused]]
 name = "ark-bn254"
 version = "0.5.0-alpha.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=markos%2F4dim-glv#cb55dac4ae15eb88bdaaafbc2fd415d9261f0fc0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=markos%2F4dim-glv#b814149bcc4c1b69bf426c8b6aefad3ec60ad3ce"

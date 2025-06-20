@@ -36,6 +36,13 @@ use dory::{
     verify, DoryProof, DoryProofBuilder, Polynomial as DoryPolynomial, ProverSetup, VerifierSetup,
 };
 
+// Import windowed types for memory-efficient caching
+use jolt_optimizations::{
+    Windowed2Signed2Data, Windowed2Signed4Data,
+    glv_two_precompute_windowed2_signed, glv_four_precompute_windowed2_signed,
+    vector_add_scalar_mul_g1_windowed2_signed, vector_add_scalar_mul_g2_windowed2_signed,
+};
+
 // NewType wrappers for Jolt + arkworks types to interop with Dory traits
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
@@ -260,8 +267,9 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G1Projective>> for JoltMsmG1 {
         assert_eq!(bases_count, vs.len(), "bases_count must equal vs length");
 
         if let Some(cache) = g1_cache {
-            // Get precomputed data for dory from cache
-            let precomputed = cache.get_precomputed_slice(bases_count);
+            // Get precomputed data slice for zero-copy access
+            // Assuming get_precomputed_slice now returns windowed data
+            let precomputed = cache.get_windowed_data().expect("Cache data should exist");
 
             // # Safety
             // JoltGroupWrapper is repr(transparent) so has same memory layout as G1Projective
@@ -269,7 +277,8 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G1Projective>> for JoltMsmG1 {
                 std::slice::from_raw_parts_mut(vs.as_mut_ptr() as *mut G1Projective, vs.len())
             };
 
-            jolt_optimizations::vector_add_scalar_mul_g1_precomputed(
+            // Use memory-efficient windowed2_signed method
+            jolt_optimizations::vector_add_scalar_mul_g1_windowed2_signed(
                 vs_proj,
                 scalar.0,
                 precomputed,
@@ -401,14 +410,17 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
         assert_eq!(bases_count, vs.len(), "bases_count must equal vs length");
 
         if let Some(cache) = g2_cache {
-            let precomputed = cache.get_precomputed_slice(bases_count);
+
+            let precomputed = cache.get_windowed_data().expect("Cache data should exist");
 
             // # Safety
             // JoltGroupWrapper is repr(transparent) so has same memory layout as G2Projective
             let vs_proj: &mut [G2Projective] = unsafe {
                 std::slice::from_raw_parts_mut(vs.as_mut_ptr() as *mut G2Projective, vs.len())
             };
-            jolt_optimizations::vector_add_scalar_mul_g2_precomputed(
+            
+            // Use memory-efficient windowed2_signed method
+            jolt_optimizations::vector_add_scalar_mul_g2_windowed2_signed(
                 vs_proj,
                 scalar.0,
                 precomputed,
@@ -910,6 +922,7 @@ pub type JoltG2Wrapper = JoltGroupWrapper<G2Projective>;
 pub type JoltGTBn254 = JoltGTWrapper<Bn254>;
 
 pub type JoltBn254 = JoltPairing<Bn254>;
+
 
 #[derive(Clone, Debug)]
 pub struct DoryCommitmentScheme<ProofTranscript: Transcript>(PhantomData<ProofTranscript>);
