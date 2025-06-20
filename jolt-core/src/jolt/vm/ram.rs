@@ -997,7 +997,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                 let mut bound_indices: Vec<Option<usize>> = vec![None; K];
 
                 for i in 0..I_chunk.len() {
-                    let (j_prime, k, inc_lt, inc) = I_chunk[i];
+                    let (j_prime, k, inc_lt, inc, inc_eval) = I_chunk[i];
                     if let Some(bound_index) = bound_indices[k] {
                         if I_chunk[bound_index].0 == j_prime / 2 {
                             // Neighbor was already processed
@@ -1014,7 +1014,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                     } else {
                         r_j * inc_lt
                     };
-                    I_chunk[next_bound_index] = (j_prime / 2, k, bound_value, inc);
+                    I_chunk[next_bound_index] = (j_prime / 2, k, bound_value, inc, inc_eval);
                     bound_indices[k] = Some(next_bound_index);
                     next_bound_index += 1;
                 }
@@ -1097,7 +1097,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             .zip(I.into_par_iter())
             .enumerate()
             .for_each(|(chunk_index, (val_chunk, I_chunk))| {
-                for (j, k, inc_lt, _inc) in I_chunk.into_iter() {
+                for (j, k, inc_lt, _inc, inc_eval) in I_chunk.into_iter() {
                     debug_assert_eq!(j, chunk_index);
                     val_chunk[k] += inc_lt;
                 }
@@ -1809,8 +1809,76 @@ fn prove_ra_hamming_weight<F: JoltField, ProofTranscript: Transcript>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::transcript::KeccakTranscript;
-    use ark_bn254::Fr;
+    use crate::{
+        host,
+        jolt::vm::{
+            rv32i_vm::{ProofTranscript, RV32IJoltVM},
+            Jolt, JoltProverPreprocessing,
+        },
+        poly::commitment::zeromorph::Zeromorph,
+        utils::transcript::KeccakTranscript,
+    };
+    use ark_bn254::{Bn254, Fr};
+    #[test]
+    fn test_read_write_sumcheck() {
+        let mut program = host::Program::new("sha2-chain-guest");
+
+        let mut inputs = vec![];
+        inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
+        inputs.append(&mut postcard::to_stdvec(&10u32).unwrap());
+        let (io_device, trace) = program.trace(&inputs);
+        let (bytecode, memory_init) = program.decode();
+        let preprocessing: JoltProverPreprocessing<
+            Fr,
+            Zeromorph<Bn254, KeccakTranscript>,
+            KeccakTranscript,
+        > = RV32IJoltVM::prover_preprocess(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            memory_init,
+            1 << 16,
+            1 << 16,
+            1 << 16,
+        );
+        let log_T = trace.len().log_2();
+        let K = preprocessing.shared.memory_layout.memory_size as usize;
+
+        let (jolt_proof, program_io, _) = <RV32IJoltVM as Jolt<32, _, _, ProofTranscript>>::prove(
+            io_device,
+            trace.clone(),
+            preprocessing.clone(),
+        );
+
+        let mut transcript = ProofTranscript::new(b"test_transcript");
+        let r: Vec<Fr> = transcript.challenge_vector(K.log_2());
+        let r_prime: Vec<Fr> = transcript.challenge_vector(log_T);
+
+        let mut initial_memory_state = vec![0; K];
+        // Copy input bytes
+        let mut index = remap_address(
+            program_io.memory_layout.input_start,
+            &program_io.memory_layout,
+        ) as usize;
+        // Convert input bytes into words and populate `v_init`
+        for chunk in program_io.inputs.chunks(4) {
+            let mut word = [0u8; 4];
+            for (i, byte) in chunk.iter().enumerate() {
+                word[i] = *byte;
+            }
+            let word = u32::from_le_bytes(word);
+            initial_memory_state[index] = word as i64;
+            index += 1;
+        }
+
+        // let (read_write_checking_proof, r_address, r_cycle) = ReadWriteCheckingProof::prove(
+        //     &trace,
+        //     &initial_memory_state,
+        //     &program_io.memory_layout,
+        //     r,
+        //     r_prime,
+        //     &mut transcript,
+        // );
+    }
 
     #[test]
     fn test_raf_evaluation_no_ops() {
