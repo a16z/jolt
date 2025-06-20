@@ -2,15 +2,22 @@ use super::commitment_scheme::CommitmentScheme;
 use crate::{
     field::JoltField,
     msm::{Icicle, VariableBaseMSM},
-    poly::multilinear_polynomial::MultilinearPolynomial,
-    utils::{errors::ProofVerifyError, transcript::Transcript},
+    poly::{
+        multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
+        sparse_matrix_polynomial::{get_max_num_vars, get_num_columns},
+    },
+    utils::{
+        errors::ProofVerifyError,
+        math::Math,
+        transcript::{AppendToTranscript, Transcript},
+    },
 };
 use ark_bn254::{Bn254, Fr, G1Projective, G2Projective};
 use ark_ec::bn::{G1Prepared, G2Prepared};
 type BnG1Prepared = G1Prepared<ark_bn254::Config>;
 type BnG2Prepared = G2Prepared<ark_bn254::Config>;
 use ark_ec::{
-    pairing::{MillerLoopOutput, Pairing as ArkPairing},
+    pairing::{MillerLoopOutput, Pairing as ArkPairing, PairingOutput},
     CurveGroup,
 };
 use ark_ff::{Field, One, PrimeField, UniformRand};
@@ -24,9 +31,16 @@ use dory::{
         Field as DoryField, Group as DoryGroup, MultiScalarMul as DoryMultiScalarMul,
         Pairing as DoryPairing,
     },
-    commit, evaluate, setup as dory_setup,
+    commit, evaluate, setup as dory_setup, setup_with_srs_file,
     transcript::Transcript as DoryTranscript,
     verify, DoryProof, DoryProofBuilder, Polynomial as DoryPolynomial, ProverSetup, VerifierSetup,
+};
+
+// memory-efficient caching utils (~20x precompute cost for size of srs)
+use jolt_optimizations::{
+    Windowed2Signed2Data, Windowed2Signed4Data,
+    glv_two_precompute_windowed2_signed, glv_four_precompute_windowed2_signed,
+    vector_add_scalar_mul_g1_windowed2_signed, vector_add_scalar_mul_g2_windowed2_signed,
 };
 
 // NewType wrappers for Jolt + arkworks types to interop with Dory traits
@@ -77,7 +91,7 @@ impl<F: JoltField> DoryField for JoltFieldWrapper<F> {
 }
 
 #[repr(transparent)]
-#[derive(Debug, Clone, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltGroupWrapper<G: CurveGroup>(pub G);
 
 impl<G> DoryGroup for JoltGroupWrapper<G>
@@ -108,9 +122,23 @@ where
     }
 }
 
+
+
 #[repr(transparent)]
 #[derive(Debug, Clone, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltGTWrapper<P: ArkPairing>(pub P::TargetField);
+
+impl<P: ArkPairing> From<PairingOutput<P>> for JoltGTWrapper<P> {
+    fn from(value: PairingOutput<P>) -> Self {
+        Self(value.0)
+    }
+}
+
+impl<P: ArkPairing> Into<PairingOutput<P>> for JoltGTWrapper<P> {
+    fn into(self) -> PairingOutput<P> {
+        PairingOutput(self.0)
+    }
+}
 
 impl<P> DoryGroup for JoltGTWrapper<P>
 where
@@ -167,15 +195,17 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G1Projective>> for JoltMsmG1 {
         bases: &[JoltGroupWrapper<G1Projective>],
         scalars: &[JoltFieldWrapper<Fr>],
     ) -> JoltGroupWrapper<G1Projective> {
-        
-        let projective_points: Vec<G1Projective> = bases.iter().map(|w| w.0).collect();
+        // # Safety
+        // JoltGroupWrapper always has same memory layout as underlying G1Projective here.
+        let projective_points: &[G1Projective] = unsafe {
+            std::slice::from_raw_parts(bases.as_ptr() as *const G1Projective, bases.len())
+        };
         let affines = G1Projective::normalize_batch(&projective_points);
 
         // # Safety
         // JoltFieldWrapper always has same memory layout as underlying Fr here.
-        let raw_scalars: &[Fr] = unsafe {
-            std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len())
-        };
+        let raw_scalars: &[Fr] =
+            unsafe { std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len()) };
 
         let result = G1Projective::msm_field_elements(&affines, None, raw_scalars, None, false)
             .expect("msm_field_elements should not fail");
@@ -195,14 +225,14 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G1Projective>> for JoltMsmG1 {
 
         // # Safety
         // JoltFieldWrapper always has same memory layout as underlying Fr
-        let raw_scalars: &[Fr] = unsafe {
-            std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len())
-        };
+        let raw_scalars: &[Fr] =
+            unsafe { std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len()) };
 
         // Use `jolt-optimizations`` fixed_base_vector_msm_g1
         let results_proj = jolt_optimizations::fixed_base_vector_msm_g1(&base.0, raw_scalars);
 
-        results_proj.into_iter()
+        results_proj
+            .into_iter()
             .map(|proj| JoltGroupWrapper(proj))
             .collect()
     }
@@ -237,8 +267,13 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G1Projective>> for JoltMsmG1 {
         assert_eq!(bases_count, vs.len(), "bases_count must equal vs length");
 
         if let Some(cache) = g1_cache {
-            // Get precomputed data for dory from cache
-            let precomputed = cache.get_precomputed_slice(bases_count);
+            // Get precomputed data slice for zero-copy access
+            // Assuming get_precomputed_slice now returns windowed data
+            let precomputed = cache.get_windowed_data().expect("Cache data should exist");
+
+            let subset_data = jolt_optimizations::Windowed2Signed2Data {
+                windowed2_tables: precomputed.windowed2_tables[..bases_count].to_vec(),
+            };
 
             // # Safety
             // JoltGroupWrapper is repr(transparent) so has same memory layout as G1Projective
@@ -246,10 +281,11 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G1Projective>> for JoltMsmG1 {
                 std::slice::from_raw_parts_mut(vs.as_mut_ptr() as *mut G1Projective, vs.len())
             };
 
-            jolt_optimizations::vector_add_scalar_mul_g1_precomputed(
+            // Use memory-efficient windowed2_signed method
+            jolt_optimizations::vector_add_scalar_mul_g1_windowed2_signed(
                 vs_proj,
                 scalar.0,
-                precomputed,
+                &subset_data,
             );
         } else {
             panic!("G1 cache not available for cached operation");
@@ -261,7 +297,11 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G1Projective>> for JoltMsmG1 {
         addends: &[JoltGroupWrapper<G1Projective>],
         scalar: &JoltFieldWrapper<Fr>,
     ) {
-        assert_eq!(vs.len(), addends.len(), "vs and addends must have same length");
+        assert_eq!(
+            vs.len(),
+            addends.len(),
+            "vs and addends must have same length"
+        );
 
         // # Safety
         // JoltGroupWrapper is repr(transparent) so has same memory layout as G1Projective
@@ -273,11 +313,7 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G1Projective>> for JoltMsmG1 {
         };
 
         // Use `jolt-optimizations`: v[i] = scalar * v[i] + gamma[i]
-        jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
-            vs_proj,
-            scalar.0,
-            addends_proj,
-        );
+        jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(vs_proj, scalar.0, addends_proj);
     }
 }
 
@@ -292,9 +328,8 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
 
         // # Safety
         // JoltFieldWrapper always has same memory layout as underlying Fr here.
-        let raw_scalars: &[Fr] = unsafe {
-            std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len())
-        };
+        let raw_scalars: &[Fr] =
+            unsafe { std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len()) };
 
         let result = G2Projective::msm_field_elements(&affines, None, raw_scalars, None, false)
             .expect("msm_field_elements should not fail");
@@ -314,9 +349,8 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
 
         // # Safety
         // JoltFieldWrapper always has same memory layout as underlying Fr
-        let raw_scalars: &[Fr] = unsafe {
-            std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len())
-        };
+        let raw_scalars: &[Fr] =
+            unsafe { std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len()) };
 
         // Check if we have cached GLV tables for g_fin
         if let Some(glv_tables) = g2_cache.and_then(|cache| cache.get_g_fin_glv_tables()) {
@@ -329,7 +363,8 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
                 })
                 .collect();
 
-            results_proj.into_iter()
+            results_proj
+                .into_iter()
                 .map(|proj| JoltGroupWrapper(proj))
                 .collect()
         } else {
@@ -342,7 +377,8 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
                 })
                 .collect();
 
-            results_proj.into_iter()
+            results_proj
+                .into_iter()
                 .map(|proj| JoltGroupWrapper(proj))
                 .collect()
         }
@@ -378,17 +414,24 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
         assert_eq!(bases_count, vs.len(), "bases_count must equal vs length");
 
         if let Some(cache) = g2_cache {
-            let precomputed = cache.get_precomputed_slice(bases_count);
+
+            let precomputed = cache.get_windowed_data().expect("Cache data should exist");
+
+            let subset_data = jolt_optimizations::Windowed2Signed4Data {
+                windowed2_tables: precomputed.windowed2_tables[..bases_count].to_vec(),
+            };
 
             // # Safety
             // JoltGroupWrapper is repr(transparent) so has same memory layout as G2Projective
             let vs_proj: &mut [G2Projective] = unsafe {
                 std::slice::from_raw_parts_mut(vs.as_mut_ptr() as *mut G2Projective, vs.len())
             };
-            jolt_optimizations::vector_add_scalar_mul_g2_precomputed(
+            
+            // Use memory-efficient windowed2_signed method
+            jolt_optimizations::vector_add_scalar_mul_g2_windowed2_signed(
                 vs_proj,
                 scalar.0,
-                precomputed,
+                &subset_data,
             );
         } else {
             panic!("G2 cache not available for cached operation");
@@ -400,7 +443,11 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
         addends: &[JoltGroupWrapper<G2Projective>],
         scalar: &JoltFieldWrapper<Fr>,
     ) {
-        assert_eq!(vs.len(), addends.len(), "vs and addends must have same length");
+        assert_eq!(
+            vs.len(),
+            addends.len(),
+            "vs and addends must have same length"
+        );
 
         // # Safety
         // JoltGroupWrapper is repr(transparent) so has same memory layout as G2Projective
@@ -412,11 +459,7 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
         };
 
         // Use jolt-optimizations function: v[i] = scalar * v[i] + gamma[i]
-        jolt_optimizations::vector_scalar_mul_add_gamma_g2_online(
-            vs_proj,
-            scalar.0,
-            addends_proj,
-        );
+        jolt_optimizations::vector_scalar_mul_add_gamma_g2_online(vs_proj, scalar.0, addends_proj);
     }
 }
 
@@ -426,6 +469,7 @@ where
     P: ArkPairing,
     P::ScalarField: JoltField,
 {
+    #[tracing::instrument(skip_all, name = "GT MSM")]
     fn msm(
         bases: &[JoltGTWrapper<P>],
         scalars: &[JoltFieldWrapper<P::ScalarField>],
@@ -462,11 +506,13 @@ where
     type G2 = JoltGroupWrapper<E::G2>;
     type GT = JoltGTWrapper<E>;
 
+    #[tracing::instrument(skip_all)]
     fn pair(p: &Self::G1, q: &Self::G2) -> Self::GT {
         let gt = E::pairing(p.0, q.0).0;
         JoltGTWrapper(gt)
     }
 
+    #[tracing::instrument(skip_all)]
     fn multi_pair(ps: &[Self::G1], qs: &[Self::G2]) -> Self::GT {
         // Delegate to the cached version with no caches
         Self::multi_pair_cached(Some(ps), None, None, Some(qs), None, None)
@@ -488,18 +534,22 @@ where
                     return Self::GT::identity();
                 }
 
-                // Extract prepared values from caches - no allocation needed
-                let g1_prepared: Vec<&BnG1Prepared> = (0..g1_c).map(|i| {
-                    g1_cache
-                        .get_prepared(i)
-                        .expect("Index out of bounds in G1 cache")
-                }).collect();
+                // Extract prepared values from caches 
+                let g1_prepared: Vec<&BnG1Prepared> = (0..g1_c)
+                    .map(|i| {
+                        g1_cache
+                            .get_prepared(i)
+                            .expect("Index out of bounds in G1 cache")
+                    })
+                    .collect();
 
-                let g2_prepared: Vec<&BnG2Prepared> = (0..g2_c).map(|i| {
-                    g2_cache
-                        .get_prepared(i)
-                        .expect("Index out of bounds in G2 cache")
-                }).collect();
+                let g2_prepared: Vec<&BnG2Prepared> = (0..g2_c)
+                    .map(|i| {
+                        g2_cache
+                            .get_prepared(i)
+                            .expect("Index out of bounds in G2 cache")
+                    })
+                    .collect();
 
                 // Use Bn254 directly since caches are BN254-specific
                 let ml_result = Bn254::multi_miller_loop(g1_prepared, g2_prepared).0;
@@ -511,7 +561,7 @@ where
                 // When E = Bn254, JoltGTWrapper<Bn254> has same memory layout as JoltGTWrapper<E>
                 // since JoltGTWrapper is repr(transparent) and E::TargetField = Bn254::TargetField
                 let bn_result = JoltGTWrapper::<Bn254>(pairing_result.0);
-                unsafe { 
+                unsafe {
                     let ptr = &bn_result as *const JoltGTWrapper<Bn254> as *const Self::GT;
                     (*ptr).clone()
                 }
@@ -528,22 +578,30 @@ where
                     return Self::GT::identity();
                 }
 
-                // G1 from cache 
-                let g1_prepared: Vec<&BnG1Prepared> = (0..g1_c).map(|i| {
-                    g1_cache
-                        .get_prepared(i)
-                        .expect("Index out of bounds in G1 cache")
-                }).collect();
+                // G1 from cache
+                let g1_prepared: Vec<&BnG1Prepared> = (0..g1_c)
+                    .map(|i| {
+                        g1_cache
+                            .get_prepared(i)
+                            .expect("Index out of bounds in G1 cache")
+                    })
+                    .collect();
 
                 // # Safety
                 // JoltGroupWrapper is repr(transparent) so has same memory layout as E::G2
                 // When E = Bn254, E::G2 = G2Projective
                 let g2_inner: &[G2Projective] = unsafe {
-                    std::slice::from_raw_parts(g2_points.as_ptr() as *const G2Projective, g2_points.len())
+                    std::slice::from_raw_parts(
+                        g2_points.as_ptr() as *const G2Projective,
+                        g2_points.len(),
+                    )
                 };
-                
+
                 let g2_affine = G2Projective::normalize_batch(g2_inner);
-                let g2_prepared = g2_affine.par_iter().map(BnG2Prepared::from).collect::<Vec<_>>();
+                let g2_prepared = g2_affine
+                    .par_iter()
+                    .map(BnG2Prepared::from)
+                    .collect::<Vec<_>>();
 
                 // Use Bn254 directly since caches are BN254-specific
                 let ml_result = Bn254::multi_miller_loop(g1_prepared, g2_prepared).0;
@@ -555,7 +613,7 @@ where
                 // When E = Bn254, JoltGTWrapper<Bn254> has same memory layout as JoltGTWrapper<E>
                 // since JoltGTWrapper is repr(transparent) and E::TargetField = Bn254::TargetField
                 let bn_result = JoltGTWrapper::<Bn254>(pairing_result.0);
-                unsafe { 
+                unsafe {
                     let ptr = &bn_result as *const JoltGTWrapper<Bn254> as *const Self::GT;
                     (*ptr).clone()
                 }
@@ -576,18 +634,26 @@ where
                 // JoltGroupWrapper is repr(transparent) so has same memory layout as E::G1
                 // When E = Bn254, E::G1 = G1Projective
                 let g1_inner: &[G1Projective] = unsafe {
-                    std::slice::from_raw_parts(g1_points.as_ptr() as *const G1Projective, g1_points.len())
+                    std::slice::from_raw_parts(
+                        g1_points.as_ptr() as *const G1Projective,
+                        g1_points.len(),
+                    )
                 };
-                
+
                 let g1_affine = G1Projective::normalize_batch(g1_inner);
-                let g1_prepared = g1_affine.par_iter().map(BnG1Prepared::from).collect::<Vec<_>>();
+                let g1_prepared = g1_affine
+                    .par_iter()
+                    .map(BnG1Prepared::from)
+                    .collect::<Vec<_>>();
 
                 // G2 from cache
-                let g2_prepared: Vec<&BnG2Prepared> = (0..g2_c).map(|i| {
-                    g2_cache
-                        .get_prepared(i)
-                        .expect("Index out of bounds in G2 cache")
-                }).collect();
+                let g2_prepared: Vec<&BnG2Prepared> = (0..g2_c)
+                    .map(|i| {
+                        g2_cache
+                            .get_prepared(i)
+                            .expect("Index out of bounds in G2 cache")
+                    })
+                    .collect();
 
                 // Use Bn254 directly since caches are BN254-specific
                 let ml_result = Bn254::multi_miller_loop(g1_prepared, g2_prepared).0;
@@ -599,7 +665,7 @@ where
                 // When E = Bn254, JoltGTWrapper<Bn254> has same memory layout as JoltGTWrapper<E>
                 // since JoltGTWrapper is repr(transparent) and E::TargetField = Bn254::TargetField
                 let bn_result = JoltGTWrapper::<Bn254>(pairing_result.0);
-                unsafe { 
+                unsafe {
                     let ptr = &bn_result as *const JoltGTWrapper<Bn254> as *const Self::GT;
                     (*ptr).clone()
                 }
@@ -651,9 +717,6 @@ where
     }
 }
 
-// Dory's Poly trait: right now it uses default implementations for the poly utilities. We will want to override them
-// for the sparse case or for further optimizations.
-// We implement get() and len() since they do not have default implementations.
 impl<F, G> DoryPolynomial<JoltFieldWrapper<F>, JoltGroupWrapper<G>> for MultilinearPolynomial<F>
 where
     F: JoltField + PrimeField,
@@ -671,6 +734,125 @@ where
 
     fn len(&self) -> usize {
         self.len()
+    }
+
+    fn evaluate(&self, point: &[JoltFieldWrapper<F>]) -> JoltFieldWrapper<F> {
+        let point: Vec<_> = point.iter().rev().map(|x| x.0).collect();
+        JoltFieldWrapper(PolynomialEvaluation::evaluate(self, &point))
+    }
+
+    #[tracing::instrument(skip_all)]
+    fn commit_rows<M1: DoryMultiScalarMul<JoltGroupWrapper<G>>>(
+        &self,
+        g1_generators: &[JoltGroupWrapper<G>],
+        row_len: usize,
+    ) -> Vec<JoltGroupWrapper<G>> {
+        let bases: Vec<_> = g1_generators
+            .par_iter()
+            .map(|g| g.0.into_affine())
+            .collect();
+        debug_assert_eq!(get_num_columns(), row_len);
+
+        match self {
+            MultilinearPolynomial::LargeScalars(poly) => poly
+                .Z
+                .par_chunks(row_len)
+                .map(|row| {
+                    JoltGroupWrapper(
+                        VariableBaseMSM::msm_field_elements(&bases, None, row, None, false)
+                            .unwrap(),
+                    )
+                })
+                .collect(),
+            MultilinearPolynomial::U8Scalars(poly) => poly
+                .coeffs
+                .par_chunks(row_len)
+                .map(|row| JoltGroupWrapper(VariableBaseMSM::msm_u8(&bases, row, None).unwrap()))
+                .collect(),
+            MultilinearPolynomial::U16Scalars(poly) => poly
+                .coeffs
+                .par_chunks(row_len)
+                .map(|row| {
+                    JoltGroupWrapper(
+                        VariableBaseMSM::msm_u16(&bases, None, row, None, false).unwrap(),
+                    )
+                })
+                .collect(),
+            MultilinearPolynomial::U32Scalars(poly) => poly
+                .coeffs
+                .par_chunks(row_len)
+                .map(|row| {
+                    JoltGroupWrapper(
+                        VariableBaseMSM::msm_u32(&bases, None, row, None, false).unwrap(),
+                    )
+                })
+                .collect(),
+            MultilinearPolynomial::U64Scalars(poly) => poly
+                .coeffs
+                .par_chunks(row_len)
+                .map(|row| {
+                    JoltGroupWrapper(
+                        VariableBaseMSM::msm_u64(&bases, None, row, None, false).unwrap(),
+                    )
+                })
+                .collect(),
+            MultilinearPolynomial::I64Scalars(poly) => poly
+                .coeffs
+                .par_chunks(row_len)
+                .map(|row| {
+                    // TODO(moodlezoup): This can be optimized
+                    let scalars: Vec<_> = row.iter().map(|x| F::from_i64(*x)).collect();
+                    JoltGroupWrapper(
+                        VariableBaseMSM::msm_field_elements(&bases, None, &scalars, None, false)
+                            .unwrap(),
+                    )
+                })
+                .collect(),
+            MultilinearPolynomial::Sparse(poly) => todo!(),
+            MultilinearPolynomial::OneHot(poly) => todo!(),
+        }
+    }
+
+    #[tracing::instrument(skip_all)]
+    fn vector_matrix_product(
+        &self,
+        left_vec: &[JoltFieldWrapper<F>],
+        sigma: usize,
+        nu: usize,
+    ) -> Vec<JoltFieldWrapper<F>> {
+        // # Safety
+        // JoltFieldWrapper always has same memory layout as underlying F here.
+        let left_vec: &[F] =
+            unsafe { std::slice::from_raw_parts(left_vec.as_ptr() as *const F, left_vec.len()) };
+
+        let num_columns = get_num_columns();
+        println!("sigma: {sigma}");
+        println!("nu: {nu}");
+        println!("num_columns: {num_columns}");
+
+        match self {
+            MultilinearPolynomial::LargeScalars(poly) => (0..num_columns)
+                .into_par_iter()
+                .map(|col_index| {
+                    JoltFieldWrapper(
+                        poly.Z
+                            .iter()
+                            .skip(col_index)
+                            .step_by(num_columns)
+                            .zip(left_vec.iter())
+                            .map(|(&a, &b)| -> F { a * b })
+                            .sum::<F>(),
+                    )
+                })
+                .collect(),
+            MultilinearPolynomial::U8Scalars(poly) => todo!(),
+            MultilinearPolynomial::U16Scalars(poly) => todo!(),
+            MultilinearPolynomial::U32Scalars(poly) => todo!(),
+            MultilinearPolynomial::U64Scalars(poly) => todo!(),
+            MultilinearPolynomial::I64Scalars(poly) => todo!(),
+            MultilinearPolynomial::Sparse(poly) => todo!(),
+            MultilinearPolynomial::OneHot(poly) => todo!(),
+        }
     }
 }
 
@@ -746,6 +928,7 @@ pub type JoltGTBn254 = JoltGTWrapper<Bn254>;
 
 pub type JoltBn254 = JoltPairing<Bn254>;
 
+
 #[derive(Clone, Debug)]
 pub struct DoryCommitmentScheme<ProofTranscript: Transcript>(PhantomData<ProofTranscript>);
 
@@ -781,8 +964,39 @@ where
     type BatchedProof = DoryBatchedProof;
 
     fn setup(max_num_vars: usize) -> Self::Setup {
-        let (prover_setup, verifier_setup) =
-            dory_setup::<JoltBn254, _>(ark_std::rand::thread_rng(), max_num_vars);
+        let srs_file_name = format!("dory_srs_{max_num_vars}_variables.srs");
+        let (mut prover_setup, verifier_setup) = setup_with_srs_file::<JoltBn254, _>(
+            &mut ark_std::rand::thread_rng(),
+            max_num_vars,
+            Some(&srs_file_name), // Will load if exists, generate and save if not
+        );
+        
+        // @TODO:
+        // Due to orphan rule we directly create cache (dory does expose init_cache()). Currently cache is disabled due to
+        // bad performance from memory swaps -- further optimization needed to find a memory-balanced cache solution.
+        /*
+            use ark_bn254::{G1Affine, G2Affine};
+            use dory::curve::{G1Cache, G2Cache};
+            
+            // Extract G1 affine points from the wrapped projective points
+            let g1_affines: Vec<G1Affine> = prover_setup.core.g1_vec
+                .iter()
+                .map(|wrapped| wrapped.0.into_affine())
+                .collect();
+            
+            // Extract G2 affine points from the wrapped projective points  
+            let g2_affines: Vec<G2Affine> = prover_setup.core.g2_vec
+                .iter()
+                .map(|wrapped| wrapped.0.into_affine())
+                .collect();
+                
+            // Extract g_fin as affine
+            let g_fin_affine: G2Affine = prover_setup.core.g_fin.0.into_affine();
+            
+            // Create and assign the caches
+            prover_setup.g1_cache = Some(G1Cache::new(&g1_affines));
+            prover_setup.g2_cache = Some(G2Cache::new(&g2_affines, Some(&g_fin_affine)));
+        */
 
         DorySetup {
             prover_setup,
@@ -791,9 +1005,9 @@ where
         }
     }
 
+    #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::commit")]
     fn commit(poly: &MultilinearPolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
-        let num_vars = poly.get_num_vars();
-        let sigma = (num_vars + 1) / 2;
+        let sigma = get_num_columns().log_2();
 
         let commitment_val = commit::<JoltBn254, JoltMsmG1, _>(poly, 0, sigma, &setup.prover_setup);
         DoryCommitment(commitment_val)
@@ -806,17 +1020,22 @@ where
         todo!("Batch commit not yet implemented for Dory")
     }
 
+    // Note that Dory implementation sometimes uses the term 'evaluation'/'evaluate' -- this is same as 'opening'/'open'
+    #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::prove")]
     fn prove(
         setup: &Self::Setup,
         poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[Self::Field],
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
-        let point_dory: Vec<JoltFieldWrapper<Self::Field>> =
-            opening_point.iter().map(|&p| JoltFieldWrapper(p)).collect();
+        // Dory uses the opposite endian-ness as Jolt
+        let point_dory: Vec<JoltFieldWrapper<Self::Field>> = opening_point
+            .iter()
+            .rev()
+            .map(|&p| JoltFieldWrapper(p))
+            .collect();
 
-        let num_vars = poly.get_num_vars();
-        let sigma = (num_vars + 1) / 2;
+        let sigma = get_num_columns().log_2();
         let dory_transcript = JoltToDoryTranscriptRef::<Self::Field, _>::new(transcript);
 
         // dory evaluate returns the opening but in this case we don't use it, we pass directly the opening to verify()
@@ -850,8 +1069,12 @@ where
         opening: &Self::Field,
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
-        let opening_point_dory: Vec<JoltFieldWrapper<Self::Field>> =
-            opening_point.iter().map(|&p| JoltFieldWrapper(p)).collect();
+        // Dory uses the opposite endian-ness as Jolt
+        let opening_point_dory: Vec<JoltFieldWrapper<Self::Field>> = opening_point
+            .iter()
+            .rev()
+            .map(|&p| JoltFieldWrapper(p))
+            .collect();
 
         let claimed_opening = JoltFieldWrapper(*opening);
         let dory_transcript = JoltToDoryTranscriptRef::<Self::Field, _>::new(transcript);
@@ -880,12 +1103,27 @@ where
         }
     }
 
+    fn combine_commitments(
+        commitments: &[&Self::Commitment],
+        coeffs: &[Self::Field],
+    ) -> Self::Commitment {
+        let combined_commitment: PairingOutput<_> = commitments
+            .iter()
+            .zip(coeffs.iter())
+            .map(|(commitment, coeff)| {
+                let g: PairingOutput<_> = commitment.0.clone().into();
+                g * coeff
+            })
+            .sum();
+        DoryCommitment(JoltGTWrapper::from(combined_commitment))
+    }
+
     fn protocol_name() -> &'static [u8] {
         b"dory_commitment_scheme"
     }
 }
 
-impl crate::utils::transcript::AppendToTranscript for DoryCommitment {
+impl AppendToTranscript for DoryCommitment {
     fn append_to_transcript<PT: Transcript>(&self, transcript: &mut PT) {
         transcript.append_serializable(&self.0);
     }
@@ -923,6 +1161,8 @@ mod tests {
             MultilinearPolynomial::U32Scalars(compact) => compact.coeffs.len(),
             MultilinearPolynomial::U64Scalars(compact) => compact.coeffs.len(),
             MultilinearPolynomial::I64Scalars(compact) => compact.coeffs.len(),
+            MultilinearPolynomial::Sparse(_) => todo!(),
+            MultilinearPolynomial::OneHot(_) => todo!(),
         };
 
         println!(
@@ -939,14 +1179,12 @@ mod tests {
 
         println!(" Commit time: {:?}", commit_time);
 
-        // Compute the evaluation using the DoryPolynomial trait's evaluate method
-        let opening_point_dory: Vec<JoltFieldWrapper<Fr>> =
-            opening_point.iter().map(|&p| JoltFieldWrapper(p)).collect();
-        let evaluation = <MultilinearPolynomial<Fr> as DoryPolynomial<
-            JoltFieldWrapper<Fr>,
-            JoltGroupWrapper<G1Projective>,
-        >>::evaluate(&poly, &opening_point_dory)
-        .0;
+        let mut reversed_opening_point = opening_point.clone();
+        reversed_opening_point.reverse();
+        let evaluation = <MultilinearPolynomial<Fr> as PolynomialEvaluation<Fr>>::evaluate(
+            &poly,
+            &reversed_opening_point,
+        );
 
         let mut prove_transcript = KeccakTranscript::new(b"dory_test");
         let prove_start = Instant::now();

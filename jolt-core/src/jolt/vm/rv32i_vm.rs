@@ -85,6 +85,7 @@ mod tests {
     use crate::host;
     use crate::jolt::vm::rv32i_vm::{Jolt, RV32IJoltVM};
     use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+    use crate::poly::commitment::dory::DoryCommitmentScheme;
     use crate::poly::commitment::hyperkzg::HyperKZG;
     use crate::poly::commitment::mock::MockCommitScheme;
     use crate::poly::commitment::zeromorph::Zeromorph;
@@ -116,14 +117,13 @@ mod tests {
             1 << 20,
             1 << 20,
         );
-        let (proof, commitments, debug_info) = <RV32IJoltVM as Jolt<
-            32,
-            Fr,
-            HyperKZG<Bn254, KeccakTranscript>,
-            KeccakTranscript,
-        >>::prove(
-            io_device, trace, preprocessing.clone()
-        );
+        let (proof, commitments, debug_info) =
+            <RV32IJoltVM as Jolt<
+                32,
+                Fr,
+                DoryCommitmentScheme<KeccakTranscript>,
+                KeccakTranscript,
+            >>::prove(io_device, trace, preprocessing.clone());
         let verification_result =
             RV32IJoltVM::verify(preprocessing.shared, proof, commitments, debug_info);
         assert!(
@@ -139,8 +139,8 @@ mod tests {
     }
 
     #[test]
-    fn fib_e2e_zeromorph() {
-        fib_e2e::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>();
+    fn fib_e2e_dory() {
+        fib_e2e::<Fr, DoryCommitmentScheme<KeccakTranscript>, KeccakTranscript>();
     }
 
     #[test]
@@ -149,7 +149,7 @@ mod tests {
     }
 
     #[test]
-    fn sha3_e2e_zeromorph() {
+    fn sha3_e2e_dory() {
         let guard = SHA3_FILE_LOCK.lock().unwrap();
         let mut program = host::Program::new("sha3-guest");
         let (bytecode, memory_init) = program.decode();
@@ -161,18 +161,17 @@ mod tests {
             bytecode.clone(),
             io_device.memory_layout.clone(),
             memory_init,
-            1 << 20,
-            1 << 20,
-            1 << 20,
+            1 << 16,
+            1 << 16,
+            1 << 16,
         );
-        let (jolt_proof, jolt_commitments, debug_info) = <RV32IJoltVM as Jolt<
-            32,
-            Fr,
-            HyperKZG<Bn254, KeccakTranscript>,
-            KeccakTranscript,
-        >>::prove(
-            io_device, trace, preprocessing.clone()
-        );
+        let (jolt_proof, jolt_commitments, debug_info) =
+            <RV32IJoltVM as Jolt<
+                32,
+                Fr,
+                DoryCommitmentScheme<KeccakTranscript>,
+                KeccakTranscript,
+            >>::prove(io_device, trace, preprocessing.clone());
 
         let verification_result = RV32IJoltVM::verify(
             preprocessing.shared,
