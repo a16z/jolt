@@ -248,6 +248,7 @@ pub enum CircuitFlags {
     Jump,
     /// 1 if the instruction is a branch (i.e. `BEQ`, `BNE`, etc.)
     Branch,
+    Lui,
     /// 1 if the lookup output is to be stored in `rd` at the end of the step.
     WriteLookupOutputToRD,
     /// Indicates whether the instruction performs a concat-type lookup.
@@ -268,7 +269,7 @@ impl ELFInstruction {
 
         flags[CircuitFlags::LeftOperandIsPC as usize] = matches!(
             self.opcode,
-            RV32IM::JAL | RV32IM::LUI | RV32IM::AUIPC,
+            RV32IM::JAL | RV32IM::AUIPC,
         );
 
         flags[CircuitFlags::RightOperandIsImm as usize] = matches!(
@@ -308,6 +309,11 @@ impl ELFInstruction {
         flags[CircuitFlags::Branch as usize] = matches!(
             self.opcode,
             RV32IM::BEQ | RV32IM::BNE | RV32IM::BLT | RV32IM::BGE | RV32IM::BLTU | RV32IM::BGEU,
+        );
+
+        flags[CircuitFlags::Lui as usize] = matches!(
+            self.opcode,
+            RV32IM::LUI,
         );
 
         // Stores, branches, jumps, and asserts do not store the lookup output to rd (they may update rd in other ways)
