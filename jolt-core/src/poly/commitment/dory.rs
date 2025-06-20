@@ -271,6 +271,10 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G1Projective>> for JoltMsmG1 {
             // Assuming get_precomputed_slice now returns windowed data
             let precomputed = cache.get_windowed_data().expect("Cache data should exist");
 
+            let subset_data = jolt_optimizations::Windowed2Signed2Data {
+                windowed2_tables: precomputed.windowed2_tables[..bases_count].to_vec(),
+            };
+
             // # Safety
             // JoltGroupWrapper is repr(transparent) so has same memory layout as G1Projective
             let vs_proj: &mut [G1Projective] = unsafe {
@@ -281,7 +285,7 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G1Projective>> for JoltMsmG1 {
             jolt_optimizations::vector_add_scalar_mul_g1_windowed2_signed(
                 vs_proj,
                 scalar.0,
-                precomputed,
+                &subset_data,
             );
         } else {
             panic!("G1 cache not available for cached operation");
@@ -413,6 +417,10 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
 
             let precomputed = cache.get_windowed_data().expect("Cache data should exist");
 
+            let subset_data = jolt_optimizations::Windowed2Signed4Data {
+                windowed2_tables: precomputed.windowed2_tables[..bases_count].to_vec(),
+            };
+
             // # Safety
             // JoltGroupWrapper is repr(transparent) so has same memory layout as G2Projective
             let vs_proj: &mut [G2Projective] = unsafe {
@@ -423,7 +431,7 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
             jolt_optimizations::vector_add_scalar_mul_g2_windowed2_signed(
                 vs_proj,
                 scalar.0,
-                precomputed,
+                &subset_data,
             );
         } else {
             panic!("G2 cache not available for cached operation");
