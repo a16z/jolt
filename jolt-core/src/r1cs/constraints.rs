@@ -113,6 +113,12 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
             JoltR1CSInputs::RAM_Write,
         );
 
+        cs.constrain_eq_conditional(
+            JoltR1CSInputs::OpFlags(CircuitFlags::Lui),
+            JoltR1CSInputs::RD_Write,
+            JoltR1CSInputs::Bytecode_Imm,
+        );
+
         let query_chunks: Vec<Variable> = (0..C)
             .map(|i| Variable::Input(JoltR1CSInputs::ChunksQuery(i).to_index::<C>()))
             .collect();

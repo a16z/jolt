@@ -163,7 +163,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
         // TODO: remove this assertion by handling the switchover point more generally
         // Currently, it should not fail with 3 or 4 SVO rounds
-        assert!(rem_num_uniform_r1cs_constraints + num_cross_step_constraints < Y_SVO_SPACE_SIZE,
+        assert!(rem_num_uniform_r1cs_constraints + num_cross_step_constraints <= Y_SVO_SPACE_SIZE,
             "The last block of {rem_num_uniform_r1cs_constraints} uniform constraints + {num_cross_step_constraints} cross step constraints must fit in a single block of size {Y_SVO_SPACE_SIZE}",
         );
 
