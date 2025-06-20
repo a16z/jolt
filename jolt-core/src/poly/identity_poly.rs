@@ -53,7 +53,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for IdentityPolynomial<F> {
         let len = r.len();
         assert_eq!(len, self.num_vars);
         (0..len)
-            .map(|i| F::from_u64((len - i - 1).pow2() as u64) * r[i])
+            .map(|i| F::from_u64(i.pow2() as u64) * r[i])
             .sum()
     }
 
