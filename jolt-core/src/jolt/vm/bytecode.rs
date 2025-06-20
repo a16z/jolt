@@ -144,7 +144,9 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
     ) -> Self {
         let K = preprocessing.bytecode.len().next_power_of_two();
         let T = trace.len();
+        // TODO: this should come from Spartan
         let r_cycle: Vec<F> = transcript.challenge_vector(T.log_2());
+        let r_shift: Vec<F> = transcript.challenge_vector(T.log_2());
         // Used to batch the core PIOP sumcheck and Hamming weight sumcheck
         // (see Section 4.2.1)
         let z: F = transcript.challenge_scalar();
@@ -153,6 +155,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
         let mut r_address: Vec<F> = Vec::with_capacity(num_rounds);
 
         let E: Vec<F> = EqPolynomial::evals(&r_cycle);
+        let E_shift: Vec<F> = EqPolynomial::evals(&r_shift);
 
         let span = tracing::span!(tracing::Level::INFO, "compute F");
         let _guard = span.enter();
@@ -161,27 +164,33 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
             .next_power_of_two()
             .min(trace.len());
         let chunk_size = (trace.len() / num_chunks).max(1);
-        let F: Vec<_> = trace
+        let (F, F_shift): (Vec<_>, Vec<_>) = trace
             .par_chunks(chunk_size)
             .enumerate()
             .map(|(chunk_index, trace_chunk)| {
                 let mut result: Vec<F> = unsafe_allocate_zero_vec(K);
+                let mut result_shift: Vec<F> = unsafe_allocate_zero_vec(K);
                 let mut j = chunk_index * chunk_size;
                 for cycle in trace_chunk {
                     let k = preprocessing.get_pc(cycle, j == trace.len() - 1);
                     result[k] += E[j];
+                    result_shift[k] += E_shift[j];
                     j += 1;
                 }
-                result
+                (result, result_shift)
             })
             .reduce(
-                || unsafe_allocate_zero_vec(K),
-                |mut running, new| {
+                || (unsafe_allocate_zero_vec(K), unsafe_allocate_zero_vec(K)),
+                |(mut running, mut running_shift), (new, new_shift)| {
                     running
                         .par_iter_mut()
                         .zip(new.into_par_iter())
                         .for_each(|(x, y)| *x += y);
-                    running
+                    running_shift
+                        .par_iter_mut()
+                        .zip(new_shift.into_par_iter())
+                        .for_each(|(x, y)| *x += y);
+                    (running, running_shift)
                 },
             );
         drop(_guard);
@@ -267,12 +276,14 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
             prove_booleanity(preprocessing, trace, &r_address, E, F, transcript);
 
         let raf_sumcheck_r_cycle =
-            RafEvaluationProof::prove(preprocessing, trace, raf_ra.clone(), &r_cycle, transcript);
-
-        // TODO: this should come from Spartan
-        let r_shift: Vec<F> = transcript.challenge_vector(T.log_2());
-        let raf_sumcheck_r_shift =
-            RafEvaluationProof::prove(preprocessing, trace, raf_ra, &r_shift, transcript);
+            RafEvaluationProof::prove(preprocessing, trace, raf_ra, &r_cycle, transcript);
+        let raf_sumcheck_r_shift = RafEvaluationProof::prove(
+            preprocessing,
+            trace,
+            MultilinearPolynomial::from(F_shift),
+            &r_shift,
+            transcript,
+        );
 
         // TODO: Reduce 2 ra claims to 1 (Section 4.5.2 of Proofs, Arguments, and Zero-Knowledge)
         // TODO: Append to opening proof accumulator
@@ -295,7 +306,9 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let K = preprocessing.bytecode.len();
+        // TODO: this should come from Spartan
         let r_cycle: Vec<F> = transcript.challenge_vector(T.log_2());
+        let _r_shift: Vec<F> = transcript.challenge_vector(T.log_2());
         let z: F = transcript.challenge_scalar();
         let gamma: F = transcript.challenge_scalar();
 
@@ -329,10 +342,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
             "Booleanity sumcheck failed"
         );
 
-        let _r_address_raf = self.raf_sumcheck_r_cycle.verify(K, transcript);
-        // TODO: this should come from Spartan
-        let _r_shift: Vec<F> = transcript.challenge_vector(K.log_2());
-        let _r_shift_raf = self.raf_sumcheck_r_shift.verify(K, transcript);
+        let _r_address_raf = self.raf_sumcheck_r_cycle.verify(K, transcript)?;
+        let _r_shift_raf = self.raf_sumcheck_r_shift.verify(K, transcript)?;
 
         // TODO: Reduce 2 ra claims to 1 (Section 4.5.2 of Proofs, Arguments, and Zero-Knowledge)
         // TODO: Append to opening proof accumulator
