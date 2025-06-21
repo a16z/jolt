@@ -302,7 +302,7 @@ where
 {
     /// Computes a grand product proof using the Section 5 technique from Quarks Paper
     /// First - Extends the evals of v to create an f poly, then commits to it and evals
-    /// Then - Constructs a g poly and preforms sumcheck proof that sum == 0
+    /// Then - Constructs a g poly and performs sumcheck proof that sum == 0
     /// Finally - computes opening proofs for a random sampled during sumcheck proof and returns
     /// Returns a random point and evaluation to be verified by the caller (which our hybrid prover does with GKR)
     pub fn prove(
