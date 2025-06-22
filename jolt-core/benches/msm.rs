@@ -1,6 +1,7 @@
 use ark_bn254::{Bn254, Fr, G1Affine, G1Projective};
 use ark_std::UniformRand;
 use criterion::Criterion;
+use jolt_core::fast_msm::VariableBaseMSM as FastVariableBaseMSM;
 use jolt_core::field::JoltField;
 #[cfg(feature = "icicle")]
 use jolt_core::msm::Icicle;
@@ -12,7 +13,7 @@ use jolt_core::utils::transcript::{KeccakTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 
-const SRS_SIZE: usize = 1 << 20;
+const SRS_SIZE: usize = 1 << 14;
 
 // Sets up the benchmark
 fn setup_bench<PCS, F, ProofTranscript>(
@@ -85,11 +86,18 @@ where
     #[cfg(feature = "icicle")]
     let id = format!("{} [mode:Icicle]", name);
     #[cfg(not(feature = "icicle"))]
-    let id = format!("{name} [mode:JOLT CPU]");
+    let id = format!("(Jolt Old) {name} [mode:JOLT CPU]");
     c.bench_function(&id, |b| {
         b.iter(|| {
             let msm =
                 <G1Projective as VariableBaseMSM>::msm(&bases, gpu_bases.as_deref(), &poly, None);
+            let _ = msm.expect("MSM failed");
+        });
+    });
+    let id_fast = format!("(Jolt new){name} [mode:JOLT CPU]");
+    c.bench_function(&id_fast, |b| {
+        b.iter(|| {
+            let msm = <G1Projective as FastVariableBaseMSM>::msm(&bases, &poly, None);
             let _ = msm.expect("MSM failed");
         });
     });

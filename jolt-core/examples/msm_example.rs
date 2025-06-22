@@ -12,7 +12,7 @@ use jolt_core::utils::transcript::{KeccakTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 use std::time::Instant;
-const SRS_SIZE: usize = 1 << 14;
+const SRS_SIZE: usize = 1 << 17;
 
 // Sets up the benchmark
 fn setup_bench<PCS, F, ProofTranscript>(
