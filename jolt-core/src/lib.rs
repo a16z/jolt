@@ -14,10 +14,12 @@ pub mod benches;
 #[cfg(feature = "host")]
 pub mod host;
 
+pub mod fast_msm;
 pub mod field;
 pub mod jolt;
 pub mod msm;
 pub mod poly;
 pub mod r1cs;
+//pub mod snarkify_msm;
 pub mod subprotocols;
 pub mod utils;
