@@ -89,7 +89,7 @@ mod tests {
     use crate::poly::commitment::dory::DoryCommitmentScheme;
     use crate::poly::commitment::hyperkzg::HyperKZG;
     use crate::poly::commitment::mock::MockCommitScheme;
-    
+
     use crate::utils::transcript::{KeccakTranscript, Transcript};
     use std::sync::{LazyLock, Mutex};
 
