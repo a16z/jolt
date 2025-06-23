@@ -12,7 +12,7 @@ use common::{self, constants::RAM_START_ADDRESS, jolt_device::MemoryConfig};
 use emulator::{
     cpu::{self, Xlen},
     default_terminal::DefaultTerminal,
-    Emulator, EmulatorState, get_mut_emulator
+    get_mut_emulator, Emulator, EmulatorState,
 };
 
 use instruction::{RV32IMCycle, RV32IMInstruction};
@@ -68,12 +68,105 @@ pub fn trace(
     memory_config: &MemoryConfig,
     checkpoint_interval: Option<usize>,
 ) -> (Vec<RV32IMCycle>, JoltDevice, Option<Vec<LazyTraceIterator>>) {
-    let mut emulator = setup_emulator(elf_contents, inputs, memory_config);
-    let (execution_trace, checkpoints) =
-        run_and_get_checkpoints(&mut emulator, checkpoint_interval);
-    let device: JoltDevice = std::mem::take(&mut emulator.get_mut_cpu().get_mut_mmu().jolt_device);
-    return (execution_trace, device, checkpoints);
+    let mut emulator_trace_iter = LazyTraceIterator {
+        emulator_state: setup_emulator(elf_contents, inputs, memory_config),
+        prev_pc: 0,
+        current_traces: Vec::new(),
+        length: None,
+        count: 0,
+    };
+
+    let mut checkpoints = Vec::new();
+    let trace = match checkpoint_interval {
+        Some(n) => {
+            let mut trace = Vec::with_capacity(1 << 24); // TODO(moodlezoup): make configurable
+            loop {
+                checkpoints.push(emulator_trace_iter.clone());
+                let trace_n = emulator_trace_iter.by_ref().take(n);
+                let prev_len = trace.len();
+                trace.extend(trace_n);
+                if trace.len() - prev_len < n {
+                    break;
+                }
+            }
+            trace
+        }
+
+        None => emulator_trace_iter.by_ref().collect(),
+    };
+
+    let mut emulator = emulator_trace_iter.get_emulator_state();
+    let device: JoltDevice =
+        std::mem::take(&mut emulator.get_mut_cpu().get_mut_mmu().jolt_device);
+    return (trace, device, checkpoint_interval.map(|_| checkpoints));
 }
+
+// /// trace() that reproduces the warning about unclosed cycle tracking markers for muldiv benchmark.
+// /// Warning: Found 1 unclosed cycle tracking marker(s):
+// ///  - 'muldiv' (at ptr: 0x80000430), started at 140 RV32IM cycles
+// ///
+// pub fn trace_warning_investigate(
+//     elf_contents: Vec<u8>,
+//     inputs: &[u8],
+//     memory_config: &MemoryConfig,
+//     checkpoint_interval: Option<usize>,
+// ) -> (Vec<RV32IMCycle>, JoltDevice, Option<Vec<LazyTraceIterator>>) {
+//     let n = 204;
+//     let mut emulator = setup_emulator(elf_contents, inputs, memory_config);
+//     // let mut emulator2 = emulator.clone();
+//     let ckp = Some(n);
+//     let (execution_trace, checkpoints, mut emu_post_state) =
+//         run_and_get_checkpoints_cycle(&mut emulator, ckp);
+//     // run_and_get_checkpoints(&mut emulator, None);
+//     println!(
+//         "DONE! - # of checkpoints = {}",
+//         checkpoints.as_ref().unwrap().len()
+//     );
+//     for (idx, i) in checkpoints.unwrap().into_iter().enumerate() {
+//         if idx == 1 {
+//             run_and_get_checkpoints(&mut i.get_emulator_state(), None);
+//         }
+//     }
+//     let device: JoltDevice =
+//         std::mem::take(&mut emu_post_state.get_mut_cpu().get_mut_mmu().jolt_device);
+//     return (execution_trace, device, None);
+// }
+
+// #[tracing::instrument(skip_all)]
+// pub fn trace_test(
+//     elf_contents: Vec<u8>,
+//     inputs: &[u8],
+//     memory_config: &MemoryConfig,
+//     checkpoint_interval: Option<usize>,
+// ) -> (Vec<RV32IMCycle>, JoltDevice, Option<Vec<LazyTraceIterator>>) {
+//     let n = 100;
+//     let mut emulator2 = setup_emulator(elf_contents, inputs, memory_config);
+//     // let mut emulator2 = emulator.clone();
+//     let ckp = Some(n);
+//     // let (execution_trace, checkpoints) =
+//     // run_and_get_checkpoints(&mut emulator, ckp);
+//     let (execution_trace, checkpoints, mut emu_post_state) =
+//         run_and_get_checkpoints_cycle(&mut emulator2, ckp);
+//     let (_, _) = run_and_get_checkpoints(&mut emulator2, ckp);
+//     // assert!(execution_trace == execution_trace2);
+//     // let (x1, x2) = (checkpoints.as_ref().unwrap().len(), checkpoints2.as_ref().unwrap().len());
+//     // println!("checkpoints.len = {x1:}, {x2:}");
+//     // assert!(checkpoints.as_ref().unwrap().iter().collect::<Vec<_>>() == checkpoints2.as_ref().unwrap().iter().collect::<Vec<_>>());
+//     let t0: Vec<RV32IMCycle> = checkpoints.as_ref().unwrap()[0].clone().collect();
+//     assert!(t0 == execution_trace);
+//     let t1: Vec<RV32IMCycle> = checkpoints.as_ref().unwrap()[1].clone().collect();
+//     assert!(t1 == execution_trace[n..]); //compare starting from the first 101 cycles
+//     let t2: Vec<RV32IMCycle> = checkpoints.as_ref().unwrap()[2].clone().collect();
+//     assert!(t2 == execution_trace[2 * n..]);
+//     let t3: Vec<RV32IMCycle> = checkpoints.as_ref().unwrap()[3].clone().collect();
+//     assert!(t3 == execution_trace[3 * n..]);
+//     let t4: Vec<RV32IMCycle> = checkpoints.as_ref().unwrap()[4].clone().collect();
+//     assert!(t4 == execution_trace[4 * n..]);
+//     let device: JoltDevice =
+//         std::mem::take(&mut emu_post_state.get_mut_cpu().get_mut_mmu().jolt_device);
+//     println!("DONE!");
+//     return (execution_trace, device, checkpoints);
+// }
 
 #[tracing::instrument(skip_all)]
 fn step_emulator(emulator: &mut Emulator, prev_pc: &mut u64) -> Option<Vec<RV32IMCycle>> {
@@ -131,10 +224,11 @@ pub fn run_and_get_checkpoints(
             loop {
                 if count % n == 0 {
                     checkpoints.push(LazyTraceIterator {
-                        state: emulator.save_state(),
+                        emulator_state: emulator.save_state(),
                         prev_pc,
                         current_traces: Vec::new(),
                         length: checkpoint_interval,
+                        count: 0,
                     });
                 }
                 count += 1;
@@ -143,6 +237,7 @@ pub fn run_and_get_checkpoints(
                     Some(cycles) => trace.extend(cycles),
                 }
             }
+            println!("Emulator called {count:} times");
         }
         None => loop {
             match step_emulator(emulator, &mut prev_pc) {
@@ -154,6 +249,29 @@ pub fn run_and_get_checkpoints(
 
     (trace, checkpoint_interval.map(|_| checkpoints))
 }
+
+// struct LazyCheckpointIterator {
+//     trace_iter: LazyTraceIterator,
+//     checkpoints: Vec<LazyTraceIterator>,
+//     trace: Vec<RV32IMCycle>,
+//     checkpoint_interval: usize,
+// }
+
+// impl Iterator for LazyCheckpointIterator {
+//     type Item = LazyTraceIterator;
+//     fn next(&mut self) -> Option<Self::Item> {
+//         let _ = self.trace_iter.by_ref().take(self.checkpoint_interval);
+//         return Some(self.trace_iter.clone());
+//     }
+// }
+
+// pub fn run_and_get_checkpoints_cycle_lazy(
+//     emulator: &mut Emulator,
+//     checkpoint_interval: Option<usize>,
+// ) -> (Vec<RV32IMCycle>, Option<Vec<LazyTraceIterator>>) {
+//     let (trace, checkpoints, _) = run_and_get_checkpoints_cycle(emulator, checkpoint_interval);
+//     (trace, checkpoints)
+// }
 
 #[tracing::instrument(skip_all)]
 fn setup_emulator(elf_contents: Vec<u8>, inputs: &[u8], memory_config: &MemoryConfig) -> Emulator {
@@ -185,12 +303,27 @@ fn setup_emulator(elf_contents: Vec<u8>, inputs: &[u8], memory_config: &MemoryCo
 /// * `length` - Length of the iterator. This length is interpreted as the number of
 ///              emulator ticks. Thus, the length of the generated trace vector is
 ///              strictly greater than the this length.
+#[derive(Clone)]
 pub struct LazyTraceIterator {
-    state: EmulatorState,
+    emulator_state: EmulatorState,
     prev_pc: u64,
     current_traces: Vec<RV32IMCycle>,
     length: Option<usize>, // number of ticks
+    count: usize,          // number of cycles
 }
+
+impl LazyTraceIterator {
+    fn at_tick_boundary(self) -> bool {
+        self.current_traces.is_empty()
+    }
+
+    fn get_emulator_state(self) -> EmulatorState {
+        // to clone or not to clone?
+        self.emulator_state
+        // self.emulator_state.save_state()
+    }
+}
+
 impl Iterator for LazyTraceIterator {
     type Item = RV32IMCycle;
     /// Advances the iterator and returns the next trace entry.
@@ -223,7 +356,8 @@ impl Iterator for LazyTraceIterator {
         }
 
         // Step the emulator to execute the next instruction till the program ends.
-        match step_emulator(get_mut_emulator(&mut self.state), &mut self.prev_pc) {
+        self.count += 1;
+        match step_emulator(get_mut_emulator(&mut self.emulator_state), &mut self.prev_pc) {
             None => return None,
             Some(cycles) => {
                 assert!(self.current_traces.is_empty());

@@ -1700,7 +1700,7 @@ mod test_cpu {
         };
         assert_eq!(DRAM_BASE, cpu.read_pc());
         assert_eq!(0, cpu.read_register(10));
-        match cpu.tick_operate(false) {
+        match cpu.tick_operate() {
             Ok(_) => {}
             Err(_e) => panic!("tick_operate() unexpectedly did panic"),
         };
