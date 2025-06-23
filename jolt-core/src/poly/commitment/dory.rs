@@ -906,13 +906,6 @@ pub type JoltBn254 = JoltPairing<Bn254>;
 #[derive(Clone, Debug)]
 pub struct DoryCommitmentScheme<ProofTranscript: Transcript>(PhantomData<ProofTranscript>);
 
-#[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug)]
-pub struct DorySetup {
-    pub prover_setup: ProverSetup<JoltBn254>,
-    pub verifier_setup: VerifierSetup<JoltBn254>,
-    pub max_num_vars: usize,
-}
-
 #[derive(Clone, Debug, Default, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DoryCommitment(pub JoltGTBn254);
 
@@ -932,30 +925,25 @@ where
     ProofTranscript: Transcript,
 {
     type Field = Fr;
-    type ProverSetup = DorySetup;
-    type VerifierSetup = DorySetup;
+    type ProverSetup = ProverSetup<JoltBn254>;
+    type VerifierSetup = VerifierSetup<JoltBn254>;
     type Commitment = DoryCommitment;
     type Proof = DoryProofData;
     type BatchedProof = DoryBatchedProof;
 
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
         let srs_file_name = format!("dory_srs_{max_num_vars}_variables.srs");
-        let (prover_setup, verifier_setup) = setup_with_srs_file::<JoltBn254, _>(
+        let (prover_setup, _) = setup_with_srs_file::<JoltBn254, _>(
             &mut ark_std::rand::thread_rng(),
             max_num_vars,
             Some(&srs_file_name), // Will load if exists, generate and save if not
         );
 
-        DorySetup {
-            prover_setup,
-            verifier_setup,
-            max_num_vars,
-        }
+        prover_setup
     }
 
-    fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup {
-        // TODO(moodlezoup): separate VerifierSetup
-        setup.clone()
+    fn setup_verifier(prover_setup: &Self::ProverSetup) -> Self::VerifierSetup {
+        prover_setup.to_verifier_setup()
     }
 
     fn srs_size(_setup: &Self::ProverSetup) -> usize {
@@ -969,7 +957,7 @@ where
     ) -> Self::Commitment {
         let sigma = get_num_columns().log_2();
 
-        let commitment_val = commit::<JoltBn254, JoltMsmG1, _>(poly, 0, sigma, &setup.prover_setup);
+        let commitment_val = commit::<JoltBn254, JoltMsmG1, _>(poly, 0, sigma, setup);
         DoryCommitment(commitment_val)
     }
 
@@ -999,19 +987,14 @@ where
         let dory_transcript = JoltToDoryTranscriptRef::<Self::Field, _>::new(transcript);
 
         // dory evaluate returns the opening but in this case we don't use it, we pass directly the opening to verify()
-        let (_claimed_evaluation, proof_builder) = evaluate::<
-            JoltBn254,
-            JoltToDoryTranscriptRef<'_, Self::Field, ProofTranscript>,
-            JoltMsmG1,
-            JoltMsmG2,
-            _,
-        >(
-            poly,
-            &point_dory,
-            sigma,
-            &setup.prover_setup,
-            dory_transcript,
-        );
+        let (_claimed_evaluation, proof_builder) =
+            evaluate::<
+                JoltBn254,
+                JoltToDoryTranscriptRef<'_, Self::Field, ProofTranscript>,
+                JoltMsmG1,
+                JoltMsmG2,
+                _,
+            >(poly, &point_dory, sigma, setup, dory_transcript);
 
         let dory_proof = proof_builder.build();
 
@@ -1053,7 +1036,7 @@ where
             &opening_point_dory,
             verifier_builder,
             proof.sigma,
-            &setup.verifier_setup,
+            setup,
             dory_transcript,
         );
 
@@ -1099,14 +1082,11 @@ mod tests {
     use ark_std::UniformRand;
     use std::time::Instant;
 
-    fn create_test_setup(max_num_vars: usize) -> DorySetup {
-        DoryCommitmentScheme::<KeccakTranscript>::setup_prover(max_num_vars)
-    }
-
     fn test_commitment_scheme_with_poly(
         poly: MultilinearPolynomial<Fr>,
         poly_type_name: &str,
-        setup: &DorySetup,
+        prover_setup: &ProverSetup<JoltBn254>,
+        verifier_setup: &VerifierSetup<JoltBn254>,
     ) -> (
         std::time::Duration,
         std::time::Duration,
@@ -1133,7 +1113,7 @@ mod tests {
         let opening_point: Vec<Fr> = (0..num_vars).map(|_| Fr::rand(&mut rng)).collect();
 
         let commit_start = Instant::now();
-        let commitment = DoryCommitmentScheme::<KeccakTranscript>::commit(&poly, setup);
+        let commitment = DoryCommitmentScheme::<KeccakTranscript>::commit(&poly, prover_setup);
         let commit_time = commit_start.elapsed();
 
         println!(" Commit time: {commit_time:?}");
@@ -1148,7 +1128,7 @@ mod tests {
         let mut prove_transcript = KeccakTranscript::new(b"dory_test");
         let prove_start = Instant::now();
         let proof = DoryCommitmentScheme::<KeccakTranscript>::prove(
-            setup,
+            prover_setup,
             &poly,
             &opening_point,
             &mut prove_transcript,
@@ -1161,7 +1141,7 @@ mod tests {
         let verify_start = Instant::now();
         let verification_result = DoryCommitmentScheme::<KeccakTranscript>::verify(
             &proof,
-            setup,
+            verifier_setup,
             &mut verify_transcript,
             &opening_point,
             &evaluation,
@@ -1192,7 +1172,9 @@ mod tests {
 
         println!("Setting up Dory PCS with max_num_vars = {max_num_vars}");
         let setup_start = Instant::now();
-        let setup = create_test_setup(max_num_vars);
+        let prover_setup = DoryCommitmentScheme::<KeccakTranscript>::setup_prover(max_num_vars);
+        let verifier_setup =
+            DoryCommitmentScheme::<KeccakTranscript>::setup_verifier(&prover_setup);
         let setup_time = setup_start.elapsed();
         println!("Setup time: {setup_time:?}\n");
 
@@ -1202,41 +1184,62 @@ mod tests {
         let coeffs_large: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
         let poly_large = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs_large));
         let (commit_large, prove_large, verify_large, total_large) =
-            test_commitment_scheme_with_poly(poly_large, "LargeScalars", &setup);
+            test_commitment_scheme_with_poly(
+                poly_large,
+                "LargeScalars",
+                &prover_setup,
+                &verifier_setup,
+            );
 
         // Test 2: U8Scalars
         let coeffs_u8: Vec<u8> = (0..num_coeffs).map(|_| rng.next_u32() as u8).collect();
         let poly_u8 = MultilinearPolynomial::U8Scalars(CompactPolynomial::from_coeffs(coeffs_u8));
         let (commit_u8, prove_u8, verify_u8, total_u8) =
-            test_commitment_scheme_with_poly(poly_u8, "U8Scalars", &setup);
+            test_commitment_scheme_with_poly(poly_u8, "U8Scalars", &prover_setup, &verifier_setup);
 
         // Test 3: U16Scalars
         let coeffs_u16: Vec<u16> = (0..num_coeffs).map(|_| rng.next_u32() as u16).collect();
         let poly_u16 =
             MultilinearPolynomial::U16Scalars(CompactPolynomial::from_coeffs(coeffs_u16));
-        let (commit_u16, prove_u16, verify_u16, total_u16) =
-            test_commitment_scheme_with_poly(poly_u16, "U16Scalars", &setup);
+        let (commit_u16, prove_u16, verify_u16, total_u16) = test_commitment_scheme_with_poly(
+            poly_u16,
+            "U16Scalars",
+            &prover_setup,
+            &verifier_setup,
+        );
 
         // Test 4: U32Scalars
         let coeffs_u32: Vec<u32> = (0..num_coeffs).map(|_| rng.next_u32()).collect();
         let poly_u32 =
             MultilinearPolynomial::U32Scalars(CompactPolynomial::from_coeffs(coeffs_u32));
-        let (commit_u32, prove_u32, verify_u32, total_u32) =
-            test_commitment_scheme_with_poly(poly_u32, "U32Scalars", &setup);
+        let (commit_u32, prove_u32, verify_u32, total_u32) = test_commitment_scheme_with_poly(
+            poly_u32,
+            "U32Scalars",
+            &prover_setup,
+            &verifier_setup,
+        );
 
         // Test 5: U64Scalars
         let coeffs_u64: Vec<u64> = (0..num_coeffs).map(|_| rng.next_u64()).collect();
         let poly_u64 =
             MultilinearPolynomial::U64Scalars(CompactPolynomial::from_coeffs(coeffs_u64));
-        let (commit_u64, prove_u64, verify_u64, total_u64) =
-            test_commitment_scheme_with_poly(poly_u64, "U64Scalars", &setup);
+        let (commit_u64, prove_u64, verify_u64, total_u64) = test_commitment_scheme_with_poly(
+            poly_u64,
+            "U64Scalars",
+            &prover_setup,
+            &verifier_setup,
+        );
 
         // Test 6: I64Scalars
         let coeffs_i64: Vec<i64> = (0..num_coeffs).map(|_| rng.next_u64() as i64).collect();
         let poly_i64 =
             MultilinearPolynomial::I64Scalars(CompactPolynomial::from_coeffs(coeffs_i64));
-        let (commit_i64, prove_i64, verify_i64, total_i64) =
-            test_commitment_scheme_with_poly(poly_i64, "I64Scalars", &setup);
+        let (commit_i64, prove_i64, verify_i64, total_i64) = test_commitment_scheme_with_poly(
+            poly_i64,
+            "I64Scalars",
+            &prover_setup,
+            &verifier_setup,
+        );
 
         println!("========== PERFORMANCE SUMMARY ==========");
 
@@ -1280,9 +1283,11 @@ mod tests {
 
         let opening_point: Vec<Fr> = (0..num_vars).map(|_| Fr::rand(&mut rng)).collect();
 
-        let setup = DoryCommitmentScheme::<KeccakTranscript>::setup_prover(max_num_vars);
+        let prover_setup = DoryCommitmentScheme::<KeccakTranscript>::setup_prover(max_num_vars);
+        let verifier_setup =
+            DoryCommitmentScheme::<KeccakTranscript>::setup_verifier(&prover_setup);
 
-        let commitment = DoryCommitmentScheme::<KeccakTranscript>::commit(&poly, &setup);
+        let commitment = DoryCommitmentScheme::<KeccakTranscript>::commit(&poly, &prover_setup);
 
         let mut prove_transcript =
             KeccakTranscript::new(DoryCommitmentScheme::<KeccakTranscript>::protocol_name());
@@ -1297,7 +1302,7 @@ mod tests {
         .0;
 
         let proof = DoryCommitmentScheme::<KeccakTranscript>::prove(
-            &setup,
+            &prover_setup,
             &poly,
             &opening_point,
             &mut prove_transcript,
@@ -1311,7 +1316,7 @@ mod tests {
                 KeccakTranscript::new(DoryCommitmentScheme::<KeccakTranscript>::protocol_name());
             let result = DoryCommitmentScheme::<KeccakTranscript>::verify(
                 &proof,
-                &setup,
+                &verifier_setup,
                 &mut verify_transcript,
                 &opening_point,
                 &tampered_evaluation,
@@ -1334,7 +1339,7 @@ mod tests {
                 KeccakTranscript::new(DoryCommitmentScheme::<KeccakTranscript>::protocol_name());
             let result = DoryCommitmentScheme::<KeccakTranscript>::verify(
                 &proof,
-                &setup,
+                &verifier_setup,
                 &mut verify_transcript,
                 &tampered_opening_point,
                 &correct_evaluation,
@@ -1355,13 +1360,13 @@ mod tests {
             let wrong_poly =
                 MultilinearPolynomial::LargeScalars(DensePolynomial::new(wrong_coeffs));
             let wrong_commitment =
-                DoryCommitmentScheme::<KeccakTranscript>::commit(&wrong_poly, &setup);
+                DoryCommitmentScheme::<KeccakTranscript>::commit(&wrong_poly, &prover_setup);
 
             let mut verify_transcript =
                 KeccakTranscript::new(DoryCommitmentScheme::<KeccakTranscript>::protocol_name());
             let result = DoryCommitmentScheme::<KeccakTranscript>::verify(
                 &proof,
-                &setup,
+                &verifier_setup,
                 &mut verify_transcript,
                 &opening_point,
                 &correct_evaluation,
@@ -1380,7 +1385,7 @@ mod tests {
             let mut verify_transcript = KeccakTranscript::new(b"wrong_domain");
             let result = DoryCommitmentScheme::<KeccakTranscript>::verify(
                 &proof,
-                &setup,
+                &verifier_setup,
                 &mut verify_transcript,
                 &opening_point,
                 &correct_evaluation,
@@ -1400,7 +1405,7 @@ mod tests {
                 KeccakTranscript::new(DoryCommitmentScheme::<KeccakTranscript>::protocol_name());
             let result = DoryCommitmentScheme::<KeccakTranscript>::verify(
                 &proof,
-                &setup,
+                &verifier_setup,
                 &mut verify_transcript,
                 &opening_point,
                 &correct_evaluation,
