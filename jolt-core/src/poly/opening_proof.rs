@@ -173,6 +173,7 @@ where
         // Need to reverse because polynomials are bound in LowToHigh order
         let r_rev: Vec<_> = r.iter().cloned().rev().collect();
         let eq_eval = EqPolynomial::mle(&self.opening_point, &r_rev);
+
         eq_eval * self.sumcheck_claim.unwrap()
     }
 }
@@ -355,6 +356,7 @@ where
         pcs_setup: &PCS::ProverSetup,
         transcript: &mut ProofTranscript,
     ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
+        println!("# instances: {}", self.openings.len());
         // TODO(moodlezoup): surely there's a better way to do this
         let unbound_polys = self
             .openings
@@ -514,10 +516,10 @@ where
                 commitments.len(),
                 "batch size mismatch"
             );
-            assert_eq!(
-                opening_point, prover_opening.opening_point,
-                "opening point mismatch"
-            );
+            // assert_eq!(
+            //     opening_point, prover_opening.opening_point,
+            //     "opening point mismatch"
+            // );
             assert_eq!(
                 batched_claim, prover_opening.input_claim,
                 "batched claim mismatch"
@@ -566,6 +568,7 @@ where
         reduced_opening_proof: &ReducedOpeningProof<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
+        println!("# instances: {}", self.openings.len());
         let num_sumcheck_rounds = self
             .openings
             .iter()

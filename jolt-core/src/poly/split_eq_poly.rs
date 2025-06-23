@@ -271,6 +271,7 @@ impl<F: JoltField> SplitEqPolynomial<F> {
     #[tracing::instrument(skip_all, name = "SplitEqPolynomial::bind")]
     pub fn bind(&mut self, r: F) {
         if self.E1_len == 1 {
+            println!("r_address: {r}");
             // E_1 is already completely bound, so we bind E_2
             let n = self.E2_len / 2;
             for i in 0..n {
@@ -278,6 +279,7 @@ impl<F: JoltField> SplitEqPolynomial<F> {
             }
             self.E2_len = n;
         } else {
+            println!("r_cycle: {r}");
             // Bind E_1
             let n = self.E1_len / 2;
             for i in 0..n {
@@ -295,33 +297,6 @@ impl<F: JoltField> SplitEqPolynomial<F> {
         }
     }
 
-    // #[tracing::instrument(skip_all, name = "SplitEqPolynomial::bind_high_to_low")]
-    // pub fn bind_high_to_low(&mut self, r: F) {
-    //     if self.E1_len == 1 {
-    //         // E_1 is already completely bound, so we bind E_2 (high-order to low-order)
-    //         let n = self.E2_len / 2;
-    //         for i in 0..n {
-    //             self.E2[i] = (F::one() - r) * self.E2[i] + r * self.E2[i + n];
-    //         }
-    //         self.E2_len = n;
-    //     } else {
-    //         // Bind E_1 (high-order to low-order)
-    //         let n = self.E1_len / 2;
-    //         for i in 0..n {
-    //             self.E1[i] = (F::one() - r) * self.E1[i] + r * self.E1[i + n];
-    //         }
-    //         self.E1_len = n;
-
-    //         // If E_1 is now completely bound, we will be switching over to the
-    //         // linear-time sumcheck prover, using E_1 * E_2:
-    //         if self.E1_len == 1 {
-    //             self.E2[..self.E2_len]
-    //                 .iter_mut()
-    //                 .for_each(|eval| *eval *= self.E1[0]);
-    //         }
-    //     }
-    // }
-
     #[cfg(test)]
     pub fn merge(&self) -> DensePolynomial<F> {
         if self.E1_len == 1 {
@@ -335,6 +310,13 @@ impl<F: JoltField> SplitEqPolynomial<F> {
             }
             DensePolynomial::new(merged)
         }
+    }
+
+    #[cfg(test)]
+    pub fn final_sumcheck_claim(&self) -> F {
+        debug_assert_eq!(self.E1_len, 1);
+        debug_assert_eq!(self.E2_len, 1);
+        self.E2[0]
     }
 }
 

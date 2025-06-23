@@ -370,7 +370,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
             "Core PIOP + Hamming weight sumcheck failed"
         );
 
-        let r_concat = [r_cycle.as_slice(), r_address.as_slice()].concat();
+        let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
         let ra_commitment = &commitments.commitments[CommittedPolynomials::BytecodeRa.to_index()];
         opening_accumulator.append(&[ra_commitment], r_concat, &[&self.ra_claim], transcript);
 

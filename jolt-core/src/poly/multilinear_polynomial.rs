@@ -1,6 +1,6 @@
 use crate::{
     poly::{
-        sparse_matrix_polynomial::{OneHotPolynomial, SparseMatrixPolynomial},
+        one_hot_polynomial::OneHotPolynomial, sparse_matrix_polynomial::SparseMatrixPolynomial,
         split_eq_poly::SplitEqPolynomial,
     },
     utils::{compute_dotproduct, math::Math},

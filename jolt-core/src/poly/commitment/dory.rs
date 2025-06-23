@@ -1129,6 +1129,8 @@ where
         opening: &Self::Field,
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
+        println!("V opening_point: {:?}", opening_point);
+        println!("V opening: {}", opening);
         // Dory uses the opposite endian-ness as Jolt
         let opening_point_dory: Vec<JoltFieldWrapper<Self::Field>> = opening_point
             .iter()

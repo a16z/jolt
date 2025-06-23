@@ -7,7 +7,7 @@ use crate::{
     jolt::vm::{ram::remap_address, JoltProverPreprocessing},
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
-        multilinear_polynomial::MultilinearPolynomial, sparse_matrix_polynomial::OneHotPolynomial,
+        multilinear_polynomial::MultilinearPolynomial, one_hot_polynomial::OneHotPolynomial,
     },
     utils::transcript::Transcript,
 };
