@@ -250,7 +250,7 @@ where
 
     #[tracing::instrument(skip_all, name = "Jolt::prove")]
     fn prove(
-        program_io: JoltDevice,
+        mut program_io: JoltDevice,
         mut trace: Vec<RV32IMCycle>,
         mut preprocessing: JoltProverPreprocessing<F, PCS, ProofTranscript>,
     ) -> (
@@ -262,6 +262,15 @@ where
         icicle::icicle_init();
         let trace_length = trace.len();
         println!("Trace length: {trace_length}");
+
+        // truncate trailing zeros on device outputs
+        program_io.outputs.truncate(
+            program_io
+                .outputs
+                .iter()
+                .rposition(|&b| b != 0)
+                .map_or(0, |pos| pos + 1),
+        );
 
         F::initialize_lookup_tables(std::mem::take(&mut preprocessing.field));
 
@@ -368,12 +377,21 @@ where
         preprocessing: JoltVerifierPreprocessing<F, PCS, ProofTranscript>,
         proof: JoltProof<WORD_SIZE, F, PCS, ProofTranscript>,
         // commitments: JoltCommitments<PCS, ProofTranscript>,
-        program_io: JoltDevice,
+        mut program_io: JoltDevice,
         _debug_info: Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
     ) -> Result<(), ProofVerifyError> {
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
         let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS, ProofTranscript> =
             VerifierOpeningAccumulator::new();
+
+        // truncate trailing zeros on device outputs
+        program_io.outputs.truncate(
+            program_io
+                .outputs
+                .iter()
+                .rposition(|&b| b != 0)
+                .map_or(0, |pos| pos + 1),
+        );
 
         #[cfg(test)]
         if let Some(debug_info) = _debug_info {
