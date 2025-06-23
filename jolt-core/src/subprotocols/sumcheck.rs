@@ -221,11 +221,7 @@ impl BatchedSumcheck {
                 assert_eq!(
                     h0 + h1,
                     batched_claim,
-                    "round {}: H(0) + H(1) = {} + {} != {}",
-                    round,
-                    h0,
-                    h1,
-                    batched_claim
+                    "round {round}: H(0) + H(1) = {h0} + {h1} != {batched_claim}"
                 );
                 batched_claim = batched_univariate_poly.evaluate(&r_j);
             }

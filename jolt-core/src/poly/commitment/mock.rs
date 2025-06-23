@@ -19,7 +19,7 @@ pub struct MockCommitScheme<F: JoltField, ProofTranscript: Transcript> {
     _marker: PhantomData<(F, ProofTranscript)>,
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize, Default, Debug, PartialEq)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Default, Debug, PartialEq, Clone)]
 pub struct MockCommitment<F: JoltField> {
     poly: MultilinearPolynomial<F>,
 }
@@ -30,7 +30,7 @@ impl<F: JoltField> AppendToTranscript for MockCommitment<F> {
     }
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Clone, Debug)]
 pub struct MockProof<F: JoltField> {
     opening_point: Vec<F>,
 }

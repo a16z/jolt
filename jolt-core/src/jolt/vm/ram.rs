@@ -1393,7 +1393,7 @@ pub fn prove_val_evaluation<F: JoltField, ProofTranscript: Transcript>(
     (proof, r_cycle_prime)
 }
 
-fn remap_address(address: u64, memory_layout: &MemoryLayout) -> u64 {
+pub fn remap_address(address: u64, memory_layout: &MemoryLayout) -> u64 {
     if address == 0 {
         return 0; // TODO(moodlezoup): Better handling for no-ops
     }

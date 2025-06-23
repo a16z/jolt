@@ -131,7 +131,7 @@ where
     pcs_setup: Option<PCS::ProverSetup>,
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Clone, Debug)]
 pub struct ReducedOpeningProof<
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
