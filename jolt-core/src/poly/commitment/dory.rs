@@ -38,9 +38,9 @@ use dory::{
 
 // memory-efficient caching utils (~20x precompute cost for size of srs)
 use jolt_optimizations::{
-    Windowed2Signed2Data, Windowed2Signed4Data,
-    glv_two_precompute_windowed2_signed, glv_four_precompute_windowed2_signed,
+    glv_four_precompute_windowed2_signed, glv_two_precompute_windowed2_signed,
     vector_add_scalar_mul_g1_windowed2_signed, vector_add_scalar_mul_g2_windowed2_signed,
+    Windowed2Signed2Data, Windowed2Signed4Data,
 };
 
 // NewType wrappers for Jolt + arkworks types to interop with Dory traits
@@ -121,8 +121,6 @@ where
         Self(G::rand(rng))
     }
 }
-
-
 
 #[repr(transparent)]
 #[derive(Debug, Clone, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
@@ -414,7 +412,6 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
         assert_eq!(bases_count, vs.len(), "bases_count must equal vs length");
 
         if let Some(cache) = g2_cache {
-
             let precomputed = cache.get_windowed_data().expect("Cache data should exist");
 
             let subset_data = jolt_optimizations::Windowed2Signed4Data {
@@ -426,7 +423,7 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
             let vs_proj: &mut [G2Projective] = unsafe {
                 std::slice::from_raw_parts_mut(vs.as_mut_ptr() as *mut G2Projective, vs.len())
             };
-            
+
             // Use memory-efficient windowed2_signed method
             jolt_optimizations::vector_add_scalar_mul_g2_windowed2_signed(
                 vs_proj,
@@ -534,7 +531,7 @@ where
                     return Self::GT::identity();
                 }
 
-                // Extract prepared values from caches 
+                // Extract prepared values from caches
                 let g1_prepared: Vec<&BnG1Prepared> = (0..g1_c)
                     .map(|i| {
                         g1_cache
@@ -928,7 +925,6 @@ pub type JoltGTBn254 = JoltGTWrapper<Bn254>;
 
 pub type JoltBn254 = JoltPairing<Bn254>;
 
-
 #[derive(Clone, Debug)]
 pub struct DoryCommitmentScheme<ProofTranscript: Transcript>(PhantomData<ProofTranscript>);
 
@@ -970,29 +966,29 @@ where
             max_num_vars,
             Some(&srs_file_name), // Will load if exists, generate and save if not
         );
-        
+
         // @TODO:
         // Due to orphan rule we directly create cache (dory does expose init_cache()). Currently cache is disabled due to
         // bad performance from memory swaps -- further optimization needed to find a memory-balanced cache solution.
         /*
             use ark_bn254::{G1Affine, G2Affine};
             use dory::curve::{G1Cache, G2Cache};
-            
+
             // Extract G1 affine points from the wrapped projective points
             let g1_affines: Vec<G1Affine> = prover_setup.core.g1_vec
                 .iter()
                 .map(|wrapped| wrapped.0.into_affine())
                 .collect();
-            
-            // Extract G2 affine points from the wrapped projective points  
+
+            // Extract G2 affine points from the wrapped projective points
             let g2_affines: Vec<G2Affine> = prover_setup.core.g2_vec
                 .iter()
                 .map(|wrapped| wrapped.0.into_affine())
                 .collect();
-                
+
             // Extract g_fin as affine
             let g_fin_affine: G2Affine = prover_setup.core.g_fin.0.into_affine();
-            
+
             // Create and assign the caches
             prover_setup.g1_cache = Some(G1Cache::new(&g1_affines));
             prover_setup.g2_cache = Some(G2Cache::new(&g2_affines, Some(&g_fin_affine)));
