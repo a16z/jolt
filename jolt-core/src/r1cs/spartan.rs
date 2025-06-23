@@ -465,7 +465,7 @@ where
             .map(|input| &self.claimed_witness_evals[input.to_index()])
             .collect();
         opening_accumulator.append(
-            &r1cs_input_commitments,
+            r1cs_input_commitments,
             r_cycle.to_vec(),
             &claims,
             transcript,

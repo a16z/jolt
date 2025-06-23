@@ -32,8 +32,6 @@ pub enum CommittedPolynomials {
     WritePCtoRD,
     /// Whether the current instruction triggers a branch
     ShouldBranch,
-    /// The program counter for the next cycle in the trace
-    NextPC,
     /*  Twist/Shout witnesses */
     /// One-hot ra polynomial for the bytecode instance of Shout
     BytecodeRa,
@@ -50,14 +48,13 @@ pub enum CommittedPolynomials {
     InstructionRa(usize),
 }
 
-pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 7] = [
+pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 6] = [
     CommittedPolynomials::LeftInstructionInput,
     CommittedPolynomials::RightInstructionInput,
     CommittedPolynomials::Product,
     CommittedPolynomials::WriteLookupOutputToRD,
     CommittedPolynomials::WritePCtoRD,
     CommittedPolynomials::ShouldBranch,
-    CommittedPolynomials::NextPC,
     // CommittedPolynomials::BytecodeRa,
     // CommittedPolynomials::RamRa,
     // CommittedPolynomials::RdInc,
@@ -141,34 +138,6 @@ impl CommittedPolynomials {
                         let is_branch =
                             cycle.instruction().circuit_flags()[CircuitFlags::Branch as usize];
                         (LookupQuery::<32>::to_lookup_output(cycle) as u8) * is_branch as u8
-                    })
-                    .collect();
-                coeffs.into()
-            }
-            CommittedPolynomials::NextPC => {
-                let coeffs: Vec<u64> = trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let is_branch =
-                            cycle.instruction().circuit_flags()[CircuitFlags::Branch as usize];
-                        let should_branch =
-                            is_branch && LookupQuery::<32>::to_lookup_output(cycle) != 0;
-                        let instr = cycle.instruction().normalize();
-                        if should_branch {
-                            (instr.address as i64 + instr.operands.imm) as u64
-                        } else {
-                            let is_jump =
-                                cycle.instruction().circuit_flags()[CircuitFlags::Jump as usize];
-                            let do_not_update_pc = cycle.instruction().circuit_flags()
-                                [CircuitFlags::DoNotUpdateUnexpandedPC as usize];
-                            if is_jump {
-                                LookupQuery::<32>::to_lookup_output(cycle)
-                            } else if do_not_update_pc {
-                                instr.address as u64
-                            } else {
-                                instr.address as u64 + 4
-                            }
-                        }
                     })
                     .collect();
                 coeffs.into()

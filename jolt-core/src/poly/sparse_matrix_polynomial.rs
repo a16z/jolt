@@ -1,22 +1,14 @@
-use std::ops::Index;
-
 use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
-use crate::msm::VariableBaseMSM;
-use crate::poly::commitment::dory::JoltGroupWrapper;
+use crate::field::JoltField;
 use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::utils::compute_dotproduct;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
-use crate::{field::JoltField, utils};
-use ark_ec::CurveGroup;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use num_integer::Integer;
 use num_traits::MulAdd;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
-use std::cmp::Ordering;
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct SparseMatrixPolynomial<F: JoltField> {
@@ -105,7 +97,7 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
         let num_columns_per_group = num_columns / num_groups;
 
         // TODO(moodlezoup): Avoid flat_map
-        let mut sparse_product: Vec<F> = self
+        let _sparse_product: Vec<F> = self
             .sparse_coeffs
             .par_iter()
             .flat_map(|group| {
@@ -121,21 +113,6 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
             .collect();
 
         todo!();
-        // sparse_product
-        //     .par_iter_mut()
-        //     .enumerate()
-        //     .for_each(|(column_index, dest)| {
-        //         *dest += l_vec
-        //             .iter()
-        //             .step_by(K)
-        //             .enumerate()
-        //             .map(|(i, l_entry)| {
-        //                 *l_entry * self.dense_submatrix[i * num_columns + column_index]
-        //             })
-        //             .sum();
-        //     });
-
-        sparse_product
     }
 
     pub fn evaluate(&self, r: &[F]) -> F {
@@ -168,11 +145,11 @@ impl<F: JoltField> PolynomialBinding<F> for SparseMatrixPolynomial<F> {
         todo!()
     }
 
-    fn bind(&mut self, r: F, order: BindingOrder) {
+    fn bind(&mut self, _r: F, _order: BindingOrder) {
         todo!()
     }
 
-    fn bind_parallel(&mut self, r: F, order: BindingOrder) {
+    fn bind_parallel(&mut self, _r: F, _order: BindingOrder) {
         todo!()
     }
 
@@ -272,14 +249,6 @@ pub struct OneHotPolynomial {
 }
 
 impl OneHotPolynomial {
-    fn commit_rows<F, G>(&self, g1_generators: &[JoltGroupWrapper<G>]) -> Vec<JoltGroupWrapper<G>>
-    where
-        F: JoltField,
-        G: CurveGroup<ScalarField = F> + VariableBaseMSM,
-    {
-        vec![]
-    }
-
     // pub fn from_increments(increments: Vec<(usize, i64)>) -> Self {
     //     let T = get_T();
     //     let global_K = get_K();
@@ -340,7 +309,7 @@ impl OneHotPolynomial {
         }
     }
 
-    fn evaluate<F: JoltField>(&self, r: &[F]) -> F {
+    fn _evaluate<F: JoltField>(&self, r: &[F]) -> F {
         let T = get_T();
         debug_assert_eq!(self.nonzero_indices.len(), T);
         assert_eq!(self.K.log_2() + T.log_2(), r.len());
@@ -381,11 +350,11 @@ impl<F: JoltField> PolynomialBinding<F> for OneHotPolynomial {
         todo!()
     }
 
-    fn bind(&mut self, r: F, order: BindingOrder) {
+    fn bind(&mut self, _r: F, _order: BindingOrder) {
         todo!()
     }
 
-    fn bind_parallel(&mut self, r: F, order: BindingOrder) {
+    fn bind_parallel(&mut self, _r: F, _order: BindingOrder) {
         todo!()
     }
 

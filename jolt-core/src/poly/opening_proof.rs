@@ -12,13 +12,11 @@ use super::{
     commitment::commitment_scheme::CommitmentScheme,
     dense_mlpoly::DensePolynomial,
     eq_poly::EqPolynomial,
-    multilinear_polynomial::{
-        BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-    },
+    multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
     unipoly::{CompressedUniPoly, UniPoly},
 };
-// #[cfg(test)]
-// use crate::poly::multilinear_polynomial::PolynomialEvaluation;
+#[cfg(test)]
+use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::{
     field::JoltField,
     subprotocols::sumcheck::SumcheckInstanceProof,

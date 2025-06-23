@@ -156,8 +156,7 @@ fn benchmark_dense_parallel<F: JoltField>(
 ) {
     c.bench_function(
         &format!(
-            "DensePolynomial::bind_parallel {} variables {:?}",
-            num_vars, binding_order
+            "DensePolynomial::bind_parallel {num_vars} variables {binding_order:?}"
         ),
         |b| {
             b.iter_with_setup(

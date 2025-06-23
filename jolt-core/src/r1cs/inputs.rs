@@ -254,9 +254,6 @@ impl JoltR1CSInputs {
                     .collect();
                 coeffs.into()
             }
-            JoltR1CSInputs::NextPC => {
-                CommittedPolynomials::NextPC.generate_witness(preprocessing, trace)
-            }
             JoltR1CSInputs::NextUnexpandedPC => {
                 let coeffs: Vec<u64> = trace
                     .par_iter()

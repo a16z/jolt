@@ -191,7 +191,7 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G1Projective>> for JoltMsmG1 {
         let projective_points: &[G1Projective] = unsafe {
             std::slice::from_raw_parts(bases.as_ptr() as *const G1Projective, bases.len())
         };
-        let affines = G1Projective::normalize_batch(&projective_points);
+        let affines = G1Projective::normalize_batch(projective_points);
 
         // # Safety
         // JoltFieldWrapper always has same memory layout as underlying Fr here.
@@ -222,10 +222,7 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G1Projective>> for JoltMsmG1 {
         // Use `jolt-optimizations`` fixed_base_vector_msm_g1
         let results_proj = jolt_optimizations::fixed_base_vector_msm_g1(&base.0, raw_scalars);
 
-        results_proj
-            .into_iter()
-            .map(|proj| JoltGroupWrapper(proj))
-            .collect()
+        results_proj.into_iter().map(JoltGroupWrapper).collect()
     }
 
     fn fixed_scalar_variable_with_add(
@@ -354,10 +351,7 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
                 })
                 .collect();
 
-            results_proj
-                .into_iter()
-                .map(|proj| JoltGroupWrapper(proj))
-                .collect()
+            results_proj.into_iter().map(JoltGroupWrapper).collect()
         } else {
             // Fall back to online computation
             let base_proj = base.0;
@@ -368,10 +362,7 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
                 })
                 .collect();
 
-            results_proj
-                .into_iter()
-                .map(|proj| JoltGroupWrapper(proj))
-                .collect()
+            results_proj.into_iter().map(JoltGroupWrapper).collect()
         }
     }
 
@@ -798,8 +789,8 @@ where
                     )
                 })
                 .collect(),
-            MultilinearPolynomial::Sparse(poly) => todo!(),
-            MultilinearPolynomial::OneHot(poly) => todo!(),
+            MultilinearPolynomial::Sparse(_) => todo!(),
+            MultilinearPolynomial::OneHot(_) => todo!(),
         }
     }
 
@@ -835,13 +826,7 @@ where
                     )
                 })
                 .collect(),
-            MultilinearPolynomial::U8Scalars(poly) => todo!(),
-            MultilinearPolynomial::U16Scalars(poly) => todo!(),
-            MultilinearPolynomial::U32Scalars(poly) => todo!(),
-            MultilinearPolynomial::U64Scalars(poly) => todo!(),
-            MultilinearPolynomial::I64Scalars(poly) => todo!(),
-            MultilinearPolynomial::Sparse(poly) => todo!(),
-            MultilinearPolynomial::OneHot(poly) => todo!(),
+            _ => todo!(),
         }
     }
 }
@@ -973,7 +958,7 @@ where
         setup.clone()
     }
 
-    fn srs_size(setup: &Self::ProverSetup) -> usize {
+    fn srs_size(_setup: &Self::ProverSetup) -> usize {
         todo!()
     }
 
@@ -1074,7 +1059,7 @@ where
 
         match verify_result {
             Ok(()) => Ok(()),
-            Err(e) => Err(ProofVerifyError::DoryError(format!("{:?}", e))),
+            Err(e) => Err(ProofVerifyError::DoryError(format!("{e:?}"))),
         }
     }
 
@@ -1141,8 +1126,7 @@ mod tests {
         };
 
         println!(
-            "Testing Dory PCS ({}) with {} variables, {} coefficients",
-            poly_type_name, num_vars, num_coeffs
+            "Testing Dory PCS ({poly_type_name}) with {num_vars} variables, {num_coeffs} coefficients"
         );
 
         let mut rng = thread_rng();
@@ -1152,7 +1136,7 @@ mod tests {
         let commitment = DoryCommitmentScheme::<KeccakTranscript>::commit(&poly, setup);
         let commit_time = commit_start.elapsed();
 
-        println!(" Commit time: {:?}", commit_time);
+        println!(" Commit time: {commit_time:?}");
 
         let mut reversed_opening_point = opening_point.clone();
         reversed_opening_point.reverse();
@@ -1171,7 +1155,7 @@ mod tests {
         );
         let prove_time = prove_start.elapsed();
 
-        println!(" Prove time: {:?}", prove_time);
+        println!(" Prove time: {prove_time:?}");
 
         let mut verify_transcript = KeccakTranscript::new(b"dory_test");
         let verify_start = Instant::now();
@@ -1185,17 +1169,15 @@ mod tests {
         );
         let verify_time = verify_start.elapsed();
 
-        println!(" Verify time: {:?}", verify_time);
+        println!(" Verify time: {verify_time:?}");
         let total_time = commit_time + prove_time + verify_time;
-        println!(" Total time (without setup): {:?}", total_time);
+        println!(" Total time (without setup): {total_time:?}");
 
         assert!(
             verification_result.is_ok(),
-            "Dory verification failed for {}: {:?}",
-            poly_type_name,
-            verification_result
+            "Dory verification failed for {poly_type_name}: {verification_result:?}"
         );
-        println!(" ✅ {} test passed!\n", poly_type_name);
+        println!(" ✅ {poly_type_name} test passed!\n");
 
         (commit_time, prove_time, verify_time, total_time)
     }
@@ -1208,11 +1190,11 @@ mod tests {
 
         let num_coeffs = 1 << num_vars;
 
-        println!("Setting up Dory PCS with max_num_vars = {}", max_num_vars);
+        println!("Setting up Dory PCS with max_num_vars = {max_num_vars}");
         let setup_start = Instant::now();
         let setup = create_test_setup(max_num_vars);
         let setup_time = setup_start.elapsed();
-        println!("Setup time: {:?}\n", setup_time);
+        println!("Setup time: {setup_time:?}\n");
 
         let mut rng = thread_rng();
 
@@ -1258,34 +1240,28 @@ mod tests {
 
         println!("========== PERFORMANCE SUMMARY ==========");
 
-        println!("Setup time: {:?}\n", setup_time);
+        println!("Setup time: {setup_time:?}\n");
 
         println!("Polynomial Type | Commit Time | Prove Time | Verify Time | Total Time");
 
         println!("----------------|-------------|-------------|-------------|------------");
         println!(
-            "LargeScalars | {:>11?} | {:>11?} | {:>11?} | {:>10?}",
-            commit_large, prove_large, verify_large, total_large
+            "LargeScalars | {commit_large:>11?} | {prove_large:>11?} | {verify_large:>11?} | {total_large:>10?}"
         );
         println!(
-            "U8Scalars | {:>11?} | {:>11?} | {:>11?} | {:>10?}",
-            commit_u8, prove_u8, verify_u8, total_u8
+            "U8Scalars | {commit_u8:>11?} | {prove_u8:>11?} | {verify_u8:>11?} | {total_u8:>10?}"
         );
         println!(
-            "U16Scalars | {:>11?} | {:>11?} | {:>11?} | {:>10?}",
-            commit_u16, prove_u16, verify_u16, total_u16
+            "U16Scalars | {commit_u16:>11?} | {prove_u16:>11?} | {verify_u16:>11?} | {total_u16:>10?}"
         );
         println!(
-            "U32Scalars | {:>11?} | {:>11?} | {:>11?} | {:>10?}",
-            commit_u32, prove_u32, verify_u32, total_u32
+            "U32Scalars | {commit_u32:>11?} | {prove_u32:>11?} | {verify_u32:>11?} | {total_u32:>10?}"
         );
         println!(
-            "U64Scalars | {:>11?} | {:>11?} | {:>11?} | {:>10?}",
-            commit_u64, prove_u64, verify_u64, total_u64
+            "U64Scalars | {commit_u64:>11?} | {prove_u64:>11?} | {verify_u64:>11?} | {total_u64:>10?}"
         );
         println!(
-            "I64Scalars | {:>11?} | {:>11?} | {:>11?} | {:>10?}",
-            commit_i64, prove_i64, verify_i64, total_i64
+            "I64Scalars | {commit_i64:>11?} | {prove_i64:>11?} | {verify_i64:>11?} | {total_i64:>10?}"
         );
         println!("==========================================");
     }
