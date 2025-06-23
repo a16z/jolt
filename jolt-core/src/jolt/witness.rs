@@ -152,18 +152,11 @@ impl CommittedPolynomials {
                 coeffs.into()
             }
             CommittedPolynomials::BytecodeRa => {
-                let addresses: Vec<usize> = trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let instr = cycle.instruction().normalize();
-                        let k = preprocessing
-                            .shared
-                            .bytecode
-                            .virtual_address_map
-                            .get(&(instr.address, instr.virtual_sequence_remaining.unwrap_or(0)))
-                            .unwrap();
-                        *k
-                    })
+                let addresses: Vec<usize> = preprocessing
+                    .shared
+                    .bytecode
+                    .map_trace_to_pc(trace)
+                    .map(|k| k as usize)
                     .collect();
                 MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
                     addresses,
