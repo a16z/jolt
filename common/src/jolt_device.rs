@@ -68,21 +68,15 @@ impl JoltDevice {
             println!("GUEST PANIC");
             self.panic = true;
             return;
-        }
-
-        if address == self.memory_layout.termination {
+        } else if self.is_panic(address) || self.is_termination(address) {
             return;
         }
 
         let internal_address = self.convert_write_address(address);
         if self.outputs.len() <= internal_address {
-            if value != 0 {
-                self.outputs.resize(internal_address + 1, 0);
-                self.outputs[internal_address] = value;
-            }
-        } else {
-            self.outputs[internal_address] = value;
+            self.outputs.resize(internal_address + 1, 0);
         }
+        self.outputs[internal_address] = value;
     }
 
     pub fn size(&self) -> usize {

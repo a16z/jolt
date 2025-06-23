@@ -38,13 +38,31 @@ pub fn lookup_table_mle_full_hypercube_test<F: JoltField, T: JoltLookupTable + D
     }
 }
 
+/// Generates a lookup index where right operand is 111..000
+pub fn gen_bitmask_lookup_index(rng: &mut rand::rngs::StdRng) -> u64 {
+    let x = rng.gen::<u32>();
+
+    let zeros = rng.gen_range(0, 33);
+    let y = if zeros >= 32 { 0 } else { u32::MAX << zeros };
+
+    let mut result = 0u64;
+    for i in 0..32 {
+        let yi = ((x >> i) & 1) as u64;
+        let xi = ((y >> i) & 1) as u64;
+
+        result |= xi << (2 * i);
+        result |= yi << (2 * i + 1);
+    }
+
+    result
+}
+
 pub fn prefix_suffix_test<F: JoltField, T: PrefixSuffixDecomposition<32>>() {
     let mut rng = StdRng::seed_from_u64(12345);
 
     for _ in 0..1000 {
         let mut prefix_checkpoints: Vec<PrefixCheckpoint<F>> = vec![None.into(); Prefixes::COUNT];
-        let lookup_index = rng.next_u64();
-
+        let lookup_index = T::random_lookup_index(&mut rng);
         let mut j = 0;
         let mut r: Vec<F> = vec![];
         for phase in 0..4 {

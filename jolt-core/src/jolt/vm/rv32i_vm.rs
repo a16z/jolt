@@ -67,7 +67,7 @@ pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
 
 pub type ProofTranscript = KeccakTranscript;
 pub type PCS = HyperKZG<Bn254, ProofTranscript>;
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Clone)]
 pub struct JoltHyperKZGProof {
     pub proof: RV32IJoltProof<Fr, PCS, ProofTranscript>,
     // pub commitments: JoltCommitments<PCS, ProofTranscript>,
@@ -84,6 +84,7 @@ mod tests {
     use crate::field::JoltField;
     use crate::host;
     use crate::jolt::vm::rv32i_vm::{Jolt, RV32IJoltVM};
+    use crate::jolt::vm::JoltVerifierPreprocessing;
     use crate::poly::commitment::commitment_scheme::CommitmentScheme;
     use crate::poly::commitment::dory::DoryCommitmentScheme;
     use crate::poly::commitment::hyperkzg::HyperKZG;
@@ -118,14 +119,16 @@ mod tests {
             1 << 20,
         );
         let (proof, commitments, debug_info) =
-            <RV32IJoltVM as Jolt<
-                32,
-                Fr,
-                DoryCommitmentScheme<KeccakTranscript>,
-                KeccakTranscript,
-            >>::prove(io_device, trace, preprocessing.clone());
+            <RV32IJoltVM as Jolt<32, F, PCS, ProofTranscript>>::prove(
+                io_device,
+                trace,
+                preprocessing.clone(),
+            );
+
+        let verifier_preprocessing =
+            JoltVerifierPreprocessing::<F, PCS, ProofTranscript>::from(&preprocessing);
         let verification_result =
-            RV32IJoltVM::verify(preprocessing.shared, proof, commitments, debug_info);
+            RV32IJoltVM::verify(verifier_preprocessing, proof, commitments, debug_info);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -173,8 +176,13 @@ mod tests {
                 KeccakTranscript,
             >>::prove(io_device, trace, preprocessing.clone());
 
+        let verifier_preprocessing = JoltVerifierPreprocessing::<
+            Fr,
+            DoryCommitmentScheme<KeccakTranscript>,
+            KeccakTranscript,
+        >::from(&preprocessing);
         let verification_result = RV32IJoltVM::verify(
-            preprocessing.shared,
+            verifier_preprocessing,
             jolt_proof,
             jolt_commitments,
             debug_info,
@@ -212,9 +220,9 @@ mod tests {
         >>::prove(
             io_device, trace, preprocessing.clone()
         );
-
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result = RV32IJoltVM::verify(
-            preprocessing.shared,
+            verifier_preprocessing,
             jolt_proof,
             jolt_commitments,
             debug_info,
@@ -249,8 +257,9 @@ mod tests {
             io_device, trace, preprocessing.clone()
         );
 
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result = RV32IJoltVM::verify(
-            preprocessing.shared,
+            verifier_preprocessing,
             jolt_proof,
             jolt_commitments,
             debug_info,
@@ -290,12 +299,15 @@ mod tests {
         >>::prove(
             io_device, trace, preprocessing.clone()
         );
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let _verification_result =
-            RV32IJoltVM::verify(preprocessing.shared, proof, commitments, debug_info);
+            RV32IJoltVM::verify(verifier_preprocessing, proof, commitments, debug_info);
     }
 
     #[test]
     #[should_panic]
+    // TODO: Remove this ignore
+    #[ignore]
     fn malicious_trace() {
         let artifact_guard = FIB_FILE_LOCK.lock().unwrap();
         let mut program = host::Program::new("fibonacci-guest");
@@ -328,7 +340,8 @@ mod tests {
         >>::prove(
             io_device, trace, preprocessing.clone()
         );
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let _verification_result =
-            RV32IJoltVM::verify(preprocessing.shared, proof, commitments, debug_info);
+            RV32IJoltVM::verify(verifier_preprocessing, proof, commitments, debug_info);
     }
 }

@@ -160,7 +160,7 @@ impl CommittedPolynomials {
                             let is_jump =
                                 cycle.instruction().circuit_flags()[CircuitFlags::Jump as usize];
                             let do_not_update_pc = cycle.instruction().circuit_flags()
-                                [CircuitFlags::DoNotUpdatePC as usize];
+                                [CircuitFlags::DoNotUpdateUnexpandedPC as usize];
                             if is_jump {
                                 LookupQuery::<32>::to_lookup_output(cycle)
                             } else if do_not_update_pc {

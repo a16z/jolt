@@ -16,8 +16,9 @@ impl InstructionFlags for VirtualSRAI {
         flags[CircuitFlags::LeftOperandIsRs1Value as usize] = true;
         flags[CircuitFlags::RightOperandIsImm as usize] = true;
         flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
-        flags[CircuitFlags::Virtual as usize] = self.virtual_sequence_remaining.is_some();
-        flags[CircuitFlags::DoNotUpdatePC as usize] =
+        flags[CircuitFlags::InlineSequenceInstruction as usize] =
+            self.virtual_sequence_remaining.is_some();
+        flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
             self.virtual_sequence_remaining.unwrap_or(0) != 0;
         flags
     }
@@ -34,7 +35,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualSRAI> 
     fn to_lookup_output(&self) -> u64 {
         use crate::subprotocols::sparse_dense_shout::LookupBits;
         let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
-        let mut x = LookupBits::new(x as u64, WORD_SIZE);
+        let mut x = LookupBits::new(x, WORD_SIZE);
         let mut y = LookupBits::new(y as u64, WORD_SIZE);
 
         let sign_bit = if x.leading_ones() == 0 { 0 } else { 1 };

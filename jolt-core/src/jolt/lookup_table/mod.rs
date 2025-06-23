@@ -22,6 +22,7 @@ use upper_word::UpperWordTable;
 use valid_div0::ValidDiv0Table;
 use valid_signed_remainder::ValidSignedRemainderTable;
 use valid_unsigned_remainder::ValidUnsignedRemainderTable;
+use virtual_rotr::VirtualRotrTable;
 use virtual_sra::VirtualSRATable;
 use virtual_srl::VirtualSRLTable;
 use xor::XorTable;
@@ -48,6 +49,10 @@ pub trait JoltLookupTable: Clone + Debug + Send + Sync + Serialize {
 pub trait PrefixSuffixDecomposition<const WORD_SIZE: usize>: JoltLookupTable + Default {
     fn suffixes(&self) -> Vec<Suffixes>;
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F;
+    #[cfg(test)]
+    fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u64 {
+        rand::RngCore::next_u64(rng)
+    }
 }
 
 pub mod prefixes;
@@ -72,6 +77,7 @@ pub mod upper_word;
 pub mod valid_div0;
 pub mod valid_signed_remainder;
 pub mod valid_unsigned_remainder;
+pub mod virtual_rotr;
 pub mod virtual_sra;
 pub mod virtual_srl;
 pub mod xor;
@@ -103,6 +109,7 @@ pub enum LookupTables<const WORD_SIZE: usize> {
     ShiftRightBitmask(ShiftRightBitmaskTable<WORD_SIZE>),
     VirtualSRL(VirtualSRLTable<WORD_SIZE>),
     VirtualSRA(VirtualSRATable<WORD_SIZE>),
+    VirtualROTRI(VirtualRotrTable<WORD_SIZE>),
 }
 
 impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
@@ -136,6 +143,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::ShiftRightBitmask(table) => table.materialize(),
             LookupTables::VirtualSRL(table) => table.materialize(),
             LookupTables::VirtualSRA(table) => table.materialize(),
+            LookupTables::VirtualROTRI(table) => table.materialize(),
         }
     }
 
@@ -162,6 +170,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::ShiftRightBitmask(table) => table.materialize_entry(index),
             LookupTables::VirtualSRL(table) => table.materialize_entry(index),
             LookupTables::VirtualSRA(table) => table.materialize_entry(index),
+            LookupTables::VirtualROTRI(table) => table.materialize_entry(index),
         }
     }
 
@@ -188,6 +197,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::ShiftRightBitmask(table) => table.evaluate_mle(r),
             LookupTables::VirtualSRL(table) => table.evaluate_mle(r),
             LookupTables::VirtualSRA(table) => table.evaluate_mle(r),
+            LookupTables::VirtualROTRI(table) => table.evaluate_mle(r),
         }
     }
 
@@ -214,6 +224,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::ShiftRightBitmask(table) => table.suffixes(),
             LookupTables::VirtualSRL(table) => table.suffixes(),
             LookupTables::VirtualSRA(table) => table.suffixes(),
+            LookupTables::VirtualROTRI(table) => table.suffixes(),
         }
     }
 
@@ -244,6 +255,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::ShiftRightBitmask(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualSRL(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualSRA(table) => table.combine(prefixes, suffixes),
+            LookupTables::VirtualROTRI(table) => table.combine(prefixes, suffixes),
         }
     }
 }

@@ -17,8 +17,9 @@ impl InstructionFlags for VirtualShiftRightBitmask {
         flags[CircuitFlags::RightOperandIsImm as usize] = true;
         flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
         flags[CircuitFlags::AddOperands as usize] = true;
-        flags[CircuitFlags::Virtual as usize] = self.virtual_sequence_remaining.is_some();
-        flags[CircuitFlags::DoNotUpdatePC as usize] =
+        flags[CircuitFlags::InlineSequenceInstruction as usize] =
+            self.virtual_sequence_remaining.is_some();
+        flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
             self.virtual_sequence_remaining.unwrap_or(0) != 0;
         flags
     }
@@ -50,7 +51,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualShiftR
             32 => {
                 let shift = y % 32;
                 let ones = (1u64 << (32 - shift)) - 1;
-                (ones << shift) as u64
+                ones << shift
             }
             64 => {
                 let shift = y % 64;

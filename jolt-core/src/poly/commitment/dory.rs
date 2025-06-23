@@ -4,7 +4,7 @@ use crate::{
     msm::{Icicle, VariableBaseMSM},
     poly::{
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
-        sparse_matrix_polynomial::{get_max_num_vars, get_num_columns},
+        sparse_matrix_polynomial::get_num_columns,
     },
     utils::{
         errors::ProofVerifyError,
@@ -31,16 +31,9 @@ use dory::{
         Field as DoryField, Group as DoryGroup, MultiScalarMul as DoryMultiScalarMul,
         Pairing as DoryPairing,
     },
-    commit, evaluate, setup as dory_setup, setup_with_srs_file,
+    commit, evaluate, setup_with_srs_file,
     transcript::Transcript as DoryTranscript,
     verify, DoryProof, DoryProofBuilder, Polynomial as DoryPolynomial, ProverSetup, VerifierSetup,
-};
-
-// memory-efficient caching utils (~20x precompute cost for size of srs)
-use jolt_optimizations::{
-    glv_four_precompute_windowed2_signed, glv_two_precompute_windowed2_signed,
-    vector_add_scalar_mul_g1_windowed2_signed, vector_add_scalar_mul_g2_windowed2_signed,
-    Windowed2Signed2Data, Windowed2Signed4Data,
 };
 
 // NewType wrappers for Jolt + arkworks types to interop with Dory traits
@@ -489,7 +482,7 @@ where
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct JoltPairing<E: ArkPairing>(PhantomData<E>);
 
 impl<E> DoryPairing for JoltPairing<E>
@@ -928,7 +921,7 @@ pub type JoltBn254 = JoltPairing<Bn254>;
 #[derive(Clone, Debug)]
 pub struct DoryCommitmentScheme<ProofTranscript: Transcript>(PhantomData<ProofTranscript>);
 
-#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug)]
 pub struct DorySetup {
     pub prover_setup: ProverSetup<JoltBn254>,
     pub verifier_setup: VerifierSetup<JoltBn254>,
@@ -954,45 +947,19 @@ where
     ProofTranscript: Transcript,
 {
     type Field = Fr;
-    type Setup = DorySetup;
+    type ProverSetup = DorySetup;
+    type VerifierSetup = DorySetup;
     type Commitment = DoryCommitment;
     type Proof = DoryProofData;
     type BatchedProof = DoryBatchedProof;
 
-    fn setup(max_num_vars: usize) -> Self::Setup {
+    fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
         let srs_file_name = format!("dory_srs_{max_num_vars}_variables.srs");
-        let (mut prover_setup, verifier_setup) = setup_with_srs_file::<JoltBn254, _>(
+        let (prover_setup, verifier_setup) = setup_with_srs_file::<JoltBn254, _>(
             &mut ark_std::rand::thread_rng(),
             max_num_vars,
             Some(&srs_file_name), // Will load if exists, generate and save if not
         );
-
-        // @TODO:
-        // Due to orphan rule we directly create cache (dory does expose init_cache()). Currently cache is disabled due to
-        // bad performance from memory swaps -- further optimization needed to find a memory-balanced cache solution.
-        /*
-            use ark_bn254::{G1Affine, G2Affine};
-            use dory::curve::{G1Cache, G2Cache};
-
-            // Extract G1 affine points from the wrapped projective points
-            let g1_affines: Vec<G1Affine> = prover_setup.core.g1_vec
-                .iter()
-                .map(|wrapped| wrapped.0.into_affine())
-                .collect();
-
-            // Extract G2 affine points from the wrapped projective points
-            let g2_affines: Vec<G2Affine> = prover_setup.core.g2_vec
-                .iter()
-                .map(|wrapped| wrapped.0.into_affine())
-                .collect();
-
-            // Extract g_fin as affine
-            let g_fin_affine: G2Affine = prover_setup.core.g_fin.0.into_affine();
-
-            // Create and assign the caches
-            prover_setup.g1_cache = Some(G1Cache::new(&g1_affines));
-            prover_setup.g2_cache = Some(G2Cache::new(&g2_affines, Some(&g_fin_affine)));
-        */
 
         DorySetup {
             prover_setup,
@@ -1001,15 +968,27 @@ where
         }
     }
 
+    fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup {
+        // TODO(moodlezoup): separate VerifierSetup
+        setup.clone()
+    }
+
+    fn srs_size(setup: &Self::ProverSetup) -> usize {
+        todo!()
+    }
+
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::commit")]
-    fn commit(poly: &MultilinearPolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
+    fn commit(
+        poly: &MultilinearPolynomial<Self::Field>,
+        setup: &Self::ProverSetup,
+    ) -> Self::Commitment {
         let sigma = get_num_columns().log_2();
 
         let commitment_val = commit::<JoltBn254, JoltMsmG1, _>(poly, 0, sigma, &setup.prover_setup);
         DoryCommitment(commitment_val)
     }
 
-    fn batch_commit<U>(_polys: &[U], _setup: &Self::Setup) -> Vec<Self::Commitment>
+    fn batch_commit<U>(_polys: &[U], _setup: &Self::ProverSetup) -> Vec<Self::Commitment>
     where
         U: Borrow<MultilinearPolynomial<Self::Field>> + Sync,
     {
@@ -1019,7 +998,7 @@ where
     // Note that Dory implementation sometimes uses the term 'evaluation'/'evaluate' -- this is same as 'opening'/'open'
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::prove")]
     fn prove(
-        setup: &Self::Setup,
+        setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[Self::Field],
         transcript: &mut ProofTranscript,
@@ -1059,7 +1038,7 @@ where
 
     fn verify(
         proof: &Self::Proof,
-        setup: &Self::Setup,
+        setup: &Self::VerifierSetup,
         transcript: &mut ProofTranscript,
         opening_point: &[Self::Field],
         opening: &Self::Field,
@@ -1136,7 +1115,7 @@ mod tests {
     use std::time::Instant;
 
     fn create_test_setup(max_num_vars: usize) -> DorySetup {
-        DoryCommitmentScheme::<KeccakTranscript>::setup(max_num_vars)
+        DoryCommitmentScheme::<KeccakTranscript>::setup_prover(max_num_vars)
     }
 
     fn test_commitment_scheme_with_poly(
@@ -1325,7 +1304,7 @@ mod tests {
 
         let opening_point: Vec<Fr> = (0..num_vars).map(|_| Fr::rand(&mut rng)).collect();
 
-        let setup = DoryCommitmentScheme::<KeccakTranscript>::setup(max_num_vars);
+        let setup = DoryCommitmentScheme::<KeccakTranscript>::setup_prover(max_num_vars);
 
         let commitment = DoryCommitmentScheme::<KeccakTranscript>::commit(&poly, &setup);
 

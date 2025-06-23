@@ -17,8 +17,9 @@ impl InstructionFlags for ADDI {
         flags[CircuitFlags::LeftOperandIsRs1Value as usize] = true;
         flags[CircuitFlags::RightOperandIsImm as usize] = true;
         flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
-        flags[CircuitFlags::Virtual as usize] = self.virtual_sequence_remaining.is_some();
-        flags[CircuitFlags::DoNotUpdatePC as usize] =
+        flags[CircuitFlags::InlineSequenceInstruction as usize] =
+            self.virtual_sequence_remaining.is_some();
+        flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
             self.virtual_sequence_remaining.unwrap_or(0) != 0;
         flags
     }
@@ -56,7 +57,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<ADDI> {
             #[cfg(test)]
             8 => (x as u8).overflowing_add(y as u8).0 as u64,
             32 => (x as u32).overflowing_add(y as u32).0 as u64,
-            64 => (x as u64).overflowing_add(y as u64).0,
+            64 => x.overflowing_add(y as u64).0,
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }

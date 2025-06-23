@@ -67,6 +67,7 @@ impl MacroBuilder {
         let compile_fn = self.make_compile_func();
         let preprocess_prover_fn = self.make_preprocess_prover_func();
         let preprocess_verifier_fn = self.make_preprocess_verifier_func();
+        let verifier_preprocess_from_prover_fn = self.make_preprocess_from_prover_func();
         let prove_fn = self.make_prove_func();
 
         let main_fn = if let Some(func) = self.get_func_selector() {
@@ -87,6 +88,7 @@ impl MacroBuilder {
             #compile_fn
             #preprocess_prover_fn
             #preprocess_verifier_fn
+            #verifier_preprocess_from_prover_fn
             #prove_fn
             #main_fn
         }
@@ -156,10 +158,10 @@ impl MacroBuilder {
                 let verify_closure = move |#(#inputs,)* output, proof: jolt::JoltHyperKZGProof| {
                     let preprocessing = (*preprocessing).clone();
                     let memory_config = MemoryConfig {
-                        max_input_size: preprocessing.memory_layout.max_input_size,
-                        max_output_size: preprocessing.memory_layout.max_output_size,
-                        stack_size: preprocessing.memory_layout.stack_size,
-                        memory_size: preprocessing.memory_layout.memory_size,
+                        max_input_size: preprocessing.shared.memory_layout.max_input_size,
+                        max_output_size: preprocessing.shared.memory_layout.max_output_size,
+                        stack_size: preprocessing.shared.memory_layout.stack_size,
+                        memory_size: preprocessing.shared.memory_layout.memory_size,
                     };
                     let mut io_device = tracer::JoltDevice::new(&memory_config);
 
@@ -319,8 +321,8 @@ impl MacroBuilder {
                 let memory_layout = MemoryLayout::new(&memory_config);
 
                 // TODO(moodlezoup): Feed in size parameters via macro
-                let preprocessing: JoltVerifierPreprocessing<jolt::F, jolt::PCS, jolt::ProofTranscript> =
-                    RV32IJoltVM::verifier_preprocess(
+                let prover_preprocessing: JoltProverPreprocessing<jolt::F, jolt::PCS, jolt::ProofTranscript> =
+                    RV32IJoltVM::prover_preprocess(
                         bytecode,
                         memory_layout,
                         memory_init,
@@ -328,7 +330,27 @@ impl MacroBuilder {
                         1 << 20,
                         1 << 24
                     );
+                let preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
+                preprocessing
+            }
+        }
+    }
 
+    fn make_preprocess_from_prover_func(&self) -> TokenStream2 {
+        let imports = self.make_imports();
+
+        let fn_name = self.get_func_name();
+        let preprocess_verifier_fn_name = Ident::new(
+            &format!("verifier_preprocessing_from_prover_{fn_name}"),
+            fn_name.span(),
+        );
+        quote! {
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
+            pub fn #preprocess_verifier_fn_name(prover_preprocessing: &jolt::JoltProverPreprocessing<jolt::F, jolt::PCS, jolt::ProofTranscript>)
+                -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::PCS, jolt::ProofTranscript>
+            {
+                #imports
+                let preprocessing = JoltVerifierPreprocessing::from(prover_preprocessing);
                 preprocessing
             }
         }
@@ -342,7 +364,7 @@ impl MacroBuilder {
                 let ret_val = ();
             },
             ReturnType::Type(_, ty) => quote! {
-                let ret_val = jolt::postcard::from_bytes::<#ty>(&output_io_device.outputs).unwrap();
+                let ret_val = jolt::postcard::from_bytes::<#ty>(&io_device.outputs).unwrap();
             },
         };
 
@@ -370,6 +392,7 @@ impl MacroBuilder {
                 #(#set_program_args;)*
 
                 let (io_device, trace) = program.trace(&input_bytes);
+                #handle_return
 
                 let (jolt_proof, /*jolt_commitments,*/ output_io_device, _) = RV32IJoltVM::prove(
                     io_device,
@@ -377,7 +400,6 @@ impl MacroBuilder {
                     preprocessing,
                 );
 
-                #handle_return
 
                 let proof = jolt::JoltHyperKZGProof {
                     proof: jolt_proof,

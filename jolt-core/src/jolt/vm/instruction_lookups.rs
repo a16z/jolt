@@ -27,7 +27,7 @@ use crate::{
     },
 };
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct LookupsProof<const WORD_SIZE: usize, F, PCS, ProofTranscript>
 where
     F: JoltField,
@@ -41,7 +41,7 @@ where
     _marker: PhantomData<PCS>,
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct ReadCheckingProof<F, ProofTranscript>
 where
     F: JoltField,
@@ -53,7 +53,7 @@ where
     flag_claims: Vec<F>,
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct BooleanityProof<F, ProofTranscript>
 where
     F: JoltField,
@@ -63,7 +63,7 @@ where
     ra_claims: [F; 4],
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct HammingWeightProof<F, ProofTranscript>
 where
     F: JoltField,
@@ -80,19 +80,18 @@ where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
-    pub fn generate_witness(preprocessing: (), lookups: &[LookupTables<WORD_SIZE>]) {}
+    pub fn generate_witness(_preprocessing: (), _lookups: &[LookupTables<WORD_SIZE>]) {}
 
     #[tracing::instrument(skip_all, name = "LookupsProof::prove")]
     pub fn prove(
-        generators: &PCS::Setup,
         trace: &[RV32IMCycle],
-        opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
+        _opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Self {
         let log_T = trace.len().log_2();
         let r_cycle: Vec<F> = transcript.challenge_vector(log_T);
         let (read_checking_sumcheck, rv_claim, ra_claims, flag_claims, eq_r_cycle) =
-            prove_sparse_dense_shout::<WORD_SIZE, _, _>(&trace, r_cycle, transcript);
+            prove_sparse_dense_shout::<WORD_SIZE, _, _>(trace, r_cycle, transcript);
         let read_checking_proof = ReadCheckingProof {
             sumcheck_proof: read_checking_sumcheck,
             rv_claim,
@@ -129,7 +128,7 @@ where
 
     pub fn verify(
         &self,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
+        _opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let r_cycle: Vec<F> = transcript.challenge_vector(self.log_T);
@@ -182,7 +181,7 @@ where
         let z_hamming_weight: F = transcript.challenge_scalar();
         let z_hamming_weight_squared: F = z_hamming_weight.square();
         let z_hamming_weight_cubed: F = z_hamming_weight_squared * z_hamming_weight;
-        let (sumcheck_claim, r_hamming_weight) = self.hamming_weight_proof.sumcheck_proof.verify(
+        let (sumcheck_claim, _r_hamming_weight) = self.hamming_weight_proof.sumcheck_proof.verify(
             F::one() + z_hamming_weight + z_hamming_weight_squared + z_hamming_weight_cubed,
             16,
             1,
@@ -244,15 +243,15 @@ fn prove_ra_booleanity<F: JoltField, ProofTranscript: Transcript>(
                 let k = lookup_index % K as u64;
                 result[3][k as usize] += eq_r_cycle[j];
 
-                lookup_index = lookup_index >> LOG_K;
+                lookup_index >>= LOG_K;
                 let k = lookup_index % K as u64;
                 result[2][k as usize] += eq_r_cycle[j];
 
-                lookup_index = lookup_index >> LOG_K;
+                lookup_index >>= LOG_K;
                 let k = lookup_index % K as u64;
                 result[1][k as usize] += eq_r_cycle[j];
 
-                lookup_index = lookup_index >> LOG_K;
+                lookup_index >>= LOG_K;
                 let k = lookup_index % K as u64;
                 result[0][k as usize] += eq_r_cycle[j];
                 j += 1;
@@ -578,15 +577,15 @@ fn prove_ra_hamming_weight<F: JoltField, ProofTranscript: Transcript>(
                 let k = lookup_index % K as u64;
                 result[3][k as usize] += eq_r_cycle[j];
 
-                lookup_index = lookup_index >> LOG_K;
+                lookup_index >>= LOG_K;
                 let k = lookup_index % K as u64;
                 result[2][k as usize] += eq_r_cycle[j];
 
-                lookup_index = lookup_index >> LOG_K;
+                lookup_index >>= LOG_K;
                 let k = lookup_index % K as u64;
                 result[1][k as usize] += eq_r_cycle[j];
 
-                lookup_index = lookup_index >> LOG_K;
+                lookup_index >>= LOG_K;
                 let k = lookup_index % K as u64;
                 result[0][k as usize] += eq_r_cycle[j];
                 j += 1;

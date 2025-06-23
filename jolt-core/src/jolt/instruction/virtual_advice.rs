@@ -15,8 +15,9 @@ impl InstructionFlags for VirtualAdvice {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
         flags[CircuitFlags::Advice as usize] = true;
         flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
-        flags[CircuitFlags::Virtual as usize] = self.virtual_sequence_remaining.is_some();
-        flags[CircuitFlags::DoNotUpdatePC as usize] =
+        flags[CircuitFlags::InlineSequenceInstruction as usize] =
+            self.virtual_sequence_remaining.is_some();
+        flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
             self.virtual_sequence_remaining.unwrap_or(0) != 0;
         flags
     }
@@ -40,7 +41,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualAdvice
             #[cfg(test)]
             8 => (self.instruction.advice as u8).into(),
             32 => (self.instruction.advice as u32).into(),
-            64 => self.instruction.advice as u64,
+            64 => self.instruction.advice,
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }

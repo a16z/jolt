@@ -50,7 +50,7 @@ impl VirtualInstructionSequence for SLLI {
                 rd: self.operands.rd,
                 rs1: self.operands.rs1,
                 // TODO: this only works for Xlen = 32
-                imm: (1 << ((self.operands.imm as u64) % 32)),
+                imm: (1 << (self.operands.imm % 32)),
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
         });

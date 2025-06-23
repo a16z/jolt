@@ -5,7 +5,8 @@ pub fn main() {
     let mut program = guest::compile_sha2(target_dir);
 
     let prover_preprocessing = guest::preprocess_prover_sha2(&mut program);
-    let verifier_preprocessing = guest::preprocess_verifier_sha2(&mut program);
+    let verifier_preprocessing =
+        guest::verifier_preprocessing_from_prover_sha2(&prover_preprocessing);
 
     let prove_sha2 = guest::build_prover_sha2(program, prover_preprocessing);
     let verify_sha2 = guest::build_verifier_sha2(verifier_preprocessing);

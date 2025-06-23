@@ -63,12 +63,12 @@ pub enum CircuitFlags {
     Branch,
     /// 1 if the lookup output is to be stored in `rd` at the end of the step.
     WriteLookupOutputToRD,
-    /// 1 if the instruction is "virtual", as defined in Section 6.1 of the Jolt paper.
-    Virtual,
+    /// 1 if the instruction is "inline", as defined in Section 6.1 of the Jolt paper.
+    InlineSequenceInstruction,
     /// 1 if the instruction is an assert, as defined in Section 6.1.1 of the Jolt paper.
     Assert,
     /// Used in virtual sequences; the program counter should be the same for the full sequence.
-    DoNotUpdatePC,
+    DoNotUpdateUnexpandedPC,
     /// Is (virtual) advice instruction
     Advice,
 }
@@ -86,7 +86,7 @@ macro_rules! define_rv32im_trait_impls {
         impl InstructionLookup<32> for RV32IMInstruction {
             fn lookup_table(&self) -> Option<LookupTables<32>> {
                 match self {
-                    RV32IMInstruction::NoOp => None,
+                    RV32IMInstruction::NoOp(_) => None,
                     $(
                         RV32IMInstruction::$instr(instr) => instr.lookup_table(),
                     )*
@@ -99,7 +99,7 @@ macro_rules! define_rv32im_trait_impls {
         impl InstructionFlags for RV32IMInstruction {
             fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
                 match self {
-                    RV32IMInstruction::NoOp => [false; NUM_CIRCUIT_FLAGS],
+                    RV32IMInstruction::NoOp(_) => [false; NUM_CIRCUIT_FLAGS],
                     $(
                         RV32IMInstruction::$instr(instr) => instr.circuit_flags(),
                     )*
@@ -112,7 +112,7 @@ macro_rules! define_rv32im_trait_impls {
         impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for RV32IMCycle {
             fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
                 match self {
-                    RV32IMCycle::NoOp => None,
+                    RV32IMCycle::NoOp(_) => None,
                     $(
                         RV32IMCycle::$instr(cycle) => cycle.instruction.lookup_table(),
                     )*
@@ -124,7 +124,7 @@ macro_rules! define_rv32im_trait_impls {
         impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RV32IMCycle {
             fn to_instruction_inputs(&self) -> (u64, i64) {
                 match self {
-                    RV32IMCycle::NoOp => (0, 0),
+                    RV32IMCycle::NoOp(_) => (0, 0),
                     $(
                         RV32IMCycle::$instr(cycle) => LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle),
                     )*
@@ -134,7 +134,7 @@ macro_rules! define_rv32im_trait_impls {
 
             fn to_lookup_operands(&self) -> (u64, u64) {
                 match self {
-                    RV32IMCycle::NoOp => (0, 0),
+                    RV32IMCycle::NoOp(_) => (0, 0),
                     $(
                         RV32IMCycle::$instr(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
                     )*
@@ -144,7 +144,7 @@ macro_rules! define_rv32im_trait_impls {
 
             fn to_lookup_output(&self) -> u64 {
                 match self {
-                    RV32IMCycle::NoOp => 0,
+                    RV32IMCycle::NoOp(_) => 0,
                     $(
                         RV32IMCycle::$instr(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_output(cycle),
                     )*
@@ -163,7 +163,7 @@ define_rv32im_trait_impls! {
         VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertLTE,
         VirtualAssertValidDiv0, VirtualAssertValidSignedRemainder, VirtualAssertValidUnsignedRemainder,
         VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I,
-        VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
+        VirtualShiftRightBitmask, VirtualShiftRightBitmaskI, VirtualROTRI,
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI
     ]
 }
@@ -207,6 +207,7 @@ pub mod virtual_movsign;
 pub mod virtual_muli;
 pub mod virtual_pow2;
 pub mod virtual_pow2i;
+pub mod virtual_rotri;
 pub mod virtual_shift_right_bitmask;
 pub mod virtual_shift_right_bitmaski;
 pub mod virtual_sra;

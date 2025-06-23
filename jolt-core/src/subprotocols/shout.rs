@@ -208,7 +208,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         let ShoutVerifierState { z, val, .. } = self.verifier_state.as_ref().unwrap();
         let ShoutSumcheckClaims { ra_claim, .. } = self.claims.as_ref().unwrap();
 
-        let r_address: Vec<F> = r.into_iter().rev().copied().collect();
+        let r_address: Vec<F> = r.iter().rev().copied().collect();
         *ra_claim * (*z + val.evaluate(&r_address))
     }
 }
