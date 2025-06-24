@@ -32,7 +32,7 @@ pub struct VirtualRASumcheck<F: JoltField, const D: usize> {
     r_cycle: Vec<F>,
 
     /// The random points r_address^(i) for each chunk
-    r_address_chunks: [Vec<F>; D],
+    _r_address_chunks: [Vec<F>; D],
 
     /// Current round index during sumcheck
     current_round: usize,
@@ -41,7 +41,7 @@ pub struct VirtualRASumcheck<F: JoltField, const D: usize> {
     num_cycle_vars: usize,
 
     /// Cached openings to be proven later
-    cached_openings: Option<[F; D]>, //TODO(markosg04): fix this
+    cached_openings: Option<[F; D]>, //TODO(markosg04): fix this -- why is it Option?
 
     /// Current binding of the eq polynomial evaluations
     current_eq_evals: Vec<F>,
@@ -62,7 +62,7 @@ impl<F: JoltField, const D: usize> VirtualRASumcheck<F, D> {
             ra_i_polys,
             eq_evals,
             r_cycle,
-            r_address_chunks,
+            _r_address_chunks: r_address_chunks,
             current_round: 0,
             num_cycle_vars,
             cached_openings: None,
@@ -384,6 +384,7 @@ mod tests {
     use crate::{poly::dense_mlpoly::DensePolynomial, utils::transcript::KeccakTranscript};
     use ark_bn254::Fr;
     use ark_std::{One, Zero, test_rng};
+    use ark_ff::PrimeField;
 
     type F = Fr;
     type ProofTranscript = KeccakTranscript;
@@ -593,5 +594,325 @@ mod tests {
         
         // Check that verification succeeded
         assert!(result.is_ok());
+    }
+
+    // Helper function to format field elements nicely
+    fn format_field_element(f: &F) -> String {
+        // Get the internal representation to show a shorter form
+        let limbs = f.into_bigint().0;
+        if limbs[0] == 0 && limbs[1] == 0 && limbs[2] == 0 && limbs[3] == 0 {
+            "0".to_string()
+        } else if limbs[0] == 1 && limbs[1] == 0 && limbs[2] == 0 && limbs[3] == 0 {
+            "1".to_string()
+        } else {
+            // Show first 8 hex digits for brevity
+            format!("0x{:08x}...", limbs[0])
+        }
+    }
+
+    // Helper function to print polynomial evaluations
+    fn print_polynomial_table(title: &str, labels: &[String], values: &[Vec<F>]) {
+        println!("\n{}", title);
+        println!("{}", "=".repeat(title.len()));
+        
+        // Print header
+        print!("| Index |");
+        for label in labels {
+            print!(" {:^20} |", label);
+        }
+        println!();
+        
+        // Print separator
+        print!("|-------|");
+        for _ in labels {
+            print!("{:-^22}|", "");
+        }
+        println!();
+        
+        // Print values
+        let num_rows = values[0].len();
+        for i in 0..num_rows {
+            print!("| {:^5} |", i);
+            for vals in values {
+                print!(" {:^20} |", format_field_element(&vals[i]));
+            }
+            println!();
+        }
+    }
+
+    #[test]
+    fn test_virtual_ra_sumcheck_verbose() {
+        println!("\n╔════════════════════════════════════════════════════════════════════╗");
+        println!("║        VIRTUAL RA SUMCHECK PROTOCOL - VERBOSE WALKTHROUGH          ║");
+        println!("╚════════════════════════════════════════════════════════════════════╝");
+        
+        // Test with D=2 (2-way chunked addresses) for simplicity
+        const D: usize = 2;
+        let mut rng = test_rng();
+        
+        // Setup parameters
+        let num_cycle_vars = 2; // 4 cycles (T = 2^2 = 4)
+        let chunk_bits = 2; // 4 possible values per chunk (B = 2^2 = 4)
+        
+        println!("\n📋 PROTOCOL PARAMETERS:");
+        println!("   • D = {} (number of address chunks)", D);
+        println!("   • T = {} (number of cycles = 2^{})", 1 << num_cycle_vars, num_cycle_vars);
+        println!("   • B = {} (values per chunk = 2^{})", 1 << chunk_bits, chunk_bits);
+        println!("   • Total address space = B^D = {}^{} = {}", 
+                 1 << chunk_bits, D, (1u32 << chunk_bits).pow(D as u32));
+        
+        // Simple example: one read at cycle 1 from address 6
+        // Address 6 in binary: 0110
+        // With 2-bit chunks: chunk_0 = 10 (decimal 2), chunk_1 = 01 (decimal 1)
+        let read_cycle = 1;
+        let address = 6;
+        let address_chunks = [2, 1]; // [10, 01] in binary
+        
+        println!("\n📍 MEMORY ACCESS PATTERN:");
+        println!("   • Read at cycle {} from address {}", read_cycle, address);
+        println!("   • Address {} in binary: {:04b}", address, address);
+        println!("   • Chunk decomposition:");
+        println!("     - chunk_0 = {:02b} (decimal {})", address_chunks[0], address_chunks[0]);
+        println!("     - chunk_1 = {:02b} (decimal {})", address_chunks[1], address_chunks[1]);
+        
+        // Choose specific random evaluation points for reproducibility
+        let r_cycle: Vec<F> = vec![
+            F::from(7u64),
+            F::from(11u64),
+        ];
+        let r_address_chunks: [Vec<F>; D] = [
+            vec![F::from(3u64), F::from(5u64)],
+            vec![F::from(13u64), F::from(17u64)],
+        ];
+        
+        println!("\n🎲 RANDOM EVALUATION POINTS:");
+        println!("   • r_cycle = [{}, {}]", 
+                 format_field_element(&r_cycle[0]), 
+                 format_field_element(&r_cycle[1]));
+        println!("   • r_address^(0) = [{}, {}]", 
+                 format_field_element(&r_address_chunks[0][0]), 
+                 format_field_element(&r_address_chunks[0][1]));
+        println!("   • r_address^(1) = [{}, {}]", 
+                 format_field_element(&r_address_chunks[1][0]), 
+                 format_field_element(&r_address_chunks[1][1]));
+        
+        // Create one-hot ra_i polynomials
+        let ra_polys = create_one_hot_ra_polys::<D>(
+            num_cycle_vars,
+            chunk_bits,
+            read_cycle,
+            &address_chunks,
+            &r_address_chunks,
+        );
+        
+        println!("\n🔨 CREATING RA POLYNOMIALS:");
+        println!("   Each ra_i is initially a (cycle × address_chunk) table:");
+        println!("   • ra_0 has a 1 at (cycle={}, chunk={})", read_cycle, address_chunks[0]);
+        println!("   • ra_1 has a 1 at (cycle={}, chunk={})", read_cycle, address_chunks[1]);
+        println!("   Then we pre-bind each ra_i to r_address^(i)");
+        
+        // Show the values after address binding
+        let num_cycles = 1 << num_cycle_vars;
+        let mut ra_values_after_binding = vec![vec![F::zero(); num_cycles]; D];
+        for j in 0..num_cycles {
+            for i in 0..D {
+                ra_values_after_binding[i][j] = ra_polys[i].get_bound_coeff(j);
+            }
+        }
+        
+        let labels = vec!["ra_0(j, r_addr^(0))".to_string(), "ra_1(j, r_addr^(1))".to_string()];
+        print_polynomial_table("RA Polynomials After Address Binding", &labels, &ra_values_after_binding);
+        
+        // Create the sumcheck instance
+        let mut sumcheck = VirtualRASumcheck::<F, D>::new(
+            ra_polys,
+            r_cycle.clone(),
+            r_address_chunks.clone(),
+        );
+        
+        // Compute and show the initial claim
+        let claim = <VirtualRASumcheck<F, D> as BatchableSumcheckInstance<F, ProofTranscript>>::input_claim(&sumcheck);
+        
+        println!("\n🎯 SUMCHECK CLAIM:");
+        println!("   Computing: Σ_j eq(r_cycle, j) × ra_0(j, r_addr^(0)) × ra_1(j, r_addr^(1))");
+        
+        // Show the eq polynomial evaluations
+        let mut eq_values = vec![F::zero(); num_cycles];
+        for j in 0..num_cycles {
+            eq_values[j] = sumcheck.eq_evals[j];
+        }
+        
+        let mut product_values = vec![F::zero(); num_cycles];
+        for j in 0..num_cycles {
+            product_values[j] = eq_values[j] * ra_values_after_binding[0][j] * ra_values_after_binding[1][j];
+        }
+        
+        let all_values = vec![
+            eq_values.clone(),
+            ra_values_after_binding[0].clone(),
+            ra_values_after_binding[1].clone(),
+            product_values.clone(),
+        ];
+        let all_labels = vec![
+            "eq(r_cycle, j)".to_string(),
+            "ra_0(j, r_addr^(0))".to_string(),
+            "ra_1(j, r_addr^(1))".to_string(),
+            "Product".to_string(),
+        ];
+        print_polynomial_table("Computing Sumcheck Claim", &all_labels, &all_values);
+        
+        println!("\n   Claim = Sum of Product column = {}", format_field_element(&claim));
+        
+        // Now simulate the sumcheck protocol round by round
+        println!("\n🔄 SUMCHECK PROTOCOL ROUNDS:");
+        println!("   We'll reduce from {} variables to 0 variables\n", num_cycle_vars);
+        
+        let mut round_challenges = vec![];
+        
+        for round in 0..num_cycle_vars {
+            println!("╭─────────────────────────────────────────────────────────────────╮");
+            println!("│ ROUND {} of {}                                                    │", round + 1, num_cycle_vars);
+            println!("╰─────────────────────────────────────────────────────────────────╯");
+            
+            // Compute the univariate polynomial for this round
+            let uni_poly = sumcheck.compute_round_polynomial();
+            
+            println!("\n📊 Computing univariate polynomial g_{}(X)", round + 1);
+            println!("   Degree = D + 1 = {} + 1 = {}", D, D + 1);
+            
+            // Show evaluations at 0, 1, 2, 3
+            let mut evals = vec![];
+            for i in 0..=D+1 {
+                let eval = uni_poly.evaluate(&F::from(i as u64));
+                evals.push(eval);
+                println!("   g_{}({}) = {}", round + 1, i, format_field_element(&eval));
+            }
+            
+            // Verify the sumcheck relation
+            let sum_check = evals[0] + evals[1];
+            println!("\n✓ Sumcheck relation: g_{}(0) + g_{}(1) = {} + {} = {}", 
+                     round + 1, round + 1,
+                     format_field_element(&evals[0]),
+                     format_field_element(&evals[1]),
+                     format_field_element(&sum_check));
+            
+            if round == 0 {
+                println!("  This should equal the initial claim: {}", format_field_element(&claim));
+                assert_eq!(sum_check, claim);
+            } else {
+                let prev_eval = uni_poly.evaluate(&round_challenges[round - 1]);
+                println!("  This should equal g_{}({}) = {}", 
+                         round, 
+                         format_field_element(&round_challenges[round - 1]),
+                         format_field_element(&prev_eval));
+            }
+            
+            // Simulate verifier's random challenge
+            let challenge = F::from(23u64 + round as u64 * 7u64); // Deterministic for demo
+            round_challenges.push(challenge);
+            
+            println!("\n🎲 Verifier sends challenge r_{} = {}", round + 1, format_field_element(&challenge));
+            
+            // Bind the variable
+            <VirtualRASumcheck<F, D> as BatchableSumcheckInstance<F, ProofTranscript>>::bind(&mut sumcheck, challenge, round);
+            
+            println!("\n📌 Binding cycle variable {} to {}", round, format_field_element(&challenge));
+            
+            // Show the state after binding
+            if round < num_cycle_vars - 1 {
+                let remaining_vars = num_cycle_vars - round - 1;
+                let remaining_size = 1 << remaining_vars;
+                
+                println!("   Remaining evaluation points: {}", remaining_size);
+                
+                // Show updated eq evaluations
+                let mut new_eq_vals = vec![F::zero(); remaining_size];
+                for i in 0..remaining_size {
+                    new_eq_vals[i] = sumcheck.current_eq_evals[i];
+                }
+                
+                // Show updated ra values
+                let mut new_ra_vals = vec![vec![F::zero(); remaining_size]; D];
+                for i in 0..D {
+                    for j in 0..remaining_size {
+                        new_ra_vals[i][j] = sumcheck.ra_i_polys[i].get_bound_coeff(j);
+                    }
+                }
+                
+                let mut bound_labels = vec![format!("eq(r_1..r_{}, *, j)", round + 1)];
+                for i in 0..D {
+                    bound_labels.push(format!("ra_{}(r_1..r_{}, *, r_addr^({}))", i, round + 1, i));
+                }
+                
+                let mut bound_values = vec![new_eq_vals];
+                bound_values.extend(new_ra_vals);
+                
+                print_polynomial_table(&format!("State After Binding Variable {}", round), &bound_labels, &bound_values);
+            }
+        }
+        
+        // Final opening
+        println!("\n╭─────────────────────────────────────────────────────────────────╮");
+        println!("│ FINAL OPENING                                                   │");
+        println!("╰─────────────────────────────────────────────────────────────────╯");
+        
+        <VirtualRASumcheck<F, D> as BatchableSumcheckInstance<F, ProofTranscript>>::cache_openings(&mut sumcheck);
+        let openings = sumcheck.cached_openings.unwrap();
+        
+        println!("\n🔓 After binding all cycle variables:");
+        for i in 0..D {
+            println!("   ra_{}(r_cycle, r_address^({})) = {}", 
+                     i, i, format_field_element(&openings[i]));
+        }
+        
+        // Compute expected final claim
+        let eq_poly = EqPolynomial::new(r_cycle.clone());
+        let eq_final = eq_poly.evaluate(&round_challenges);
+        let ra_product = openings[0] * openings[1];
+        let expected_final = eq_final * ra_product;
+        
+        println!("\n📝 Final verification:");
+        println!("   eq(r_cycle, r_bound) = {}", format_field_element(&eq_final));
+        println!("   Π ra_i = {} × {} = {}", 
+                 format_field_element(&openings[0]),
+                 format_field_element(&openings[1]),
+                 format_field_element(&ra_product));
+        println!("   Expected final claim = {} × {} = {}", 
+                 format_field_element(&eq_final),
+                 format_field_element(&ra_product),
+                 format_field_element(&expected_final));
+        
+        // Run actual protocol to verify
+        let mut prover_transcript = ProofTranscript::new(b"test_virtual_ra_verbose");
+        let sumcheck_for_prove = VirtualRASumcheck::<F, D>::new(
+            create_one_hot_ra_polys::<D>(
+                num_cycle_vars,
+                chunk_bits,
+                read_cycle,
+                &address_chunks,
+                &r_address_chunks,
+            ),
+            r_cycle.clone(),
+            r_address_chunks.clone(),
+        );
+        
+        let (proof, r_cycle_bound) = sumcheck_for_prove.prove(&mut prover_transcript);
+        
+        println!("\n✅ Protocol completed successfully!");
+        println!("   Proof size: {} compressed polynomials", proof.sumcheck_proof.compressed_polys.len());
+        println!("   Number of ra_claims: {}", proof.ra_claims.len());
+        
+        // Verify
+        let mut verifier_transcript = ProofTranscript::new(b"test_virtual_ra_verbose");
+        let result = VirtualRASumcheck::<F, D>::verify(
+            &proof,
+            claim,
+            &r_cycle,
+            &r_address_chunks,
+            &mut verifier_transcript,
+        );
+        
+        assert!(result.is_ok());
+        println!("\n🎉 Verification passed!");
     }
 }
