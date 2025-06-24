@@ -8,7 +8,7 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof},
-    utils::{errors::ProofVerifyError, transcript::Transcript},
+    utils::{errors::ProofVerifyError, thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
@@ -212,7 +212,7 @@ impl<F: JoltField, ProofTranscript: Transcript, const D: usize>
 
         // Update eq polynomial evaluations
         let len = self.current_eq_evaluations.len() / 2;
-        let mut new_evals = vec![F::zero(); len];
+        let mut new_evals = unsafe_allocate_zero_vec(len);
 
         for i in 0..len {
             let eq_0 = self.current_eq_evaluations[i];
@@ -315,7 +315,7 @@ mod tests {
     use super::*;
     use crate::{poly::dense_mlpoly::DensePolynomial, utils::transcript::KeccakTranscript};
     use ark_bn254::Fr;
-    use ark_std::{test_rng, One, UniformRand, Zero};
+    use ark_std::{test_rng, One, UniformRand};
 
     type F = Fr;
     type ProofTranscript = KeccakTranscript;
@@ -332,7 +332,7 @@ mod tests {
         let mut ra_polys = Vec::with_capacity(D);
 
         for i in 0..D {
-            let mut values = vec![F::zero(); num_cycles * chunk_size];
+            let mut values = unsafe_allocate_zero_vec(num_cycles * chunk_size);
             let index = cycle * chunk_size + address_chunks[i];
             values[index] = F::one();
 
@@ -413,9 +413,9 @@ mod tests {
         let chunk_size = 1 << chunk_bits;
 
         let mut ra_values: [Vec<F>; D] = [
-            vec![F::zero(); num_cycles * chunk_size],
-            vec![F::zero(); num_cycles * chunk_size],
-            vec![F::zero(); num_cycles * chunk_size],
+            unsafe_allocate_zero_vec(num_cycles * chunk_size),
+            unsafe_allocate_zero_vec(num_cycles * chunk_size),
+            unsafe_allocate_zero_vec(num_cycles * chunk_size),
         ];
 
         for (cycle, chunks) in reads.iter() {
@@ -469,7 +469,7 @@ mod tests {
         let chunk_size = 1 << chunk_bits;
 
         let mut ra_values: Vec<Vec<F>> = (0..D)
-            .map(|_| vec![F::zero(); num_cycles * chunk_size])
+            .map(|_| unsafe_allocate_zero_vec(num_cycles * chunk_size))
             .collect();
 
         for _ in 0..num_reads {
