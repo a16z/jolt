@@ -315,7 +315,12 @@ impl<F: JoltField> PolynomialBinding<F> for OneHotPolynomial<F> {
             std::mem::swap(&mut self.bound_coeffs, &mut self.binding_scratch_space);
         }
         self.num_variables_bound += 1;
-        debug_assert!(self.num_variables_bound <= self.K.log_2() + num_cycle_variables);
+        debug_assert!(
+            self.num_variables_bound <= self.K.log_2() + num_cycle_variables,
+            "{} >= {} + {num_cycle_variables}",
+            self.num_variables_bound,
+            self.K.log_2()
+        );
 
         if self.num_variables_bound == num_cycle_variables {
             println!("Sorting bound_coeffs...");

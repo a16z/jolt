@@ -287,22 +287,17 @@ where
         let ram_addresses: Vec<usize> = trace
             .par_iter()
             .map(|cycle| {
-                let ram_op = cycle.ram_access();
-                match ram_op {
-                    tracer::instruction::RAMAccess::Read(read) => {
-                        remap_address(read.address, &preprocessing.shared.memory_layout) as usize
-                    }
-                    tracer::instruction::RAMAccess::Write(write) => {
-                        remap_address(write.address, &preprocessing.shared.memory_layout) as usize
-                    }
-                    tracer::instruction::RAMAccess::NoOp => 0,
-                }
+                remap_address(
+                    cycle.ram_access().address() as u64,
+                    &preprocessing.shared.memory_layout,
+                ) as usize
             })
             .collect();
+        let ram_K = ram_addresses.par_iter().max().unwrap().next_power_of_two();
 
         let K = [
             preprocessing.shared.bytecode.code_size,
-            ram_addresses.par_iter().max().unwrap().next_power_of_two(),
+            ram_K,
             1 << 16, // K for instruction lookups Shout
         ]
         .into_iter()
@@ -321,6 +316,7 @@ where
             &program_io,
             &program_io.memory_layout,
             trace_length,
+            ram_K,
         );
 
         let committed_polys: Vec<_> = ALL_COMMITTED_POLYNOMIALS
@@ -360,10 +356,10 @@ where
             RegistersTwistProof::prove(&trace, &mut opening_accumulator, &mut transcript);
 
         let ram_proof = RAMTwistProof::prove(
-            &preprocessing.shared.ram,
+            &preprocessing,
             &trace,
             &program_io,
-            1 << 16, // TODO(moodlezoup)
+            ram_K,
             &mut opening_accumulator,
             &mut transcript,
         );
@@ -433,6 +429,7 @@ where
             &program_io,
             &preprocessing.shared.memory_layout,
             proof.trace_length,
+            proof.ram.K,
         );
 
         for commitment in proof.commitments.commitments.iter() {
@@ -462,11 +459,12 @@ where
             .registers
             .verify(padded_trace_length, &mut transcript)?;
         proof.ram.verify(
-            1 << 16, // TODO(moodlezoup)
             padded_trace_length,
             &preprocessing.shared.ram,
+            &proof.commitments,
             &program_io,
             &mut transcript,
+            &mut opening_accumulator,
         )?;
         proof.bytecode.verify(
             &preprocessing.shared.bytecode,
@@ -491,8 +489,10 @@ where
         program_io: &JoltDevice,
         memory_layout: &MemoryLayout,
         trace_length: usize,
+        ram_K: usize,
     ) {
         transcript.append_u64(trace_length as u64);
+        transcript.append_u64(ram_K as u64);
         transcript.append_u64(WORD_SIZE as u64);
         transcript.append_u64(memory_layout.max_input_size);
         transcript.append_u64(memory_layout.max_output_size);

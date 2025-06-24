@@ -37,7 +37,7 @@ fn get_cycles_per_group() -> usize {
         .expect("CYCLES_PER_GROUP is uninitialized")
 }
 
-fn get_max_num_rows() -> usize {
+pub fn get_max_num_rows() -> usize {
     MAX_NUM_ROWS
         .get()
         .cloned()

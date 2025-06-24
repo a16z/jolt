@@ -130,6 +130,7 @@ impl BatchedSumcheck {
             .map(|sumcheck| sumcheck.num_rounds())
             .max()
             .unwrap();
+        println!("max_num_rounds: {max_num_rounds}");
 
         let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
 

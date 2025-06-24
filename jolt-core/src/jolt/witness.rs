@@ -49,7 +49,7 @@ pub enum CommittedPolynomials {
     InstructionRa(usize),
 }
 
-pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 7] = [
+pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 8] = [
     CommittedPolynomials::LeftInstructionInput,
     CommittedPolynomials::RightInstructionInput,
     CommittedPolynomials::Product,
@@ -57,7 +57,7 @@ pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 7] = [
     CommittedPolynomials::WritePCtoRD,
     CommittedPolynomials::ShouldBranch,
     CommittedPolynomials::BytecodeRa,
-    // CommittedPolynomials::RamRa,
+    CommittedPolynomials::RamRa,
     // CommittedPolynomials::RdInc,
     // CommittedPolynomials::RamInc,
     // CommittedPolynomials::InstructionRa(0),
@@ -167,18 +167,10 @@ impl CommittedPolynomials {
                 let addresses: Vec<usize> = trace
                     .par_iter()
                     .map(|cycle| {
-                        let ram_op = cycle.ram_access();
-                        match ram_op {
-                            tracer::instruction::RAMAccess::Read(read) => {
-                                remap_address(read.address, &preprocessing.shared.memory_layout)
-                                    as usize
-                            }
-                            tracer::instruction::RAMAccess::Write(write) => {
-                                remap_address(write.address, &preprocessing.shared.memory_layout)
-                                    as usize
-                            }
-                            tracer::instruction::RAMAccess::NoOp => 0,
-                        }
+                        remap_address(
+                            cycle.ram_access().address() as u64,
+                            &preprocessing.shared.memory_layout,
+                        ) as usize
                     })
                     .collect();
                 let K = addresses.par_iter().max().unwrap().next_power_of_two();
