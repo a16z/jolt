@@ -383,6 +383,10 @@ where
 
         // Need to reverse because polynomials are bound in LowToHigh order
         r_sumcheck.reverse();
+
+        println!("P r_sumcheck: {r_sumcheck:?}");
+        println!("P claim {:?}", self.openings[0].sumcheck_claim.unwrap());
+
         // Reduced opening proof
         let joint_opening_proof = PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, transcript);
 
@@ -544,12 +548,12 @@ where
             //     batched_poly == prover_state.polynomial,
             //     "batched poly mismatch"
             // );
-            // let prover_joint_commitment =
-            //     PCS::commit(&prover_state.polynomial, self.pcs_setup.as_ref().unwrap());
-            // assert_eq!(
-            //     prover_joint_commitment, joint_commitment,
-            //     "joint commitment mismatch"
-            // );
+            let prover_joint_commitment =
+                PCS::commit(&prover_state.polynomial, self.pcs_setup.as_ref().unwrap());
+            assert_eq!(
+                prover_joint_commitment, joint_commitment,
+                "joint commitment mismatch"
+            );
         }
 
         self.openings
@@ -606,6 +610,8 @@ where
         // Need to reverse because polynomials are bound in LowToHigh order
         r_sumcheck.reverse();
 
+        println!("V r_sumcheck: {r_sumcheck:?}");
+
         // Compute joint claim = ∑ᵢ γⁱ⋅ claimᵢ
         let joint_claim: F = gamma_powers
             .iter()
@@ -619,6 +625,8 @@ where
                 *coeff * claim * lagrange_eval
             })
             .sum();
+
+        println!("V claim: {joint_claim}");
 
         // Verify the reduced opening proof
         PCS::verify(

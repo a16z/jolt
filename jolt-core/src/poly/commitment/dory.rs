@@ -4,12 +4,11 @@ use crate::{
     msm::{Icicle, VariableBaseMSM},
     poly::{
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
-        sparse_matrix_polynomial::{get_K, get_num_columns},
+        sparse_matrix_polynomial::{get_K, get_T, get_num_columns},
     },
     utils::{
         errors::ProofVerifyError,
         math::Math,
-        thread::unsafe_allocate_zero_vec,
         transcript::{AppendToTranscript, Transcript},
     },
 };
@@ -792,7 +791,7 @@ where
                 .collect(),
             MultilinearPolynomial::Sparse(poly) => {
                 let num_rows = poly.num_rows;
-                let K = get_K();
+                let T = get_T();
                 println!("# rows = {num_rows}");
                 let mut row_commitments: Vec<_> = (0..num_rows)
                     .into_par_iter()
@@ -802,7 +801,7 @@ where
                             .iter()
                             .flat_map(|group| {
                                 group.iter().filter_map(|(t, k, coeff)| {
-                                    let global_index = *t as u128 * K as u128 + *k as u128;
+                                    let global_index = *k as u128 * T as u128 + *t as u128;
                                     if global_index / row_len as u128 == row_index as u128 {
                                         let col_index = global_index % row_len as u128;
                                         Some((&bases[col_index as usize], coeff))
@@ -834,7 +833,7 @@ where
             }
             MultilinearPolynomial::OneHot(poly) => {
                 let num_rows = poly.num_rows();
-                let K = get_K();
+                let T = get_T();
                 println!("# rows = {num_rows}");
                 (0..num_rows)
                     .into_par_iter()
@@ -843,7 +842,7 @@ where
                             .nonzero_indices
                             .iter()
                             .filter_map(|(t, k)| {
-                                let global_index = *t as u128 * K as u128 + *k as u128;
+                                let global_index = *k as u128 * T as u128 + *t as u128;
                                 if global_index / row_len as u128 == row_index as u128 {
                                     let col_index = global_index % row_len as u128;
                                     Some(bases[col_index as usize])
@@ -897,7 +896,7 @@ where
             MultilinearPolynomial::U64Scalars(poly) => todo!(),
             MultilinearPolynomial::I64Scalars(poly) => todo!(),
             MultilinearPolynomial::Sparse(poly) => {
-                let K = get_K();
+                let T = get_T();
                 let row_len = num_columns;
                 let num_chunks = 4 * rayon::current_num_threads().next_power_of_two();
                 let chunk_size = std::cmp::max(1, num_columns / num_chunks);
@@ -911,7 +910,7 @@ where
                             vec![JoltFieldWrapper(F::zero()); chunk_size];
                         for group in poly.sparse_coeffs.iter() {
                             for (t, k, coeff) in group.iter() {
-                                let global_index = *t as u128 * K as u128 + *k as u128;
+                                let global_index = *k as u128 * T as u128 + *t as u128;
                                 let col_index = (global_index % row_len as u128) as usize;
                                 if col_index >= min_col_index && col_index < max_col_index {
                                     let row_index = (global_index / row_len as u128) as usize;
@@ -1129,8 +1128,6 @@ where
         opening: &Self::Field,
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
-        println!("V opening_point: {:?}", opening_point);
-        println!("V opening: {}", opening);
         // Dory uses the opposite endian-ness as Jolt
         let opening_point_dory: Vec<JoltFieldWrapper<Self::Field>> = opening_point
             .iter()

@@ -282,11 +282,12 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
         let unbound_ra_poly =
             CommittedPolynomials::BytecodeRa.generate_witness(preprocessing, trace);
 
-        let r_address_rev = r_address.iter().cloned().rev().collect::<Vec<_>>();
+        let r_address_rev = r_address.iter().copied().rev().collect::<Vec<_>>();
         let eq_poly =
             EqPolynomial::Split(SplitEqPolynomial::new_with_split(&r_cycle, &r_address_rev));
 
         let r_concat = [r_cycle.as_slice(), r_address_rev.as_slice()].concat();
+        println!("P r_concat: {r_concat:?}");
         opening_accumulator.append(
             &[&unbound_ra_poly],
             eq_poly,
@@ -354,10 +355,12 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
         let z: F = transcript.challenge_scalar();
         let gamma: F = transcript.challenge_scalar();
 
-        let (sumcheck_claim, mut r_address) =
+        let (sumcheck_claim, r_address) =
             self.core_piop_sumcheck
                 .verify(self.rv_claim + z, K.log_2(), 2, transcript)?;
-        r_address = r_address.into_iter().rev().collect();
+
+        let r_address_rev: Vec<_> = r_address.iter().copied().rev().collect();
+        let r_cycle_rev: Vec<_> = r_cycle.iter().copied().rev().collect();
 
         // Used to combine the various fields in each instruction into a single
         // field element.
@@ -365,12 +368,13 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
         let val = MultilinearPolynomial::from(val);
 
         assert_eq!(
-            self.ra_claim * (z + val.evaluate(&r_address)),
+            self.ra_claim * (z + val.evaluate(&r_address_rev)),
             sumcheck_claim,
             "Core PIOP + Hamming weight sumcheck failed"
         );
 
-        let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
+        let r_concat = [r_address_rev.as_slice(), r_cycle.as_slice()].concat();
+        println!("V r_concat: {r_concat:?}");
         let ra_commitment = &commitments.commitments[CommittedPolynomials::BytecodeRa.to_index()];
         opening_accumulator.append(&[ra_commitment], r_concat, &[&self.ra_claim], transcript);
 
@@ -378,9 +382,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
             self.booleanity_sumcheck
                 .verify(F::zero(), K.log_2() + T.log_2(), 3, transcript)?;
         let (r_address_prime, r_cycle_prime) = r_booleanity.split_at(K.log_2());
-        let eq_eval_address = EqPolynomial::mle(&r_address, r_address_prime);
-        let r_cycle: Vec<_> = r_cycle.iter().copied().rev().collect();
-        let eq_eval_cycle = EqPolynomial::mle(&r_cycle, r_cycle_prime);
+        let eq_eval_address = EqPolynomial::mle(&r_address_rev, r_address_prime);
+        let eq_eval_cycle = EqPolynomial::mle(&r_cycle_rev, r_cycle_prime);
 
         assert_eq!(
             eq_eval_address * eq_eval_cycle * (self.ra_claim_prime.square() - self.ra_claim_prime),

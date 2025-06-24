@@ -307,13 +307,13 @@ where
             .map(|input| claimed_witness_evals[input.to_index()])
             .collect();
 
-        opening_accumulator.append(
-            &committed_polys,
-            EqPolynomial::from_evals(chis),
-            r_cycle.to_vec(),
-            &committed_poly_claims,
-            transcript,
-        );
+        // opening_accumulator.append(
+        //     &committed_polys,
+        //     EqPolynomial::from_evals(chis),
+        //     r_cycle.to_vec(),
+        //     &committed_poly_claims,
+        //     transcript,
+        // );
 
         let unexpanded_pc_eval_at_shift_r = shift_sumcheck_claims[0];
         let pc_eval_at_shift_r = shift_sumcheck_claims[1];
@@ -462,12 +462,12 @@ where
             .iter()
             .map(|input| &self.claimed_witness_evals[input.to_index()])
             .collect();
-        opening_accumulator.append(
-            r1cs_input_commitments,
-            r_cycle.to_vec(),
-            &claims,
-            transcript,
-        );
+        // opening_accumulator.append(
+        //     r1cs_input_commitments,
+        //     r_cycle.to_vec(),
+        //     &claims,
+        //     transcript,
+        // );
 
         Ok(())
     }

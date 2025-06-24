@@ -27,14 +27,6 @@ impl<F: JoltField> OneHotPolynomial<F> {
         (T * self.K as u128 / row_length) as usize
     }
 
-    pub fn commit_rows<G>(&self, g1_generators: &[JoltGroupWrapper<G>]) -> Vec<JoltGroupWrapper<G>>
-    where
-        G: CurveGroup<ScalarField = F> + VariableBaseMSM,
-    {
-        todo!();
-        vec![]
-    }
-
     #[cfg(test)]
     fn to_dense_poly(&self) -> DensePolynomial<F> {
         use crate::utils::thread::unsafe_allocate_zero_vec;
