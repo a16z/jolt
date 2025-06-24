@@ -14,7 +14,7 @@ use alloc::vec::Vec;
 fn waste_memory(size: u32, n: u32) {
     let mut v = Vec::new();
     for i in 0..size {
-        vec.push(i);
+        v.push(i);
     }
 }
 ```
@@ -30,7 +30,7 @@ Jolt restricts the size of the inputs and outputs to 4096 bytes by default. Usin
 fn sum(input: &[u8]) -> u32 {
     let mut sum = 0;
     for value in input {
-        sum += value;
+        sum += *value as u32;
     }
 
     sum
@@ -61,8 +61,6 @@ fn inline_asm() -> (i32, u32, i32, u32) {
 }
 ```
 
-
-```toml
 
 ## Getting Help
 If none of the above help, please serialize your program and send it along with a detailed bug report.

@@ -1,7 +1,7 @@
-# Multilinear Extensions 
-For any $v$-variate polynomial $g(x_1, ... x_v)$ polynomial, it's multilinear extension $f(x_1, ... x_v)$ is the polynomial which agrees over all $2^v$ points $x \in \{0,1\}^v$: $g(x_1, ... x_v) = \tilde{f}(x_1, ... x_v) \forall x \in \{0,1\}^v$. By the Schwartz-Zippel lemma, if $g$ and $f$ disagree at even a single input, then $g$ and $f$ must disagree *almost everywhere*.
+# Multilinear Extensions
+For any $v$-variate polynomial $g(x_1, ... x_v)$, its multilinear extension $f(x_1, ... x_v)$ is the polynomial which agrees over all $2^v$ points $x \in \{0,1\}^v$: $g(x_1, ... x_v) = \tilde{f}(x_1, ... x_v) \forall x \in \{0,1\}^v$. By the Schwartz-Zippel lemma, if $g$ and $f$ disagree at even a single input, then $g$ and $f$ must disagree *almost everywhere*.
 
-For more precise details please read **Section 3.5 of [Proofs and Args ZK](https://people.cs.georgetown.edu/jthaler/ProofsArgsAndZK.pdf)**. 
+For more precise details please read **Section 3.5 of [Proofs and Args ZK](https://people.cs.georgetown.edu/jthaler/ProofsArgsAndZK.pdf)**.
 
 ## Engineering
 In practice, MLE's are stored as the vector of evaluations over the $v$-variate boolean hypercube $\{0,1\}^v$. There are two important algorithms over multilinear extensions: single variable binding, and evaluation.
