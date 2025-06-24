@@ -168,6 +168,14 @@ impl<F: JoltField> EqPolynomial<F> {
 
         evals
     }
+
+    pub fn final_sumcheck_claim(&self) -> F {
+        match self {
+            EqPolynomial::Default(eq_poly) => eq_poly[0],
+            EqPolynomial::Split(eq_poly) => eq_poly.final_sumcheck_claim(),
+            EqPolynomial::Gruen(_) => todo!(),
+        }
+    }
 }
 
 pub struct EqPlusOnePolynomial<F> {

@@ -310,7 +310,6 @@ impl<F: JoltField> SplitEqPolynomial<F> {
         }
     }
 
-    #[cfg(test)]
     pub fn final_sumcheck_claim(&self) -> F {
         debug_assert_eq!(self.E1_len, 1);
         debug_assert_eq!(self.E2_len, 1);

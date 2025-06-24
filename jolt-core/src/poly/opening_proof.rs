@@ -109,12 +109,19 @@ where
         self.input_claim
     }
 
-    fn compute_prover_message(&self, _: usize) -> Vec<F> {
+    fn compute_prover_message(&self, round: usize) -> Vec<F> {
         let prover_state = self.prover_state.as_ref().unwrap();
         match (&prover_state.polynomial, &prover_state.eq_poly) {
             (MultilinearPolynomial::LargeScalars(_), EqPolynomial::Default(_)) => {
                 let polynomial = &prover_state.polynomial;
                 let eq_poly = &prover_state.eq_poly;
+
+                if round >= self.num_rounds() {
+                    return vec![
+                        polynomial.final_sumcheck_claim() * eq_poly.final_sumcheck_claim(),
+                    ];
+                }
+
                 let mle_half = polynomial.len() / 2;
                 let eval_0: F = (0..mle_half)
                     .map(|i| polynomial.get_bound_coeff(2 * i) * eq_poly.get_bound_coeff(2 * i))
@@ -136,13 +143,20 @@ where
                 todo!("Sparse/Split");
             }
             (MultilinearPolynomial::OneHot(poly), EqPolynomial::Split(eq_poly)) => {
+                if round >= self.num_rounds() {
+                    return vec![poly.final_sumcheck_claim() * eq_poly.final_sumcheck_claim()];
+                }
                 poly.compute_sumcheck_prover_message(eq_poly)
             }
             _ => panic!("Unexpected polynomial types"),
         }
     }
 
-    fn bind(&mut self, r_j: F, _: usize) {
+    fn bind(&mut self, r_j: F, round: usize) {
+        if round >= self.num_rounds() {
+            return;
+        }
+
         let prover_state = self.prover_state.as_mut().unwrap();
         rayon::join(
             || {
@@ -633,8 +647,8 @@ where
             .zip(reduced_opening_proof.sumcheck_claims.iter())
             .zip(self.openings.iter())
             .map(|((coeff, claim), opening)| {
-                let r_slice = &r_sumcheck[num_sumcheck_rounds - opening.opening_point.len()..];
-                // let r_slice = &r_sumcheck[..num_sumcheck_rounds - opening.opening_point.len()];
+                // let r_slice = &r_sumcheck[num_sumcheck_rounds - opening.opening_point.len()..];
+                let r_slice = &r_sumcheck[..num_sumcheck_rounds - opening.opening_point.len()];
                 let lagrange_eval: F = r_slice.iter().map(|r| F::one() - r).product();
                 // let lagrange_eval: F = r_slice.iter().product();
 

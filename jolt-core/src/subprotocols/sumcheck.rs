@@ -171,23 +171,39 @@ impl BatchedSumcheck {
                 .zip(individual_claims.iter())
                 .map(|(sumcheck, previous_claim)| {
                     let num_rounds = sumcheck.num_rounds();
-                    if remaining_rounds > num_rounds {
-                        // We haven't gotten to this sumcheck's variables yet, so
-                        // the univariate polynomial is just a constant equal to
-                        // the input claim, scaled by a power of 2.
-                        let num_rounds = sumcheck.num_rounds();
-                        let scaled_input_claim = sumcheck
-                            .input_claim()
-                            .mul_u64(1 << (remaining_rounds - num_rounds - 1));
-                        // Constant polynomial
-                        UniPoly::from_coeff(vec![scaled_input_claim])
+                    if round < num_rounds {
+                        let mut univariate_poly_evals = sumcheck.compute_prover_message(round);
+                        for eval in univariate_poly_evals.iter_mut() {
+                            *eval = eval.mul_u64(1 << (max_num_rounds - num_rounds));
+                        }
+                        univariate_poly_evals.insert(1, *previous_claim - univariate_poly_evals[0]);
+                        UniPoly::from_evals(&univariate_poly_evals)
                     } else {
-                        let offset = max_num_rounds - sumcheck.num_rounds();
-                        let mut univariate_poly_evals =
-                            sumcheck.compute_prover_message(round - offset);
+                        let mut univariate_poly_evals = sumcheck.compute_prover_message(round);
+                        for eval in univariate_poly_evals.iter_mut() {
+                            *eval = eval.mul_u64(1 << (remaining_rounds - 1));
+                        }
                         univariate_poly_evals.insert(1, *previous_claim - univariate_poly_evals[0]);
                         UniPoly::from_evals(&univariate_poly_evals)
                     }
+
+                    // if remaining_rounds > num_rounds {
+                    //     // We haven't gotten to this sumcheck's variables yet, so
+                    //     // the univariate polynomial is just a constant equal to
+                    //     // the input claim, scaled by a power of 2.
+                    //     let num_rounds = sumcheck.num_rounds();
+                    //     let scaled_input_claim = sumcheck
+                    //         .input_claim()
+                    //         .mul_u64(1 << (remaining_rounds - num_rounds - 1));
+                    //     // Constant polynomial
+                    //     UniPoly::from_coeff(vec![scaled_input_claim])
+                    // } else {
+                    //     let offset = max_num_rounds - sumcheck.num_rounds();
+                    //     let mut univariate_poly_evals =
+                    //         sumcheck.compute_prover_message(round - offset);
+                    //     univariate_poly_evals.insert(1, *previous_claim - univariate_poly_evals[0]);
+                    //     UniPoly::from_evals(&univariate_poly_evals)
+                    // }
                 })
                 .collect();
 
@@ -231,9 +247,8 @@ impl BatchedSumcheck {
                 // If a sumcheck instance has fewer than `max_num_rounds`,
                 // we wait until there are <= `sumcheck.num_rounds()` left
                 // before binding its variables.
-                if remaining_rounds <= sumcheck.num_rounds() {
-                    let offset = max_num_rounds - sumcheck.num_rounds();
-                    sumcheck.bind(r_j, round - offset);
+                if round < sumcheck.num_rounds() {
+                    sumcheck.bind(r_j, round);
                 }
             }
 
@@ -300,7 +315,8 @@ impl BatchedSumcheck {
                 // before binding its variables.
                 // So, the sumcheck *actually* uses just the last `sumcheck.num_rounds()`
                 // values of `r_sumcheck`.
-                let r_slice = &r_sumcheck[max_num_rounds - sumcheck.num_rounds()..];
+                // let r_slice = &r_sumcheck[max_num_rounds - sumcheck.num_rounds()..];
+                let r_slice = &r_sumcheck[..sumcheck.num_rounds()];
                 sumcheck.expected_output_claim(r_slice) * coeff
             })
             .sum();
