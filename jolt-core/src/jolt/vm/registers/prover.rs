@@ -21,54 +21,7 @@ use common::constants::REGISTER_COUNT;
 use fixedbitset::FixedBitSet;
 use rayon::prelude::*;
 use tracer::instruction::RV32IMCycle;
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct RegistersTwistProof<F: JoltField, ProofTranscript: Transcript> {
-    /// Proof for the read-checking and write-checking sumchecks
-    /// (steps 3 and 4 of Figure 9).
-    read_write_checking_proof: ReadWriteCheckingProof<F, ProofTranscript>,
-    /// Proof of the Val-evaluation sumcheck (step 6 of Figure 9).
-    val_evaluation_proof: ValEvaluationProof<F, ProofTranscript>,
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct ReadWriteCheckingProof<F: JoltField, ProofTranscript: Transcript> {
-    /// Joint sumcheck proof for the read-checking and write-checking sumchecks
-    /// (steps 3 and 4 of Figure 9).
-    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    /// The claimed evaluation ra(r_address, r_cycle) output by the read/write-
-    /// checking sumcheck.
-    rs1_ra_claim: F,
-    /// The claimed evaluation rv(r') proven by the read-checking sumcheck.
-    rs1_rv_claim: F,
-    /// The claimed evaluation ra(r_address, r_cycle) output by the read/write-
-    /// checking sumcheck.
-    rs2_ra_claim: F,
-    /// The claimed evaluation rv(r') proven by the read-checking sumcheck.
-    rs2_rv_claim: F,
-    /// The claimed evaluation wa(r_address, r_cycle) output by the read/write-
-    /// checking sumcheck.
-    rd_wa_claim: F,
-    /// The claimed evaluation wv(r_address, r_cycle) output by the read/write-
-    /// checking sumcheck.
-    rd_wv_claim: F,
-    /// The claimed evaluation val(r_address, r_cycle) output by the read/write-
-    /// checking sumcheck.
-    val_claim: F,
-    /// The claimed evaluation Inc(r, r') proven by the write-checking sumcheck.
-    inc_claim: F,
-    /// The sumcheck round index at which we switch from binding cycle variables
-    /// to binding address variables.
-    sumcheck_switch_index: usize,
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct ValEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
-    /// Sumcheck proof for the Val-evaluation sumcheck (steps 6 of Figure 9).
-    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    /// The claimed evaluation Inc(r_address, r_cycle') output by the Val-evaluation sumcheck.
-    inc_claim: F,
-}
+use crate::jolt::vm::registers::{ReadWriteCheckingProof, RegistersTwistProof, ValEvaluationProof};
 
 impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTranscript> {
     #[tracing::instrument(skip_all, name = "RegistersTwistProof::prove")]
@@ -100,45 +53,6 @@ impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTran
             read_write_checking_proof,
             val_evaluation_proof,
         }
-    }
-
-    pub fn verify(
-        &self,
-        T: usize,
-        transcript: &mut ProofTranscript,
-    ) -> Result<(), ProofVerifyError> {
-        let log_T = T.log_2();
-        let r: Vec<F> = transcript.challenge_vector((REGISTER_COUNT as usize).log_2());
-        let r_prime: Vec<F> = transcript.challenge_vector(log_T);
-
-        let r_cycle = self
-            .read_write_checking_proof
-            .verify(r, r_prime, transcript);
-
-        let (sumcheck_claim, r_cycle_prime) = self.val_evaluation_proof.sumcheck_proof.verify(
-            self.read_write_checking_proof.val_claim,
-            log_T,
-            2,
-            transcript,
-        )?;
-
-        // Compute LT(r_cycle', r_cycle)
-        let mut lt_eval = F::zero();
-        let mut eq_term = F::one();
-        for (x, y) in r_cycle_prime.iter().rev().zip(r_cycle.iter()) {
-            lt_eval += (F::one() - x) * y * eq_term;
-            eq_term *= F::one() - x - y + *x * y + *x * y;
-        }
-
-        assert_eq!(
-            sumcheck_claim,
-            lt_eval * self.val_evaluation_proof.inc_claim,
-            "Val evaluation sumcheck failed"
-        );
-
-        // TODO: Append Inc claim to opening proof accumulator
-
-        Ok(())
     }
 }
 
@@ -1002,8 +916,8 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                     &mut val,
                     &mut eq_r_prime,
                 ]
-                .into_par_iter()
-                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+                    .into_par_iter()
+                    .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
             } else {
                 // Bind an address variable k
                 r_address.push(r_j);
@@ -1031,47 +945,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         drop_in_background_thread((rs1_ra, rd_wv, val, data_buffers, eq_r, eq_r_prime, A));
 
         (proof, r_address, r_cycle)
-    }
-
-    pub fn verify(&self, r: Vec<F>, r_prime: Vec<F>, transcript: &mut ProofTranscript) -> Vec<F> {
-        let K = r.len().pow2();
-        let T = r_prime.len().pow2();
-        let z: F = transcript.challenge_scalar();
-
-        let (sumcheck_claim, r_sumcheck) = self
-            .sumcheck_proof
-            .verify(
-                self.inc_claim + z * self.rs1_rv_claim + z.square() * self.rs2_rv_claim,
-                T.log_2() + K.log_2(),
-                3,
-                transcript,
-            )
-            .unwrap();
-
-        // The high-order cycle variables are bound after the switch
-        let mut r_cycle = r_sumcheck[self.sumcheck_switch_index..T.log_2()].to_vec();
-        // First `sumcheck_switch_index` rounds bind cycle variables from low to high
-        r_cycle.extend(r_sumcheck[..self.sumcheck_switch_index].iter().rev());
-        // Final log(K) rounds bind address variables
-        let r_address = r_sumcheck[T.log_2()..].to_vec();
-
-        // eq(r', r_cycle)
-        let eq_eval_cycle = EqPolynomial::new(r_prime).evaluate(&r_cycle);
-        // eq(r, r_address)
-        let eq_eval_address = EqPolynomial::new(r).evaluate(&r_address);
-
-        assert_eq!(
-            eq_eval_address
-                * eq_eval_cycle
-                * self.rd_wa_claim
-                * (self.rd_wv_claim - self.val_claim)
-                + z * eq_eval_cycle * self.rs1_ra_claim * self.val_claim
-                + z.square() * eq_eval_cycle * self.rs2_ra_claim * self.val_claim,
-            sumcheck_claim,
-            "Read/write-checking sumcheck failed"
-        );
-
-        r_cycle
     }
 }
 
