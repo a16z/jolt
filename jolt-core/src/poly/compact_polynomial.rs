@@ -3,9 +3,10 @@ use std::ops::Index;
 use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
-use crate::{field::JoltField, utils};
+use crate::{field::JoltField, into_optimal_iter, optimal_iter, optimal_iter_mut, utils};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use num_integer::Integer;
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::cmp::Ordering;
 
@@ -145,7 +146,7 @@ impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
     }
 
     pub fn coeffs_as_field_elements(&self) -> Vec<F> {
-        self.coeffs.par_iter().map(|x| x.to_field()).collect()
+        optimal_iter!(self.coeffs).map(|x| x.to_field()).collect()
     }
     // Faster evaluation based on
     // https://randomwalks.xyz/publish/fast_polynomial_evaluation.html
@@ -294,8 +295,7 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                     }
                     let binding_scratch_space = self.binding_scratch_space.as_mut().unwrap();
 
-                    binding_scratch_space
-                        .par_iter_mut()
+                    optimal_iter_mut!(binding_scratch_space)
                         .take(n)
                         .enumerate()
                         .for_each(|(i, new_coeff)| {
@@ -310,8 +310,8 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                 }
                 BindingOrder::HighToLow => {
                     let (left, right) = self.bound_coeffs.split_at_mut(n);
-                    left.par_iter_mut()
-                        .zip(right.par_iter())
+                    optimal_iter_mut!(left)
+                        .zip(optimal_iter!(right))
                         .filter(|(a, b)| a != b)
                         .for_each(|(a, b)| {
                             *a += r * (*b - *a);
@@ -321,8 +321,7 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
         } else {
             match order {
                 BindingOrder::LowToHigh => {
-                    self.bound_coeffs = (0..n)
-                        .into_par_iter()
+                    self.bound_coeffs = into_optimal_iter!((0..n))
                         .map(|i| {
                             let a = self.coeffs[2 * i];
                             let b = self.coeffs[2 * i + 1];
@@ -342,9 +341,8 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                 }
                 BindingOrder::HighToLow => {
                     let (left, right) = self.coeffs.split_at(n);
-                    self.bound_coeffs = left
-                        .par_iter()
-                        .zip(right.par_iter())
+                    self.bound_coeffs = optimal_iter!(left)
+                        .zip(optimal_iter!(right))
                         .map(|(&a, &b)| {
                             match a.cmp(&b) {
                                 Ordering::Equal => a.to_field(),

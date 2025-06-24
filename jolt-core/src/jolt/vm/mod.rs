@@ -2,35 +2,27 @@
 #![allow(dead_code)]
 
 use crate::field::JoltField;
-use crate::jolt::vm::ram::remap_address;
 use crate::jolt::vm::rv32im_vm::Serializable;
-use crate::jolt::witness::ALL_COMMITTED_POLYNOMIALS;
 #[cfg(feature = "prover")]
 use crate::msm::icicle;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::commitment::dory::DoryGlobals;
-use crate::poly::opening_proof::{
-    ProverOpeningAccumulator, ReducedOpeningProof, VerifierOpeningAccumulator,
-};
+use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::r1cs::constraints::R1CSConstraints;
 use crate::r1cs::spartan::UniformSpartanProof;
 use crate::utils::errors::ProofVerifyError;
-use crate::utils::math::Math;
 use crate::utils::transcript::Transcript;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use bytecode::{BytecodePreprocessing, BytecodeShoutProof};
 use common::jolt_device::MemoryLayout;
 use instruction_lookups::LookupsProof;
 use ram::{RAMPreprocessing, RAMTwistProof};
-use rayon::prelude::*;
 use registers::RegistersTwistProof;
 use std::{
     fs::File,
     io::{Read, Write},
     path::Path,
 };
-use tracer::emulator::memory::Memory;
-use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
+use tracer::instruction::RV32IMInstruction;
 use tracer::JoltDevice;
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
@@ -196,13 +188,14 @@ where
         proof: JoltProof<WORD_SIZE, F, PCS, ProofTranscript>,
         // commitments: JoltCommitments<PCS, ProofTranscript>,
         program_io: JoltDevice,
+        #[cfg(feature = "prover")]
         _debug_info: Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
     ) -> Result<(), ProofVerifyError> {
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
         let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS, ProofTranscript> =
             VerifierOpeningAccumulator::new();
 
-        #[cfg(test)]
+        #[cfg(all(test, feature = "prover"))]
         if let Some(debug_info) = _debug_info {
             transcript.compare_to(debug_info.transcript);
             opening_accumulator

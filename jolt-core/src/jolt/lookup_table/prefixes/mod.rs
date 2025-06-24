@@ -14,7 +14,8 @@ use sign_extension::SignExtensionPrefix;
 use std::{fmt::Display, ops::Index};
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
-
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 use and::AndPrefix;
 use div_by_zero::DivByZeroPrefix;
 use eq::EqPrefix;
