@@ -238,7 +238,7 @@ where
                 Self::msm_field_elements(bases, gpu_bases, &scalars, max_num_bits, use_icicle)
             }
             MultilinearPolynomial::OneHot(_) => todo!(),
-            MultilinearPolynomial::Sparse(_) => todo!(),
+            MultilinearPolynomial::RLC(_) => todo!(),
         }
     }
 
@@ -308,7 +308,7 @@ where
                             "MultilinearPolynomial::U8Scalars cannot have more than 10 bits"
                         ),
                         MultilinearPolynomial::OneHot(_) => todo!(),
-                        MultilinearPolynomial::Sparse(_) => todo!(),
+                        MultilinearPolynomial::RLC(_) => todo!(),
                     }
                 } else {
                     Either::Left((i, max_num_bits, poly))

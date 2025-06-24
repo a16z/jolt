@@ -1,7 +1,5 @@
 use crate::{
-    poly::{
-        one_hot_polynomial::OneHotPolynomial, sparse_matrix_polynomial::SparseMatrixPolynomial,
-    },
+    poly::{one_hot_polynomial::OneHotPolynomial, rlc_polynomial::RLCPolynomial},
     utils::{compute_dotproduct, math::Math},
 };
 use ark_serialize::{
@@ -31,7 +29,7 @@ pub enum MultilinearPolynomial<F: JoltField> {
     U32Scalars(CompactPolynomial<u32, F>),
     U64Scalars(CompactPolynomial<u64, F>),
     I64Scalars(CompactPolynomial<i64, F>),
-    Sparse(SparseMatrixPolynomial<F>),
+    RLC(RLCPolynomial<F>),
     OneHot(OneHotPolynomial<F>),
 }
 
@@ -58,7 +56,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.coeffs.len(),
             MultilinearPolynomial::U64Scalars(poly) => poly.coeffs.len(),
             MultilinearPolynomial::I64Scalars(poly) => poly.coeffs.len(),
-            MultilinearPolynomial::Sparse(_) => todo!(),
+            MultilinearPolynomial::RLC(_) => todo!(),
             MultilinearPolynomial::OneHot(_) => todo!(),
         }
     }
@@ -72,7 +70,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.len(),
             MultilinearPolynomial::U64Scalars(poly) => poly.len(),
             MultilinearPolynomial::I64Scalars(poly) => poly.len(),
-            MultilinearPolynomial::Sparse(_) => todo!(),
+            MultilinearPolynomial::RLC(_) => todo!(),
             MultilinearPolynomial::OneHot(_) => todo!(),
         }
     }
@@ -85,7 +83,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.get_num_vars(),
             MultilinearPolynomial::U64Scalars(poly) => poly.get_num_vars(),
             MultilinearPolynomial::I64Scalars(poly) => poly.get_num_vars(),
-            MultilinearPolynomial::Sparse(_) => todo!(),
+            MultilinearPolynomial::RLC(_) => todo!(),
             MultilinearPolynomial::OneHot(_) => todo!(),
         }
     }
@@ -117,7 +115,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                 // elements before computing the MSM
                 F::NUM_BYTES * 8
             }
-            MultilinearPolynomial::Sparse(_) => todo!(),
+            MultilinearPolynomial::RLC(_) => todo!(),
             MultilinearPolynomial::OneHot(_) => todo!(),
         }
     }
@@ -129,20 +127,20 @@ impl<F: JoltField> MultilinearPolynomial<F> {
         if polynomials.iter().any(|poly| {
             matches!(
                 poly,
-                MultilinearPolynomial::Sparse(_) | MultilinearPolynomial::OneHot(_)
+                MultilinearPolynomial::RLC(_) | MultilinearPolynomial::OneHot(_)
             )
         }) {
             let max_num_rows = polynomials
                 .iter()
                 .filter_map(|polynomial| match polynomial {
-                    MultilinearPolynomial::Sparse(poly) => Some(poly.num_rows),
+                    MultilinearPolynomial::RLC(poly) => Some(poly.num_rows),
                     MultilinearPolynomial::OneHot(poly) => Some(poly.K),
                     _ => None,
                 })
                 .max()
                 .unwrap();
 
-            let mut result = SparseMatrixPolynomial::<F>::new(max_num_rows);
+            let mut result = RLCPolynomial::<F>::new(max_num_rows);
             for (coeff, polynomial) in coefficients.iter().zip(polynomials.iter()) {
                 result = match polynomial {
                     MultilinearPolynomial::LargeScalars(poly) => poly.mul_add(*coeff, result),
@@ -151,11 +149,11 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                     MultilinearPolynomial::U32Scalars(poly) => poly.mul_add(*coeff, result),
                     MultilinearPolynomial::U64Scalars(poly) => poly.mul_add(*coeff, result),
                     MultilinearPolynomial::I64Scalars(poly) => poly.mul_add(*coeff, result),
-                    MultilinearPolynomial::Sparse(poly) => poly.mul_add(*coeff, result),
+                    MultilinearPolynomial::RLC(poly) => poly.mul_add(*coeff, result),
                     MultilinearPolynomial::OneHot(poly) => poly.mul_add(*coeff, result),
                 };
             }
-            return MultilinearPolynomial::Sparse(result);
+            return MultilinearPolynomial::RLC(result);
         }
 
         let max_length = polynomials
@@ -218,7 +216,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                                 *rlc += poly_eval.field_mul(*coeff);
                             }
                         }
-                        MultilinearPolynomial::Sparse(_) => unreachable!(),
+                        MultilinearPolynomial::RLC(_) => unreachable!(),
                         MultilinearPolynomial::OneHot(_) => unreachable!(),
                     }
                 }
@@ -238,7 +236,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => F::from_u32(poly.coeffs[index]),
             MultilinearPolynomial::U64Scalars(poly) => F::from_u64(poly.coeffs[index]),
             MultilinearPolynomial::I64Scalars(poly) => F::from_i64(poly.coeffs[index]),
-            MultilinearPolynomial::Sparse(_) => todo!(),
+            MultilinearPolynomial::RLC(_) => todo!(),
             MultilinearPolynomial::OneHot(_) => todo!(),
         }
     }
@@ -255,7 +253,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => i64::from(poly.coeffs[index]),
             MultilinearPolynomial::U64Scalars(poly) => i64::try_from(poly.coeffs[index]).unwrap(),
             MultilinearPolynomial::I64Scalars(poly) => poly.coeffs[index],
-            MultilinearPolynomial::Sparse(_) => todo!(),
+            MultilinearPolynomial::RLC(_) => todo!(),
             MultilinearPolynomial::OneHot(_) => todo!(),
         }
     }
@@ -272,7 +270,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => i128::from(poly.coeffs[index]),
             MultilinearPolynomial::U64Scalars(poly) => i128::from(poly.coeffs[index]),
             MultilinearPolynomial::I64Scalars(poly) => i128::from(poly.coeffs[index]),
-            MultilinearPolynomial::Sparse(_) => todo!(),
+            MultilinearPolynomial::RLC(_) => todo!(),
             MultilinearPolynomial::OneHot(_) => todo!(),
         }
     }
@@ -318,7 +316,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                     F::from_i64(poly.coeffs[index])
                 }
             }
-            MultilinearPolynomial::Sparse(_) => todo!(),
+            MultilinearPolynomial::RLC(_) => todo!(),
             MultilinearPolynomial::OneHot(_) => todo!(),
         }
     }
@@ -358,7 +356,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                 .zip_eq(other.par_iter())
                 .map(|(a, b)| a.field_mul(*b))
                 .sum(),
-            MultilinearPolynomial::Sparse(_) => todo!(),
+            MultilinearPolynomial::RLC(_) => todo!(),
             MultilinearPolynomial::OneHot(_) => todo!(),
         }
     }
@@ -382,7 +380,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::I64Scalars(poly) => {
                 poly.coeffs[index].field_mul(scaling_factor_r2_adjusted)
             }
-            MultilinearPolynomial::Sparse(_) => todo!(),
+            MultilinearPolynomial::RLC(_) => todo!(),
             MultilinearPolynomial::OneHot(_) => todo!(),
         }
     }
@@ -404,7 +402,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                         .map(|(t, k)| split_eq.E1[*t] * split_eq.E2[*k])
                         .sum()
                 }
-                MultilinearPolynomial::Sparse(poly) => {
+                MultilinearPolynomial::RLC(poly) => {
                     let sparse_eval: F = poly
                         .sparse_coeffs
                         .par_iter()
@@ -594,7 +592,7 @@ impl<F: JoltField> CanonicalSerialize for MultilinearPolynomial<F> {
                 (5_u8).serialize_with_mode(&mut writer, compress)?;
                 compact_polynomial.serialize_with_mode(&mut writer, compress)?;
             }
-            MultilinearPolynomial::Sparse(_) => todo!(),
+            MultilinearPolynomial::RLC(_) => todo!(),
             MultilinearPolynomial::OneHot(_) => todo!(),
         }
         Ok(())
@@ -620,7 +618,7 @@ impl<F: JoltField> CanonicalSerialize for MultilinearPolynomial<F> {
             MultilinearPolynomial::I64Scalars(compact_polynomial) => {
                 (5_u8).serialized_size(compress) + compact_polynomial.serialized_size(compress)
             }
-            MultilinearPolynomial::Sparse(_) => todo!(),
+            MultilinearPolynomial::RLC(_) => todo!(),
             MultilinearPolynomial::OneHot(_) => todo!(),
         }
     }
@@ -668,7 +666,7 @@ impl<F: JoltField> Valid for MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(compact_polynomial) => compact_polynomial.check(),
             MultilinearPolynomial::U64Scalars(compact_polynomial) => compact_polynomial.check(),
             MultilinearPolynomial::I64Scalars(compact_polynomial) => compact_polynomial.check(),
-            MultilinearPolynomial::Sparse(_) => todo!(),
+            MultilinearPolynomial::RLC(_) => todo!(),
             MultilinearPolynomial::OneHot(_) => todo!(),
         }
     }
@@ -708,7 +706,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.is_bound(),
             MultilinearPolynomial::U64Scalars(poly) => poly.is_bound(),
             MultilinearPolynomial::I64Scalars(poly) => poly.is_bound(),
-            MultilinearPolynomial::Sparse(_) => todo!(),
+            MultilinearPolynomial::RLC(_) => todo!(),
             MultilinearPolynomial::OneHot(_) => todo!(),
         }
     }
@@ -722,7 +720,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.bind(r, order),
             MultilinearPolynomial::U64Scalars(poly) => poly.bind(r, order),
             MultilinearPolynomial::I64Scalars(poly) => poly.bind(r, order),
-            MultilinearPolynomial::Sparse(_) => todo!(),
+            MultilinearPolynomial::RLC(_) => todo!(),
             MultilinearPolynomial::OneHot(_) => todo!(),
         }
     }
@@ -736,7 +734,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.bind_parallel(r, order),
             MultilinearPolynomial::U64Scalars(poly) => poly.bind_parallel(r, order),
             MultilinearPolynomial::I64Scalars(poly) => poly.bind_parallel(r, order),
-            MultilinearPolynomial::Sparse(_) => todo!(),
+            MultilinearPolynomial::RLC(_) => todo!(),
             MultilinearPolynomial::OneHot(poly) => poly.bind_parallel(r, order),
         }
     }
@@ -752,7 +750,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.final_sumcheck_claim(),
             MultilinearPolynomial::U64Scalars(poly) => poly.final_sumcheck_claim(),
             MultilinearPolynomial::I64Scalars(poly) => poly.final_sumcheck_claim(),
-            MultilinearPolynomial::Sparse(_) => todo!(),
+            MultilinearPolynomial::RLC(_) => todo!(),
             MultilinearPolynomial::OneHot(poly) => poly.final_sumcheck_claim(),
         }
     }
@@ -763,7 +761,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
     fn evaluate(&self, r: &[F]) -> F {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly.evaluate(r),
-            MultilinearPolynomial::Sparse(poly) => {
+            MultilinearPolynomial::RLC(poly) => {
                 // Not actually used
                 F::zero()
             }

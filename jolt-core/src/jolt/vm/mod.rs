@@ -10,7 +10,7 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::opening_proof::{
     ProverOpeningAccumulator, ReducedOpeningProof, VerifierOpeningAccumulator,
 };
-use crate::poly::sparse_matrix_polynomial::SparseMatrixPolynomial;
+use crate::poly::sparse_matrix_polynomial::RLCPolynomial;
 use crate::r1cs::constraints::R1CSConstraints;
 use crate::r1cs::spartan::UniformSpartanProof;
 use crate::utils::errors::ProofVerifyError;
@@ -305,7 +305,7 @@ where
         .unwrap();
         println!("T = {padded_trace_length}, K = {K}");
 
-        SparseMatrixPolynomial::<F>::initialize(K, padded_trace_length);
+        RLCPolynomial::<F>::initialize(K, padded_trace_length);
 
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
         let mut opening_accumulator: ProverOpeningAccumulator<F, PCS, ProofTranscript> =

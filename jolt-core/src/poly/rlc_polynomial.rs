@@ -11,7 +11,7 @@ use once_cell::sync::OnceCell;
 use rayon::prelude::*;
 
 #[derive(Default, Clone, Debug, PartialEq)]
-pub struct SparseMatrixPolynomial<F: JoltField> {
+pub struct RLCPolynomial<F: JoltField> {
     pub num_rows: usize,
     /// Length-T vector of (dense) coefficients (corresponding to k=0)
     pub dense_submatrix: Vec<F>,
@@ -60,7 +60,7 @@ pub fn get_K() -> usize {
     GLOBAL_K.get().cloned().expect("GLOBAL_K is uninitialized")
 }
 
-impl<F: JoltField> SparseMatrixPolynomial<F> {
+impl<F: JoltField> RLCPolynomial<F> {
     pub fn initialize(K: usize, T: usize) {
         let matrix_size = K as u128 * T as u128;
         let num_columns = matrix_size.isqrt().next_power_of_two();
@@ -87,7 +87,7 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
     }
 }
 
-impl<F: JoltField> PolynomialBinding<F> for SparseMatrixPolynomial<F> {
+impl<F: JoltField> PolynomialBinding<F> for RLCPolynomial<F> {
     fn is_bound(&self) -> bool {
         todo!()
     }
@@ -105,10 +105,10 @@ impl<F: JoltField> PolynomialBinding<F> for SparseMatrixPolynomial<F> {
     }
 }
 
-impl<F: JoltField> MulAdd<F, SparseMatrixPolynomial<F>> for &OneHotPolynomial<F> {
-    type Output = SparseMatrixPolynomial<F>;
+impl<F: JoltField> MulAdd<F, RLCPolynomial<F>> for &OneHotPolynomial<F> {
+    type Output = RLCPolynomial<F>;
 
-    fn mul_add(self, a: F, mut b: SparseMatrixPolynomial<F>) -> SparseMatrixPolynomial<F> {
+    fn mul_add(self, a: F, mut b: RLCPolynomial<F>) -> RLCPolynomial<F> {
         assert!(!self.is_bound());
         let cycles_per_group = get_cycles_per_group();
         // println!("{:?}", b.sparse_coeffs);
@@ -124,10 +124,10 @@ impl<F: JoltField> MulAdd<F, SparseMatrixPolynomial<F>> for &OneHotPolynomial<F>
     }
 }
 
-impl<F: JoltField> MulAdd<F, SparseMatrixPolynomial<F>> for &SparseMatrixPolynomial<F> {
-    type Output = SparseMatrixPolynomial<F>;
+impl<F: JoltField> MulAdd<F, RLCPolynomial<F>> for &RLCPolynomial<F> {
+    type Output = RLCPolynomial<F>;
 
-    fn mul_add(self, a: F, mut b: SparseMatrixPolynomial<F>) -> SparseMatrixPolynomial<F> {
+    fn mul_add(self, a: F, mut b: RLCPolynomial<F>) -> RLCPolynomial<F> {
         assert_eq!(
             self.dense_submatrix.len(),
             b.dense_submatrix.len(),
@@ -155,12 +155,10 @@ impl<F: JoltField> MulAdd<F, SparseMatrixPolynomial<F>> for &SparseMatrixPolynom
     }
 }
 
-impl<T: SmallScalar, F: JoltField> MulAdd<F, SparseMatrixPolynomial<F>>
-    for &CompactPolynomial<T, F>
-{
-    type Output = SparseMatrixPolynomial<F>;
+impl<T: SmallScalar, F: JoltField> MulAdd<F, RLCPolynomial<F>> for &CompactPolynomial<T, F> {
+    type Output = RLCPolynomial<F>;
 
-    fn mul_add(self, a: F, mut b: SparseMatrixPolynomial<F>) -> SparseMatrixPolynomial<F> {
+    fn mul_add(self, a: F, mut b: RLCPolynomial<F>) -> RLCPolynomial<F> {
         b.dense_submatrix
             .par_iter_mut()
             .zip_eq(self.coeffs.par_iter())
@@ -171,10 +169,10 @@ impl<T: SmallScalar, F: JoltField> MulAdd<F, SparseMatrixPolynomial<F>>
     }
 }
 
-impl<F: JoltField> MulAdd<F, SparseMatrixPolynomial<F>> for &DensePolynomial<F> {
-    type Output = SparseMatrixPolynomial<F>;
+impl<F: JoltField> MulAdd<F, RLCPolynomial<F>> for &DensePolynomial<F> {
+    type Output = RLCPolynomial<F>;
 
-    fn mul_add(self, a: F, mut b: SparseMatrixPolynomial<F>) -> SparseMatrixPolynomial<F> {
+    fn mul_add(self, a: F, mut b: RLCPolynomial<F>) -> RLCPolynomial<F> {
         b.dense_submatrix
             .par_iter_mut()
             .zip_eq(self.Z.par_iter())

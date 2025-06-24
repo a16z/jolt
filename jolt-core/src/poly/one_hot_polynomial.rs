@@ -1,11 +1,13 @@
 use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 use crate::field::JoltField;
+use crate::msm::VariableBaseMSM;
+use crate::poly::commitment::dory::JoltGroupWrapper;
 #[cfg(test)]
 use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::sparse_matrix_polynomial::{get_T, get_num_columns};
+use crate::poly::rlc_polynomial::{get_T, get_num_columns};
 use crate::poly::split_eq_poly::SplitEqPolynomial;
 use crate::utils::math::Math;
+use ark_ec::CurveGroup;
 use rayon::prelude::*;
 
 #[derive(Default, Clone, Debug, PartialEq)]
@@ -69,21 +71,41 @@ impl<F: JoltField> OneHotPolynomial<F> {
         }
     }
 
-    fn evaluate(&self, r: &[F]) -> F {
+    pub fn commit_rows<G: CurveGroup<ScalarField = F> + VariableBaseMSM>(
+        &self,
+        bases: &[G::Affine],
+    ) -> Vec<JoltGroupWrapper<G>> {
+        let num_rows = self.num_rows();
+        println!("# rows = {num_rows}");
+        let row_len = get_num_columns();
         let T = get_T();
-        debug_assert_eq!(self.nonzero_indices.len(), T);
-        assert_eq!(self.K.log_2() + T.log_2(), r.len());
 
-        let (r_left, r_right) = r.split_at(self.K.log_2());
-        let (eq_left, eq_right) = rayon::join(
-            || EqPolynomial::evals(r_left),
-            || EqPolynomial::evals(r_right),
-        );
+        let num_chunks = 4 * rayon::current_num_threads().next_power_of_two();
+        let chunk_size = std::cmp::max(1, num_rows / num_chunks);
+        let num_chunks = num_rows / chunk_size;
 
-        self.nonzero_indices
-            .par_iter()
-            .map(|(t, k)| eq_left[*k] * eq_right[*t])
-            .sum()
+        (0..num_chunks)
+            .into_par_iter()
+            .flat_map(|chunk_index| {
+                let min_row_index = chunk_index * chunk_size;
+                let max_row_index = min_row_index + chunk_size;
+
+                let mut result: Vec<JoltGroupWrapper<G>> =
+                    vec![JoltGroupWrapper(G::zero()); chunk_size];
+
+                for (t, k) in self.nonzero_indices.iter() {
+                    let global_index = *k as u128 * T as u128 + *t as u128;
+                    let row_index = (global_index / row_len as u128) as usize;
+
+                    if row_index >= min_row_index && row_index < max_row_index {
+                        let col_index = global_index % row_len as u128;
+                        result[row_index % chunk_size].0 += bases[col_index as usize];
+                    }
+                }
+
+                result
+            })
+            .collect()
     }
 
     pub fn compute_sumcheck_prover_message(&self, eq_poly: &SplitEqPolynomial<F>) -> Vec<F> {
@@ -347,7 +369,7 @@ impl<F: JoltField> PolynomialBinding<F> for OneHotPolynomial<F> {
 
 #[cfg(test)]
 mod tests {
-    use crate::poly::sparse_matrix_polynomial::SparseMatrixPolynomial;
+    use crate::poly::rlc_polynomial::RLCPolynomial;
 
     use super::*;
     use ark_bn254::Fr;
@@ -357,7 +379,7 @@ mod tests {
     fn dense_polynomial_equivalence<const LOG_K: usize, const LOG_T: usize>() {
         let K: usize = 1 << LOG_K;
         let T: usize = 1 << LOG_T;
-        SparseMatrixPolynomial::<Fr>::initialize(K, T);
+        RLCPolynomial::<Fr>::initialize(K, T);
 
         let mut rng = test_rng();
 

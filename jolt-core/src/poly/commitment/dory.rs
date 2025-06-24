@@ -4,7 +4,7 @@ use crate::{
     msm::{Icicle, VariableBaseMSM},
     poly::{
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
-        sparse_matrix_polynomial::{get_T, get_num_columns},
+        rlc_polynomial::{get_T, get_num_columns},
     },
     utils::{
         errors::ProofVerifyError,
@@ -789,7 +789,7 @@ where
                     )
                 })
                 .collect(),
-            MultilinearPolynomial::Sparse(poly) => {
+            MultilinearPolynomial::RLC(poly) => {
                 let num_rows = poly.num_rows;
                 let T = get_T();
                 println!("# rows = {num_rows}");
@@ -831,30 +831,7 @@ where
                     });
                 row_commitments
             }
-            MultilinearPolynomial::OneHot(poly) => {
-                let num_rows = poly.num_rows();
-                let T = get_T();
-                println!("# rows = {num_rows}");
-                (0..num_rows)
-                    .into_par_iter()
-                    .map(|row_index| {
-                        let row_commitment = poly
-                            .nonzero_indices
-                            .iter()
-                            .filter_map(|(t, k)| {
-                                let global_index = *k as u128 * T as u128 + *t as u128;
-                                if global_index / row_len as u128 == row_index as u128 {
-                                    let col_index = global_index % row_len as u128;
-                                    Some(bases[col_index as usize])
-                                } else {
-                                    None
-                                }
-                            })
-                            .fold(G::zero(), |sum, base| sum + base);
-                        JoltGroupWrapper(row_commitment)
-                    })
-                    .collect()
-            }
+            MultilinearPolynomial::OneHot(poly) => poly.commit_rows(&bases),
         }
     }
 
@@ -890,7 +867,7 @@ where
                     )
                 })
                 .collect(),
-            MultilinearPolynomial::Sparse(poly) => {
+            MultilinearPolynomial::RLC(poly) => {
                 let T = get_T();
                 let row_len = num_columns;
                 let num_chunks = 4 * rayon::current_num_threads().next_power_of_two();
@@ -1042,6 +1019,7 @@ where
     type Proof = DoryProofData;
     type BatchedProof = DoryBatchedProof;
 
+    #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::setup_prover")]
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
         let srs_file_name = format!("dory_srs_{max_num_vars}_variables.srs");
         let (prover_setup, _) = setup_with_srs_file::<JoltBn254, _>(
@@ -1053,6 +1031,7 @@ where
         prover_setup
     }
 
+    #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::setup_verifier")]
     fn setup_verifier(prover_setup: &Self::ProverSetup) -> Self::VerifierSetup {
         prover_setup.to_verifier_setup()
     }
@@ -1115,6 +1094,7 @@ where
         }
     }
 
+    #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::verify")]
     fn verify(
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
@@ -1212,7 +1192,7 @@ mod tests {
             MultilinearPolynomial::U32Scalars(compact) => compact.coeffs.len(),
             MultilinearPolynomial::U64Scalars(compact) => compact.coeffs.len(),
             MultilinearPolynomial::I64Scalars(compact) => compact.coeffs.len(),
-            MultilinearPolynomial::Sparse(_) => todo!(),
+            MultilinearPolynomial::RLC(_) => todo!(),
             MultilinearPolynomial::OneHot(_) => todo!(),
         };
 
