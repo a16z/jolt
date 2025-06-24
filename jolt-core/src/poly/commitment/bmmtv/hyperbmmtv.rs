@@ -114,6 +114,10 @@ where
         SRS::trim(Arc::new(srs), powers_len - 1)
     }
 
+    fn srs_size(setup: &Self::Setup) -> usize {
+        setup.0.g1_powers().len()
+    }
+
     #[tracing::instrument(skip_all, name = "HyperBmmtv::commit")]
     fn commit(
         poly: &MultilinearPolynomial<Self::Field>,

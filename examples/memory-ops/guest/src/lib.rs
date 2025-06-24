@@ -1,7 +1,7 @@
 #![cfg_attr(feature = "guest", no_std)]
 #![allow(unused_assignments, asm_sub_register)]
 
-#[jolt::provable]
+#[jolt::provable(guest_only)]
 fn memory_ops() -> (i32, u32, i32, u32) {
     use core::arch::asm;
 

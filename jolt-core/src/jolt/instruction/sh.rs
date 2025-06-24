@@ -40,7 +40,10 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SHInstruction<WORD_S
 
         let is_aligned =
             AssertHalfwordAlignmentInstruction::<WORD_SIZE>(dest, offset_unsigned).lookup_entry();
-        debug_assert_eq!(is_aligned, 1);
+        debug_assert_eq!(
+            is_aligned, 1,
+            "Unaligned halfword store at addr = {dest} + offset = {offset_unsigned}"
+        );
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
@@ -63,7 +66,11 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SHInstruction<WORD_S
         });
 
         let ram_address = ADDInstruction::<WORD_SIZE>(dest, offset_unsigned).lookup_entry();
-        assert!(ram_address % 2 == 0);
+        assert_eq!(
+            ram_address % 2,
+            0,
+            "SH instruction must write to an even address"
+        );
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
@@ -348,10 +355,15 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SHInstruction<WORD_S
     }
 
     fn virtual_sequence(instruction: ELFInstruction) -> Vec<ELFInstruction> {
+        // make sure rs1_val dest value is aligned with the instruction's imm
+        let imm = instruction.imm.unwrap();
+        // Select a valid aligned rs1_val such that (rs1_val + imm) is always even
+        let rs1_val = if imm % 2 == 0 { Some(0) } else { Some(1) };
+
         let dummy_trace_row = RVTraceRow {
             instruction,
             register_state: RegisterState {
-                rs1_val: Some(0),
+                rs1_val,
                 rs2_val: Some(0),
                 rd_post_val: Some(0),
             },
