@@ -3,11 +3,12 @@ use std::sync::Arc;
 
 use crate::{
     field::JoltField,
-    join_if_rayon, optimal_chunks, optimal_iter,
+    join_if_rayon,
     jolt::{
         vm::{JoltCommitments, JoltProverPreprocessing},
         witness::CommittedPolynomials,
     },
+    optimal_chunks, optimal_iter,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         compact_polynomial::SmallScalar,

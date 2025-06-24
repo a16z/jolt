@@ -2,6 +2,9 @@ use rayon::prelude::*;
 use std::marker::PhantomData;
 use tracer::instruction::RV32IMCycle;
 
+use crate::jolt::vm::instruction_lookups::{
+    BooleanityProof, HammingWeightProof, LookupsProof, ReadCheckingProof,
+};
 use crate::{
     field::JoltField,
     jolt::{
@@ -16,7 +19,7 @@ use crate::{
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
-        opening_proof::{ProverOpeningAccumulator},
+        opening_proof::ProverOpeningAccumulator,
         unipoly::{CompressedUniPoly, UniPoly},
     },
     subprotocols::{
@@ -31,10 +34,8 @@ use crate::{
     },
 };
 
-use crate::jolt::vm::instruction_lookups::{BooleanityProof, HammingWeightProof, ReadCheckingProof};
-
 impl<const WORD_SIZE: usize, F, PCS, ProofTranscript>
-LookupsProof<WORD_SIZE, F, PCS, ProofTranscript>
+    LookupsProof<WORD_SIZE, F, PCS, ProofTranscript>
 where
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,

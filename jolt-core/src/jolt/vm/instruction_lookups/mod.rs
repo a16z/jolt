@@ -9,16 +9,8 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use std::marker::PhantomData;
 
 use crate::{
-    field::JoltField,
-    poly::{
-        commitment::commitment_scheme::CommitmentScheme,
-    },
-    subprotocols::{
-        sumcheck::SumcheckInstanceProof,
-    },
-    utils::{
-        transcript::Transcript,
-    },
+    field::JoltField, poly::commitment::commitment_scheme::CommitmentScheme,
+    subprotocols::sumcheck::SumcheckInstanceProof, utils::transcript::Transcript,
 };
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]

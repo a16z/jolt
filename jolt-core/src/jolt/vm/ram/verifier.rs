@@ -1,30 +1,28 @@
+use crate::jolt::vm::output_check::OutputSumcheck;
+use crate::jolt::vm::ram::{
+    remap_address, BooleanitySumcheck, BooleanityVerifierState, HammingWeightSumcheck,
+    HammingWeightVerifierState, ValEvaluationSumcheck, ValEvaluationSumcheckClaims,
+    ValEvaluationVerifierState,
+};
+use crate::jolt::vm::ram_read_write_checking::RamReadWriteChecking;
+use crate::jolt::vm::JoltCommitments;
+use crate::jolt::witness::CommittedPolynomials;
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::opening_proof::VerifierOpeningAccumulator;
+use crate::subprotocols::ra_virtual::RASumcheck;
+use crate::subprotocols::sumcheck::BatchableSumcheckInstance;
 use crate::{
     field::JoltField,
     jolt::vm::ram::{RAMPreprocessing, RAMTwistProof, RafEvaluationProof, ReadWriteCheckingProof},
     poly::{
         eq_poly::EqPolynomial,
         identity_poly::UnmapRamAddressPolynomial,
-        multilinear_polynomial::{
-            MultilinearPolynomial, PolynomialEvaluation,
-        }
+        multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     },
-    utils::{
-        errors::ProofVerifyError,
-        math::Math,
-        transcript::Transcript,
-    }
+    utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
 };
 use common::jolt_device::MemoryLayout;
 use tracer::JoltDevice;
-use crate::jolt::vm::JoltCommitments;
-use crate::jolt::vm::output_check::OutputSumcheck;
-use crate::jolt::vm::ram::{remap_address, BooleanitySumcheck, BooleanityVerifierState, HammingWeightSumcheck, HammingWeightVerifierState, ValEvaluationSumcheck, ValEvaluationSumcheckClaims, ValEvaluationVerifierState};
-use crate::jolt::vm::ram_read_write_checking::RamReadWriteChecking;
-use crate::jolt::witness::CommittedPolynomials;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::opening_proof::VerifierOpeningAccumulator;
-use crate::subprotocols::ra_virtual::RASumcheck;
-use crate::subprotocols::sumcheck::BatchableSumcheckInstance;
 
 impl<F: JoltField, ProofTranscript: Transcript> RafEvaluationProof<F, ProofTranscript> {
     pub fn verify(
@@ -69,7 +67,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
 }
 
 impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript> {
-    pub fn verify<PCS: CommitmentScheme<ProofTranscript, crate::poly::commitment::commitment_scheme::Field= F>>(
+    pub fn verify<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
         &self,
         T: usize,
         preprocessing: &RAMPreprocessing,
@@ -140,7 +138,8 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         let mut r_cycle_prime = <ValEvaluationSumcheck<F> as BatchableSumcheckInstance<
             F,
             ProofTranscript,
-        >>::verify_single(&sumcheck_instance,
+        >>::verify_single(
+            &sumcheck_instance,
             &self.val_evaluation_proof.sumcheck_proof,
             transcript,
         )?;
@@ -194,7 +193,8 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         let r_booleanity = <ValEvaluationSumcheck<F> as BatchableSumcheckInstance<
             F,
             ProofTranscript,
-        >>::verify_single(&sumcheck_instance,
+        >>::verify_single(
+            &sumcheck_instance,
             &self.booleanity_proof.sumcheck_proof,
             transcript,
         )?;
@@ -244,7 +244,11 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         let _r_hamming_weight = <ValEvaluationSumcheck<F> as BatchableSumcheckInstance<
             F,
             ProofTranscript,
-        >>::verify_single(&sumcheck_instance, &self.hamming_weight_proof.sumcheck_proof, transcript)?;
+        >>::verify_single(
+            &sumcheck_instance,
+            &self.hamming_weight_proof.sumcheck_proof,
+            transcript,
+        )?;
 
         let _r_address_raf =
             self.raf_evaluation_proof
@@ -301,9 +305,9 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         assert_eq!(
             eq_eval_cycle * self.ra_claim * self.val_claim
                 + z * eq_eval_address
-                * eq_eval_cycle
-                * self.ra_claim
-                * (self.wv_claim - self.val_claim),
+                    * eq_eval_cycle
+                    * self.ra_claim
+                    * (self.wv_claim - self.val_claim),
             sumcheck_claim,
             "Read/write-checking sumcheck failed"
         );

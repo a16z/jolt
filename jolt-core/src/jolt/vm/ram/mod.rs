@@ -5,10 +5,6 @@ pub use prover::*;
 mod verifier;
 pub use verifier::*;
 
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::constants::BYTES_PER_INSTRUCTION;
-use common::jolt_device::MemoryLayout;
-use tracer::instruction::RV32IMCycle;
 use crate::field::JoltField;
 use crate::jolt::vm::output_check::OutputProof;
 use crate::jolt::vm::ram_read_write_checking::RamReadWriteCheckingProof;
@@ -17,6 +13,10 @@ use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::subprotocols::ra_virtual::RAProof;
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::utils::transcript::Transcript;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use common::constants::BYTES_PER_INSTRUCTION;
+use common::jolt_device::MemoryLayout;
+use tracer::instruction::RV32IMCycle;
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct RAMPreprocessing {
@@ -170,7 +170,7 @@ struct RafEvaluationSumcheck<F: JoltField> {
     cached_claim: Option<F>,
 }
 
-fn remap_address(address: u64, memory_layout: &MemoryLayout) -> u64 {
+pub(crate) fn remap_address(address: u64, memory_layout: &MemoryLayout) -> u64 {
     if address == 0 {
         return 0; // TODO(moodlezoup): Better handling for no-ops
     }
@@ -303,10 +303,10 @@ struct HammingWeightSumcheck<F: JoltField> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::math::Math;
     use crate::utils::transcript::KeccakTranscript;
     use ark_bn254::Fr;
     use tracer::instruction::RV32IMCycle;
-    use crate::utils::math::Math;
 
     #[test]
     fn test_raf_evaluation_no_ops() {

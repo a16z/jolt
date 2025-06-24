@@ -8,7 +8,7 @@ use crate::utils::errors::ProofVerifyError;
 use crate::utils::transcript::Transcript;
 
 impl<const WORD_SIZE: usize, F, PCS, ProofTranscript>
-LookupsProof<WORD_SIZE, F, PCS, ProofTranscript>
+    LookupsProof<WORD_SIZE, F, PCS, ProofTranscript>
 where
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
@@ -52,16 +52,16 @@ where
             eq_eval_address
                 * eq_eval_cycle
                 * ((self.booleanity_proof.ra_claims[0].square()
-                - self.booleanity_proof.ra_claims[0])
-                + z_booleanity
-                * (self.booleanity_proof.ra_claims[1].square()
-                - self.booleanity_proof.ra_claims[1])
-                + z_booleanity_squared
-                * (self.booleanity_proof.ra_claims[2].square()
-                - self.booleanity_proof.ra_claims[2])
-                + z_booleanity_cubed
-                * (self.booleanity_proof.ra_claims[3].square()
-                - self.booleanity_proof.ra_claims[3])),
+                    - self.booleanity_proof.ra_claims[0])
+                    + z_booleanity
+                        * (self.booleanity_proof.ra_claims[1].square()
+                            - self.booleanity_proof.ra_claims[1])
+                    + z_booleanity_squared
+                        * (self.booleanity_proof.ra_claims[2].square()
+                            - self.booleanity_proof.ra_claims[2])
+                    + z_booleanity_cubed
+                        * (self.booleanity_proof.ra_claims[3].square()
+                            - self.booleanity_proof.ra_claims[3])),
             sumcheck_claim,
             "Booleanity sumcheck failed"
         );

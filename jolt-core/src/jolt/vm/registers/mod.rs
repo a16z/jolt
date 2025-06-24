@@ -5,18 +5,14 @@ pub use prover::*;
 mod verifier;
 pub use verifier::*;
 
+use crate::jolt::vm::registers_read_write_checking::RegistersReadWriteCheckingProof;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::{
     field::JoltField,
     subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::{
-        math::Math
-        ,
-        transcript::{AppendToTranscript, Transcript},
-    },
+    utils::transcript::{AppendToTranscript, Transcript},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use crate::jolt::vm::registers_read_write_checking::RegistersReadWriteCheckingProof;
-use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct RegistersTwistProof<F: JoltField, ProofTranscript: Transcript> {

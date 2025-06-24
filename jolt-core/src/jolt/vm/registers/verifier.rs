@@ -1,25 +1,21 @@
-use crate::{
-    field::JoltField,
-    poly::{
-        eq_poly::EqPolynomial,
-        multilinear_polynomial::PolynomialEvaluation,
-    },
-    utils::{
-        errors::ProofVerifyError,
-        math::Math,
-        transcript::Transcript,
-    },
+use crate::jolt::vm::registers::{
+    ReadWriteCheckingProof, RegistersTwistProof, ValEvaluationSumcheck,
+    ValEvaluationSumcheckClaims, ValEvaluationVerifierState,
 };
-use crate::jolt::vm::JoltCommitments;
-use crate::jolt::vm::registers::{ReadWriteCheckingProof, RegistersTwistProof, ValEvaluationSumcheck, ValEvaluationSumcheckClaims, ValEvaluationVerifierState};
 use crate::jolt::vm::registers_read_write_checking::RegistersReadWriteChecking;
+use crate::jolt::vm::JoltCommitments;
 use crate::jolt::witness::CommittedPolynomials;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::subprotocols::sumcheck::BatchableSumcheckInstance;
+use crate::{
+    field::JoltField,
+    poly::{eq_poly::EqPolynomial, multilinear_polynomial::PolynomialEvaluation},
+    utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
+};
 
 impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTranscript> {
-    pub fn verify<PCS: CommitmentScheme<ProofTranscript, crate::poly::commitment::commitment_scheme::Field= F>>(
+    pub fn verify<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
         &self,
         commitments: &JoltCommitments<F, PCS, ProofTranscript>,
         T: usize,
