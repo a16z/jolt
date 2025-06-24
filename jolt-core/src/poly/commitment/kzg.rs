@@ -9,10 +9,12 @@ use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, UniformRand, Zero};
 use rand_core::{CryptoRng, RngCore};
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::borrow::Borrow;
 use std::marker::PhantomData;
 use std::sync::Arc;
+use crate::{into_optimal_iter, optimal_iter};
 
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct SRS<P: Pairing>
@@ -80,7 +82,7 @@ where
         // Precompute a commitment to each power-of-two length vector of ones, which is just the sum of each power-of-two length prefix of the SRS
         let num_powers = (g1_powers.len() as f64).log2().floor() as usize + 1;
         let all_ones_coeffs: Vec<u8> = vec![1; num_g1_powers + 1];
-        let powers_of_2 = (0..num_powers).into_par_iter().map(|i| 1usize << i);
+        let powers_of_2 = into_optimal_iter!((0..num_powers)).map(|i| 1usize << i);
         let g_products = powers_of_2
             .map(|power| {
                 <P::G1 as VariableBaseMSM>::msm_u8(
@@ -95,8 +97,7 @@ where
 
         #[cfg(feature = "icicle")]
         let gpu_g1 = Some(
-            g1_powers
-                .par_iter()
+            optimal_iter!(g1_powers)
                 .map(<P::G1 as Icicle>::from_ark_affine)
                 .collect::<Vec<_>>(),
         );
@@ -239,8 +240,7 @@ where
         let gpu_g1 = pk.gpu_g1();
 
         // batch commit requires all batches to have the same length
-        assert!(polys
-            .par_iter()
+        assert!(optimal_iter!(polys)
             .all(|s| s.borrow().len() == polys[0].borrow().len()));
         assert!(polys[0].borrow().len() <= g1_powers.len());
 

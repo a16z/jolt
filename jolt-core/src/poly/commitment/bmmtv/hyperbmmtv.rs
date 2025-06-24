@@ -6,28 +6,24 @@
 
 use std::{borrow::Borrow, marker::PhantomData, sync::Arc};
 
-use crate::{
-    field::JoltField,
-    msm::Icicle,
-    poly::{
-        commitment::{
-            bmmtv::poly_commit::{OpeningProof, UnivariatePolynomialCommitment},
-            commitment_scheme::CommitmentScheme,
-            kzg::{KZGProverKey, KZGVerifierKey, SRS},
-        },
-        multilinear_polynomial::MultilinearPolynomial,
-        unipoly::UniPoly,
+use crate::{field::JoltField, msm::Icicle, optimal_iter, optimal_iter_mut, poly::{
+    commitment::{
+        bmmtv::poly_commit::{OpeningProof, UnivariatePolynomialCommitment},
+        commitment_scheme::CommitmentScheme,
+        kzg::{KZGProverKey, KZGVerifierKey, SRS},
     },
-    utils::{
-        errors::ProofVerifyError,
-        transcript::{AppendToTranscript, Transcript},
-    },
-};
+    multilinear_polynomial::MultilinearPolynomial,
+    unipoly::UniPoly,
+}, utils::{
+    errors::ProofVerifyError,
+    transcript::{AppendToTranscript, Transcript},
+}};
 use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, Zero};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 #[derive(Clone)]
@@ -140,8 +136,7 @@ where
     where
         U: Borrow<MultilinearPolynomial<Self::Field>> + Sync,
     {
-        polys
-            .par_iter()
+        optimal_iter!(polys)
             .map(|poly| Self::commit(poly.borrow(), gens))
             .collect()
     }
@@ -170,7 +165,7 @@ where
             let mut Pi = vec![P::ScalarField::zero(); Pi_len];
             let x = opening_point[ell - i - 1];
 
-            Pi.par_iter_mut().enumerate().for_each(|(j, Pi_j)| {
+            optimal_iter_mut!(Pi).enumerate().for_each(|(j, Pi_j)| {
                 let Peven = previous_poly[2 * j + 1];
                 let Podd = previous_poly[2 * j];
                 *Pi_j = x * (Peven - Podd) + Podd;
@@ -185,8 +180,7 @@ where
         // We do not need to commit to the first polynomial as it is already committed.
 
         // Todo: Batch commit
-        let com_list: Vec<_> = polys[1..]
-            .par_iter()
+        let com_list: Vec<_> = optimal_iter!(polys[1..])
             .map(|poly| {
                 UnivariatePolynomialCommitment::<P, ProofTranscript>::commit(setup, poly).unwrap()
             })

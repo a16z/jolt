@@ -18,10 +18,12 @@ use crate::utils::{compute_dotproduct, mul_0_1_optimized};
 use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use num_integer::Roots;
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use tracing::trace_span;
 
 use crate::msm::{Icicle, VariableBaseMSM};
+use crate::{into_optimal_iter, optimal_chunks, optimal_iter};
 
 /// Hyrax commits to a multilinear polynomial by interpreting its coefficients as a
 /// matrix. Given the number of variables in the polynomial, and the desired "aspect
@@ -71,9 +73,8 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
         assert_eq!(L_size * R_size, n);
 
         let gens = CurveGroup::normalize_batch(&generators.generators[..R_size]);
-        let row_commitments = poly
-            .Z
-            .par_chunks(R_size)
+        let row_commitments = optimal_chunks!(poly
+            .Z, R_size)
             .map(|row| PedersenCommitment::commit_vector(row, &gens))
             .collect();
         Self { row_commitments }
@@ -95,13 +96,12 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
 
         let gens = CurveGroup::normalize_batch(&generators.generators[..R_size]);
 
-        let rows = batch.par_iter().flat_map(|poly| poly.par_chunks(R_size));
+        let rows = optimal_iter!(batch).flat_map(|poly| optimal_chunks!(poly, R_size));
         let row_commitments: Vec<G> = rows
             .map(|row| PedersenCommitment::commit_vector(row, &gens))
             .collect();
 
-        row_commitments
-            .par_chunks(L_size)
+        optimal_chunks!(row_commitments, L_size)
             .map(|chunk| Self {
                 row_commitments: chunk.to_vec(),
             })
@@ -195,8 +195,7 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
     ) -> Vec<G::ScalarField> {
         let (_, R_size) = matrix_dimensions(poly.get_num_vars(), ratio);
 
-        poly.evals_ref()
-            .par_chunks(R_size)
+        optimal_chunks!(poly.evals_ref(), R_size)
             .enumerate()
             .map(|(i, row)| {
                 row.iter()
@@ -244,8 +243,7 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
         let chunk_size = poly_len / num_chunks;
 
         let rlc_poly = if chunk_size > 0 {
-            (0..num_chunks)
-                .into_par_iter()
+            into_optimal_iter!((0..num_chunks))
                 .flat_map_iter(|chunk_index| {
                     let mut chunk = vec![G::ScalarField::zero(); chunk_size];
                     for (coeff, poly) in rlc_coefficients.iter().zip(polynomials.iter()) {
@@ -260,9 +258,8 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
                 })
                 .collect::<Vec<_>>()
         } else {
-            rlc_coefficients
-                .par_iter()
-                .zip(polynomials.par_iter())
+            optimal_iter!(rlc_coefficients)
+                .zip(optimal_iter!(polynomials))
                 .map(|(coeff, poly)| poly.evals_ref().iter().map(|eval| *coeff * *eval).collect())
                 .reduce(
                     || vec![G::ScalarField::zero(); poly_len],
@@ -314,9 +311,8 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
 
         let rlc_eval = compute_dotproduct(&rlc_coefficients, openings);
 
-        let rlc_commitment = rlc_coefficients
-            .par_iter()
-            .zip(commitments.par_iter())
+        let rlc_commitment = optimal_iter!(rlc_coefficients)
+            .zip(optimal_iter!(commitments))
             .map(|(coeff, commitment)| {
                 commitment
                     .row_commitments

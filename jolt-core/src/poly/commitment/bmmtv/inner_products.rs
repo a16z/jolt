@@ -7,7 +7,9 @@ use ark_ec::{
 };
 
 use crate::msm::{use_icicle, Icicle, VariableBaseMSM};
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
+use crate::{optimal_chunks, optimal_iter};
 
 #[derive(Debug, thiserror::Error)]
 pub enum InnerProductError {
@@ -45,12 +47,10 @@ fn cfg_multi_pairing<P: Pairing>(left: &[P::G1], right: &[P::G2]) -> Option<Pair
     let aff_left = P::G1::normalize_batch(left);
     let aff_right = P::G2::normalize_batch(right);
 
-    let left = aff_left
-        .par_iter()
+    let left = optimal_iter!(aff_left)
         .map(P::G1Prepared::from)
         .collect::<Vec<_>>();
-    let right = aff_right
-        .par_iter()
+    let right = optimal_iter!(aff_right)
         .map(P::G2Prepared::from)
         .collect::<Vec<_>>();
 
@@ -64,7 +64,7 @@ fn cfg_multi_pairing<P: Pairing>(left: &[P::G1], right: &[P::G2]) -> Option<Pair
         1
     };
 
-    let (left_chunks, right_chunks) = (left.par_chunks(chunk_size), right.par_chunks(chunk_size));
+    let (left_chunks, right_chunks) = (optimal_chunks!(left, chunk_size), optimal_chunks!(right, chunk_size));
 
     // Compute all the (partial) pairings and take the product. We have to take the product over
     // P::TargetField because MillerLoopOutput doesn't impl Product
