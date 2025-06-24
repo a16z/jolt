@@ -679,7 +679,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 
         // Linear combination of the read-checking claim (which is rv(r')) and the
         // write-checking claim (which is Inc(r, r'))
-        let mut previous_claim = rv_eval + wv_eval;
+        let mut previous_claim = rv_eval + z * wv_eval;
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
         let span = tracing::span!(
@@ -1059,7 +1059,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                     .map(|j| {
                         let eq_r_prime_evals =
                             eq_r_prime.sumcheck_evals(j, DEGREE, BindingOrder::HighToLow);
-                        let wv_evals = wv.sumcheck_evals(j, DEGREE, BindingOrder::HighToLow);
 
                         let inner_sum_evals: [F; 3] = (0..K)
                             .into_par_iter()
@@ -1071,8 +1070,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                                     val.sumcheck_evals(index, DEGREE, BindingOrder::HighToLow);
                                 let inc_evals =
                                     inc.sumcheck_evals(index, DEGREE, BindingOrder::HighToLow);
-                                let eq_z_prime_evals =
-                                    eq_r_prime.sumcheck_evals(j, DEGREE, BindingOrder::HighToLow);
 
                                 [
                                     ra_evals[0].mul_0_optimized(
@@ -1178,7 +1175,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             } else {
                 // Bind an address variable k
                 r_address.push(r_j);
-                // Note that `wv` and `eq_r_prime` are polynomials over only the cycle
+                // Note that and `eq_r_prime` is a polynomial over only the cycle
                 // variables, so they are not bound here
                 [&mut ra, &mut val, &mut inc]
                     .into_par_iter()
@@ -1186,14 +1183,13 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             }
         }
 
-        panic!("success");
         let proof = ReadWriteCheckingProof {
             sumcheck_proof: SumcheckInstanceProof::new(compressed_polys),
             ra_claim: ra.final_sumcheck_claim(),
             rv_claim: rv_eval,
-            wv_claim: wv.final_sumcheck_claim(),
+            wv_claim: wv_eval,
             val_claim: val.final_sumcheck_claim(),
-            inc_claim: wv_eval * z.inverse().unwrap(),
+            inc_claim: inc.final_sumcheck_claim(),
             sumcheck_switch_index: chunk_size.log_2(),
         };
 
@@ -2016,7 +2012,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let (sumcheck_claim, r_sumcheck) = self
             .sumcheck_proof
             .verify(
-                self.rv_claim + z * self.inc_claim,
+                self.rv_claim + z * self.wv_claim,
                 T.log_2() + K.log_2(),
                 3,
                 transcript,
@@ -2036,11 +2032,9 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let eq_eval_address = EqPolynomial::new(r).evaluate(&r_address);
 
         assert_eq!(
-            eq_eval_cycle * self.ra_claim * self.val_claim
-                + z * eq_eval_address
-                    * eq_eval_cycle
-                    * self.ra_claim
-                    * (self.wv_claim - self.val_claim),
+            eq_eval_cycle
+                * self.ra_claim
+                * (self.val_claim + z * (self.val_claim + self.inc_claim)),
             sumcheck_claim,
             "Read/write-checking sumcheck failed"
         );
@@ -2587,17 +2581,23 @@ mod tests {
         let r: Vec<Fr> = prover_transcript.challenge_vector(K.log_2());
         let r_prime: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
 
-        let (read_write_checking_proof, r_address, r_cycle) =
-            ReadWriteCheckingProof::prove_from_array(
-                addresses,
-                read_values,
-                write_values,
-                write_increments,
-                vec![0; K],
-                &r,
-                &r_prime,
-                &mut prover_transcript,
-            );
+        let (proof, r_address, r_cycle) = ReadWriteCheckingProof::prove_from_array(
+            addresses,
+            read_values,
+            write_values,
+            write_increments,
+            vec![0; K],
+            &r,
+            &r_prime,
+            &mut prover_transcript,
+        );
+
+        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+        verifier_transcript.compare_to(prover_transcript);
+        let r: Vec<Fr> = verifier_transcript.challenge_vector(K.log_2());
+        let r_prime: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
+
+        proof.verify(r, r_prime, &mut verifier_transcript);
     }
 
     #[test]
