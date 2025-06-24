@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use crate::{
     field::JoltField,
+    join_if_rayon, optimal_chunks, optimal_iter,
     jolt::{
         vm::{JoltCommitments, JoltProverPreprocessing},
         witness::CommittedPolynomials,
@@ -25,6 +26,7 @@ use crate::{
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
+#[cfg(feature = "rayon")]
 use rayon::prelude::*;
 use tracer::instruction::{NormalizedInstruction, RV32IMCycle, RV32IMInstruction};
 
@@ -96,7 +98,7 @@ impl BytecodePreprocessing {
         trace: &'a [RV32IMCycle],
     ) -> impl rayon::iter::ParallelIterator<Item = u64> + use<'a, 'b> {
         let (_, init) = trace.split_last().unwrap();
-        init.par_iter()
+        optimal_iter!(init)
             .map(|cycle| self.get_pc(cycle, false) as u64)
             .chain(rayon::iter::once(0))
     }
@@ -109,8 +111,7 @@ fn bytecode_to_val<F: JoltField>(bytecode: &[RV32IMInstruction], gamma: F) -> Ve
         gamma_powers.push(gamma * gamma_powers.last().unwrap());
     }
 
-    bytecode
-        .par_iter()
+    optimal_iter!(bytecode)
         .map(|instruction| {
             let NormalizedInstruction {
                 address,
@@ -165,8 +166,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
             .next_power_of_two()
             .min(trace.len());
         let chunk_size = (trace.len() / num_chunks).max(1);
-        let (F, F_shift): (Vec<_>, Vec<_>) = trace
-            .par_chunks(chunk_size)
+        let (F, F_shift): (Vec<_>, Vec<_>) = optimal_chunks!(trace, chunk_size)
             .enumerate()
             .map(|(chunk_index, trace_chunk)| {
                 let mut result: Vec<F> = unsafe_allocate_zero_vec(K);
@@ -774,8 +774,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                         .B
                         .sumcheck_evals(k_prime, DEGREE, BindingOrder::LowToHigh);
 
-                let inner_sum = prover_state.G[k_prime << m..(k_prime + 1) << m]
-                    .par_iter()
+                let inner_sum = optimal_iter!(prover_state.G[k_prime << m..(k_prime + 1) << m])
                     .enumerate()
                     .map(|(k, &G_k)| {
                         // Since we're binding variables from low to high, k_m is the high bit
@@ -1043,14 +1042,14 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             .as_mut()
             .expect("Prover state not initialized");
 
-        rayon::join(
+        join_if_rayon!(
             || {
                 prover_state
                     .ra_poly
                     .bind_parallel(r_j, BindingOrder::LowToHigh)
             },
             || {
-                rayon::join(
+                join_if_rayon!(
                     || {
                         prover_state
                             .ra_poly_shift
@@ -1060,9 +1059,9 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                         prover_state
                             .int_poly
                             .bind_parallel(r_j, BindingOrder::LowToHigh)
-                    },
+                    }
                 )
-            },
+            }
         );
     }
 

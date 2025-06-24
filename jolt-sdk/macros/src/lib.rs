@@ -168,7 +168,7 @@ impl MacroBuilder {
                     #(#set_program_args;)*
                     io_device.outputs.append(&mut jolt::postcard::to_stdvec(&output).unwrap());
 
-                    RV32IJoltVM::verify(preprocessing, proof.proof, /*proof.commitments,*/ io_device, None).is_ok()
+                    RV32IMJoltVM::verify(preprocessing, proof.proof, /*proof.commitments,*/ io_device, None).is_ok()
                 };
 
                 verify_closure
@@ -279,7 +279,7 @@ impl MacroBuilder {
 
                 // TODO(moodlezoup): Feed in size parameters via macro
                 let preprocessing: JoltProverPreprocessing<jolt::F, jolt::PCS, jolt::ProofTranscript> =
-                    RV32IJoltVM::prover_preprocess(
+                    RV32IMJoltVM::prover_preprocess(
                         bytecode,
                         memory_layout,
                         memory_init,
@@ -322,7 +322,7 @@ impl MacroBuilder {
 
                 // TODO(moodlezoup): Feed in size parameters via macro
                 let prover_preprocessing: JoltProverPreprocessing<jolt::F, jolt::PCS, jolt::ProofTranscript> =
-                    RV32IJoltVM::prover_preprocess(
+                    RV32IMJoltVM::prover_preprocess(
                         bytecode,
                         memory_layout,
                         memory_init,
@@ -394,7 +394,7 @@ impl MacroBuilder {
                 let (trace, final_memory_state, io_device) = program.trace(&input_bytes);
                 #handle_return
 
-                let (jolt_proof, output_io_device, _) = RV32IJoltVM::prove(
+                let (jolt_proof, output_io_device, _) = RV32IMJoltVM::prove(
                     io_device,
                     trace,
                     final_memory_state,
@@ -546,9 +546,10 @@ impl MacroBuilder {
                 host::Program,
                 JoltProverPreprocessing,
                 JoltVerifierPreprocessing,
-                Jolt,
+                JoltProver,
+                JoltVerifier,
                 ProofTranscript,
-                RV32IJoltVM,
+                RV32IMJoltVM,
                 RV32IJoltProof,
                 MemoryConfig,
                 MemoryLayout,
@@ -681,12 +682,12 @@ impl MacroBuilder {
             #[wasm_bindgen]
             #[cfg(all(target_arch = "wasm32", not(feature = "guest")))]
             pub fn #verify_wasm_fn_name(preprocessing_data: &[u8], proof_bytes: &[u8]) -> bool {
-                use jolt::{Jolt, JoltHyperKZGProof, RV32IJoltVM, ProofTranscript, Serializable};
+                use jolt::{Jolt, JoltHyperKZGProof, RV32IMJoltVM, ProofTranscript, Serializable};
 
                 let decoded_preprocessing_data: DecodedData = deserialize_from_bin(preprocessing_data).unwrap();
                 let proof = JoltHyperKZGProof::deserialize_from_bytes(proof_bytes).unwrap();
 
-                let preprocessing = RV32IJoltVM::preprocess(
+                let preprocessing = RV32IMJoltVM::preprocess(
                     decoded_preprocessing_data.bytecode,
                     decoded_preprocessing_data.memory_init,
                     1 << 20,
@@ -694,7 +695,7 @@ impl MacroBuilder {
                     1 << 24,
                 );
 
-                let result = RV32IJoltVM::verify(preprocessing, proof.proof /*, proof.commitments */);
+                let result = RV32IMJoltVM::verify(preprocessing, proof.proof /*, proof.commitments */);
                 result.is_ok()
             }
         }

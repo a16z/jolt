@@ -1,6 +1,8 @@
 use crate::field::JoltField;
-use crate::utils::{math::Math, thread::unsafe_allocate_zero_vec};
+use crate::optimal_iter_mut;
+#[cfg(feature = "rayon")]
 use rayon::prelude::*;
+use crate::utils::{math::Math, thread::unsafe_allocate_zero_vec};
 use std::marker::PhantomData;
 
 const PARALLEL_THRESHOLD: usize = 16;
@@ -118,13 +120,10 @@ impl<F: JoltField> EqPolynomial<F> {
             let (evals_left, evals_right) = evals.split_at_mut(size);
             let (evals_right, _) = evals_right.split_at_mut(size);
 
-            evals_left
-                .par_iter_mut()
-                .zip(evals_right.par_iter_mut())
-                .for_each(|(x, y)| {
-                    *y = *x * *r;
-                    *x -= *y;
-                });
+            optimal_iter_mut!(evals_left).zip(optimal_iter_mut!(evals_right)).for_each(|(x, y)| {
+                *y = *x * *r;
+                *x -= *y;
+            });
 
             size *= 2;
         }

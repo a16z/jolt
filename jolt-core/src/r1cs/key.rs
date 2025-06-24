@@ -23,7 +23,7 @@ pub struct UniformSpartanKey<F: JoltField> {
     pub num_steps: usize,
 
     /// Digest of verifier key
-    pub(crate) vk_digest: F,
+    pub vk_digest: F,
 }
 
 /// (row, col, value)

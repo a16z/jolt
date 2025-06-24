@@ -1,0 +1,18 @@
+[package]
+name = "jolt-verifier"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+jolt-core = { path = "../jolt-core", default-features = false }
+tracer = { path = "../tracer", default-features = false }
+common = { path = "../common" }
+
+[dev-dependencies]
+
+
+[features]
+default = ["parallel"]
+parallel = ["jolt-core/default"]
+no-parallel = []
+

@@ -2146,6 +2146,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-verifier"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "jolt-core",
+ "tracer",
+]
+
+[[package]]
 name = "js-sys"
 version = "0.3.77"
 source = "registry+https://github.com/rust-lang/crates.io-index"
