@@ -143,6 +143,20 @@ impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTran
 }
 
 impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofTranscript> {
+    #[tracing::instrument(skip_all, name = "ReadWriteCheckingProof::prove_with_array")]
+    pub fn prove_from_array(
+        write_addresses: Vec<usize>,
+        read_values: Vec<u32>,
+        write_values: Vec<u32>,
+        write_increments: Vec<i64>,
+        initial_memory_state: Vec<i64>,
+        r: &[F],
+        r_prime: &[F],
+        transcript: &mut ProofTranscript,
+    ) -> (ReadWriteCheckingProof<F, ProofTranscript>, Vec<F>, Vec<F>) {
+        todo!()
+    }
+
     #[tracing::instrument(skip_all, name = "ReadWriteCheckingProof::prove")]
     pub fn prove(
         trace: &[RV32IMCycle],
@@ -1203,4 +1217,69 @@ pub fn prove_val_evaluation<F: JoltField, ProofTranscript: Transcript>(
     drop_in_background_thread((inc, eq_r_address, lt));
 
     (proof, r_cycle_prime)
+}
+
+#[cfg(test)]
+mod tests {
+    use ark_bn254::Fr;
+    use ark_std::test_rng;
+    use rand_core::RngCore;
+
+    use crate::{
+        jolt::vm::registers::ReadWriteCheckingProof,
+        utils::{math::Math, transcript::{KeccakTranscript, Transcript}},
+    };
+
+    #[test]
+    fn test_read_write_sumcheck() {
+        const T: usize = 1 << 8;
+        const K: usize = 16;
+        let mut rng = test_rng();
+
+        let mut register = [0u32; K];
+        let mut read_addresses: Vec<usize> = Vec::with_capacity(T);
+        let mut write_addresses: Vec<usize> = Vec::with_capacity(T);
+        let mut read_values: Vec<u32> = Vec::with_capacity(T);
+        let mut write_values: Vec<u32> = Vec::with_capacity(T);
+        let mut write_increments: Vec<i64> = Vec::with_capacity(T);
+        for _ in 0..T {
+            // Random read and write address
+            let read_address = rng.next_u32() as usize % K;
+            read_addresses.push(read_address);
+            let write_address = rng.next_u32() as usize % K;
+            write_addresses.push(write_address);
+            // Read the value currently in the read register
+            read_values.push(register[read_address]);
+            // Random write value
+            let write_value = rng.next_u32();
+            write_values.push(write_value);
+            // The increment is the difference between the new value and the old value
+            let write_increment = (write_value as i64) - (register[write_address] as i64);
+            write_increments.push(write_increment);
+            // Write the new value to ram
+            register[write_address] = write_value;
+        }
+
+        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+        let r: Vec<Fr> = prover_transcript.challenge_vector(K.log_2());
+        let r_prime: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
+
+        let (proof, r_address, r_cycle) = ReadWriteCheckingProof::prove_from_array(
+            read_addresses,
+            read_values,
+            write_values,
+            write_increments,
+            vec![0; K],
+            &r,
+            &r_prime,
+            &mut prover_transcript,
+        );
+
+        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+        verifier_transcript.compare_to(prover_transcript);
+        let r: Vec<Fr> = verifier_transcript.challenge_vector(K.log_2());
+        let r_prime: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
+
+        proof.verify(r, r_prime, &mut verifier_transcript);
+    }
 }
