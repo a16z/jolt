@@ -5,7 +5,10 @@ use tracer::instruction::RV32IMCycle;
 
 use crate::{
     field::JoltField,
-    jolt::{instruction::LookupQuery, lookup_table::LookupTables},
+    jolt::{
+        instruction::LookupQuery, lookup_table::LookupTables, vm::JoltProverPreprocessing,
+        witness::CommittedPolynomials,
+    },
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
@@ -13,6 +16,7 @@ use crate::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
+        split_eq_poly::SplitEqPolynomial,
         unipoly::{CompressedUniPoly, UniPoly},
     },
     subprotocols::{
@@ -84,14 +88,15 @@ where
 
     #[tracing::instrument(skip_all, name = "LookupsProof::prove")]
     pub fn prove(
+        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
         trace: &[RV32IMCycle],
-        _opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Self {
         let log_T = trace.len().log_2();
         let r_cycle: Vec<F> = transcript.challenge_vector(log_T);
         let (read_checking_sumcheck, rv_claim, ra_claims, flag_claims, eq_r_cycle) =
-            prove_sparse_dense_shout::<WORD_SIZE, _, _>(trace, r_cycle, transcript);
+            prove_sparse_dense_shout::<WORD_SIZE, _, _>(trace, &r_cycle, transcript);
         let read_checking_proof = ReadCheckingProof {
             sumcheck_proof: read_checking_sumcheck,
             rv_claim,
@@ -108,12 +113,26 @@ where
         };
 
         // TODO(moodlezoup): Openings
-        let (hamming_weight_sumcheck, _, ra_claims) =
+        let (hamming_weight_sumcheck, r_address, ra_claims) =
             prove_ra_hamming_weight::<F, ProofTranscript>(trace, eq_r_cycle, transcript);
         let hamming_weight_proof = HammingWeightProof {
             sumcheck_proof: hamming_weight_sumcheck,
             ra_claims,
         };
+
+        // let unbound_ra_polys = [
+        //     &CommittedPolynomials::InstructionRa(0).generate_witness(preprocessing, trace),
+        //     &CommittedPolynomials::InstructionRa(1).generate_witness(preprocessing, trace),
+        //     &CommittedPolynomials::InstructionRa(2).generate_witness(preprocessing, trace),
+        //     &CommittedPolynomials::InstructionRa(3).generate_witness(preprocessing, trace),
+        // ];
+
+        // let r_address_rev = r_address.iter().copied().rev().collect::<Vec<_>>();
+        // let eq_poly =
+        //     EqPolynomial::Split(SplitEqPolynomial::new_with_split(&r_cycle, &r_address_rev));
+        // let r_concat = [r_cycle.as_slice(), r_address_rev.as_slice()].concat();
+
+        // opening_accumulator.append(&unbound_ra_polys, eq_poly, r_concat, &ra_claims, transcript);
 
         // TODO(moodlezoup): Interleaved raf evaluation
 

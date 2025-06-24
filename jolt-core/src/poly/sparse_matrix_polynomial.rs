@@ -2,9 +2,8 @@ use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 use crate::field::JoltField;
 use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::one_hot_polynomial::OneHotPolynomial;
-use crate::utils::compute_dotproduct;
+use crate::poly::split_eq_poly::SplitEqPolynomial;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use num_traits::MulAdd;
@@ -14,10 +13,12 @@ use rayon::prelude::*;
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct SparseMatrixPolynomial<F: JoltField> {
     pub num_rows: usize,
+    /// Length-T vector of (dense) coefficients (corresponding to k=0)
     pub dense_submatrix: Vec<F>,
     /// 2d vector of (t, k, coeff) tuples.
     /// There is no guarantee on the ordering of tuples within a given vector.
     pub sparse_coeffs: Vec<Vec<(usize, usize, F)>>,
+    num_variables_bound: usize,
 }
 
 static GLOBAL_K: OnceCell<usize> = OnceCell::new();
@@ -81,66 +82,8 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
             num_rows,
             dense_submatrix: unsafe_allocate_zero_vec(get_T()),
             sparse_coeffs: vec![vec![]; num_groups],
+            num_variables_bound: 0,
         }
-    }
-
-    pub fn vector_matrix_product(&self, l_vec: &[F]) -> Vec<F> {
-        let column_height = get_max_num_rows();
-        debug_assert_eq!(column_height, l_vec.len());
-
-        let K = get_K();
-        let T = get_T();
-
-        let num_cycles_per_group = get_cycles_per_group();
-        let num_groups = T / num_cycles_per_group;
-        let num_columns = get_num_columns();
-        let num_columns_per_group = num_columns / num_groups;
-
-        // TODO(moodlezoup): Avoid flat_map
-        let _sparse_product: Vec<F> = self
-            .sparse_coeffs
-            .par_iter()
-            .flat_map(|group| {
-                let mut dot_products = unsafe_allocate_zero_vec(num_columns_per_group);
-                for (t, k, coeff) in group.iter() {
-                    let global_index = *t as u128 * K as u128 + *k as u128;
-                    let column_index = global_index / column_height as u128;
-                    let row_index = global_index % column_height as u128;
-                    dot_products[column_index as usize] += l_vec[row_index as usize] * coeff;
-                }
-                dot_products
-            })
-            .collect();
-
-        todo!();
-    }
-
-    pub fn evaluate(&self, r: &[F]) -> F {
-        let K = self.num_rows;
-        let T = get_T();
-        assert_eq!(K.log_2() + T.log_2(), r.len());
-
-        // let (r_address, r_cycle) = r.split_at(K.log_2());
-        let (r_cycle, r_address) = r.split_at(T.log_2());
-        let r_address: Vec<_> = r_address.iter().rev().copied().collect();
-        // let r_cycle: Vec<_> = r_cycle.iter().rev().copied().collect();
-        let (eq_r_address, eq_r_cycle) = rayon::join(
-            || EqPolynomial::evals(&r_address),
-            || EqPolynomial::evals(&r_cycle),
-        );
-
-        let sparse_eval: F = self
-            .sparse_coeffs
-            .par_iter()
-            .map(|group| {
-                group
-                    .iter()
-                    .map(|(t, k, coeff)| eq_r_cycle[*t] * eq_r_address[*k] * coeff)
-                    .sum::<F>()
-            })
-            .sum();
-        let dense_eval = compute_dotproduct(&self.dense_submatrix, &eq_r_cycle);
-        sparse_eval + dense_eval
     }
 }
 

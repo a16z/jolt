@@ -235,9 +235,8 @@ impl<F: JoltField> PolynomialBinding<F> for OneHotPolynomial<F> {
         self.num_variables_bound > 0
     }
 
-    fn bind(&mut self, r: F, order: BindingOrder) {
-        assert_eq!(order, BindingOrder::LowToHigh);
-        todo!()
+    fn bind(&mut self, _: F, _: BindingOrder) {
+        unimplemented!("Always use bind_parallel")
     }
 
     fn bind_parallel(&mut self, r: F, order: BindingOrder) {

@@ -49,7 +49,7 @@ pub enum CommittedPolynomials {
     InstructionRa(usize),
 }
 
-pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 8] = [
+pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 12] = [
     CommittedPolynomials::LeftInstructionInput,
     CommittedPolynomials::RightInstructionInput,
     CommittedPolynomials::Product,
@@ -60,10 +60,10 @@ pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 8] = [
     CommittedPolynomials::RamRa,
     // CommittedPolynomials::RdInc,
     // CommittedPolynomials::RamInc,
-    // CommittedPolynomials::InstructionRa(0),
-    // CommittedPolynomials::InstructionRa(1),
-    // CommittedPolynomials::InstructionRa(2),
-    // CommittedPolynomials::InstructionRa(3),
+    CommittedPolynomials::InstructionRa(0),
+    CommittedPolynomials::InstructionRa(1),
+    CommittedPolynomials::InstructionRa(2),
+    CommittedPolynomials::InstructionRa(3),
 ];
 
 impl CommittedPolynomials {

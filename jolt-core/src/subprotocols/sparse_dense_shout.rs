@@ -292,7 +292,7 @@ pub fn prove_sparse_dense_shout<
     ProofTranscript: Transcript,
 >(
     trace: &[RV32IMCycle],
-    r_cycle: Vec<F>,
+    r_cycle: &[F],
     transcript: &mut ProofTranscript,
 ) -> (
     SumcheckInstanceProof<F, ProofTranscript>,
@@ -322,7 +322,7 @@ pub fn prove_sparse_dense_shout<
     drop(_guard);
     drop(span);
 
-    let eq_r_prime_evals = EqPolynomial::evals(&r_cycle);
+    let eq_r_prime_evals = EqPolynomial::evals(r_cycle);
     let mut u_evals = eq_r_prime_evals.clone();
 
     let mut prefix_checkpoints: Vec<PrefixCheckpoint<F>> = vec![None.into(); Prefixes::COUNT];
@@ -790,7 +790,7 @@ mod tests {
         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(LOG_T);
 
         let (proof, rv_claim, ra_claims, flag_claims, _) =
-            prove_sparse_dense_shout::<WORD_SIZE, _, _>(&trace, r_cycle, &mut prover_transcript);
+            prove_sparse_dense_shout::<WORD_SIZE, _, _>(&trace, &r_cycle, &mut prover_transcript);
 
         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
         verifier_transcript.compare_to(prover_transcript);

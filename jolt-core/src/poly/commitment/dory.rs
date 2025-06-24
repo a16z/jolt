@@ -4,7 +4,7 @@ use crate::{
     msm::{Icicle, VariableBaseMSM},
     poly::{
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
-        sparse_matrix_polynomial::{get_K, get_T, get_num_columns},
+        sparse_matrix_polynomial::{get_T, get_num_columns},
     },
     utils::{
         errors::ProofVerifyError,
@@ -890,11 +890,6 @@ where
                     )
                 })
                 .collect(),
-            MultilinearPolynomial::U8Scalars(poly) => todo!(),
-            MultilinearPolynomial::U16Scalars(poly) => todo!(),
-            MultilinearPolynomial::U32Scalars(poly) => todo!(),
-            MultilinearPolynomial::U64Scalars(poly) => todo!(),
-            MultilinearPolynomial::I64Scalars(poly) => todo!(),
             MultilinearPolynomial::Sparse(poly) => {
                 let T = get_T();
                 let row_len = num_columns;
@@ -942,7 +937,7 @@ where
 
                 product
             }
-            MultilinearPolynomial::OneHot(poly) => todo!(),
+            _ => unimplemented!("Unexpected polynomial type"),
         }
     }
 }

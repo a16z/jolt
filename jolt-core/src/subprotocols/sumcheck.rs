@@ -186,24 +186,6 @@ impl BatchedSumcheck {
                         univariate_poly_evals.insert(1, *previous_claim - univariate_poly_evals[0]);
                         UniPoly::from_evals(&univariate_poly_evals)
                     }
-
-                    // if remaining_rounds > num_rounds {
-                    //     // We haven't gotten to this sumcheck's variables yet, so
-                    //     // the univariate polynomial is just a constant equal to
-                    //     // the input claim, scaled by a power of 2.
-                    //     let num_rounds = sumcheck.num_rounds();
-                    //     let scaled_input_claim = sumcheck
-                    //         .input_claim()
-                    //         .mul_u64(1 << (remaining_rounds - num_rounds - 1));
-                    //     // Constant polynomial
-                    //     UniPoly::from_coeff(vec![scaled_input_claim])
-                    // } else {
-                    //     let offset = max_num_rounds - sumcheck.num_rounds();
-                    //     let mut univariate_poly_evals =
-                    //         sumcheck.compute_prover_message(round - offset);
-                    //     univariate_poly_evals.insert(1, *previous_claim - univariate_poly_evals[0]);
-                    //     UniPoly::from_evals(&univariate_poly_evals)
-                    // }
                 })
                 .collect();
 

@@ -349,8 +349,12 @@ where
         .ok()
         .unwrap();
 
-        let instruction_proof =
-            LookupsProof::prove(&trace, &mut opening_accumulator, &mut transcript);
+        let instruction_proof = LookupsProof::prove(
+            &preprocessing,
+            &trace,
+            &mut opening_accumulator,
+            &mut transcript,
+        );
 
         let registers_proof =
             RegistersTwistProof::prove(&trace, &mut opening_accumulator, &mut transcript);

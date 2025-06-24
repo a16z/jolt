@@ -4,6 +4,8 @@
 //! can use a sumcheck to reduce multiple opening proofs (multiple polynomials, not
 //! necessarily of the same size, each opened at a different point) into a single opening.
 
+use std::{cell::RefCell, rc::Rc};
+
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use super::{
@@ -19,6 +21,20 @@ use crate::{
     utils::{errors::ProofVerifyError, transcript::Transcript},
 };
 
+pub struct SharedEqPolynomial<F: JoltField> {
+    num_variables_bound: usize,
+    eq_poly: EqPolynomial<F>,
+}
+
+impl<F: JoltField> From<EqPolynomial<F>> for SharedEqPolynomial<F> {
+    fn from(eq_poly: EqPolynomial<F>) -> Self {
+        Self {
+            eq_poly,
+            num_variables_bound: 0,
+        }
+    }
+}
+
 /// An opening computed by the prover.
 ///
 /// May be a batched opening, where multiple polynomials opened
@@ -33,7 +49,7 @@ pub struct ProverOpening<F: JoltField> {
     /// The multilinear extension EQ(x, opening_point). This is typically
     /// an intermediate value used to compute `claim`, but is also used in
     /// the `ProverOpeningAccumulator::prove_batch_opening_reduction` sumcheck.
-    pub eq_poly: EqPolynomial<F>,
+    pub eq_poly: Rc<RefCell<SharedEqPolynomial<F>>>,
     #[cfg(test)]
     /// If this is a batched opening, this `Vec` contains the individual
     /// polynomials in the batch.
@@ -61,7 +77,7 @@ where
 {
     fn new_prover_instance(
         polynomial: MultilinearPolynomial<F>,
-        eq_poly: EqPolynomial<F>,
+        eq_poly: Rc<RefCell<SharedEqPolynomial<F>>>,
         opening_point: Vec<F>,
         claim: F,
     ) -> Self {
@@ -111,42 +127,42 @@ where
 
     fn compute_prover_message(&self, round: usize) -> Vec<F> {
         let prover_state = self.prover_state.as_ref().unwrap();
-        match (&prover_state.polynomial, &prover_state.eq_poly) {
+        let shared_eq = prover_state.eq_poly.borrow();
+        match (&prover_state.polynomial, &shared_eq.eq_poly) {
             (MultilinearPolynomial::LargeScalars(_), EqPolynomial::Default(_)) => {
                 let polynomial = &prover_state.polynomial;
-                let eq_poly = &prover_state.eq_poly;
 
                 if round >= self.num_rounds() {
                     return vec![
-                        polynomial.final_sumcheck_claim() * eq_poly.final_sumcheck_claim(),
+                        polynomial.final_sumcheck_claim()
+                            * shared_eq.eq_poly.final_sumcheck_claim(),
                     ];
                 }
 
                 let mle_half = polynomial.len() / 2;
                 let eval_0: F = (0..mle_half)
-                    .map(|i| polynomial.get_bound_coeff(2 * i) * eq_poly.get_bound_coeff(2 * i))
+                    .map(|i| {
+                        polynomial.get_bound_coeff(2 * i) * shared_eq.eq_poly.get_bound_coeff(2 * i)
+                    })
                     .sum();
                 let eval_2: F = (0..mle_half)
                     .map(|i| {
                         let poly_bound_point = polynomial.get_bound_coeff(2 * i + 1)
                             + polynomial.get_bound_coeff(2 * i + 1)
                             - polynomial.get_bound_coeff(2 * i);
-                        let eq_bound_point = eq_poly.get_bound_coeff(2 * i + 1)
-                            + eq_poly.get_bound_coeff(2 * i + 1)
-                            - eq_poly.get_bound_coeff(2 * i);
+                        let eq_bound_point = shared_eq.eq_poly.get_bound_coeff(2 * i + 1)
+                            + shared_eq.eq_poly.get_bound_coeff(2 * i + 1)
+                            - shared_eq.eq_poly.get_bound_coeff(2 * i);
                         poly_bound_point * eq_bound_point
                     })
                     .sum();
                 vec![eval_0, eval_2]
             }
-            (MultilinearPolynomial::Sparse(_), EqPolynomial::Split(_)) => {
-                todo!("Sparse/Split");
-            }
             (MultilinearPolynomial::OneHot(poly), EqPolynomial::Split(eq_poly)) => {
                 if round >= self.num_rounds() {
                     return vec![poly.final_sumcheck_claim() * eq_poly.final_sumcheck_claim()];
                 }
-                poly.compute_sumcheck_prover_message(eq_poly)
+                poly.compute_sumcheck_prover_message(&eq_poly)
             }
             _ => panic!("Unexpected polynomial types"),
         }
@@ -158,18 +174,17 @@ where
         }
 
         let prover_state = self.prover_state.as_mut().unwrap();
-        rayon::join(
-            || {
-                prover_state
-                    .polynomial
-                    .bind_parallel(r_j, BindingOrder::LowToHigh)
-            },
-            || {
-                prover_state
-                    .eq_poly
-                    .bind_parallel(r_j, BindingOrder::LowToHigh)
-            },
-        );
+        let mut shared_eq = prover_state.eq_poly.borrow_mut();
+        if shared_eq.num_variables_bound <= round {
+            shared_eq
+                .eq_poly
+                .bind_parallel(r_j, BindingOrder::LowToHigh);
+            shared_eq.num_variables_bound += 1;
+        }
+
+        prover_state
+            .polynomial
+            .bind_parallel(r_j, BindingOrder::LowToHigh);
     }
 
     fn cache_openings(&mut self) {
@@ -285,6 +300,7 @@ where
         transcript: &mut ProofTranscript,
     ) {
         assert_eq!(polynomials.len(), claims.len());
+
         #[cfg(test)]
         {
             for poly in polynomials.iter() {
@@ -308,8 +324,18 @@ where
             }
         }
 
-        // TODO(moodlezoup): If batch size is 1, skip this
-        let (batched_claim, batched_poly) = if polynomials.len() > 1 {
+        let all_dense = polynomials.iter().all(|poly| {
+            matches!(
+                poly,
+                MultilinearPolynomial::LargeScalars(_)
+                    | MultilinearPolynomial::U8Scalars(_)
+                    | MultilinearPolynomial::U16Scalars(_)
+                    | MultilinearPolynomial::U32Scalars(_)
+                    | MultilinearPolynomial::U64Scalars(_)
+                    | MultilinearPolynomial::I64Scalars(_)
+            )
+        });
+        if all_dense {
             // Generate batching challenge \rho and powers 1,...,\rho^{m-1}
             let rho: F = transcript.challenge_scalar();
             let mut rho_powers = vec![F::one()];
@@ -318,48 +344,81 @@ where
             }
 
             // Compute the random linear combination of the claims
-            let batched_claim = rho_powers
+            let batched_claim: F = rho_powers
                 .iter()
                 .zip(claims.iter())
                 .map(|(scalar, eval)| *scalar * *eval)
                 .sum();
 
             let batched_poly = MultilinearPolynomial::linear_combination(polynomials, &rho_powers);
-            (batched_claim, batched_poly)
-        } else {
-            (claims[0], polynomials[0].clone())
-        };
 
-        #[cfg(test)]
-        {
-            let batched_eval = batched_poly.evaluate_with_eq(&eq_poly);
-            assert_eq!(batched_eval, batched_claim);
-            let mut opening = OpeningProofReductionSumcheck::new_prover_instance(
-                batched_poly,
-                eq_poly,
-                opening_point,
-                batched_claim,
-            );
-            for poly in polynomials.iter() {
-                opening
-                    .prover_state
-                    .as_mut()
-                    .unwrap()
-                    .batch
-                    .push((*poly).clone());
+            #[cfg(test)]
+            {
+                let batched_eval = batched_poly.evaluate_with_eq(&eq_poly);
+                assert_eq!(batched_eval, batched_claim);
+                let mut opening = OpeningProofReductionSumcheck::new_prover_instance(
+                    batched_poly,
+                    Rc::new(RefCell::new(eq_poly.into())),
+                    opening_point,
+                    batched_claim,
+                );
+                for poly in polynomials.iter() {
+                    opening
+                        .prover_state
+                        .as_mut()
+                        .unwrap()
+                        .batch
+                        .push((*poly).clone());
+                }
+                self.openings.push(opening);
             }
-            self.openings.push(opening);
-        }
 
-        #[cfg(not(test))]
-        {
-            let opening = OpeningProofReductionSumcheck::new_prover_instance(
-                batched_poly,
-                eq_poly,
-                opening_point,
-                batched_claim,
-            );
-            self.openings.push(opening);
+            #[cfg(not(test))]
+            {
+                let opening = OpeningProofReductionSumcheck::new_prover_instance(
+                    batched_poly,
+                    Rc::new(RefCell::new(eq_poly.into())),
+                    opening_point,
+                    batched_claim,
+                );
+                self.openings.push(opening);
+            }
+        } else {
+            let all_sparse = polynomials
+                .iter()
+                .all(|poly| matches!(poly, MultilinearPolynomial::OneHot(_)));
+            assert!(all_sparse);
+            let shared_eq = Rc::new(RefCell::new(eq_poly.into()));
+
+            for (polynomial, claim) in polynomials.into_iter().zip(claims.iter()) {
+                #[cfg(test)]
+                {
+                    let mut opening = OpeningProofReductionSumcheck::new_prover_instance(
+                        (*polynomial).clone(),
+                        shared_eq.clone(),
+                        opening_point.clone(),
+                        *claim,
+                    );
+                    opening
+                        .prover_state
+                        .as_mut()
+                        .unwrap()
+                        .batch
+                        .push((*polynomial).clone());
+                    self.openings.push(opening);
+                }
+
+                #[cfg(not(test))]
+                {
+                    let opening = OpeningProofReductionSumcheck::new_prover_instance(
+                        (*polynomial).clone(),
+                        shared_eq.clone(),
+                        opening_point.clone(),
+                        *claim,
+                    );
+                    self.openings.push(opening);
+                }
+            }
         }
     }
 
@@ -538,10 +597,6 @@ where
                 commitments.len(),
                 "batch size mismatch"
             );
-            // assert_eq!(
-            //     opening_point, prover_opening.opening_point,
-            //     "opening point mismatch"
-            // );
             assert_eq!(
                 batched_claim, prover_opening.input_claim,
                 "batched claim mismatch"
@@ -558,14 +613,6 @@ where
                     "commitment mismatch at index {i}"
                 );
             }
-            // let batched_poly = MultilinearPolynomial::linear_combination(
-            //     &prover_state.batch.iter().collect::<Vec<_>>(),
-            //     &rho_powers,
-            // );
-            // assert!(
-            //     batched_poly == prover_state.polynomial,
-            //     "batched poly mismatch"
-            // );
             let prover_joint_commitment =
                 PCS::commit(&prover_state.polynomial, self.pcs_setup.as_ref().unwrap());
             assert_eq!(
@@ -639,23 +686,17 @@ where
         // Need to reverse because polynomials are bound in LowToHigh order
         r_sumcheck.reverse();
 
-        println!("V r_sumcheck: {r_sumcheck:?}");
-
         // Compute joint claim = ∑ᵢ γⁱ⋅ claimᵢ
         let joint_claim: F = gamma_powers
             .iter()
             .zip(reduced_opening_proof.sumcheck_claims.iter())
             .zip(self.openings.iter())
             .map(|((coeff, claim), opening)| {
-                // let r_slice = &r_sumcheck[num_sumcheck_rounds - opening.opening_point.len()..];
                 let r_slice = &r_sumcheck[..num_sumcheck_rounds - opening.opening_point.len()];
                 let lagrange_eval: F = r_slice.iter().map(|r| F::one() - r).product();
-                // let lagrange_eval: F = r_slice.iter().product();
-
                 *coeff * claim * lagrange_eval
             })
             .sum();
-        println!("V claim: {joint_claim}");
 
         // Verify the reduced opening proof
         PCS::verify(

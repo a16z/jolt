@@ -404,6 +404,20 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                         .map(|(t, k)| split_eq.E1[*t] * split_eq.E2[*k])
                         .sum()
                 }
+                MultilinearPolynomial::Sparse(poly) => {
+                    let sparse_eval: F = poly
+                        .sparse_coeffs
+                        .par_iter()
+                        .map(|group| {
+                            group
+                                .iter()
+                                .map(|(t, k, coeff)| split_eq.E1[*t] * split_eq.E2[*k] * coeff)
+                                .sum::<F>()
+                        })
+                        .sum();
+                    let dense_eval = compute_dotproduct(&poly.dense_submatrix, &split_eq.E1);
+                    sparse_eval + dense_eval
+                }
                 _ => unimplemented!("Unexpected polynomial type"),
             },
             EqPolynomial::Gruen(gruen_split_eq) => todo!(),
@@ -751,7 +765,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
             MultilinearPolynomial::LargeScalars(poly) => poly.evaluate(r),
             MultilinearPolynomial::Sparse(poly) => {
                 // Not actually used
-                poly.evaluate(r)
+                F::zero()
             }
             _ => {
                 let chis = EqPolynomial::evals(r);
