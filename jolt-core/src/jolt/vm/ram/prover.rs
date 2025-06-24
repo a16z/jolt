@@ -1,3 +1,4 @@
+use crate::jolt::vm::ram::{remap_address, BooleanityProof, HammingWeightProof, RAMPreprocessing, RAMTwistProof, RafEvaluationProof, ReadWriteCheckingProof, ValEvaluationProof};
 use crate::{
     field::{JoltField, OptimizedMul},
     poly::{
@@ -11,133 +12,17 @@ use crate::{
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{
-        errors::ProofVerifyError,
         math::Math,
         thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
         transcript::{AppendToTranscript, Transcript},
     },
 };
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::{constants::BYTES_PER_INSTRUCTION, jolt_device::MemoryLayout};
+use common::{jolt_device::MemoryLayout};
 use rayon::prelude::*;
 use tracer::{
     instruction::{RAMAccess, RV32IMCycle},
     JoltDevice,
 };
-
-#[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct RAMPreprocessing {
-    min_bytecode_address: u64,
-    bytecode_words: Vec<u32>,
-}
-
-impl RAMPreprocessing {
-    pub fn preprocess(memory_init: Vec<(u64, u8)>) -> Self {
-        let min_bytecode_address = memory_init
-            .iter()
-            .map(|(address, _)| *address)
-            .min()
-            .unwrap_or(0);
-
-        let max_bytecode_address = memory_init
-            .iter()
-            .map(|(address, _)| *address)
-            .max()
-            .unwrap_or(0)
-            + (BYTES_PER_INSTRUCTION as u64 - 1); // For RV32IM, instructions occupy 4 bytes, so the max bytecode address is the max instruction address + 3
-
-        let num_words = max_bytecode_address.next_multiple_of(4) / 4 - min_bytecode_address / 4 + 1;
-        let mut bytecode_words = vec![0u32; num_words as usize];
-        // Convert bytes into words and populate `bytecode_words`
-        for chunk in
-            memory_init.chunk_by(|(address_a, _), (address_b, _)| address_a / 4 == address_b / 4)
-        {
-            let mut word = [0u8; 4];
-            for (address, byte) in chunk {
-                word[(address % 4) as usize] = *byte;
-            }
-            let word = u32::from_le_bytes(word);
-            let remapped_index = (chunk[0].0 / 4 - min_bytecode_address / 4) as usize;
-            bytecode_words[remapped_index] = word;
-        }
-
-        Self {
-            min_bytecode_address,
-            bytecode_words,
-        }
-    }
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct RAMTwistProof<F: JoltField, ProofTranscript: Transcript> {
-    /// Proof for the read-checking and write-checking sumchecks
-    /// (steps 3 and 4 of Figure 9).
-    read_write_checking_proof: ReadWriteCheckingProof<F, ProofTranscript>,
-    /// Proof of the Val-evaluation sumcheck (step 6 of Figure 9).
-    val_evaluation_proof: ValEvaluationProof<F, ProofTranscript>,
-
-    booleanity_proof: BooleanityProof<F, ProofTranscript>,
-    hamming_weight_proof: HammingWeightProof<F, ProofTranscript>,
-    raf_evaluation_proof: RafEvaluationProof<F, ProofTranscript>,
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct ReadWriteCheckingProof<F: JoltField, ProofTranscript: Transcript> {
-    /// Joint sumcheck proof for the read-checking and write-checking sumchecks
-    /// (steps 3 and 4 of Figure 9).
-    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    /// The claimed evaluation ra(r_address, r_cycle) output by the read/write-
-    /// checking sumcheck.
-    ra_claim: F,
-    /// The claimed evaluation rv(r') proven by the read-checking sumcheck.
-    rv_claim: F,
-    /// The claimed evaluation wv(r_address, r_cycle) output by the read/write-
-    /// checking sumcheck.
-    wv_claim: F,
-    /// The claimed evaluation val(r_address, r_cycle) output by the read/write-
-    /// checking sumcheck.
-    val_claim: F,
-    /// The claimed evaluation Inc(r, r') proven by the write-checking sumcheck.
-    inc_claim: F,
-    /// The sumcheck round index at which we switch from binding cycle variables
-    /// to binding address variables.
-    sumcheck_switch_index: usize,
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct ValEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
-    /// Sumcheck proof for the Val-evaluation sumcheck (steps 6 of Figure 9).
-    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    /// The claimed evaluation Inc(r_address, r_cycle') output by the Val-evaluation sumcheck.
-    inc_claim: F,
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct BooleanityProof<F, ProofTranscript>
-where
-    F: JoltField,
-    ProofTranscript: Transcript,
-{
-    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    ra_claim: F,
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct HammingWeightProof<F, ProofTranscript>
-where
-    F: JoltField,
-    ProofTranscript: Transcript,
-{
-    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    ra_claim: F,
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct RafEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
-    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    ra_claim: F,
-    raf_claim: F,
-}
 
 impl<F: JoltField, ProofTranscript: Transcript> RafEvaluationProof<F, ProofTranscript> {
     #[tracing::instrument(skip_all, name = "RafEvaluationProof::prove")]
@@ -245,31 +130,6 @@ impl<F: JoltField, ProofTranscript: Transcript> RafEvaluationProof<F, ProofTrans
             raf_claim,
         }
     }
-
-    pub fn verify(
-        &self,
-        K: usize,
-        transcript: &mut ProofTranscript,
-        memory_layout: &MemoryLayout,
-    ) -> Result<Vec<F>, ProofVerifyError> {
-        const DEGREE: usize = 2;
-
-        // Verify the sumcheck proof
-        let (sumcheck_claim, r_raf_sumcheck) =
-            self.sumcheck_proof
-                .verify(self.raf_claim, K.log_2(), DEGREE, transcript)?;
-
-        let unmap_eval = UnmapRamAddressPolynomial::new(K.log_2(), memory_layout.input_start)
-            .evaluate(&r_raf_sumcheck);
-
-        // Verify sumcheck_claim = unmap(r_raf_sumcheck) * ra(r_raf_sumcheck, r_cycle)
-        let expected_product = unmap_eval * self.ra_claim;
-        if expected_product != sumcheck_claim {
-            return Err(ProofVerifyError::InternalError);
-        }
-
-        Ok(r_raf_sumcheck)
-    }
 }
 
 impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript> {
@@ -363,118 +223,6 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             hamming_weight_proof,
             raf_evaluation_proof,
         }
-    }
-
-    pub fn verify(
-        &self,
-        K: usize,
-        T: usize,
-        preprocessing: &RAMPreprocessing,
-        program_io: &JoltDevice,
-        transcript: &mut ProofTranscript,
-    ) -> Result<(), ProofVerifyError> {
-        let log_K = K.log_2();
-        let log_T = T.log_2();
-        let r: Vec<F> = transcript.challenge_vector(log_K);
-        let r_prime: Vec<F> = transcript.challenge_vector(log_T);
-
-        let (r_address, r_cycle) =
-            self.read_write_checking_proof
-                .verify(r, r_prime.clone(), transcript);
-
-        let mut initial_memory_state = vec![0; K];
-        // Copy bytecode
-        let mut index = remap_address(
-            preprocessing.min_bytecode_address,
-            &program_io.memory_layout,
-        ) as usize;
-        for word in preprocessing.bytecode_words.iter() {
-            initial_memory_state[index] = *word as i64;
-            index += 1;
-        }
-        // Copy input bytes
-        index = remap_address(
-            program_io.memory_layout.input_start,
-            &program_io.memory_layout,
-        ) as usize;
-        // Convert input bytes into words and populate `v_init`
-        for chunk in program_io.inputs.chunks(4) {
-            let mut word = [0u8; 4];
-            for (i, byte) in chunk.iter().enumerate() {
-                word[i] = *byte;
-            }
-            let word = u32::from_le_bytes(word);
-            initial_memory_state[index] = word as i64;
-            index += 1;
-        }
-
-        let init: MultilinearPolynomial<F> = MultilinearPolynomial::from(initial_memory_state);
-        let init_eval = init.evaluate(&r_address);
-
-        let (sumcheck_claim, r_cycle_prime) = self.val_evaluation_proof.sumcheck_proof.verify(
-            self.read_write_checking_proof.val_claim - init_eval,
-            log_T,
-            2,
-            transcript,
-        )?;
-
-        // Compute LT(r_cycle', r_cycle)
-        let mut lt_eval = F::zero();
-        let mut eq_term = F::one();
-        for (x, y) in r_cycle_prime.iter().rev().zip(r_cycle.iter()) {
-            lt_eval += (F::one() - x) * y * eq_term;
-            eq_term *= F::one() - x - y + *x * y + *x * y;
-        }
-
-        assert_eq!(
-            sumcheck_claim,
-            lt_eval * self.val_evaluation_proof.inc_claim,
-            "Val evaluation sumcheck failed"
-        );
-
-        // TODO: Append Inc claim to opening proof accumulator
-
-        let mut r_address: Vec<F> = transcript.challenge_vector(log_K);
-        r_address = r_address.into_iter().rev().collect();
-
-        let (sumcheck_claim, r_booleanity) =
-            self.booleanity_proof
-                .sumcheck_proof
-                .verify(F::zero(), log_K + log_T, 3, transcript)?;
-
-        let (r_address_prime, r_cycle_prime) = r_booleanity.split_at(log_K);
-
-        let eq_eval_address = EqPolynomial::new(r_address).evaluate(r_address_prime);
-        let r_cycle_prime: Vec<_> = r_cycle_prime.iter().copied().rev().collect();
-        // let r_cycle: Vec<_> = r_cycle.iter().copied().rev().collect();
-        let eq_eval_cycle = EqPolynomial::new(r_prime).evaluate(&r_cycle_prime);
-
-        assert_eq!(
-            eq_eval_address
-                * eq_eval_cycle
-                * (self.booleanity_proof.ra_claim.square() - self.booleanity_proof.ra_claim),
-            sumcheck_claim,
-            "Booleanity sumcheck failed"
-        );
-
-        let (sumcheck_claim, _r_hamming_weight) =
-            self.hamming_weight_proof
-                .sumcheck_proof
-                .verify(F::one(), log_K, 1, transcript)?;
-
-        assert_eq!(
-            self.hamming_weight_proof.ra_claim, sumcheck_claim,
-            "Hamming weight sumcheck failed"
-        );
-
-        // Verify RAF evaluation proof
-        let _r_address_raf =
-            self.raf_evaluation_proof
-                .verify(K, transcript, &program_io.memory_layout)?;
-
-        // TODO: Add opening proof verification for ra(r_address_raf, r_cycle)
-
-        Ok(())
     }
 }
 
@@ -1081,16 +829,16 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                                 [
                                     ra_evals[0].mul_0_optimized(val_evals[0])
                                         + z_eq_r_eval
-                                            .mul_0_optimized(ra_evals[0])
-                                            .mul_0_optimized(wv_evals[0] - val_evals[0]),
+                                        .mul_0_optimized(ra_evals[0])
+                                        .mul_0_optimized(wv_evals[0] - val_evals[0]),
                                     ra_evals[1].mul_0_optimized(val_evals[1])
                                         + z_eq_r_eval
-                                            .mul_0_optimized(ra_evals[1])
-                                            .mul_0_optimized(wv_evals[1] - val_evals[1]),
+                                        .mul_0_optimized(ra_evals[1])
+                                        .mul_0_optimized(wv_evals[1] - val_evals[1]),
                                     ra_evals[2].mul_0_optimized(val_evals[2])
                                         + z_eq_r_eval
-                                            .mul_0_optimized(ra_evals[2])
-                                            .mul_0_optimized(wv_evals[2] - val_evals[2]),
+                                        .mul_0_optimized(ra_evals[2])
+                                        .mul_0_optimized(wv_evals[2] - val_evals[2]),
                                 ]
                             })
                             .reduce(
@@ -1211,51 +959,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         drop_in_background_thread((ra, wv, val, data_buffers, z_eq_r, eq_r_prime, A));
 
         (proof, r_address, r_cycle)
-    }
-
-    pub fn verify(
-        &self,
-        r: Vec<F>,
-        r_prime: Vec<F>,
-        transcript: &mut ProofTranscript,
-    ) -> (Vec<F>, Vec<F>) {
-        let K = r.len().pow2();
-        let T = r_prime.len().pow2();
-        let z: F = transcript.challenge_scalar();
-
-        let (sumcheck_claim, r_sumcheck) = self
-            .sumcheck_proof
-            .verify(
-                self.rv_claim + z * self.inc_claim,
-                T.log_2() + K.log_2(),
-                3,
-                transcript,
-            )
-            .unwrap();
-
-        // The high-order cycle variables are bound after the switch
-        let mut r_cycle = r_sumcheck[self.sumcheck_switch_index..T.log_2()].to_vec();
-        // First `sumcheck_switch_index` rounds bind cycle variables from low to high
-        r_cycle.extend(r_sumcheck[..self.sumcheck_switch_index].iter().rev());
-        // Final log(K) rounds bind address variables
-        let r_address = r_sumcheck[T.log_2()..].to_vec();
-
-        // eq(r', r_cycle)
-        let eq_eval_cycle = EqPolynomial::new(r_prime).evaluate(&r_cycle);
-        // eq(r, r_address)
-        let eq_eval_address = EqPolynomial::new(r).evaluate(&r_address);
-
-        assert_eq!(
-            eq_eval_cycle * self.ra_claim * self.val_claim
-                + z * eq_eval_address
-                    * eq_eval_cycle
-                    * self.ra_claim
-                    * (self.wv_claim - self.val_claim),
-            sumcheck_claim,
-            "Read/write-checking sumcheck failed"
-        );
-
-        (r_address, r_cycle)
     }
 }
 
@@ -1391,17 +1094,6 @@ pub fn prove_val_evaluation<F: JoltField, ProofTranscript: Transcript>(
     drop_in_background_thread((inc, eq_r_address, lt));
 
     (proof, r_cycle_prime)
-}
-
-fn remap_address(address: u64, memory_layout: &MemoryLayout) -> u64 {
-    if address == 0 {
-        return 0; // TODO(moodlezoup): Better handling for no-ops
-    }
-    if address >= memory_layout.input_start {
-        (address - memory_layout.input_start) / 4 + 1
-    } else {
-        panic!("Unexpected address {address}")
-    }
 }
 
 #[tracing::instrument(skip_all)]
@@ -1748,57 +1440,4 @@ fn prove_ra_hamming_weight<F: JoltField, ProofTranscript: Transcript>(
         r_address_double_prime,
         ra_claim,
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::utils::transcript::KeccakTranscript;
-    use ark_bn254::Fr;
-
-    #[test]
-    fn test_raf_evaluation_no_ops() {
-        const K: usize = 1 << 8;
-        const T: usize = 1 << 6;
-
-        let memory_layout = MemoryLayout {
-            max_input_size: 256,
-            max_output_size: 256,
-            input_start: 0x80000000,
-            input_end: 0x80000100,
-            output_start: 0x80001000,
-            output_end: 0x80001100,
-            stack_size: 1024,
-            stack_end: 0x7FFFFF00,
-            memory_size: 0x10000,
-            memory_end: 0x80010000,
-            panic: 0x80002000,
-            termination: 0x80002001,
-            io_end: 0x80002002,
-        };
-
-        // Create trace with only no-ops (address = 0)
-        let mut trace = Vec::new();
-        for i in 0..T {
-            trace.push(RV32IMCycle::NoOp(i));
-        }
-
-        let mut prover_transcript = KeccakTranscript::new(b"test_no_ops");
-        let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
-
-        // Prove
-        let proof =
-            RafEvaluationProof::prove(&trace, &memory_layout, r_cycle, K, &mut prover_transcript);
-
-        // Verify
-        let mut verifier_transcript = KeccakTranscript::new(b"test_no_ops");
-        let _r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
-
-        let r_address_result = proof.verify(K, &mut verifier_transcript, &memory_layout);
-
-        assert!(
-            r_address_result.is_ok(),
-            "No-op RAF evaluation verification failed"
-        );
-    }
 }

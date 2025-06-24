@@ -21,13 +21,13 @@ pub mod transcript;
 #[macro_export]
 macro_rules! optimal_iter {
     ($T:expr) => {{
-        #[cfg(feature = "icicle")]
-        {
-            $T.iter()
-        }
-        #[cfg(not(feature = "icicle"))]
+        #[cfg(feature = "rayon")]
         {
             $T.par_iter()
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            $T.iter()
         }
     }};
 }
@@ -35,13 +35,13 @@ macro_rules! optimal_iter {
 #[macro_export]
 macro_rules! into_optimal_iter {
     ($T:expr) => {{
-        #[cfg(feature = "icicle")]
-        {
-            $T.into_iter()
-        }
-        #[cfg(not(feature = "icicle"))]
+        #[cfg(feature = "rayon")]
         {
             $T.into_par_iter()
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            $T.into_iter()
         }
     }};
 }
@@ -49,27 +49,41 @@ macro_rules! into_optimal_iter {
 #[macro_export]
 macro_rules! optimal_iter_mut {
     ($T:expr) => {{
-        #[cfg(feature = "icicle")]
-        {
-            $T.iter_mut()
-        }
-        #[cfg(not(feature = "icicle"))]
+        #[cfg(feature = "rayon")]
         {
             $T.par_iter_mut()
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            $T.iter_mut()
         }
     }};
 }
 
 #[macro_export]
-macro_rules! join_conditional {
-    ($f1:expr, $f2:expr) => {{
-        #[cfg(feature = "icicle")]
+macro_rules! optimal_chunks {
+    ($T:expr, $chunk_size:expr) => {{
+        #[cfg(feature = "rayon")]
         {
-            ($f1(), $f2())
+            $T.par_chunks($chunk_size)
         }
-        #[cfg(not(feature = "icicle"))]
+        #[cfg(not(feature = "rayon"))]
+        {
+            $T.chunks($chunk_size)
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! join_if_rayon {
+    ($f1:expr, $f2:expr) => {{
+        #[cfg(feature = "rayon")]
         {
             rayon::join($f1, $f2)
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            ($f1(), $f2())
         }
     }};
 }

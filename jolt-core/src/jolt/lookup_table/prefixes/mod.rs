@@ -1,6 +1,6 @@
 use crate::jolt::lookup_table::prefixes::left_shift::LeftShiftPrefix;
 use crate::jolt::lookup_table::prefixes::left_shift_helper::LeftShiftHelperPrefix;
-use crate::{field::JoltField, subprotocols::sparse_dense_shout::LookupBits};
+use crate::{field::JoltField, optimal_iter_mut, subprotocols::sparse_dense_shout::LookupBits};
 use lsb::LsbPrefix;
 use negative_divisor_equals_remainder::NegativeDivisorEqualsRemainderPrefix;
 use negative_divisor_greater_than_remainder::NegativeDivisorGreaterThanRemainderPrefix;
@@ -9,7 +9,6 @@ use num_derive::FromPrimitive;
 use positive_remainder_equals_divisor::PositiveRemainderEqualsDivisorPrefix;
 use positive_remainder_less_than_divisor::PositiveRemainderLessThanDivisorPrefix;
 use pow2::Pow2Prefix;
-use rayon::prelude::*;
 use right_shift::RightShiftPrefix;
 use sign_extension::SignExtensionPrefix;
 use std::{fmt::Display, ops::Index};
@@ -239,8 +238,7 @@ impl Prefixes {
     ) {
         debug_assert_eq!(checkpoints.len(), Self::COUNT);
         let previous_checkpoints = checkpoints.to_vec();
-        checkpoints
-            .par_iter_mut()
+        optimal_iter_mut!(checkpoints)
             .enumerate()
             .for_each(|(index, new_checkpoint)| {
                 let prefix: Self = FromPrimitive::from_u8(index as u8).unwrap();

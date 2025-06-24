@@ -1,25 +1,21 @@
 use std::collections::BTreeMap;
 
-use crate::{
-    field::JoltField,
-    poly::{
-        compact_polynomial::SmallScalar,
-        eq_poly::EqPolynomial,
-        multilinear_polynomial::{
-            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-        },
-        unipoly::{CompressedUniPoly, UniPoly},
+use crate::{field::JoltField, join_if_rayon, optimal_chunks, optimal_iter, poly::{
+    compact_polynomial::SmallScalar,
+    eq_poly::EqPolynomial,
+    multilinear_polynomial::{
+        BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
     },
-    subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::{
-        errors::ProofVerifyError,
-        math::Math,
-        thread::unsafe_allocate_zero_vec,
-        transcript::{AppendToTranscript, Transcript},
-    },
-};
+    unipoly::{CompressedUniPoly, UniPoly},
+}, subprotocols::sumcheck::SumcheckInstanceProof, utils::{
+    errors::ProofVerifyError,
+    math::Math,
+    thread::unsafe_allocate_zero_vec,
+    transcript::{AppendToTranscript, Transcript},
+}};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
+#[cfg(feature = "rayon")]
 use rayon::prelude::*;
 use tracer::instruction::{NormalizedInstruction, RV32IMCycle, RV32IMInstruction};
 
@@ -85,7 +81,7 @@ impl BytecodePreprocessing {
         trace: &'a [RV32IMCycle],
     ) -> impl rayon::iter::ParallelIterator<Item = u64> + use<'a, 'b> {
         let (_, init) = trace.split_last().unwrap();
-        init.par_iter()
+        optimal_iter!(init)
             .map(|cycle| self.get_pc(cycle, false) as u64)
             .chain(rayon::iter::once(0))
     }
@@ -98,8 +94,7 @@ fn bytecode_to_val<F: JoltField>(bytecode: &[RV32IMInstruction], gamma: F) -> Ve
         gamma_powers.push(gamma * gamma_powers.last().unwrap());
     }
 
-    bytecode
-        .par_iter()
+    optimal_iter!(bytecode)
         .map(|instruction| {
             let NormalizedInstruction {
                 address,
@@ -153,8 +148,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
             .next_power_of_two()
             .min(trace.len());
         let chunk_size = (trace.len() / num_chunks).max(1);
-        let F: Vec<_> = trace
-            .par_chunks(chunk_size)
+        let F: Vec<_> = optimal_chunks!(trace, chunk_size)
             .enumerate()
             .map(|(chunk_index, trace_chunk)| {
                 let mut result: Vec<F> = unsafe_allocate_zero_vec(K);
@@ -241,10 +235,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
             previous_claim = univariate_poly.evaluate(&r_j);
 
             // Bind polynomials
-            rayon::join(
-                || ra.bind_parallel(r_j, BindingOrder::LowToHigh),
-                || val.bind_parallel(r_j, BindingOrder::LowToHigh),
-            );
+            join_if_rayon!( || ra.bind_parallel(r_j, BindingOrder::LowToHigh),
+                || val.bind_parallel(r_j, BindingOrder::LowToHigh));
         }
 
         drop(_guard);
@@ -555,9 +547,9 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
         previous_claim = univariate_poly.evaluate(&r_j);
 
         // Bind polynomials
-        rayon::join(
+        join_if_rayon!(
             || D.bind_parallel(r_j, BindingOrder::LowToHigh),
-            || H.bind_parallel(r_j, BindingOrder::LowToHigh),
+            || H.bind_parallel(r_j, BindingOrder::LowToHigh)
         );
     }
 

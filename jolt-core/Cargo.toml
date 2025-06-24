@@ -18,7 +18,7 @@ description = "The lookup singularity. Based on Spartan; built on Arkworks."
 documentation = "https://github.com/a16z/jolt/README.md"
 repository = "https://github.com/a16z/jolt"
 license-file = "LICENSE"
-keywords = ["SNARK", "cryptography", "proofs"]
+keywords = ["SNARK", "cryptography", "proofs", "zkVM"]
 
 [features]
 default = [
@@ -29,7 +29,8 @@ default = [
     "host",
     "rayon",
 ]
-host = ["dep:reqwest", "dep:tokio"]
+host = ["dep:reqwest", "dep:tokio", "prover"]
+prover = []
 icicle = [
     "default",
     "dep:icicle-runtime",
