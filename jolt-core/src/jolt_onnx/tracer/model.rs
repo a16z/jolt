@@ -136,6 +136,9 @@ impl QuantizedONNXModel {
                     println!("\x1b[33mwarning\x1b[0m: unimplemented instruction: {instr:?}");
                     io_map.insert(instr.outputs[0].to_string(), input.clone());
                 }
+                _ => {
+                    unimplemented!("Unsupported operator: {:?}", instr.opcode);
+                }
             }
             self.tracer.capture_post_state(&io_map);
         }
@@ -204,6 +207,9 @@ impl QuantizedONNXModel {
                     let h_out = h - kh + 1; // Output height (assuming stride=1, padding=0)
                     let w_out = w - kw + 1; // Output width (assuming stride=1, padding=0)
                     vec![n, m, h_out, w_out] // Output shape is [N, M, H', W']
+                }
+                _ => {
+                    unimplemented!("Unsupported operator: {:?}", instr.opcode);
                 }
             };
 

@@ -112,6 +112,8 @@ pub enum Operator {
     Relu,
     /// Convolution operator
     Conv,
+    /// Max pooling operator
+    MaxPool,
     /// Max window operator
     MaxWindow,
     /// Max operator

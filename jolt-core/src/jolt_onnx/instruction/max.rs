@@ -1,3 +1,5 @@
+//! Implements a lookup for the max function. Used in the maxpool operator.
+
 use crate::{
     field::JoltField,
     jolt::subtable::{
@@ -23,6 +25,7 @@ use crate::{
     utils::instruction_utils::chunk_and_concatenate_operands,
 };
 
+/// Performs the max operation on two operands.
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct MaxInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
 
