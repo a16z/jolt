@@ -3,7 +3,9 @@ Jolt's verifier with no proof composition is expensive. We [estimate](on-chain-v
 
 To solve these two issues we're aiming to add a configuration option to the Jolt prover with a post processing step, which creates a Groth16 proof of the Jolt verifier for constant proof size / cost (~280k gas on EVM) regardless of continuation chunk count or opening proof cost. This technique is industry standard. (An added benefit of this proof composition is that it will render Jolt proofs [zero-knowledge](zk.md)).
 
-We call directly representing the Jolt verifier (with HyperKZG polynomial commitment scheme) as constraints to then feeding those constraints into Groth16 "naive composition". Unfortunately, this naive procedure would result in over a hundred million constraints. Applying Groth16 to such a large constraint system will result in far more latency than we'd like, (and may even be impossible over the BN254 scalar fieldbecause that field only supports FFTs of length $2^{27}$. Below, we describe alternate ways forward.
+
+We call directly representing the Jolt verifier (with HyperKZG polynomial commitment scheme) as constraints to then feeding those constraints into Groth16 "naive composition". Unfortunately, this naive procedure would result in over a hundred million constraints. Applying Groth16 to such a large constraint system will result in far more latency than we'd like, (and may even be impossible over the BN254 scalar field because that field only supports FFTs of length $2^{27}$. Below, we describe alternate ways forward.
+
 
 # Cost accounting for naive composition
 
@@ -34,7 +36,7 @@ The field operations done by the Jolt verifier in the various invocations of the
 
 We further expect upcoming advances in methods for addressing non-native field arithmetic (and/or more careful optimizations of the Jolt verifier) to bring this down to under 2 million constraints.
 
-But the Spartan proof is still too big to post on-chain. So, second, represent the Spartan verifier as an R1CS instance over the BN254 scalar field, and apply Groth16 to this R1CS. This the proof posted and verified on-chain.
+But the Spartan proof is still too big to post on-chain. So, second, represent the Spartan verifier as an R1CS instance over the BN254 scalar field, and apply Groth16 to this R1CS. This is the proof posted and verified on-chain.
 
 The Spartan verifier only does at most a couple of hundred field operations (since there's only two sum-check invocations in Spartan, and the second sum-check invocation can be especially tiny for highly uniform constraint systems) and $2 \cdot \sqrt{n}$ scalar multiplications where $n$ is the number of columns (i.e., witness variables) in the R1CS instance. $2 \sqrt{n}$ here will be on the order of 3,000, perhaps less. Each (128-bit) scalar multiplication (which are done natively in this R1CS) yields about $2,000$ constraints. So that's 6 million constraints being fed to Groth16.
 
