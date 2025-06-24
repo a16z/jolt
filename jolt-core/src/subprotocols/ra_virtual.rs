@@ -397,7 +397,7 @@ mod tests {
     use super::*;
     use crate::{poly::dense_mlpoly::DensePolynomial, utils::transcript::KeccakTranscript};
     use ark_bn254::Fr;
-    use ark_std::{One, Zero, test_rng};
+    use ark_std::{One, Zero, test_rng, UniformRand};
     use ark_ff::PrimeField;
 
     type F = Fr;
@@ -913,5 +913,128 @@ mod tests {
         
         assert!(result.is_ok());
         println!("\n🎉 Verification passed!");
+    }
+
+    #[test]
+    fn test_virtual_ra_sumcheck_large_random() {
+        // Test with 10 rounds of sumcheck (1024 cycles)
+        // Using D=4 for 4-way address chunking
+        const D: usize = 4;
+        let mut rng = test_rng();
+        
+        // Setup parameters
+        let num_cycle_vars = 10; // 2^10 = 1024 cycles
+        let chunk_bits = 4; // 2^4 = 16 possible values per chunk
+        
+        println!("\n📊 LARGE RANDOM TEST PARAMETERS:");
+        println!("   • D = {} (number of address chunks)", D);
+        println!("   • Number of sumcheck rounds = {}", num_cycle_vars);
+        println!("   • T = {} (number of cycles = 2^{})", 1 << num_cycle_vars, num_cycle_vars);
+        println!("   • B = {} (values per chunk = 2^{})", 1 << chunk_bits, chunk_bits);
+        println!("   • Total address bits = {} × {} = {}", D, chunk_bits, D * chunk_bits);
+        
+        // Generate random reads - let's do 50 random reads
+        let num_reads = 50;
+        let num_cycles = 1 << num_cycle_vars;
+        let chunk_size = 1 << chunk_bits;
+        
+        // Create ra_values arrays
+        let mut ra_values: Vec<Vec<F>> = (0..D).map(|_| vec![F::zero(); num_cycles * chunk_size]).collect();
+        
+        println!("\n🎲 Generating {} random reads...", num_reads);
+        let mut reads = Vec::new();
+        for _ in 0..num_reads {
+            let cycle = usize::rand(&mut rng) % num_cycles;
+            let mut address_chunks = vec![];
+            for _ in 0..D {
+                address_chunks.push(usize::rand(&mut rng) % chunk_size);
+            }
+            
+            // Add to polynomial values
+            for i in 0..D {
+                let index = cycle * chunk_size + address_chunks[i];
+                ra_values[i][index] = F::one();
+            }
+            
+            reads.push((cycle, address_chunks));
+        }
+        
+        // Show a sample of the reads
+        println!("   Sample reads:");
+        for i in 0..5.min(num_reads) {
+            let (cycle, chunks) = &reads[i];
+            println!("     Read {}: cycle={}, chunks={:?}", i, cycle, chunks);
+        }
+        if num_reads > 5 {
+            println!("     ... and {} more", num_reads - 5);
+        }
+        
+        // Create the polynomials
+        let mut ra_polys = Vec::with_capacity(D);
+        for i in 0..D {
+            let poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(ra_values[i].clone()));
+            ra_polys.push(poly);
+        }
+        let ra_polys: [MultilinearPolynomial<F>; D] = ra_polys.try_into().unwrap();
+        
+        // Generate random evaluation points
+        println!("\n🎯 Generating random evaluation points...");
+        let r_cycle: Vec<F> = (0..num_cycle_vars).map(|_| F::random(&mut rng)).collect();
+        let r_address_chunks: [Vec<F>; D] = std::array::from_fn(|_| {
+            (0..chunk_bits).map(|_| F::random(&mut rng)).collect()
+        });
+        
+        // Create the sumcheck instance
+        let start_time = std::time::Instant::now();
+        let sumcheck = VirtualRASumcheck::<F, D>::new(
+            ra_polys,
+            r_cycle.clone(),
+            r_address_chunks.clone(),
+        );
+        let setup_time = start_time.elapsed();
+        
+        // Compute the claim
+        let claim_start = std::time::Instant::now();
+        let claim = <VirtualRASumcheck<F, D> as BatchableSumcheckInstance<F, ProofTranscript>>::input_claim(&sumcheck);
+        let claim_time = claim_start.elapsed();
+        
+        println!("\n⏱️  PERFORMANCE METRICS:");
+        println!("   • Setup time: {:?}", setup_time);
+        println!("   • Claim computation time: {:?}", claim_time);
+        
+        // Create transcripts
+        let mut prover_transcript = ProofTranscript::new(b"test_virtual_ra_large_random");
+        let mut verifier_transcript = ProofTranscript::new(b"test_virtual_ra_large_random");
+        
+        // Prove
+        let prove_start = std::time::Instant::now();
+        let (proof, r_cycle_bound) = sumcheck.prove(&mut prover_transcript);
+        let prove_time = prove_start.elapsed();
+        
+        println!("   • Proving time: {:?}", prove_time);
+        println!("   • Proof size: {} compressed polynomials", proof.sumcheck_proof.compressed_polys.len());
+        println!("   • Number of ra_claims: {}", proof.ra_claims.len());
+        
+        // Verify
+        let verify_start = std::time::Instant::now();
+        let result = VirtualRASumcheck::<F, D>::verify(
+            &proof,
+            claim,
+            &r_cycle,
+            &r_address_chunks,
+            &mut verifier_transcript,
+        );
+        let verify_time = verify_start.elapsed();
+        
+        println!("   • Verification time: {:?}", verify_time);
+        
+        // Check results
+        assert!(result.is_ok());
+        let verifier_r_cycle_bound = result.unwrap();
+        assert_eq!(r_cycle_bound, verifier_r_cycle_bound);
+        
+        println!("\n✅ Large random test passed successfully!");
+        println!("   • Total time: {:?}", setup_time + claim_time + prove_time + verify_time);
+        println!("   • Prover/Verifier time ratio: {:.2}x", prove_time.as_secs_f64() / verify_time.as_secs_f64());
     }
 }
