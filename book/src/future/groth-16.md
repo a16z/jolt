@@ -3,7 +3,9 @@ Jolt's verifier with no proof composition is expensive. We [estimate](on-chain-v
 
 To solve these two issues we're aiming to add a configuration option to the Jolt prover with a post processing step, which creates a Groth16 proof of the Jolt verifier for constant proof size / cost (~280k gas on EVM) regardless of continuation chunk count or opening proof cost. This technique is industry standard. (An added benefit of this proof composition is that it will render Jolt proofs [zero-knowledge](zk.md)).
 
-We call directly representing the Jolt verifier (with HyperKZG polynomial commitment scheme) as constraints to then feeding those constraints into Groth16 "naive composition". Unfortunately, this naive procedure would result in over a hundred million constraints. Applying Groth16 to such a large constraint system will result in far more latency than we'd like, (and may even be impossible over the BN254 scalar fieldbecause that field only supports FFTs of length $2^{27}$. Below, we describe alternate ways forward.
+
+We call directly representing the Jolt verifier (with HyperKZG polynomial commitment scheme) as constraints to then feeding those constraints into Groth16 "naive composition". Unfortunately, this naive procedure would result in over a hundred million constraints. Applying Groth16 to such a large constraint system will result in far more latency than we'd like, (and may even be impossible over the BN254 scalar field because that field only supports FFTs of length $2^{27}$. Below, we describe alternate ways forward.
+
 
 # Cost accounting for naive composition
 
