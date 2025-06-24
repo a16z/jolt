@@ -5,9 +5,7 @@ use crate::{
         right_msb::RightMSBSubtable,
     },
     subprotocols::sparse_dense_shout::PrefixSuffixDecomposition,
-    utils::{instruction_utils::concatenate_lookups, uninterleave_bits},
 };
-use ark_std::log2;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -167,27 +165,27 @@ mod test {
             jolt_instruction_test!(instruction);
         }
 
-        // // x == y
-        // for _ in 0..256 {
-        //     let x = rng.next_u32() as u64;
-        //     jolt_instruction_test!(MaxInstruction::<WORD_SIZE>(x, x));
-        // }
+        // x == y
+        for _ in 0..256 {
+            let x = rng.next_u32() as u64;
+            jolt_instruction_test!(MaxInstruction::<WORD_SIZE>(x, x));
+        }
 
-        // // Edge cases
-        // let u32_max: u64 = u32::MAX as u64;
-        // let instructions = vec![
-        //     MaxInstruction::<WORD_SIZE>(100, 0),
-        //     MaxInstruction::<WORD_SIZE>(0, 100),
-        //     MaxInstruction::<WORD_SIZE>(1, 0),
-        //     MaxInstruction::<WORD_SIZE>(0, u32_max),
-        //     MaxInstruction::<WORD_SIZE>(u32_max, 0),
-        //     MaxInstruction::<WORD_SIZE>(u32_max, u32_max),
-        //     MaxInstruction::<WORD_SIZE>(u32_max, 1 << 8),
-        //     MaxInstruction::<WORD_SIZE>(1 << 8, u32_max),
-        // ];
-        // for instruction in instructions {
-        //     jolt_instruction_test!(instruction);
-        // }
+        // Edge cases
+        let u32_max: u64 = u32::MAX as u64;
+        let instructions = vec![
+            MaxInstruction::<WORD_SIZE>(100, 0),
+            MaxInstruction::<WORD_SIZE>(0, 100),
+            MaxInstruction::<WORD_SIZE>(1, 0),
+            MaxInstruction::<WORD_SIZE>(0, u32_max),
+            MaxInstruction::<WORD_SIZE>(u32_max, 0),
+            MaxInstruction::<WORD_SIZE>(u32_max, u32_max),
+            MaxInstruction::<WORD_SIZE>(u32_max, 1 << 8),
+            MaxInstruction::<WORD_SIZE>(1 << 8, u32_max),
+        ];
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
+        }
     }
 
     #[test]

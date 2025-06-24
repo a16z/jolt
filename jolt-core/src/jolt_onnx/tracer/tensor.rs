@@ -119,6 +119,17 @@ impl QuantizedTensor {
             scale: 1.0, // Default scale, will be adjusted later
         }
     }
+
+    /// Return the maximum value in the quantized tensor.
+    pub fn max(&self) -> i8 {
+        // Find the maximum value in the quantized data.
+        *self.data.iter().max().unwrap()
+    }
+
+    /// Return the length of the quantized data.
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
 }
 
 /// Quantize a slice of f32 data to i8
