@@ -9,7 +9,7 @@ We call directly representing the Jolt verifier (with HyperKZG polynomial commit
 
 In naive composition, the bulk of the constraints are devoted to implementing the [~150 scalar multiplications done by the Jolt verifier](on-chain-verifier.md) (or more accurately, ~150 scalar multiplications will be the dominant verifier cost once we finish all optimizations that are now in progress).
 
-Each scalar multiplication costs about 400 group operations, each of which costs about 10 field multiplications, so that's about $150 \cdot 400 \cdot 10=600k$ field multiplications. The real killer is that these field multiplications must be done non-natively in constraints, due to the fact that that BN254 does not have a pairing-friendly  "sister curve" (i.e., a curve whose scalar field matches the BN254 base field). This means that each of the $600k$ field multiplications costs thousands of constraints.
+Each scalar multiplication costs about 400 group operations, each of which costs about 10 field multiplications, so that's about $150 \cdot 400 \cdot 10=600k$ field multiplications. The real killer is that these field multiplications must be done non-natively in constraints, due to the fact that BN254 does not have a pairing-friendly "sister curve" (i.e., a curve whose scalar field matches the BN254 base field). This means that each of the $600k$ field multiplications costs thousands of constraints.
 
 On top of the above, the two pairings done by the HyperKZG verifier, implemented non-natively in constraints,
 should cost about 6 million constraints.
