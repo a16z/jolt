@@ -36,7 +36,7 @@ The field operations done by the Jolt verifier in the various invocations of the
 
 We further expect upcoming advances in methods for addressing non-native field arithmetic (and/or more careful optimizations of the Jolt verifier) to bring this down to under 2 million constraints.
 
-But the Spartan proof is still too big to post on-chain. So, second, represent the Spartan verifier as an R1CS instance over the BN254 scalar field, and apply Groth16 to this R1CS. This the proof posted and verified on-chain.
+But the Spartan proof is still too big to post on-chain. So, second, represent the Spartan verifier as an R1CS instance over the BN254 scalar field, and apply Groth16 to this R1CS. This is the proof posted and verified on-chain.
 
 The Spartan verifier only does at most a couple of hundred field operations (since there's only two sum-check invocations in Spartan, and the second sum-check invocation can be especially tiny for highly uniform constraint systems) and $2 \cdot \sqrt{n}$ scalar multiplications where $n$ is the number of columns (i.e., witness variables) in the R1CS instance. $2 \sqrt{n}$ here will be on the order of 3,000, perhaps less. Each (128-bit) scalar multiplication (which are done natively in this R1CS) yields about $2,000$ constraints. So that's 6 million constraints being fed to Groth16.
 
