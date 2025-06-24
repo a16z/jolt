@@ -5,7 +5,6 @@ use crate::{
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
-        unipoly::UniPoly,
     },
     subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof},
     utils::{errors::ProofVerifyError, thread::unsafe_allocate_zero_vec, transcript::Transcript},
@@ -74,8 +73,8 @@ impl<F: JoltField, const D: usize> VirtualRASumcheck<F, D> {
         }
     }
 
-    /// Computes the univariate polynomial for the current sumcheck round
-    fn compute_round_polynomial(&self) -> UniPoly<F> {
+    /// Computes the evaluations for the current sumcheck round
+    fn compute_round_evaluations(&self) -> Vec<F> {
         let half_len = 1 << (self.num_cycle_vars - self.current_round - 1);
         let degree = D + 1;
 
@@ -119,7 +118,7 @@ impl<F: JoltField, const D: usize> VirtualRASumcheck<F, D> {
             })
             .collect();
 
-        UniPoly::from_evals(&evals)
+        evals
     }
 
     /// Proves the virtual RA sumcheck
@@ -196,12 +195,12 @@ impl<F: JoltField, ProofTranscript: Transcript, const D: usize>
     }
 
     fn compute_prover_message(&self, _round: usize) -> Vec<F> {
-        let poly = self.compute_round_polynomial();
-        let degree = D + 1;
-
-        let mut evals = vec![poly.evaluate(&F::zero())];
-        for i in 2..=degree {
-            evals.push(poly.evaluate(&F::from_u64(i as u64)));
+        let all_evals = self.compute_round_evaluations();
+        
+        // Extract evaluations at 0, 2, 3, ..., degree (skipping 1)
+        let mut evals = vec![all_evals[0]];
+        for i in 2..all_evals.len() {
+            evals.push(all_evals[i]);
         }
 
         evals
