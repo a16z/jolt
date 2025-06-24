@@ -49,11 +49,27 @@ pub struct VirtualRASumcheck<F: JoltField, const D: usize> {
 
 impl<F: JoltField, const D: usize> VirtualRASumcheck<F, D> {
     pub fn new(
-        ra_i_polys: [MultilinearPolynomial<F>; D],
+        mut ra_i_polys: [MultilinearPolynomial<F>; D],
         r_cycle: Vec<F>,
         r_address_chunks: [Vec<F>; D],
     ) -> Self {
         let num_cycle_vars = r_cycle.len();
+        
+        // Pre-bind the address variables for each ra_i polynomial
+        // Each ra_i has num_cycle_vars + chunk_bits variables
+        // We bind the last chunk_bits variables (the address part) to r_address_chunks[i]
+        let total_vars = ra_i_polys[0].get_num_vars();
+        let chunk_bits = total_vars - num_cycle_vars;
+        
+        for i in 0..D {
+            // Pre-bind the address variables to r_address_chunks[i]
+            // The polynomial has num_cycle_vars + chunk_bits variables total
+            // We bind the last chunk_bits variables (the address part)
+            for j in 0..chunk_bits {
+                ra_i_polys[i].bind(r_address_chunks[i][j], BindingOrder::HighToLow);
+            }
+        }
+        
         // Precompute eq(r_cycle, *) evaluations
         let eq_evals = EqPolynomial::evals(&r_cycle);
         let current_eq_evals = eq_evals.clone();
@@ -75,7 +91,7 @@ impl<F: JoltField, const D: usize> VirtualRASumcheck<F, D> {
         let half_len = 1 << (self.num_cycle_vars - self.current_round - 1);
 
         // We need to compute the sum over the remaining variables of:
-        // eq(r_cycle[..current_round] || X || remaining_vars, j) * _i ra_i(j, r_address^(i))
+        // eq(r_cycle[..current_round] || X || remaining_vars, j) * Product_i ra_i(j, r_address^(i))
 
         // The degree is D+1 (D from the product of ra_i's, plus 1 from eq)
         let degree = D + 1;
@@ -178,8 +194,6 @@ impl<F: JoltField, ProofTranscript: Transcript, const D: usize>
     }
 
     fn compute_prover_message(&self, _round: usize) -> Vec<F> {
-        // Update current round (this is a bit awkward due to the trait design)
-        // In practice, you might want to use interior mutability or a different approach
         let poly = self.compute_round_polynomial();
 
         // Return evaluations at 0, 2, 3, ..., degree
@@ -394,14 +408,13 @@ mod tests {
     /// creates D polynomials where ra_i represents the one-hot encoding
     /// of the i-th chunk of the address at the given cycle.
     /// 
-    /// Each ra_i polynomial is initially over all (cycle, address) variables,
-    /// but we need to pre-bind it to the specific address chunk evaluation point.
+    /// Each ra_i polynomial is over all (cycle, address) variables.
+    /// The pre-binding to address chunks is now handled in VirtualRASumcheck::new.
     fn create_one_hot_ra_polys<const D: usize>(
         num_cycle_vars: usize,
         chunk_bits: usize,
         cycle: usize,
         address_chunks: &[usize; D],
-        r_address_chunks: &[Vec<F>; D],
     ) -> [MultilinearPolynomial<F>; D] {
         let num_cycles = 1 << num_cycle_vars;
         let chunk_size = 1 << chunk_bits;
@@ -420,14 +433,7 @@ mod tests {
             values[index] = F::one();
             
             // Create the polynomial
-            let mut poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(values));
-            
-            // Pre-bind the address variables to r_address_chunks[i]
-            // The polynomial has num_cycle_vars + chunk_bits variables total
-            // We bind the last chunk_bits variables (the address part)
-            for j in 0..chunk_bits {
-                poly.bind(r_address_chunks[i][j], BindingOrder::HighToLow);
-            }
+            let poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(values));
             
             ra_polys.push(poly);
         }
@@ -464,7 +470,6 @@ mod tests {
             chunk_bits,
             read_cycle,
             &address_chunks,
-            &r_address_chunks,
         );
         
         // Create the sumcheck instance
@@ -554,14 +559,10 @@ mod tests {
             }
         }
         
-        // Create and pre-bind the polynomials
+        // Create the polynomials (pre-binding will be done in VirtualRASumcheck::new)
         let mut ra_polys = Vec::with_capacity(D);
         for i in 0..D {
-            let mut poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(ra_values[i].clone()));
-            // Pre-bind the address variables
-            for j in 0..chunk_bits {
-                poly.bind(r_address_chunks[i][j], BindingOrder::HighToLow);
-            }
+            let poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(ra_values[i].clone()));
             ra_polys.push(poly);
         }
         let ra_polys: [MultilinearPolynomial<F>; D] = ra_polys.try_into().unwrap();
@@ -648,7 +649,7 @@ mod tests {
         
         // Test with D=2 (2-way chunked addresses) for simplicity
         const D: usize = 2;
-        let mut rng = test_rng();
+        let _rng = test_rng();
         
         // Setup parameters
         let num_cycle_vars = 2; // 4 cycles (T = 2^2 = 4)
@@ -702,33 +703,32 @@ mod tests {
             chunk_bits,
             read_cycle,
             &address_chunks,
-            &r_address_chunks,
         );
         
         println!("\n🔨 CREATING RA POLYNOMIALS:");
         println!("   Each ra_i is initially a (cycle × address_chunk) table:");
         println!("   • ra_0 has a 1 at (cycle={}, chunk={})", read_cycle, address_chunks[0]);
         println!("   • ra_1 has a 1 at (cycle={}, chunk={})", read_cycle, address_chunks[1]);
-        println!("   Then we pre-bind each ra_i to r_address^(i)");
+        println!("   Then VirtualRASumcheck::new will pre-bind each ra_i to r_address^(i)");
+        
+        // Create the sumcheck instance which will do the pre-binding
+        let mut sumcheck = VirtualRASumcheck::<F, D>::new(
+            ra_polys,
+            r_cycle.clone(),
+            r_address_chunks.clone(),
+        );
         
         // Show the values after address binding
         let num_cycles = 1 << num_cycle_vars;
         let mut ra_values_after_binding = vec![vec![F::zero(); num_cycles]; D];
         for j in 0..num_cycles {
             for i in 0..D {
-                ra_values_after_binding[i][j] = ra_polys[i].get_bound_coeff(j);
+                ra_values_after_binding[i][j] = sumcheck.ra_i_polys[i].get_bound_coeff(j);
             }
         }
         
         let labels = vec!["ra_0(j, r_addr^(0))".to_string(), "ra_1(j, r_addr^(1))".to_string()];
         print_polynomial_table("RA Polynomials After Address Binding", &labels, &ra_values_after_binding);
-        
-        // Create the sumcheck instance
-        let mut sumcheck = VirtualRASumcheck::<F, D>::new(
-            ra_polys,
-            r_cycle.clone(),
-            r_address_chunks.clone(),
-        );
         
         // Compute and show the initial claim
         let claim = <VirtualRASumcheck<F, D> as BatchableSumcheckInstance<F, ProofTranscript>>::input_claim(&sumcheck);
@@ -890,13 +890,12 @@ mod tests {
                 chunk_bits,
                 read_cycle,
                 &address_chunks,
-                &r_address_chunks,
             ),
             r_cycle.clone(),
             r_address_chunks.clone(),
         );
         
-        let (proof, r_cycle_bound) = sumcheck_for_prove.prove(&mut prover_transcript);
+        let (proof, _r_cycle_bound) = sumcheck_for_prove.prove(&mut prover_transcript);
         
         println!("\n✅ Protocol completed successfully!");
         println!("   Proof size: {} compressed polynomials", proof.sumcheck_proof.compressed_polys.len());
