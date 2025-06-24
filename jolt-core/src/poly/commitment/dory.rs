@@ -4,7 +4,7 @@ use crate::{
     msm::{Icicle, VariableBaseMSM},
     poly::{
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
-        rlc_polynomial::{get_T, get_num_columns},
+        rlc_polynomial::get_num_columns,
     },
     utils::{
         errors::ProofVerifyError,
@@ -789,48 +789,7 @@ where
                     )
                 })
                 .collect(),
-            MultilinearPolynomial::RLC(poly) => {
-                let num_rows = poly.num_rows;
-                let T = get_T();
-                println!("# rows = {num_rows}");
-                let mut row_commitments: Vec<_> = (0..num_rows)
-                    .into_par_iter()
-                    .map(|row_index| {
-                        let (bases, scalars): (Vec<&G::Affine>, Vec<F>) = poly
-                            .sparse_coeffs
-                            .iter()
-                            .flat_map(|group| {
-                                group.iter().filter_map(|(t, k, coeff)| {
-                                    let global_index = *k as u128 * T as u128 + *t as u128;
-                                    if global_index / row_len as u128 == row_index as u128 {
-                                        let col_index = global_index % row_len as u128;
-                                        Some((&bases[col_index as usize], coeff))
-                                    } else {
-                                        None
-                                    }
-                                })
-                            })
-                            .unzip();
-
-                        let row_commitment: G = VariableBaseMSM::msm_field_elements_ref(
-                            &bases, None, &scalars, None, false,
-                        )
-                        .unwrap();
-                        JoltGroupWrapper(row_commitment)
-                    })
-                    .collect();
-                poly.dense_submatrix
-                    .par_chunks(row_len)
-                    .zip(row_commitments.par_iter_mut())
-                    .for_each(|(dense_row, commitment)| {
-                        let msm_result: G = VariableBaseMSM::msm_field_elements(
-                            &bases, None, dense_row, None, false,
-                        )
-                        .unwrap();
-                        *commitment = JoltGroupWrapper(commitment.0 + msm_result)
-                    });
-                row_commitments
-            }
+            MultilinearPolynomial::RLC(poly) => poly.commit_rows(&bases),
             MultilinearPolynomial::OneHot(poly) => poly.commit_rows(&bases),
         }
     }
@@ -842,78 +801,35 @@ where
         sigma: usize,
         nu: usize,
     ) -> Vec<JoltFieldWrapper<F>> {
-        // # Safety
-        // JoltFieldWrapper always has same memory layout as underlying F here.
-        let left_vec: &[F] =
-            unsafe { std::slice::from_raw_parts(left_vec.as_ptr() as *const F, left_vec.len()) };
-
         let num_columns = get_num_columns();
         println!("sigma: {sigma}");
         println!("nu: {nu}");
         println!("num_columns: {num_columns}");
 
         match self {
-            MultilinearPolynomial::LargeScalars(poly) => (0..num_columns)
-                .into_par_iter()
-                .map(|col_index| {
-                    JoltFieldWrapper(
-                        poly.Z
-                            .iter()
-                            .skip(col_index)
-                            .step_by(num_columns)
-                            .zip(left_vec.iter())
-                            .map(|(&a, &b)| -> F { a * b })
-                            .sum::<F>(),
-                    )
-                })
-                .collect(),
-            MultilinearPolynomial::RLC(poly) => {
-                let T = get_T();
-                let row_len = num_columns;
-                let num_chunks = 4 * rayon::current_num_threads().next_power_of_two();
-                let chunk_size = std::cmp::max(1, num_columns / num_chunks);
-                let num_chunks = num_columns / chunk_size;
-                let mut product: Vec<_> = (0..num_chunks)
+            MultilinearPolynomial::LargeScalars(poly) => {
+                // # Safety
+                // JoltFieldWrapper always has same memory layout as underlying F here.
+                let left_vec: &[F] = unsafe {
+                    std::slice::from_raw_parts(left_vec.as_ptr() as *const F, left_vec.len())
+                };
+
+                (0..num_columns)
                     .into_par_iter()
-                    .flat_map(|chunk_index| {
-                        let min_col_index = chunk_index * chunk_size;
-                        let max_col_index = min_col_index + chunk_size;
-                        let mut result: Vec<JoltFieldWrapper<F>> =
-                            vec![JoltFieldWrapper(F::zero()); chunk_size];
-                        for group in poly.sparse_coeffs.iter() {
-                            for (t, k, coeff) in group.iter() {
-                                let global_index = *k as u128 * T as u128 + *t as u128;
-                                let col_index = (global_index % row_len as u128) as usize;
-                                if col_index >= min_col_index && col_index < max_col_index {
-                                    let row_index = (global_index / row_len as u128) as usize;
-                                    result[col_index % chunk_size].0 +=
-                                        left_vec[row_index] * *coeff;
-                                }
-                            }
-                        }
-                        result
+                    .map(|col_index| {
+                        JoltFieldWrapper(
+                            poly.Z
+                                .iter()
+                                .skip(col_index)
+                                .step_by(num_columns)
+                                .zip(left_vec.iter())
+                                .map(|(&a, &b)| -> F { a * b })
+                                .sum::<F>(),
+                        )
                     })
-                    .collect();
-
-                product
-                    .par_iter_mut()
-                    .enumerate()
-                    .for_each(|(col_index, dot_product)| {
-                        *dot_product = JoltFieldWrapper(
-                            dot_product.0
-                                + poly
-                                    .dense_submatrix
-                                    .iter()
-                                    .skip(col_index)
-                                    .step_by(num_columns)
-                                    .zip(left_vec.iter())
-                                    .map(|(&a, &b)| -> F { a * b })
-                                    .sum::<F>(),
-                        );
-                    });
-
-                product
+                    .collect()
             }
+            MultilinearPolynomial::RLC(poly) => poly.vector_matrix_product(left_vec),
             _ => unimplemented!("Unexpected polynomial type"),
         }
     }

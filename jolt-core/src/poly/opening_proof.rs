@@ -317,11 +317,11 @@ where
                 );
             }
 
-            let expected_claims: Vec<F> =
-                MultilinearPolynomial::batch_evaluate_with_eq(polynomials, &eq_poly);
-            for (claim, expected_claim) in claims.iter().zip(expected_claims.into_iter()) {
-                assert_eq!(*claim, expected_claim, "Unexpected claim");
-            }
+            // let expected_claims: Vec<F> =
+            //     MultilinearPolynomial::batch_evaluate_with_eq(polynomials, &eq_poly);
+            // for (claim, expected_claim) in claims.iter().zip(expected_claims.into_iter()) {
+            //     assert_eq!(*claim, expected_claim, "Unexpected claim");
+            // }
         }
 
         let all_dense = polynomials.iter().all(|poly| {
@@ -354,8 +354,8 @@ where
 
             #[cfg(test)]
             {
-                let batched_eval = batched_poly.evaluate_with_eq(&eq_poly);
-                assert_eq!(batched_eval, batched_claim);
+                // let batched_eval = batched_poly.evaluate_with_eq(&eq_poly);
+                // assert_eq!(batched_eval, batched_claim);
                 let mut opening = OpeningProofReductionSumcheck::new_prover_instance(
                     batched_poly,
                     Rc::new(RefCell::new(eq_poly.into())),

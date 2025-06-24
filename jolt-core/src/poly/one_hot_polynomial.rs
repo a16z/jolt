@@ -7,6 +7,7 @@ use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::rlc_polynomial::{get_T, get_num_columns};
 use crate::poly::split_eq_poly::SplitEqPolynomial;
 use crate::utils::math::Math;
+use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_ec::CurveGroup;
 use rayon::prelude::*;
 
@@ -106,6 +107,36 @@ impl<F: JoltField> OneHotPolynomial<F> {
                 result
             })
             .collect()
+    }
+
+    pub fn vector_matrix_product(&self, left_vec: &[F]) -> Vec<F> {
+        let T = get_T();
+        let num_columns = get_num_columns();
+        let row_len = num_columns;
+        let num_chunks = 4 * rayon::current_num_threads().next_power_of_two();
+        let chunk_size = std::cmp::max(1, num_columns / num_chunks);
+        let num_chunks = num_columns / chunk_size;
+
+        let product: Vec<_> = (0..num_chunks)
+            .into_par_iter()
+            .flat_map(|chunk_index| {
+                let min_col_index = chunk_index * chunk_size;
+                let max_col_index = min_col_index + chunk_size;
+                let mut result: Vec<F> = unsafe_allocate_zero_vec(chunk_size);
+                for (t, k) in self.nonzero_indices.iter() {
+                    let global_index = *k as u128 * T as u128 + *t as u128;
+                    let col_index = (global_index % row_len as u128) as usize;
+                    if col_index >= min_col_index && col_index < max_col_index {
+                        let row_index = (global_index / row_len as u128) as usize;
+                        result[col_index % chunk_size] += left_vec[row_index];
+                    }
+                }
+
+                result
+            })
+            .collect();
+
+        product
     }
 
     pub fn compute_sumcheck_prover_message(&self, eq_poly: &SplitEqPolynomial<F>) -> Vec<F> {

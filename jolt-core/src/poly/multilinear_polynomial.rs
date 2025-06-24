@@ -1,5 +1,8 @@
 use crate::{
-    poly::{one_hot_polynomial::OneHotPolynomial, rlc_polynomial::RLCPolynomial},
+    poly::{
+        one_hot_polynomial::OneHotPolynomial,
+        rlc_polynomial::{get_max_num_rows, RLCPolynomial},
+    },
     utils::{compute_dotproduct, math::Math},
 };
 use ark_serialize::{
@@ -130,16 +133,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                 MultilinearPolynomial::RLC(_) | MultilinearPolynomial::OneHot(_)
             )
         }) {
-            let max_num_rows = polynomials
-                .iter()
-                .filter_map(|polynomial| match polynomial {
-                    MultilinearPolynomial::RLC(poly) => Some(poly.num_rows),
-                    MultilinearPolynomial::OneHot(poly) => Some(poly.K),
-                    _ => None,
-                })
-                .max()
-                .unwrap();
-
+            let max_num_rows = get_max_num_rows();
             let mut result = RLCPolynomial::<F>::new(max_num_rows);
             for (coeff, polynomial) in coefficients.iter().zip(polynomials.iter()) {
                 result = match polynomial {
@@ -149,8 +143,8 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                     MultilinearPolynomial::U32Scalars(poly) => poly.mul_add(*coeff, result),
                     MultilinearPolynomial::U64Scalars(poly) => poly.mul_add(*coeff, result),
                     MultilinearPolynomial::I64Scalars(poly) => poly.mul_add(*coeff, result),
-                    MultilinearPolynomial::RLC(poly) => poly.mul_add(*coeff, result),
                     MultilinearPolynomial::OneHot(poly) => poly.mul_add(*coeff, result),
+                    _ => unimplemented!("Unexpected polynomial type"),
                 };
             }
             return MultilinearPolynomial::RLC(result);
@@ -385,71 +379,71 @@ impl<F: JoltField> MultilinearPolynomial<F> {
         }
     }
 
-    #[tracing::instrument(skip_all, name = "MultilinearPolynomial::evaluate_with_eq")]
-    pub fn evaluate_with_eq(&self, eq_poly: &EqPolynomial<F>) -> F {
-        match eq_poly {
-            EqPolynomial::Default(eq) => match self {
-                MultilinearPolynomial::LargeScalars(poly) => {
-                    poly.evaluate_at_chi_low_optimized(&eq.Z)
-                }
-                _ => self.dot_product(&eq.Z),
-            },
-            EqPolynomial::Split(split_eq) => match self {
-                MultilinearPolynomial::OneHot(poly) => {
-                    assert_eq!(poly.nonzero_indices.len(), split_eq.E1_len);
-                    poly.nonzero_indices
-                        .iter()
-                        .map(|(t, k)| split_eq.E1[*t] * split_eq.E2[*k])
-                        .sum()
-                }
-                MultilinearPolynomial::RLC(poly) => {
-                    let sparse_eval: F = poly
-                        .sparse_coeffs
-                        .par_iter()
-                        .map(|group| {
-                            group
-                                .iter()
-                                .map(|(t, k, coeff)| split_eq.E1[*t] * split_eq.E2[*k] * coeff)
-                                .sum::<F>()
-                        })
-                        .sum();
-                    let dense_eval = compute_dotproduct(&poly.dense_submatrix, &split_eq.E1);
-                    sparse_eval + dense_eval
-                }
-                _ => unimplemented!("Unexpected polynomial type"),
-            },
-            EqPolynomial::Gruen(gruen_split_eq) => todo!(),
-        }
-    }
+    //     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::evaluate_with_eq")]
+    //     pub fn evaluate_with_eq(&self, eq_poly: &EqPolynomial<F>) -> F {
+    //         match eq_poly {
+    //             EqPolynomial::Default(eq) => match self {
+    //                 MultilinearPolynomial::LargeScalars(poly) => {
+    //                     poly.evaluate_at_chi_low_optimized(&eq.Z)
+    //                 }
+    //                 _ => self.dot_product(&eq.Z),
+    //             },
+    //             EqPolynomial::Split(split_eq) => match self {
+    //                 MultilinearPolynomial::OneHot(poly) => {
+    //                     assert_eq!(poly.nonzero_indices.len(), split_eq.E1_len);
+    //                     poly.nonzero_indices
+    //                         .iter()
+    //                         .map(|(t, k)| split_eq.E1[*t] * split_eq.E2[*k])
+    //                         .sum()
+    //                 }
+    //                 MultilinearPolynomial::RLC(poly) => {
+    //                     let sparse_eval: F = poly
+    //                         .sparse_rlc
+    //                         .par_iter()
+    //                         .map(|group| {
+    //                             group
+    //                                 .iter()
+    //                                 .map(|(t, k, coeff)| split_eq.E1[*t] * split_eq.E2[*k] * coeff)
+    //                                 .sum::<F>()
+    //                         })
+    //                         .sum();
+    //                     let dense_eval = compute_dotproduct(&poly.dense_rlc, &split_eq.E1);
+    //                     sparse_eval + dense_eval
+    //                 }
+    //                 _ => unimplemented!("Unexpected polynomial type"),
+    //             },
+    //             EqPolynomial::Gruen(gruen_split_eq) => todo!(),
+    //         }
+    //     }
 
-    #[tracing::instrument(skip_all, name = "MultilinearPolynomial::batch_evaluate_with_eq")]
-    pub fn batch_evaluate_with_eq(polys: &[&Self], eq_poly: &EqPolynomial<F>) -> Vec<F> {
-        match eq_poly {
-            EqPolynomial::Default(eq) => polys
-                .into_par_iter()
-                .map(|&poly| match poly {
-                    MultilinearPolynomial::LargeScalars(poly) => {
-                        poly.evaluate_at_chi_low_optimized(&eq.Z)
-                    }
-                    _ => poly.dot_product(&eq.Z),
-                })
-                .collect(),
-            EqPolynomial::Split(split_eq) => polys
-                .par_iter()
-                .map(|poly| match poly {
-                    MultilinearPolynomial::OneHot(poly) => {
-                        assert_eq!(poly.nonzero_indices.len(), split_eq.E1_len);
-                        poly.nonzero_indices
-                            .iter()
-                            .map(|(t, k)| split_eq.E1[*t] * split_eq.E2[*k])
-                            .sum()
-                    }
-                    _ => unimplemented!("Unexpected polynomial type"),
-                })
-                .collect(),
-            EqPolynomial::Gruen(gruen_split_eq) => todo!(),
-        }
-    }
+    //     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::batch_evaluate_with_eq")]
+    //     pub fn batch_evaluate_with_eq(polys: &[&Self], eq_poly: &EqPolynomial<F>) -> Vec<F> {
+    //         match eq_poly {
+    //             EqPolynomial::Default(eq) => polys
+    //                 .into_par_iter()
+    //                 .map(|&poly| match poly {
+    //                     MultilinearPolynomial::LargeScalars(poly) => {
+    //                         poly.evaluate_at_chi_low_optimized(&eq.Z)
+    //                     }
+    //                     _ => poly.dot_product(&eq.Z),
+    //                 })
+    //                 .collect(),
+    //             EqPolynomial::Split(split_eq) => polys
+    //                 .par_iter()
+    //                 .map(|poly| match poly {
+    //                     MultilinearPolynomial::OneHot(poly) => {
+    //                         assert_eq!(poly.nonzero_indices.len(), split_eq.E1_len);
+    //                         poly.nonzero_indices
+    //                             .iter()
+    //                             .map(|(t, k)| split_eq.E1[*t] * split_eq.E2[*k])
+    //                             .sum()
+    //                     }
+    //                     _ => unimplemented!("Unexpected polynomial type"),
+    //                 })
+    //                 .collect(),
+    //             EqPolynomial::Gruen(gruen_split_eq) => todo!(),
+    //         }
+    //     }
 }
 
 impl<F: JoltField> From<Vec<F>> for MultilinearPolynomial<F> {

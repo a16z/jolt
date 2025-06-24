@@ -1,11 +1,15 @@
 use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 use crate::field::JoltField;
+use crate::msm::VariableBaseMSM;
+use crate::poly::commitment::dory::{JoltFieldWrapper, JoltGroupWrapper};
 use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::one_hot_polynomial::OneHotPolynomial;
 use crate::poly::split_eq_poly::SplitEqPolynomial;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
+use ark_bn254::{Fr, G1Projective};
+use ark_ec::CurveGroup;
 use num_traits::MulAdd;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
@@ -13,11 +17,11 @@ use rayon::prelude::*;
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct RLCPolynomial<F: JoltField> {
     pub num_rows: usize,
-    /// Length-T vector of (dense) coefficients (corresponding to k=0)
-    pub dense_submatrix: Vec<F>,
-    /// 2d vector of (t, k, coeff) tuples.
-    /// There is no guarantee on the ordering of tuples within a given vector.
-    pub sparse_coeffs: Vec<Vec<(usize, usize, F)>>,
+    /// Length-T vector of (dense) coefficients (i.e. k=0)
+    pub dense_rlc: Vec<F>,
+    /// Random linear combiation of one-hot polynomials, represented
+    /// by a vector of (coefficient, one-hot polynomial) pairs
+    one_hot_rlc: Vec<(F, OneHotPolynomial<F>)>,
     num_variables_bound: usize,
 }
 
@@ -25,17 +29,9 @@ static GLOBAL_K: OnceCell<usize> = OnceCell::new();
 static GLOBAL_T: OnceCell<usize> = OnceCell::new();
 static MAX_NUM_ROWS: OnceCell<usize> = OnceCell::new();
 static NUM_COLUMNS: OnceCell<usize> = OnceCell::new();
-static CYCLES_PER_GROUP: OnceCell<usize> = OnceCell::new();
 
 pub fn get_max_num_vars() -> usize {
     get_K().log_2() + get_T().log_2()
-}
-
-fn get_cycles_per_group() -> usize {
-    CYCLES_PER_GROUP
-        .get()
-        .cloned()
-        .expect("CYCLES_PER_GROUP is uninitialized")
 }
 
 pub fn get_max_num_rows() -> usize {
@@ -67,41 +63,113 @@ impl<F: JoltField> RLCPolynomial<F> {
         let num_rows = matrix_size / num_columns;
         println!("# rows: {num_rows}");
         println!("# cols: {num_columns}");
-        let num_groups = rayon::current_num_threads() * 64;
-        let cycles_per_group = std::cmp::max(T / num_groups, 1);
+
         let _ = GLOBAL_K.set(K);
         let _ = GLOBAL_T.set(T);
         let _ = MAX_NUM_ROWS.set(num_rows as usize);
         let _ = NUM_COLUMNS.set(num_columns as usize);
-        let _ = CYCLES_PER_GROUP.set(cycles_per_group);
     }
 
     pub fn new(num_rows: usize) -> Self {
-        let num_groups = get_T() / get_cycles_per_group();
         Self {
             num_rows,
-            dense_submatrix: unsafe_allocate_zero_vec(get_T()),
-            sparse_coeffs: vec![vec![]; num_groups],
+            dense_rlc: unsafe_allocate_zero_vec(get_T()),
+            one_hot_rlc: vec![],
             num_variables_bound: 0,
         }
     }
-}
 
-impl<F: JoltField> PolynomialBinding<F> for RLCPolynomial<F> {
-    fn is_bound(&self) -> bool {
-        todo!()
+    // TODO(moodlezoup): we should be able to cache the row commitments
+    // for each underlying polynomial and take a linear combination of those
+    pub fn commit_rows<G: CurveGroup<ScalarField = F> + VariableBaseMSM>(
+        &self,
+        bases: &[G::Affine],
+    ) -> Vec<JoltGroupWrapper<G>> {
+        let num_rows = self.num_rows;
+        println!("# rows = {num_rows}");
+        let row_len = get_num_columns();
+
+        let mut row_commitments = vec![JoltGroupWrapper(G::zero()); num_rows];
+
+        self.dense_rlc
+            .par_chunks(row_len)
+            .zip(row_commitments.par_iter_mut())
+            .for_each(|(dense_row, commitment)| {
+                let msm_result: G =
+                    VariableBaseMSM::msm_field_elements(&bases, None, dense_row, None, false)
+                        .unwrap();
+                *commitment = JoltGroupWrapper(commitment.0 + msm_result)
+            });
+
+        for (coeff, poly) in self.one_hot_rlc.iter() {
+            let mut new_row_commitments: Vec<JoltGroupWrapper<G>> = poly.commit_rows(bases);
+            new_row_commitments.resize(num_rows, JoltGroupWrapper(G::zero()));
+
+            let updated_row_commitments: &mut [G1Projective] = unsafe {
+                std::slice::from_raw_parts_mut(
+                    new_row_commitments.as_mut_ptr() as *mut G1Projective,
+                    new_row_commitments.len(),
+                )
+            };
+
+            let current_row_commitments: &[G1Projective] = unsafe {
+                std::slice::from_raw_parts(
+                    row_commitments.as_ptr() as *const G1Projective,
+                    row_commitments.len(),
+                )
+            };
+
+            let coeff_fr = unsafe { *(&raw const *coeff as *const Fr) };
+
+            // Use `jolt-optimizations`: v[i] = scalar * v[i] + gamma[i]
+            jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
+                updated_row_commitments,
+                coeff_fr,
+                current_row_commitments,
+            );
+
+            let _ = std::mem::replace(&mut row_commitments, new_row_commitments);
+        }
+
+        row_commitments
     }
 
-    fn bind(&mut self, _r: F, _order: BindingOrder) {
-        todo!()
-    }
+    pub fn vector_matrix_product(
+        &self,
+        left_vec: &[JoltFieldWrapper<F>],
+    ) -> Vec<JoltFieldWrapper<F>> {
+        let left_vec: &[F] =
+            unsafe { std::slice::from_raw_parts(left_vec.as_ptr() as *const F, left_vec.len()) };
+        let num_columns = get_num_columns();
 
-    fn bind_parallel(&mut self, _r: F, _order: BindingOrder) {
-        todo!()
-    }
+        // TODO(moodlezoup): better parallelism
+        let mut result: Vec<_> = (0..num_columns)
+            .into_par_iter()
+            .map(|col_index| {
+                JoltFieldWrapper(
+                    self.dense_rlc
+                        .iter()
+                        .skip(col_index)
+                        .step_by(num_columns)
+                        .zip(left_vec.iter())
+                        .map(|(&a, &b)| -> F { a * b })
+                        .sum::<F>(),
+                )
+            })
+            .collect();
 
-    fn final_sumcheck_claim(&self) -> F {
-        todo!()
+        for (coeff, poly) in self.one_hot_rlc.iter() {
+            // TODO(moodlezoup): Pass result by mutable reference to
+            // poly.vector_matrix_product
+            result
+                .par_iter_mut()
+                .zip(poly.vector_matrix_product(left_vec).into_par_iter())
+                .for_each(|(result, new)| {
+                    result.0 += new * coeff;
+                });
+        }
+
+        result
     }
 }
 
@@ -110,47 +178,7 @@ impl<F: JoltField> MulAdd<F, RLCPolynomial<F>> for &OneHotPolynomial<F> {
 
     fn mul_add(self, a: F, mut b: RLCPolynomial<F>) -> RLCPolynomial<F> {
         assert!(!self.is_bound());
-        let cycles_per_group = get_cycles_per_group();
-        // println!("{:?}", b.sparse_coeffs);
-        // Potentially end up with more than one tuple per (row_index, col_index)
-        b.sparse_coeffs
-            .par_iter_mut()
-            .zip(self.nonzero_indices.par_iter().chunks(cycles_per_group))
-            .for_each(|(acc, new)| {
-                acc.extend(new.iter().map(|(t, k)| (*t, *k, a)));
-            });
-        // println!("{:?}", b.sparse_coeffs);
-        b
-    }
-}
-
-impl<F: JoltField> MulAdd<F, RLCPolynomial<F>> for &RLCPolynomial<F> {
-    type Output = RLCPolynomial<F>;
-
-    fn mul_add(self, a: F, mut b: RLCPolynomial<F>) -> RLCPolynomial<F> {
-        assert_eq!(
-            self.dense_submatrix.len(),
-            b.dense_submatrix.len(),
-            "dense submatrix size"
-        );
-
-        b.dense_submatrix
-            .par_iter_mut()
-            .zip(self.dense_submatrix.par_iter())
-            .for_each(|(acc, new)| {
-                *acc += a * new;
-            });
-
-        assert!(b.sparse_coeffs.len() >= self.sparse_coeffs.len());
-
-        // Potentially end up with more than one tuple per (t, k)
-        b.sparse_coeffs
-            .par_iter_mut()
-            .zip(self.sparse_coeffs.par_iter())
-            .for_each(|(acc, new)| {
-                acc.extend(new.iter().map(|(t, k, coeff)| (*t, *k, a * coeff)));
-            });
-
+        b.one_hot_rlc.push((a, self.clone())); // TODO(moodlezoup): avoid clone
         b
     }
 }
@@ -159,7 +187,7 @@ impl<T: SmallScalar, F: JoltField> MulAdd<F, RLCPolynomial<F>> for &CompactPolyn
     type Output = RLCPolynomial<F>;
 
     fn mul_add(self, a: F, mut b: RLCPolynomial<F>) -> RLCPolynomial<F> {
-        b.dense_submatrix
+        b.dense_rlc
             .par_iter_mut()
             .zip_eq(self.coeffs.par_iter())
             .for_each(|(acc, new)| {
@@ -173,7 +201,7 @@ impl<F: JoltField> MulAdd<F, RLCPolynomial<F>> for &DensePolynomial<F> {
     type Output = RLCPolynomial<F>;
 
     fn mul_add(self, a: F, mut b: RLCPolynomial<F>) -> RLCPolynomial<F> {
-        b.dense_submatrix
+        b.dense_rlc
             .par_iter_mut()
             .zip_eq(self.Z.par_iter())
             .for_each(|(acc, new)| {
