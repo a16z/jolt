@@ -5,15 +5,14 @@
 //! necessarily of the same size, each opened at a different point) into a single opening.
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use std::marker::PhantomData;
 
 use super::{
     commitment::commitment_scheme::CommitmentScheme,
     eq_poly::EqPolynomial,
-    multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
+    multilinear_polynomial::{
+        BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
+    },
 };
-#[cfg(test)]
-use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::{
     field::JoltField,
     subprotocols::sumcheck::{BatchableSumcheckInstance, BatchedSumcheck, SumcheckInstanceProof},
@@ -386,9 +385,6 @@ where
         // Need to reverse because polynomials are bound in LowToHigh order
         r_sumcheck.reverse();
 
-        println!("P r_sumcheck: {r_sumcheck:?}");
-        // println!("P claim: {joint_claim}");
-
         // Reduced opening proof
         let joint_opening_proof = PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, transcript);
 
@@ -629,23 +625,22 @@ where
         // Need to reverse because polynomials are bound in LowToHigh order
         r_sumcheck.reverse();
 
+        println!("V r_sumcheck: {r_sumcheck:?}");
+
         // Compute joint claim = ∑ᵢ γⁱ⋅ claimᵢ
         let joint_claim: F = gamma_powers
             .iter()
             .zip(reduced_opening_proof.sumcheck_claims.iter())
             .zip(self.openings.iter())
             .map(|((coeff, claim), opening)| {
-                let (r_lo, _) =
-                    r_sumcheck.split_at(num_sumcheck_rounds - opening.opening_point.len());
-                let lagrange_eval: F = r_lo.iter().map(|r| F::one() - r).product();
-                // let r_slice = &r_sumcheck[num_sumcheck_rounds - opening.opening_point.len()..];
-                // let lagrange_eval: F = r_slice.iter().map(|r| F::one() - r).product();
+                let r_slice = &r_sumcheck[num_sumcheck_rounds - opening.opening_point.len()..];
+                // let r_slice = &r_sumcheck[..num_sumcheck_rounds - opening.opening_point.len()];
+                let lagrange_eval: F = r_slice.iter().map(|r| F::one() - r).product();
+                // let lagrange_eval: F = r_slice.iter().product();
 
                 *coeff * claim * lagrange_eval
             })
             .sum();
-
-        println!("V r_sumcheck: {r_sumcheck:?}");
         println!("V claim: {joint_claim}");
 
         // Verify the reduced opening proof

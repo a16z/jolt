@@ -1,7 +1,6 @@
 use crate::{
     poly::{
         one_hot_polynomial::OneHotPolynomial, sparse_matrix_polynomial::SparseMatrixPolynomial,
-        split_eq_poly::SplitEqPolynomial,
     },
     utils::{compute_dotproduct, math::Math},
 };
@@ -750,9 +749,9 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
     fn evaluate(&self, r: &[F]) -> F {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly.evaluate(r),
-            MultilinearPolynomial::Sparse(_) => {
+            MultilinearPolynomial::Sparse(poly) => {
                 // Not actually used
-                F::zero()
+                poly.evaluate(r)
             }
             _ => {
                 let chis = EqPolynomial::evals(r);

@@ -271,7 +271,6 @@ impl<F: JoltField> SplitEqPolynomial<F> {
     #[tracing::instrument(skip_all, name = "SplitEqPolynomial::bind")]
     pub fn bind(&mut self, r: F) {
         if self.E1_len == 1 {
-            println!("r_address: {r}");
             // E_1 is already completely bound, so we bind E_2
             let n = self.E2_len / 2;
             for i in 0..n {
@@ -279,7 +278,6 @@ impl<F: JoltField> SplitEqPolynomial<F> {
             }
             self.E2_len = n;
         } else {
-            println!("r_cycle: {r}");
             // Bind E_1
             let n = self.E1_len / 2;
             for i in 0..n {

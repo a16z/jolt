@@ -113,9 +113,9 @@ mod tests {
             bytecode.clone(),
             io_device.memory_layout.clone(),
             memory_init,
-            1 << 20,
-            1 << 20,
-            1 << 20,
+            1 << 16,
+            1 << 16,
+            1 << 16,
         );
         let (proof, commitments, debug_info) =
             <RV32IJoltVM as Jolt<32, F, PCS, ProofTranscript>>::prove(
@@ -198,9 +198,9 @@ mod tests {
             bytecode.clone(),
             io_device.memory_layout.clone(),
             memory_init,
-            1 << 20,
-            1 << 20,
-            1 << 20,
+            1 << 16,
+            1 << 16,
+            1 << 16,
         );
         let (jolt_proof, jolt_commitments, debug_info) =
             <RV32IJoltVM as Jolt<

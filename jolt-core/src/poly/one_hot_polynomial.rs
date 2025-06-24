@@ -1,14 +1,11 @@
 use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 use crate::field::JoltField;
-use crate::msm::VariableBaseMSM;
-use crate::poly::commitment::dory::JoltGroupWrapper;
 #[cfg(test)]
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::sparse_matrix_polynomial::{get_T, get_num_columns};
 use crate::poly::split_eq_poly::SplitEqPolynomial;
 use crate::utils::math::Math;
-use ark_ec::CurveGroup;
 use rayon::prelude::*;
 
 #[derive(Default, Clone, Debug, PartialEq)]

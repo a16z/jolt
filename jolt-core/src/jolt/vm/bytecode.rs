@@ -309,13 +309,13 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
 
         // TODO: Reduce 2 ra claims to 1 (Section 4.5.2 of Proofs, Arguments, and Zero-Knowledge)
         let r_concat = [r_cycle_prime, r_address_prime].concat();
-        // opening_accumulator.append(
-        //     &[&unbound_ra_poly],
-        //     eq_poly,
-        //     r_concat,
-        //     &[ra_claim_prime],
-        //     transcript,
-        // );
+        opening_accumulator.append(
+            &[&unbound_ra_poly],
+            eq_poly,
+            r_concat,
+            &[ra_claim_prime],
+            transcript,
+        );
 
         let challenge: F = transcript.challenge_scalar();
         let raf_ra_shift = MultilinearPolynomial::from(F_shift);
@@ -395,12 +395,12 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
         let r_address_prime = r_address_prime.iter().copied().rev().collect::<Vec<_>>();
         let r_cycle_prime = r_cycle_prime.iter().rev().copied().collect::<Vec<_>>();
         let r_concat = [r_address_prime.as_slice(), r_cycle_prime.as_slice()].concat();
-        // opening_accumulator.append(
-        //     &[ra_commitment],
-        //     r_concat,
-        //     &[&self.ra_claim_prime],
-        //     transcript,
-        // );
+        opening_accumulator.append(
+            &[ra_commitment],
+            r_concat,
+            &[&self.ra_claim_prime],
+            transcript,
+        );
 
         let challenge: F = transcript.challenge_scalar();
         let _ = self.raf_sumcheck.verify(K, challenge, transcript)?;

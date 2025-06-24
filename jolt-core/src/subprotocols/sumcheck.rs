@@ -301,7 +301,6 @@ impl BatchedSumcheck {
                 // So, the sumcheck *actually* uses just the last `sumcheck.num_rounds()`
                 // values of `r_sumcheck`.
                 let r_slice = &r_sumcheck[max_num_rounds - sumcheck.num_rounds()..];
-                // println!("asdf {}", sumcheck.expected_output_claim(r_slice));
                 sumcheck.expected_output_claim(r_slice) * coeff
             })
             .sum();
