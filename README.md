@@ -113,6 +113,12 @@ We have enabled [benchmarking during CI](https://a16z.github.io/jolt/dev/bench/)
 
 *This repository started as a fork of https://github.com/arkworks-rs/spartan. Original Spartan [code](https://github.com/microsoft/Spartan) by Srinath Setty.*
 
+## Licensing
+
+Jolt is dual licensed under the following two licenses at your discretion: the MIT License (see [LICENSE-MIT](https://github.com/a16z/jolt/blob/main/LICENSE-MIT)), and the Apache License (see [LICENSE-APACHE](https://github.com/a16z/jolt/blob/main/LICENSE-APACHE)).
+
+Jolt is Copyright (c) a16z 2023. However, certain portions of the Jolt codebase are modifications or ports of third party code, as indicated in the applicable code headers for such code or in the copyright attribution notices we have included in the directories for such code.
+
 ## Disclaimer
 
 *This code is being provided as is. No guarantee, representation or warranty is being made, express or implied, as to the safety or correctness of the code. It has not been audited and as such there can be no assurance it will work as intended, and users may experience delays, failures, errors, omissions or loss of transmitted information. Nothing in this repo should be construed as investment advice or legal advice for any particular facts or circumstances and is not meant to replace competent counsel. It is strongly advised for you to contact a reputable attorney in your jurisdiction for any questions or concerns with respect thereto. a16z is not liable for any use of the foregoing, and users should proceed with caution and use at their own risk. See a16z.com/disclosures for more info.*
