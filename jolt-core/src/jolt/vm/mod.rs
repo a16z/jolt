@@ -6,7 +6,7 @@ use crate::jolt::vm::rv32im_vm::Serializable;
 #[cfg(feature = "prover")]
 use crate::msm::icicle;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
+use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::r1cs::constraints::R1CSConstraints;
 use crate::r1cs::spartan::UniformSpartanProof;
 use crate::utils::errors::ProofVerifyError;
@@ -206,13 +206,14 @@ where
         proof: JoltProof<WORD_SIZE, F, PCS, ProofTranscript>,
         // commitments: JoltCommitments<PCS, ProofTranscript>,
         program_io: JoltDevice,
+        #[cfg(feature = "prover")]
         _debug_info: Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
     ) -> Result<(), ProofVerifyError> {
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
         let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS, ProofTranscript> =
             VerifierOpeningAccumulator::new();
 
-        #[cfg(test)]
+        #[cfg(all(test, feature = "prover"))]
         if let Some(debug_info) = _debug_info {
             transcript.compare_to(debug_info.transcript);
             opening_accumulator
