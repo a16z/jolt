@@ -496,7 +496,7 @@ where
         opening_accumulator.append(
             &[&self.g_commitment],
             r_sumcheck.clone(),
-            &[&self.g_r_sumcheck],
+            &[self.g_r_sumcheck],
             transcript,
         );
 
@@ -507,7 +507,7 @@ where
         // Next do the line reduction verification of g(r', 0) and g(r', 1)
         let (r_g, claim_g) =
             line_reduce_verify(self.g_r_prime.0, self.g_r_prime.1, &r_prime, transcript);
-        opening_accumulator.append(&[&self.g_commitment], r_g, &[&claim_g], transcript);
+        opening_accumulator.append(&[&self.g_commitment], r_g, &[claim_g], transcript);
 
         // Similarly, we can reduce v(r', 0) and v(r', 1) to a single claim about v:
         let (r_v, claim_v) =

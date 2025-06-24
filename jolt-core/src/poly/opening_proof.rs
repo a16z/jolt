@@ -560,7 +560,7 @@ where
         &mut self,
         commitments: &[&PCS::Commitment],
         opening_point: Vec<F>,
-        claims: &[&F],
+        claims: &[F],
         transcript: &mut ProofTranscript,
     ) {
         assert_eq!(commitments.len(), claims.len());

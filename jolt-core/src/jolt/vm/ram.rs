@@ -481,7 +481,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         opening_accumulator.append(
             &[ra_commitment],
             r_concat,
-            &[&self.booleanity_proof.ra_claim],
+            &[self.booleanity_proof.ra_claim],
             transcript,
         );
 

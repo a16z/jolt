@@ -456,9 +456,11 @@ where
                 &mut transcript,
             )
             .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))?;
-        proof
-            .instruction_lookups
-            .verify(&mut opening_accumulator, &mut transcript)?;
+        proof.instruction_lookups.verify(
+            &proof.commitments,
+            &mut opening_accumulator,
+            &mut transcript,
+        )?;
         proof
             .registers
             .verify(padded_trace_length, &mut transcript)?;

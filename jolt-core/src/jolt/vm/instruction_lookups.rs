@@ -6,7 +6,9 @@ use tracer::instruction::RV32IMCycle;
 use crate::{
     field::JoltField,
     jolt::{
-        instruction::LookupQuery, lookup_table::LookupTables, vm::JoltProverPreprocessing,
+        instruction::LookupQuery,
+        lookup_table::LookupTables,
+        vm::{JoltCommitments, JoltProverPreprocessing},
         witness::CommittedPolynomials,
     },
     poly::{
@@ -120,19 +122,19 @@ where
             ra_claims,
         };
 
-        // let unbound_ra_polys = [
-        //     &CommittedPolynomials::InstructionRa(0).generate_witness(preprocessing, trace),
-        //     &CommittedPolynomials::InstructionRa(1).generate_witness(preprocessing, trace),
-        //     &CommittedPolynomials::InstructionRa(2).generate_witness(preprocessing, trace),
-        //     &CommittedPolynomials::InstructionRa(3).generate_witness(preprocessing, trace),
-        // ];
+        let unbound_ra_polys = [
+            &CommittedPolynomials::InstructionRa(0).generate_witness(preprocessing, trace),
+            &CommittedPolynomials::InstructionRa(1).generate_witness(preprocessing, trace),
+            &CommittedPolynomials::InstructionRa(2).generate_witness(preprocessing, trace),
+            &CommittedPolynomials::InstructionRa(3).generate_witness(preprocessing, trace),
+        ];
 
-        // let r_address_rev = r_address.iter().copied().rev().collect::<Vec<_>>();
-        // let eq_poly =
-        //     EqPolynomial::Split(SplitEqPolynomial::new_with_split(&r_cycle, &r_address_rev));
-        // let r_concat = [r_cycle.as_slice(), r_address_rev.as_slice()].concat();
+        let r_address_rev = r_address.iter().copied().rev().collect::<Vec<_>>();
+        let eq_poly =
+            EqPolynomial::Split(SplitEqPolynomial::new_with_split(&r_cycle, &r_address_rev));
+        let r_concat = [r_cycle.as_slice(), r_address_rev.as_slice()].concat();
 
-        // opening_accumulator.append(&unbound_ra_polys, eq_poly, r_concat, &ra_claims, transcript);
+        opening_accumulator.append(&unbound_ra_polys, eq_poly, r_concat, &ra_claims, transcript);
 
         // TODO(moodlezoup): Interleaved raf evaluation
 
@@ -147,7 +149,8 @@ where
 
     pub fn verify(
         &self,
-        _opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
+        commitments: &JoltCommitments<F, PCS, ProofTranscript>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let r_cycle: Vec<F> = transcript.challenge_vector(self.log_T);
@@ -176,8 +179,8 @@ where
 
         r_address = r_address.into_iter().rev().collect();
         let eq_eval_address = EqPolynomial::mle(&r_address, r_address_prime);
-        let r_cycle: Vec<_> = r_cycle.iter().copied().rev().collect();
-        let eq_eval_cycle = EqPolynomial::mle(&r_cycle, r_cycle_prime);
+        let r_cycle_rev: Vec<_> = r_cycle.iter().copied().rev().collect();
+        let eq_eval_cycle = EqPolynomial::mle(&r_cycle_rev, r_cycle_prime);
 
         assert_eq!(
             eq_eval_address
@@ -200,7 +203,7 @@ where
         let z_hamming_weight: F = transcript.challenge_scalar();
         let z_hamming_weight_squared: F = z_hamming_weight.square();
         let z_hamming_weight_cubed: F = z_hamming_weight_squared * z_hamming_weight;
-        let (sumcheck_claim, _r_hamming_weight) = self.hamming_weight_proof.sumcheck_proof.verify(
+        let (sumcheck_claim, r_hamming_weight) = self.hamming_weight_proof.sumcheck_proof.verify(
             F::one() + z_hamming_weight + z_hamming_weight_squared + z_hamming_weight_cubed,
             16,
             1,
@@ -214,6 +217,33 @@ where
                 + z_hamming_weight_cubed * self.hamming_weight_proof.ra_claims[3],
             sumcheck_claim,
             "Hamming weight sumcheck failed"
+        );
+
+        let r_hamming_weight: Vec<_> = r_hamming_weight.iter().copied().rev().collect();
+        let r_concat = [r_hamming_weight.as_slice(), r_cycle.as_slice()].concat();
+        opening_accumulator.append(
+            &[&commitments.commitments[CommittedPolynomials::InstructionRa(0).to_index()]],
+            r_concat.clone(),
+            &[self.hamming_weight_proof.ra_claims[0]],
+            transcript,
+        );
+        opening_accumulator.append(
+            &[&commitments.commitments[CommittedPolynomials::InstructionRa(1).to_index()]],
+            r_concat.clone(),
+            &[self.hamming_weight_proof.ra_claims[1]],
+            transcript,
+        );
+        opening_accumulator.append(
+            &[&commitments.commitments[CommittedPolynomials::InstructionRa(2).to_index()]],
+            r_concat.clone(),
+            &[self.hamming_weight_proof.ra_claims[2]],
+            transcript,
+        );
+        opening_accumulator.append(
+            &[&commitments.commitments[CommittedPolynomials::InstructionRa(3).to_index()]],
+            r_concat,
+            &[self.hamming_weight_proof.ra_claims[3]],
+            transcript,
         );
 
         Ok(())

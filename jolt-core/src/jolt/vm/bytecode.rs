@@ -375,7 +375,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
 
         let r_concat = [r_address_rev.as_slice(), r_cycle.as_slice()].concat();
         let ra_commitment = &commitments.commitments[CommittedPolynomials::BytecodeRa.to_index()];
-        opening_accumulator.append(&[ra_commitment], r_concat, &[&self.ra_claim], transcript);
+        opening_accumulator.append(&[ra_commitment], r_concat, &[self.ra_claim], transcript);
 
         let (sumcheck_claim, r_booleanity) =
             self.booleanity_sumcheck
@@ -398,7 +398,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
         opening_accumulator.append(
             &[ra_commitment],
             r_concat,
-            &[&self.ra_claim_prime],
+            &[self.ra_claim_prime],
             transcript,
         );
 
