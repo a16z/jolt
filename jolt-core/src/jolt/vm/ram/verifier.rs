@@ -137,7 +137,10 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             }),
         };
 
-        let mut r_cycle_prime = sumcheck_instance.verify_single(
+        let mut r_cycle_prime = <ValEvaluationSumcheck<F> as BatchableSumcheckInstance<
+            F,
+            ProofTranscript,
+        >>::verify_single(&sumcheck_instance,
             &self.val_evaluation_proof.sumcheck_proof,
             transcript,
         )?;
@@ -188,7 +191,10 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             memory_layout: None,
         };
 
-        let r_booleanity = sumcheck_instance.verify_single(
+        let r_booleanity = <ValEvaluationSumcheck<F> as BatchableSumcheckInstance<
+            F,
+            ProofTranscript,
+        >>::verify_single(&sumcheck_instance,
             &self.booleanity_proof.sumcheck_proof,
             transcript,
         )?;
@@ -235,8 +241,10 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             d,
         );
 
-        let _r_hamming_weight = sumcheck_instance
-            .verify_single(&self.hamming_weight_proof.sumcheck_proof, transcript)?;
+        let _r_hamming_weight = <ValEvaluationSumcheck<F> as BatchableSumcheckInstance<
+            F,
+            ProofTranscript,
+        >>::verify_single(&sumcheck_instance, &self.hamming_weight_proof.sumcheck_proof, transcript)?;
 
         let _r_address_raf =
             self.raf_evaluation_proof
