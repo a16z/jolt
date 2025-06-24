@@ -21,10 +21,10 @@ license-file = "LICENSE"
 keywords = ["SNARK", "cryptography", "proofs", "zkVM"]
 
 [features]
-default = ["parallel", "host"]
+default = ["host"]
 host = ["dep:reqwest", "dep:tokio", "prover"]
 host-verifier = ["dep:reqwest", "dep:tokio"]
-prover = []
+prover = ["parallel"]
 parallel = [
     "ark-ec/parallel",
     "ark-ff/parallel",

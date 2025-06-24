@@ -5,6 +5,7 @@ use ark_std::vec::Vec;
 #[cfg(feature = "icicle")]
 use icicle_core::curve::Affine;
 use num_integer::Integer;
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::borrow::Borrow;
 
@@ -24,6 +25,7 @@ pub type GpuBaseType<G: ScalarMul> = G::MulBase;
 
 use crate::poly::unipoly::UniPoly;
 use itertools::Either;
+use crate::{into_optimal_iter, optimal_iter};
 
 /// Copy of ark_ec::VariableBaseMSM with minor modifications to speed up
 /// known small element sized MSMs.
@@ -161,8 +163,7 @@ where
                             }
                         }
 
-                        let scalars = scalars
-                            .par_iter()
+                        let scalars = optimal_iter!(scalars)
                             .map(|s| s.into_bigint())
                             .collect::<Vec<_>>();
                         if Self::NEGATION_IS_CHEAP {
@@ -211,9 +212,8 @@ where
             }
             MultilinearPolynomial::I64Scalars(poly) => {
                 // TODO(moodlezoup): This can be optimized
-                let scalars: Vec<_> = poly
-                    .coeffs
-                    .par_iter()
+                let scalars: Vec<_> = optimal_iter!(poly
+                    .coeffs)
                     .map(|x| Self::ScalarField::from_i64(*x))
                     .collect();
                 Self::msm_field_elements(bases, gpu_bases, &scalars, max_num_bits, use_icicle)
@@ -235,9 +235,9 @@ where
     {
         // Validate input lengths
         if variable_batches {
-            assert!(polys.par_iter().all(|s| s.borrow().len() <= bases.len()));
+            assert!(optimal_iter!(polys).all(|s| s.borrow().len() <= bases.len()));
         } else {
-            assert!(polys.par_iter().all(|s| s.borrow().len() == bases.len()));
+            assert!(optimal_iter!(polys).all(|s| s.borrow().len() == bases.len()));
             assert_eq!(bases.len(), gpu_bases.map_or(bases.len(), |b| b.len()));
         }
 
@@ -250,8 +250,7 @@ where
         if !use_icicle {
             let span = tracing::span!(tracing::Level::INFO, "batch_msm_cpu_only");
             let _guard = span.enter();
-            return polys
-                .into_par_iter()
+            return into_optimal_iter!(polys)
                 .map(|poly| {
                     let poly = poly.borrow();
                     let bases_slice = &bases[..poly.len()];
@@ -264,7 +263,7 @@ where
         let span = tracing::span!(tracing::Level::INFO, "group_scalar_indices_parallel");
         let _guard = span.enter();
         let (cpu_batch, gpu_batch): (Vec<_>, Vec<_>) =
-            polys.par_iter().enumerate().partition_map(|(i, poly)| {
+            optimal_iter!(polys).enumerate().partition_map(|(i, poly)| {
                 let poly = poly.borrow();
                 let max_num_bits = poly.max_num_bits();
 
@@ -302,8 +301,7 @@ where
         // Handle CPU computations in parallel
         let span = tracing::span!(tracing::Level::INFO, "batch_msm_cpu");
         let _guard = span.enter();
-        let cpu_results: Vec<(usize, Self)> = cpu_batch
-            .into_par_iter()
+        let cpu_results: Vec<(usize, Self)> = into_optimal_iter!(cpu_batch)
             .map(|(i, max_num_bits, poly)| {
                 let bases_slice = &bases[..poly.len()];
                 (
@@ -348,8 +346,7 @@ where
                     let slices_at_a_time = total_memory_bits() / slice_bit_size;
 
                     for work_chunk in gpu_batch.chunks(slices_at_a_time) {
-                        let (max_num_bits, chunk_polys): (Vec<_>, Vec<_>) = work_chunk
-                            .par_iter()
+                        let (max_num_bits, chunk_polys): (Vec<_>, Vec<_>) = optimal_iter!(work_chunk)
                             .map(|(_, max_num_bits, poly)| (*max_num_bits, poly.as_slice()))
                             .unzip();
 
@@ -406,8 +403,7 @@ where
     where
         P: Borrow<UniPoly<Self::ScalarField>> + Sync,
     {
-        assert!(polys
-            .par_iter()
+        assert!(optimal_iter!(polys)
             .all(|s| s.borrow().coeffs.len() <= bases.len()));
         #[cfg(not(feature = "icicle"))]
         assert!(gpu_bases.is_none());
@@ -417,8 +413,7 @@ where
         if !use_icicle {
             let span = tracing::span!(tracing::Level::INFO, "batch_msm_cpu_only");
             let _guard = span.enter();
-            return polys
-                .into_par_iter()
+            return into_optimal_iter!(polys)
                 .map(|poly| {
                     Self::msm_field_elements(
                         &bases[..poly.borrow().coeffs.len()],
@@ -436,7 +431,7 @@ where
         let span = tracing::span!(tracing::Level::INFO, "group_scalar_indices_parallel");
         let _guard = span.enter();
         let (cpu_batch, gpu_batch): (Vec<_>, Vec<_>) =
-            polys.par_iter().enumerate().partition_map(|(i, poly)| {
+            optimal_iter!(polys).enumerate().partition_map(|(i, poly)| {
                 let poly = poly.borrow();
                 let max_num_bits = (*poly.coeffs.iter().max().unwrap()).num_bits() as usize;
                 if use_icicle && max_num_bits > 10 {
@@ -452,8 +447,7 @@ where
         // Handle CPU computations in parallel
         let span = tracing::span!(tracing::Level::INFO, "batch_msm_cpu");
         let _guard = span.enter();
-        let cpu_results: Vec<(usize, Self)> = cpu_batch
-            .into_par_iter()
+        let cpu_results: Vec<(usize, Self)> = into_optimal_iter!(cpu_batch)
             .map(|(i, max_num_bits, poly)| {
                 (
                     i,
@@ -504,8 +498,7 @@ where
     #[cfg(feature = "icicle")]
     #[tracing::instrument(skip_all)]
     fn get_gpu_bases(bases: &[Self::MulBase]) -> Vec<GpuBaseType<Self>> {
-        bases
-            .par_iter()
+        optimal_iter!(bases)
             .map(|base| <Self as Icicle>::from_ark_affine(base))
             .collect()
     }
@@ -519,8 +512,7 @@ pub fn use_icicle() -> bool {
 }
 
 fn map_field_elements_to_u16<F: PrimeField>(field_elements: &[F]) -> Vec<u16> {
-    field_elements
-        .par_iter()
+    optimal_iter!(field_elements)
         .map(|s| {
             let bigint = s.into_bigint();
             let limbs: &[u64] = bigint.as_ref();
@@ -530,8 +522,7 @@ fn map_field_elements_to_u16<F: PrimeField>(field_elements: &[F]) -> Vec<u16> {
 }
 
 fn map_field_elements_to_u64<F: PrimeField>(field_elements: &[F]) -> Vec<u64> {
-    field_elements
-        .par_iter()
+    optimal_iter!(field_elements)
         .map(|s| {
             let bigint = s.into_bigint();
             let limbs: &[u64] = bigint.as_ref();
@@ -560,13 +551,11 @@ where
 
     let num_bits = max_num_bits;
     let digits_count = num_bits.div_ceil(c);
-    let scalar_digits = scalars
-        .into_par_iter()
+    let scalar_digits = into_optimal_iter!(scalars)
         .flat_map_iter(|s| make_digits_bigint(s, c, num_bits))
         .collect::<Vec<_>>();
     let zero = V::zero();
-    let window_sums: Vec<_> = (0..digits_count)
-        .into_par_iter()
+    let window_sums: Vec<_> = into_optimal_iter!((0..digits_count))
         .map(|i| {
             let mut buckets = vec![zero; 1 << c];
             for (digits, base) in scalar_digits.chunks(digits_count).zip(bases) {
@@ -770,7 +759,7 @@ where
     let zero = V::zero();
 
     let scalars_and_bases_iter = scalars.iter().zip(bases).filter(|(s, _base)| !s.is_zero());
-    let window_starts = (0..max_num_bits).into_par_iter().step_by(c);
+    let window_starts = into_optimal_iter!((0..max_num_bits)).step_by(c);
 
     // Each window is of size `c`.
     // We divide up the bits 0..num_bits into windows of size `c`, and

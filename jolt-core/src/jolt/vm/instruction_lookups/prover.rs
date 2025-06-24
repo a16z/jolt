@@ -23,11 +23,10 @@ use crate::{
         unipoly::{CompressedUniPoly, UniPoly},
     },
     subprotocols::{
-        sparse_dense_shout::{prove_sparse_dense_shout, verify_sparse_dense_shout},
+        sparse_dense_shout::{prove_sparse_dense_shout},
         sumcheck::SumcheckInstanceProof,
     },
     utils::{
-        errors::ProofVerifyError,
         math::Math,
         thread::unsafe_allocate_zero_vec,
         transcript::{AppendToTranscript, Transcript},
