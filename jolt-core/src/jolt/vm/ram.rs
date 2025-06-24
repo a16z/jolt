@@ -702,7 +702,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 
         // Linear combination of the read-checking claim (which is rv(r')) and the
         // write-checking claim (which is Inc(r, r'))
-        let mut previous_claim = rv_eval;
+        let mut previous_claim = rv_eval + wv_eval;
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
         let span = tracing::span!(
@@ -745,28 +745,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 
         // First log(T / num_chunks) rounds of sumcheck
         for round in 0..chunk_size.log_2() {
-            #[cfg(test)]
-            {
-                let mut expected_claim = F::zero();
-                for j in 0..(T >> round) {
-                    let mut inner_sum = F::zero();
-                    for k in 0..K {
-                        let kj = k * (T >> round) + j;
-                        // read-checking sumcheck
-                        inner_sum += ra_test.get_bound_coeff(kj) * val_test.get_bound_coeff(kj);
-                        // write-checking sumcheck
-                        // inner_sum += z_eq_r.get_bound_coeff(k)
-                        //     * ra_test.get_bound_coeff(kj)
-                        //     * (wv.get_bound_coeff(j) - val_test.get_bound_coeff(kj))
-                    }
-                    expected_claim += eq_r_prime.get_bound_coeff(j) * inner_sum;
-                }
-                assert_eq!(
-                    expected_claim, previous_claim,
-                    "Sumcheck sanity check failed in round {round}"
-                );
-            }
-
             let inner_span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
             let _inner_guard = inner_span.enter();
 
@@ -873,17 +851,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                                     inner_sum_evals[2] +=
                                         ra_eval_3 * (val_eval_3 + z * (inc_eval_3 + val_eval_3));
 
-                                    // inner_sum_evals[0] += ra[0][k]
-                                    //     .mul_0_optimized(val_j_r[0][k] + z * (val_j_r[0][k]));
-                                    // inner_sum_evals[1] +=
-                                    //     ra_eval_2 * (val_eval_2 + z * (val_eval_2));
-                                    // inner_sum_evals[2] +=
-                                    //     ra_eval_3 * (val_eval_3 + z * (val_eval_3));
-
-                                    // inner_sum_evals[0] += ra[0][k].mul_0_optimized(val_j_r[0][k]);
-                                    // inner_sum_evals[1] += ra_eval_2 * val_eval_2;
-                                    // inner_sum_evals[2] += ra_eval_3 * val_eval_3;
-
                                     ra[0][k] = F::zero();
                                     ra[1][k] = F::zero();
                                 }
@@ -927,6 +894,8 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                     .map(|j| {
                         let ra_evals = ra_test.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
                         let val_evals = val_test.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+
+                        // Evaluate at k
                         let eq_r_prime_evals = eq_r_prime.sumcheck_evals(
                             j % (T / (round + 1).pow2()),
                             DEGREE,
@@ -934,9 +903,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                         );
                         let inc_evals = inc_test.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
                         [
-                            // eq_r_prime_evals[0] * ra_evals[0] * val_evals[0],
-                            // eq_r_prime_evals[1] * ra_evals[1] * val_evals[1],
-                            // eq_r_prime_evals[2] * ra_evals[2] * val_evals[2],
                             eq_r_prime_evals[0]
                                 * ra_evals[0]
                                 * (val_evals[0] + z * (inc_evals[0] + val_evals[0])),
@@ -958,7 +924,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                             ]
                         },
                     );
-                println!("round: {:?}", round);
                 assert_eq!(test_univariate_poly_evals, univariate_poly_evals);
             }
 
@@ -968,6 +933,15 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 
             let r_j = transcript.challenge_scalar::<F>();
             r_cycle.insert(0, r_j);
+
+            #[cfg(test)]
+            {
+                [&mut ra_test, &mut val_test, &mut inc_test]
+                    .into_par_iter()
+                    .for_each(|poly| {
+                        poly.bind_parallel(r_j, BindingOrder::LowToHigh);
+                    });
+            }
 
             previous_claim = univariate_poly.evaluate(&r_j);
 
@@ -988,6 +962,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                             debug_assert!(j_prime % 2 == 1);
                             I_chunk[bound_index].2 += r_j * inc_lt;
                             I_chunk[bound_index].3 += inc;
+                            I_chunk[bound_index].4 += inc_eval * r_j;
                             continue;
                         }
                     }
@@ -998,7 +973,13 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                     } else {
                         r_j * inc_lt
                     };
-                    I_chunk[next_bound_index] = (j_prime / 2, k, bound_value, inc, inc_eval);
+                    let new_inc_eval = if j_prime % 2 == 0 {
+                        inc_eval - inc_eval * r_j
+                    } else {
+                        inc_eval * r_j
+                    };
+
+                    I_chunk[next_bound_index] = (j_prime / 2, k, bound_value, inc, new_inc_eval);
                     bound_indices[k] = Some(next_bound_index);
                     next_bound_index += 1;
                 }
@@ -1008,27 +989,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             drop(_inner_guard);
             drop(inner_span);
 
-            rayon::join(
-                || wv.bind_parallel(r_j, BindingOrder::LowToHigh),
-                || eq_r_prime.bind_parallel(r_j, BindingOrder::LowToHigh),
-            );
-
-            // #[cfg(test)]
-            // {
-            //     val_test.bind_parallel(r_j, BindingOrder::LowToHigh);
-            //     ra_test.bind_parallel(r_j, BindingOrder::LowToHigh);
-
-            //     // Check that row indices of I are non-decreasing
-            //     let mut current_row = 0;
-            //     for I_chunk in I.iter() {
-            //         for (row, _, _, _) in I_chunk {
-            //             if *row != current_row {
-            //                 assert_eq!(*row, current_row + 1);
-            //                 current_row = *row;
-            //             }
-            //         }
-            //     }
-            // }
+            eq_r_prime.bind_parallel(r_j, BindingOrder::LowToHigh);
 
             let inner_span = tracing::span!(tracing::Level::INFO, "Update A");
             let _inner_guard = inner_span.enter();
@@ -1043,11 +1004,10 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                     *x -= *y;
                 });
         }
-        panic!("success");
-
 
         drop(_guard);
         drop(span);
+        panic!("success");
 
         // At this point I has been bound to a point where each chunk contains a single row,
         // so we might as well materialize the full `ra`, `wa`, and `Val` polynomials and perform
