@@ -21,16 +21,17 @@ license-file = "LICENSE"
 keywords = ["SNARK", "cryptography", "proofs", "zkVM"]
 
 [features]
-default = [
+default = ["parallel", "host"]
+host = ["dep:reqwest", "dep:tokio", "prover"]
+host-verifier = ["dep:reqwest", "dep:tokio"]
+prover = []
+parallel = [
     "ark-ec/parallel",
     "ark-ff/parallel",
     "ark-std/parallel",
     "ark-ff/asm",
-    "host",
     "rayon",
 ]
-host = ["dep:reqwest", "dep:tokio", "prover"]
-prover = []
 icicle = [
     "default",
     "dep:icicle-runtime",

@@ -1,4 +1,7 @@
-use crate::jolt::vm::ram::{remap_address, BooleanityProof, HammingWeightProof, RAMPreprocessing, RAMTwistProof, RafEvaluationProof, ReadWriteCheckingProof, ValEvaluationProof};
+use crate::jolt::vm::ram::{
+    remap_address, BooleanityProof, HammingWeightProof, RAMPreprocessing, RAMTwistProof,
+    RafEvaluationProof, ReadWriteCheckingProof, ValEvaluationProof,
+};
 use crate::{
     field::{JoltField, OptimizedMul},
     poly::{
@@ -17,7 +20,7 @@ use crate::{
         transcript::{AppendToTranscript, Transcript},
     },
 };
-use common::{jolt_device::MemoryLayout};
+use common::jolt_device::MemoryLayout;
 use rayon::prelude::*;
 use tracer::{
     instruction::{RAMAccess, RV32IMCycle},
@@ -829,16 +832,16 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                                 [
                                     ra_evals[0].mul_0_optimized(val_evals[0])
                                         + z_eq_r_eval
-                                        .mul_0_optimized(ra_evals[0])
-                                        .mul_0_optimized(wv_evals[0] - val_evals[0]),
+                                            .mul_0_optimized(ra_evals[0])
+                                            .mul_0_optimized(wv_evals[0] - val_evals[0]),
                                     ra_evals[1].mul_0_optimized(val_evals[1])
                                         + z_eq_r_eval
-                                        .mul_0_optimized(ra_evals[1])
-                                        .mul_0_optimized(wv_evals[1] - val_evals[1]),
+                                            .mul_0_optimized(ra_evals[1])
+                                            .mul_0_optimized(wv_evals[1] - val_evals[1]),
                                     ra_evals[2].mul_0_optimized(val_evals[2])
                                         + z_eq_r_eval
-                                        .mul_0_optimized(ra_evals[2])
-                                        .mul_0_optimized(wv_evals[2] - val_evals[2]),
+                                            .mul_0_optimized(ra_evals[2])
+                                            .mul_0_optimized(wv_evals[2] - val_evals[2]),
                                 ]
                             })
                             .reduce(

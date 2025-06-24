@@ -8,11 +8,7 @@ pub use verifier::*;
 use crate::{
     field::JoltField,
     subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::{
-        math::Math
-        ,
-        transcript::{AppendToTranscript, Transcript},
-    },
+    utils::transcript::{AppendToTranscript, Transcript},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 

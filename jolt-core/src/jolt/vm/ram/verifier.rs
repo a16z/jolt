@@ -1,22 +1,16 @@
+use crate::jolt::vm::ram::remap_address;
 use crate::{
     field::JoltField,
     jolt::vm::ram::{RAMPreprocessing, RAMTwistProof, RafEvaluationProof, ReadWriteCheckingProof},
     poly::{
         eq_poly::EqPolynomial,
         identity_poly::UnmapRamAddressPolynomial,
-        multilinear_polynomial::{
-            MultilinearPolynomial, PolynomialEvaluation,
-        }
+        multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     },
-    utils::{
-        errors::ProofVerifyError,
-        math::Math,
-        transcript::Transcript,
-    }
+    utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
 };
 use common::jolt_device::MemoryLayout;
 use tracer::JoltDevice;
-use crate::jolt::vm::ram::remap_address;
 
 impl<F: JoltField, ProofTranscript: Transcript> RafEvaluationProof<F, ProofTranscript> {
     pub fn verify(
@@ -195,9 +189,9 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         assert_eq!(
             eq_eval_cycle * self.ra_claim * self.val_claim
                 + z * eq_eval_address
-                * eq_eval_cycle
-                * self.ra_claim
-                * (self.wv_claim - self.val_claim),
+                    * eq_eval_cycle
+                    * self.ra_claim
+                    * (self.wv_claim - self.val_claim),
             sumcheck_claim,
             "Read/write-checking sumcheck failed"
         );

@@ -5,12 +5,12 @@ pub use prover::*;
 mod verifier;
 pub use verifier::*;
 
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::constants::BYTES_PER_INSTRUCTION;
-use common::jolt_device::MemoryLayout;
 use crate::field::JoltField;
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::utils::transcript::Transcript;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use common::constants::BYTES_PER_INSTRUCTION;
+use common::jolt_device::MemoryLayout;
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct RAMPreprocessing {
@@ -140,10 +140,10 @@ fn remap_address(address: u64, memory_layout: &MemoryLayout) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::math::Math;
     use crate::utils::transcript::KeccakTranscript;
     use ark_bn254::Fr;
     use tracer::instruction::RV32IMCycle;
-    use crate::utils::math::Math;
 
     #[test]
     fn test_raf_evaluation_no_ops() {

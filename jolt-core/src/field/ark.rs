@@ -1,6 +1,6 @@
-use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
 use crate::into_optimal_iter;
 use crate::utils::thread::unsafe_allocate_zero_vec;
+use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
 
 use super::{FieldOps, JoltField};
 

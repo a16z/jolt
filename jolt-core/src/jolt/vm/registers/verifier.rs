@@ -1,27 +1,10 @@
+use crate::jolt::vm::registers::{ReadWriteCheckingProof, RegistersTwistProof};
 use crate::{
-    field::{JoltField, OptimizedMul},
-    poly::{
-        eq_poly::EqPolynomial,
-        multilinear_polynomial::{
-            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-        },
-        opening_proof::ProverOpeningAccumulator,
-        unipoly::{CompressedUniPoly, UniPoly},
-    },
-    subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::{
-        errors::ProofVerifyError,
-        math::Math,
-        thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
-        transcript::{AppendToTranscript, Transcript},
-    },
+    field::JoltField,
+    poly::eq_poly::EqPolynomial,
+    utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
 };
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::REGISTER_COUNT;
-use fixedbitset::FixedBitSet;
-use rayon::prelude::*;
-use tracer::instruction::RV32IMCycle;
-use crate::jolt::vm::registers::{ReadWriteCheckingProof, RegistersTwistProof, ValEvaluationProof};
 
 impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTranscript> {
     pub fn verify(

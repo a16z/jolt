@@ -1,3 +1,4 @@
+use crate::jolt::vm::registers::{ReadWriteCheckingProof, RegistersTwistProof, ValEvaluationProof};
 use crate::{
     field::{JoltField, OptimizedMul},
     poly::{
@@ -10,18 +11,15 @@ use crate::{
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{
-        errors::ProofVerifyError,
         math::Math,
         thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
         transcript::{AppendToTranscript, Transcript},
     },
 };
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::REGISTER_COUNT;
 use fixedbitset::FixedBitSet;
 use rayon::prelude::*;
 use tracer::instruction::RV32IMCycle;
-use crate::jolt::vm::registers::{ReadWriteCheckingProof, RegistersTwistProof, ValEvaluationProof};
 
 impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTranscript> {
     #[tracing::instrument(skip_all, name = "RegistersTwistProof::prove")]
@@ -916,8 +914,8 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                     &mut val,
                     &mut eq_r_prime,
                 ]
-                    .into_par_iter()
-                    .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+                .into_par_iter()
+                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
             } else {
                 // Bind an address variable k
                 r_address.push(r_j);
