@@ -287,7 +287,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
             EqPolynomial::Split(SplitEqPolynomial::new_with_split(&r_cycle, &r_address_rev));
 
         let r_concat = [r_cycle.as_slice(), r_address_rev.as_slice()].concat();
-        println!("P r_concat: {r_concat:?}");
         opening_accumulator.append(
             &[&unbound_ra_poly],
             eq_poly,
@@ -301,11 +300,22 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
         let (booleanity_sumcheck_proof, r_address_prime, r_cycle_prime, ra_claim_prime) =
             prove_booleanity(&bytecode_preprocessing, trace, &r_address, E, F, transcript);
 
-        let r_address_prime = r_address_prime.iter().cloned().rev().collect::<Vec<_>>();
+        let r_address_prime = r_address_prime.iter().copied().rev().collect::<Vec<_>>();
+        let r_cycle_prime = r_cycle_prime.iter().rev().copied().collect::<Vec<_>>();
         let eq_poly = EqPolynomial::Split(SplitEqPolynomial::new_with_split(
-            &r_cycle_prime.iter().rev().cloned().collect::<Vec<_>>(),
+            &r_cycle_prime,
             &r_address_prime,
         ));
+
+        // TODO: Reduce 2 ra claims to 1 (Section 4.5.2 of Proofs, Arguments, and Zero-Knowledge)
+        let r_concat = [r_cycle_prime, r_address_prime].concat();
+        opening_accumulator.append(
+            &[&unbound_ra_poly],
+            eq_poly,
+            r_concat,
+            &[ra_claim_prime],
+            transcript,
+        );
 
         let challenge: F = transcript.challenge_scalar();
         let raf_ra_shift = MultilinearPolynomial::from(F_shift);
@@ -319,16 +329,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
             challenge,
             transcript,
         );
-
-        // TODO: Reduce 2 ra claims to 1 (Section 4.5.2 of Proofs, Arguments, and Zero-Knowledge)
-        let r_concat = [r_cycle_prime, r_address_prime].concat();
-        // opening_accumulator.append(
-        //     &[&unbound_ra_poly],
-        //     eq_poly,
-        //     r_concat,
-        //     &[ra_claim_prime],
-        //     transcript,
-        // );
 
         Self {
             core_piop_sumcheck: core_piop_sumcheck_proof,
@@ -374,7 +374,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
         );
 
         let r_concat = [r_address_rev.as_slice(), r_cycle.as_slice()].concat();
-        println!("V r_concat: {r_concat:?}");
         let ra_commitment = &commitments.commitments[CommittedPolynomials::BytecodeRa.to_index()];
         opening_accumulator.append(&[ra_commitment], r_concat, &[&self.ra_claim], transcript);
 
@@ -391,19 +390,20 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
             "Booleanity sumcheck failed"
         );
 
+        // TODO: Reduce 2 ra claims to 1 (Section 4.5.2 of Proofs, Arguments, and Zero-Knowledge)
+        // let r_address_prime = r_address_prime.iter().cloned().rev().collect::<Vec<_>>();
+        let r_address_prime = r_address_prime.iter().copied().rev().collect::<Vec<_>>();
+        let r_cycle_prime = r_cycle_prime.iter().rev().copied().collect::<Vec<_>>();
+        let r_concat = [r_address_prime.as_slice(), r_cycle_prime.as_slice()].concat();
+        opening_accumulator.append(
+            &[ra_commitment],
+            r_concat,
+            &[&self.ra_claim_prime],
+            transcript,
+        );
+
         let challenge: F = transcript.challenge_scalar();
         let _ = self.raf_sumcheck.verify(K, challenge, transcript)?;
-
-        // TODO: Reduce 2 ra claims to 1 (Section 4.5.2 of Proofs, Arguments, and Zero-Knowledge)
-        let r_address_prime = r_address_prime.iter().cloned().rev().collect::<Vec<_>>();
-        let r_concat = [r_cycle_prime, &r_address_prime].concat();
-        let ra_commitment = &commitments.commitments[CommittedPolynomials::BytecodeRa.to_index()];
-        // opening_accumulator.append(
-        //     &[ra_commitment],
-        //     r_concat,
-        //     &[&self.ra_claim_prime],
-        //     transcript,
-        // );
 
         Ok(())
     }

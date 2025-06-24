@@ -171,7 +171,7 @@ where
 
     fn expected_output_claim(&self, r: &[F]) -> F {
         // Need to reverse because polynomials are bound in LowToHigh order
-        let r_rev: Vec<_> = r.iter().cloned().rev().collect();
+        let r_rev: Vec<_> = r.iter().copied().rev().collect();
         let eq_eval = EqPolynomial::mle(&self.opening_point, &r_rev);
 
         eq_eval * self.sumcheck_claim.unwrap()
