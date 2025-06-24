@@ -115,29 +115,29 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
         todo!();
     }
 
-    pub fn evaluate(&self, r: &[F]) -> F {
-        let K = self.num_rows;
-        assert_eq!(K.log_2() + get_T().log_2(), r.len());
+    // pub fn evaluate(&self, r: &[F]) -> F {
+    //     let K = self.num_rows;
+    //     assert_eq!(K.log_2() + get_T().log_2(), r.len());
 
-        let (r_address, r_cycle) = r.split_at(K.log_2());
-        let (eq_r_address, eq_r_cycle) = rayon::join(
-            || EqPolynomial::evals(r_address),
-            || EqPolynomial::evals(r_cycle),
-        );
+    //     let (r_address, r_cycle) = r.split_at(K.log_2());
+    //     let (eq_r_address, eq_r_cycle) = rayon::join(
+    //         || EqPolynomial::evals(r_address),
+    //         || EqPolynomial::evals(r_cycle),
+    //     );
 
-        let sparse_eval: F = self
-            .sparse_coeffs
-            .par_iter()
-            .map(|group| {
-                group
-                    .iter()
-                    .map(|(t, k, coeff)| eq_r_cycle[*t] * eq_r_address[*k] * coeff)
-                    .sum::<F>()
-            })
-            .sum();
-        let dense_eval = compute_dotproduct(&self.dense_submatrix, &eq_r_cycle);
-        sparse_eval + dense_eval
-    }
+    //     let sparse_eval: F = self
+    //         .sparse_coeffs
+    //         .par_iter()
+    //         .map(|group| {
+    //             group
+    //                 .iter()
+    //                 .map(|(t, k, coeff)| eq_r_cycle[*t] * eq_r_address[*k] * coeff)
+    //                 .sum::<F>()
+    //         })
+    //         .sum();
+    //     let dense_eval = compute_dotproduct(&self.dense_submatrix, &eq_r_cycle);
+    //     sparse_eval + dense_eval
+    // }
 }
 
 impl<F: JoltField> PolynomialBinding<F> for SparseMatrixPolynomial<F> {
@@ -215,7 +215,7 @@ impl<T: SmallScalar, F: JoltField> MulAdd<F, SparseMatrixPolynomial<F>>
     fn mul_add(self, a: F, mut b: SparseMatrixPolynomial<F>) -> SparseMatrixPolynomial<F> {
         b.dense_submatrix
             .par_iter_mut()
-            .zip(self.coeffs.par_iter())
+            .zip_eq(self.coeffs.par_iter())
             .for_each(|(acc, new)| {
                 *acc += new.field_mul(a);
             });
@@ -229,7 +229,7 @@ impl<F: JoltField> MulAdd<F, SparseMatrixPolynomial<F>> for &DensePolynomial<F> 
     fn mul_add(self, a: F, mut b: SparseMatrixPolynomial<F>) -> SparseMatrixPolynomial<F> {
         b.dense_submatrix
             .par_iter_mut()
-            .zip(self.Z.par_iter())
+            .zip_eq(self.Z.par_iter())
             .for_each(|(acc, new)| {
                 *acc += a * new;
             });

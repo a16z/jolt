@@ -206,7 +206,8 @@ where
     ProofTranscript: Transcript,
 {
     openings: Vec<OpeningProofReductionSumcheck<F, PCS, ProofTranscript>>,
-    _marker: PhantomData<ProofTranscript>,
+    #[cfg(test)]
+    joint_commitment: Option<PCS::Commitment>,
 }
 
 /// Accumulates openings encountered by the verifier over the course of Jolt,
@@ -221,7 +222,7 @@ where
     #[cfg(test)]
     /// In testing, the Jolt verifier may be provided the prover's openings so that we
     /// can detect any places where the openings don't match up.
-    prover_openings: Option<Vec<OpeningProofReductionSumcheck<F, PCS, ProofTranscript>>>,
+    prover_openings: Option<ProverOpeningAccumulator<F, PCS, ProofTranscript>>,
     #[cfg(test)]
     pcs_setup: Option<PCS::ProverSetup>,
 }
@@ -246,7 +247,8 @@ where
     pub fn new() -> Self {
         Self {
             openings: vec![],
-            _marker: PhantomData,
+            #[cfg(test)]
+            joint_commitment: None,
         }
     }
 
@@ -385,17 +387,22 @@ where
         r_sumcheck.reverse();
 
         println!("P r_sumcheck: {r_sumcheck:?}");
-        println!("P claim {:?}", self.openings[0].sumcheck_claim.unwrap());
+        // println!("P claim: {joint_claim}");
 
         // Reduced opening proof
         let joint_opening_proof = PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, transcript);
 
-        // Restore polynomials to unbound state
         #[cfg(test)]
-        self.openings
-            .iter_mut()
-            .zip(unbound_polys.into_iter())
-            .for_each(|(opening, poly)| opening.prover_state.as_mut().unwrap().polynomial = poly);
+        {
+            self.joint_commitment = Some(PCS::commit(&joint_poly, pcs_setup));
+            // Restore polynomials to unbound state
+            self.openings
+                .iter_mut()
+                .zip(unbound_polys.into_iter())
+                .for_each(|(opening, poly)| {
+                    opening.prover_state.as_mut().unwrap().polynomial = poly
+                });
+        }
 
         ReducedOpeningProof {
             sumcheck_proof,
@@ -465,7 +472,7 @@ where
         prover_openings: ProverOpeningAccumulator<F, PCS, ProofTranscript>,
         pcs_setup: &PCS::ProverSetup,
     ) {
-        self.prover_openings = Some(prover_openings.openings);
+        self.prover_openings = Some(prover_openings);
         self.pcs_setup = Some(pcs_setup.clone());
     }
 
@@ -513,7 +520,8 @@ where
             if self.prover_openings.is_none() {
                 break 'test;
             }
-            let prover_opening = &self.prover_openings.as_ref().unwrap()[self.openings.len()];
+            let prover_opening =
+                &self.prover_openings.as_ref().unwrap().openings[self.openings.len()];
             let prover_state = prover_opening.prover_state.as_ref().unwrap();
             assert_eq!(
                 prover_state.batch.len(),
@@ -606,11 +614,20 @@ where
                 .collect::<Vec<_>>(),
             &gamma_powers,
         );
+        #[cfg(test)]
+        assert_eq!(
+            &joint_commitment,
+            self.prover_openings
+                .as_ref()
+                .unwrap()
+                .joint_commitment
+                .as_ref()
+                .unwrap(),
+            "Joint commitment mismatch"
+        );
 
         // Need to reverse because polynomials are bound in LowToHigh order
         r_sumcheck.reverse();
-
-        println!("V r_sumcheck: {r_sumcheck:?}");
 
         // Compute joint claim = ∑ᵢ γⁱ⋅ claimᵢ
         let joint_claim: F = gamma_powers
@@ -621,11 +638,14 @@ where
                 let (r_lo, _) =
                     r_sumcheck.split_at(num_sumcheck_rounds - opening.opening_point.len());
                 let lagrange_eval: F = r_lo.iter().map(|r| F::one() - r).product();
+                // let r_slice = &r_sumcheck[num_sumcheck_rounds - opening.opening_point.len()..];
+                // let lagrange_eval: F = r_slice.iter().map(|r| F::one() - r).product();
 
                 *coeff * claim * lagrange_eval
             })
             .sum();
 
+        println!("V r_sumcheck: {r_sumcheck:?}");
         println!("V claim: {joint_claim}");
 
         // Verify the reduced opening proof
