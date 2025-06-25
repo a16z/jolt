@@ -7,9 +7,10 @@ use crate::{
     subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof},
     utils::{math::Math, transcript::Transcript},
 };
+
+use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use rayon::iter::IndexedParallelIterator;
 use rayon::iter::{IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
-
 pub struct RAProof<F: JoltField, ProofTranscript: Transcript> {
     pub ra_i_claims: Vec<F>,
     pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
@@ -22,7 +23,7 @@ pub struct RASumcheck<F: JoltField, const D: usize> {
     /// ra polynomials for each chunk
     ra_i_polys: [MultilinearPolynomial<F>; D],
     /// Eq polynomial as a multilinear polynomial
-    eq_poly: EqPolynomial<F>,
+    eq_poly: MultilinearPolynomial<F>,
     /// Random point r_cycle
     r_cycle: Vec<F>,
     /// r_address pre-chunked
@@ -62,7 +63,10 @@ impl<F: JoltField, const D: usize> RASumcheck<F, D> {
             .try_into()
             .expect("Failed to convert Vec to array");
 
-        let eq_poly = EqPolynomial::new(r_cycle.clone());
+
+        let eq_evals = EqPolynomial::evals(&r_cycle);
+
+        let eq_poly = MultilinearPolynomial::from(eq_evals);
 
         // We do pre-binding. The sumcheck is in variable j hence we can pre-bind the r_address chunks:
         for (poly, chunk) in ra_i_polys.iter_mut().zip(r_address_chunks.iter()) {
@@ -129,17 +133,72 @@ impl<F: JoltField, ProofTranscript: Transcript, const D: usize>
         for ra_i in self.ra_i_polys.iter_mut() {
             ra_i.bind_parallel(r_j, BindingOrder::LowToHigh);
         }
+        self.eq_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
     }
 
     fn input_claim(&self) -> F {
         self.ra_claim.clone()
     }
 
-    fn expected_output_claim(&self, _r: &[F]) -> F {
-        todo!()
+    fn expected_output_claim(&self, r: &[F]) -> F {
+        
+        let eq_eval = self.eq_poly.evaluate(r);
+        
+        // Compute the product of all ra_i evaluations
+        let mut product = F::one();
+        for (_i, ra_i_claim) in self.ra_i_claims.as_ref().unwrap().iter().enumerate() {
+            product *= *ra_i_claim;
+        }
+        
+        eq_eval * product
     }
 
-    fn compute_prover_message(&self, _round: usize) -> Vec<F> {
-        todo!()
+    fn compute_prover_message(&self, round: usize) -> Vec<F> {
+        let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript>>::degree(self);
+        let ra_i_polys = &self.ra_i_polys;
+        let eq_poly = &self.eq_poly;
+        
+        // We need to compute evaluations at 0, 2, 3, ..., degree
+        // = eq(r_cycle, j) * ∏_{i=0}^{D-1} ra_i(j)
+        
+        let eval_points: Vec<usize> = (0..=degree)
+            .filter(|&i| i != 1)
+            .collect();
+        
+        let mut evals = vec![F::zero(); eval_points.len()];
+
+        let remaining_vars = <Self as BatchableSumcheckInstance<F, ProofTranscript>>::num_rounds(&self) - round - 1;
+        
+        for (eval_idx, &point) in eval_points.iter().enumerate() {
+            for j in 0..(1 << remaining_vars) {
+
+              let eq_evals = eq_poly.sumcheck_evals(j, degree, BindingOrder::LowToHigh);
+                // Extract the evaluation at the current point
+                let eq_eval = if point == 0 {
+                    eq_evals[0]
+                } else {
+                    eq_evals[point - 1]
+                };
+                
+                // Compute ∏_{i=0}^{D-1} ra_i(j) evaluated at point
+                let mut ra_product = F::one();
+                for ra_i_poly in ra_i_polys.iter() {
+                    // Get sumcheck evaluations for this polynomial at index j
+                    let ra_i_evals = ra_i_poly.sumcheck_evals(j, degree, BindingOrder::LowToHigh);
+                    // The evaluation at point k is at index k (0-indexed for points 0, 2, 3, ...)
+                    let ra_i_eval = if point == 0 {
+                        ra_i_evals[0]
+                    } else {
+                        ra_i_evals[point - 1]
+                    };
+                    ra_product *= ra_i_eval;
+                }
+                
+                // Add to the sum: eq(r_cycle, j) * ∏_{i=0}^{D-1} ra_i(j)
+                evals[eval_idx] += eq_eval * ra_product;
+            }
+        }
+        
+        evals
     }
 }
