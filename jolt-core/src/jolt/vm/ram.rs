@@ -515,8 +515,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 
         // eq(r', j)
         let mut eq_r_prime = MultilinearPolynomial::from(EqPolynomial::evals(&r_prime));
-        #[cfg(test)]
-        let mut eq_r_prime_test = MultilinearPolynomial::from(EqPolynomial::evals(&r_prime));
 
         let deltas: Vec<Vec<i64>> = addresses[..T - chunk_size]
             .par_chunks_exact(chunk_size)
