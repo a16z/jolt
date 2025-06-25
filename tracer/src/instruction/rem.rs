@@ -17,7 +17,7 @@ use super::{
     virtual_assert_eq::VirtualAssertEQ,
     virtual_assert_valid_signed_remainder::VirtualAssertValidSignedRemainder,
     virtual_move::VirtualMove,
-    RISCVInstruction, RISCVTrace, RV32IMInstruction, VirtualInstructionSequence,
+    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
 };
 
 declare_riscv_instr!(
@@ -44,7 +44,7 @@ impl REM {
 }
 
 impl RISCVTrace for REM {
-    fn trace(&self, cpu: &mut Cpu) -> Vec<super::RV32IMCycle> {
+    fn trace(&self, cpu: &mut Cpu, trace: &mut Option<&mut Vec<RV32IMCycle>>) {
         // REM operands
         let x = cpu.x[self.operands.rs1];
         let y = cpu.x[self.operands.rs2];
@@ -90,11 +90,9 @@ impl RISCVTrace for REM {
             panic!("Expected Advice instruction");
         }
 
-        let mut all_traces = Vec::new();
         for instr in virtual_sequence {
-            all_traces.extend(instr.trace(cpu));
+            instr.trace(cpu, trace);
         }
-        all_traces
     }
 }
 

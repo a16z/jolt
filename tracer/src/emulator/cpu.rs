@@ -314,16 +314,12 @@ impl Cpu {
     }
 
     /// Runs program one cycle. Fetch, decode, and execution are completed in a cycle so far.
-    pub fn tick(&mut self) -> Vec<RV32IMCycle> {
+    pub fn tick(&mut self, trace: &mut Option<&mut Vec<RV32IMCycle>>) {
         let instruction_address = self.pc;
-
-        let trace = match self.tick_operate() {
-            Ok(trace) => trace,
-            Err(e) => {
-                self.handle_exception(e, instruction_address);
-                vec![]
-            }
-        };
+        match self.tick_operate(trace) {
+            Ok(()) => {}
+            Err(e) => self.handle_exception(e, instruction_address),
+        }
         self.mmu.tick();
         self.handle_interrupt(self.pc);
         self.clock = self.clock.wrapping_add(1);
@@ -332,16 +328,15 @@ impl Cpu {
         // just an arbitrary ratio.
         // @TODO: Implement more properly
         self.write_csr_raw(CSR_CYCLE_ADDRESS, self.clock * 8);
-        trace
     }
 
     // @TODO: Rename?
-    fn tick_operate(&mut self) -> Result<Vec<RV32IMCycle>, Trap> {
+    fn tick_operate(&mut self, trace: &mut Option<&mut Vec<RV32IMCycle>>) -> Result<(), Trap> {
         if self.wfi {
             if (self.read_csr_raw(CSR_MIE_ADDRESS) & self.read_csr_raw(CSR_MIP_ADDRESS)) != 0 {
                 self.wfi = false;
             }
-            return Ok(vec![]);
+            return Ok(());
         }
 
         let original_word = self.fetch()?;
@@ -361,8 +356,7 @@ impl Cpu {
             .ok()
             .unwrap();
 
-        let trace = instr.trace(self);
-        self.trace_len += trace.len();
+        instr.trace(self, trace);
 
         // check if current instruction is real or not for cycle profiling
         if instr.is_real() {
@@ -370,7 +364,7 @@ impl Cpu {
         }
         self.x[0] = 0; // hardwired zero
 
-        Ok(trace)
+        Ok(())
     }
 
     fn handle_interrupt(&mut self, instruction_address: u64) {

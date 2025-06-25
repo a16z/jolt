@@ -12,7 +12,7 @@ use super::{
     mul::MUL,
     mulhu::MULHU,
     virtual_movsign::VirtualMovsign,
-    RISCVInstruction, RISCVTrace, RV32IMInstruction, VirtualInstructionSequence,
+    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
 };
 
 declare_riscv_instr!(
@@ -38,13 +38,11 @@ impl MULH {
 }
 
 impl RISCVTrace for MULH {
-    fn trace(&self, cpu: &mut Cpu) -> Vec<super::RV32IMCycle> {
+    fn trace(&self, cpu: &mut Cpu, trace: &mut Option<&mut Vec<RV32IMCycle>>) {
         let virtual_sequence = self.virtual_sequence();
-        let mut all_traces = Vec::new();
         for instr in virtual_sequence {
-            all_traces.extend(instr.trace(cpu));
+            instr.trace(cpu, trace);
         }
-        all_traces
     }
 }
 

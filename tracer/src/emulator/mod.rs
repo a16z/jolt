@@ -4,6 +4,8 @@ const PROGRAM_MEMORY_CAPACITY: u64 = 1024 * 1024 * 128; // big enough to run Lin
 
 extern crate fnv;
 
+use crate::instruction::RV32IMCycle;
+
 #[cfg(feature = "std")]
 use self::fnv::FnvHashMap;
 #[cfg(not(feature = "std"))]
@@ -102,7 +104,7 @@ impl Emulator {
             let disas = self.cpu.disassemble_next_instruction();
             println!("{disas}");
 
-            self.tick();
+            self.tick(&mut None);
 
             // It seems in riscv-tests ends with end code
             // written to a certain physical memory address
@@ -122,8 +124,8 @@ impl Emulator {
     }
 
     /// Runs CPU one cycle
-    pub fn tick(&mut self) -> Vec<crate::instruction::RV32IMCycle> {
-        self.cpu.tick()
+    pub fn tick(&mut self, trace: &mut Option<&mut Vec<RV32IMCycle>>) {
+        self.cpu.tick(trace)
     }
 
     /// Sets up program run by the program. This method analyzes the passed content

@@ -7,7 +7,7 @@ use crate::{
 
 use super::{
     format::{format_i::FormatI, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
+    RISCVInstruction, RISCVTrace
 };
 
 // Constants for 32-bit and 64-bit word sizes

@@ -166,86 +166,88 @@ pub fn trace(
 // }
 
 #[tracing::instrument(skip_all)]
-fn step_emulator(emulator: &mut Emulator, prev_pc: &mut u64) -> Option<Vec<RV32IMCycle>> {
+fn step_emulator(emulator: &mut Emulator, prev_pc: &mut u64, trace: &mut Option<&mut Vec<RV32IMCycle>>) {
     let pc = emulator.get_cpu().read_pc();
     // This is a trick to see if the program has terminated by throwing itself
     // into an infinite loop. It seems to be a good heuristic for now but we
     // should eventually migrate to an explicit shutdown signal.
+    if let Some(trace_vec) = trace{
+        assert!(trace_vec.is_empty());
+    }
     if *prev_pc == pc {
-        return None;
+        return;
     }
-    let trace = emulator.tick();
+    emulator.tick(trace);
     *prev_pc = pc;
-    Some(trace)
 }
 
-/// Executes a RISC-V program while collecting periodic checkpoints of the emulator state.
-///
-/// This function runs the emulator until program completion, optionally saving snapshots
-/// of the emulator state at regular intervals.
-///
-/// # Arguments
-///
-/// * `emulator` - Mutable reference to an initialized emulator containing the program to run
-/// * `checkpoint_interval` - Optional interval at which to save emulator state:
-///   * `Some(n)` - Save a checkpoint every `n` emulator ticks
-///   * `None` - Run to completion without saving checkpoints
-///
-/// # Returns
-///
-/// Returns `(Vec<RV32IMCycle>, Option<Vec<LazyTraceIterator>>)`:
-/// * `Vec<RV32IMCycle>` - Complete trace vector
-/// * `Some(Vec<LazyTraceIterator>)` - If `checkpoint_interval` was `Some(n)`, contains vector of checkpoints
-///                 saved at each interval that can be used to resume trace computation
-/// * `None` - If `checkpoint_interval` was `None`
-///
-/// # Notes
-///
-/// - The emulator's state is cloned at each checkpoint, which is memory-intensive
-/// - Program termination is detected via an infinite loop heuristic rather than
-///   an explicit shutdown signal
-/// - Tracing is always enabled during execution. This can be changed if tracing is not needed
-///   during checkpointing.
-#[tracing::instrument(skip_all)]
-pub fn run_and_get_checkpoints(
-    emulator: &mut Emulator,
-    checkpoint_interval: Option<usize>,
-) -> (Vec<RV32IMCycle>, Option<Vec<LazyTraceIterator>>) {
-    let mut prev_pc: u64 = 0;
-    let mut checkpoints = Vec::new();
-    let mut trace = Vec::with_capacity(1 << 24); // TODO(moodlezoup): make configurable
+// /// Executes a RISC-V program while collecting periodic checkpoints of the emulator state.
+// ///
+// /// This function runs the emulator until program completion, optionally saving snapshots
+// /// of the emulator state at regular intervals.
+// ///
+// /// # Arguments
+// ///
+// /// * `emulator` - Mutable reference to an initialized emulator containing the program to run
+// /// * `checkpoint_interval` - Optional interval at which to save emulator state:
+// ///   * `Some(n)` - Save a checkpoint every `n` emulator ticks
+// ///   * `None` - Run to completion without saving checkpoints
+// ///
+// /// # Returns
+// ///
+// /// Returns `(Vec<RV32IMCycle>, Option<Vec<LazyTraceIterator>>)`:
+// /// * `Vec<RV32IMCycle>` - Complete trace vector
+// /// * `Some(Vec<LazyTraceIterator>)` - If `checkpoint_interval` was `Some(n)`, contains vector of checkpoints
+// ///                 saved at each interval that can be used to resume trace computation
+// /// * `None` - If `checkpoint_interval` was `None`
+// ///
+// /// # Notes
+// ///
+// /// - The emulator's state is cloned at each checkpoint, which is memory-intensive
+// /// - Program termination is detected via an infinite loop heuristic rather than
+// ///   an explicit shutdown signal
+// /// - Tracing is always enabled during execution. This can be changed if tracing is not needed
+// ///   during checkpointing.
+// #[tracing::instrument(skip_all)]
+// pub fn run_and_get_checkpoints(
+//     emulator: &mut Emulator,
+//     checkpoint_interval: Option<usize>,
+// ) -> (Vec<RV32IMCycle>, Option<Vec<LazyTraceIterator>>) {
+//     let mut prev_pc: u64 = 0;
+//     let mut checkpoints = Vec::new();
+//     let mut trace = Vec::with_capacity(1 << 24); // TODO(moodlezoup): make configurable
 
-    match checkpoint_interval {
-        Some(n) => {
-            let mut count = 0;
-            loop {
-                if count % n == 0 {
-                    checkpoints.push(LazyTraceIterator {
-                        emulator_state: emulator.save_state(),
-                        prev_pc,
-                        current_traces: Vec::new(),
-                        length: checkpoint_interval,
-                        count: 0,
-                    });
-                }
-                count += 1;
-                match step_emulator(emulator, &mut prev_pc) {
-                    None => break,
-                    Some(cycles) => trace.extend(cycles),
-                }
-            }
-            println!("Emulator called {count:} times");
-        }
-        None => loop {
-            match step_emulator(emulator, &mut prev_pc) {
-                None => break,
-                Some(cycles) => trace.extend(cycles),
-            }
-        },
-    }
+//     match checkpoint_interval {
+//         Some(n) => {
+//             let mut count = 0;
+//             loop {
+//                 if count % n == 0 {
+//                     checkpoints.push(LazyTraceIterator {
+//                         emulator_state: emulator.save_state(),
+//                         prev_pc,
+//                         current_traces: Vec::new(),
+//                         length: checkpoint_interval,
+//                         count: 0,
+//                     });
+//                 }
+//                 count += 1;
+//                 match step_emulator(emulator, &mut prev_pc) {
+//                     None => break,
+//                     Some(cycles) => trace.extend(cycles),
+//                 }
+//             }
+//             println!("Emulator called {count:} times");
+//         }
+//         None => loop {
+//             match step_emulator(emulator, &mut prev_pc) {
+//                 None => break,
+//                 Some(cycles) => trace.extend(cycles),
+//             }
+//         },
+//     }
 
-    (trace, checkpoint_interval.map(|_| checkpoints))
-}
+//     (trace, checkpoint_interval.map(|_| checkpoints))
+// }
 
 // struct LazyCheckpointIterator {
 //     trace_iter: LazyTraceIterator,
@@ -374,17 +376,17 @@ impl Iterator for LazyTraceIterator {
 
         // Step the emulator to execute the next instruction till the program ends.
         self.count += 1;
-        match step_emulator(
+        assert!(self.current_traces.is_empty());
+        step_emulator(
             get_mut_emulator(&mut self.emulator_state),
             &mut self.prev_pc,
-        ) {
-            None => return None,
-            Some(cycles) => {
-                assert!(self.current_traces.is_empty());
-                self.current_traces = cycles;
-                self.current_traces.reverse();
-                self.current_traces.pop()
-            }
+            &mut Some(&mut self.current_traces),
+        );
+        if self.current_traces.is_empty() {
+            return None;
+        } else {
+            self.current_traces.reverse();
+            self.current_traces.pop()
         }
     }
 }
