@@ -4,6 +4,7 @@ pub mod dense_interleaved_poly;
 pub mod dense_mlpoly;
 pub mod eq_poly;
 pub mod identity_poly;
+pub mod inc_polynomial;
 pub mod multilinear_polynomial;
 pub mod one_hot_polynomial;
 pub mod opening_proof;

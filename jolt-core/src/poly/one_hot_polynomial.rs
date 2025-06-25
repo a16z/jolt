@@ -72,6 +72,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "OneHotPolynomial::commit_rows")]
     pub fn commit_rows<G: CurveGroup<ScalarField = F> + VariableBaseMSM>(
         &self,
         bases: &[G::Affine],
@@ -109,6 +110,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
             .collect()
     }
 
+    #[tracing::instrument(skip_all, name = "OneHotPolynomial::vector_matrix_product")]
     pub fn vector_matrix_product(&self, left_vec: &[F]) -> Vec<F> {
         let T = get_T();
         let num_columns = get_num_columns();
@@ -139,6 +141,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
         product
     }
 
+    #[tracing::instrument(skip_all, name = "OneHotPolynomial::compute_sumcheck_prover_message")]
     pub fn compute_sumcheck_prover_message(&self, eq_poly: &SplitEqPolynomial<F>) -> Vec<F> {
         // SplitEqPolynomial only supports binding from low to high, where
         // cycle variables are bound before address variables.
@@ -292,6 +295,7 @@ impl<F: JoltField> PolynomialBinding<F> for OneHotPolynomial<F> {
         unimplemented!("Always use bind_parallel")
     }
 
+    #[tracing::instrument(skip_all, name = "OneHotPolynomial::bind_parallel")]
     fn bind_parallel(&mut self, r: F, order: BindingOrder) {
         assert_eq!(order, BindingOrder::LowToHigh);
         let num_cycle_variables = get_T().log_2();

@@ -81,6 +81,7 @@ impl<F: JoltField> RLCPolynomial<F> {
 
     // TODO(moodlezoup): we should be able to cache the row commitments
     // for each underlying polynomial and take a linear combination of those
+    #[tracing::instrument(skip_all, name = "RLCPolynomial::commit_rows")]
     pub fn commit_rows<G: CurveGroup<ScalarField = F> + VariableBaseMSM>(
         &self,
         bases: &[G::Affine],
@@ -134,6 +135,7 @@ impl<F: JoltField> RLCPolynomial<F> {
         row_commitments
     }
 
+    #[tracing::instrument(skip_all, name = "RLCPolynomial::vector_matrix_product")]
     pub fn vector_matrix_product(
         &self,
         left_vec: &[JoltFieldWrapper<F>],

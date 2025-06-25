@@ -312,7 +312,7 @@ where
 
         println!("Proof sizing:");
         serialize_and_print_size("jolt_proof", &jolt_proof);
-        serialize_and_print_size("jolt_proof.commitments", &jolt_proof.commitments);
+        serialize_and_print_size(" jolt_proof.commitments", &jolt_proof.commitments);
         serialize_and_print_size(" jolt_proof.r1cs", &jolt_proof.r1cs);
         serialize_and_print_size(" jolt_proof.bytecode", &jolt_proof.bytecode);
         serialize_and_print_size(" jolt_proof.ram", &jolt_proof.ram);
