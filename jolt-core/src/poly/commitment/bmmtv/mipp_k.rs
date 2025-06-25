@@ -17,10 +17,16 @@ use super::{
     afgho::AfghoCommitment, gipa::CommitmentSteps, inner_products::MultiexponentiationInnerProduct,
     Error,
 };
-use crate::{field::JoltField, msm::Icicle, optimal_iter, poly::{
-    commitment::kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG, G2},
-    unipoly::UniPoly,
-}, utils::transcript::Transcript};
+use crate::{
+    field::JoltField,
+    msm::Icicle,
+    optimal_iter,
+    poly::{
+        commitment::kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG, G2},
+        unipoly::UniPoly,
+    },
+    utils::transcript::Transcript,
+};
 
 /// Calculates KZG opening in G2
 pub fn prove_commitment_key_kzg_opening<P: Pairing>(
@@ -149,8 +155,7 @@ where
             let ck_kzg = tracing::span!(Level::TRACE, "Prove commitment key");
             let _guard = ck_kzg.enter();
             let ck_a_final = proof.final_commitment_param;
-            let transcript_inverse = optimal_iter!(proof
-                .scalar_transcript)
+            let transcript_inverse = optimal_iter!(proof.scalar_transcript)
                 .map(|x| JoltField::inverse(x).unwrap())
                 .collect::<Vec<_>>();
 

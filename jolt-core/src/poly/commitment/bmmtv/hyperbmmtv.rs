@@ -6,18 +6,24 @@
 
 use std::{borrow::Borrow, marker::PhantomData, sync::Arc};
 
-use crate::{field::JoltField, msm::Icicle, optimal_iter, optimal_iter_mut, poly::{
-    commitment::{
-        bmmtv::poly_commit::{OpeningProof, UnivariatePolynomialCommitment},
-        commitment_scheme::CommitmentScheme,
-        kzg::{KZGProverKey, KZGVerifierKey, SRS},
+use crate::{
+    field::JoltField,
+    msm::Icicle,
+    optimal_iter, optimal_iter_mut,
+    poly::{
+        commitment::{
+            bmmtv::poly_commit::{OpeningProof, UnivariatePolynomialCommitment},
+            commitment_scheme::CommitmentScheme,
+            kzg::{KZGProverKey, KZGVerifierKey, SRS},
+        },
+        multilinear_polynomial::MultilinearPolynomial,
+        unipoly::UniPoly,
     },
-    multilinear_polynomial::MultilinearPolynomial,
-    unipoly::UniPoly,
-}, utils::{
-    errors::ProofVerifyError,
-    transcript::{AppendToTranscript, Transcript},
-}};
+    utils::{
+        errors::ProofVerifyError,
+        transcript::{AppendToTranscript, Transcript},
+    },
+};
 use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, Zero};

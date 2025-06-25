@@ -1,9 +1,9 @@
+use super::{FieldOps, JoltField};
 use crate::into_optimal_iter;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
-use super::{FieldOps, JoltField};
 
 impl FieldOps for ark_bn254::Fr {}
 impl FieldOps<&ark_bn254::Fr, ark_bn254::Fr> for &ark_bn254::Fr {}

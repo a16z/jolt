@@ -24,8 +24,8 @@ pub type GpuBaseType<G: Icicle> = Affine<G::C>;
 pub type GpuBaseType<G: ScalarMul> = G::MulBase;
 
 use crate::poly::unipoly::UniPoly;
-use itertools::Either;
 use crate::{into_optimal_iter, optimal_iter};
+use itertools::Either;
 
 /// Copy of ark_ec::VariableBaseMSM with minor modifications to speed up
 /// known small element sized MSMs.
@@ -212,8 +212,7 @@ where
             }
             MultilinearPolynomial::I64Scalars(poly) => {
                 // TODO(moodlezoup): This can be optimized
-                let scalars: Vec<_> = optimal_iter!(poly
-                    .coeffs)
+                let scalars: Vec<_> = optimal_iter!(poly.coeffs)
                     .map(|x| Self::ScalarField::from_i64(*x))
                     .collect();
                 Self::msm_field_elements(bases, gpu_bases, &scalars, max_num_bits, use_icicle)
@@ -346,9 +345,10 @@ where
                     let slices_at_a_time = total_memory_bits() / slice_bit_size;
 
                     for work_chunk in gpu_batch.chunks(slices_at_a_time) {
-                        let (max_num_bits, chunk_polys): (Vec<_>, Vec<_>) = optimal_iter!(work_chunk)
-                            .map(|(_, max_num_bits, poly)| (*max_num_bits, poly.as_slice()))
-                            .unzip();
+                        let (max_num_bits, chunk_polys): (Vec<_>, Vec<_>) =
+                            optimal_iter!(work_chunk)
+                                .map(|(_, max_num_bits, poly)| (*max_num_bits, poly.as_slice()))
+                                .unzip();
 
                         let max_num_bits = max_num_bits.iter().max().unwrap();
                         let batch_results =
@@ -403,8 +403,7 @@ where
     where
         P: Borrow<UniPoly<Self::ScalarField>> + Sync,
     {
-        assert!(optimal_iter!(polys)
-            .all(|s| s.borrow().coeffs.len() <= bases.len()));
+        assert!(optimal_iter!(polys).all(|s| s.borrow().coeffs.len() <= bases.len()));
         #[cfg(not(feature = "icicle"))]
         assert!(gpu_bases.is_none());
 

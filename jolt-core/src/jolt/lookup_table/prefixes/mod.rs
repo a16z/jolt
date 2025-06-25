@@ -1,32 +1,32 @@
 use crate::jolt::lookup_table::prefixes::left_shift::LeftShiftPrefix;
 use crate::jolt::lookup_table::prefixes::left_shift_helper::LeftShiftHelperPrefix;
 use crate::{field::JoltField, optimal_iter_mut, subprotocols::sparse_dense_shout::LookupBits};
-use lsb::LsbPrefix;
-use negative_divisor_equals_remainder::NegativeDivisorEqualsRemainderPrefix;
-use negative_divisor_greater_than_remainder::NegativeDivisorGreaterThanRemainderPrefix;
-use negative_divisor_zero_remainder::NegativeDivisorZeroRemainderPrefix;
-use num_derive::FromPrimitive;
-use positive_remainder_equals_divisor::PositiveRemainderEqualsDivisorPrefix;
-use positive_remainder_less_than_divisor::PositiveRemainderLessThanDivisorPrefix;
-use pow2::Pow2Prefix;
-use right_shift::RightShiftPrefix;
-use sign_extension::SignExtensionPrefix;
-use std::{fmt::Display, ops::Index};
-use strum::EnumCount;
-use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 use and::AndPrefix;
 use div_by_zero::DivByZeroPrefix;
 use eq::EqPrefix;
 use left_is_zero::LeftOperandIsZeroPrefix;
 use left_msb::LeftMsbPrefix;
 use lower_word::LowerWordPrefix;
+use lsb::LsbPrefix;
 use lt::LessThanPrefix;
+use negative_divisor_equals_remainder::NegativeDivisorEqualsRemainderPrefix;
+use negative_divisor_greater_than_remainder::NegativeDivisorGreaterThanRemainderPrefix;
+use negative_divisor_zero_remainder::NegativeDivisorZeroRemainderPrefix;
 use num::FromPrimitive;
+use num_derive::FromPrimitive;
 use or::OrPrefix;
+use positive_remainder_equals_divisor::PositiveRemainderEqualsDivisorPrefix;
+use positive_remainder_less_than_divisor::PositiveRemainderLessThanDivisorPrefix;
+use pow2::Pow2Prefix;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 use right_is_zero::RightOperandIsZeroPrefix;
 use right_msb::RightMsbPrefix;
+use right_shift::RightShiftPrefix;
+use sign_extension::SignExtensionPrefix;
+use std::{fmt::Display, ops::Index};
+use strum::EnumCount;
+use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 use upper_word::UpperWordPrefix;
 use xor::XorPrefix;
 

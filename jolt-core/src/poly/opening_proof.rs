@@ -545,7 +545,6 @@ where
             })
             .collect();
         let (sumcheck_proof, r_sumcheck) = BatchedSumcheck::prove(instances, transcript);
-
         let claims: Vec<_> = self
             .openings
             .iter()

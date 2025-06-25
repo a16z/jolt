@@ -7,27 +7,29 @@ use crate::jolt::vm::instruction_lookups::LookupsProof;
 use crate::jolt::vm::ram::{remap_address, RAMPreprocessing, RAMTwistProof};
 use crate::jolt::vm::registers::RegistersTwistProof;
 use crate::jolt::vm::rv32im_vm::Serializable;
-use crate::jolt::vm::{JoltCommitments, JoltCommon, JoltProof, JoltProverPreprocessing, JoltSharedPreprocessing};
+use crate::jolt::vm::{
+    JoltCommitments, JoltCommon, JoltProof, JoltProverPreprocessing, JoltSharedPreprocessing,
+};
+use crate::jolt::witness::ALL_COMMITTED_POLYNOMIALS;
 use crate::msm::icicle;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::r1cs::constraints::R1CSConstraints;
 use crate::r1cs::spartan::UniformSpartanProof;
+use crate::utils::math::Math;
 use crate::utils::transcript::Transcript;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
+use rayon::iter::IntoParallelRefIterator;
 use std::{
     fs::File,
     io::{Read, Write},
     path::Path,
 };
-use rayon::iter::IntoParallelRefIterator;
 use tracer::emulator::memory::Memory;
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
 use tracer::JoltDevice;
-use crate::jolt::witness::ALL_COMMITTED_POLYNOMIALS;
-use crate::poly::commitment::dory::DoryGlobals;
-use crate::utils::math::Math;
 
 impl<F, PCS, ProofTranscript> Serializable for JoltProverPreprocessing<F, PCS, ProofTranscript>
 where
@@ -73,7 +75,7 @@ where
 }
 
 pub trait JoltProver<const WORD_SIZE: usize, F, PCS, ProofTranscript>:
-JoltCommon<WORD_SIZE, F, PCS, ProofTranscript>
+    JoltCommon<WORD_SIZE, F, PCS, ProofTranscript>
 where
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
@@ -122,9 +124,9 @@ where
             max_memory_size.next_power_of_two(),
             1 << 16, // instruction lookups Shout
         ]
-            .into_iter()
-            .max()
-            .unwrap();
+        .into_iter()
+        .max()
+        .unwrap();
         let max_T = max_trace_length.next_power_of_two();
 
         println!("setup...");
@@ -198,9 +200,9 @@ where
             ram_K,
             1 << 16, // K for instruction lookups Shout
         ]
-            .into_iter()
-            .max()
-            .unwrap();
+        .into_iter()
+        .max()
+        .unwrap();
         println!("T = {padded_trace_length}, K = {K}");
 
         let _guard = DoryGlobals::initialize(K, padded_trace_length);
@@ -244,8 +246,8 @@ where
             &mut opening_accumulator,
             &mut transcript,
         )
-            .ok()
-            .unwrap();
+        .ok()
+        .unwrap();
 
         let instruction_proof = LookupsProof::prove(
             &preprocessing,

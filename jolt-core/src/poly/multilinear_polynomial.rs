@@ -3,6 +3,7 @@ use crate::{
     utils::{compute_dotproduct, math::Math},
 };
 use num_traits::MulAdd;
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use strum_macros::EnumIter;
 
@@ -13,6 +14,7 @@ use super::{
 };
 use crate::{
     field::{JoltField, OptimizedMul},
+    into_optimal_iter, optimal_iter,
     utils::thread::unsafe_allocate_zero_vec,
 };
 
@@ -86,9 +88,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
     #[tracing::instrument(skip_all)]
     pub fn max_num_bits(&self) -> usize {
         match self {
-            MultilinearPolynomial::LargeScalars(poly) => poly
-                .evals_ref()
-                .par_iter()
+            MultilinearPolynomial::LargeScalars(poly) => optimal_iter!(poly.evals_ref())
                 .map(|s| s.num_bits())
                 .max()
                 .unwrap() as usize,
@@ -150,8 +150,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             .min(max_length);
         let chunk_size = (max_length / num_chunks).max(1);
 
-        let lc_coeffs: Vec<F> = (0..num_chunks)
-            .into_par_iter()
+        let lc_coeffs: Vec<F> = into_optimal_iter!((0..num_chunks))
             .flat_map_iter(|chunk_index| {
                 let index = chunk_index * chunk_size;
                 let mut chunk = unsafe_allocate_zero_vec::<F>(chunk_size);
@@ -324,34 +323,24 @@ impl<F: JoltField> MultilinearPolynomial<F> {
     pub fn dot_product(&self, other: &[F]) -> F {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => compute_dotproduct(&poly.Z, other),
-            MultilinearPolynomial::U8Scalars(poly) => poly
-                .coeffs
-                .par_iter()
-                .zip_eq(other.par_iter())
+            MultilinearPolynomial::U8Scalars(poly) => optimal_iter!(poly.coeffs)
+                .zip_eq(optimal_iter!(other))
                 .map(|(a, b)| a.field_mul(*b))
                 .sum(),
-            MultilinearPolynomial::U16Scalars(poly) => poly
-                .coeffs
-                .par_iter()
-                .zip_eq(other.par_iter())
+            MultilinearPolynomial::U16Scalars(poly) => optimal_iter!(poly.coeffs)
+                .zip_eq(optimal_iter!(other))
                 .map(|(a, b)| a.field_mul(*b))
                 .sum(),
-            MultilinearPolynomial::U32Scalars(poly) => poly
-                .coeffs
-                .par_iter()
-                .zip_eq(other.par_iter())
+            MultilinearPolynomial::U32Scalars(poly) => optimal_iter!(poly.coeffs)
+                .zip_eq(optimal_iter!(other))
                 .map(|(a, b)| a.field_mul(*b))
                 .sum(),
-            MultilinearPolynomial::U64Scalars(poly) => poly
-                .coeffs
-                .par_iter()
-                .zip_eq(other.par_iter())
+            MultilinearPolynomial::U64Scalars(poly) => optimal_iter!(poly.coeffs)
+                .zip_eq(optimal_iter!(other))
                 .map(|(a, b)| a.field_mul(*b))
                 .sum(),
-            MultilinearPolynomial::I64Scalars(poly) => poly
-                .coeffs
-                .par_iter()
-                .zip_eq(other.par_iter())
+            MultilinearPolynomial::I64Scalars(poly) => optimal_iter!(poly.coeffs)
+                .zip_eq(optimal_iter!(other))
                 .map(|(a, b)| a.field_mul(*b))
                 .sum(),
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
@@ -596,8 +585,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::batch_evaluate")]
     fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<F>, Vec<F>) {
         let eq = EqPolynomial::evals(r);
-        let evals: Vec<F> = polys
-            .into_par_iter()
+        let evals: Vec<F> = into_optimal_iter!(polys)
             .map(|&poly| match poly {
                 MultilinearPolynomial::LargeScalars(poly) => {
                     poly.evaluate_at_chi_low_optimized(&eq)

@@ -14,13 +14,19 @@ use super::{
 use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use crate::utils::transcript::Transcript;
-use crate::{into_optimal_iter, msm::{Icicle, VariableBaseMSM}, optimal_iter, optimal_iter_mut, poly::{commitment::kzg::SRS, dense_mlpoly::DensePolynomial, unipoly::UniPoly}, utils::{errors::ProofVerifyError, transcript::AppendToTranscript}};
+use crate::{
+    into_optimal_iter,
+    msm::{Icicle, VariableBaseMSM},
+    optimal_iter, optimal_iter_mut,
+    poly::{commitment::kzg::SRS, dense_mlpoly::DensePolynomial, unipoly::UniPoly},
+    utils::{errors::ProofVerifyError, transcript::AppendToTranscript},
+};
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, Zero};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{CryptoRng, RngCore, SeedableRng};
-#[cfg(feature="parallel")]
+#[cfg(feature = "parallel")]
 use rayon::iter::{
     IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
     IntoParallelRefMutIterator, ParallelIterator,
@@ -453,8 +459,7 @@ where
     where
         U: Borrow<MultilinearPolynomial<Self::Field>> + Sync,
     {
-        into_optimal_iter!(UnivariateKZG::commit_batch(&gens.kzg_pk, polys)
-            .unwrap())
+        into_optimal_iter!(UnivariateKZG::commit_batch(&gens.kzg_pk, polys).unwrap())
             .map(|c| HyperKZGCommitment(c))
             .collect()
     }

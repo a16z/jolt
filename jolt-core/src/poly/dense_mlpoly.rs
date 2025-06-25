@@ -5,14 +5,15 @@ use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized};
 
+use super::multilinear_polynomial::BindingOrder;
 use crate::field::JoltField;
 use crate::utils::math::Math;
+use crate::{optimal_iter, optimal_iter_mut};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use core::ops::Index;
 use rand_core::{CryptoRng, RngCore};
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
-
-use super::multilinear_polynomial::BindingOrder;
 
 #[derive(Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DensePolynomial<F: JoltField> {
@@ -123,8 +124,8 @@ impl<F: JoltField> DensePolynomial<F> {
 
         let (left, right) = self.Z.split_at_mut(n);
 
-        left.par_iter_mut()
-            .zip(right.par_iter())
+        optimal_iter_mut!(left)
+            .zip(optimal_iter!(right))
             .filter(|(&mut a, &b)| a != b)
             .for_each(|(a, b)| {
                 *a += *r * (*b - *a);
@@ -221,8 +222,7 @@ impl<F: JoltField> DensePolynomial<F> {
 
         let scratch_space = self.binding_scratch_space.as_mut().unwrap();
 
-        scratch_space
-            .par_iter_mut()
+        optimal_iter_mut!(scratch_space)
             .take(n)
             .enumerate()
             .for_each(|(i, z)| {

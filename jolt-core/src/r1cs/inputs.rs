@@ -148,11 +148,19 @@ impl JoltR1CSInputs {
                 coeffs.into()
             }
             JoltR1CSInputs::NextPC => {
+                #[cfg(feature = "parallel")]
                 let coeffs: Vec<u64> = preprocessing
                     .shared
                     .bytecode
                     .map_trace_to_pc(&trace[1..])
                     .chain(rayon::iter::once(0))
+                    .collect();
+                #[cfg(not(feature = "parallel"))]
+                let coeffs: Vec<u64> = preprocessing
+                    .shared
+                    .bytecode
+                    .map_trace_to_pc(&trace[1..])
+                    .chain(std::iter::once(0))
                     .collect();
                 coeffs.into()
             }

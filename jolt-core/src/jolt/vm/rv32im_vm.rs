@@ -4,9 +4,9 @@ use crate::r1cs::constraints::JoltRV32IMConstraints;
 use ark_bn254::{Bn254, Fr};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
-use super::{JoltCommon, JoltProof, JoltVerifier};
 #[cfg(feature = "prover")]
 use super::JoltProver;
+use super::{JoltCommon, JoltProof, JoltVerifier};
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 
