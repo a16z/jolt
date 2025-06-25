@@ -431,7 +431,7 @@ mod tests {
             .take(LOG_T)
             .collect();
         let mut split_eq = SplitEqPolynomial::new_with_split(&r_cycle, &r_address);
-        let mut eq = split_eq.merge();
+        let mut eq = split_eq.merge(BindingOrder::LowToHigh);
 
         for round in 0..LOG_K + LOG_T {
             let one_hot_message = one_hot_poly.compute_sumcheck_prover_message(&split_eq);
@@ -453,7 +453,7 @@ mod tests {
 
             let r = Fr::random(&mut rng);
             one_hot_poly.bind_parallel(r, BindingOrder::LowToHigh);
-            split_eq.bind(r);
+            split_eq.bind(r, BindingOrder::LowToHigh);
             dense_poly.bind_parallel(r, BindingOrder::LowToHigh);
             eq.bind_parallel(r, BindingOrder::LowToHigh);
         }

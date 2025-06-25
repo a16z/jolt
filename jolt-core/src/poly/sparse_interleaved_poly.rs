@@ -421,7 +421,9 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
 {
     #[cfg(test)]
     fn sumcheck_sanity_check(&self, eq_poly: &SplitEqPolynomial<F>, round_claim: F) {
-        let merged_eq = eq_poly.merge();
+        use crate::poly::multilinear_polynomial::BindingOrder;
+
+        let merged_eq = eq_poly.merge(BindingOrder::LowToHigh);
         let (left, right) = self.uninterleave();
         let expected: F = left
             .iter()

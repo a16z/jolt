@@ -11,9 +11,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use super::{
     commitment::commitment_scheme::CommitmentScheme,
     eq_poly::EqPolynomial,
-    multilinear_polynomial::{
-        BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-    },
+    multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
 };
 use crate::{
     field::JoltField,
@@ -126,42 +124,30 @@ where
     }
 
     fn compute_prover_message(&self, round: usize) -> Vec<F> {
+        debug_assert!(round < self.num_rounds());
         let prover_state = self.prover_state.as_ref().unwrap();
         let shared_eq = prover_state.eq_poly.borrow();
         match (&prover_state.polynomial, &shared_eq.eq_poly) {
             (MultilinearPolynomial::LargeScalars(_), EqPolynomial::Default(_)) => {
                 let polynomial = &prover_state.polynomial;
-
-                if round >= self.num_rounds() {
-                    return vec![
-                        polynomial.final_sumcheck_claim()
-                            * shared_eq.eq_poly.final_sumcheck_claim(),
-                    ];
-                }
-
                 let mle_half = polynomial.len() / 2;
                 let eval_0: F = (0..mle_half)
-                    .map(|i| {
-                        polynomial.get_bound_coeff(2 * i) * shared_eq.eq_poly.get_bound_coeff(2 * i)
-                    })
+                    .map(|i| polynomial.get_bound_coeff(i) * shared_eq.eq_poly.get_bound_coeff(i))
                     .sum();
                 let eval_2: F = (0..mle_half)
                     .map(|i| {
-                        let poly_bound_point = polynomial.get_bound_coeff(2 * i + 1)
-                            + polynomial.get_bound_coeff(2 * i + 1)
-                            - polynomial.get_bound_coeff(2 * i);
-                        let eq_bound_point = shared_eq.eq_poly.get_bound_coeff(2 * i + 1)
-                            + shared_eq.eq_poly.get_bound_coeff(2 * i + 1)
-                            - shared_eq.eq_poly.get_bound_coeff(2 * i);
+                        let poly_bound_point = polynomial.get_bound_coeff(i + mle_half)
+                            + polynomial.get_bound_coeff(i + mle_half)
+                            - polynomial.get_bound_coeff(i);
+                        let eq_bound_point = shared_eq.eq_poly.get_bound_coeff(i + mle_half)
+                            + shared_eq.eq_poly.get_bound_coeff(i + mle_half)
+                            - shared_eq.eq_poly.get_bound_coeff(i);
                         poly_bound_point * eq_bound_point
                     })
                     .sum();
                 vec![eval_0, eval_2]
             }
             (MultilinearPolynomial::OneHot(poly), EqPolynomial::Split(eq_poly)) => {
-                if round >= self.num_rounds() {
-                    return vec![poly.final_sumcheck_claim() * eq_poly.final_sumcheck_claim()];
-                }
                 poly.compute_sumcheck_prover_message(&eq_poly)
             }
             _ => panic!("Unexpected polynomial types"),
@@ -169,22 +155,20 @@ where
     }
 
     fn bind(&mut self, r_j: F, round: usize) {
-        if round >= self.num_rounds() {
-            return;
-        }
+        debug_assert!(round < self.num_rounds());
 
         let prover_state = self.prover_state.as_mut().unwrap();
         let mut shared_eq = prover_state.eq_poly.borrow_mut();
         if shared_eq.num_variables_bound <= round {
             shared_eq
                 .eq_poly
-                .bind_parallel(r_j, BindingOrder::LowToHigh);
+                .bind_parallel(r_j, BindingOrder::HighToLow);
             shared_eq.num_variables_bound += 1;
         }
 
         prover_state
             .polynomial
-            .bind_parallel(r_j, BindingOrder::LowToHigh);
+            .bind_parallel(r_j, BindingOrder::HighToLow);
     }
 
     fn cache_openings(&mut self) {
@@ -198,10 +182,7 @@ where
     }
 
     fn expected_output_claim(&self, r: &[F]) -> F {
-        // Need to reverse because polynomials are bound in LowToHigh order
-        let r_rev: Vec<_> = r.iter().copied().rev().collect();
-        let eq_eval = EqPolynomial::mle(&self.opening_point, &r_rev);
-
+        let eq_eval = EqPolynomial::mle(&self.opening_point, &r);
         eq_eval * self.sumcheck_claim.unwrap()
     }
 }
@@ -455,9 +436,6 @@ where
             &gamma_powers,
         );
 
-        // Need to reverse because polynomials are bound in LowToHigh order
-        r_sumcheck.reverse();
-
         // Reduced opening proof
         let joint_opening_proof = PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, transcript);
 
@@ -682,9 +660,6 @@ where
                 .unwrap(),
             "Joint commitment mismatch"
         );
-
-        // Need to reverse because polynomials are bound in LowToHigh order
-        r_sumcheck.reverse();
 
         // Compute joint claim = ∑ᵢ γⁱ⋅ claimᵢ
         let joint_claim: F = gamma_powers

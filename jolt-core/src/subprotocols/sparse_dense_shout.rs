@@ -526,9 +526,6 @@ pub fn prove_sparse_dense_shout<
         .map(|checkpoint| checkpoint.unwrap())
         .collect();
 
-    // flag_table(j)
-    // combined_instruction_val_poly(j) = \sum_table flag_table(j) * Val_table(r_address)
-    //                                    flag_interleave(j) * Interleave(r_address) + flag_identity(j) * Identity(r_address)
     let mut combined_instruction_val_poly: Vec<F> = unsafe_allocate_zero_vec(T);
     combined_instruction_val_poly
         .par_iter_mut()

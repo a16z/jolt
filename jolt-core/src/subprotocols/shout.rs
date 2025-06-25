@@ -163,11 +163,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 
     #[tracing::instrument(skip_all)]
-    fn compute_prover_message(&self, round: usize) -> Vec<F> {
+    fn compute_prover_message(&self, _: usize) -> Vec<F> {
         let ShoutProverState { ra, val, z, .. } = self.prover_state.as_ref().unwrap();
-        if round >= BatchableSumcheckInstance::<F, ProofTranscript>::num_rounds(self) {
-            return vec![ra.final_sumcheck_claim() * (*z + val.final_sumcheck_claim())];
-        }
 
         let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript>>::degree(self);
 
@@ -190,11 +187,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 
     #[tracing::instrument(skip_all)]
-    fn bind(&mut self, r_j: F, round: usize) {
-        if round >= BatchableSumcheckInstance::<F, ProofTranscript>::num_rounds(self) {
-            return;
-        }
-
+    fn bind(&mut self, r_j: F, _: usize) {
         let ShoutProverState { ra, val, .. } = self.prover_state.as_mut().unwrap();
         rayon::join(
             || ra.bind_parallel(r_j, BindingOrder::LowToHigh),
@@ -572,7 +565,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                 );
 
             univariate_poly_evals.to_vec()
-        } else if round < BatchableSumcheckInstance::<F, ProofTranscript>::num_rounds(self) {
+        } else {
             // Last log(T) rounds of sumcheck
 
             let mut univariate_poly_evals: [F; 3] = (0..D.len() / 2)
@@ -609,17 +602,10 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             ];
 
             univariate_poly_evals.to_vec()
-        } else {
-            let H_final = H.as_ref().unwrap().final_sumcheck_claim();
-            vec![D.final_sumcheck_claim() * (H_final.square() - H_final)]
         }
     }
 
     fn bind(&mut self, r_j: F, round: usize) {
-        if round >= BatchableSumcheckInstance::<F, ProofTranscript>::num_rounds(self) {
-            return;
-        }
-
         let BooleanityProverState {
             K,
             B,
