@@ -1,8 +1,6 @@
-use std::collections::BTreeMap;
-
 use crate::{
     field::JoltField,
-    join_if_rayon, optimal_chunks, optimal_iter,
+    join_if_rayon, optimal_chunks, optimal_iter, optimal_num_threads,
     poly::{
         compact_polynomial::SmallScalar,
         eq_poly::EqPolynomial,
@@ -23,6 +21,9 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
+use std::collections::BTreeMap;
+#[cfg(not(feature = "parallel"))]
+use std::iter::once;
 use tracer::instruction::{NormalizedInstruction, RV32IMCycle, RV32IMInstruction};
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
@@ -82,14 +83,26 @@ impl BytecodePreprocessing {
             .unwrap()
     }
 
+    #[cfg(feature = "parallel")]
     pub fn map_trace_to_pc<'a, 'b>(
         &'b self,
         trace: &'a [RV32IMCycle],
-    ) -> impl rayon::iter::ParallelIterator<Item = u64> + use<'a, 'b> {
+    ) -> impl ParallelIterator<Item = u64> + use<'a, 'b> {
         let (_, init) = trace.split_last().unwrap();
-        optimal_iter!(init)
+        init.par_iter()
             .map(|cycle| self.get_pc(cycle, false) as u64)
             .chain(rayon::iter::once(0))
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    pub fn map_trace_to_pc<'a, 'b>(
+        &'b self,
+        trace: &'a [RV32IMCycle],
+    ) -> impl Iterator<Item = u64> + use<'a, 'b> {
+        let (_, init) = trace.split_last().unwrap();
+        init.iter()
+            .map(|cycle| self.get_pc(cycle, false) as u64)
+            .chain(once(0))
     }
 }
 
@@ -150,9 +163,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
         let span = tracing::span!(tracing::Level::INFO, "compute F");
         let _guard = span.enter();
 
-        let num_chunks = rayon::current_num_threads()
-            .next_power_of_two()
-            .min(trace.len());
+        let num_chunks = optimal_num_threads!().next_power_of_two().min(trace.len());
         let chunk_size = (trace.len() / num_chunks).max(1);
         let F: Vec<_> = optimal_chunks!(trace, chunk_size)
             .enumerate()

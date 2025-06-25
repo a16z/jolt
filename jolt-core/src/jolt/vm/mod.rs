@@ -206,8 +206,7 @@ where
         proof: JoltProof<WORD_SIZE, F, PCS, ProofTranscript>,
         // commitments: JoltCommitments<PCS, ProofTranscript>,
         program_io: JoltDevice,
-        #[cfg(feature = "prover")]
-        _debug_info: Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
+        #[cfg(feature = "prover")] _debug_info: Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
     ) -> Result<(), ProofVerifyError> {
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
         let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS, ProofTranscript> =
@@ -270,11 +269,10 @@ where
 
 pub mod bytecode;
 pub mod instruction_lookups;
+#[cfg(feature = "prover")]
+mod prover;
 pub mod ram;
 pub mod registers;
 pub mod rv32im_vm;
 #[cfg(feature = "prover")]
-mod prover;
-#[cfg(feature = "prover")]
 pub use prover::*;
-

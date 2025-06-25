@@ -86,6 +86,7 @@ impl<F: JoltField> Index<usize> for ExpandingTable<F> {
     }
 }
 
+#[cfg(feature = "parallel")]
 impl<'data, F: JoltField> IntoParallelIterator for &'data ExpandingTable<F> {
     type Item = &'data F;
     type Iter = Iter<'data, F>;

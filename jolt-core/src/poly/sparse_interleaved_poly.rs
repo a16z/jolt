@@ -10,6 +10,7 @@ use crate::{
     },
     utils::{math::Math, transcript::Transcript},
 };
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 #[derive(Default, Debug, Clone, Copy, PartialEq)]

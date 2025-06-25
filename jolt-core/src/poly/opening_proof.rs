@@ -5,6 +5,7 @@
 //! necessarily of the same size, each opened at a different point) into a single opening.
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::marker::PhantomData;
 
@@ -19,6 +20,7 @@ use super::{
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::{
     field::JoltField,
+    optimal_iter, optimal_iter_mut,
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{
         errors::ProofVerifyError,
@@ -304,9 +306,8 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
 
         // Compute random linear combination of the claims, accounting for the fact that the
         // polynomials may be of different sizes
-        let mut e: F = coeffs
-            .par_iter()
-            .zip(self.openings.par_iter())
+        let mut e: F = optimal_iter!(coeffs)
+            .zip(optimal_iter!(self.openings))
             .map(|(coeff, opening)| {
                 let scaled_claim = if opening.polynomial.get_num_vars() != max_num_vars {
                     F::from_u64(1 << (max_num_vars - opening.polynomial.get_num_vars()))
@@ -331,7 +332,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
             let r_j = transcript.challenge_scalar();
             r.push(r_j);
 
-            self.openings.par_iter_mut().for_each(|opening| {
+            optimal_iter_mut!(self.openings).for_each(|opening| {
                 if remaining_rounds <= opening.opening_point.len() {
                     rayon::join(
                         || opening.eq_poly.bind(r_j, BindingOrder::HighToLow),
@@ -362,9 +363,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
         remaining_sumcheck_rounds: usize,
         previous_round_claim: F,
     ) -> UniPoly<F> {
-        let evals: Vec<(F, F)> = self
-            .openings
-            .par_iter()
+        let evals: Vec<(F, F)> = optimal_iter!(self.openings)
             .map(|opening| {
                 if remaining_sumcheck_rounds <= opening.opening_point.len() {
                     let mle_half = opening.polynomial.len() / 2;
@@ -633,9 +632,8 @@ where
         sumcheck_proof: &SumcheckInstanceProof<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(F, Vec<F>), ProofVerifyError> {
-        let combined_claim: F = coeffs
-            .par_iter()
-            .zip(self.openings.par_iter())
+        let combined_claim: F = optimal_iter!(coeffs)
+            .zip(optimal_iter!(self.openings))
             .map(|(coeff, opening)| {
                 let scaled_claim = if opening.opening_point.len() != num_sumcheck_rounds {
                     F::from_u64(1 << (num_sumcheck_rounds - opening.opening_point.len()))

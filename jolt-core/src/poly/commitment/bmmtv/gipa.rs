@@ -5,14 +5,14 @@ use std::marker::PhantomData;
 
 use super::Error;
 use crate::msm::Icicle;
+use crate::poly::commitment::bmmtv::afgho::AfghoCommitment;
+use crate::poly::commitment::bmmtv::inner_products::MultiexponentiationInnerProduct;
 use crate::{field::JoltField, optimal_iter, utils::transcript::Transcript};
 use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use tracing::Level;
-use crate::poly::commitment::bmmtv::afgho::AfghoCommitment;
-use crate::poly::commitment::bmmtv::inner_products::MultiexponentiationInnerProduct;
 
 pub type CommitmentSteps<P> = Vec<(
     (PairingOutput<P>, <P as Pairing>::G1),

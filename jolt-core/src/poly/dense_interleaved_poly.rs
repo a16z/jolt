@@ -1,11 +1,13 @@
 use crate::{
     field::JoltField,
+    optimal_chunks, optimal_chunks_mut, optimal_iter,
     subprotocols::{
         grand_product::BatchedGrandProductLayer,
         sumcheck::{BatchedCubicSumcheck, Bindable},
     },
     utils::{thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
+#[cfg(feature = "parallel")]
 use rayon::{prelude::*, slice::Chunks};
 
 #[cfg(test)]
@@ -65,8 +67,14 @@ impl<F: JoltField> DenseInterleavedPolynomial<F> {
         self.coeffs[..self.len].iter()
     }
 
+    #[cfg(feature = "parallel")]
     pub fn par_chunks(&self, chunk_size: usize) -> Chunks<'_, F> {
         self.coeffs[..self.len].par_chunks(chunk_size)
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    pub fn par_chunks(&self, chunk_size: usize) -> std::slice::Chunks<'_, F> {
+        self.coeffs[..self.len].chunks(chunk_size)
     }
 
     #[cfg(test)]
@@ -122,9 +130,8 @@ impl<F: JoltField> Bindable<F> for DenseInterleavedPolynomial<F> {
         // In order to parallelize binding while obeying Rust ownership rules, we
         // must write to a different vector than we are reading from. `binding_scratch_space`
         // serves this purpose.
-        self.binding_scratch_space
-            .par_chunks_mut(2)
-            .zip(self.coeffs[..self.len].par_chunks(4))
+        optimal_chunks_mut!(self.binding_scratch_space, 2)
+            .zip(optimal_chunks!(self.coeffs[..self.len], 4))
             .for_each(|(bound_chunk, unbound_chunk)| {
                 let unbound_chunk = [
                     *unbound_chunk.first().unwrap_or(&F::zero()),
@@ -217,7 +224,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
             // would without the Dao-Thaler optimization, using the standard linear-time
             // sumcheck algorithm.
             self.par_chunks(4)
-                .zip(eq_poly.E2.par_chunks(2))
+                .zip(optimal_chunks!(eq_poly.E2, 2))
                 .map(|(layer_chunk, eq_chunk)| {
                     let eq_evals = {
                         let eval_point_0 = eq_chunk[0];
@@ -271,8 +278,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
 
             // We start by computing the E1 evals:
             // (1 - j) * E1[0, x1] + j * E1[1, x1]
-            let E1_evals: Vec<_> = eq_poly.E1[..eq_poly.E1_len]
-                .par_chunks(2)
+            let E1_evals: Vec<_> = optimal_chunks!(eq_poly.E1[..eq_poly.E1_len], 2)
                 .map(|E1_chunk| {
                     let eval_point_0 = E1_chunk[0];
                     let m_eq = E1_chunk[1] - E1_chunk[0];
@@ -283,8 +289,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                 .collect();
 
             let chunk_size = (self.len.next_power_of_two() / eq_poly.E2_len).max(1);
-            eq_poly.E2[..eq_poly.E2_len]
-                .par_iter()
+            optimal_iter!(eq_poly.E2[..eq_poly.E2_len])
                 .zip(self.par_chunks(chunk_size))
                 .map(|(E2_eval, P_x2)| {
                     // The for-loop below corresponds to the inner sum:

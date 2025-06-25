@@ -75,6 +75,34 @@ macro_rules! optimal_chunks {
 }
 
 #[macro_export]
+macro_rules! optimal_num_threads {
+    () => {{
+        #[cfg(feature = "rayon")]
+        {
+            rayon::current_num_threads()
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            1
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! optimal_chunks_mut {
+    ($T:expr, $chunk_size:expr) => {{
+        #[cfg(feature = "rayon")]
+        {
+            $T.par_chunks_mut($chunk_size)
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            $T.chunks_mut($chunk_size)
+        }
+    }};
+}
+
+#[macro_export]
 macro_rules! join_if_rayon {
     ($f1:expr, $f2:expr) => {{
         #[cfg(feature = "rayon")]

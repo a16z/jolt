@@ -24,9 +24,9 @@ use super::{
     kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG, SRS},
 };
 use crate::field::JoltField;
+use crate::{optimal_iter, optimal_iter_mut};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
-use crate::{optimal_iter, optimal_iter_mut};
 
 pub struct ZeromorphSRS<P: Pairing>(Arc<SRS<P>>)
 where

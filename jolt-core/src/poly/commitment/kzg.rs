@@ -3,6 +3,7 @@ use crate::msm::{use_icicle, GpuBaseType, Icicle, VariableBaseMSM};
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::utils::errors::ProofVerifyError;
+use crate::{into_optimal_iter, optimal_iter};
 use ark_ec::scalar_mul::fixed_base::FixedBase;
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::PrimeField;
@@ -14,7 +15,6 @@ use rayon::prelude::*;
 use std::borrow::Borrow;
 use std::marker::PhantomData;
 use std::sync::Arc;
-use crate::{into_optimal_iter, optimal_iter};
 
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct SRS<P: Pairing>
@@ -240,8 +240,7 @@ where
         let gpu_g1 = pk.gpu_g1();
 
         // batch commit requires all batches to have the same length
-        assert!(optimal_iter!(polys)
-            .all(|s| s.borrow().len() == polys[0].borrow().len()));
+        assert!(optimal_iter!(polys).all(|s| s.borrow().len() == polys[0].borrow().len()));
         assert!(polys[0].borrow().len() <= g1_powers.len());
 
         if let Some(invalid) = polys

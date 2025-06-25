@@ -73,8 +73,7 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
         assert_eq!(L_size * R_size, n);
 
         let gens = CurveGroup::normalize_batch(&generators.generators[..R_size]);
-        let row_commitments = optimal_chunks!(poly
-            .Z, R_size)
+        let row_commitments = optimal_chunks!(poly.Z, R_size)
             .map(|row| PedersenCommitment::commit_vector(row, &gens))
             .collect();
         Self { row_commitments }
