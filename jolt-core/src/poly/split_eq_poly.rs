@@ -336,6 +336,32 @@ impl<F: JoltField> SplitEqPolynomial<F> {
         }
     }
 
+    pub fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F> {
+        debug_assert!(degree > 0);
+        let mut evals = vec![F::zero(); degree];
+
+        match order {
+            BindingOrder::LowToHigh => {
+                if self.E1_len == 1 {
+                    debug_assert!(index < self.E2_len / 2);
+                    evals[0] = self.E2[2 * index];
+                    if degree == 1 {
+                        return evals;
+                    }
+                    let mut eval = self.E2[2 * index + 1];
+                    let m = eval - evals[0];
+                    for i in 1..degree {
+                        eval += m;
+                        evals[i] = eval;
+                    }
+                } else {
+                }
+            }
+            BindingOrder::HighToLow => todo!(),
+        }
+        evals
+    }
+
     #[cfg(test)]
     pub fn merge(&self, binding_order: BindingOrder) -> DensePolynomial<F> {
         if binding_order == BindingOrder::LowToHigh && self.E1_len == 1 {

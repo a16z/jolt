@@ -1,11 +1,10 @@
-use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
+use super::multilinear_polynomial::PolynomialBinding;
 use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
 use crate::poly::commitment::dory::{JoltFieldWrapper, JoltGroupWrapper};
 use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::one_hot_polynomial::OneHotPolynomial;
-use crate::poly::split_eq_poly::SplitEqPolynomial;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_bn254::{Fr, G1Projective};
