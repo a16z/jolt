@@ -28,7 +28,7 @@ You can run tests on the internal representation produced by the `zklean-extract
 cargo test -p zklean-extractor
 ```
 
-This tests use the [`proptest`](https://docs.rs/proptest/latest/proptest/index.html) library to ensure that extracting a representation of each constraint and MLE and executing it produces the same result as computing the constraint or MLE on its own. By default we run proptest for 256 iterations, however this can be changed by running
+These tests use the [`proptest`](https://docs.rs/proptest/latest/proptest/index.html) library to ensure that extracting a representation of each constraint and MLE and executing it produces the same result as computing the constraint or MLE on its own. By default we run proptest for 256 iterations, however this can be changed by running
 ```sh
 PROPTEST_CASES=$DESIRED_NUMBER_OF_ITERS cargo test -p zklean-extractor
 ```
