@@ -12,7 +12,7 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::poly::commitment::zeromorph::Zeromorph;
 use crate::subprotocols::shout::ShoutProof;
-use crate::subprotocols::sparse_dense_shout::{
+use crate::subprotocols::shout::sparse_dense::{
     prove_sparse_dense_shout, verify_sparse_dense_shout,
 };
 use crate::subprotocols::twist::{TwistAlgorithm, TwistProof};

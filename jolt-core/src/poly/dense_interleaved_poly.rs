@@ -187,19 +187,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedGrandProductLayer<F, Proo
 impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTranscript>
     for DenseInterleavedPolynomial<F>
 {
-    #[cfg(test)]
-    fn sumcheck_sanity_check(&self, eq_poly: &SplitEqPolynomial<F>, round_claim: F) {
-        let (left, right) = self.uninterleave();
-        let merged_eq = eq_poly.merge();
-        let expected: F = left
-            .iter()
-            .zip(right.iter())
-            .zip(merged_eq.evals_ref().iter())
-            .map(|((l, r), eq)| *eq * l * r)
-            .sum();
-        assert_eq!(expected, round_claim);
-    }
-
     /// We want to compute the evaluations of the following univariate cubic polynomial at
     /// points {0, 1, 2, 3}:
     ///     \sum_{x} eq(r, x) * left(x) * right(x)
@@ -344,6 +331,19 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
         let left_claim = self.coeffs[0];
         let right_claim = self.coeffs[1];
         (left_claim, right_claim)
+    }
+
+    #[cfg(test)]
+    fn sumcheck_sanity_check(&self, eq_poly: &SplitEqPolynomial<F>, round_claim: F) {
+        let (left, right) = self.uninterleave();
+        let merged_eq = eq_poly.merge();
+        let expected: F = left
+            .iter()
+            .zip(right.iter())
+            .zip(merged_eq.evals_ref().iter())
+            .map(|((l, r), eq)| *eq * l * r)
+            .sum();
+        assert_eq!(expected, round_claim);
     }
 }
 

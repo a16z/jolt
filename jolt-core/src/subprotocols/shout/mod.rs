@@ -2,6 +2,8 @@
 pub mod prover;
 #[cfg(feature = "prover")]
 pub mod sparse_dense;
+mod lookup_bits;
+pub use lookup_bits::*;
 
 use strum::IntoEnumIterator;
 #[cfg(feature = "prover")]

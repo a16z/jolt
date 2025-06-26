@@ -3,7 +3,7 @@ use crate::jolt::vm::instruction_lookups::LookupsProof;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
-use crate::subprotocols::sparse_dense_shout::verify_sparse_dense_shout;
+use crate::subprotocols::shout::verify_sparse_dense_shout;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::transcript::Transcript;
 
