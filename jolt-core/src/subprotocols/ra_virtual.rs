@@ -17,7 +17,26 @@ pub struct RAProof<F: JoltField, ProofTranscript: Transcript> {
 }
 
 /// Virtual RA sumcheck for d-way chunked addresses
-pub struct RASumcheck<F: JoltField, const D: usize> {
+// pub struct RASumcheck<F: JoltField, const D: usize> {
+//     /// ra(r_cycle, r_address)
+//     ra_claim: F,
+//     /// ra polynomials for each chunk
+//     ra_i_polys: [MultilinearPolynomial<F>; D],
+//     /// Eq polynomial as a multilinear polynomial
+//     eq_poly: MultilinearPolynomial<F>,
+//     /// Random point r_cycle
+//     r_cycle: Vec<F>,
+//     /// r_address pre-chunked
+//     r_address: Vec<F>,
+//     /// Random points r_address^(i) for each chunk
+//     r_address_chunks: [Vec<F>; D],
+//     /// ra_i_ claims to be proved via evaluation proof
+//     ra_i_claims: Option<[F; D]>,
+//     /// Length of the trace
+//     T: usize,
+// }
+
+pub struct RAProverState<F: JoltField, const D: usize> {
     /// ra(r_cycle, r_address)
     ra_claim: F,
     /// ra polynomials for each chunk
@@ -34,6 +53,33 @@ pub struct RASumcheck<F: JoltField, const D: usize> {
     ra_i_claims: Option<[F; D]>,
     /// Length of the trace
     T: usize,
+}
+pub struct RAVerifierState<F: JoltField, const D: usize> {
+    /// ra(r_cycle, r_address)
+    ra_claim: F,
+    /// ra polynomials for each chunk
+    ra_i_polys: [MultilinearPolynomial<F>; D],
+    /// Eq polynomial as a multilinear polynomial
+    eq_poly: MultilinearPolynomial<F>,
+    /// Random point r_cycle
+    r_cycle: Vec<F>,
+    /// r_address pre-chunked
+    r_address: Vec<F>,
+    /// Random points r_address^(i) for each chunk
+    r_address_chunks: [Vec<F>; D],
+    /// ra_i_ claims to be proved via evaluation proof
+    ra_i_claims: Option<[F; D]>,
+    /// Length of the trace
+    T: usize,
+}
+
+pub struct RASumcheck<F: JoltField, const D: usize> {
+    /// ra(r_cycle, r_address)
+    ra_claim: F,
+    /// Prover state
+    prover_state: Option<RAProverState<F, D>>,
+    /// verifier state
+    verifier_state: Option<RAVerifierState<F, D>>,
 }
 
 impl<F: JoltField, const D: usize> RASumcheck<F, D> {
@@ -63,7 +109,6 @@ impl<F: JoltField, const D: usize> RASumcheck<F, D> {
             .try_into()
             .expect("Failed to convert Vec to array");
 
-
         let eq_evals = EqPolynomial::evals(&r_cycle);
 
         let eq_poly = MultilinearPolynomial::from(eq_evals);
@@ -75,7 +120,7 @@ impl<F: JoltField, const D: usize> RASumcheck<F, D> {
             }
         }
 
-        Self {
+        let prover_state = RAProverState {
             ra_claim,
             ra_i_polys,
             eq_poly,
@@ -84,6 +129,12 @@ impl<F: JoltField, const D: usize> RASumcheck<F, D> {
             r_address_chunks,
             ra_i_claims: None,
             T,
+        };
+
+        Self {
+            ra_claim,
+            prover_state: Some(prover_state),
+            verifier_state: None,
         }
     }
 
@@ -95,6 +146,8 @@ impl<F: JoltField, const D: usize> RASumcheck<F, D> {
             crate::subprotocols::sumcheck::BatchedSumcheck::prove(vec![&mut self], transcript);
 
         let ra_i_claims = self
+            .prover_state
+            .expect("Prover state not initialized")
             .ra_i_claims
             .expect("ra_i_claims were not set after prove")
             .to_vec();
@@ -141,15 +194,14 @@ impl<F: JoltField, ProofTranscript: Transcript, const D: usize>
     }
 
     fn expected_output_claim(&self, r: &[F]) -> F {
-        
         let eq_eval = self.eq_poly.evaluate(r);
-        
+
         // Compute the product of all ra_i evaluations
         let mut product = F::one();
         for (_i, ra_i_claim) in self.ra_i_claims.as_ref().unwrap().iter().enumerate() {
             product *= *ra_i_claim;
         }
-        
+
         eq_eval * product
     }
 
@@ -157,29 +209,27 @@ impl<F: JoltField, ProofTranscript: Transcript, const D: usize>
         let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript>>::degree(self);
         let ra_i_polys = &self.ra_i_polys;
         let eq_poly = &self.eq_poly;
-        
+
         // We need to compute evaluations at 0, 2, 3, ..., degree
         // = eq(r_cycle, j) * ∏_{i=0}^{D-1} ra_i(j)
-        
-        let eval_points: Vec<usize> = (0..=degree)
-            .filter(|&i| i != 1)
-            .collect();
-        
+
+        let eval_points: Vec<usize> = (0..=degree).filter(|&i| i != 1).collect();
+
         let mut evals = vec![F::zero(); eval_points.len()];
 
-        let remaining_vars = <Self as BatchableSumcheckInstance<F, ProofTranscript>>::num_rounds(&self) - round - 1;
-        
+        let remaining_vars =
+            <Self as BatchableSumcheckInstance<F, ProofTranscript>>::num_rounds(&self) - round - 1;
+
         for (eval_idx, &point) in eval_points.iter().enumerate() {
             for j in 0..(1 << remaining_vars) {
-
-              let eq_evals = eq_poly.sumcheck_evals(j, degree, BindingOrder::LowToHigh);
+                let eq_evals = eq_poly.sumcheck_evals(j, degree, BindingOrder::LowToHigh);
                 // Extract the evaluation at the current point
                 let eq_eval = if point == 0 {
                     eq_evals[0]
                 } else {
                     eq_evals[point - 1]
                 };
-                
+
                 // Compute ∏_{i=0}^{D-1} ra_i(j) evaluated at point
                 let mut ra_product = F::one();
                 for ra_i_poly in ra_i_polys.iter() {
@@ -193,12 +243,12 @@ impl<F: JoltField, ProofTranscript: Transcript, const D: usize>
                     };
                     ra_product *= ra_i_eval;
                 }
-                
+
                 // Add to the sum: eq(r_cycle, j) * ∏_{i=0}^{D-1} ra_i(j)
                 evals[eval_idx] += eq_eval * ra_product;
             }
         }
-        
+
         evals
     }
 }
