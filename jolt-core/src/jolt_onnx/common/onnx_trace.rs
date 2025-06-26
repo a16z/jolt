@@ -64,6 +64,7 @@ impl ONNXInstruction {
             Operator::Conv => {
                 self.decorate_conv(node_proto);
             }
+            _ => {}
         }
     }
 
@@ -111,6 +112,12 @@ pub enum Operator {
     Relu,
     /// Convolution operator
     Conv,
+    /// Max pooling operator
+    MaxPool,
+    /// Max window operator
+    MaxWindow,
+    /// Max operator
+    Max,
 }
 
 /// Used to decorate the matmul operator with its attributes.
