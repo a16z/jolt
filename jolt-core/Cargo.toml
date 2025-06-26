@@ -46,7 +46,6 @@ ark-serialize = { version = "0.5.0", default-features = false, features = [
     "derive",
 ] }
 ark-serialize-derive = { version = "0.5.0", default-features = false }
-
 ark-std = { version = "0.5.0" }
 clap = { version = "4.3.10", features = ["derive"] }
 enum_dispatch = "0.3.12"
