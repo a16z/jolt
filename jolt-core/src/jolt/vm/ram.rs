@@ -334,14 +334,24 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         let init: MultilinearPolynomial<F> = MultilinearPolynomial::from(initial_memory_state);
         let init_eval = init.evaluate(&r_address);
 
-        let (val_evaluation_proof, _r_cycle_prime) = prove_val_evaluation(
+        let (val_evaluation_proof, mut r_cycle_prime) = prove_val_evaluation(
             trace,
             &program_io.memory_layout,
-            r_address,
+            r_address.clone(),
             r_cycle.clone(),
             init_eval,
             read_write_checking_proof.val_claim,
             transcript,
+        );
+        // Cycle variables are bound from low to high
+        r_cycle_prime.reverse();
+
+        let rd_inc_poly = CommittedPolynomials::RamInc.generate_witness(preprocessing, trace);
+        opening_accumulator.append_sparse(
+            vec![rd_inc_poly],
+            r_address,
+            r_cycle_prime,
+            vec![val_evaluation_proof.inc_claim],
         );
 
         let (booleanity_sumcheck, r_address_prime, r_cycle_prime, ra_claim) =
@@ -431,17 +441,28 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         let init: MultilinearPolynomial<F> = MultilinearPolynomial::from(initial_memory_state);
         let init_eval = init.evaluate(&r_address);
 
-        let (sumcheck_claim, r_cycle_prime) = self.val_evaluation_proof.sumcheck_proof.verify(
+        let (sumcheck_claim, mut r_cycle_prime) = self.val_evaluation_proof.sumcheck_proof.verify(
             self.read_write_checking_proof.val_claim - init_eval,
             log_T,
             2,
             transcript,
         )?;
+        // Cycle variables are bound from low to high
+        r_cycle_prime.reverse();
+
+        let inc_commitment = &commitments.commitments[CommittedPolynomials::RamInc.to_index()];
+        let r_concat = [r_address.as_slice(), r_cycle_prime.as_slice()].concat();
+        opening_accumulator.append(
+            &[inc_commitment],
+            r_concat,
+            &[self.val_evaluation_proof.inc_claim],
+            transcript,
+        );
 
         // Compute LT(r_cycle', r_cycle)
         let mut lt_eval = F::zero();
         let mut eq_term = F::one();
-        for (x, y) in r_cycle_prime.iter().rev().zip(r_cycle.iter()) {
+        for (x, y) in r_cycle_prime.iter().zip(r_cycle.iter()) {
             lt_eval += (F::one() - x) * y * eq_term;
             eq_term *= F::one() - x - y + *x * y + *x * y;
         }
