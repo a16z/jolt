@@ -22,7 +22,6 @@ use tracer::JoltDevice;
 use crate::msm::icicle;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::utils::errors::ProofVerifyError;
-use crate::utils::math::Math;
 use crate::utils::transcript::Transcript;
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
@@ -282,75 +281,40 @@ where
         );
         transcript.append_scalar(&spartan_key.vk_digest);
 
-        let mut transcript_1 = transcript.clone();
-
+        #[cfg(not(test))]
         let r1cs_proof = UniformSpartanProof::prove::<PCS>(
             &preprocessing,
             &constraint_builder,
             &spartan_key,
             &trace,
             &mut opening_accumulator,
-            &mut transcript_1,
-        )
-        .ok()
-        .unwrap();
-
-        let shard_len = std::cmp::min(
-            padded_trace_length,
-            std::cmp::max(
-                1 << (padded_trace_length.log_2() - padded_trace_length.log_2() / 2),
-                1 << 20,
-            ),
-        );
-
-        println!("shard_len: {shard_len}");
-
-        let r1cs_proof = UniformSpartanProof::prove_streaming::<PCS>(
-            &preprocessing,
-            &constraint_builder,
-            &spartan_key,
-            &trace,
-            shard_len,
-            &mut opening_accumulator,
             &mut transcript,
         )
         .ok()
         .unwrap();
 
-        // let shard_len = padded_trace_length;
-
-        // let outer_sumcheck_proof = UniformSpartanProof::prove_streaming::<PCS>(
-        //     &preprocessing,
-        //     &constraint_builder,
-        //     &spartan_key,
-        //     &trace,
-        //     shard_len,
-        //     &mut opening_accumulator,
-        //     &mut transcript_1,
-        // );
-        // .ok()
-        // .unwrap();
-
-        // #[cfg(test)]
-        // {
-        //     println!(
-        //         "Streaming sum-check proof has {} polys.",
-        //         outer_sumcheck_proof.compressed_polys.len()
-        //     );
-        //
-        //     assert_eq!(
-        //         outer_sumcheck_proof.compressed_polys.len(),
-        //         r1cs_proof.outer_sumcheck_proof.compressed_polys.len()
-        //     );
-        //     for i in 0..r1cs_proof.outer_sumcheck_proof.compressed_polys.len() {
-        //         assert_eq!(
-        //             outer_sumcheck_proof.compressed_polys[i].coeffs_except_linear_term,
-        //             r1cs_proof.outer_sumcheck_proof.compressed_polys[i].coeffs_except_linear_term,
-        //             "The streaming sum-check errs in round {i}"
-        //         );
-        //     }
-        //     println!("streaming sum-check prover returns the correct proof.");
-        // }
+        #[cfg(test)]
+        let r1cs_proof = {
+            use crate::utils::math::Math;
+            let shard_len = std::cmp::min(
+                padded_trace_length,
+                std::cmp::max(
+                    1 << (padded_trace_length.log_2() - padded_trace_length.log_2() / 2),
+                    1 << 20,
+                ),
+            );
+            UniformSpartanProof::prove_streaming::<PCS>(
+                &preprocessing,
+                &constraint_builder,
+                &spartan_key,
+                &trace,
+                shard_len,
+                &mut opening_accumulator,
+                &mut transcript,
+            )
+            .ok()
+            .unwrap()
+        };
 
         let instruction_proof = LookupsProof::prove(
             &preprocessing.shared.generators,

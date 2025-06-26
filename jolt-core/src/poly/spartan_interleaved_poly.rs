@@ -3,6 +3,8 @@ use super::{
     sparse_interleaved_poly::SparseCoefficient, split_eq_poly::GruenSplitEqPolynomial,
     unipoly::CompressedUniPoly,
 };
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::r1cs::inputs::R1CSInputsOracle;
 use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
 use crate::utils::streaming::Oracle;
 use crate::{
@@ -16,15 +18,6 @@ use crate::{
 };
 use ark_ff::Zero;
 use rayon::prelude::*;
-use std::ops::Index;
-
-use crate::jolt::vm::JoltProverPreprocessing;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::r1cs::inputs::R1CSInputsOracle;
-use ark_std::iterable::Iterable;
-use rayon::ThreadPoolBuilder;
-use std::time::{Duration, Instant};
-use tracer::instruction::RV32IMCycle;
 
 pub const TOTAL_NUM_ACCUMS: usize = svo_helpers::total_num_accums(NUM_SVO_ROUNDS);
 pub const NUM_NONTRIVIAL_TERNARY_POINTS: usize =
@@ -518,15 +511,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         let x_next_val = local_offset / 2 / Y_SVO_SPACE_SIZE; // 0 or 1
                         let eq_r_y = eq_r_evals[y_val_idx];
 
-                        // println!(
-                        //     "block_idx = {}, x_in_val = {}, x_out_val = {}, x_next_val = {}, y_val_idx = {}",
-                        //     current_block_id,
-                        //     x_in_val_stream,
-                        //     x_out_val_stream,
-                        //     x_next_val,
-                        //     y_val_idx
-                        // );
-
                         if current_is_B {
                             // Current coefficient is Bz
                             let bz_orig_val = current_coeff.value;
@@ -631,17 +615,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
                     task_sum_contrib_0 += e_out_val * e_in_val * p_at_xk0;
                     task_sum_contrib_infty += e_out_val * e_in_val * p_slope_term;
-
-                    // println!(
-                    //     "block_idx = {}, az_1_at_0 = {}, bz_1_at_0 = {}, az_1_at_r = {}, bz_1_at_r = {}, eval_at_zero = {}, eval_at_infinity = {}",
-                    //     current_block_id,
-                    //     az0_at_r,
-                    //     bz0_at_r,
-                    //     az1_at_r,
-                    //     bz1_at_r,
-                    //     task_sum_contrib_0,
-                    //     task_sum_contrib_infty
-                    // );
                 }
 
                 StreamingTaskOutput {
@@ -1215,9 +1188,7 @@ where
         );
         assert!(
             NUM_SVO_ROUNDS <= num_constraint_vars,
-            "NUM_SVO_ROUNDS ({}) cannot exceed total constraint variables ({})",
-            NUM_SVO_ROUNDS,
-            num_constraint_vars
+            "NUM_SVO_ROUNDS ({NUM_SVO_ROUNDS}) cannot exceed total constraint variables ({num_constraint_vars})",
         );
 
         // Number of constraint variables that are NOT part of the SVO prefix Y.
@@ -1226,10 +1197,7 @@ where
         assert_eq!(
             num_non_svo_z_vars,
             total_num_vars - NUM_SVO_ROUNDS,
-            "num_non_svo_z_vars ({}) + NUM_SVO_ROUNDS ({}) must be == total_num_vars ({})",
-            num_non_svo_z_vars,
-            NUM_SVO_ROUNDS,
-            total_num_vars
+            "num_non_svo_z_vars ({num_non_svo_z_vars}) + NUM_SVO_ROUNDS ({NUM_SVO_ROUNDS}) must be == total_num_vars ({total_num_vars})"
         );
 
         // --- Define Iteration Spaces for Non-SVO Z variables (x_out_val, x_in_val) ---
@@ -1262,8 +1230,6 @@ where
         assert_eq!(E_out_vec.len(), NUM_SVO_ROUNDS);
 
         let num_x_out_vals = 1usize << iter_num_x_out_vars;
-        let num_x_in_step_vals = 1usize << iter_num_x_in_step_vars;
-        let _num_x_in_non_svo_constraint_vals: usize = 1usize << iter_num_x_in_constraint_vars;
 
         assert_eq!(
             1usize << iter_num_x_in_vars,
@@ -1276,40 +1242,21 @@ where
         let num_shards = self.get_len() / shard_length;
         assert!(num_shards > 0);
         let num_shard_vars = (shard_length.ilog2() + padded_num_constraints.ilog2()) as usize;
-        // println!(
-        //     "num_shards: {}, num_shard_vars: {}",
-        //     num_shards, num_shard_vars
-        // );
-
         let mut svo_accums_zero = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
         let mut svo_accums_infty = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
 
         if num_shard_vars <= NUM_SVO_ROUNDS + iter_num_x_in_vars {
-            println!("\n Shard smaller than an x_out_val block \n");
             // There are multiple shards for every value of x_out_vars. So we iterate over every value of x_out_vars
             // and stream all shards corresponding to that value of x_out_vars.
             let shards_per_x_out_val = num_shards / num_x_out_vals;
-            // println!("shards_per_x_out_val: {}", shards_per_x_out_val);
-            // println!("num_shards: {}", num_shards);
-            // println!("num_x_out_vals: {}", num_x_out_vals);
-            // 1 << (NUM_SVO_ROUNDS + iter_num_x_in_vars - num_shard_vars)
-            let mut time_to_stream_shards = std::time::Duration::ZERO;
-            let mut time_to_chunk_and_collect = std::time::Duration::ZERO;
-            let mut time_to_compute_preprocessing = std::time::Duration::ZERO;
-
             for x_out_val in 0..num_x_out_vals {
                 // Accumulator for SUM_{x_in} E_in * P_ext for this specific x_out_val.
                 let mut tA_sum_for_current_x_out = [F::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
-                // let mut tA_sum_for_current_x_out_parallel =
-                //     [F::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
                 let mut current_x_out_svo_zero = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
                 let mut current_x_out_svo_infty = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
 
-                for shard_idx in 0..shards_per_x_out_val {
-                    // let now = Instant::now();
+                for _ in 0..shards_per_x_out_val {
                     let shard = self.next_shard();
-                    // time_to_stream_shards += now.elapsed();
-
                     let tA_sum_for_current_shard = shard
                         .par_iter()
                         .map(|piece| {
@@ -1369,23 +1316,11 @@ where
                     svo_accums_infty[i] += current_x_out_svo_infty[i];
                 }
             }
-            println!("Time to stream shards: {:?}", time_to_stream_shards);
-            println!("Time to chunk and collect: {:?}", time_to_chunk_and_collect);
-            println!(
-                "Time to compute pre-processing: {:?}",
-                time_to_compute_preprocessing
-            );
         } else {
             // TODO: Implement Dao-Thaler optmisation.
-            let mut time_to_stream_shards = std::time::Duration::ZERO;
-            let mut time_to_chunk_and_collect = std::time::Duration::ZERO;
-            let mut time_to_compute_preprocessing = std::time::Duration::ZERO;
             // There are multiple values of x_out_vars in the same shard. So we stream a shard and divide it into blocks
             // based on the value of x_out_vars.
-            println!("Shard larger than an x_out_val block");
-            let num_x_out_vals_per_shard = num_x_out_vals / num_shards;
-
-            for shard_idx in 0..num_shards {
+            for _ in 0..num_shards {
                 let shard = self.next_shard();
 
                 let (current_shard_svo_zero, current_shard_svo_infty) = shard
@@ -1402,9 +1337,6 @@ where
                             .for_each(|x_out_val_block| {
                                 let mut tA_sum_for_current_x_out =
                                     [F::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
-                                // let mut current_x_out_svo_zero = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
-                                // let mut current_x_out_svo_infty = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
-
                                 x_out_val_block
                                     .chunk_by(|u, v| {
                                         u.index >> (NUM_SVO_ROUNDS + 1)
@@ -1470,6 +1402,7 @@ where
     }
 
     // TODO: Implement Dao-Thaler optimisation.
+    #[allow(clippy::too_many_arguments)]
     pub fn streaming_rounds(
         &mut self,
         num_shards: usize,
@@ -1482,29 +1415,8 @@ where
         claim: &mut F,
         transcript: &mut ProofTranscript,
     ) {
-        let total_time = Instant::now();
         let mut partially_bound_coeffs = Vec::<Vec<SparseCoefficient<F>>>::new();
-        let mut time_to_collect = Duration::ZERO;
-        let mut time_to_stream_shards = Duration::ZERO;
-        let mut time_for_sum_check = Duration::ZERO;
         let mut r_i = F::zero();
-
-        // let current_num_threads = rayon::current_num_threads();
-
-        // println!("Total threads: {}", current_num_threads);
-        // let pool_1_num_threads = (2 * current_num_threads).div_ceil(3);
-        // let pool_2_num_threads = current_num_threads - pool_1_num_threads;
-        // println!("Pool 1 threads: {}", pool_1_num_threads);
-        // println!("Pool 2 threads: {}", pool_2_num_threads);
-        //
-        // let pool_1 = ThreadPoolBuilder::new()
-        //     .num_threads(pool_1_num_threads)
-        //     .build()
-        //     .unwrap();
-        // let pool_2 = ThreadPoolBuilder::new()
-        //     .num_threads(pool_2_num_threads)
-        //     .build()
-        //     .unwrap();
 
         // TODO: Add relevant assertions for piece length.
         let piece_size =
@@ -1516,20 +1428,14 @@ where
         // TODO: Both for loops have a lot of repeated code. Put all that code in a function.
         // All blocks start and end in the same piece
         for round in streaming_rounds_start..=split_index {
-            println!(
-                "Streaming round {} has smaller block size than piece size.",
-                round
-            );
             let block_size = 1 << (round + 1);
 
             let mut eval_at_zero = F::zero();
             let mut eval_at_infinity = F::zero();
 
             assert_eq!(self.get_step(), 0);
-            for i in 0..num_shards {
-                let now = Instant::now();
+            for _ in 0..num_shards {
                 let shard = self.next_shard();
-                time_to_stream_shards += now.elapsed();
 
                 let num_x_in_vars = eq_poly.E_in_current_len().log_2();
 
@@ -1545,7 +1451,6 @@ where
                                 let current_block_id = block[0].index / (2 * block_size);
                                 let x_in_val =
                                     current_block_id & ((1 << num_x_in_vars) - 1);
-                                // println!("x_in_val = {}", x_in_val);
                                 let x_out_val = current_block_id >> num_x_in_vars;
                                 let e_out_val = eq_poly.E_out_current()[x_out_val];
                                 let e_in_val = if eq_poly.E_in_current_len() > 1 {
@@ -1754,16 +1659,12 @@ where
         // Block size larger than the size of a piece.
         for round in (split_index + 1)..=streaming_rounds_end {
             assert_eq!(self.get_step(), 0);
-            println!(
-                "Streaming round {} has larger block size than piece size.",
-                round
-            );
             let block_size = 1 << (round + 1);
 
             let mut eval_at_zero = F::zero();
             let mut eval_at_infinity = F::zero();
 
-            for i in 0..num_shards {
+            for _ in 0..num_shards {
                 let shard = self.next_shard();
 
                 // TODO: Refactor. Put this in a sepearte funciton or closure.
@@ -1777,7 +1678,6 @@ where
                         let current_block_id = block[0][0].index / (2 * block_size);
                         let x_in_val =
                             current_block_id & ((1 << num_x_in_vars) - 1);
-                        // println!("x_in_val = {}", x_in_val);
                         let x_out_val = current_block_id >> num_x_in_vars;
                         let e_out_val = eq_poly.E_out_current()[x_out_val];
                         let e_in_val = if eq_poly.E_in_current_len() > 1 {
@@ -1991,21 +1891,10 @@ where
             }
         }
 
-        let time_to_bind = Instant::now();
-
-        // for i in 0..collected_outputs.len() {
-        //     for j in 0..collected_outputs[i].2.len() {
-        //         if collected_outputs[i].2[j].index < 10 {
-        //             println!("Collected output {}: {:?}", i, collected_outputs[i].2);
-        //         }
-        //     }
-        // }
-
         let num_chunks = rayon::current_num_threads() * 8;
         let chunk_size = partially_bound_coeffs.len() / num_chunks;
 
         let binding_output_lengths: Vec<usize> = (0..num_chunks)
-            .into_iter()
             .map(|chunk_idx| {
                 let start_idx = chunk_idx * chunk_size;
                 let end_idx = if chunk_idx == num_chunks - 1 {

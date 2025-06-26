@@ -875,7 +875,7 @@ pub(crate) fn process_small_scalar_polys<F, T>(
 
 #[inline(always)]
 pub(crate) fn process_large_scalar_polys<F>(
-    coeffs: &Vec<F>,
+    coeffs: &[F],
     final_eval: &mut F,
     eq: &SplitEqPolynomial<F>,
     base_poly_idx: usize,

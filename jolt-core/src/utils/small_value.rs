@@ -1539,9 +1539,7 @@ pub mod svo_helpers {
             }
         }
 
-        let block_idx = block[0].index >> (NUM_SVO_ROUNDS + 1);
-
-        svo_helpers::compute_and_update_tA_inplace_generic::<NUM_SVO_ROUNDS, F>(
+        compute_and_update_tA_inplace_generic::<NUM_SVO_ROUNDS, F>(
             &az_binary_evals,
             &bz_binary_evals,
             &E_in_val,

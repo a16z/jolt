@@ -344,7 +344,7 @@ where
         key: &UniformSpartanKey<F>,
         trace: &[RV32IMCycle],
         shard_length: usize,
-        opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
+        _opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<Self, SpartanError>
     where

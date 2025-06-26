@@ -26,14 +26,11 @@ use crate::{into_optimal_iter, optimal_iter};
 
 use crate::jolt::vm::JoltProverPreprocessing;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::sparse_interleaved_poly::SparseCoefficient;
-use crate::r1cs::inputs::{R1CSInputsOracle, ALL_R1CS_INPUTS};
+use crate::r1cs::inputs::R1CSInputsOracle;
 use ark_serialize::*;
 use rayon::prelude::*;
 use smallvec::{smallvec, SmallVec};
 use std::marker::PhantomData;
-use std::time::Duration;
-use tokio::time::Instant;
 use tracer::instruction::RV32IMCycle;
 
 pub trait Bindable<F: JoltField>: Sync {
@@ -485,17 +482,6 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             &mut claim,
         );
 
-        let shard_len = 1048576;
-        let streaming_rounds_start = NUM_SVO_ROUNDS;
-        let binding_round = if num_rounds > shard_len.log_2() + padded_num_constraints.log_2() {
-            std::cmp::max(
-                streaming_rounds_start,
-                num_rounds - shard_len.log_2() - padded_num_constraints.log_2(),
-            )
-        } else {
-            streaming_rounds_start
-        };
-
         // Round (NUM_SVO_ROUNDS + 1)..num_rounds : do the linear time sumcheck
         for _ in NUM_SVO_ROUNDS + 1..num_rounds {
             az_bz_cz_poly.remaining_sumcheck_round(
@@ -584,7 +570,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             transcript,
         );
 
-        for i in binding_round + 1..num_rounds {
+        for _ in binding_round + 1..num_rounds {
             az_bz_poly_oracle.remaining_sumcheck_rounds(
                 &mut eq_poly,
                 transcript,
@@ -622,10 +608,6 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
 
         let len = poly_A.len() / 2;
         let trace_len = witness_polynomials[0].len();
-        // witness_polynomials
-        //     .iter()
-        //     .for_each(|poly| debug_assert_eq!(poly.len(), trace_len));
-
         // We don't materialize the full, flattened witness vector, but this closure
         // simulates it
         let witness_value = |index: usize| {
