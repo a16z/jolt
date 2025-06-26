@@ -4,18 +4,19 @@
     clippy::too_many_arguments
 )]
 
-use crate::impl_r1cs_input_lc_conversions;
 use crate::jolt::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
 use crate::jolt::vm::JoltProverPreprocessing;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::transcript::Transcript;
+use crate::{impl_r1cs_input_lc_conversions, optimal_iter};
 
 use super::key::UniformSpartanKey;
 use super::spartan::UniformSpartanProof;
 
 use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::fmt::Debug;
 use std::marker::PhantomData;
@@ -153,48 +154,49 @@ impl JoltR1CSInputs {
                 coeffs.into()
             }
             JoltR1CSInputs::UnexpandedPC => {
-                let coeffs: Vec<u64> = trace
-                    .par_iter()
+                let coeffs: Vec<u64> = optimal_iter!(trace)
                     .map(|cycle| cycle.instruction().normalize().address as u64)
                     .collect();
                 coeffs.into()
             }
             JoltR1CSInputs::Rd => {
-                let coeffs: Vec<u8> = trace
-                    .par_iter()
+                let coeffs: Vec<u8> = optimal_iter!(trace)
                     .map(|cycle| cycle.rd_write().0 as u8)
                     .collect();
                 coeffs.into()
             }
             JoltR1CSInputs::Imm => {
-                let coeffs: Vec<i64> = trace
-                    .par_iter()
+                let coeffs: Vec<i64> = optimal_iter!(trace)
                     .map(|cycle| cycle.instruction().normalize().operands.imm)
                     .collect();
                 coeffs.into()
             }
             JoltR1CSInputs::RamAddress => {
-                let coeffs: Vec<u64> = trace
-                    .par_iter()
+                let coeffs: Vec<u64> = optimal_iter!(trace)
                     .map(|cycle| cycle.ram_access().address() as u64)
                     .collect();
                 coeffs.into()
             }
             JoltR1CSInputs::Rs1Value => {
-                let coeffs: Vec<u64> = trace.par_iter().map(|cycle| cycle.rs1_read().1).collect();
+                let coeffs: Vec<u64> = optimal_iter!(trace)
+                    .map(|cycle| cycle.rs1_read().1)
+                    .collect();
                 coeffs.into()
             }
             JoltR1CSInputs::Rs2Value => {
-                let coeffs: Vec<u64> = trace.par_iter().map(|cycle| cycle.rs2_read().1).collect();
+                let coeffs: Vec<u64> = optimal_iter!(trace)
+                    .map(|cycle| cycle.rs2_read().1)
+                    .collect();
                 coeffs.into()
             }
             JoltR1CSInputs::RdWriteValue => {
-                let coeffs: Vec<u64> = trace.par_iter().map(|cycle| cycle.rd_write().2).collect();
+                let coeffs: Vec<u64> = optimal_iter!(trace)
+                    .map(|cycle| cycle.rd_write().2)
+                    .collect();
                 coeffs.into()
             }
             JoltR1CSInputs::RamReadValue => {
-                let coeffs: Vec<u64> = trace
-                    .par_iter()
+                let coeffs: Vec<u64> = optimal_iter!(trace)
                     .map(|cycle| match cycle.ram_access() {
                         tracer::instruction::RAMAccess::Read(read) => read.value,
                         tracer::instruction::RAMAccess::Write(write) => write.pre_value,
@@ -204,8 +206,7 @@ impl JoltR1CSInputs {
                 coeffs.into()
             }
             JoltR1CSInputs::RamWriteValue => {
-                let coeffs: Vec<u64> = trace
-                    .par_iter()
+                let coeffs: Vec<u64> = optimal_iter!(trace)
                     .map(|cycle| match cycle.ram_access() {
                         tracer::instruction::RAMAccess::Read(read) => read.value,
                         tracer::instruction::RAMAccess::Write(write) => write.post_value,
@@ -215,36 +216,31 @@ impl JoltR1CSInputs {
                 coeffs.into()
             }
             JoltR1CSInputs::LeftInstructionInput => {
-                let coeffs: Vec<u64> = trace
-                    .par_iter()
+                let coeffs: Vec<u64> = optimal_iter!(trace)
                     .map(|cycle| LookupQuery::<32>::to_instruction_inputs(cycle).0)
                     .collect();
                 coeffs.into()
             }
             JoltR1CSInputs::RightInstructionInput => {
-                let coeffs: Vec<i64> = trace
-                    .par_iter()
+                let coeffs: Vec<i64> = optimal_iter!(trace)
                     .map(|cycle| LookupQuery::<32>::to_instruction_inputs(cycle).1)
                     .collect();
                 coeffs.into()
             }
             JoltR1CSInputs::LeftLookupOperand => {
-                let coeffs: Vec<u64> = trace
-                    .par_iter()
+                let coeffs: Vec<u64> = optimal_iter!(trace)
                     .map(|cycle| LookupQuery::<32>::to_lookup_operands(cycle).0)
                     .collect();
                 coeffs.into()
             }
             JoltR1CSInputs::RightLookupOperand => {
-                let coeffs: Vec<u64> = trace
-                    .par_iter()
+                let coeffs: Vec<u64> = optimal_iter!(trace)
                     .map(|cycle| LookupQuery::<32>::to_lookup_operands(cycle).1)
                     .collect();
                 coeffs.into()
             }
             JoltR1CSInputs::Product => {
-                let coeffs: Vec<u64> = trace
-                    .par_iter()
+                let coeffs: Vec<u64> = optimal_iter!(trace)
                     .map(|cycle| {
                         let (left_input, right_input) =
                             LookupQuery::<32>::to_instruction_inputs(cycle);
@@ -254,8 +250,7 @@ impl JoltR1CSInputs {
                 coeffs.into()
             }
             JoltR1CSInputs::WriteLookupOutputToRD => {
-                let coeffs: Vec<u8> = trace
-                    .par_iter()
+                let coeffs: Vec<u8> = optimal_iter!(trace)
                     .map(|cycle| {
                         let flag = cycle.instruction().circuit_flags()
                             [CircuitFlags::WriteLookupOutputToRD as usize];
@@ -265,8 +260,7 @@ impl JoltR1CSInputs {
                 coeffs.into()
             }
             JoltR1CSInputs::WritePCtoRD => {
-                let coeffs: Vec<u8> = trace
-                    .par_iter()
+                let coeffs: Vec<u8> = optimal_iter!(trace)
                     .map(|cycle| {
                         let flag = cycle.instruction().circuit_flags()[CircuitFlags::Jump as usize];
                         (cycle.rd_write().0 as u8) * (flag as u8)
@@ -275,15 +269,13 @@ impl JoltR1CSInputs {
                 coeffs.into()
             }
             JoltR1CSInputs::LookupOutput => {
-                let coeffs: Vec<u64> = trace
-                    .par_iter()
+                let coeffs: Vec<u64> = optimal_iter!(trace)
                     .map(LookupQuery::<32>::to_lookup_output)
                     .collect();
                 coeffs.into()
             }
             JoltR1CSInputs::NextUnexpandedPC => {
-                let coeffs: Vec<u64> = trace
-                    .par_iter()
+                let coeffs: Vec<u64> = optimal_iter!(trace)
                     .map(|cycle| {
                         let is_branch =
                             cycle.instruction().circuit_flags()[CircuitFlags::Branch as usize];
@@ -311,8 +303,7 @@ impl JoltR1CSInputs {
                 coeffs.into()
             }
             JoltR1CSInputs::ShouldBranch => {
-                let coeffs: Vec<u8> = trace
-                    .par_iter()
+                let coeffs: Vec<u8> = optimal_iter!(trace)
                     .map(|cycle| {
                         let is_branch =
                             cycle.instruction().circuit_flags()[CircuitFlags::Branch as usize];
@@ -323,8 +314,7 @@ impl JoltR1CSInputs {
             }
             JoltR1CSInputs::OpFlags(flag) => {
                 // TODO(moodlezoup): Boolean polynomial
-                let coeffs: Vec<u8> = trace
-                    .par_iter()
+                let coeffs: Vec<u8> = optimal_iter!(trace)
                     .map(|cycle| cycle.instruction().circuit_flags()[*flag as usize] as u8)
                     .collect();
                 coeffs.into()

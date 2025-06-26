@@ -21,11 +21,11 @@ pub mod transcript;
 #[macro_export]
 macro_rules! optimal_iter {
     ($T:expr) => {{
-        #[cfg(feature = "rayon")]
+        #[cfg(feature = "parallel")]
         {
             $T.par_iter()
         }
-        #[cfg(not(feature = "rayon"))]
+        #[cfg(not(feature = "parallel"))]
         {
             $T.iter()
         }
@@ -35,11 +35,11 @@ macro_rules! optimal_iter {
 #[macro_export]
 macro_rules! into_optimal_iter {
     ($T:expr) => {{
-        #[cfg(feature = "rayon")]
+        #[cfg(feature = "parallel")]
         {
             $T.into_par_iter()
         }
-        #[cfg(not(feature = "rayon"))]
+        #[cfg(not(feature = "parallel"))]
         {
             $T.into_iter()
         }
@@ -49,11 +49,11 @@ macro_rules! into_optimal_iter {
 #[macro_export]
 macro_rules! optimal_iter_mut {
     ($T:expr) => {{
-        #[cfg(feature = "rayon")]
+        #[cfg(feature = "parallel")]
         {
             $T.par_iter_mut()
         }
-        #[cfg(not(feature = "rayon"))]
+        #[cfg(not(feature = "parallel"))]
         {
             $T.iter_mut()
         }
@@ -63,11 +63,11 @@ macro_rules! optimal_iter_mut {
 #[macro_export]
 macro_rules! optimal_chunks {
     ($T:expr, $chunk_size:expr) => {{
-        #[cfg(feature = "rayon")]
+        #[cfg(feature = "parallel")]
         {
             $T.par_chunks($chunk_size)
         }
-        #[cfg(not(feature = "rayon"))]
+        #[cfg(not(feature = "parallel"))]
         {
             $T.chunks($chunk_size)
         }
@@ -75,13 +75,27 @@ macro_rules! optimal_chunks {
 }
 
 #[macro_export]
+macro_rules! optimal_flat_map {
+    ($T:expr, $F:expr) => {{
+        #[cfg(feature = "parallel")]
+        {
+            $T.flat_map_iter($F)
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            $T.flat_map($F)
+        }
+    }};
+}
+
+#[macro_export]
 macro_rules! optimal_num_threads {
     () => {{
-        #[cfg(feature = "rayon")]
+        #[cfg(feature = "parallel")]
         {
             rayon::current_num_threads()
         }
-        #[cfg(not(feature = "rayon"))]
+        #[cfg(not(feature = "parallel"))]
         {
             1
         }
@@ -91,11 +105,11 @@ macro_rules! optimal_num_threads {
 #[macro_export]
 macro_rules! optimal_chunks_mut {
     ($T:expr, $chunk_size:expr) => {{
-        #[cfg(feature = "rayon")]
+        #[cfg(feature = "parallel")]
         {
             $T.par_chunks_mut($chunk_size)
         }
-        #[cfg(not(feature = "rayon"))]
+        #[cfg(not(feature = "parallel"))]
         {
             $T.chunks_mut($chunk_size)
         }
@@ -103,13 +117,27 @@ macro_rules! optimal_chunks_mut {
 }
 
 #[macro_export]
+macro_rules! optimal_chunk_by {
+    ($T:expr, $F:expr) => {{
+        #[cfg(feature = "parallel")]
+        {
+            $T.par_chunk_by($F)
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            $T.chunk_by($F)
+        }
+    }};
+}
+
+#[macro_export]
 macro_rules! join_if_rayon {
     ($f1:expr, $f2:expr) => {{
-        #[cfg(feature = "rayon")]
+        #[cfg(feature = "parallel")]
         {
             rayon::join($f1, $f2)
         }
-        #[cfg(not(feature = "rayon"))]
+        #[cfg(not(feature = "parallel"))]
         {
             ($f1(), $f2())
         }

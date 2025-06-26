@@ -2,14 +2,13 @@ use crate::{
     field::JoltField,
     optimal_chunks, optimal_chunks_mut, optimal_iter,
     subprotocols::{
-        grand_product::BatchedGrandProductLayer,
         sumcheck::{BatchedCubicSumcheck, Bindable},
     },
     utils::{thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
 #[cfg(feature = "parallel")]
 use rayon::{prelude::*, slice::Chunks};
-
+use crate::subprotocols::grand_product::BatchedGrandProductLayer;
 #[cfg(test)]
 use super::dense_mlpoly::DensePolynomial;
 use super::{split_eq_poly::SplitEqPolynomial, unipoly::UniPoly};
