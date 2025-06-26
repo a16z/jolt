@@ -252,22 +252,6 @@ impl R1CSBuilder {
     }
 }
 
-// pub(crate) fn shard_last_step_eval_offset_lc<F: JoltField>(
-//     offset: &OffsetLC,
-//     flattened_polynomials: &[MultilinearPolynomial<F>],
-//     flattened_eval: &[MultilinearPolynomial<F>],
-//     step: usize,
-//     next_step_m: Option<usize>,
-// ) -> i128 {
-//     if !offset.0 {
-//         offset.1.evaluate_row(flattened_polynomials, step)
-//     } else if next_step_m.is_some() {
-//         offset.1.evaluate_row(flattened_eval, 0)
-//     } else {
-//         offset.1.constant_term_field()
-//     }
-// }
-
 // TODO(sragss): Detailed documentation with wiki.
 pub struct CombinedUniformBuilder<F: JoltField> {
     _field: PhantomData<F>,

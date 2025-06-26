@@ -621,9 +621,6 @@ where
         self.step = (self.step + self.shard_length) % self.trace.len();
         shard
     }
-    fn reset(&mut self) {
-        self.step = 0;
-    }
 
     fn get_len(&self) -> usize {
         self.trace.len()

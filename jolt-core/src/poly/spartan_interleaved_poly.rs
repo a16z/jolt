@@ -88,10 +88,10 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
     /// - Eval at infty: acc_3(infty, v_1, v_2), where v_1, v_2 \in {0, 1, infty}
     ///
     /// Total = 19 accumulators
-    // #[tracing::instrument(
-    //     skip_all,
-    //     name = "NewSpartanInterleavedPolynomial::new_with_precompute"
-    // )]
+    #[tracing::instrument(
+        skip_all,
+        name = "NewSpartanInterleavedPolynomial::new_with_precompute"
+    )]
     pub fn new_with_precompute(
         padded_num_constraints: usize,
         uniform_constraints: &[Constraint],
@@ -784,10 +784,10 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
     ///
     /// We then process this to form `s_i(X) = l_i(X) * t_i(X)`, append `s_i.compress()` to the transcript,
     /// derive next challenge `r_i`, then bind both `eq_poly` and `bound_coeffs` with `r_i`.
-    // #[tracing::instrument(
-    //     skip_all,
-    //     name = "NewSpartanInterleavedPolynomial::remaining_sumcheck_round"
-    // )]
+    #[tracing::instrument(
+        skip_all,
+        name = "NewSpartanInterleavedPolynomial::remaining_sumcheck_round"
+    )]
     pub fn remaining_sumcheck_round<ProofTranscript: Transcript>(
         &mut self,
         eq_poly: &mut GruenSplitEqPolynomial<F>,
@@ -2306,10 +2306,6 @@ where
 
     fn next_shard(&mut self) -> Self::Shard {
         self.generate_shard()
-    }
-
-    fn reset(&mut self) {
-        self.input_polys_oracle.reset();
     }
 
     fn get_len(&self) -> usize {

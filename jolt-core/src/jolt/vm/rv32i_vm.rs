@@ -82,12 +82,11 @@ mod tests {
     use ark_bn254::{Bn254, Fr};
     use tracing_chrome::ChromeLayerBuilder;
     use tracing_subscriber::layer::SubscriberExt;
-    use tracing_subscriber::{FmtSubscriber, Registry};
+    use tracing_subscriber::Registry;
 
     use crate::field::JoltField;
     use crate::host;
     use crate::jolt::vm::rv32i_vm::{Jolt, RV32IJoltVM};
-    use crate::jolt::vm::JoltProverPreprocessing;
     use crate::poly::commitment::commitment_scheme::CommitmentScheme;
     use crate::poly::commitment::hyperkzg::HyperKZG;
     use crate::poly::commitment::mock::MockCommitScheme;

@@ -737,6 +737,7 @@ where
             )
             .map_err(|_| SpartanError::InvalidShiftSumcheckProof)?;
 
+        #[cfg(test)]
         let shift_sumcheck_r: Vec<F> = shift_sumcheck_r.iter().rev().copied().collect();
 
         let unexpanded_pc_eval_at_shift_r = self.shift_sumcheck_witness_eval[0];
