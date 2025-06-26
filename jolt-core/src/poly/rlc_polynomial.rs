@@ -12,6 +12,7 @@ use ark_ec::CurveGroup;
 use num_traits::MulAdd;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
+use tracing::trace_span;
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct RLCPolynomial<F: JoltField> {
@@ -127,6 +128,9 @@ impl<F: JoltField> RLCPolynomial<F> {
 
             let coeff_fr = unsafe { *(&raw const *coeff as *const Fr) };
 
+            let _span = trace_span!("vector_scalar_mul_add_gamma_g1_online");
+            let _enter = _span.enter();
+
             // Use `jolt-optimizations`: v[i] = scalar * v[i] + gamma[i]
             jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
                 updated_row_commitments,
@@ -139,6 +143,7 @@ impl<F: JoltField> RLCPolynomial<F> {
 
         for (coeff, poly) in self.inc_rlc.iter() {
             let mut new_row_commitments: Vec<JoltGroupWrapper<G>> = poly.commit_rows(bases);
+
             new_row_commitments.resize(num_rows, JoltGroupWrapper(G::zero()));
 
             let updated_row_commitments: &mut [G1Projective] = unsafe {
@@ -156,6 +161,9 @@ impl<F: JoltField> RLCPolynomial<F> {
             };
 
             let coeff_fr = unsafe { *(&raw const *coeff as *const Fr) };
+
+            let _span = trace_span!("vector_scalar_mul_add_gamma_g1_online");
+            let _enter = _span.enter();
 
             // Use `jolt-optimizations`: v[i] = scalar * v[i] + gamma[i]
             jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
