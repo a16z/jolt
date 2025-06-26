@@ -98,6 +98,7 @@ where
 
     /// Computes a batched grand product proof, layer by layer.
     #[tracing::instrument(skip_all, name = "BatchedGrandProduct::prove_grand_product")]
+    #[cfg(feature = "prover")]
     fn prove_grand_product(
         &mut self,
         _opening_accumulator: Option<&mut ProverOpeningAccumulator<F, PCS, ProofTranscript>>,
@@ -246,6 +247,7 @@ where
     ProofTranscript: Transcript,
 {
     /// Proves a single layer of a batched grand product circuit
+    #[cfg(feature = "prover")]
     fn prove_layer(
         &mut self,
         claim: &mut F,

@@ -125,6 +125,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "Spartan::prove")]
+    #[cfg(feature = "prover")]
     pub fn prove<PCS>(
         preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
         constraint_builder: &CombinedUniformBuilder<F>,
