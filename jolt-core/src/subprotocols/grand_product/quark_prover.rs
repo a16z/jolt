@@ -8,7 +8,10 @@ use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumu
 use crate::subprotocols::grand_product::quark::{
     QuarkGrandProduct, QuarkGrandProductBase, QuarkGrandProductConfig, QuarkGrandProductProof,
 };
-use crate::subprotocols::grand_product::{BatchedGrandProductProver, BatchedGrandProductLayer, BatchedGrandProductProof, BatchedGrandProductVerifier};
+use crate::subprotocols::grand_product::{
+    BatchedGrandProductLayer, BatchedGrandProductProof, BatchedGrandProductProver,
+    BatchedGrandProductVerifier,
+};
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::utils::math::Math;
 use crate::utils::transcript::{AppendToTranscript, Transcript};

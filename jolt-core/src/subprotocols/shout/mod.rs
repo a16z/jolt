@@ -1,31 +1,25 @@
+mod lookup_bits;
 #[cfg(feature = "prover")]
 pub mod prover;
 #[cfg(feature = "prover")]
 pub mod sparse_dense;
+pub use lookup_bits::*;
 
-use strum::IntoEnumIterator;
 #[cfg(feature = "prover")]
 pub use prover::*;
+use strum::IntoEnumIterator;
 
-use crate::{
-    field::JoltField,
-    poly::{
-        multilinear_polynomial::{
-            MultilinearPolynomial,
-        },
-    },
-    utils::{
-        errors::ProofVerifyError,
-        math::Math,
-        transcript::{Transcript},
-    },
-};
 use crate::jolt::lookup_table::LookupTables;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::identity_poly::{Endianness, IdentityPolynomial, OperandPolynomial, OperandSide};
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstanceProof};
+use crate::{
+    field::JoltField,
+    poly::multilinear_polynomial::MultilinearPolynomial,
+    utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
+};
 
 pub struct ShoutProof<F: JoltField, ProofTranscript: Transcript> {
     sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
@@ -194,7 +188,7 @@ pub fn verify_sparse_dense_shout<
 
     let val_claim = rv_val_claim
         + (F::one() - is_add_mul_sub_flag_claim)
-        * (gamma * right_operand_eval + gamma_squared * left_operand_eval)
+            * (gamma * right_operand_eval + gamma_squared * left_operand_eval)
         + gamma_squared * is_add_mul_sub_flag_claim * identity_poly_eval;
 
     assert_eq!(

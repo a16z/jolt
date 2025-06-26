@@ -22,7 +22,9 @@ use crate::{
         opening_proof::ProverOpeningAccumulator,
         unipoly::{CompressedUniPoly, UniPoly},
     },
-    subprotocols::{sparse_dense_shout::prove_sparse_dense_shout, sumcheck::SumcheckInstanceProof},
+    subprotocols::{
+        shout::sparse_dense::prove_sparse_dense_shout, sumcheck::SumcheckInstanceProof,
+    },
     utils::{
         math::Math,
         thread::unsafe_allocate_zero_vec,

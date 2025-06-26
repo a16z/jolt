@@ -1,7 +1,9 @@
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_interleaved_poly::DenseInterleavedPolynomial;
-use crate::subprotocols::grand_product::{BatchedDenseGrandProduct, BatchedGrandProductProver, BatchedGrandProductLayer};
+use crate::subprotocols::grand_product::{
+    BatchedDenseGrandProduct, BatchedGrandProductLayer, BatchedGrandProductProver,
+};
 use crate::utils::math::Math;
 use crate::utils::transcript::Transcript;
 use rayon::prelude::*;

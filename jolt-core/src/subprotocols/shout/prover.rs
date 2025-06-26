@@ -1,3 +1,10 @@
+use crate::subprotocols::shout::{
+    BooleanityProverState, BooleanitySumcheck, BooleanityVerifierState, ShoutProof,
+    ShoutProverState, ShoutSumcheck, ShoutSumcheckClaims, ShoutVerifierState,
+};
+use crate::subprotocols::sumcheck::{
+    BatchableSumcheckInstance, BatchedSumcheck, SumcheckInstanceProof,
+};
 use crate::{
     field::JoltField,
     poly::{
@@ -17,8 +24,6 @@ use crate::{
     },
 };
 use rayon::prelude::*;
-use crate::subprotocols::shout::{BooleanityProverState, BooleanitySumcheck, BooleanityVerifierState, ShoutProof, ShoutProverState, ShoutSumcheck, ShoutSumcheckClaims, ShoutVerifierState};
-use crate::subprotocols::sumcheck::{BatchableSumcheckInstance, BatchedSumcheck, SumcheckInstanceProof};
 
 impl<F: JoltField> ShoutProverState<F> {
     #[tracing::instrument(skip_all)]
@@ -88,7 +93,7 @@ impl<F: JoltField> ShoutProverState<F> {
 }
 
 impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
-for ShoutSumcheck<F>
+    for ShoutSumcheck<F>
 {
     #[inline(always)]
     fn degree(&self) -> usize {
@@ -364,7 +369,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             [F::one(), F::one(), F::from_u8(4)],
             [F::zero(), F::from_u8(4), F::from_u8(9)],
         ];
-        
+
         if round < K.log_2() {
             // First log(K) rounds of sumcheck
             let m = round + 1;
@@ -920,12 +925,12 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
         {
             let expected: F = eq_r_r
                 * (0..H.len())
-                .map(|j| {
-                    let D_j = D.get_bound_coeff(j);
-                    let H_j = H.get_bound_coeff(j);
-                    D_j * (H_j.square() - H_j)
-                })
-                .sum::<F>();
+                    .map(|j| {
+                        let D_j = D.get_bound_coeff(j);
+                        let H_j = H.get_bound_coeff(j);
+                        D_j * (H_j.square() - H_j)
+                    })
+                    .sum::<F>();
             assert_eq!(
                 expected, previous_claim,
                 "Sumcheck sanity check failed in round {_round}"

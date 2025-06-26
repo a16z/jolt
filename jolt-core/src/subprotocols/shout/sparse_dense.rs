@@ -1,3 +1,5 @@
+use crate::subprotocols::shout::LookupBits;
+use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::{
     field::JoltField,
     jolt::{
@@ -28,7 +30,6 @@ use rayon::{prelude::*, slice::Iter};
 use std::{fmt::Display, ops::Index};
 use strum::{EnumCount, IntoEnumIterator};
 use tracer::instruction::RV32IMCycle;
-use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 
 /// Table containing the evaluations `EQ(x_1, ..., x_j, r_1, ..., r_j)`,
 /// built up incrementally as we receive random challenges `r_j` over the
@@ -101,126 +102,6 @@ impl<F: JoltField> ParallelSlice<F> for &ExpandingTable<F> {
     fn as_parallel_slice(&self) -> &[F] {
         self.values[..self.len].as_parallel_slice()
     }
-}
-
-/// A bitvector type used to represent a (substring of a) lookup index.
-#[derive(Clone, Copy, Debug)]
-pub struct LookupBits {
-    bits: u64,
-    len: usize,
-}
-
-impl LookupBits {
-    pub fn new(mut bits: u64, len: usize) -> Self {
-        debug_assert!(len <= 64);
-        if len < 64 {
-            bits %= 1 << len;
-        }
-        Self { bits, len }
-    }
-
-    pub fn uninterleave(&self) -> (Self, Self) {
-        let (x_bits, y_bits) = uninterleave_bits(self.bits);
-        let x = Self::new(x_bits as u64, self.len / 2);
-        let y = Self::new(y_bits as u64, self.len - x.len);
-        (x, y)
-    }
-
-    /// Splits `self` into a tuple (prefix, suffix) of `LookupBits`, where
-    /// `suffix.len() == suffix_len`.
-    pub fn split(&self, suffix_len: usize) -> (Self, Self) {
-        let suffix_bits = self.bits % (1 << suffix_len);
-        let suffix = Self::new(suffix_bits, suffix_len);
-        let prefix_bits = self.bits >> suffix_len;
-        let prefix = Self::new(prefix_bits, self.len - suffix_len);
-        (prefix, suffix)
-    }
-
-    /// Pops the most significant bit from `self`, decrementing `len`.
-    pub fn pop_msb(&mut self) -> u8 {
-        let msb = (self.bits >> (self.len - 1)) & 1;
-        self.bits %= 1 << (self.len - 1);
-        self.len -= 1;
-        msb as u8
-    }
-
-    pub fn len(&self) -> usize {
-        self.len
-    }
-
-    pub fn trailing_zeros(&self) -> u32 {
-        std::cmp::min(self.bits.trailing_zeros(), self.len as u32)
-    }
-
-    pub fn leading_ones(&self) -> u32 {
-        self.bits.unbounded_shl(64 - self.len as u32).leading_ones()
-    }
-}
-
-impl Display for LookupBits {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:0width$b}", self.bits, width = self.len)
-    }
-}
-
-impl From<LookupBits> for u64 {
-    fn from(value: LookupBits) -> u64 {
-        value.bits
-    }
-}
-impl From<LookupBits> for usize {
-    fn from(value: LookupBits) -> usize {
-        value.bits.try_into().unwrap()
-    }
-}
-impl From<LookupBits> for u32 {
-    fn from(value: LookupBits) -> u32 {
-        value.bits.try_into().unwrap()
-    }
-}
-impl From<&LookupBits> for u64 {
-    fn from(value: &LookupBits) -> u64 {
-        value.bits
-    }
-}
-impl From<&LookupBits> for usize {
-    fn from(value: &LookupBits) -> usize {
-        value.bits.try_into().unwrap()
-    }
-}
-impl From<&LookupBits> for u32 {
-    fn from(value: &LookupBits) -> u32 {
-        value.bits.try_into().unwrap()
-    }
-}
-impl std::ops::Rem<usize> for &LookupBits {
-    type Output = usize;
-
-    fn rem(self, rhs: usize) -> Self::Output {
-        usize::from(self) % rhs
-    }
-}
-impl std::ops::Rem<usize> for LookupBits {
-    type Output = usize;
-
-    fn rem(self, rhs: usize) -> Self::Output {
-        usize::from(self) % rhs
-    }
-}
-impl PartialEq for LookupBits {
-    fn eq(&self, other: &Self) -> bool {
-        u64::from(self) == u64::from(other)
-    }
-}
-
-/// Computes the bit-length of the suffix, for the current (`j`th) round
-/// of sumcheck.
-pub fn current_suffix_len(log_K: usize, j: usize) -> usize {
-    // Number of sumcheck rounds per "phase" of sparse-dense sumcheck.
-    let phase_length = log_K / 4;
-    // The suffix length is 3/4 * log_K at the beginning and shrinks by
-    // log_K / 4 after each phase.
-    log_K - (j / phase_length + 1) * phase_length
 }
 
 /// Compute the sumcheck prover message in round `j` using the prefix-suffix
@@ -798,10 +679,10 @@ pub fn prove_sparse_dense_shout<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::subprotocols::shout::verify_sparse_dense_shout;
     use crate::utils::transcript::KeccakTranscript;
     use ark_bn254::Fr;
     use rand::{rngs::StdRng, RngCore, SeedableRng};
-    use crate::subprotocols::shout::verify_sparse_dense_shout;
 
     const WORD_SIZE: usize = 8;
     const LOG_T: usize = 8;

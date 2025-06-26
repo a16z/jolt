@@ -1,6 +1,6 @@
 use crate::jolt::lookup_table::prefixes::left_shift::LeftShiftPrefix;
 use crate::jolt::lookup_table::prefixes::left_shift_helper::LeftShiftHelperPrefix;
-use crate::{field::JoltField, optimal_iter_mut, subprotocols::sparse_dense_shout::LookupBits};
+use crate::{field::JoltField, optimal_iter_mut, subprotocols::shout::LookupBits};
 use and::AndPrefix;
 use div_by_zero::DivByZeroPrefix;
 use eq::EqPrefix;

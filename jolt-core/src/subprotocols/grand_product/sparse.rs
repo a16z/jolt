@@ -1,12 +1,14 @@
 use crate::field::JoltField;
 use crate::optimal_chunks;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::opening_proof::{VerifierOpeningAccumulator};
+use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::poly::sparse_interleaved_poly::SparseInterleavedPolynomial;
 use crate::subprotocols::grand_product::quark::QuarkGrandProductBase;
+use crate::subprotocols::grand_product::{
+    BatchedGrandProductLayerProof, BatchedGrandProductProof, BatchedGrandProductVerifier,
+};
 use crate::subprotocols::QuarkHybridLayerDepth;
 use crate::utils::transcript::Transcript;
-use crate::subprotocols::grand_product::{BatchedGrandProductLayerProof, BatchedGrandProductProof, BatchedGrandProductVerifier};
 
 /// A special bottom layer of a grand product, where boolean flags are used to
 /// toggle the other inputs (fingerprints) going into the rest of the tree.
@@ -133,6 +135,11 @@ where
 mod tests {
     use super::*;
     use crate::poly::commitment::zeromorph::ZeromorphSRS;
+    use crate::poly::opening_proof::ProverOpeningAccumulator;
+    use crate::poly::split_eq_poly::SplitEqPolynomial;
+    use crate::subprotocols::grand_product::BatchedGrandProductProver;
+    use crate::subprotocols::sumcheck::{BatchedCubicSumcheck, Bindable};
+    use crate::utils::math::Math;
     use crate::{
         poly::{
             commitment::zeromorph::Zeromorph, dense_interleaved_poly::DenseInterleavedPolynomial,
@@ -143,11 +150,6 @@ mod tests {
     use ark_std::{rand::Rng, test_rng, One};
     use itertools::Itertools;
     use rand_core::SeedableRng;
-    use crate::poly::opening_proof::ProverOpeningAccumulator;
-    use crate::poly::split_eq_poly::SplitEqPolynomial;
-    use crate::subprotocols::grand_product::BatchedGrandProductProver;
-    use crate::subprotocols::sumcheck::{BatchedCubicSumcheck, Bindable};
-    use crate::utils::math::Math;
 
     fn condense(sparse_layer: SparseInterleavedPolynomial<Fr>) -> Vec<Fr> {
         sparse_layer.to_dense().Z

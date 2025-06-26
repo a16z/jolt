@@ -5,7 +5,7 @@ use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::hyperkzg::HyperKZG;
 use jolt_core::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use jolt_core::subprotocols::grand_product::{
-    BatchedDenseGrandProduct, BatchedGrandProductProver, BatchedGrandProductProof,
+    BatchedDenseGrandProduct, BatchedGrandProductProof, BatchedGrandProductProver,
 };
 use jolt_core::subprotocols::grand_product_quarks::{QuarkGrandProduct, QuarkGrandProductConfig};
 use jolt_core::subprotocols::QuarkHybridLayerDepth;

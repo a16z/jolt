@@ -5,7 +5,7 @@ use crate::{
         suffixes::SuffixEval,
         PrefixSuffixDecomposition,
     },
-    subprotocols::sparse_dense_shout::LookupBits,
+    subprotocols::shout::LookupBits,
     utils::index_to_field_bitvector,
 };
 use num::Integer;

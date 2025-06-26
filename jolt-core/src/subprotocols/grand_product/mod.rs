@@ -10,18 +10,18 @@ mod sparse_prover;
 
 use super::sumcheck::{BatchedCubicSumcheck, SumcheckInstanceProof};
 use crate::field::JoltField;
+use crate::into_optimal_iter;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::dense_interleaved_poly::DenseInterleavedPolynomial;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
+use crate::poly::split_eq_poly::SplitEqPolynomial;
 use crate::subprotocols::grand_product::quark::QuarkGrandProductProof;
 use crate::utils::math::Math;
+use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::Transcript;
 use ark_serialize::*;
 use itertools::Itertools;
-use crate::into_optimal_iter;
-use crate::poly::dense_interleaved_poly::DenseInterleavedPolynomial;
-use crate::poly::split_eq_poly::SplitEqPolynomial;
-use crate::utils::thread::drop_in_background_thread;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -228,7 +228,7 @@ where
 }
 
 impl<F, PCS, ProofTranscript> BatchedGrandProductVerifier<F, PCS, ProofTranscript>
-for BatchedDenseGrandProduct<F>
+    for BatchedDenseGrandProduct<F>
 where
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
@@ -240,7 +240,7 @@ where
 }
 
 pub trait BatchedGrandProductLayer<F, ProofTranscript>:
-BatchedCubicSumcheck<F, ProofTranscript> + std::fmt::Debug
+    BatchedCubicSumcheck<F, ProofTranscript> + std::fmt::Debug
 where
     F: JoltField,
     ProofTranscript: Transcript,
@@ -332,11 +332,12 @@ mod tests {
                 assert_eq!(layer.coeffs.par_iter().product::<Fr>(), expected_product);
             }
 
-            let claimed_outputs: Vec<Fr> = <BatchedDenseGrandProduct<Fr> as BatchedGrandProductProver<
-                Fr,
-                Zeromorph<Bn254, KeccakTranscript>,
-                KeccakTranscript,
-            >>::claimed_outputs(&batched_circuit);
+            let claimed_outputs: Vec<Fr> =
+                <BatchedDenseGrandProduct<Fr> as BatchedGrandProductProver<
+                    Fr,
+                    Zeromorph<Bn254, KeccakTranscript>,
+                    KeccakTranscript,
+                >>::claimed_outputs(&batched_circuit);
             let expected_outputs: Vec<Fr> =
                 leaves.iter().map(|x| x.iter().product::<Fr>()).collect();
             assert!(claimed_outputs == expected_outputs);

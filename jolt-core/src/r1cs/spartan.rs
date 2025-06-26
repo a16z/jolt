@@ -29,7 +29,7 @@ use crate::{
         eq_poly::{EqPlusOnePolynomial, EqPolynomial},
     },
     subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof},
-utils::small_value::NUM_SVO_ROUNDS,
+    utils::small_value::NUM_SVO_ROUNDS,
 };
 
 use super::builder::CombinedUniformBuilder;

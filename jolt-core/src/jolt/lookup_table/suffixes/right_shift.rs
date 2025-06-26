@@ -1,4 +1,4 @@
-use crate::subprotocols::sparse_dense_shout::LookupBits;
+use crate::subprotocols::shout::LookupBits;
 
 use super::SparseDenseSuffix;
 

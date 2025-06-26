@@ -2,16 +2,14 @@ use super::{
     dense_interleaved_poly::DenseInterleavedPolynomial, dense_mlpoly::DensePolynomial,
     split_eq_poly::SplitEqPolynomial, unipoly::UniPoly,
 };
+use crate::subprotocols::grand_product::BatchedGrandProductLayer;
 use crate::{
     field::{JoltField, OptimizedMul},
-    subprotocols::{
-        sumcheck::{BatchedCubicSumcheck, Bindable},
-    },
+    subprotocols::sumcheck::{BatchedCubicSumcheck, Bindable},
     utils::{math::Math, transcript::Transcript},
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
-use crate::subprotocols::grand_product::BatchedGrandProductLayer;
 
 #[derive(Default, Debug, Clone, Copy, PartialEq)]
 pub struct SparseCoefficient<T> {

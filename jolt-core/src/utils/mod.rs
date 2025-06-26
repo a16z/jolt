@@ -2,6 +2,7 @@
 use crate::field::JoltField;
 
 use ark_std::test_rng;
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 pub mod errors;
@@ -97,7 +98,7 @@ macro_rules! optimal_num_threads {
         }
         #[cfg(not(feature = "parallel"))]
         {
-            1
+            1usize
         }
     }};
 }

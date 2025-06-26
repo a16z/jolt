@@ -1,20 +1,25 @@
 use crate::field::{JoltField, OptimizedMul};
+use crate::optimal_chunks;
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 #[cfg(test)]
 use crate::poly::dense_mlpoly::DensePolynomial;
+use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::poly::sparse_interleaved_poly::SparseInterleavedPolynomial;
 use crate::poly::split_eq_poly::SplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::grand_product::sparse::{BatchedGrandProductToggleLayer, SparseGrandProductConfig, ToggledBatchedGrandProduct};
-use crate::subprotocols::grand_product::{BatchedGrandProductLayer, BatchedGrandProductLayerProof, BatchedGrandProductProof, BatchedGrandProductProver};
+use crate::subprotocols::grand_product::quark::QuarkGrandProductBase;
+use crate::subprotocols::grand_product::sparse::{
+    BatchedGrandProductToggleLayer, SparseGrandProductConfig, ToggledBatchedGrandProduct,
+};
+use crate::subprotocols::grand_product::{
+    BatchedGrandProductLayer, BatchedGrandProductLayerProof, BatchedGrandProductProof,
+    BatchedGrandProductProver,
+};
 use crate::subprotocols::sumcheck::{BatchedCubicSumcheck, Bindable};
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::Transcript;
 use rayon::prelude::*;
-use crate::optimal_chunks;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
-use crate::subprotocols::grand_product::quark::QuarkGrandProductBase;
 
 impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
     #[cfg(test)]
@@ -896,12 +901,11 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedGrandProductLayer<F, Proo
     }
 }
 
-
 impl<F, PCS, ProofTranscript> BatchedGrandProductProver<F, PCS, ProofTranscript>
-for ToggledBatchedGrandProduct<F>
+    for ToggledBatchedGrandProduct<F>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field= F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
     type Leaves = (Vec<Vec<usize>>, Vec<Vec<F>>); // (flags, fingerprints)
@@ -962,7 +966,6 @@ where
             left.iter().zip(right.iter()).map(|(l, r)| *l * r).collect()
         }
     }
-
 
     fn layers(
         &'_ mut self,

@@ -216,7 +216,7 @@ fn line_reduce_verify<F: JoltField, ProofTranscript: Transcript>(
 }
 
 impl<F, PCS, ProofTranscript> BatchedGrandProductVerifier<F, PCS, ProofTranscript>
-for QuarkGrandProduct<F, ProofTranscript>
+    for QuarkGrandProduct<F, ProofTranscript>
 where
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
@@ -248,10 +248,10 @@ mod quark_grand_product_tests {
     use super::*;
     use crate::poly::commitment::zeromorph::*;
     use crate::poly::opening_proof::ProverOpeningAccumulator;
+    use crate::subprotocols::grand_product::BatchedGrandProductProver;
     use crate::utils::transcript::{KeccakTranscript, Transcript};
     use ark_bn254::{Bn254, Fr};
     use rand_core::SeedableRng;
-    use crate::subprotocols::grand_product::BatchedGrandProductProver;
 
     fn quark_hybrid_test_with_config(config: QuarkGrandProductConfig) {
         const LAYER_SIZE: usize = 1 << 8;
