@@ -314,7 +314,7 @@ impl Cpu {
     }
 
     /// Runs program one cycle. Fetch, decode, and execution are completed in a cycle so far.
-    pub fn tick(&mut self, trace: &mut Option<&mut Vec<RV32IMCycle>>) {
+    pub fn tick(&mut self, trace: Option<&mut Vec<RV32IMCycle>>) {
         let instruction_address = self.pc;
         match self.tick_operate(trace) {
             Ok(()) => {}
@@ -331,7 +331,7 @@ impl Cpu {
     }
 
     // @TODO: Rename?
-    fn tick_operate(&mut self, trace: &mut Option<&mut Vec<RV32IMCycle>>) -> Result<(), Trap> {
+    fn tick_operate(&mut self, trace: Option<&mut Vec<RV32IMCycle>>) -> Result<(), Trap> {
         if self.wfi {
             if (self.read_csr_raw(CSR_MIE_ADDRESS) & self.read_csr_raw(CSR_MIP_ADDRESS)) != 0 {
                 self.wfi = false;
@@ -1671,12 +1671,12 @@ mod test_cpu {
             Err(_e) => panic!("Failed to store"),
         };
 
-        cpu.tick();
+        cpu.tick(None);
 
         assert_eq!(DRAM_BASE + 4, cpu.read_pc());
         assert_eq!(1, cpu.read_register(1));
 
-        cpu.tick();
+        cpu.tick(None);
 
         assert_eq!(DRAM_BASE + 6, cpu.read_pc());
         assert_eq!(8, cpu.read_register(8));
@@ -1694,7 +1694,7 @@ mod test_cpu {
         };
         assert_eq!(DRAM_BASE, cpu.read_pc());
         assert_eq!(0, cpu.read_register(10));
-        match cpu.tick_operate() {
+        match cpu.tick_operate(&mut None) {
             Ok(_) => {}
             Err(_e) => panic!("tick_operate() unexpectedly did panic"),
         };
@@ -1813,7 +1813,7 @@ mod test_cpu {
         cpu.write_csr_raw(CSR_MIP_ADDRESS, MIP_MTIP);
         cpu.write_csr_raw(CSR_MTVEC_ADDRESS, handler_vector);
 
-        cpu.tick();
+        cpu.tick(None);
 
         // Interrupt isn't caught because mie is disabled
         assert_eq!(DRAM_BASE + 4, cpu.read_pc());
@@ -1822,7 +1822,7 @@ mod test_cpu {
         // Enable mie in mstatus
         cpu.write_csr_raw(CSR_MSTATUS_ADDRESS, 0x8);
 
-        cpu.tick();
+        cpu.tick(None);
 
         // Interrupt happened and moved to handler
         assert_eq!(handler_vector, cpu.read_pc());
@@ -1850,7 +1850,7 @@ mod test_cpu {
         cpu.write_csr_raw(CSR_MTVEC_ADDRESS, handler_vector);
         cpu.update_pc(DRAM_BASE);
 
-        cpu.tick();
+        cpu.tick(None);
 
         // Interrupt happened and moved to handler
         assert_eq!(handler_vector, cpu.read_pc());
@@ -1883,13 +1883,13 @@ mod test_cpu {
 
         // Test x0
         assert_eq!(0, cpu.read_register(0));
-        cpu.tick(); // Execute  "addi x0, x0, 1"
+        cpu.tick(None); // Execute  "addi x0, x0, 1"
                     // x0 is still zero because it's hardcoded zero
         assert_eq!(0, cpu.read_register(0));
 
         // Test x1
         assert_eq!(0, cpu.read_register(1));
-        cpu.tick(); // Execute  "addi x1, x1, 1"
+        cpu.tick(None); // Execute  "addi x1, x1, 1"
                     // x1 is not hardcoded zero
         assert_eq!(1, cpu.read_register(1));
     }

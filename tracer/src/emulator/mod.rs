@@ -104,7 +104,7 @@ impl Emulator {
             let disas = self.cpu.disassemble_next_instruction();
             println!("{disas}");
 
-            self.tick(&mut None);
+            self.tick(None);
 
             // It seems in riscv-tests ends with end code
             // written to a certain physical memory address
@@ -124,7 +124,7 @@ impl Emulator {
     }
 
     /// Runs CPU one cycle
-    pub fn tick(&mut self, trace: &mut Option<&mut Vec<RV32IMCycle>>) {
+    pub fn tick(&mut self, trace: Option<&mut Vec<RV32IMCycle>>) {
         self.cpu.tick(trace)
     }
 

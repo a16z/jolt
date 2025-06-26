@@ -166,12 +166,12 @@ pub fn trace(
 // }
 
 #[tracing::instrument(skip_all)]
-fn step_emulator(emulator: &mut Emulator, prev_pc: &mut u64, trace: &mut Option<&mut Vec<RV32IMCycle>>) {
+fn step_emulator(emulator: &mut Emulator, prev_pc: &mut u64, trace: Option<&mut Vec<RV32IMCycle>>) {
     let pc = emulator.get_cpu().read_pc();
     // This is a trick to see if the program has terminated by throwing itself
     // into an infinite loop. It seems to be a good heuristic for now but we
     // should eventually migrate to an explicit shutdown signal.
-    if let Some(trace_vec) = trace{
+    if let Some(trace_vec) = trace.as_ref(){
         assert!(trace_vec.is_empty());
     }
     if *prev_pc == pc {
@@ -380,7 +380,7 @@ impl Iterator for LazyTraceIterator {
         step_emulator(
             get_mut_emulator(&mut self.emulator_state),
             &mut self.prev_pc,
-            &mut Some(&mut self.current_traces),
+           Some(&mut self.current_traces)
         );
         if self.current_traces.is_empty() {
             return None;

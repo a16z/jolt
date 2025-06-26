@@ -34,10 +34,12 @@ impl SLL {
 }
 
 impl RISCVTrace for SLL {
-    fn trace(&self, cpu: &mut Cpu, trace: &mut Option<&mut Vec<RV32IMCycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
         let virtual_sequence = self.virtual_sequence();
+        let mut trace = trace; 
         for instr in virtual_sequence {
-            instr.trace(cpu, trace);
+            // In each iteration, create a new Option containing a re-borrowed reference
+            instr.trace(cpu, trace.as_mut().map(|vec_ref| &mut **vec_ref));
         }
     }
 }
