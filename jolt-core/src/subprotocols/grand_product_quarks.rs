@@ -413,7 +413,7 @@ where
         // We have a commitment to g(x) = f(1, x), so we can prove opening 1 directly:
         let (g_r_sumcheck, chis_r) =
             MultilinearPolynomial::batch_evaluate(&[&g_polynomial], &r_sumcheck);
-        opening_accumulator.append(
+        opening_accumulator.append_dense(
             &[&g_polynomial],
             EqPolynomial::from_evals(chis_r),
             r_sumcheck.clone(),
@@ -442,7 +442,7 @@ where
         // We can reduce g(r', 0) and g(r', 1) to a single opening of g:
         let ((reduced_opening_point_g, reduced_opening_g), g_r_prime) =
             line_reduce::<PCS::Field, ProofTranscript>(&r_prime, &g_polynomial, transcript);
-        opening_accumulator.append(
+        opening_accumulator.append_dense(
             &[&g_polynomial],
             EqPolynomial::from_evals(EqPolynomial::evals(&reduced_opening_point_g)),
             reduced_opening_point_g,

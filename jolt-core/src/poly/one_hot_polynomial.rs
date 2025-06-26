@@ -1,15 +1,17 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
+use super::multilinear_polynomial::BindingOrder;
 use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
 use crate::poly::commitment::dory::JoltGroupWrapper;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
+use crate::poly::multilinear_polynomial::{
+    MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
+};
 use crate::poly::rlc_polynomial::{get_T, get_num_columns};
-use crate::poly::split_eq_poly::SplitEqPolynomial;
+use crate::subprotocols::sparse_dense_shout::ExpandingTable;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_ec::CurveGroup;
@@ -19,59 +21,209 @@ use rayon::prelude::*;
 pub struct OneHotPolynomial<F: JoltField> {
     pub K: usize,
     pub nonzero_indices: Vec<usize>,
+    num_variables_bound: usize,
+    G: Option<Vec<F>>,
     H: Option<DensePolynomial<F>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct OneHotSumcheckState<F: JoltField> {
+    pub B: MultilinearPolynomial<F>, // Equation (53)
+    pub D: MultilinearPolynomial<F>, // Equation (54)
+    pub F: ExpandingTable<F>,        // Equation (55)
     num_variables_bound: usize,
 }
 
-pub struct OneHotEqState<F: JoltField> {
-    pub B: MultilinearPolynomial<F>,
-    pub D: MultilinearPolynomial<F>,
-    pub F: Vec<F>,
-    num_variables_bound: usize,
-}
-
-pub struct OneHotPolynomialProverOpening<F: JoltField> {
-    pub polynomial: OneHotPolynomial<F>,
-    pub eq_state: Rc<RefCell<OneHotEqState<F>>>,
-}
-
-impl<F: JoltField> OneHotPolynomialProverOpening<F> {
-    fn compute_prover_message(&self, _: usize) -> Vec<F> {
-        let shared_eq = self.eq_state.borrow();
-        todo!()
-    }
-
-    fn bind(&mut self, r_j: F, round: usize) {
-        let mut shared_eq = self.eq_state.borrow_mut();
-        if shared_eq.num_variables_bound <= round {
-            shared_eq
-                .eq_poly
-                .bind_parallel(r_j, BindingOrder::HighToLow);
-            shared_eq.num_variables_bound += 1;
-        }
-
-        self.polynomial.bind_parallel(r_j, BindingOrder::HighToLow);
-    }
-
-    fn final_sumcheck_claim(&self) -> F {
-        self.polynomial.final_sumcheck_claim()
-    }
-}
-
-impl<F: JoltField> OneHotEqState<F> {
+impl<F: JoltField> OneHotSumcheckState<F> {
     pub fn new(r_address: &[F], r_cycle: &[F]) -> Self {
         let K = 1 << r_address.len();
         // F will maintain an array that, at the end of sumcheck round m, has size 2^m
         // and stores all 2^m values eq((k_1, ..., k_m), (r_1, ..., r_m))
         // See Equation (55)
-        let mut F = unsafe_allocate_zero_vec(K);
-        F[0] = F::one();
+        let mut F = ExpandingTable::new(K);
+        F.reset(F::one());
         Self {
             B: MultilinearPolynomial::from(EqPolynomial::evals(&r_address)), // Equation (53)
             D: MultilinearPolynomial::from(EqPolynomial::evals(&r_cycle)),   // Equation (54)
             F,
             num_variables_bound: 0,
         }
+    }
+}
+
+pub struct OneHotPolynomialProverOpening<F: JoltField> {
+    pub polynomial: OneHotPolynomial<F>,
+    pub eq_state: Rc<RefCell<OneHotSumcheckState<F>>>,
+}
+
+impl<F: JoltField> OneHotPolynomialProverOpening<F> {
+    pub fn new(
+        mut polynomial: OneHotPolynomial<F>,
+        eq_state: Rc<RefCell<OneHotSumcheckState<F>>>,
+    ) -> Self {
+        let T = polynomial.nonzero_indices.len();
+        let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
+        let chunk_size = (T / num_chunks).max(1);
+
+        let eq_rc = eq_state.clone();
+        let D = &eq_rc.borrow().D;
+
+        let G = polynomial
+            .nonzero_indices
+            .par_chunks(chunk_size)
+            .enumerate()
+            .map(|(chunk_index, chunk)| {
+                let mut result = unsafe_allocate_zero_vec(polynomial.K);
+                let mut j = chunk_index * chunk_size;
+                for k in chunk {
+                    result[*k] += D.get_bound_coeff(j);
+                    j += 1;
+                }
+                result
+            })
+            .reduce(
+                || unsafe_allocate_zero_vec(polynomial.K),
+                |mut running, new| {
+                    running
+                        .par_iter_mut()
+                        .zip(new.into_par_iter())
+                        .for_each(|(x, y)| *x += y);
+                    running
+                },
+            );
+
+        polynomial.G = Some(G);
+
+        Self {
+            polynomial,
+            eq_state,
+        }
+    }
+
+    pub fn compute_prover_message(&self, round: usize) -> Vec<F> {
+        let shared_eq = self.eq_state.borrow();
+
+        if round < self.polynomial.K.log_2() {
+            let num_unbound_address_variables = self.polynomial.K.log_2() - round;
+            let B = &shared_eq.B;
+            let F = &shared_eq.F;
+            let G = self.polynomial.G.as_ref().unwrap();
+
+            let univariate_poly_evals: [F; 2] = (0..B.len() / 2)
+                .into_par_iter()
+                .map(|k_prime| {
+                    let B_evals = B.sumcheck_evals(k_prime, 2, BindingOrder::HighToLow);
+                    let inner_sum = G
+                        .par_iter()
+                        .enumerate()
+                        .skip(k_prime)
+                        .step_by(B.len() / 2)
+                        .map(|(k, &G_k)| {
+                            // k_m is the bit corresponding to the variable we'll be binding next
+                            let k_m = (k >> (num_unbound_address_variables - 1)) & 1;
+                            // We then index into F using the high order bits of k
+                            let F_k = F[k >> num_unbound_address_variables];
+
+                            // G_times_F := G[k] * F[k_1, ...., k_{m-1}]
+                            let G_times_F = G_k * F_k;
+
+                            // For c \in {0, 2} compute:
+                            //    G[k] * F[k_1, ...., k_{m-1}, c]
+                            //    = G[k] * F[k_1, ...., k_{m-1}] * eq(k_m, c)
+                            //    = G_times_F * eq(k_m, c)
+                            let eval_c0 = match k_m {
+                                0 => G_times_F, // eq(0, 0) = 0 * 0 + (1 - 0) * (1 - 0) = 1,
+                                1 => F::zero(), // eq(1, 0) = 1 * 0 + (1 - 1) * (1 - 0) = 0
+                                _ => unreachable!(),
+                            };
+
+                            let eval_c2 = match k_m {
+                                0 => -G_times_F,            // eq(0, 2) = 0 * 2 + (1 - 0) * (1 - 2) = -1,
+                                1 => G_times_F + G_times_F, // eq(1, 2) = 1 * 2 + (1 - 1) * (1 - 2) = 2
+                                _ => unreachable!(),
+                            };
+                            [eval_c0, eval_c2]
+                        })
+                        .reduce(
+                            || [F::zero(); 2],
+                            |running, new| [running[0] + new[0], running[1] + new[1]],
+                        );
+
+                    [B_evals[0] * inner_sum[0], B_evals[1] * inner_sum[1]]
+                })
+                .reduce(
+                    || [F::zero(); 2],
+                    |running, new| [running[0] + new[0], running[1] + new[1]],
+                );
+
+            univariate_poly_evals.to_vec()
+        } else {
+            let H = self.polynomial.H.as_ref().unwrap();
+            let B = &shared_eq.B;
+            let D = &shared_eq.D;
+            let n = H.len() / 2;
+
+            let univariate_poly_evals: [F; 2] = (0..n)
+                .into_par_iter()
+                .map(|j| {
+                    let H_evals = H.sumcheck_evals(j, 2, BindingOrder::HighToLow);
+                    let D_evals = D.sumcheck_evals(j, 2, BindingOrder::HighToLow);
+                    [H_evals[0] * D_evals[0], H_evals[1] * D_evals[1]]
+                })
+                .reduce(
+                    || [F::zero(); 2],
+                    |running, new| [running[0] + new[0], running[1] + new[1]],
+                );
+
+            let eq_r_address_claim = B.final_sumcheck_claim();
+            vec![
+                eq_r_address_claim * univariate_poly_evals[0],
+                eq_r_address_claim * univariate_poly_evals[1],
+            ]
+        }
+    }
+
+    pub fn bind(&mut self, r: F, round: usize) {
+        let mut shared_eq = self.eq_state.borrow_mut();
+        let num_variables_bound = shared_eq.num_variables_bound;
+        if round < self.polynomial.K.log_2() {
+            if num_variables_bound <= round {
+                shared_eq.B.bind_parallel(r, BindingOrder::HighToLow);
+                // Update F for this round (see Equation 55)
+                shared_eq.F.update(r);
+
+                shared_eq.num_variables_bound += 1;
+            }
+
+            if round == self.polynomial.K.log_2() - 1 {
+                let F = &shared_eq.F;
+                // Transition point; initialize H
+                self.polynomial.H = Some(DensePolynomial::new(
+                    self.polynomial
+                        .nonzero_indices
+                        .par_iter()
+                        .map(|&k| F[k])
+                        .collect::<Vec<_>>(),
+                ));
+            }
+        } else {
+            // Last log(T) rounds of sumcheck
+
+            if num_variables_bound <= round {
+                shared_eq.D.bind_parallel(r, BindingOrder::HighToLow);
+                shared_eq.num_variables_bound += 1;
+            }
+
+            self.polynomial
+                .H
+                .as_mut()
+                .unwrap()
+                .bind_parallel(r, BindingOrder::HighToLow)
+        }
+    }
+
+    pub fn final_sumcheck_claim(&self) -> F {
+        self.polynomial.H.as_ref().unwrap().Z[0]
     }
 }
 
@@ -84,7 +236,6 @@ impl<F: JoltField> OneHotPolynomial<F> {
 
     #[cfg(test)]
     fn to_dense_poly(&self) -> DensePolynomial<F> {
-        assert!(!self.is_bound());
         let T = get_T();
         let mut dense_coeffs: Vec<F> = vec![F::zero(); self.K * T];
         for (t, k) in self.nonzero_indices.iter().enumerate() {
@@ -99,9 +250,9 @@ impl<F: JoltField> OneHotPolynomial<F> {
         Self {
             K,
             nonzero_indices,
-            F: unsafe_allocate_zero_vec(K),
-            H: None,
             num_variables_bound: 0,
+            G: None,
+            H: None,
         }
     }
 
@@ -175,84 +326,6 @@ impl<F: JoltField> OneHotPolynomial<F> {
 
         product
     }
-
-    #[tracing::instrument(skip_all, name = "OneHotPolynomial::compute_sumcheck_prover_message")]
-    pub fn compute_sumcheck_prover_message(&self, eq_poly: &SplitEqPolynomial<F>) -> Vec<F> {
-        if self.num_variables_bound < self.K.log_2() {
-            todo!()
-        } else {
-            let H = self.H.as_ref().unwrap();
-            debug_assert_eq!(H.len(), eq_poly.E1_len);
-            let n = H.len() / 2;
-
-            let univariate_poly_evals: [F; 2] = (0..n)
-                .into_par_iter()
-                .map(|j| {
-                    let H_evals = H.sumcheck_evals(j, 2, BindingOrder::HighToLow);
-                    [
-                        H_evals[0] * eq_poly.E1[j],
-                        H_evals[1] * (eq_poly.E1[j + n] + eq_poly.E1[j + n] - eq_poly.E1[j]),
-                    ]
-                })
-                .reduce(
-                    || [F::zero(); 2],
-                    |running, new| [running[0] + new[0], running[1] + new[1]],
-                );
-            univariate_poly_evals.to_vec()
-        }
-    }
-}
-
-impl<F: JoltField> PolynomialBinding<F> for OneHotPolynomial<F> {
-    fn is_bound(&self) -> bool {
-        self.num_variables_bound > 0
-    }
-
-    fn bind(&mut self, _: F, _: BindingOrder) {
-        unimplemented!("Always use bind_parallel")
-    }
-
-    #[tracing::instrument(skip_all, name = "OneHotPolynomial::bind_parallel")]
-    fn bind_parallel(&mut self, r: F, order: BindingOrder) {
-        assert_eq!(order, BindingOrder::HighToLow);
-
-        if self.num_variables_bound < self.K.log_2() {
-            // println!(
-            //     "TODO(moodlezoup): does this need to be changed for high-to-low binding order?"
-            // );
-            // // Update F for this round (see Equation 55)
-            // let (F_left, F_right) = self.F.split_at_mut(1 << self.num_variables_bound);
-            // F_left
-            //     .par_iter_mut()
-            //     .zip(F_right.par_iter_mut())
-            //     .for_each(|(x, y)| {
-            //         *y = *x * r;
-            //         *x -= *y;
-            //     });
-
-            if self.num_variables_bound == self.K.log_2() - 1 {
-                // Transition point; initialize H
-                self.H = Some(DensePolynomial::new(
-                    self.nonzero_indices
-                        .par_iter()
-                        .map(|&k| self.F[k])
-                        .collect::<Vec<_>>(),
-                ));
-            }
-        } else {
-            // Last log(T) rounds of sumcheck
-            self.H
-                .as_mut()
-                .unwrap()
-                .bind_parallel(r, BindingOrder::HighToLow)
-        }
-
-        self.num_variables_bound += 1;
-    }
-
-    fn final_sumcheck_claim(&self) -> F {
-        self.H.as_ref().unwrap().Z[0]
-    }
 }
 
 #[cfg(test)]
@@ -274,7 +347,7 @@ mod tests {
         let nonzero_indices: Vec<_> = std::iter::repeat_with(|| rng.next_u64() as usize % K)
             .take(T)
             .collect();
-        let mut one_hot_poly = OneHotPolynomial::<Fr>::from_indices(nonzero_indices, K);
+        let one_hot_poly = OneHotPolynomial::<Fr>::from_indices(nonzero_indices, K);
         let mut dense_poly = one_hot_poly.to_dense_poly();
 
         let r_address: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
@@ -283,13 +356,27 @@ mod tests {
         let r_cycle: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
             .take(LOG_T)
             .collect();
-        let mut split_eq = SplitEqPolynomial::new_with_split(&r_cycle, &r_address);
-        let mut eq = split_eq.merge(BindingOrder::HighToLow);
+
+        let one_hot_sumcheck_state = OneHotSumcheckState::new(&r_address, &r_cycle);
+        let mut one_hot_opening = OneHotPolynomialProverOpening::new(
+            one_hot_poly,
+            Rc::new(RefCell::new(one_hot_sumcheck_state)),
+        );
+
+        let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
+        let mut eq = DensePolynomial::new(EqPolynomial::evals(&r_concat));
 
         for round in 0..LOG_K + LOG_T {
-            let one_hot_message = one_hot_poly.compute_sumcheck_prover_message(&split_eq);
+            let one_hot_message = one_hot_opening.compute_prover_message(round);
             let mut expected_message = vec![Fr::zero(), Fr::zero()];
             let mle_half = dense_poly.len() / 2;
+            (0..mle_half).for_each(|i| {
+                let eval_0 = dense_poly[i] * eq[i];
+                let poly_bound_point =
+                    dense_poly[i + mle_half] + dense_poly[i + mle_half] - dense_poly[i];
+                let eq_bound_point = eq[i + mle_half] + eq[i + mle_half] - eq[i];
+                let eval_2 = poly_bound_point * eq_bound_point;
+            });
             expected_message[0] = (0..mle_half).map(|i| dense_poly[i] * eq[i]).sum();
             expected_message[1] = (0..mle_half)
                 .map(|i| {
@@ -305,13 +392,12 @@ mod tests {
             );
 
             let r = Fr::random(&mut rng);
-            one_hot_poly.bind_parallel(r, BindingOrder::HighToLow);
-            split_eq.bind(r, BindingOrder::HighToLow);
+            one_hot_opening.bind(r, round);
             dense_poly.bind_parallel(r, BindingOrder::HighToLow);
             eq.bind_parallel(r, BindingOrder::HighToLow);
         }
         assert_eq!(
-            one_hot_poly.final_sumcheck_claim(),
+            one_hot_opening.final_sumcheck_claim(),
             dense_poly[0],
             "final sumcheck claim"
         );

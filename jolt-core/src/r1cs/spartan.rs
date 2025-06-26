@@ -307,7 +307,7 @@ where
             .map(|input| claimed_witness_evals[input.to_index()])
             .collect();
 
-        opening_accumulator.append(
+        opening_accumulator.append_dense(
             &committed_polys,
             EqPolynomial::from_evals(chis),
             r_cycle.to_vec(),

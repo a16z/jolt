@@ -18,7 +18,6 @@ use crate::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
-        split_eq_poly::SplitEqPolynomial,
         unipoly::{CompressedUniPoly, UniPoly},
     },
     subprotocols::{
@@ -122,19 +121,22 @@ where
             ra_claims,
         };
 
-        let unbound_ra_polys = [
-            &CommittedPolynomials::InstructionRa(0).generate_witness(preprocessing, trace),
-            &CommittedPolynomials::InstructionRa(1).generate_witness(preprocessing, trace),
-            &CommittedPolynomials::InstructionRa(2).generate_witness(preprocessing, trace),
-            &CommittedPolynomials::InstructionRa(3).generate_witness(preprocessing, trace),
+        let unbound_ra_polys = vec![
+            CommittedPolynomials::InstructionRa(0).generate_witness(preprocessing, trace),
+            CommittedPolynomials::InstructionRa(1).generate_witness(preprocessing, trace),
+            CommittedPolynomials::InstructionRa(2).generate_witness(preprocessing, trace),
+            CommittedPolynomials::InstructionRa(3).generate_witness(preprocessing, trace),
         ];
 
         let r_address_rev = r_address.iter().copied().rev().collect::<Vec<_>>();
-        let eq_poly =
-            EqPolynomial::Split(SplitEqPolynomial::new_with_split(&r_cycle, &r_address_rev));
-        let r_concat = [r_cycle.as_slice(), r_address_rev.as_slice()].concat();
 
-        opening_accumulator.append(&unbound_ra_polys, eq_poly, r_concat, &ra_claims, transcript);
+        opening_accumulator.append_sparse(
+            unbound_ra_polys,
+            r_address_rev,
+            r_cycle,
+            ra_claims.to_vec(),
+            transcript,
+        );
 
         // TODO(moodlezoup): Interleaved raf evaluation
 

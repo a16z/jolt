@@ -1,4 +1,3 @@
-use super::multilinear_polynomial::PolynomialBinding;
 use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
 use crate::poly::commitment::dory::{JoltFieldWrapper, JoltGroupWrapper};
@@ -178,7 +177,6 @@ impl<F: JoltField> MulAdd<F, RLCPolynomial<F>> for &OneHotPolynomial<F> {
     type Output = RLCPolynomial<F>;
 
     fn mul_add(self, a: F, mut b: RLCPolynomial<F>) -> RLCPolynomial<F> {
-        assert!(!self.is_bound());
         b.one_hot_rlc.push((a, self.clone())); // TODO(moodlezoup): avoid clone
         b
     }

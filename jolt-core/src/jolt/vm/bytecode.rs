@@ -15,7 +15,6 @@ use crate::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
-        split_eq_poly::SplitEqPolynomial,
         unipoly::{CompressedUniPoly, UniPoly},
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
@@ -283,15 +282,11 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
             CommittedPolynomials::BytecodeRa.generate_witness(preprocessing, trace);
 
         let r_address_rev = r_address.iter().copied().rev().collect::<Vec<_>>();
-        let eq_poly =
-            EqPolynomial::Split(SplitEqPolynomial::new_with_split(&r_cycle, &r_address_rev));
-
-        let r_concat = [r_cycle.as_slice(), r_address_rev.as_slice()].concat();
-        opening_accumulator.append(
-            &[&unbound_ra_poly],
-            eq_poly,
-            r_concat,
-            &[ra_claim],
+        opening_accumulator.append_sparse(
+            vec![unbound_ra_poly.clone()],
+            r_address_rev,
+            r_cycle.clone(),
+            vec![ra_claim],
             transcript,
         );
 
@@ -302,18 +297,13 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
 
         let r_address_prime = r_address_prime.iter().copied().rev().collect::<Vec<_>>();
         let r_cycle_prime = r_cycle_prime.iter().rev().copied().collect::<Vec<_>>();
-        let eq_poly = EqPolynomial::Split(SplitEqPolynomial::new_with_split(
-            &r_cycle_prime,
-            &r_address_prime,
-        ));
 
         // TODO: Reduce 2 ra claims to 1 (Section 4.5.2 of Proofs, Arguments, and Zero-Knowledge)
-        let r_concat = [r_cycle_prime, r_address_prime].concat();
-        opening_accumulator.append(
-            &[&unbound_ra_poly],
-            eq_poly,
-            r_concat,
-            &[ra_claim_prime],
+        opening_accumulator.append_sparse(
+            vec![unbound_ra_poly],
+            r_address_prime,
+            r_cycle_prime,
+            vec![ra_claim_prime],
             transcript,
         );
 

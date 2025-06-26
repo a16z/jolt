@@ -12,7 +12,6 @@ use crate::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
-        split_eq_poly::SplitEqPolynomial,
         unipoly::{CompressedUniPoly, UniPoly},
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
@@ -354,18 +353,13 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
 
         let r_address_prime = r_address_prime.iter().copied().rev().collect::<Vec<_>>();
         let r_cycle_prime = r_cycle_prime.iter().rev().copied().collect::<Vec<_>>();
-        let eq_poly = EqPolynomial::Split(SplitEqPolynomial::new_with_split(
-            &r_cycle_prime,
-            &r_address_prime,
-        ));
         let unbound_ra_poly = CommittedPolynomials::RamRa.generate_witness(preprocessing, trace);
 
-        let r_concat = [r_cycle_prime.as_slice(), r_address_prime.as_slice()].concat();
-        opening_accumulator.append(
-            &[&unbound_ra_poly],
-            eq_poly,
-            r_concat,
-            &[ra_claim],
+        opening_accumulator.append_sparse(
+            vec![unbound_ra_poly],
+            r_address_prime,
+            r_cycle_prime,
+            vec![ra_claim],
             transcript,
         );
 

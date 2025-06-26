@@ -729,7 +729,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
             MultilinearPolynomial::U64Scalars(poly) => poly.bind_parallel(r, order),
             MultilinearPolynomial::I64Scalars(poly) => poly.bind_parallel(r, order),
             MultilinearPolynomial::RLC(_) => todo!(),
-            MultilinearPolynomial::OneHot(poly) => poly.bind_parallel(r, order),
+            MultilinearPolynomial::OneHot(_) => todo!(),
         }
     }
 
@@ -745,7 +745,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
             MultilinearPolynomial::U64Scalars(poly) => poly.final_sumcheck_claim(),
             MultilinearPolynomial::I64Scalars(poly) => poly.final_sumcheck_claim(),
             MultilinearPolynomial::RLC(_) => todo!(),
-            MultilinearPolynomial::OneHot(poly) => poly.final_sumcheck_claim(),
+            MultilinearPolynomial::OneHot(_) => todo!(),
         }
     }
 }
@@ -755,7 +755,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
     fn evaluate(&self, r: &[F]) -> F {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly.evaluate(r),
-            MultilinearPolynomial::RLC(poly) => {
+            MultilinearPolynomial::RLC(_) => {
                 // Not actually used
                 F::zero()
             }
