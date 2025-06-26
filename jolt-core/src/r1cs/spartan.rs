@@ -6,7 +6,6 @@ use crate::field::JoltField;
 use crate::jolt::vm::JoltCommitments;
 use crate::jolt::vm::JoltProverPreprocessing;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::ProverOpeningAccumulator;
@@ -24,13 +23,18 @@ use ark_serialize::CanonicalSerialize;
 use thiserror::Error;
 
 use crate::{
-    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPlusOnePolynomial},
+    optimal_iter, optimal_iter_mut,
+    poly::{
+        dense_mlpoly::DensePolynomial,
+        eq_poly::{EqPlusOnePolynomial, EqPolynomial},
+    },
     subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof},
-    utils::small_value::NUM_SVO_ROUNDS,
+utils::small_value::NUM_SVO_ROUNDS,
 };
 
 use super::builder::CombinedUniformBuilder;
 
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 #[derive(Clone, Debug)]
@@ -132,8 +136,7 @@ where
     where
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
     {
-        let input_polys: Vec<MultilinearPolynomial<F>> = ALL_R1CS_INPUTS
-            .par_iter()
+        let input_polys: Vec<MultilinearPolynomial<F>> = optimal_iter!(ALL_R1CS_INPUTS)
             .map(|var| var.generate_witness(trace, preprocessing))
             .collect();
 
@@ -466,10 +469,9 @@ impl<'a, F: JoltField> InnerSumcheck<'a, F> {
         // Bind witness polynomials z at point r_cycle
         let mut bind_z = vec![F::zero(); num_vars_uniform];
 
-        input_polys
-            .par_iter()
+        optimal_iter!(input_polys)
             .take(num_vars_uniform)
-            .zip(bind_z.par_iter_mut())
+            .zip(optimal_iter_mut!(bind_z))
             .for_each(|(poly, eval)| {
                 *eval = poly.dot_product(&eq_r_cycle);
             });

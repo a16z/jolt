@@ -3,14 +3,15 @@ use crate::field::JoltField;
 use std::cmp::Ordering;
 use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign, Sub};
 
-use crate::utils::gaussian_elimination::gaussian_elimination;
-use crate::utils::transcript::{AppendToTranscript, Transcript};
-use ark_serialize::*;
-use rand_core::{CryptoRng, RngCore};
-use rayon::prelude::*;
-
 use super::compact_polynomial::SmallScalar;
 use super::multilinear_polynomial::MultilinearPolynomial;
+use crate::utils::gaussian_elimination::gaussian_elimination;
+use crate::utils::transcript::{AppendToTranscript, Transcript};
+use crate::{into_optimal_iter, optimal_iter_mut};
+use ark_serialize::*;
+use rand_core::{CryptoRng, RngCore};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 // ax^2 + bx + c stored as vec![c,b,a]
 // ax^3 + bx^2 + cx + d stored as vec![d,c,b,a]
@@ -213,7 +214,7 @@ impl<F: JoltField> UniPoly<F> {
     }
 
     pub fn shift_coefficients(&mut self, rhs: &F) {
-        self.coeffs.par_iter_mut().for_each(|c| *c += *rhs);
+        optimal_iter_mut!(self.coeffs).for_each(|c| *c += *rhs);
     }
 
     /// This function computes a cubic polynomial s(X), given the following conditions:
@@ -287,7 +288,7 @@ impl<F: JoltField> Mul<F> for UniPoly<F> {
     type Output = Self;
 
     fn mul(self, rhs: F) -> Self {
-        let iter = self.coeffs.into_par_iter();
+        let iter = into_optimal_iter!(self.coeffs);
         Self::from_coeff(iter.map(|c| c * rhs).collect::<Vec<_>>())
     }
 }
@@ -296,7 +297,7 @@ impl<F: JoltField> Mul<&F> for UniPoly<F> {
     type Output = Self;
 
     fn mul(self, rhs: &F) -> Self {
-        let iter = self.coeffs.into_par_iter();
+        let iter = into_optimal_iter!(self.coeffs);
         Self::from_coeff(iter.map(|c| c * *rhs).collect::<Vec<_>>())
     }
 }
@@ -325,7 +326,7 @@ impl<F: JoltField> IndexMut<usize> for UniPoly<F> {
 
 impl<F: JoltField> MulAssign<&F> for UniPoly<F> {
     fn mul_assign(&mut self, rhs: &F) {
-        self.coeffs.par_iter_mut().for_each(|c| *c *= *rhs);
+        optimal_iter_mut!(self.coeffs).for_each(|c| *c *= *rhs);
     }
 }
 

@@ -5,13 +5,13 @@ use super::{
 use crate::{
     field::{JoltField, OptimizedMul},
     subprotocols::{
-        grand_product::BatchedGrandProductLayer,
         sumcheck::{BatchedCubicSumcheck, Bindable},
     },
     utils::{math::Math, transcript::Transcript},
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+use crate::subprotocols::grand_product::BatchedGrandProductLayer;
 
 #[derive(Default, Debug, Clone, Copy, PartialEq)]
 pub struct SparseCoefficient<T> {

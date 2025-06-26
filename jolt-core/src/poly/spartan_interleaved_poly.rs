@@ -6,6 +6,7 @@ use super::{
 use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
 use crate::{
     field::{JoltField, OptimizedMul, OptimizedMulI128},
+    into_optimal_iter, optimal_chunk_by, optimal_flat_map, optimal_iter,
     r1cs::builder::Constraint,
     utils::{
         math::Math,
@@ -14,6 +15,7 @@ use crate::{
     },
 };
 use ark_ff::Zero;
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 pub const TOTAL_NUM_ACCUMS: usize = svo_helpers::total_num_accums(NUM_SVO_ROUNDS);
@@ -210,8 +212,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
             0 // No work per chunk if no x_out_vals
         };
 
-        let collected_chunk_outputs: Vec<PrecomputeTaskOutput<F>> = (0..num_parallel_chunks)
-            .into_par_iter()
+        let collected_chunk_outputs: Vec<PrecomputeTaskOutput<F>> = into_optimal_iter!((0..num_parallel_chunks))
             .map(|chunk_idx| {
                 let x_out_start = chunk_idx * x_out_chunk_size;
                 let x_out_end = std::cmp::min((chunk_idx + 1) * x_out_chunk_size, num_x_out_vals);
@@ -453,8 +454,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         // Take ownership
         let shards_to_process = std::mem::take(&mut self.ab_unbound_coeffs_shards);
 
-        let collected_chunk_outputs: Vec<StreamingTaskOutput<F>> = shards_to_process // Use the taken vec
-            .into_par_iter() // Consumes and gives ownership to closures
+        let collected_chunk_outputs: Vec<StreamingTaskOutput<F>> = into_optimal_iter!(shards_to_process) // Consumes and gives ownership to closures
             .map(|shard_data: Vec<SparseCoefficient<i128>>| { // shard_data is now owned Vec
                 // Estimate the number of bound coefficients to preallocate
                 // TODO: have a precise estimate. This is a (somewhat conservative) guess based on real workload (i.e. SHA-2 chain)
@@ -615,8 +615,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         );
 
         // Bind coefficients directly from task outputs into scratch space
-        let per_task_output_sizes: Vec<usize> = collected_chunk_outputs
-            .par_iter() // Iterate over collected_chunk_outputs by reference for calculating sizes
+        let per_task_output_sizes: Vec<usize> = optimal_iter!(collected_chunk_outputs) // Iterate over collected_chunk_outputs by reference for calculating sizes
             .map(|task_output| {
                 let coeffs_from_task = &task_output.bound_coeffs_local;
                 let mut current_task_total_output_size = 0;
@@ -652,9 +651,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         }
         debug_assert_eq!(scratch_remainder.len(), 0);
 
-        collected_chunk_outputs // Now consume collected_chunk_outputs
-            .into_par_iter()
-            .zip_eq(output_slices_for_tasks.into_par_iter())
+        into_optimal_iter!(collected_chunk_outputs) // Now consume collected_chunk_outputs
+            .zip_eq(into_optimal_iter!(output_slices_for_tasks))
             .for_each(|(task_output, output_slice_for_task)| {
                 let coeffs_from_task = &task_output.bound_coeffs_local;
 
@@ -763,53 +761,48 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
             .len()
             .div_ceil(rayon::current_num_threads())
             .next_multiple_of(6);
-        let chunks: Vec<_> = self
-            .bound_coeffs
-            .par_chunk_by(|x, y| x.index / block_size == y.index / block_size)
-            .collect();
+        let chunks: Vec<_> = optimal_chunk_by!(self.bound_coeffs, |x, y| x.index / block_size
+            == y.index / block_size)
+        .collect();
 
         // If `E_in` is fully bound, then we simply sum over `E_out`
         let quadratic_evals = if eq_poly.E_in_current_len() == 1 {
-            let evals: (F, F) = chunks
-                .par_iter()
-                .flat_map_iter(|chunk| {
-                    chunk
-                        .chunk_by(|x, y| x.index / 6 == y.index / 6)
-                        .map(|sparse_block| {
-                            let block_index = sparse_block[0].index / 6;
-                            let mut block = [F::zero(); 6];
-                            for coeff in sparse_block {
-                                block[coeff.index % 6] = coeff.value;
-                            }
+            let evals: (F, F) = optimal_flat_map!(optimal_iter!(chunks), |chunk| {
+                chunk
+                    .chunk_by(|x, y| x.index / 6 == y.index / 6)
+                    .map(|sparse_block| {
+                        let block_index = sparse_block[0].index / 6;
+                        let mut block = [F::zero(); 6];
+                        for coeff in sparse_block {
+                            block[coeff.index % 6] = coeff.value;
+                        }
 
-                            let az = (block[0], block[3]);
-                            let bz = (block[1], block[4]);
-                            let cz0 = block[2];
+                        let az = (block[0], block[3]);
+                        let bz = (block[1], block[4]);
+                        let cz0 = block[2];
 
-                            let az_eval_infty = az.1 - az.0;
-                            let bz_eval_infty = bz.1 - bz.0;
+                        let az_eval_infty = az.1 - az.0;
+                        let bz_eval_infty = bz.1 - bz.0;
 
-                            let eq_evals = eq_poly.E_out_current()[block_index];
+                        let eq_evals = eq_poly.E_out_current()[block_index];
 
-                            (
-                                eq_evals.mul_0_optimized(az.0.mul_0_optimized(bz.0) - cz0),
-                                eq_evals
-                                    .mul_0_optimized(az_eval_infty.mul_0_optimized(bz_eval_infty)),
-                            )
-                        })
-                })
-                .reduce(
-                    || (F::zero(), F::zero()),
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
-                );
+                        (
+                            eq_evals.mul_0_optimized(az.0.mul_0_optimized(bz.0) - cz0),
+                            eq_evals.mul_0_optimized(az_eval_infty.mul_0_optimized(bz_eval_infty)),
+                        )
+                    })
+            })
+            .reduce(
+                || (F::zero(), F::zero()),
+                |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
+            );
             evals
         } else {
             // If `E_in` is not fully bound, then we have to collect the sum over `E_out` as well
             let num_x1_bits = eq_poly.E_in_current_len().log_2();
             let x1_bitmask = (1 << num_x1_bits) - 1;
 
-            let evals: (F, F) = chunks
-                .par_iter()
+            let evals: (F, F) = optimal_iter!(chunks)
                 .map(|chunk| {
                     let mut eval_point_0 = F::zero();
                     let mut eval_point_infty = F::zero();
@@ -871,8 +864,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
             transcript,
         );
 
-        let output_sizes: Vec<_> = chunks
-            .par_iter()
+        let output_sizes: Vec<_> = optimal_iter!(chunks)
             .map(|chunk| Self::binding_output_length(chunk))
             .collect();
 
@@ -893,9 +885,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         }
         debug_assert_eq!(remainder.len(), 0);
 
-        chunks
-            .par_iter()
-            .zip_eq(output_slices.into_par_iter())
+        optimal_iter!(chunks)
+            .zip_eq(into_optimal_iter!(output_slices))
             .for_each(|(coeffs, output_slice)| {
                 let mut output_index = 0;
                 for block in coeffs.chunk_by(|x, y| x.index / 6 == y.index / 6) {
