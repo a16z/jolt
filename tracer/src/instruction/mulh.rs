@@ -43,7 +43,7 @@ impl RISCVTrace for MULH {
         let mut trace = trace;
         for instr in virtual_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
-            instr.trace(cpu, trace.as_mut().map(|vec_ref| &mut **vec_ref));
+            instr.trace(cpu, trace.as_deref_mut());
         }
     }
 }

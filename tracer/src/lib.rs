@@ -95,7 +95,7 @@ pub fn trace(
     let mut final_emulator_state = emulator_trace_iter.get_emulator_state();
     let mut_jolt_device = &mut final_emulator_state.get_mut_cpu().get_mut_mmu().jolt_device;
     let device = std::mem::take(mut_jolt_device);
-    return (trace, device, checkpoint_interval.map(|_| checkpoints));
+    (trace, device, checkpoint_interval.map(|_| checkpoints))
 }
 
 // /// trace() that reproduces the warning about unclosed cycle tracking markers for muldiv benchmark.
@@ -283,7 +283,7 @@ fn setup_emulator(elf_contents: Vec<u8>, inputs: &[u8], memory_config: &MemoryCo
     emulator.get_mut_cpu().get_mut_mmu().jolt_device = jolt_device;
 
     emulator.setup_program(elf_contents);
-    return emulator;
+    emulator
 }
 
 /// An iterator that lazily generates execution traces from a RISC-V emulator checkpoint.
@@ -300,7 +300,7 @@ fn setup_emulator(elf_contents: Vec<u8>, inputs: &[u8], memory_config: &MemoryCo
 /// * `prev_pc` - Previous program counter value, used for termination detection
 /// * `current_traces` - Buffer of trace entries from the most recent emulator tick
 /// * `length` - Length of the iterator. This length is interpreted as the number of
-///              RV32IM Cycles.
+///   RV32IM Cycles.
 #[derive(Clone)]
 pub struct LazyTraceIterator {
     emulator_state: EmulatorState,
@@ -364,7 +364,7 @@ impl Iterator for LazyTraceIterator {
             Some(&mut self.current_traces),
         );
         if self.current_traces.is_empty() {
-            return None;
+            None
         } else {
             self.current_traces.reverse();
             self.current_traces.pop()

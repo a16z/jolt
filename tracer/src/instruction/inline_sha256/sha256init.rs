@@ -51,7 +51,7 @@ impl RISCVTrace for SHA256INIT {
 
         let mut trace = trace;
         for instr in virtual_sequence {
-            instr.trace(cpu, trace.as_mut().map(|vec_ref| &mut **vec_ref));
+            instr.trace(cpu, trace.as_deref_mut());
         }
     }
 }
