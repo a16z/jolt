@@ -5,9 +5,6 @@ mod prover;
 pub use prover::*;
 
 use crate::field::JoltField;
-use crate::poly::multilinear_polynomial::{
-    PolynomialBinding, PolynomialEvaluation,
-};
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
