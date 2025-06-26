@@ -9,7 +9,7 @@ use crate::instruction::inline_sha256::{
     execute_sha256_compression_initial, Sha256SequenceBuilder, NEEDED_REGISTERS,
 };
 use crate::instruction::{
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence
+    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
 };
 
 declare_riscv_instr!(
@@ -49,7 +49,7 @@ impl RISCVTrace for SHA256INIT {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
         let virtual_sequence = self.virtual_sequence();
 
-        let mut trace = trace; 
+        let mut trace = trace;
         for instr in virtual_sequence {
             instr.trace(cpu, trace.as_mut().map(|vec_ref| &mut **vec_ref));
         }

@@ -5,7 +5,7 @@ use crate::{
     emulator::cpu::Cpu,
     instruction::{
         format::{format_i::FormatI, InstructionFormat},
-        RISCVInstruction, RISCVTrace
+        RISCVInstruction, RISCVTrace,
     },
 };
 

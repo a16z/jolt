@@ -4,7 +4,7 @@ use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{
     format::{format_virtual_right_shift_r::FormatVirtualRightShiftR, InstructionFormat},
-    RISCVInstruction, RISCVTrace
+    RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(

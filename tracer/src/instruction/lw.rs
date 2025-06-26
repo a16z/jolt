@@ -6,7 +6,7 @@ use super::RAMRead;
 
 use super::{
     format::{format_load::FormatLoad, InstructionFormat},
-    RISCVInstruction, RISCVTrace
+    RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(

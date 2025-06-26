@@ -7,7 +7,7 @@ use crate::{
 
 use super::{
     format::{format_r::FormatR, InstructionFormat},
-    RISCVInstruction, RISCVTrace
+    RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(

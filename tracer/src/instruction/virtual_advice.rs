@@ -5,7 +5,7 @@ use crate::emulator::cpu::Cpu;
 
 use super::{
     format::{format_j::FormatJ, InstructionFormat},
-    RISCVInstruction, RISCVTrace
+    RISCVInstruction, RISCVTrace,
 };
 
 // Special case for VirtualAdvice as it has an extra 'advice' field

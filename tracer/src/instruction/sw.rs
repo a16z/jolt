@@ -6,7 +6,7 @@ use super::RAMWrite;
 
 use super::{
     format::{format_s::FormatS, InstructionFormat},
-    RISCVInstruction, RISCVTrace
+    RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(

@@ -72,7 +72,7 @@ impl RISCVTrace for DIVU {
             panic!("Expected Advice instruction");
         }
 
-        let mut trace = trace; 
+        let mut trace = trace;
         for instr in virtual_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_mut().map(|vec_ref| &mut **vec_ref));

@@ -4,7 +4,7 @@ use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{
     format::{format_virtual_halfword_alignment::HalfwordAlignFormat, InstructionFormat},
-    RISCVInstruction, RISCVTrace
+    RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
