@@ -287,7 +287,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
             r_address_rev,
             r_cycle.clone(),
             vec![ra_claim],
-            transcript,
         );
 
         let core_piop_sumcheck_proof = SumcheckInstanceProof::new(compressed_polys);
@@ -304,7 +303,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
             r_address_prime,
             r_cycle_prime,
             vec![ra_claim_prime],
-            transcript,
         );
 
         let challenge: F = transcript.challenge_scalar();

@@ -15,8 +15,11 @@ use super::{
 };
 use crate::{
     field::JoltField,
-    poly::one_hot_polynomial::{
-        OneHotPolynomial, OneHotPolynomialProverOpening, OneHotSumcheckState,
+    poly::{
+        inc_polynomial::{IncPolynomial, IncPolynomialProverOpening},
+        one_hot_polynomial::{
+            OneHotPolynomial, OneHotPolynomialProverOpening, OneHotSumcheckState,
+        },
     },
     subprotocols::sumcheck::{BatchableSumcheckInstance, BatchedSumcheck, SumcheckInstanceProof},
     utils::{errors::ProofVerifyError, transcript::Transcript},
@@ -101,6 +104,7 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
 pub enum ProverOpening<F: JoltField> {
     Dense(DensePolynomialProverOpening<F>),
     OneHot(OneHotPolynomialProverOpening<F>),
+    Inc(IncPolynomialProverOpening<F>),
 }
 
 impl<F: JoltField> ProverOpening<F> {
@@ -110,6 +114,7 @@ impl<F: JoltField> ProverOpening<F> {
             ProverOpening::OneHot(opening) => {
                 MultilinearPolynomial::OneHot(opening.polynomial.clone())
             }
+            ProverOpening::Inc(opening) => MultilinearPolynomial::Inc(opening.polynomial.clone()),
         }
     }
 }
@@ -158,13 +163,31 @@ where
         }
     }
 
-    fn new_prover_instance_sparse(
+    fn new_prover_instance_one_hot(
         polynomial: OneHotPolynomial<F>,
         eq_state: Rc<RefCell<OneHotSumcheckState<F>>>,
         opening_point: Vec<F>,
         claim: F,
     ) -> Self {
         let opening = OneHotPolynomialProverOpening::new(polynomial, eq_state);
+        Self {
+            prover_state: Some(opening.into()),
+            verifier_state: None,
+            opening_point,
+            input_claim: claim,
+            sumcheck_claim: None,
+            #[cfg(test)]
+            batch: vec![],
+        }
+    }
+
+    fn new_prover_instance_inc(
+        polynomial: IncPolynomial<F>,
+        eq_state: Rc<RefCell<OneHotSumcheckState<F>>>,
+        opening_point: Vec<F>,
+        claim: F,
+    ) -> Self {
+        let opening = IncPolynomialProverOpening::new(polynomial, eq_state);
         Self {
             prover_state: Some(opening.into()),
             verifier_state: None,
@@ -214,6 +237,7 @@ where
         match prover_state {
             ProverOpening::Dense(opening) => opening.compute_prover_message(round),
             ProverOpening::OneHot(opening) => opening.compute_prover_message(round),
+            ProverOpening::Inc(opening) => opening.compute_prover_message(round),
         }
     }
 
@@ -224,6 +248,7 @@ where
         match prover_state {
             ProverOpening::Dense(opening) => opening.bind(r_j, round),
             ProverOpening::OneHot(opening) => opening.bind(r_j, round),
+            ProverOpening::Inc(opening) => opening.bind(r_j, round),
         }
     }
 
@@ -234,6 +259,9 @@ where
                 self.sumcheck_claim = Some(opening.final_sumcheck_claim())
             }
             ProverOpening::OneHot(opening) => {
+                self.sumcheck_claim = Some(opening.final_sumcheck_claim())
+            }
+            ProverOpening::Inc(opening) => {
                 self.sumcheck_claim = Some(opening.final_sumcheck_claim())
             }
         };
@@ -428,51 +456,75 @@ where
         r_address: Vec<F>,
         r_cycle: Vec<F>,
         claims: Vec<F>,
-        transcript: &mut ProofTranscript,
     ) {
         let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
         let shared_eq = Rc::new(RefCell::new(OneHotSumcheckState::new(&r_address, &r_cycle)));
 
-        #[cfg(test)]
-        {
-            let all_sparse = polynomials
-                .iter()
-                .all(|poly| matches!(poly, MultilinearPolynomial::OneHot(_)));
-            assert!(
-                all_sparse,
-                "Tried to append dense polynomial using ProverOpeningAccumulator::append_sparse"
-            );
+        let all_sparse = polynomials.iter().all(|poly| {
+            matches!(
+                poly,
+                MultilinearPolynomial::OneHot(_) | MultilinearPolynomial::Inc(_)
+            )
+        });
+        assert!(
+            all_sparse,
+            "Tried to append dense polynomial using ProverOpeningAccumulator::append_sparse"
+        );
 
-            for (poly, claim) in polynomials.into_iter().zip(claims.into_iter()) {
-                if let MultilinearPolynomial::OneHot(poly) = poly {
-                    let mut opening = OpeningProofReductionSumcheck::new_prover_instance_sparse(
-                        poly.clone(),
-                        shared_eq.clone(),
-                        r_concat.clone(),
-                        claim,
-                    );
-                    opening.batch.push(MultilinearPolynomial::OneHot(poly));
-                    self.openings.push(opening);
-                } else {
-                    unreachable!()
+        for (poly, claim) in polynomials.into_iter().zip(claims.into_iter()) {
+            match poly {
+                MultilinearPolynomial::OneHot(one_hot_polynomial) => {
+                    #[cfg(test)]
+                    {
+                        let mut opening =
+                            OpeningProofReductionSumcheck::new_prover_instance_one_hot(
+                                one_hot_polynomial.clone(),
+                                shared_eq.clone(),
+                                r_concat.clone(),
+                                claim,
+                            );
+                        opening
+                            .batch
+                            .push(MultilinearPolynomial::OneHot(one_hot_polynomial));
+                        self.openings.push(opening);
+                    }
+                    #[cfg(not(test))]
+                    {
+                        let opening = OpeningProofReductionSumcheck::new_prover_instance_one_hot(
+                            one_hot_polynomial,
+                            shared_eq.clone(),
+                            r_concat.clone(),
+                            claim,
+                        );
+                        self.openings.push(opening);
+                    }
                 }
-            }
-        }
-
-        #[cfg(not(test))]
-        {
-            for (poly, claim) in polynomials.into_iter().zip(claims.into_iter()) {
-                if let MultilinearPolynomial::OneHot(poly) = poly {
-                    let opening = OpeningProofReductionSumcheck::new_prover_instance_sparse(
-                        poly,
-                        shared_eq.clone(),
-                        r_concat.clone(),
-                        claim,
-                    );
-                    self.openings.push(opening);
-                } else {
-                    unreachable!()
+                MultilinearPolynomial::Inc(inc_polynomial) => {
+                    #[cfg(test)]
+                    {
+                        let mut opening = OpeningProofReductionSumcheck::new_prover_instance_inc(
+                            inc_polynomial.clone(),
+                            shared_eq.clone(),
+                            r_concat.clone(),
+                            claim,
+                        );
+                        opening
+                            .batch
+                            .push(MultilinearPolynomial::Inc(inc_polynomial));
+                        self.openings.push(opening);
+                    }
+                    #[cfg(not(test))]
+                    {
+                        let opening = OpeningProofReductionSumcheck::new_prover_instance_inc(
+                            inc_polynomial,
+                            shared_eq.clone(),
+                            r_concat.clone(),
+                            claim,
+                        );
+                        self.openings.push(opening);
+                    }
                 }
+                _ => unreachable!("Unexpected MultilinearPolynomial variant"),
             }
         }
     }

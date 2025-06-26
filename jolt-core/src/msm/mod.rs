@@ -175,10 +175,7 @@ where
 
     fn msm_field_elements_ref(
         bases: &[&Self::MulBase],
-        gpu_bases: Option<&[GpuBaseType<Self>]>,
         scalars: &[Self::ScalarField],
-        max_num_bits: Option<usize>,
-        use_icicle: bool,
     ) -> Result<Self, ProofVerifyError> {
         (bases.len() >= scalars.len())
             .then(|| {
@@ -239,6 +236,7 @@ where
             }
             MultilinearPolynomial::OneHot(_) => todo!(),
             MultilinearPolynomial::RLC(_) => todo!(),
+            MultilinearPolynomial::Inc(_) => todo!(),
         }
     }
 
@@ -309,6 +307,7 @@ where
                         ),
                         MultilinearPolynomial::OneHot(_) => todo!(),
                         MultilinearPolynomial::RLC(_) => todo!(),
+                        MultilinearPolynomial::Inc(_) => todo!(),
                     }
                 } else {
                     Either::Left((i, max_num_bits, poly))

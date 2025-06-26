@@ -31,10 +31,11 @@ pub struct OneHotSumcheckState<F: JoltField> {
     pub B: MultilinearPolynomial<F>, // Equation (53)
     pub D: MultilinearPolynomial<F>, // Equation (54)
     pub F: ExpandingTable<F>,        // Equation (55)
-    num_variables_bound: usize,
+    pub num_variables_bound: usize,
 }
 
 impl<F: JoltField> OneHotSumcheckState<F> {
+    #[tracing::instrument(skip_all, name = "OneHotSumcheckState::new")]
     pub fn new(r_address: &[F], r_cycle: &[F]) -> Self {
         let K = 1 << r_address.len();
         // F will maintain an array that, at the end of sumcheck round m, has size 2^m
@@ -57,6 +58,7 @@ pub struct OneHotPolynomialProverOpening<F: JoltField> {
 }
 
 impl<F: JoltField> OneHotPolynomialProverOpening<F> {
+    #[tracing::instrument(skip_all, name = "OneHotPolynomialProverOpening::new")]
     pub fn new(
         mut polynomial: OneHotPolynomial<F>,
         eq_state: Rc<RefCell<OneHotSumcheckState<F>>>,
@@ -100,6 +102,10 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
         }
     }
 
+    #[tracing::instrument(
+        skip_all,
+        name = "OneHotPolynomialProverOpening::compute_prover_message"
+    )]
     pub fn compute_prover_message(&self, round: usize) -> Vec<F> {
         let shared_eq = self.eq_state.borrow();
 
@@ -183,6 +189,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "OneHotPolynomialProverOpening::bind")]
     pub fn bind(&mut self, r: F, round: usize) {
         let mut shared_eq = self.eq_state.borrow_mut();
         let num_variables_bound = shared_eq.num_variables_bound;
@@ -370,13 +377,6 @@ mod tests {
             let one_hot_message = one_hot_opening.compute_prover_message(round);
             let mut expected_message = vec![Fr::zero(), Fr::zero()];
             let mle_half = dense_poly.len() / 2;
-            (0..mle_half).for_each(|i| {
-                let eval_0 = dense_poly[i] * eq[i];
-                let poly_bound_point =
-                    dense_poly[i + mle_half] + dense_poly[i + mle_half] - dense_poly[i];
-                let eq_bound_point = eq[i + mle_half] + eq[i + mle_half] - eq[i];
-                let eval_2 = poly_bound_point * eq_bound_point;
-            });
             expected_message[0] = (0..mle_half).map(|i| dense_poly[i] * eq[i]).sum();
             expected_message[1] = (0..mle_half)
                 .map(|i| {

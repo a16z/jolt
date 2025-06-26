@@ -791,6 +791,7 @@ where
                 .collect(),
             MultilinearPolynomial::RLC(poly) => poly.commit_rows(&bases),
             MultilinearPolynomial::OneHot(poly) => poly.commit_rows(&bases),
+            MultilinearPolynomial::Inc(poly) => poly.commit_rows(&bases),
         }
     }
 
@@ -1108,8 +1109,7 @@ mod tests {
             MultilinearPolynomial::U32Scalars(compact) => compact.coeffs.len(),
             MultilinearPolynomial::U64Scalars(compact) => compact.coeffs.len(),
             MultilinearPolynomial::I64Scalars(compact) => compact.coeffs.len(),
-            MultilinearPolynomial::RLC(_) => todo!(),
-            MultilinearPolynomial::OneHot(_) => todo!(),
+            _ => todo!(),
         };
 
         println!(

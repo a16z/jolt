@@ -194,6 +194,7 @@ impl<F: JoltField> UniPoly<F> {
             }
             MultilinearPolynomial::RLC(_) => todo!(),
             MultilinearPolynomial::OneHot(_) => todo!(),
+            MultilinearPolynomial::Inc(_) => todo!(),
         }
     }
 

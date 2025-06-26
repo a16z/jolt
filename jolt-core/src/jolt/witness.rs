@@ -6,7 +6,7 @@ use crate::{
     field::JoltField,
     jolt::vm::{ram::remap_address, JoltProverPreprocessing},
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
+        commitment::commitment_scheme::CommitmentScheme, inc_polynomial::IncPolynomial,
         multilinear_polynomial::MultilinearPolynomial, one_hot_polynomial::OneHotPolynomial,
     },
     utils::transcript::Transcript,
@@ -49,7 +49,7 @@ pub enum CommittedPolynomials {
     InstructionRa(usize),
 }
 
-pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 12] = [
+pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 14] = [
     CommittedPolynomials::LeftInstructionInput,
     CommittedPolynomials::RightInstructionInput,
     CommittedPolynomials::Product,
@@ -58,8 +58,8 @@ pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 12] = [
     CommittedPolynomials::ShouldBranch,
     CommittedPolynomials::BytecodeRa,
     CommittedPolynomials::RamRa,
-    // CommittedPolynomials::RdInc,
-    // CommittedPolynomials::RamInc,
+    CommittedPolynomials::RdInc,
+    CommittedPolynomials::RamInc,
     CommittedPolynomials::InstructionRa(0),
     CommittedPolynomials::InstructionRa(1),
     CommittedPolynomials::InstructionRa(2),
@@ -177,44 +177,53 @@ impl CommittedPolynomials {
                 MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(addresses, K))
             }
             CommittedPolynomials::RdInc => {
-                todo!()
-                // let increments: Vec<(usize, i64)> = trace
-                //     .par_iter()
-                //     .map(|cycle| {
-                //         let (k, pre_value, post_value) = cycle.rd_write();
-                //         let increment = post_value as i64 - pre_value as i64;
-                //         (k, increment)
-                //     })
-                //     .collect();
-                // MultilinearPolynomial::OneHot(OneHotPolynomial::from_increments(increments))
+                let increments: Vec<(usize, i64)> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        let (k, pre_value, post_value) = cycle.rd_write();
+                        let increment = post_value as i64 - pre_value as i64;
+                        (k, increment)
+                    })
+                    .collect();
+                MultilinearPolynomial::Inc(IncPolynomial::from_coeffs(increments, 64))
             }
             CommittedPolynomials::RamInc => {
-                todo!()
-                // let increments: Vec<(usize, i64)> = trace
-                //     .par_iter()
-                //     .map(|cycle| {
-                //         let ram_op = cycle.ram_access();
-                //         match ram_op {
-                //             tracer::instruction::RAMAccess::Read(read) => {
-                //                 let k = remap_address(
-                //                     read.address,
-                //                     &preprocessing.shared.memory_layout,
-                //                 ) as usize;
-                //                 (k, 0)
-                //             }
-                //             tracer::instruction::RAMAccess::Write(write) => {
-                //                 let k = remap_address(
-                //                     write.address,
-                //                     &preprocessing.shared.memory_layout,
-                //                 ) as usize;
-                //                 let increment = write.post_value as i64 - write.pre_value as i64;
-                //                 (k, increment)
-                //             }
-                //             tracer::instruction::RAMAccess::NoOp => (0, 0),
-                //         }
-                //     })
-                //     .collect();
-                // MultilinearPolynomial::OneHot(OneHotPolynomial::from_increments(increments))
+                let increments: Vec<(usize, i64)> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        let ram_op = cycle.ram_access();
+                        match ram_op {
+                            tracer::instruction::RAMAccess::Read(read) => {
+                                let k = remap_address(
+                                    read.address,
+                                    &preprocessing.shared.memory_layout,
+                                ) as usize;
+                                (k, 0)
+                            }
+                            tracer::instruction::RAMAccess::Write(write) => {
+                                let k = remap_address(
+                                    write.address,
+                                    &preprocessing.shared.memory_layout,
+                                ) as usize;
+                                let increment = write.post_value as i64 - write.pre_value as i64;
+                                (k, increment)
+                            }
+                            tracer::instruction::RAMAccess::NoOp => (0, 0),
+                        }
+                    })
+                    .collect();
+                let K = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        remap_address(
+                            cycle.ram_access().address() as u64,
+                            &preprocessing.shared.memory_layout,
+                        ) as usize
+                    })
+                    .max()
+                    .unwrap()
+                    .next_power_of_two();
+                MultilinearPolynomial::Inc(IncPolynomial::from_coeffs(increments, K))
             }
             CommittedPolynomials::InstructionRa(i) => {
                 if *i > 3 {

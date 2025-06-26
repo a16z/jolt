@@ -3,6 +3,7 @@ use crate::msm::VariableBaseMSM;
 use crate::poly::commitment::dory::{JoltFieldWrapper, JoltGroupWrapper};
 use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use crate::poly::dense_mlpoly::DensePolynomial;
+use crate::poly::inc_polynomial::IncPolynomial;
 use crate::poly::one_hot_polynomial::OneHotPolynomial;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
@@ -20,6 +21,9 @@ pub struct RLCPolynomial<F: JoltField> {
     /// Random linear combiation of one-hot polynomials, represented
     /// by a vector of (coefficient, one-hot polynomial) pairs
     one_hot_rlc: Vec<(F, OneHotPolynomial<F>)>,
+    /// Random linear combiation of Inc polynomials, represented
+    /// by a vector of (coefficient, Inc polynomial) pairs
+    inc_rlc: Vec<(F, IncPolynomial<F>)>,
     num_variables_bound: usize,
 }
 
@@ -73,6 +77,7 @@ impl<F: JoltField> RLCPolynomial<F> {
             num_rows,
             dense_rlc: unsafe_allocate_zero_vec(get_T()),
             one_hot_rlc: vec![],
+            inc_rlc: vec![],
             num_variables_bound: 0,
         }
     }
@@ -101,6 +106,38 @@ impl<F: JoltField> RLCPolynomial<F> {
             });
 
         for (coeff, poly) in self.one_hot_rlc.iter() {
+            let mut new_row_commitments: Vec<JoltGroupWrapper<G>> = poly.commit_rows(bases);
+
+            // TODO(moodlezoup): Avoid resize
+            new_row_commitments.resize(num_rows, JoltGroupWrapper(G::zero()));
+
+            let updated_row_commitments: &mut [G1Projective] = unsafe {
+                std::slice::from_raw_parts_mut(
+                    new_row_commitments.as_mut_ptr() as *mut G1Projective,
+                    new_row_commitments.len(),
+                )
+            };
+
+            let current_row_commitments: &[G1Projective] = unsafe {
+                std::slice::from_raw_parts(
+                    row_commitments.as_ptr() as *const G1Projective,
+                    row_commitments.len(),
+                )
+            };
+
+            let coeff_fr = unsafe { *(&raw const *coeff as *const Fr) };
+
+            // Use `jolt-optimizations`: v[i] = scalar * v[i] + gamma[i]
+            jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
+                updated_row_commitments,
+                coeff_fr,
+                current_row_commitments,
+            );
+
+            let _ = std::mem::replace(&mut row_commitments, new_row_commitments);
+        }
+
+        for (coeff, poly) in self.inc_rlc.iter() {
             let mut new_row_commitments: Vec<JoltGroupWrapper<G>> = poly.commit_rows(bases);
             new_row_commitments.resize(num_rows, JoltGroupWrapper(G::zero()));
 
@@ -169,6 +206,17 @@ impl<F: JoltField> RLCPolynomial<F> {
                 });
         }
 
+        for (coeff, poly) in self.inc_rlc.iter() {
+            // TODO(moodlezoup): Pass result by mutable reference to
+            // poly.vector_matrix_product
+            result
+                .par_iter_mut()
+                .zip(poly.vector_matrix_product(left_vec).into_par_iter())
+                .for_each(|(result, new)| {
+                    result.0 += new * coeff;
+                });
+        }
+
         result
     }
 }
@@ -178,6 +226,15 @@ impl<F: JoltField> MulAdd<F, RLCPolynomial<F>> for &OneHotPolynomial<F> {
 
     fn mul_add(self, a: F, mut b: RLCPolynomial<F>) -> RLCPolynomial<F> {
         b.one_hot_rlc.push((a, self.clone())); // TODO(moodlezoup): avoid clone
+        b
+    }
+}
+
+impl<F: JoltField> MulAdd<F, RLCPolynomial<F>> for &IncPolynomial<F> {
+    type Output = RLCPolynomial<F>;
+
+    fn mul_add(self, a: F, mut b: RLCPolynomial<F>) -> RLCPolynomial<F> {
+        b.inc_rlc.push((a, self.clone())); // TODO(moodlezoup): avoid clone
         b
     }
 }

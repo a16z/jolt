@@ -360,7 +360,6 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             r_address_prime,
             r_cycle_prime,
             vec![ra_claim],
-            transcript,
         );
 
         let (hamming_weight_sumcheck, _, ra_claim) =

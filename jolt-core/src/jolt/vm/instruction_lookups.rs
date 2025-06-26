@@ -135,7 +135,6 @@ where
             r_address_rev,
             r_cycle,
             ra_claims.to_vec(),
-            transcript,
         );
 
         // TODO(moodlezoup): Interleaved raf evaluation

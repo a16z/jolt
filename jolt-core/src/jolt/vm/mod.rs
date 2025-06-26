@@ -324,7 +324,8 @@ where
             .map(|poly| poly.generate_witness(&preprocessing, &trace))
             .collect();
         let commitments: Vec<_> = committed_polys
-            .par_iter()
+            // .par_iter()
+            .iter()
             .map(|poly| PCS::commit(poly, &preprocessing.generators))
             .collect();
         for commitment in commitments.iter() {
@@ -356,8 +357,12 @@ where
             &mut transcript,
         );
 
-        let registers_proof =
-            RegistersTwistProof::prove(&trace, &mut opening_accumulator, &mut transcript);
+        let registers_proof = RegistersTwistProof::prove(
+            &preprocessing,
+            &trace,
+            &mut opening_accumulator,
+            &mut transcript,
+        );
 
         let ram_proof = RAMTwistProof::prove(
             &preprocessing,
@@ -461,9 +466,12 @@ where
             &mut opening_accumulator,
             &mut transcript,
         )?;
-        proof
-            .registers
-            .verify(padded_trace_length, &mut transcript)?;
+        proof.registers.verify(
+            &proof.commitments,
+            padded_trace_length,
+            &mut opening_accumulator,
+            &mut transcript,
+        )?;
         proof.ram.verify(
             padded_trace_length,
             &preprocessing.shared.ram,
