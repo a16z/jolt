@@ -4,7 +4,11 @@ pub trait Oracle: Send + Sync {
 
     // TODO: We want to run Jolt on programs with upto 2^40 instructions. On a 32 bit machine, the
     // length won't fit in a usize.
-    fn reset(&mut self);
+
+    // TODO: Remove.
+    fn reset(&mut self) {
+        unimplemented!("Not required for all impl")
+    }
 
     // TODO: We want to run Jolt on programs with upto 2^40 instructions. On a 32 bit machine, the
     // step won't fit in a usize.
@@ -12,6 +16,7 @@ pub trait Oracle: Send + Sync {
         unimplemented!("Not required for all impl")
     }
 
+    // TODO: Remove
     fn peek(&self) -> Option<Self::Shard> {
         unimplemented!("Not required for all impl")
     }

@@ -2018,6 +2018,7 @@ dependencies = [
  "reqwest",
  "serde",
  "sha3",
+ "smallvec",
  "strum",
  "strum_macros",
  "sys-info",

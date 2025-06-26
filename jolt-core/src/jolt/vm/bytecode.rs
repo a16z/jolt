@@ -89,6 +89,15 @@ impl BytecodePreprocessing {
             .map(|cycle| self.get_pc(cycle, false) as u64)
             .chain(rayon::iter::once(0))
     }
+
+    pub fn map_trace_to_pc_streaming<'a, 'b>(
+        &'b self,
+        trace: &'a [RV32IMCycle],
+    ) -> impl rayon::iter::ParallelIterator<Item = u64> + use<'a, 'b> {
+        trace
+            .par_iter()
+            .map(|cycle| self.get_pc(cycle, false) as u64)
+    }
 }
 
 #[tracing::instrument(skip_all)]

@@ -1,5 +1,4 @@
 use super::ops::{Term, Variable, LC};
-use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::{
     field::JoltField,

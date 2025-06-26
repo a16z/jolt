@@ -2,7 +2,6 @@ use crate::utils::{compute_dotproduct, math::Math};
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
-use ark_std::iterable::Iterable;
 use rayon::prelude::*;
 use strum_macros::EnumIter;
 
@@ -682,74 +681,6 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
 
         let mut final_evals = vec![F::zero(); num_polys];
 
-        #[inline(always)]
-        fn process_small_scalar_polys<F, T>(
-            coeffs: &[T],
-            final_eval: &mut F,
-            eq: &SplitEqPolynomial<F>,
-            base_poly_idx: usize,
-            x1_bitmask: usize,
-            num_x1_bits: usize,
-            shard_length: usize,
-        ) where
-            F: JoltField,
-            T: SmallScalar,
-        {
-            let e1 = &eq.E1;
-            let e2 = &eq.E2;
-            let chunk_size = e1.len();
-            let no_of_chunks = shard_length / chunk_size;
-
-            *final_eval += (0..no_of_chunks)
-                .map(|chunk_iter| {
-                    let start_idx = chunk_iter * chunk_size;
-                    let end_idx = start_idx + chunk_size;
-                    let x2 = (base_poly_idx + (end_idx - 1)) >> num_x1_bits;
-                    (start_idx..end_idx)
-                        .map(|i| {
-                            let poly_idx = base_poly_idx + i;
-                            let x1 = poly_idx & x1_bitmask;
-                            coeffs[i].field_mul(e1[x1])
-                        })
-                        .fold(F::zero(), |acc, x| acc + x)
-                        * e2[x2]
-                })
-                .fold(F::zero(), |acc, x| acc + x);
-        }
-        #[inline(always)]
-        fn process_large_scalar_polys<F>(
-            coeffs: &Vec<F>,
-            final_eval: &mut F,
-            eq: &SplitEqPolynomial<F>,
-            base_poly_idx: usize,
-            x1_bitmask: usize,
-            num_x1_bits: usize,
-            shard_length: usize,
-        ) where
-            F: JoltField,
-        {
-            let e1 = &eq.E1;
-            let e2 = &eq.E2;
-            let chunk_size = e1.len();
-            let no_of_chunks = shard_length / chunk_size;
-
-            *final_eval += (0..no_of_chunks)
-                .map(|chunk_iter| {
-                    let start_idx = chunk_iter * chunk_size;
-                    let end_idx = start_idx + chunk_size;
-                    let x2 = (base_poly_idx + (end_idx - 1)) >> num_x1_bits;
-                    (start_idx..end_idx)
-                        .map(|i| {
-                            let poly_idx = base_poly_idx + i;
-                            let x1 = poly_idx & x1_bitmask;
-                            coeffs[i].mul_01_optimized(e1[x1])
-                        })
-                        .fold(F::zero(), |acc, x| acc + x)
-                        * e2[x2]
-                })
-                .fold(F::zero(), |acc, x| acc + x);
-        }
-
         if polys
             .iter()
             .any(|poly| !matches!(poly, MultilinearPolynomial::LargeScalars(_)))
@@ -910,6 +841,68 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
     }
 }
 
+#[inline(always)]
+pub(crate) fn process_small_scalar_polys<F, T>(
+    coeffs: &[T],
+    final_eval: &mut F,
+    eq: &SplitEqPolynomial<F>,
+    base_poly_idx: usize,
+    x1_bitmask: usize,
+    num_x1_bits: usize,
+    shard_length: usize,
+) where
+    F: JoltField,
+    T: SmallScalar,
+{
+    let e1 = &eq.E1;
+    let e2 = &eq.E2;
+    let chunk_size = e1.len();
+    let no_of_chunks = shard_length / chunk_size;
+
+    *final_eval += (0..no_of_chunks).fold(F::zero(), |mut acc, chunk_iter| {
+        let start_idx = chunk_iter * chunk_size;
+        let end_idx = start_idx + chunk_size;
+        let x2 = (base_poly_idx + (end_idx - 1)) >> num_x1_bits;
+        acc += (start_idx..end_idx).fold(F::zero(), |mut acc, i| {
+            let poly_idx = base_poly_idx + i;
+            let x1 = poly_idx & x1_bitmask;
+            acc += coeffs[i].field_mul(e1[x1]);
+            acc
+        }) * e2[x2];
+        acc
+    });
+}
+
+#[inline(always)]
+pub(crate) fn process_large_scalar_polys<F>(
+    coeffs: &Vec<F>,
+    final_eval: &mut F,
+    eq: &SplitEqPolynomial<F>,
+    base_poly_idx: usize,
+    x1_bitmask: usize,
+    num_x1_bits: usize,
+    shard_length: usize,
+) where
+    F: JoltField,
+{
+    let e1 = &eq.E1;
+    let e2 = &eq.E2;
+    let chunk_size = e1.len();
+    let no_of_chunks = shard_length / chunk_size;
+
+    *final_eval += (0..no_of_chunks).fold(F::zero(), |mut acc, chunk_iter| {
+        let start_idx = chunk_iter * chunk_size;
+        let end_idx = start_idx + chunk_size;
+        let x2 = (base_poly_idx + (end_idx - 1)) >> num_x1_bits;
+        acc += (start_idx..end_idx).fold(F::zero(), |mut acc, i| {
+            let poly_idx = base_poly_idx + i;
+            let x1 = poly_idx & x1_bitmask;
+            acc += coeffs[i].mul_01_optimized(e1[x1]);
+            acc
+        }) * e2[x2];
+        acc
+    });
+}
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -80,10 +80,14 @@ impl Serializable for JoltHyperKZGProof {}
 #[cfg(test)]
 mod tests {
     use ark_bn254::{Bn254, Fr};
+    use tracing_chrome::ChromeLayerBuilder;
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::{FmtSubscriber, Registry};
 
     use crate::field::JoltField;
     use crate::host;
     use crate::jolt::vm::rv32i_vm::{Jolt, RV32IJoltVM};
+    use crate::jolt::vm::JoltProverPreprocessing;
     use crate::poly::commitment::commitment_scheme::CommitmentScheme;
     use crate::poly::commitment::hyperkzg::HyperKZG;
     use crate::poly::commitment::mock::MockCommitScheme;
@@ -145,7 +149,16 @@ mod tests {
 
     #[test]
     fn fib_e2e_hyperkzg() {
+        let (chrome_layer, guard) = ChromeLayerBuilder::new()
+            .file("trace.json")
+            .include_args(true)
+            .build();
+
+        let subscriber = Registry::default().with(chrome_layer);
+        tracing::subscriber::set_global_default(subscriber).unwrap();
+
         fib_e2e::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>();
+        drop(guard);
     }
 
     #[test]
@@ -190,13 +203,11 @@ mod tests {
     #[test]
     fn sha3_e2e_hyperkzg() {
         let guard = SHA3_FILE_LOCK.lock().unwrap();
-
         let mut program = host::Program::new("sha3-guest");
         let (bytecode, memory_init) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
         let (io_device, trace) = program.trace(&inputs);
         drop(guard);
-
         let preprocessing = RV32IJoltVM::prover_preprocess(
             bytecode.clone(),
             io_device.memory_layout.clone(),
@@ -213,7 +224,6 @@ mod tests {
         >>::prove(
             io_device, trace, preprocessing.clone()
         );
-
         let verification_result = RV32IJoltVM::verify(
             preprocessing.shared,
             jolt_proof,
@@ -229,17 +239,27 @@ mod tests {
 
     #[test]
     fn sha3_chain_e2e_hyperkzg() {
-        let guard = SHA3_FILE_LOCK.lock().unwrap();
+        let (chrome_layer, _guard) = ChromeLayerBuilder::new()
+            .file("trace.json")
+            .include_args(true)
+            .build();
 
+        let subscriber = Registry::default().with(chrome_layer);
+        tracing::subscriber::set_global_default(subscriber).unwrap();
+
+        let guard = SHA3_FILE_LOCK.lock().unwrap();
         let mut program = host::Program::new("sha3-chain-guest");
         let (bytecode, memory_init) = program.decode();
-        let mut input_vec = vec![5u8; 32];
-        input_vec.push(32);
-        let inputs = postcard::to_stdvec(&input_vec).unwrap();
+        let mut inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
+        inputs.append(&mut postcard::to_stdvec(&512u32).unwrap());
         let (io_device, trace) = program.trace(&inputs);
         drop(guard);
 
-        let preprocessing = RV32IJoltVM::prover_preprocess(
+        let preprocessing: crate::jolt::vm::JoltProverPreprocessing<
+            Fr,
+            HyperKZG<Bn254, KeccakTranscript>,
+            KeccakTranscript,
+        > = RV32IJoltVM::prover_preprocess(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             memory_init,
@@ -247,6 +267,7 @@ mod tests {
             1 << 20,
             1 << 20,
         );
+
         let (jolt_proof, jolt_commitments, debug_info) = <RV32IJoltVM as Jolt<
             32,
             Fr,
@@ -262,6 +283,7 @@ mod tests {
             jolt_commitments,
             debug_info,
         );
+
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
