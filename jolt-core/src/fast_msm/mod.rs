@@ -106,6 +106,7 @@ where
                         poly.coeffs.len(),
                     ))
             }
+            _ => unimplemented!("This variant of MultilinearPolynomial is not yet handled"),
         }
     }
     fn joltified(&self) {
