@@ -252,9 +252,6 @@ impl<F: JoltField> IncPolynomial<F> {
                 let min_row_index = chunk_index * chunk_size;
                 let max_row_index = min_row_index + chunk_size;
 
-                // let mut result: Vec<JoltGroupWrapper<G>> =
-                //     vec![JoltGroupWrapper(G::zero()); chunk_size];
-
                 // Vec of bases per row
                 let mut bases_ref = vec![vec![]; chunk_size];
                 // Vec of scalars per row
@@ -268,8 +265,6 @@ impl<F: JoltField> IncPolynomial<F> {
                         let col_index = global_index % row_len as u128;
                         bases_ref[row_index % chunk_size].push(&bases[col_index as usize]);
                         scalars_ref[row_index % chunk_size].push(F::from_i64(*coeff));
-                        // result[row_index % chunk_size].0 +=
-                        //     bases[col_index as usize].0 * F::from_i64(*coeff);
                     }
                 }
 

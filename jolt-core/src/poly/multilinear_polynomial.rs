@@ -136,7 +136,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
         if polynomials.iter().any(|poly| {
             matches!(
                 poly,
-                MultilinearPolynomial::RLC(_) | MultilinearPolynomial::OneHot(_)
+                MultilinearPolynomial::OneHot(_) | MultilinearPolynomial::Inc(_)
             )
         }) {
             let max_num_rows = get_max_num_rows();

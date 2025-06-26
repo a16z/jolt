@@ -132,7 +132,8 @@ impl BatchedSumcheck {
             .unwrap();
         println!("max_num_rounds: {max_num_rounds}");
 
-        let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
+        // let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
+        let batching_coeffs: Vec<F> = vec![F::one(); sumcheck_instances.len()];
 
         // To see why we may need to scale by a power of two, consider a batch of
         // two sumchecks:
@@ -265,7 +266,8 @@ impl BatchedSumcheck {
             .max()
             .unwrap();
 
-        let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
+        // let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
+        let batching_coeffs: Vec<F> = vec![F::one(); sumcheck_instances.len()];
 
         // To see why we may need to scale by a power of two, consider a batch of
         // two sumchecks:

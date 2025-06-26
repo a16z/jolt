@@ -701,7 +701,10 @@ where
             }
             let prover_opening =
                 &self.prover_openings.as_ref().unwrap().openings[self.openings.len()];
-            let prover_state = prover_opening.prover_state.as_ref().unwrap();
+            assert_eq!(
+                prover_opening.opening_point, opening_point,
+                "opening point mismatch"
+            );
             assert_eq!(
                 prover_opening.batch.len(),
                 commitments.len(),
@@ -747,7 +750,6 @@ where
         reduced_opening_proof: &ReducedOpeningProof<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        println!("# instances: {}", self.openings.len());
         let num_sumcheck_rounds = self
             .openings
             .iter()
