@@ -143,6 +143,7 @@ fn benchmark_msm_batch<PCS, F, ProofTranscript>(
             MultilinearPolynomial::U64Scalars(poly) => poly.coeffs_as_field_elements(),
             MultilinearPolynomial::I64Scalars(poly) => poly.coeffs_as_field_elements(),
             MultilinearPolynomial::U8Scalars(poly) => poly.coeffs_as_field_elements(),
+            _ => unimplemented!("This variant of MultilinearPolynomial is not yet handled"),
         })
         .collect();
     let polys_ref: Vec<_> = polys.iter().map(|p| p.as_slice()).collect();
