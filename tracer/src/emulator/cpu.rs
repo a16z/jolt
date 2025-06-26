@@ -1485,7 +1485,7 @@ impl Cpu {
                     );
                 } else {
                     println!(
-                        "Warning: Attempt to end a marker (ptr: 0x{ptr:x}) that was never started",
+                        "Warning: Attempt to end a marker (ptr: 0x{ptr:x}) that was never started"
                     );
                 }
             }

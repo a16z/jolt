@@ -26,9 +26,7 @@ impl MULHSU {
     fn exec(&self, cpu: &mut Cpu, _: &mut <MULHSU as RISCVInstruction>::RAMAccess) {
         cpu.x[self.operands.rd] = match cpu.xlen {
             Xlen::Bit32 => cpu.sign_extend(
-                ((cpu.x[self.operands.rs1] as i64)
-                    .wrapping_mul(cpu.x[self.operands.rs2] as u32 as i64)
-                    >> 32) as i64,
+                cpu.x[self.operands.rs1].wrapping_mul(cpu.x[self.operands.rs2] as u32 as i64) >> 32,
             ),
             Xlen::Bit64 => {
                 ((cpu.x[self.operands.rs1] as u128)

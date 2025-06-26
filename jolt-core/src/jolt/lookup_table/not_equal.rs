@@ -22,7 +22,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for NotEqualTable<WORD_SIZE> {
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
-        F::one() - EqualTable::<WORD_SIZE>::default().evaluate_mle::<F>(r)
+        F::one() - EqualTable::<WORD_SIZE>.evaluate_mle::<F>(r)
     }
 }
 

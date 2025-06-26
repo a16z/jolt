@@ -32,7 +32,7 @@ fn setup_bench<PCS, F, ProofTranscript>(
 ) -> (
     // Leaves
     (Vec<F>, usize),
-    PCS::Setup,
+    PCS::ProverSetup,
     // Products of leaves
     Vec<F>,
 )
@@ -68,7 +68,7 @@ where
     // Compute known products (one per layer)
     let known_products: Vec<F> = leaves.iter().map(|layer| layer.iter().product()).collect();
 
-    let setup = PCS::setup(SRS_SIZE);
+    let setup = PCS::setup_prover(SRS_SIZE);
 
     ((leaves.concat(), batch_size), setup, known_products)
 }
@@ -83,7 +83,7 @@ fn benchmark_prove<PCS, F, G, ProofTranscript>(
     G: BatchedGrandProduct<F, PCS, ProofTranscript, Leaves = (Vec<F>, usize)>,
     ProofTranscript: Transcript,
 {
-    let (leaves, setup, _) = setup_bench::<PCS, F, ProofTranscript>(
+    let (leaves, _, _) = setup_bench::<PCS, F, ProofTranscript>(
         config.num_layers,
         config.layer_size,
         config.percentage_ones,
@@ -103,11 +103,7 @@ fn benchmark_prove<PCS, F, G, ProofTranscript>(
                 let mut prover_accumulator: ProverOpeningAccumulator<F, ProofTranscript> =
                     ProverOpeningAccumulator::new();
                 let _proof: BatchedGrandProductProof<PCS, ProofTranscript> = grand_product
-                    .prove_grand_product(
-                        Some(&mut prover_accumulator),
-                        &mut transcript,
-                        Some(&setup),
-                    )
+                    .prove_grand_product(Some(&mut prover_accumulator), &mut transcript, None)
                     .0;
             });
         },
@@ -134,11 +130,8 @@ fn benchmark_verify<PCS, F, G, ProofTranscript>(
     let mut grand_product = G::construct_with_config(leaves, grand_products_config);
     let mut prover_accumulator: ProverOpeningAccumulator<F, ProofTranscript> =
         ProverOpeningAccumulator::new();
-    let (proof, r_prover) = grand_product.prove_grand_product(
-        Some(&mut prover_accumulator),
-        &mut transcript,
-        Some(&setup),
-    );
+    let (proof, r_prover) =
+        grand_product.prove_grand_product(Some(&mut prover_accumulator), &mut transcript, None);
 
     c.bench_function(
         &format!(
@@ -156,7 +149,6 @@ fn benchmark_verify<PCS, F, G, ProofTranscript>(
                     &known_products,
                     Some(&mut verifier_accumulator),
                     &mut transcript,
-                    Some(&setup),
                 );
 
                 assert_eq!(r_prover, r_verifier);

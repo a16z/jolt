@@ -153,7 +153,7 @@ where
         &mut self,
         opening_accumulator: Option<&mut ProverOpeningAccumulator<F, ProofTranscript>>,
         transcript: &mut ProofTranscript,
-        setup: Option<&PCS::Setup>,
+        setup: Option<&PCS::ProverSetup>,
     ) -> (BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>) {
         QuarkGrandProductBase::prove_quark_grand_product(
             self,
@@ -167,14 +167,13 @@ where
     fn verify_grand_product(
         proof: &BatchedGrandProductProof<PCS, ProofTranscript>,
         claimed_outputs: &[F],
-        opening_accumulator: Option<&mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>>,
+        _opening_accumulator: Option<&mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>>,
         transcript: &mut ProofTranscript,
-        _setup: Option<&PCS::Setup>,
     ) -> (F, Vec<F>) {
         QuarkGrandProductBase::verify_quark_grand_product::<Self, PCS>(
             proof,
             claimed_outputs,
-            opening_accumulator,
+            _opening_accumulator,
             transcript,
         )
     }
@@ -195,7 +194,7 @@ where
         grand_product: &mut impl BatchedGrandProduct<F, PCS, ProofTranscript>,
         opening_accumulator: Option<&mut ProverOpeningAccumulator<F, ProofTranscript>>,
         transcript: &mut ProofTranscript,
-        setup: Option<&PCS::Setup>,
+        setup: Option<&PCS::ProverSetup>,
     ) -> (BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>) {
         let mut proof_layers = Vec::with_capacity(grand_product.num_layers());
 
@@ -311,7 +310,7 @@ where
         claim: PCS::Field,
         opening_accumulator: &mut ProverOpeningAccumulator<PCS::Field, ProofTranscript>,
         transcript: &mut ProofTranscript,
-        setup: &PCS::Setup,
+        setup: &PCS::ProverSetup,
     ) -> (Self, Vec<PCS::Field>, PCS::Field) {
         let v_length = v.len();
         let v_variables = v_length.log_2();
@@ -696,10 +695,10 @@ mod quark_grand_product_tests {
                 .prove_grand_product(
                     Some(&mut prover_accumulator),
                     &mut prover_transcript,
-                    Some(&setup),
+                    Some(&setup.0),
                 )
                 .0;
-        let batched_proof = prover_accumulator.reduce_and_prove(&setup, &mut prover_transcript);
+        let batched_proof = prover_accumulator.reduce_and_prove(&setup.0, &mut prover_transcript);
 
         // Note resetting the transcript is important
         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
@@ -709,17 +708,16 @@ mod quark_grand_product_tests {
             Zeromorph<Bn254, KeccakTranscript>,
             KeccakTranscript,
         > = VerifierOpeningAccumulator::new();
-        verifier_accumulator.compare_to(prover_accumulator, &setup);
+        verifier_accumulator.compare_to(prover_accumulator, &setup.0);
 
         let _ = QuarkGrandProduct::verify_grand_product(
             &proof,
             &known_products,
             Some(&mut verifier_accumulator),
             &mut verifier_transcript,
-            None,
         );
         assert!(verifier_accumulator
-            .reduce_and_verify(&setup, &batched_proof, &mut verifier_transcript)
+            .reduce_and_verify(&setup.1, &batched_proof, &mut verifier_transcript)
             .is_ok());
     }
 

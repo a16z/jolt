@@ -22,8 +22,8 @@ declare_riscv_instr!(
 impl VirtualPow2I {
     fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualPow2I as RISCVInstruction>::RAMAccess) {
         match cpu.xlen {
-            Xlen::Bit32 => cpu.x[self.operands.rd] = 1 << (self.operands.imm as u64) % 32,
-            Xlen::Bit64 => cpu.x[self.operands.rd] = 1 << (self.operands.imm as u64) % 64,
+            Xlen::Bit32 => cpu.x[self.operands.rd] = 1 << (self.operands.imm % 32),
+            Xlen::Bit64 => cpu.x[self.operands.rd] = 1 << (self.operands.imm % 64),
         }
     }
 }

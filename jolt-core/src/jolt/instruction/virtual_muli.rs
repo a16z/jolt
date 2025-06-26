@@ -18,8 +18,9 @@ impl InstructionFlags for VirtualMULI {
         flags[CircuitFlags::RightOperandIsImm as usize] = true;
         flags[CircuitFlags::MultiplyOperands as usize] = true;
         flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
-        flags[CircuitFlags::Virtual as usize] = self.virtual_sequence_remaining.is_some();
-        flags[CircuitFlags::DoNotUpdatePC as usize] =
+        flags[CircuitFlags::InlineSequenceInstruction as usize] =
+            self.virtual_sequence_remaining.is_some();
+        flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
             self.virtual_sequence_remaining.unwrap_or(0) != 0;
         flags
     }
@@ -60,7 +61,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualMULI> 
             #[cfg(test)]
             8 => (x as i8).wrapping_mul(y as i8) as u8 as u64,
             32 => (x as i32).wrapping_mul(y as i32) as u32 as u64,
-            64 => (x as i64).wrapping_mul(y as i64) as u64,
+            64 => (x as i64).wrapping_mul(y) as u64,
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }

@@ -7,9 +7,9 @@
 use crate::impl_r1cs_input_lc_conversions;
 use crate::jolt::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
 use crate::jolt::vm::JoltProverPreprocessing;
+use crate::jolt::witness::CommittedPolynomials;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::utils::transcript::Transcript;
 
 use super::key::UniformSpartanKey;
@@ -31,13 +31,13 @@ pub struct R1CSProof<F: JoltField, ProofTranscript: Transcript> {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum JoltR1CSInputs {
-    VirtualInstructionAddress, // Virtual (bytecode raf)
-    RealInstructionAddress,    // Virtual (bytecode rv)
-    Rd,                        // Virtual (bytecode rv)
-    Imm,                       // Virtual (bytecode rv)
-    RamAddress,                // Virtual (RAM raf)
-    Rs1Value,                  // Virtual (registers rv)
-    Rs2Value,                  // Virtual (registers rv)
+    PC,           // Virtual (bytecode raf)
+    UnexpandedPC, // Virtual (bytecode rv)
+    Rd,           // Virtual (bytecode rv)
+    Imm,          // Virtual (bytecode rv)
+    RamAddress,   // Virtual (RAM raf)
+    Rs1Value,     // Virtual (registers rv)
+    Rs2Value,     // Virtual (registers rv)
     RdWriteValue,
     RamReadValue, // Virtual (RAM rv)
     RamWriteValue,
@@ -49,16 +49,23 @@ pub enum JoltR1CSInputs {
     WriteLookupOutputToRD,
     WritePCtoRD,
     ShouldBranch,
-    NextPC,
-    LookupOutput, // Virtual (instruction rv)
+    NextUnexpandedPC, // Virtual (spartan shift sumcheck)
+    NextPC,           // Virtual (spartan shift sumcheck)
+    LookupOutput,     // Virtual (instruction rv)
     OpFlags(CircuitFlags),
 }
 
 /// This const serves to define a canonical ordering over inputs (and thus indices
 /// for each input). This is needed for sumcheck.
-pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 36] = [
-    JoltR1CSInputs::VirtualInstructionAddress,
-    JoltR1CSInputs::RealInstructionAddress,
+pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 37] = [
+    JoltR1CSInputs::LeftInstructionInput,
+    JoltR1CSInputs::RightInstructionInput,
+    JoltR1CSInputs::Product,
+    JoltR1CSInputs::WriteLookupOutputToRD,
+    JoltR1CSInputs::WritePCtoRD,
+    JoltR1CSInputs::ShouldBranch,
+    JoltR1CSInputs::PC,
+    JoltR1CSInputs::UnexpandedPC,
     JoltR1CSInputs::Rd,
     JoltR1CSInputs::Imm,
     JoltR1CSInputs::RamAddress,
@@ -67,14 +74,9 @@ pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 36] = [
     JoltR1CSInputs::RdWriteValue,
     JoltR1CSInputs::RamReadValue,
     JoltR1CSInputs::RamWriteValue,
-    JoltR1CSInputs::LeftInstructionInput,
-    JoltR1CSInputs::RightInstructionInput,
     JoltR1CSInputs::LeftLookupOperand,
     JoltR1CSInputs::RightLookupOperand,
-    JoltR1CSInputs::Product,
-    JoltR1CSInputs::WriteLookupOutputToRD,
-    JoltR1CSInputs::WritePCtoRD,
-    JoltR1CSInputs::ShouldBranch,
+    JoltR1CSInputs::NextUnexpandedPC,
     JoltR1CSInputs::NextPC,
     JoltR1CSInputs::LookupOutput,
     JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsRs1Value),
@@ -89,10 +91,21 @@ pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 36] = [
     JoltR1CSInputs::OpFlags(CircuitFlags::Jump),
     JoltR1CSInputs::OpFlags(CircuitFlags::Branch),
     JoltR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD),
-    JoltR1CSInputs::OpFlags(CircuitFlags::Virtual),
+    JoltR1CSInputs::OpFlags(CircuitFlags::InlineSequenceInstruction),
     JoltR1CSInputs::OpFlags(CircuitFlags::Assert),
-    JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdatePC),
+    JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC),
     JoltR1CSInputs::OpFlags(CircuitFlags::Advice),
+];
+
+/// The subset of `ALL_R1CS_INPUTS` that are committed. The rest of
+/// the inputs are virtual polynomials.
+pub const COMMITTED_R1CS_INPUTS: [JoltR1CSInputs; 6] = [
+    JoltR1CSInputs::LeftInstructionInput,
+    JoltR1CSInputs::RightInstructionInput,
+    JoltR1CSInputs::Product,
+    JoltR1CSInputs::WriteLookupOutputToRD,
+    JoltR1CSInputs::WritePCtoRD,
+    JoltR1CSInputs::ShouldBranch,
 ];
 
 impl JoltR1CSInputs {
@@ -126,22 +139,24 @@ impl JoltR1CSInputs {
         ProofTranscript: Transcript,
     {
         match self {
-            JoltR1CSInputs::VirtualInstructionAddress => {
-                let coeffs: Vec<u64> = trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let instr = cycle.instruction().normalize();
-                        *preprocessing
-                            .shared
-                            .bytecode
-                            .virtual_address_map
-                            .get(&(instr.address, instr.virtual_sequence_remaining.unwrap_or(0)))
-                            .unwrap() as u64
-                    })
+            JoltR1CSInputs::PC => {
+                let coeffs: Vec<u64> = preprocessing
+                    .shared
+                    .bytecode
+                    .map_trace_to_pc(trace)
                     .collect();
                 coeffs.into()
             }
-            JoltR1CSInputs::RealInstructionAddress => {
+            JoltR1CSInputs::NextPC => {
+                let coeffs: Vec<u64> = preprocessing
+                    .shared
+                    .bytecode
+                    .map_trace_to_pc(&trace[1..])
+                    .chain(rayon::iter::once(0))
+                    .collect();
+                coeffs.into()
+            }
+            JoltR1CSInputs::UnexpandedPC => {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
                     .map(|cycle| cycle.instruction().normalize().address as u64)
@@ -204,18 +219,10 @@ impl JoltR1CSInputs {
                 coeffs.into()
             }
             JoltR1CSInputs::LeftInstructionInput => {
-                let coeffs: Vec<u64> = trace
-                    .par_iter()
-                    .map(|cycle| LookupQuery::<32>::to_instruction_inputs(cycle).0)
-                    .collect();
-                coeffs.into()
+                CommittedPolynomials::LeftInstructionInput.generate_witness(preprocessing, trace)
             }
             JoltR1CSInputs::RightInstructionInput => {
-                let coeffs: Vec<i64> = trace
-                    .par_iter()
-                    .map(|cycle| LookupQuery::<32>::to_instruction_inputs(cycle).1)
-                    .collect();
-                coeffs.into()
+                CommittedPolynomials::RightInstructionInput.generate_witness(preprocessing, trace)
             }
             JoltR1CSInputs::LeftLookupOperand => {
                 let coeffs: Vec<u64> = trace
@@ -232,45 +239,22 @@ impl JoltR1CSInputs {
                 coeffs.into()
             }
             JoltR1CSInputs::Product => {
-                let coeffs: Vec<u64> = trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let (left_input, right_input) =
-                            LookupQuery::<32>::to_instruction_inputs(cycle);
-                        left_input * right_input as u64
-                    })
-                    .collect();
-                coeffs.into()
+                CommittedPolynomials::Product.generate_witness(preprocessing, trace)
             }
             JoltR1CSInputs::WriteLookupOutputToRD => {
-                let coeffs: Vec<u8> = trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let flag = cycle.instruction().circuit_flags()
-                            [CircuitFlags::WriteLookupOutputToRD as usize];
-                        (cycle.rd_write().0 as u8) * (flag as u8)
-                    })
-                    .collect();
-                coeffs.into()
+                CommittedPolynomials::WriteLookupOutputToRD.generate_witness(preprocessing, trace)
             }
             JoltR1CSInputs::WritePCtoRD => {
-                let coeffs: Vec<u8> = trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let flag = cycle.instruction().circuit_flags()[CircuitFlags::Jump as usize];
-                        (cycle.rd_write().0 as u8) * (flag as u8)
-                    })
-                    .collect();
-                coeffs.into()
+                CommittedPolynomials::WritePCtoRD.generate_witness(preprocessing, trace)
             }
             JoltR1CSInputs::LookupOutput => {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
-                    .map(|cycle| LookupQuery::<32>::to_lookup_output(cycle))
+                    .map(LookupQuery::<32>::to_lookup_output)
                     .collect();
                 coeffs.into()
             }
-            JoltR1CSInputs::NextPC => {
+            JoltR1CSInputs::NextUnexpandedPC => {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
                     .map(|cycle| {
@@ -286,7 +270,7 @@ impl JoltR1CSInputs {
                             let is_jump =
                                 cycle.instruction().circuit_flags()[CircuitFlags::Jump as usize];
                             let do_not_update_pc = cycle.instruction().circuit_flags()
-                                [CircuitFlags::DoNotUpdatePC as usize];
+                                [CircuitFlags::DoNotUpdateUnexpandedPC as usize];
                             if is_jump {
                                 LookupQuery::<32>::to_lookup_output(cycle)
                             } else if do_not_update_pc {
@@ -300,15 +284,7 @@ impl JoltR1CSInputs {
                 coeffs.into()
             }
             JoltR1CSInputs::ShouldBranch => {
-                let coeffs: Vec<u8> = trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let is_branch =
-                            cycle.instruction().circuit_flags()[CircuitFlags::Branch as usize];
-                        (LookupQuery::<32>::to_lookup_output(cycle) as u8) * is_branch as u8
-                    })
-                    .collect();
-                coeffs.into()
+                CommittedPolynomials::ShouldBranch.generate_witness(preprocessing, trace)
             }
             JoltR1CSInputs::OpFlags(flag) => {
                 // TODO(moodlezoup): Boolean polynomial

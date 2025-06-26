@@ -17,8 +17,13 @@
 # tracing-chrome output
 trace-**.json
 
+# SRS files
+*.srs
+
 temp_file
 
 # ide
 .idea
 .vscode
+
+*.patch

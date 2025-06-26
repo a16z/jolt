@@ -123,7 +123,7 @@ impl VirtualInstructionSequence for SH {
             },
             virtual_sequence_remaining: Some(9),
         };
-        sequence.extend(slli.virtual_sequence().into_iter());
+        sequence.extend(slli.virtual_sequence());
 
         let lui = LUI {
             address: self.address,
@@ -144,7 +144,7 @@ impl VirtualInstructionSequence for SH {
             },
             virtual_sequence_remaining: Some(7),
         };
-        sequence.extend(sll_mask.virtual_sequence().into_iter());
+        sequence.extend(sll_mask.virtual_sequence());
 
         let sll_value = SLL {
             address: self.address,
@@ -155,7 +155,7 @@ impl VirtualInstructionSequence for SH {
             },
             virtual_sequence_remaining: Some(5),
         };
-        sequence.extend(sll_value.virtual_sequence().into_iter());
+        sequence.extend(sll_value.virtual_sequence());
 
         let xor = XOR {
             address: self.address,

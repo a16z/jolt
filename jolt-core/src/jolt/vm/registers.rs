@@ -22,7 +22,7 @@ use fixedbitset::FixedBitSet;
 use rayon::prelude::*;
 use tracer::instruction::RV32IMCycle;
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct RegistersTwistProof<F: JoltField, ProofTranscript: Transcript> {
     /// Proof for the read-checking and write-checking sumchecks
     /// (steps 3 and 4 of Figure 9).
@@ -31,7 +31,7 @@ pub struct RegistersTwistProof<F: JoltField, ProofTranscript: Transcript> {
     val_evaluation_proof: ValEvaluationProof<F, ProofTranscript>,
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct ReadWriteCheckingProof<F: JoltField, ProofTranscript: Transcript> {
     /// Joint sumcheck proof for the read-checking and write-checking sumchecks
     /// (steps 3 and 4 of Figure 9).
@@ -62,7 +62,7 @@ pub struct ReadWriteCheckingProof<F: JoltField, ProofTranscript: Transcript> {
     sumcheck_switch_index: usize,
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct ValEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
     /// Sumcheck proof for the Val-evaluation sumcheck (steps 6 of Figure 9).
     sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
@@ -75,7 +75,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTran
     pub fn prove(
         // generators: &PCS::Setup,
         trace: &[RV32IMCycle],
-        opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
+        _opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> RegistersTwistProof<F, ProofTranscript> {
         let log_T = trace.len().log_2();
