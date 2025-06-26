@@ -1,4 +1,3 @@
-use super::sumcheck::SumcheckInstanceProof;
 use crate::{
     field::JoltField,
     jolt::{
@@ -19,7 +18,6 @@ use crate::{
         unipoly::{CompressedUniPoly, UniPoly},
     },
     utils::{
-        errors::ProofVerifyError,
         math::Math,
         thread::{drop_in_background_thread, unsafe_allocate_zero_vec, unsafe_zero_slice},
         transcript::{AppendToTranscript, Transcript},
@@ -30,6 +28,7 @@ use rayon::{prelude::*, slice::Iter};
 use std::{fmt::Display, ops::Index};
 use strum::{EnumCount, IntoEnumIterator};
 use tracer::instruction::RV32IMCycle;
+use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 
 /// Table containing the evaluations `EQ(x_1, ..., x_j, r_1, ..., r_j)`,
 /// built up incrementally as we receive random challenges `r_j` over the
@@ -796,70 +795,13 @@ pub fn prove_sparse_dense_shout<
         eq_r_prime_evals,
     )
 }
-
-pub fn verify_sparse_dense_shout<
-    const WORD_SIZE: usize,
-    F: JoltField,
-    ProofTranscript: Transcript,
->(
-    proof: &SumcheckInstanceProof<F, ProofTranscript>,
-    log_T: usize,
-    r_cycle: Vec<F>,
-    rv_claim: F,
-    ra_claims: [F; 4],
-    is_add_mul_sub_flag_claim: F,
-    flag_claims: &[F],
-    transcript: &mut ProofTranscript,
-) -> Result<(), ProofVerifyError> {
-    let log_K = 2 * WORD_SIZE;
-    let first_log_K_rounds = SumcheckInstanceProof::new(proof.compressed_polys[..log_K].to_vec());
-    let last_log_T_rounds = SumcheckInstanceProof::new(proof.compressed_polys[log_K..].to_vec());
-
-    let gamma: F = transcript.challenge_scalar();
-    let gamma_squared = gamma.square();
-
-    // The first log(K) rounds' univariate polynomials are degree 2
-    let (sumcheck_claim, r_address) = first_log_K_rounds.verify(rv_claim, log_K, 2, transcript)?;
-    // The last log(T) rounds' univariate polynomials are degree 6
-    let (sumcheck_claim, r_cycle_prime) =
-        last_log_T_rounds.verify(sumcheck_claim, log_T, 6, transcript)?;
-
-    let val_evals: Vec<_> = LookupTables::<WORD_SIZE>::iter()
-        .map(|table| table.evaluate_mle(&r_address))
-        .collect();
-    let eq_eval_cycle = EqPolynomial::mle(&r_cycle, &r_cycle_prime);
-
-    let rv_val_claim = flag_claims
-        .iter()
-        .zip(val_evals.iter())
-        .map(|(flag, val)| *flag * val)
-        .sum::<F>();
-
-    let right_operand_eval = OperandPolynomial::new(log_K, OperandSide::Right).evaluate(&r_address);
-    let left_operand_eval = OperandPolynomial::new(log_K, OperandSide::Left).evaluate(&r_address);
-    let identity_poly_eval =
-        IdentityPolynomial::new_with_endianness(log_K, Endianness::Big).evaluate(&r_address);
-
-    let val_claim = rv_val_claim
-        + (F::one() - is_add_mul_sub_flag_claim)
-            * (gamma * right_operand_eval + gamma_squared * left_operand_eval)
-        + gamma_squared * is_add_mul_sub_flag_claim * identity_poly_eval;
-
-    assert_eq!(
-        eq_eval_cycle * ra_claims.iter().product::<F>() * val_claim,
-        sumcheck_claim,
-        "Read-checking sumcheck failed"
-    );
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::utils::transcript::KeccakTranscript;
     use ark_bn254::Fr;
     use rand::{rngs::StdRng, RngCore, SeedableRng};
+    use crate::subprotocols::shout::verify_sparse_dense_shout;
 
     const WORD_SIZE: usize = 8;
     const LOG_T: usize = 8;

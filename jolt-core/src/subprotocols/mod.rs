@@ -3,7 +3,6 @@
 pub mod grand_product;
 pub mod ra_virtual;
 pub mod shout;
-pub mod sparse_dense_shout;
 pub mod sumcheck;
 pub mod twist;
 

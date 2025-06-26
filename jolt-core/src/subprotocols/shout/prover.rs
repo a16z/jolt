@@ -1,4 +1,3 @@
-use super::sumcheck::{BatchableSumcheckInstance, BatchedSumcheck, SumcheckInstanceProof};
 use crate::{
     field::JoltField,
     poly::{
@@ -18,20 +17,8 @@ use crate::{
     },
 };
 use rayon::prelude::*;
-
-pub struct ShoutProof<F: JoltField, ProofTranscript: Transcript> {
-    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    core_piop_claims: ShoutSumcheckClaims<F>,
-    ra_claim_prime: F,
-}
-
-struct ShoutProverState<F: JoltField> {
-    K: usize,
-    rv_claim: F,
-    z: F,
-    ra: MultilinearPolynomial<F>,
-    val: MultilinearPolynomial<F>,
-}
+use crate::subprotocols::shout::{BooleanityProverState, BooleanitySumcheck, BooleanityVerifierState, ShoutProof, ShoutProverState, ShoutSumcheck, ShoutSumcheckClaims, ShoutVerifierState};
+use crate::subprotocols::sumcheck::{BatchableSumcheckInstance, BatchedSumcheck, SumcheckInstanceProof};
 
 impl<F: JoltField> ShoutProverState<F> {
     #[tracing::instrument(skip_all)]
@@ -100,38 +87,8 @@ impl<F: JoltField> ShoutProverState<F> {
     }
 }
 
-#[derive(Clone)]
-struct ShoutSumcheckClaims<F: JoltField> {
-    ra_claim: F,
-    rv_claim: F,
-}
-
-struct ShoutVerifierState<F: JoltField> {
-    K: usize,
-    z: F,
-    val: MultilinearPolynomial<F>,
-}
-
-impl<F: JoltField> ShoutVerifierState<F> {
-    fn initialize<ProofTranscript: Transcript>(
-        lookup_table: Vec<F>,
-        transcript: &mut ProofTranscript,
-    ) -> Self {
-        let K = lookup_table.len();
-        let z: F = transcript.challenge_scalar();
-        let val = MultilinearPolynomial::from(lookup_table);
-        Self { K, z, val }
-    }
-}
-
-struct ShoutSumcheck<F: JoltField> {
-    verifier_state: Option<ShoutVerifierState<F>>,
-    prover_state: Option<ShoutProverState<F>>,
-    claims: Option<ShoutSumcheckClaims<F>>,
-}
-
 impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
-    for ShoutSumcheck<F>
+for ShoutSumcheck<F>
 {
     #[inline(always)]
     fn degree(&self) -> usize {
@@ -255,41 +212,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ShoutProof<F, ProofTranscript> {
             ra_claim_prime: booleanity_sumcheck.ra_claim.unwrap(),
         }
     }
-
-    pub fn verify(
-        &self,
-        lookup_table: Vec<F>,
-        r_cycle: &[F],
-        transcript: &mut ProofTranscript,
-    ) -> Result<(), ProofVerifyError> {
-        let K = lookup_table.len();
-
-        let core_piop_verifier_state = ShoutVerifierState::initialize(lookup_table, transcript);
-        let booleanity_verifier_state = BooleanityVerifierState::initialize(r_cycle, K, transcript);
-
-        let core_piop_sumcheck = ShoutSumcheck {
-            prover_state: None,
-            verifier_state: Some(core_piop_verifier_state),
-            claims: Some(self.core_piop_claims.clone()),
-        };
-
-        let booleanity_sumcheck = BooleanitySumcheck {
-            prover_state: None,
-            verifier_state: Some(booleanity_verifier_state),
-            ra_claim: Some(self.ra_claim_prime),
-        };
-
-        let _r_sumcheck = BatchedSumcheck::verify(
-            &self.sumcheck_proof,
-            vec![&core_piop_sumcheck, &booleanity_sumcheck],
-            transcript,
-        )?;
-
-        // TODO: Reduce 2 ra claims to 1 (Section 4.5.2 of Proofs, Arguments, and Zero-Knowledge)
-        // TODO: Append to opening proof accumulator
-
-        Ok(())
-    }
 }
 
 /// Implements the sumcheck prover for the core Shout PIOP when d = 1. See
@@ -376,20 +298,6 @@ pub fn prove_core_shout_piop<F: JoltField, ProofTranscript: Transcript>(
     )
 }
 
-struct BooleanityProverState<F: JoltField> {
-    read_addresses: Vec<usize>,
-    K: usize,
-    T: usize,
-    B: GruenSplitEqPolynomial<F>,
-    #[cfg(test)]
-    old_B: MultilinearPolynomial<F>,
-    F: Vec<F>,
-    G: Vec<F>,
-    D: MultilinearPolynomial<F>,
-    /// Initialized after first log(K) rounds of sumcheck
-    H: Option<MultilinearPolynomial<F>>,
-}
-
 impl<F: JoltField> BooleanityProverState<F> {
     #[tracing::instrument(skip_all)]
     fn initialize<ProofTranscript: Transcript>(
@@ -424,34 +332,6 @@ impl<F: JoltField> BooleanityProverState<F> {
     }
 }
 
-struct BooleanityVerifierState<F: JoltField> {
-    r_address: Vec<F>,
-    r_cycle: Vec<F>,
-}
-
-impl<F: JoltField> BooleanityVerifierState<F> {
-    fn initialize<ProofTranscript: Transcript>(
-        r_cycle: &[F],
-        K: usize,
-        transcript: &mut ProofTranscript,
-    ) -> Self {
-        let r_cycle: Vec<_> = r_cycle.iter().copied().rev().collect();
-        let r_address: Vec<F> = transcript
-            .challenge_vector(K.log_2())
-            .into_iter()
-            .rev()
-            .collect();
-
-        Self { r_cycle, r_address }
-    }
-}
-
-struct BooleanitySumcheck<F: JoltField> {
-    verifier_state: Option<BooleanityVerifierState<F>>,
-    prover_state: Option<BooleanityProverState<F>>,
-    ra_claim: Option<F>,
-}
-
 #[cfg(test)]
 impl<F: JoltField> BooleanitySumcheck<F> {
     fn compute_prover_message_cubic(&self, round: usize) -> Vec<F> {
@@ -484,7 +364,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             [F::one(), F::one(), F::from_u8(4)],
             [F::zero(), F::from_u8(4), F::from_u8(9)],
         ];
-
+        
         if round < K.log_2() {
             // First log(K) rounds of sumcheck
             let m = round + 1;
@@ -1040,12 +920,12 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
         {
             let expected: F = eq_r_r
                 * (0..H.len())
-                    .map(|j| {
-                        let D_j = D.get_bound_coeff(j);
-                        let H_j = H.get_bound_coeff(j);
-                        D_j * (H_j.square() - H_j)
-                    })
-                    .sum::<F>();
+                .map(|j| {
+                    let D_j = D.get_bound_coeff(j);
+                    let H_j = H.get_bound_coeff(j);
+                    D_j * (H_j.square() - H_j)
+                })
+                .sum::<F>();
             assert_eq!(
                 expected, previous_claim,
                 "Sumcheck sanity check failed in round {_round}"
