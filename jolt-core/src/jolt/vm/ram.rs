@@ -870,7 +870,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                         let ra_evals = ra_test.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
                         let val_evals = val_test.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
 
-                        // Evaluate at k
                         let eq_r_prime_evals = eq_r_prime.sumcheck_evals(
                             j % (T / (round + 1).pow2()),
                             DEGREE,
