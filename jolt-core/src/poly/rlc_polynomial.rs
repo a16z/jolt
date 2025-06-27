@@ -17,10 +17,10 @@ pub struct RLCPolynomial<F: JoltField> {
     pub num_rows: usize,
     /// Length-T vector of (dense) coefficients (i.e. k=0)
     pub dense_rlc: Vec<F>,
-    /// Random linear combiation of one-hot polynomials, represented
+    /// Random linear combination of one-hot polynomials, represented
     /// by a vector of (coefficient, one-hot polynomial) pairs
     one_hot_rlc: Vec<(F, OneHotPolynomial<F>)>,
-    /// Random linear combiation of Inc polynomials, represented
+    /// Random linear combination of Inc polynomials, represented
     /// by a vector of (coefficient, Inc polynomial) pairs
     inc_rlc: Vec<(F, IncPolynomial<F>)>,
     num_variables_bound: usize,
