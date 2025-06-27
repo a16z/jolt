@@ -1,3 +1,5 @@
+use std::ops::{Index, IndexMut};
+
 use strum::EnumCount;
 use strum_macros::EnumCount as EnumCountMacro;
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
@@ -74,6 +76,19 @@ pub enum CircuitFlags {
 }
 
 pub const NUM_CIRCUIT_FLAGS: usize = CircuitFlags::COUNT;
+
+impl Index<CircuitFlags> for [bool; NUM_CIRCUIT_FLAGS] {
+    type Output = bool;
+    fn index(&self, index: CircuitFlags) -> &bool {
+        &self[index as usize]
+    }
+}
+
+impl IndexMut<CircuitFlags> for [bool; NUM_CIRCUIT_FLAGS] {
+    fn index_mut(&mut self, index: CircuitFlags) -> &mut bool {
+        &mut self[index as usize]
+    }
+}
 
 pub trait InstructionFlags {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS];

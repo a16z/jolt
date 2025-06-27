@@ -2,7 +2,7 @@ use super::sumcheck::SumcheckInstanceProof;
 use crate::{
     field::JoltField,
     jolt::{
-        instruction::{InstructionLookup, LookupQuery},
+        instruction::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery},
         lookup_table::{
             prefixes::{PrefixCheckpoint, PrefixEval, Prefixes},
             LookupTables,
@@ -11,9 +11,11 @@ use crate::{
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
+        identity_poly::{BatchedUninterleavePolynomial, Endianness, IdentityPolynomial},
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
+        prefix_suffix::{PrefixRegistry, PrefixSuffixDecomposition},
         unipoly::{CompressedUniPoly, UniPoly},
     },
     utils::{
@@ -237,6 +239,9 @@ pub fn current_suffix_len(log_K: usize, j: usize) -> usize {
 fn compute_sumcheck_prover_message<const WORD_SIZE: usize, F: JoltField>(
     prefix_checkpoints: &[PrefixCheckpoint<F>],
     suffix_polys: &[Vec<DensePolynomial<F>>],
+    identity_ps: &PrefixSuffixDecomposition<F, 2>,
+    batched_ps: &PrefixSuffixDecomposition<F, 2>,
+    gamma: F,
     r: &[F],
     j: usize,
 ) -> [F; 2] {
@@ -282,7 +287,30 @@ fn compute_sumcheck_prover_message<const WORD_SIZE: usize, F: JoltField>(
             |running, new| (running.0 + new.0, running.1 + new.1, running.2 + new.2),
         );
 
-    [eval_0, eval_2_right + eval_2_right - eval_2_left]
+    let (identity_0, identity_2, batched_0, batched_2): (F, F, F, F) = (0..len / 2)
+        .into_par_iter()
+        .map(|b| {
+            let (i0, i2) = identity_ps.sumcheck_evals(b);
+            let (b0, b2) = batched_ps.sumcheck_evals(b);
+            (i0, i2, b0, b2)
+        })
+        .reduce(
+            || (F::zero(), F::zero(), F::zero(), F::zero()),
+            |running, new| {
+                (
+                    running.0 + new.0,
+                    running.1 + new.1,
+                    running.2 + new.2,
+                    running.3 + new.3,
+                )
+            },
+        );
+
+    let gamma_squared = gamma.square();
+    [
+        eval_0 + gamma * batched_0 + gamma_squared * identity_0,
+        eval_2_right + eval_2_right - eval_2_left + gamma * batched_2 + gamma_squared * identity_2,
+    ]
 }
 
 #[allow(clippy::type_complexity)]
@@ -298,6 +326,7 @@ pub fn prove_sparse_dense_shout<
     SumcheckInstanceProof<F, ProofTranscript>,
     F,
     [F; 4],
+    F,
     Vec<F>,
     Vec<F>,
 ) {
@@ -328,7 +357,10 @@ pub fn prove_sparse_dense_shout<
     let mut prefix_checkpoints: Vec<PrefixCheckpoint<F>> = vec![None.into(); Prefixes::COUNT];
     let mut v = ExpandingTable::new(m);
 
-    let span = tracing::span!(tracing::Level::INFO, "compute rv_claim");
+    let gamma: F = transcript.challenge_scalar();
+    let gamma_squared = gamma.square();
+
+    let span = tracing::span!(tracing::Level::INFO, "compute input claim");
     let _guard = span.enter();
     let rv_claim = trace
         .par_iter()
@@ -342,10 +374,19 @@ pub fn prove_sparse_dense_shout<
             }
         })
         .sum();
+    // TODO: these claims should be connected from spartan
+    let (right_operand_evals, left_operand_poly_evals): (Vec<u64>, Vec<u64>) = trace
+        .par_iter()
+        .map(LookupQuery::<WORD_SIZE>::to_lookup_operands)
+        .collect();
+    let right_operand_claim = MultilinearPolynomial::from(right_operand_evals).evaluate(r_cycle);
+    let left_operand_claim = MultilinearPolynomial::from(left_operand_poly_evals).evaluate(r_cycle);
+
+    let input_claim = rv_claim + gamma * right_operand_claim + gamma_squared * left_operand_claim;
     drop(_guard);
     drop(span);
 
-    let mut previous_claim = rv_claim;
+    let mut previous_claim = input_claim;
 
     let mut j: usize = 0;
     let mut ra: Vec<MultilinearPolynomial<F>> = Vec::with_capacity(4);
@@ -361,6 +402,14 @@ pub fn prove_sparse_dense_shout<
                 .collect()
         })
         .collect();
+
+    let mut prefix_registry = PrefixRegistry::new();
+
+    let batched_uninter_poly = BatchedUninterleavePolynomial::new(log_K, gamma);
+    let identity_poly: IdentityPolynomial<F> =
+        IdentityPolynomial::new_with_endianness(log_K, Endianness::Big);
+    let mut batched_ps = PrefixSuffixDecomposition::new(Box::new(batched_uninter_poly), m, log_K);
+    let mut identity_ps = PrefixSuffixDecomposition::new(Box::new(identity_poly), m, log_K);
 
     let span = tracing::span!(tracing::Level::INFO, "Compute lookup_indices_by_table");
     let _guard = span.enter();
@@ -388,6 +437,21 @@ pub fn prove_sparse_dense_shout<
             table_lookups
         })
         .collect();
+    let (lookup_indices_batched, lookup_indices_identity): (Vec<_>, Vec<_>) = lookup_indices
+        .par_iter()
+        .enumerate()
+        .zip(trace.par_iter())
+        .partition_map(|((idx, item), cycle)| {
+            let flags = cycle.instruction().circuit_flags();
+            if flags[CircuitFlags::AddOperands]
+                || flags[CircuitFlags::SubtractOperands]
+                || flags[CircuitFlags::MultiplyOperands]
+            {
+                itertools::Either::Right((idx, item))
+            } else {
+                itertools::Either::Left((idx, item))
+            }
+        });
 
     drop(_guard);
     drop(span);
@@ -442,6 +506,14 @@ pub fn prove_sparse_dense_shout<
                         }
                     });
             });
+
+        rayon::join(
+            || identity_ps.init_Q(&u_evals, lookup_indices_identity.iter()),
+            || batched_ps.init_Q(&u_evals, lookup_indices_batched.iter()),
+        );
+        identity_ps.init_P(&mut prefix_registry);
+        batched_ps.init_P(&mut prefix_registry);
+
         drop(_suffix_poly_guard);
         drop(suffix_poly_span);
 
@@ -454,6 +526,9 @@ pub fn prove_sparse_dense_shout<
             let univariate_poly_evals = compute_sumcheck_prover_message::<WORD_SIZE, F>(
                 &prefix_checkpoints,
                 &suffix_polys,
+                &identity_ps,
+                &batched_ps,
+                gamma,
                 &r,
                 j,
             );
@@ -481,6 +556,8 @@ pub fn prove_sparse_dense_shout<
                     .par_iter_mut()
                     .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow))
             });
+            identity_ps.bind(r_j, BindingOrder::HighToLow);
+            batched_ps.bind(r_j, BindingOrder::HighToLow);
             v.update(r_j);
 
             {
@@ -494,6 +571,8 @@ pub fn prove_sparse_dense_shout<
                 }
             }
 
+            identity_ps.next_round();
+            batched_ps.next_round();
             j += 1;
         }
 
@@ -509,6 +588,12 @@ pub fn prove_sparse_dense_shout<
             })
             .collect();
         ra.push(MultilinearPolynomial::from(ra_i));
+
+        identity_ps.next_phase();
+        batched_ps.next_phase();
+        if phase != 3 {
+            prefix_registry.next_phase();
+        }
     }
 
     drop_in_background_thread(suffix_polys);
@@ -540,7 +625,17 @@ pub fn prove_sparse_dense_shout<
                         F::from_u32(suffix.suffix_mle::<WORD_SIZE>(LookupBits::new(0, 0)))
                     })
                     .collect();
-                *val = table.combine(&prefixes, &suffixes);
+                *val += table.combine(&prefixes, &suffixes);
+            }
+
+            let flags = step.instruction().circuit_flags();
+            let is_add_mul_sub = flags[CircuitFlags::AddOperands]
+                || flags[CircuitFlags::MultiplyOperands]
+                || flags[CircuitFlags::SubtractOperands];
+            if is_add_mul_sub {
+                *val += gamma_squared * identity_ps.final_sumcheck_claim();
+            } else {
+                *val += gamma * batched_ps.final_sumcheck_claim();
             }
         });
     let mut combined_instruction_val_poly =
@@ -640,6 +735,10 @@ pub fn prove_sparse_dense_shout<
                 .sum::<F>()
         })
         .collect();
+    let add_mul_sub_claims = lookup_indices_identity
+        .into_par_iter()
+        .map(|(j, _)| eq_r_cycle_prime[j])
+        .sum::<F>();
     drop(_guard);
     drop(span);
 
@@ -656,6 +755,7 @@ pub fn prove_sparse_dense_shout<
         SumcheckInstanceProof::new(compressed_polys),
         rv_claim,
         ra_claims,
+        add_mul_sub_claims,
         flag_claims,
         eq_r_prime_evals,
     )
@@ -671,12 +771,17 @@ pub fn verify_sparse_dense_shout<
     r_cycle: Vec<F>,
     rv_claim: F,
     ra_claims: [F; 4],
+    is_add_mul_sub_flag_claim: F,
     flag_claims: &[F],
     transcript: &mut ProofTranscript,
 ) -> Result<(), ProofVerifyError> {
     let log_K = 2 * WORD_SIZE;
     let first_log_K_rounds = SumcheckInstanceProof::new(proof.compressed_polys[..log_K].to_vec());
     let last_log_T_rounds = SumcheckInstanceProof::new(proof.compressed_polys[log_K..].to_vec());
+
+    let gamma: F = transcript.challenge_scalar();
+    let gamma_squared = gamma.square();
+
     // The first log(K) rounds' univariate polynomials are degree 2
     let (sumcheck_claim, r_address) = first_log_K_rounds.verify(rv_claim, log_K, 2, transcript)?;
     // The last log(T) rounds' univariate polynomials are degree 6
@@ -688,14 +793,23 @@ pub fn verify_sparse_dense_shout<
         .collect();
     let eq_eval_cycle = EqPolynomial::mle(&r_cycle, &r_cycle_prime);
 
+    let rv_val_claim = flag_claims
+        .iter()
+        .zip(val_evals.iter())
+        .map(|(flag, val)| *flag * val)
+        .sum::<F>();
+
+    let batched_uninter_poly_eval =
+        BatchedUninterleavePolynomial::new(log_K, gamma).evaluate(&r_address);
+    let identity_poly_eval =
+        IdentityPolynomial::new_with_endianness(log_K, Endianness::Big).evaluate(&r_address);
+
+    let val_claim = rv_val_claim
+        + gamma * (F::one() - is_add_mul_sub_flag_claim) * batched_uninter_poly_eval
+        + gamma_squared * is_add_mul_sub_flag_claim * identity_poly_eval;
+
     assert_eq!(
-        eq_eval_cycle
-            * ra_claims.iter().product::<F>()
-            * flag_claims
-                .iter()
-                .zip(val_evals.iter())
-                .map(|(flag, val)| *flag * val)
-                .sum::<F>(),
+        eq_eval_cycle * ra_claims.iter().product::<F>() * val_claim,
         sumcheck_claim,
         "Read-checking sumcheck failed"
     );
@@ -786,7 +900,7 @@ mod tests {
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(LOG_T);
 
-        let (proof, rv_claim, ra_claims, flag_claims, _) =
+        let (proof, rv_claim, ra_claims, add_mul_sub_claim, flag_claims, _) =
             prove_sparse_dense_shout::<WORD_SIZE, _, _>(&trace, &r_cycle, &mut prover_transcript);
 
         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
@@ -798,6 +912,7 @@ mod tests {
             r_cycle,
             rv_claim,
             ra_claims,
+            add_mul_sub_claim,
             &flag_claims,
             &mut verifier_transcript,
         );
