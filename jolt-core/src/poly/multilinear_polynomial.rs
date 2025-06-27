@@ -1,6 +1,6 @@
 use crate::{
     poly::{
-        commitment::dory::get_max_num_rows, inc_polynomial::IncPolynomial,
+        commitment::dory::DoryGlobals, inc_polynomial::IncPolynomial,
         one_hot_polynomial::OneHotPolynomial, rlc_polynomial::RLCPolynomial,
     },
     utils::{compute_dotproduct, math::Math},
@@ -127,7 +127,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                 MultilinearPolynomial::OneHot(_) | MultilinearPolynomial::Inc(_)
             )
         }) {
-            let max_num_rows = get_max_num_rows();
+            let max_num_rows = DoryGlobals::get_max_num_rows();
             let mut result = RLCPolynomial::<F>::new(max_num_rows);
             for (coeff, polynomial) in coefficients.iter().zip(polynomials.iter()) {
                 result = match polynomial {

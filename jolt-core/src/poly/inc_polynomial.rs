@@ -4,7 +4,7 @@ use std::rc::Rc;
 use super::multilinear_polynomial::BindingOrder;
 use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
-use crate::poly::commitment::dory::{get_T, get_num_columns, JoltGroupWrapper};
+use crate::poly::commitment::dory::{DoryGlobals, JoltGroupWrapper};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::multilinear_polynomial::{PolynomialBinding, PolynomialEvaluation};
 use crate::poly::one_hot_polynomial::OneHotSumcheckState;
@@ -204,13 +204,13 @@ impl<F: JoltField> IncPolynomialProverOpening<F> {
 impl<F: JoltField> IncPolynomial<F> {
     pub fn num_rows(&self) -> usize {
         let T = self.nonzero_coeffs.len() as u128;
-        let row_length = get_num_columns() as u128;
+        let row_length = DoryGlobals::get_num_columns() as u128;
         (T * self.K as u128 / row_length) as usize
     }
 
     #[cfg(test)]
     fn to_dense_poly(&self) -> DensePolynomial<F> {
-        let T = get_T();
+        let T = DoryGlobals::get_T();
         let mut dense_coeffs: Vec<F> = vec![F::zero(); self.K * T];
         for (t, (k, coeff)) in self.nonzero_coeffs.iter().enumerate() {
             dense_coeffs[k * T + t] = F::from_i64(*coeff);
@@ -219,7 +219,7 @@ impl<F: JoltField> IncPolynomial<F> {
     }
 
     pub fn from_coeffs(nonzero_coeffs: Vec<(usize, i64)>, K: usize) -> Self {
-        debug_assert_eq!(get_T(), nonzero_coeffs.len());
+        debug_assert_eq!(DoryGlobals::get_T(), nonzero_coeffs.len());
 
         Self {
             K,
@@ -237,8 +237,8 @@ impl<F: JoltField> IncPolynomial<F> {
     ) -> Vec<JoltGroupWrapper<G>> {
         let num_rows = self.num_rows();
         println!("# rows = {num_rows}");
-        let row_len = get_num_columns();
-        let T = get_T();
+        let row_len = DoryGlobals::get_num_columns();
+        let T = DoryGlobals::get_T();
 
         let num_chunks = 4 * rayon::current_num_threads().next_power_of_two();
         let chunk_size = std::cmp::max(1, num_rows / num_chunks);
@@ -293,8 +293,8 @@ impl<F: JoltField> IncPolynomial<F> {
 
     #[tracing::instrument(skip_all, name = "IncPolynomial::vector_matrix_product")]
     pub fn vector_matrix_product(&self, left_vec: &[F]) -> Vec<F> {
-        let T = get_T();
-        let num_columns = get_num_columns();
+        let T = DoryGlobals::get_T();
+        let num_columns = DoryGlobals::get_num_columns();
         let row_len = num_columns;
         let num_chunks = 4 * rayon::current_num_threads().next_power_of_two();
         let chunk_size = std::cmp::max(1, num_columns / num_chunks);
@@ -327,21 +327,19 @@ impl<F: JoltField> IncPolynomial<F> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        poly::{commitment::dory::DoryCommitmentScheme, eq_poly::EqPolynomial},
-        utils::transcript::KeccakTranscript,
-    };
+    use crate::poly::eq_poly::EqPolynomial;
 
     use super::*;
     use ark_bn254::Fr;
     use ark_std::{test_rng, Zero};
     use num::Integer;
     use rand_core::RngCore;
+    use serial_test::serial;
 
     fn dense_polynomial_equivalence<const LOG_K: usize, const LOG_T: usize>() {
         let K: usize = 1 << LOG_K;
         let T: usize = 1 << LOG_T;
-        DoryCommitmentScheme::<KeccakTranscript>::initialize_globals(K, T);
+        let _guard = DoryGlobals::initialize(K, T);
 
         let mut rng = test_rng();
 
@@ -400,21 +398,22 @@ mod tests {
             dense_poly[0],
             "final sumcheck claim"
         );
-
-        DoryCommitmentScheme::<KeccakTranscript>::reset_globals();
     }
 
-    // #[test]
-    // fn K_less_than_T() {
-    //     dense_polynomial_equivalence::<5, 6>();
-    // }
-
-    // #[test]
-    // fn K_equals_T() {
-    //     dense_polynomial_equivalence::<6, 6>();
-    // }
+    #[test]
+    #[serial]
+    fn K_less_than_T() {
+        dense_polynomial_equivalence::<5, 6>();
+    }
 
     #[test]
+    #[serial]
+    fn K_equals_T() {
+        dense_polynomial_equivalence::<6, 6>();
+    }
+
+    #[test]
+    #[serial]
     fn K_greater_than_T() {
         dense_polynomial_equivalence::<6, 5>();
     }

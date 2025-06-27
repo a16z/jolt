@@ -41,26 +41,66 @@ static mut GLOBAL_T: OnceCell<usize> = OnceCell::new();
 static mut MAX_NUM_ROWS: OnceCell<usize> = OnceCell::new();
 static mut NUM_COLUMNS: OnceCell<usize> = OnceCell::new();
 
-pub fn get_max_num_rows() -> usize {
-    unsafe {
-        MAX_NUM_ROWS
-            .get()
-            .cloned()
-            .expect("MAX_NUM_ROWS is uninitialized")
+pub struct DoryGlobals();
+
+impl DoryGlobals {
+    pub fn initialize(K: usize, T: usize) -> Self {
+        let matrix_size = K as u128 * T as u128;
+        let num_columns = matrix_size.isqrt().next_power_of_two();
+        let num_rows = matrix_size / num_columns;
+        println!("# rows: {num_rows}");
+        println!("# cols: {num_columns}");
+
+        unsafe {
+            GLOBAL_T.set(T).expect("GLOBAL_T is already initialized");
+            MAX_NUM_ROWS
+                .set(num_rows as usize)
+                .expect("MAX_NUM_ROWS is already initialized");
+            NUM_COLUMNS
+                .set(num_columns as usize)
+                .expect("NUM_COLUMNS is already initialized");
+        }
+
+        DoryGlobals()
+    }
+
+    pub fn get_max_num_rows() -> usize {
+        unsafe {
+            MAX_NUM_ROWS
+                .get()
+                .cloned()
+                .expect("MAX_NUM_ROWS is uninitialized")
+        }
+    }
+
+    pub fn get_num_columns() -> usize {
+        unsafe {
+            NUM_COLUMNS
+                .get()
+                .cloned()
+                .expect("NUM_COLUMNS is uninitialized")
+        }
+    }
+
+    pub fn get_T() -> usize {
+        unsafe { GLOBAL_T.get().cloned().expect("GLOBAL_T is uninitialized") }
     }
 }
 
-pub fn get_num_columns() -> usize {
-    unsafe {
-        NUM_COLUMNS
-            .get()
-            .cloned()
-            .expect("NUM_COLUMNS is uninitialized")
+impl Drop for DoryGlobals {
+    fn drop(&mut self) {
+        unsafe {
+            GLOBAL_T
+                .take()
+                .expect("reset_globals: GLOBAL_T is uninitialized");
+            MAX_NUM_ROWS
+                .take()
+                .expect("reset_globals: MAX_NUM_ROWS is uninitialized");
+            NUM_COLUMNS
+                .take()
+                .expect("reset_globals: NUM_COLUMNS is uninitialized");
+        }
     }
-}
-
-pub fn get_T() -> usize {
-    unsafe { GLOBAL_T.get().cloned().expect("GLOBAL_T is uninitialized") }
 }
 
 // NewType wrappers for Jolt + arkworks types to interop with Dory traits
@@ -759,7 +799,7 @@ where
             .par_iter()
             .map(|g| g.0.into_affine())
             .collect();
-        debug_assert_eq!(get_num_columns(), row_len);
+        debug_assert_eq!(DoryGlobals::get_num_columns(), row_len);
 
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly
@@ -829,7 +869,7 @@ where
         sigma: usize,
         nu: usize,
     ) -> Vec<JoltFieldWrapper<F>> {
-        let num_columns = get_num_columns();
+        let num_columns = DoryGlobals::get_num_columns();
         println!("sigma: {sigma}");
         println!("nu: {nu}");
         println!("num_columns: {num_columns}");
@@ -1000,40 +1040,6 @@ pub type JoltBn254 = JoltPairing<Bn254>;
 #[derive(Clone, Debug)]
 pub struct DoryCommitmentScheme<ProofTranscript: Transcript>(PhantomData<ProofTranscript>);
 
-impl<ProofTranscript: Transcript> DoryCommitmentScheme<ProofTranscript> {
-    pub fn initialize_globals(K: usize, T: usize) {
-        let matrix_size = K as u128 * T as u128;
-        let num_columns = matrix_size.isqrt().next_power_of_two();
-        let num_rows = matrix_size / num_columns;
-        println!("# rows: {num_rows}");
-        println!("# cols: {num_columns}");
-
-        unsafe {
-            GLOBAL_T.set(T).expect("GLOBAL_T is already initialized");
-            MAX_NUM_ROWS
-                .set(num_rows as usize)
-                .expect("MAX_NUM_ROWS is already initialized");
-            NUM_COLUMNS
-                .set(num_columns as usize)
-                .expect("NUM_COLUMNS is already initialized");
-        }
-    }
-
-    pub fn reset_globals() {
-        unsafe {
-            GLOBAL_T
-                .take()
-                .expect("reset_globals: GLOBAL_T is uninitialized");
-            MAX_NUM_ROWS
-                .take()
-                .expect("reset_globals: MAX_NUM_ROWS is uninitialized");
-            NUM_COLUMNS
-                .take()
-                .expect("reset_globals: NUM_COLUMNS is uninitialized");
-        }
-    }
-}
-
 #[derive(Clone, Debug, Default, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DoryCommitment(pub JoltGTBn254);
 
@@ -1085,7 +1091,7 @@ where
         poly: &MultilinearPolynomial<Self::Field>,
         setup: &Self::ProverSetup,
     ) -> Self::Commitment {
-        let sigma = get_num_columns().log_2();
+        let sigma = DoryGlobals::get_num_columns().log_2();
         let commitment_val = commit::<JoltBn254, JoltMsmG1, _>(poly, 0, sigma, setup);
         DoryCommitment(commitment_val)
     }
@@ -1112,7 +1118,7 @@ where
             .map(|&p| JoltFieldWrapper(p))
             .collect();
 
-        let sigma = get_num_columns().log_2();
+        let sigma = DoryGlobals::get_num_columns().log_2();
         let dory_transcript = JoltToDoryTranscriptRef::<Self::Field, _>::new(transcript);
 
         // dory evaluate returns the opening but in this case we don't use it, we pass directly the opening to verify()
@@ -1298,7 +1304,7 @@ mod tests {
         let num_vars = 18;
 
         let num_coeffs = 1 << num_vars;
-        DoryCommitmentScheme::<KeccakTranscript>::initialize_globals(1, num_coeffs);
+        let _guard = DoryGlobals::initialize(1, num_coeffs);
 
         println!("Setting up Dory PCS with max_num_vars = {max_num_vars}");
         let setup_start = Instant::now();
@@ -1397,8 +1403,6 @@ mod tests {
             "I64Scalars | {commit_i64:>11?} | {prove_i64:>11?} | {verify_i64:>11?} | {total_i64:>10?}"
         );
         println!("==========================================");
-
-        DoryCommitmentScheme::<KeccakTranscript>::reset_globals();
     }
 
     #[test]
@@ -1409,7 +1413,7 @@ mod tests {
         let num_vars = 10;
         let max_num_vars = 10;
         let num_coeffs = 1 << num_vars;
-        DoryCommitmentScheme::<KeccakTranscript>::initialize_globals(1, num_coeffs);
+        let _guard = DoryGlobals::initialize(1, num_coeffs);
 
         let mut rng = thread_rng();
         let coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
@@ -1555,7 +1559,5 @@ mod tests {
             );
             println!("✅ Test 5 passed: Correct proof indeed verifies successfully");
         }
-
-        DoryCommitmentScheme::<KeccakTranscript>::reset_globals();
     }
 }

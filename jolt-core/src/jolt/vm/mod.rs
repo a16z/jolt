@@ -7,7 +7,7 @@ use crate::jolt::vm::rv32i_vm::Serializable;
 use crate::jolt::witness::ALL_COMMITTED_POLYNOMIALS;
 use crate::msm::icicle;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::commitment::dory::DoryCommitmentScheme;
+use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::opening_proof::{
     ProverOpeningAccumulator, ReducedOpeningProof, VerifierOpeningAccumulator,
 };
@@ -305,7 +305,7 @@ where
         .unwrap();
         println!("T = {padded_trace_length}, K = {K}");
 
-        DoryCommitmentScheme::<ProofTranscript>::initialize_globals(K, padded_trace_length);
+        let _guard = DoryGlobals::initialize(K, padded_trace_length);
 
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
         let mut opening_accumulator: ProverOpeningAccumulator<F, PCS, ProofTranscript> =
@@ -404,8 +404,6 @@ where
         #[cfg(not(test))]
         let debug_info = None;
 
-        DoryCommitmentScheme::<ProofTranscript>::reset_globals();
-
         (jolt_proof, program_io, debug_info)
     }
 
@@ -436,20 +434,23 @@ where
                 opening_accumulator
                     .compare_to(debug_info.opening_accumulator, &debug_info.prover_setup);
             }
-
-            let K = [
-                preprocessing.shared.bytecode.code_size,
-                proof.ram.K,
-                1 << 16, // K for instruction lookups Shout
-            ]
-            .into_iter()
-            .max()
-            .unwrap();
-            let T = proof.trace_length.next_power_of_two();
-            // Need to initialize globals because the verifier computes commitments
-            // in `VerifierOpeningAccumulator::append` inside of `#[cfg(test)] block
-            DoryCommitmentScheme::<ProofTranscript>::initialize_globals(K, T);
         }
+
+        #[cfg(test)]
+        let K = [
+            preprocessing.shared.bytecode.code_size,
+            proof.ram.K,
+            1 << 16, // K for instruction lookups Shout
+        ]
+        .into_iter()
+        .max()
+        .unwrap();
+        #[cfg(test)]
+        let T = proof.trace_length.next_power_of_two();
+        // Need to initialize globals because the verifier computes commitments
+        // in `VerifierOpeningAccumulator::append` inside of `#[cfg(test)] block
+        #[cfg(test)]
+        let _guard = DoryGlobals::initialize(K, T);
 
         Self::fiat_shamir_preamble(
             &mut transcript,
@@ -512,9 +513,6 @@ where
             &proof.opening_proof,
             &mut transcript,
         )?;
-
-        #[cfg(test)]
-        DoryCommitmentScheme::<ProofTranscript>::reset_globals();
 
         Ok(())
     }

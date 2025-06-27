@@ -1,6 +1,6 @@
 use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
-use crate::poly::commitment::dory::{get_T, get_num_columns, JoltFieldWrapper, JoltGroupWrapper};
+use crate::poly::commitment::dory::{DoryGlobals, JoltFieldWrapper, JoltGroupWrapper};
 use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::inc_polynomial::IncPolynomial;
@@ -30,7 +30,7 @@ impl<F: JoltField> RLCPolynomial<F> {
     pub fn new(num_rows: usize) -> Self {
         Self {
             num_rows,
-            dense_rlc: unsafe_allocate_zero_vec(get_T()),
+            dense_rlc: unsafe_allocate_zero_vec(DoryGlobals::get_T()),
             one_hot_rlc: vec![],
             inc_rlc: vec![],
             num_variables_bound: 0,
@@ -46,7 +46,7 @@ impl<F: JoltField> RLCPolynomial<F> {
     ) -> Vec<JoltGroupWrapper<G>> {
         let num_rows = self.num_rows;
         println!("# rows = {num_rows}");
-        let row_len = get_num_columns();
+        let row_len = DoryGlobals::get_num_columns();
 
         let mut row_commitments = vec![JoltGroupWrapper(G::zero()); num_rows];
 
@@ -139,7 +139,7 @@ impl<F: JoltField> RLCPolynomial<F> {
     ) -> Vec<JoltFieldWrapper<F>> {
         let left_vec: &[F] =
             unsafe { std::slice::from_raw_parts(left_vec.as_ptr() as *const F, left_vec.len()) };
-        let num_columns = get_num_columns();
+        let num_columns = DoryGlobals::get_num_columns();
 
         // TODO(moodlezoup): better parallelism
         let mut result: Vec<_> = (0..num_columns)
