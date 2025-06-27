@@ -663,8 +663,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         let (r_address_prime, r_cycle_prime) = r.split_at(r_address.len());
         let ra_claim = self.ra_claim.unwrap();
 
-        EqPolynomial::mle(&r_address, r_address_prime)
-            * EqPolynomial::mle(&r_cycle, r_cycle_prime)
+        EqPolynomial::mle(r_address, r_address_prime)
+            * EqPolynomial::mle(r_cycle, r_cycle_prime)
             * (ra_claim.square() - ra_claim)
     }
 }

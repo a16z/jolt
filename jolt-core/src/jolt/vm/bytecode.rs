@@ -292,7 +292,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
         let core_piop_sumcheck_proof = SumcheckInstanceProof::new(compressed_polys);
 
         let (booleanity_sumcheck_proof, r_address_prime, r_cycle_prime, ra_claim_prime) =
-            prove_booleanity(&bytecode_preprocessing, trace, &r_address, E, F, transcript);
+            prove_booleanity(bytecode_preprocessing, trace, &r_address, E, F, transcript);
 
         let r_address_prime = r_address_prime.iter().copied().rev().collect::<Vec<_>>();
         let r_cycle_prime = r_cycle_prime.iter().rev().copied().collect::<Vec<_>>();

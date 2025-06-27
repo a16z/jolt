@@ -1,3 +1,5 @@
+#![allow(static_mut_refs)]
+
 use super::commitment_scheme::CommitmentScheme;
 use crate::{
     field::JoltField,

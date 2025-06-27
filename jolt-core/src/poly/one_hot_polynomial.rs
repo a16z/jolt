@@ -43,8 +43,8 @@ impl<F: JoltField> OneHotSumcheckState<F> {
         let mut F = ExpandingTable::new(K);
         F.reset(F::one());
         Self {
-            B: MultilinearPolynomial::from(EqPolynomial::evals(&r_address)), // Equation (53)
-            D: MultilinearPolynomial::from(EqPolynomial::evals(&r_cycle)),   // Equation (54)
+            B: MultilinearPolynomial::from(EqPolynomial::evals(r_address)), // Equation (53)
+            D: MultilinearPolynomial::from(EqPolynomial::evals(r_cycle)),   // Equation (54)
             F,
             num_variables_bound: 0,
         }

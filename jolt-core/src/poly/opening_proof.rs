@@ -269,7 +269,7 @@ where
     }
 
     fn expected_output_claim(&self, r: &[F]) -> F {
-        let eq_eval = EqPolynomial::mle(&self.opening_point, &r);
+        let eq_eval = EqPolynomial::mle(&self.opening_point, r);
         eq_eval * self.sumcheck_claim.unwrap()
     }
 }
@@ -332,6 +332,17 @@ pub struct ReducedOpeningProof<
     sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     sumcheck_claims: Vec<F>,
     joint_opening_proof: PCS::Proof,
+}
+
+impl<F, PCS, ProofTranscript> Default for ProverOpeningAccumulator<F, PCS, ProofTranscript>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<F, PCS, ProofTranscript> ProverOpeningAccumulator<F, PCS, ProofTranscript>
@@ -673,7 +684,7 @@ where
             let joint_commitment = PCS::combine_commitments(commitments, &rho_powers);
             (batched_claim, joint_commitment)
         } else {
-            (claims[0].clone(), commitments[0].clone())
+            (claims[0], commitments[0].clone())
         };
 
         #[cfg(test)]
