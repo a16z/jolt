@@ -1,3 +1,8 @@
+//! This is an implementation of one-hot multilinear polynomials as
+//! necessary for Dory and the opening proof reduction sumcheck in
+//! `opening_proof.rs`. In particular, this implementation is _not_ used
+//! in the Twist/Shout PIOP implementations in Jolt.
+
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -16,20 +21,46 @@ use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_ec::CurveGroup;
 use rayon::prelude::*;
 
+/// Represents a one-hot multilinear polynomial (ra/wa) used
+/// in Twist/Shout. Perhaps somewhat unintuitively, the implementation
+/// in this file is currently only used to compute the Dory
+/// commitment and in the opening proof reduction sumcheck.
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct OneHotPolynomial<F: JoltField> {
+    /// The size of the "address" space for this polynomial.
     pub K: usize,
+    /// The indices of the nonzero coefficients for each j \in {0, 1}^T.
+    /// In other words, the raf/waf corresponding to this
+    /// ra/wa polynomial.
     pub nonzero_indices: Vec<usize>,
+    /// The number of variables that have been bound over the
+    /// course of sumcheck so far.
     num_variables_bound: usize,
+    /// The array described in Section 6.3 of the Twist/Shout paper.
     G: Option<Vec<F>>,
+    /// The array described in Section 6.3 of the Twist/Shout paper.
     H: Option<DensePolynomial<F>>,
 }
 
+/// State related to the EQ(k, j) term appearing in the opening
+/// proof reduction sumcheck.
+///
+/// The opening proof reduction sumcheck is a batched sumcheck where
+/// each sumcheck instance in the batch corresponds to one opening.
+/// The sumcheck instance for a one-hot polynomial opening has the form
+///   \sum eq(k, r_address) * eq(j, r_cycle) * ra(k, j)
+/// so we use a simplified version of the prover algorithm for the
+/// Booleanity sumcheck described in Section 6.3 of the Twist/Shout paper.
 #[derive(Clone, Debug)]
 pub struct OneHotSumcheckState<F: JoltField> {
-    pub B: MultilinearPolynomial<F>, // Equation (53)
-    pub D: MultilinearPolynomial<F>, // Equation (54)
-    pub F: ExpandingTable<F>,        // Equation (55)
+    /// B stores eq(r, k), see Equation (53)
+    pub B: MultilinearPolynomial<F>,
+    /// D stores eq(r', j), see Equation (54)
+    pub D: MultilinearPolynomial<F>,
+    /// F will maintain an array that, at the end of sumcheck round m, has size 2^m
+    /// and stores all 2^m values eq((k_1, ..., k_m), (r_1, ..., r_m))
+    pub F: ExpandingTable<F>,
+    /// The number of variables that have been bound during sumcheck so far
     pub num_variables_bound: usize,
 }
 
@@ -69,6 +100,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
         let eq_rc = eq_state.clone();
         let D = &eq_rc.borrow().D;
 
+        // Compute G as described in Section 6.3
         let G = polynomial
             .nonzero_indices
             .par_chunks(chunk_size)
@@ -234,6 +266,8 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
 }
 
 impl<F: JoltField> OneHotPolynomial<F> {
+    /// The number of rows in the coefficient matrix used to
+    /// commit to this polynomial using Dory
     pub fn num_rows(&self) -> usize {
         let T = self.nonzero_indices.len() as u128;
         let row_length = DoryGlobals::get_num_columns() as u128;
@@ -276,6 +310,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
         let chunk_size = std::cmp::max(1, num_rows / num_chunks);
         let num_chunks = num_rows / chunk_size;
 
+        // Iterate over chunks of contiguous rows in parallel
         // TODO(moodlezoup): Optimize this
         (0..num_chunks)
             .into_par_iter()
@@ -290,8 +325,12 @@ impl<F: JoltField> OneHotPolynomial<F> {
                     let global_index = *k as u128 * T as u128 + t as u128;
                     let row_index = (global_index / row_len as u128) as usize;
 
+                    // If this coefficient falls in the chunk of rows corresponding
+                    // to `chunk_index`, add its contribution to the result
                     if row_index >= min_row_index && row_index < max_row_index {
                         let col_index = global_index % row_len as u128;
+                        // All the nonzero coefficients are 1, so we simply add
+                        // the associated base to the result.
                         result[row_index % chunk_size].0 += bases[col_index as usize];
                     }
                 }
@@ -320,6 +359,8 @@ impl<F: JoltField> OneHotPolynomial<F> {
                 for (t, k) in self.nonzero_indices.iter().enumerate() {
                     let global_index = *k as u128 * T as u128 + t as u128;
                     let col_index = (global_index % row_len as u128) as usize;
+                    // If this coefficient falls in the chunk of rows corresponding
+                    // to `chunk_index`, compute its contribution to the result.
                     if col_index >= min_col_index && col_index < max_col_index {
                         let row_index = (global_index / row_len as u128) as usize;
                         result[col_index % chunk_size] += left_vec[row_index];

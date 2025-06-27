@@ -1,7 +1,7 @@
 use crate::{
     poly::{
-        commitment::dory::DoryGlobals, inc_polynomial::IncPolynomial,
-        one_hot_polynomial::OneHotPolynomial, rlc_polynomial::RLCPolynomial,
+        inc_polynomial::IncPolynomial, one_hot_polynomial::OneHotPolynomial,
+        rlc_polynomial::RLCPolynomial,
     },
     utils::{compute_dotproduct, math::Math},
 };
@@ -121,14 +121,16 @@ impl<F: JoltField> MultilinearPolynomial<F> {
     pub fn linear_combination(polynomials: &[&Self], coefficients: &[F]) -> Self {
         debug_assert_eq!(polynomials.len(), coefficients.len());
 
+        // If there's at least one sparse polynomial in `polynomials`, the linear
+        // combination will be represented by an `RLCPolynomial`. Otherwise, it will
+        // be represented by a `DensePolynomial`.
         if polynomials.iter().any(|poly| {
             matches!(
                 poly,
                 MultilinearPolynomial::OneHot(_) | MultilinearPolynomial::Inc(_)
             )
         }) {
-            let max_num_rows = DoryGlobals::get_max_num_rows();
-            let mut result = RLCPolynomial::<F>::new(max_num_rows);
+            let mut result = RLCPolynomial::<F>::new();
             for (coeff, polynomial) in coefficients.iter().zip(polynomials.iter()) {
                 result = match polynomial {
                     MultilinearPolynomial::LargeScalars(poly) => poly.mul_add(*coeff, result),

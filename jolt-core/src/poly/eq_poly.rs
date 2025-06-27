@@ -7,6 +7,7 @@ const PARALLEL_THRESHOLD: usize = 16;
 
 pub struct EqPolynomial<F: JoltField>(PhantomData<F>);
 impl<F: JoltField> EqPolynomial<F> {
+    /// Computes the MLE evaluation EQ(x, y)
     pub fn mle(x: &[F], y: &[F]) -> F {
         assert_eq!(x.len(), y.len());
         x.par_iter()

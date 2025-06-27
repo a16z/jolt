@@ -1,3 +1,8 @@
+//! This is an implementation of the Inc(k, j) multilinear polynomial as
+//! necessary for Dory and the opening proof reduction sumcheck in
+//! `opening_proof.rs`. In particular, this implementation is _not_ used
+//! in the Twist PIOP implementations in Jolt.
+
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -13,21 +18,50 @@ use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_ec::CurveGroup;
 use rayon::prelude::*;
 
+/// Represents an Inc(k, j) multilinear polynomial used in
+/// Twist. Perhaps somewhat unintuitively, the implementation
+/// in this file is currently only used to compute the Dory
+/// commitment and in the opening proof reduction sumcheck.
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct IncPolynomial<F: JoltField> {
+    /// The size of the "address" space for this Inc polynomial.
     pub K: usize,
+    /// The (unbound) nonzero coefficients, represented by a
+    /// vector of (k, increment) pairs.
     pub nonzero_coeffs: Vec<(usize, i64)>,
+    /// The number of variables that have been bound over the
+    /// course of sumcheck so far.
     num_variables_bound: usize,
+    /// The array described in Section 6.3 of the Twist/Shout paper.
     G: Option<Vec<F>>,
+    /// The array described in Section 6.3 of the Twist/Shout paper.
     H: Option<DensePolynomial<F>>,
 }
 
+/// Represents the opening of an Inc polynomial. Used in the opening
+/// proof reduction sumcheck in `opening_proof.rs`.
+///
+/// The opening proof reduction sumcheck is a batched sumcheck where
+/// each sumcheck instance in the batch corresponds to one opening.
+/// The sumcheck instance for an Inc polynomial opening has the form
+///   \sum eq(k, r_address) * eq(j, r_cycle) * Inc(k, j)
+/// so we use a simplified version of the prover algorithm for the
+/// Booleanity sumcheck described in Section 6.3 of the Twist/Shout paper.
 pub struct IncPolynomialProverOpening<F: JoltField> {
+    /// The Inc polynomial whose evaluation we are proving
     pub polynomial: IncPolynomial<F>,
+    /// State related to the EQ(k, j) term appearing in the opening
+    /// proof reduction sumcheck. This state may be shared between
+    /// multiple `IncPolynomialProverOpening` and `OneHotPolynomialProverOpening`
+    /// instances, hence the `Rc<RefCell<...>>`.
     pub eq_state: Rc<RefCell<OneHotSumcheckState<F>>>,
 }
 
 impl<F: JoltField> IncPolynomialProverOpening<F> {
+    /// Initializes a `IncPolynomialProverOpening` struct for the given
+    /// `polynomial` and `eq_state`. In particular, this computes the
+    /// G array for `polynomial`, which is only used for the opening proof
+    /// reduction and so hasn't been computed yet.
     #[tracing::instrument(skip_all, name = "IncPolynomialProverOpening::new")]
     pub fn new(
         mut polynomial: IncPolynomial<F>,
@@ -40,6 +74,7 @@ impl<F: JoltField> IncPolynomialProverOpening<F> {
         let eq_rc = eq_state.clone();
         let D = &eq_rc.borrow().D;
 
+        // Compute G as described in Section 6.3
         let G = polynomial
             .nonzero_coeffs
             .par_chunks(chunk_size)
@@ -77,6 +112,9 @@ impl<F: JoltField> IncPolynomialProverOpening<F> {
         let shared_eq = self.eq_state.borrow();
 
         if round < self.polynomial.K.log_2() {
+            // First log(K) rounds of sumcheck, similar to what's described in
+            // Section 6.3 under "First log(K)/d rounds"
+
             let num_unbound_address_variables = self.polynomial.K.log_2() - round;
             let B = &shared_eq.B;
             let F = &shared_eq.F;
@@ -131,6 +169,9 @@ impl<F: JoltField> IncPolynomialProverOpening<F> {
 
             univariate_poly_evals.to_vec()
         } else {
+            // Last log(T) rounds of sumcheck, similar to what's described in
+            // Section 6.3 under "Last log(T) rounds"
+
             let H = self.polynomial.H.as_ref().unwrap();
             let B = &shared_eq.B;
             let D = &shared_eq.D;
@@ -148,6 +189,9 @@ impl<F: JoltField> IncPolynomialProverOpening<F> {
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 );
 
+            // B (i.e. eq(r_address, k)) is fully bound at this point, so
+            // multiply by its constant value outside of the above loop.
+            // See Equation (57)
             let eq_r_address_claim = B.final_sumcheck_claim();
             vec![
                 eq_r_address_claim * univariate_poly_evals[0],
@@ -162,6 +206,7 @@ impl<F: JoltField> IncPolynomialProverOpening<F> {
         let num_variables_bound = shared_eq.num_variables_bound;
         if round < self.polynomial.K.log_2() {
             if num_variables_bound <= round {
+                // Bind eq(r_address, k)
                 shared_eq.B.bind_parallel(r, BindingOrder::HighToLow);
                 // Update F for this round (see Equation 55)
                 shared_eq.F.update(r);
@@ -171,7 +216,7 @@ impl<F: JoltField> IncPolynomialProverOpening<F> {
 
             if round == self.polynomial.K.log_2() - 1 {
                 let F = &shared_eq.F;
-                // Transition point; initialize H
+                // Transition point; initialize H (i.e. Inc(r'_address, j))
                 self.polynomial.H = Some(DensePolynomial::new(
                     self.polynomial
                         .nonzero_coeffs
@@ -184,10 +229,12 @@ impl<F: JoltField> IncPolynomialProverOpening<F> {
             // Last log(T) rounds of sumcheck
 
             if num_variables_bound <= round {
+                // Bind eq(r_cycle, j)
                 shared_eq.D.bind_parallel(r, BindingOrder::HighToLow);
                 shared_eq.num_variables_bound += 1;
             }
 
+            // Bind Inc(r'_address, j)
             self.polynomial
                 .H
                 .as_mut()
@@ -202,6 +249,8 @@ impl<F: JoltField> IncPolynomialProverOpening<F> {
 }
 
 impl<F: JoltField> IncPolynomial<F> {
+    /// The number of rows in the coefficient matrix used to
+    /// commit to this polynomial using Dory
     pub fn num_rows(&self) -> usize {
         let T = self.nonzero_coeffs.len() as u128;
         let row_length = DoryGlobals::get_num_columns() as u128;
@@ -244,6 +293,7 @@ impl<F: JoltField> IncPolynomial<F> {
         let chunk_size = std::cmp::max(1, num_rows / num_chunks);
         let num_chunks = num_rows / chunk_size;
 
+        // Iterate over chunks of contiguous rows in parallel
         // TODO(moodlezoup): Optimize this
         (0..num_chunks)
             .into_par_iter()
@@ -260,6 +310,8 @@ impl<F: JoltField> IncPolynomial<F> {
                     let global_index = *k as u128 * T as u128 + t as u128;
                     let row_index = (global_index / row_len as u128) as usize;
 
+                    // If this coefficient falls in the chunk of rows corresponding
+                    // to `chunk_index`, cache the associated base and scalar.
                     if row_index >= min_row_index && row_index < max_row_index {
                         let col_index = global_index % row_len as u128;
                         bases_ref[row_index % chunk_size].push(&bases[col_index as usize]);
@@ -267,6 +319,7 @@ impl<F: JoltField> IncPolynomial<F> {
                     }
                 }
 
+                // Compute the MSM for each row in this chunk
                 let result: Vec<_> = bases_ref
                     .par_iter()
                     .zip(scalars_ref.par_iter())
@@ -310,6 +363,8 @@ impl<F: JoltField> IncPolynomial<F> {
                 for (t, (k, coeff)) in self.nonzero_coeffs.iter().enumerate() {
                     let global_index = *k as u128 * T as u128 + t as u128;
                     let col_index = (global_index % row_len as u128) as usize;
+                    // If this coefficient falls in the chunk of rows corresponding
+                    // to `chunk_index`, compute its contribution to the result.
                     if col_index >= min_col_index && col_index < max_col_index {
                         let row_index = (global_index / row_len as u128) as usize;
                         result[col_index % chunk_size] +=

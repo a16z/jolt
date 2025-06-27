@@ -12,31 +12,41 @@ use num_traits::MulAdd;
 use rayon::prelude::*;
 use tracing::trace_span;
 
+/// `RLCPolynomial` represents a multilinear polynomial comprised of a
+/// random linear combination of multiple polynomials, potentially with
+/// different sizes.
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct RLCPolynomial<F: JoltField> {
-    pub num_rows: usize,
-    /// Length-T vector of (dense) coefficients (i.e. k=0)
+    /// Random linear combination of dense (i.e. length T) polynomials.
     pub dense_rlc: Vec<F>,
-    /// Random linear combination of one-hot polynomials, represented
-    /// by a vector of (coefficient, one-hot polynomial) pairs
+    /// Random linear combination of one-hot polynomials (length T x K
+    /// for some K). Instead of pre-emptively combining these polynomials,
+    /// as we do for `dense_rlc`, we store a vector of (coefficient, polynomial)
+    /// pairs and lazily handle the linear combination in `commit_rows`
+    /// and `vector_matrix_product`.
     one_hot_rlc: Vec<(F, OneHotPolynomial<F>)>,
-    /// Random linear combination of Inc polynomials, represented
-    /// by a vector of (coefficient, Inc polynomial) pairs
+    /// Random linear combination of Inc polynomials (length T x K
+    /// for some K). Instead of pre-emptively combining these polynomials,
+    /// as we do for `dense_rlc`, we store a vector of (coefficient, polynomial)
+    /// pairs and lazily handle the linear combination in `commit_rows`
+    /// and `vector_matrix_product`.
     inc_rlc: Vec<(F, IncPolynomial<F>)>,
-    num_variables_bound: usize,
 }
 
 impl<F: JoltField> RLCPolynomial<F> {
-    pub fn new(num_rows: usize) -> Self {
+    pub fn new() -> Self {
         Self {
-            num_rows,
             dense_rlc: unsafe_allocate_zero_vec(DoryGlobals::get_T()),
             one_hot_rlc: vec![],
             inc_rlc: vec![],
-            num_variables_bound: 0,
         }
     }
 
+    /// Commits to the rows of `RLCPolynomial`, viewing its coefficients
+    /// as a matrix (used in Dory).
+    /// We do so by computing the row commitments for the individual
+    /// polynomials comprising the linear combination, and taking the
+    /// linear combination of the resulting commitments.
     // TODO(moodlezoup): we should be able to cache the row commitments
     // for each underlying polynomial and take a linear combination of those
     #[tracing::instrument(skip_all, name = "RLCPolynomial::commit_rows")]
@@ -44,12 +54,13 @@ impl<F: JoltField> RLCPolynomial<F> {
         &self,
         bases: &[G::Affine],
     ) -> Vec<JoltGroupWrapper<G>> {
-        let num_rows = self.num_rows;
+        let num_rows = DoryGlobals::get_max_num_rows();
         println!("# rows = {num_rows}");
         let row_len = DoryGlobals::get_num_columns();
 
         let mut row_commitments = vec![JoltGroupWrapper(G::zero()); num_rows];
 
+        // Compute the row commitments for dense submatrix
         self.dense_rlc
             .par_chunks(row_len)
             .zip(row_commitments.par_iter_mut())
@@ -60,6 +71,7 @@ impl<F: JoltField> RLCPolynomial<F> {
                 *commitment = JoltGroupWrapper(commitment.0 + msm_result)
             });
 
+        // Compute the row commitments for one-hot polynomials
         for (coeff, poly) in self.one_hot_rlc.iter() {
             let mut new_row_commitments: Vec<JoltGroupWrapper<G>> = poly.commit_rows(bases);
 
@@ -85,7 +97,8 @@ impl<F: JoltField> RLCPolynomial<F> {
             let _span = trace_span!("vector_scalar_mul_add_gamma_g1_online");
             let _enter = _span.enter();
 
-            // Use `jolt-optimizations`: v[i] = scalar * v[i] + gamma[i]
+            // Scales the row commitments for the current polynomial by
+            // its coefficient
             jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
                 updated_row_commitments,
                 coeff_fr,
@@ -95,6 +108,7 @@ impl<F: JoltField> RLCPolynomial<F> {
             let _ = std::mem::replace(&mut row_commitments, new_row_commitments);
         }
 
+        // Compute the row commitments for Inc polynomials
         for (coeff, poly) in self.inc_rlc.iter() {
             let mut new_row_commitments: Vec<JoltGroupWrapper<G>> = poly.commit_rows(bases);
 
@@ -119,7 +133,8 @@ impl<F: JoltField> RLCPolynomial<F> {
             let _span = trace_span!("vector_scalar_mul_add_gamma_g1_online");
             let _enter = _span.enter();
 
-            // Use `jolt-optimizations`: v[i] = scalar * v[i] + gamma[i]
+            // Scales the row commitments for the current polynomial by
+            // its coefficient
             jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
                 updated_row_commitments,
                 coeff_fr,
@@ -132,6 +147,11 @@ impl<F: JoltField> RLCPolynomial<F> {
         row_commitments
     }
 
+    /// Computes a vector-matrix product, viewing the coefficients of the
+    /// polynomial as a matrix (used in Dory).
+    /// We do so by computing the vector-matrix product for the individual
+    /// polynomials comprising the linear combination, and taking the
+    /// linear combination of the resulting products.
     #[tracing::instrument(skip_all, name = "RLCPolynomial::vector_matrix_product")]
     pub fn vector_matrix_product(
         &self,
@@ -141,6 +161,7 @@ impl<F: JoltField> RLCPolynomial<F> {
             unsafe { std::slice::from_raw_parts(left_vec.as_ptr() as *const F, left_vec.len()) };
         let num_columns = DoryGlobals::get_num_columns();
 
+        // Compute the vector-matrix product for dense submatrix
         // TODO(moodlezoup): better parallelism
         let mut result: Vec<_> = (0..num_columns)
             .into_par_iter()
@@ -157,6 +178,7 @@ impl<F: JoltField> RLCPolynomial<F> {
             })
             .collect();
 
+        // Compute the vector-matrix product for one-hot polynomials
         for (coeff, poly) in self.one_hot_rlc.iter() {
             // TODO(moodlezoup): Pass result by mutable reference to
             // poly.vector_matrix_product
@@ -168,6 +190,7 @@ impl<F: JoltField> RLCPolynomial<F> {
                 });
         }
 
+        // Compute the vector-matrix product for Inc polynomials
         for (coeff, poly) in self.inc_rlc.iter() {
             // TODO(moodlezoup): Pass result by mutable reference to
             // poly.vector_matrix_product

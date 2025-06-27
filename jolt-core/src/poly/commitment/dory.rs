@@ -37,13 +37,28 @@ use dory::{
     verify, DoryProof, DoryProofBuilder, Polynomial as DoryPolynomial, ProverSetup, VerifierSetup,
 };
 
+/// The (padded) length of the execution trace currently being proven
 static mut GLOBAL_T: OnceCell<usize> = OnceCell::new();
+/// Dory works by viewing the coefficients of a polynomial as a matrix.
+/// In order to batch Dory opening proofs together for polynomials of
+/// different lengths, we fix one dimension of the matrix (the number of
+/// columns, i.e. the row length) and implicitly zero pad in the
+/// other dimension (i.e. the number of rows). This is the maximum number
+/// of rows across all committed polynomials, for the execution trace
+/// currently being proven.
 static mut MAX_NUM_ROWS: OnceCell<usize> = OnceCell::new();
+/// Dory works by viewing the coefficients of a polynomial as a matrix.
+/// In order to batch Dory opening proofs together for polynomials of
+/// different lengths, we fix one dimension of the matrix (the number of
+/// columns, i.e. the row length). This is the fixed dimension, the number
+/// of columns in the matrix.
 static mut NUM_COLUMNS: OnceCell<usize> = OnceCell::new();
 
 pub struct DoryGlobals();
 
 impl DoryGlobals {
+    /// Initializes the static variables (`GLOBAL_T`, `MAX_NUM_ROWS`, and
+    /// `NUM_COLUMNS`) used by Dory.
     pub fn initialize(K: usize, T: usize) -> Self {
         let matrix_size = K as u128 * T as u128;
         let num_columns = matrix_size.isqrt().next_power_of_two();
@@ -64,6 +79,13 @@ impl DoryGlobals {
         DoryGlobals()
     }
 
+    /// Dory works by viewing the coefficients of a polynomial as a matrix.
+    /// In order to batch Dory opening proofs together for polynomials of
+    /// different lengths, we fix one dimension of the matrix (the number of
+    /// columns, i.e. the row length) and implicitly zero pad in the
+    /// other dimension (i.e. the number of rows). This is the maximum number
+    /// of rows across all committed polynomials, for the execution trace
+    /// currently being proven.
     pub fn get_max_num_rows() -> usize {
         unsafe {
             MAX_NUM_ROWS
@@ -73,6 +95,11 @@ impl DoryGlobals {
         }
     }
 
+    /// Dory works by viewing the coefficients of a polynomial as a matrix.
+    /// In order to batch Dory opening proofs together for polynomials of
+    /// different lengths, we fix one dimension of the matrix (the number of
+    /// columns, i.e. the row length). This is the fixed dimension, the number
+    /// of columns in the matrix.
     pub fn get_num_columns() -> usize {
         unsafe {
             NUM_COLUMNS
@@ -82,11 +109,18 @@ impl DoryGlobals {
         }
     }
 
+    /// The (padded) length of the execution trace currently being proven
     pub fn get_T() -> usize {
         unsafe { GLOBAL_T.get().cloned().expect("GLOBAL_T is uninitialized") }
     }
 }
 
+/// Teardown for Dory global variables. In order to prevent contention between
+/// tests that may try to set the globals to different values, we:
+/// (a) use serial_test to run those tests serially
+/// (b) Use `OnceCell::take` to reset the globals when `DoryGlobals` is dropped.
+/// This ensures that the globals are uninitialized at the start of each test,
+/// regardless of whether a preceding test passed or failed.
 impl Drop for DoryGlobals {
     fn drop(&mut self) {
         unsafe {

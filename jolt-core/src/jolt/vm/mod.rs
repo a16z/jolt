@@ -324,8 +324,7 @@ where
             .map(|poly| poly.generate_witness(&preprocessing, &trace))
             .collect();
         let commitments: Vec<_> = committed_polys
-            // .par_iter()
-            .iter()
+            .par_iter()
             .map(|poly| PCS::commit(poly, &preprocessing.generators))
             .collect();
         for commitment in commitments.iter() {
@@ -448,7 +447,7 @@ where
         #[cfg(test)]
         let T = proof.trace_length.next_power_of_two();
         // Need to initialize globals because the verifier computes commitments
-        // in `VerifierOpeningAccumulator::append` inside of `#[cfg(test)] block
+        // in `VerifierOpeningAccumulator::append` inside of a `#[cfg(test)]` block
         #[cfg(test)]
         let _guard = DoryGlobals::initialize(K, T);
 
