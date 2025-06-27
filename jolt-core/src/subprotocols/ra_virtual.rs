@@ -355,4 +355,56 @@ mod tests {
             "r_cycle_bound mismatch"
         );
     }
+
+    #[test]
+    fn test_ra_sumcheck_with_t_equals_2() {
+        use rand::Rng;
+        let mut rng = thread_rng();
+        const D: usize = 3;
+        let T = 2;
+        let k = 8;
+
+        let one_hot_index_0 = rng.gen::<usize>() % k;
+        let one_hot_index_1 = rng.gen::<usize>() % k;
+
+        let mut ra_values = vec![Fr::zero(); k * T];
+        ra_values[one_hot_index_0] = Fr::one();
+        ra_values[k + one_hot_index_1] = Fr::one();
+        let ra_poly = MultilinearPolynomial::from(ra_values);
+
+        let addresses = vec![one_hot_index_0, one_hot_index_1];
+
+        println!("One-hot indices: {}, {}", one_hot_index_0, one_hot_index_1);
+
+        let r_cycle: Vec<Fr> = (0..T.log_2()).map(|_| Fr::from(rng.gen::<u64>())).collect();
+        let r_address: Vec<Fr> = (0..k.log_2()).map(|_| Fr::from(rng.gen::<u64>())).collect();
+
+        let mut eval_point = r_cycle.clone();
+        eval_point.extend_from_slice(&r_address);
+        let ra_claim = ra_poly.evaluate(&eval_point);
+
+        let prover_sumcheck =
+            RASumcheck::<Fr, D>::new(ra_claim, addresses, r_cycle.clone(), r_address.clone(), T);
+
+        let mut prover_transcript = KeccakTranscript::new(b"test_t_equals_2");
+        let (proof, r_cycle_bound) = prover_sumcheck.prove(&mut prover_transcript);
+
+        let mut verifier_transcript = KeccakTranscript::new(b"test_t_equals_2");
+
+        let verify_result = RASumcheck::<Fr, D>::verify(
+            ra_claim,
+            proof.ra_i_claims,
+            r_cycle,
+            T,
+            &proof.sumcheck_proof,
+            &mut verifier_transcript,
+        );
+
+        assert!(verify_result.is_ok(), "Verification failed");
+        let verified_r_cycle_bound = verify_result.unwrap();
+        assert_eq!(
+            r_cycle_bound, verified_r_cycle_bound,
+            "r_cycle_bound mismatch"
+        );
+    }
 }
