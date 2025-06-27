@@ -121,7 +121,7 @@ impl<F: JoltField, const D: usize> RASumcheck<F, D> {
         transcript: &mut ProofTranscript,
     ) -> (RAProof<F, ProofTranscript>, Vec<F>) {
         let (sumcheck_proof, r_cycle_bound) =
-            crate::subprotocols::sumcheck::BatchedSumcheck::prove(vec![&mut self], transcript);
+            crate::subprotocols::sumcheck::BatchedSumcheck::prove_single(&mut self, transcript);
 
         let ra_i_claims = self
             .ra_i_claims
@@ -152,9 +152,9 @@ impl<F: JoltField, const D: usize> RASumcheck<F, D> {
             .map_err(|_| crate::utils::errors::ProofVerifyError::InternalError)?;
         verifier_sumcheck.ra_i_claims = Some(ra_i_claims_array);
 
-        let r_cycle_bound = crate::subprotocols::sumcheck::BatchedSumcheck::verify(
+        let r_cycle_bound = crate::subprotocols::sumcheck::BatchedSumcheck::verify_single(
             sumcheck_proof,
-            vec![&verifier_sumcheck],
+            &verifier_sumcheck,
             transcript,
         )?;
 

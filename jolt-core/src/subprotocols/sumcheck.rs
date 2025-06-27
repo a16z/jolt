@@ -314,6 +314,21 @@ impl BatchedSumcheck {
 
         Ok(r_sumcheck)
     }
+
+    pub fn prove_single<F: JoltField, ProofTranscript: Transcript>(
+        sumcheck_instance: &mut dyn BatchableSumcheckInstance<F, ProofTranscript>,
+        transcript: &mut ProofTranscript,
+    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>) {
+        Self::prove(vec![sumcheck_instance], transcript)
+    }
+
+    pub fn verify_single<F: JoltField, ProofTranscript: Transcript>(
+        proof: &SumcheckInstanceProof<F, ProofTranscript>,
+        sumcheck_instance: &dyn BatchableSumcheckInstance<F, ProofTranscript>,
+        transcript: &mut ProofTranscript,
+    ) -> Result<Vec<F>, ProofVerifyError> {
+        Self::verify(proof, vec![sumcheck_instance], transcript)
+    }
 }
 
 impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTranscript> {
