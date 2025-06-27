@@ -271,9 +271,18 @@ impl<F: JoltField> IncPolynomial<F> {
                     .par_iter()
                     .zip(scalars_ref.par_iter())
                     .map(|(bases_row, scalars_row)| {
+                        if scalars_row.is_empty() {
+                            return JoltGroupWrapper(G::ZERO);
+                        }
                         JoltGroupWrapper(
-                            VariableBaseMSM::msm_field_elements_ref(bases_row, scalars_row)
-                                .unwrap(),
+                            VariableBaseMSM::msm_field_elements(
+                                bases_row,
+                                None,
+                                scalars_row,
+                                None,
+                                false,
+                            )
+                            .unwrap(),
                         )
                     })
                     .collect();
