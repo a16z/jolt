@@ -16,7 +16,7 @@ pub struct FormatVirtualRightShiftI {
     pub imm: u64,
 }
 
-#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RegisterStateFormatVirtualI {
     pub rd: (u64, u64), // (old_value, new_value)
     pub rs1: u64,

@@ -18,7 +18,7 @@ use super::{
     virtual_assert_lte::VirtualAssertLTE,
     virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
     virtual_move::VirtualMove,
-    RISCVInstruction, RISCVTrace, RV32IMInstruction, VirtualInstructionSequence,
+    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
 };
 
 declare_riscv_instr!(
@@ -41,7 +41,7 @@ impl REMU {
 }
 
 impl RISCVTrace for REMU {
-    fn trace(&self, cpu: &mut Cpu) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
         let mut virtual_sequence = self.virtual_sequence();
         if let RV32IMInstruction::VirtualAdvice(instr) = &mut virtual_sequence[0] {
             instr.advice = if cpu.unsigned_data(cpu.x[self.operands.rs2]) == 0 {
@@ -69,8 +69,10 @@ impl RISCVTrace for REMU {
             panic!("Expected Advice instruction");
         }
 
+        let mut trace = trace;
         for instr in virtual_sequence {
-            instr.trace(cpu);
+            // In each iteration, create a new Option containing a re-borrowed reference
+            instr.trace(cpu, trace.as_deref_mut());
         }
     }
 }

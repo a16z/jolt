@@ -79,6 +79,7 @@ struct ActiveMarker {
 }
 
 /// Emulates a RISC-V CPU core
+#[derive(Clone)]
 pub struct Cpu {
     clock: u64,
     pub(crate) xlen: Xlen,
@@ -95,7 +96,8 @@ pub struct Cpu {
     is_reservation_set: bool,
     _dump_flag: bool,
     unsigned_data_mask: u64,
-    pub trace: Vec<RV32IMCycle>,
+    // pub trace: Vec<RV32IMCycle>,
+    pub trace_len: usize,
     executed_instrs: u64, // “real” RV32IM cycles
     active_markers: FnvHashMap<u32, ActiveMarker>,
 }
@@ -258,7 +260,8 @@ impl Cpu {
             is_reservation_set: false,
             _dump_flag: false,
             unsigned_data_mask: 0xffffffffffffffff,
-            trace: Vec::with_capacity(1 << 24), // TODO(moodlezoup): make configurable
+            // trace: Vec::with_capacity(1 << 24), // TODO(moodlezoup): make configurable
+            trace_len: 0,
             executed_instrs: 0,
             active_markers: FnvHashMap::default(),
         };
@@ -311,9 +314,9 @@ impl Cpu {
     }
 
     /// Runs program one cycle. Fetch, decode, and execution are completed in a cycle so far.
-    pub fn tick(&mut self) {
+    pub fn tick(&mut self, trace: Option<&mut Vec<RV32IMCycle>>) {
         let instruction_address = self.pc;
-        match self.tick_operate() {
+        match self.tick_operate(trace) {
             Ok(()) => {}
             Err(e) => self.handle_exception(e, instruction_address),
         }
@@ -328,7 +331,7 @@ impl Cpu {
     }
 
     // @TODO: Rename?
-    fn tick_operate(&mut self) -> Result<(), Trap> {
+    fn tick_operate(&mut self, trace: Option<&mut Vec<RV32IMCycle>>) -> Result<(), Trap> {
         if self.wfi {
             if (self.read_csr_raw(CSR_MIE_ADDRESS) & self.read_csr_raw(CSR_MIP_ADDRESS)) != 0 {
                 self.wfi = false;
@@ -352,7 +355,8 @@ impl Cpu {
         let instr = RV32IMInstruction::decode(word, instruction_address)
             .ok()
             .unwrap();
-        instr.trace(self);
+
+        instr.trace(self, trace);
 
         // check if current instruction is real or not for cycle profiling
         if instr.is_real() {
@@ -1466,7 +1470,7 @@ impl Cpu {
                     ActiveMarker {
                         label,
                         start_instrs: self.executed_instrs,
-                        start_trace_len: self.trace.len(),
+                        start_trace_len: self.trace_len,
                     },
                 );
             }
@@ -1474,7 +1478,7 @@ impl Cpu {
             JOLT_CYCLE_MARKER_END => {
                 if let Some(mark) = self.active_markers.remove(&ptr) {
                     let real = self.executed_instrs - mark.start_instrs;
-                    let virt = self.trace.len() - mark.start_trace_len;
+                    let virt = self.trace_len - mark.start_trace_len;
                     println!(
                         "\"{}\": {} RV32IM cycles, {} virtual cycles",
                         mark.label, real, virt
@@ -1667,12 +1671,12 @@ mod test_cpu {
             Err(_e) => panic!("Failed to store"),
         };
 
-        cpu.tick();
+        cpu.tick(None);
 
         assert_eq!(DRAM_BASE + 4, cpu.read_pc());
         assert_eq!(1, cpu.read_register(1));
 
-        cpu.tick();
+        cpu.tick(None);
 
         assert_eq!(DRAM_BASE + 6, cpu.read_pc());
         assert_eq!(8, cpu.read_register(8));
@@ -1690,8 +1694,8 @@ mod test_cpu {
         };
         assert_eq!(DRAM_BASE, cpu.read_pc());
         assert_eq!(0, cpu.read_register(10));
-        match cpu.tick_operate() {
-            Ok(()) => {}
+        match cpu.tick_operate(None) {
+            Ok(_) => {}
             Err(_e) => panic!("tick_operate() unexpectedly did panic"),
         };
         // .tick_operate() increments the program counter by 4 for
@@ -1809,7 +1813,7 @@ mod test_cpu {
         cpu.write_csr_raw(CSR_MIP_ADDRESS, MIP_MTIP);
         cpu.write_csr_raw(CSR_MTVEC_ADDRESS, handler_vector);
 
-        cpu.tick();
+        cpu.tick(None);
 
         // Interrupt isn't caught because mie is disabled
         assert_eq!(DRAM_BASE + 4, cpu.read_pc());
@@ -1818,7 +1822,7 @@ mod test_cpu {
         // Enable mie in mstatus
         cpu.write_csr_raw(CSR_MSTATUS_ADDRESS, 0x8);
 
-        cpu.tick();
+        cpu.tick(None);
 
         // Interrupt happened and moved to handler
         assert_eq!(handler_vector, cpu.read_pc());
@@ -1846,7 +1850,7 @@ mod test_cpu {
         cpu.write_csr_raw(CSR_MTVEC_ADDRESS, handler_vector);
         cpu.update_pc(DRAM_BASE);
 
-        cpu.tick();
+        cpu.tick(None);
 
         // Interrupt happened and moved to handler
         assert_eq!(handler_vector, cpu.read_pc());
@@ -1879,14 +1883,14 @@ mod test_cpu {
 
         // Test x0
         assert_eq!(0, cpu.read_register(0));
-        cpu.tick(); // Execute  "addi x0, x0, 1"
-                    // x0 is still zero because it's hardcoded zero
+        cpu.tick(None); // Execute  "addi x0, x0, 1"
+                        // x0 is still zero because it's hardcoded zero
         assert_eq!(0, cpu.read_register(0));
 
         // Test x1
         assert_eq!(0, cpu.read_register(1));
-        cpu.tick(); // Execute  "addi x1, x1, 1"
-                    // x1 is not hardcoded zero
+        cpu.tick(None); // Execute  "addi x1, x1, 1"
+                        // x1 is not hardcoded zero
         assert_eq!(1, cpu.read_register(1));
     }
 

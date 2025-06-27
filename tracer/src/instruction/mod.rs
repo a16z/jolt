@@ -153,13 +153,13 @@ pub mod xori;
 #[cfg(test)]
 pub mod test;
 
-#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RAMRead {
     pub address: u64,
     pub value: u64,
 }
 
-#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RAMWrite {
     pub address: u64,
     pub pre_value: u64,
@@ -227,7 +227,7 @@ pub trait RISCVTrace: RISCVInstruction
 where
     RISCVCycle<Self>: Into<RV32IMCycle>,
 {
-    fn trace(&self, cpu: &mut Cpu) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
         let mut cycle: RISCVCycle<Self> = RISCVCycle {
             instruction: *self,
             register_state: Default::default(),
@@ -238,7 +238,9 @@ where
         self.execute(cpu, &mut cycle.ram_access);
         self.operands()
             .capture_post_execution_state(&mut cycle.register_state, cpu);
-        cpu.trace.push(cycle.into());
+        if let Some(trace_vec) = trace {
+            trace_vec.push(cycle.into());
+        }
     }
 }
 
@@ -261,7 +263,7 @@ macro_rules! define_rv32im_enums {
         }
 
         #[derive(
-            From, Debug, Copy, Clone, Serialize, Deserialize, IntoStaticStr, EnumIter, EnumCountMacro,
+            From, Debug, Copy, Clone, Serialize, Deserialize, IntoStaticStr, EnumIter, EnumCountMacro, PartialEq
         )]
         pub enum RV32IMCycle {
             /// No-operation cycle (address)
@@ -329,12 +331,12 @@ macro_rules! define_rv32im_enums {
         }
 
         impl RV32IMInstruction {
-            pub fn trace(&self, cpu: &mut Cpu) {
+            pub fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
                 match self {
                     RV32IMInstruction::NoOp(_) => panic!("Unsupported instruction: {:?}", self),
                     RV32IMInstruction::UNIMPL => panic!("Unsupported instruction: {:?}", self),
                     $(
-                        RV32IMInstruction::$instr(instr) => instr.trace(cpu),
+                        RV32IMInstruction::$instr(instr) => instr.trace(cpu, trace),
                     )*
                 }
             }
@@ -395,7 +397,7 @@ impl CanonicalSerialize for RV32IMInstruction {
         _compress: Compress,
     ) -> Result<(), SerializationError> {
         let bytes = serde_json::to_vec(self).map_err(|_| SerializationError::InvalidData)?;
-        let len = bytes.len() as u64;
+        let len: u64 = bytes.len() as u64;
         len.serialize_with_mode(&mut writer, _compress)?;
         writer
             .write_all(&bytes)
@@ -598,7 +600,7 @@ impl RV32IMInstruction {
     }
 }
 
-#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RISCVCycle<T: RISCVInstruction> {
     pub instruction: T,
     pub register_state: <T::Format as InstructionFormat>::RegisterState,
