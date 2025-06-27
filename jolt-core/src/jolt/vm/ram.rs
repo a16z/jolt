@@ -491,8 +491,8 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         addresses: Vec<usize>,
         read_values: Vec<u64>,
         write_values: Vec<u64>,
-        write_increments: Vec<i64>,
-        initial_memory_state: Vec<i64>,
+        write_increments: Vec<i128>,
+        initial_memory_state: Vec<i128>,
         r: &[F],
         r_prime: &[F],
         transcript: &mut ProofTranscript,
@@ -516,11 +516,11 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         // eq(r', j)
         let mut eq_r_prime = MultilinearPolynomial::from(EqPolynomial::evals(&r_prime));
 
-        let deltas: Vec<Vec<i64>> = addresses[..T - chunk_size]
+        let deltas: Vec<Vec<i128>> = addresses[..T - chunk_size]
             .par_chunks_exact(chunk_size)
             .zip(write_increments[..T - chunk_size].par_chunks_exact(chunk_size))
             .map(|(address_chunk, increment_chunk)| {
-                let mut delta = vec![0i64; K];
+                let mut delta = vec![0; K];
                 for (k, increment) in address_chunk.iter().zip(increment_chunk.iter()) {
                     delta[*k] += increment;
                 }
@@ -538,17 +538,17 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let mut val_test: MultilinearPolynomial<F> = {
             // Compute Val in cycle-major order, since we will be binding
             // from low-to-high starting with the cycle variables
-            let mut val: Vec<i64> = vec![0; K * T];
+            let mut val: Vec<i128> = vec![0; K * T];
             val.par_chunks_mut(T).enumerate().for_each(|(k, val_k)| {
                 let mut current_val = initial_memory_state[k].clone();
                 for j in 0..T {
                     val_k[j] = current_val;
                     if addresses[j] == k {
-                        current_val = write_values[j] as i64;
+                        current_val = write_values[j] as i128;
                     }
                 }
             });
-            MultilinearPolynomial::from(val)
+            MultilinearPolynomial::from(val.iter().map(|v| F::from_i128(*v)).collect::<Vec<F>>())
         };
 
         #[cfg(test)]
@@ -573,7 +573,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                 let mut current_val = initial_memory_state[k].clone();
                 for j in 0..T {
                     if addresses[j] == k {
-                        inc_k[j] = F::from_i64(write_increments[j]);
+                        inc_k[j] = F::from_i128(write_increments[j]);
                     }
                 }
             });
@@ -581,7 +581,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         };
 
         // Value in register k before the jth cycle, for j \in {0, chunk_size, 2 * chunk_size, ...}
-        let mut checkpoints: Vec<Vec<i64>> = Vec::with_capacity(num_chunks);
+        let mut checkpoints: Vec<Vec<i128>> = Vec::with_capacity(num_chunks);
         checkpoints.push(initial_memory_state);
 
         for (chunk_index, delta) in deltas.into_iter().enumerate() {
@@ -603,7 +603,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                 val_checkpoint
                     .iter_mut()
                     .zip(checkpoint.iter())
-                    .for_each(|(dest, src)| *dest = F::from_i64(*src))
+                    .for_each(|(dest, src)| *dest = F::from_i128(*src))
             });
 
         drop(_guard);
@@ -654,8 +654,8 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                             j,
                             *k,
                             F::zero(),
-                            F::from_i64(*increment),
-                            F::from_i64(*increment),
+                            F::from_i128(*increment),
+                            F::from_i128(*increment),
                         );
                         j += 1;
                         inc
@@ -1204,6 +1204,8 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         r_prime: Vec<F>,
         transcript: &mut ProofTranscript,
     ) -> (ReadWriteCheckingProof<F, ProofTranscript>, Vec<F>, Vec<F>) {
+        // TODO: initial_memory_state should probably be a Vec<i128>
+
         let read_values: Vec<u64> = trace
             .par_iter()
             .map(|cycle| {
@@ -1235,12 +1237,12 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             })
             .collect();
 
-        let write_increments: Vec<i64> = trace
+        let write_increments: Vec<i128> = trace
             .par_iter()
             .map(|cycle| {
                 let ram_op = cycle.ram_access();
                 match ram_op {
-                    RAMAccess::Write(write) => write.post_value as i64 - write.pre_value as i64,
+                    RAMAccess::Write(write) => write.post_value as i128 - write.pre_value as i128,
                     _ => 0,
                 }
             })
@@ -1251,7 +1253,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             read_values,
             write_values,
             write_increments,
-            initial_memory_state.to_vec(),
+            initial_memory_state.iter().map(|v| *v as i128).collect(),
             &r,
             &r_prime,
             transcript,
@@ -1817,7 +1819,7 @@ mod tests {
         let mut addresses: Vec<usize> = Vec::with_capacity(T);
         let mut read_values: Vec<u64> = Vec::with_capacity(T);
         let mut write_values: Vec<u64> = Vec::with_capacity(T);
-        let mut write_increments: Vec<i64> = Vec::with_capacity(T);
+        let mut write_increments: Vec<i128> = Vec::with_capacity(T);
         for _ in 0..T {
             // Random read and write address
             let address = rng.next_u64() as usize % K;
@@ -1828,7 +1830,7 @@ mod tests {
             let write_value = rng.next_u64();
             write_values.push(write_value);
             // The increment is the difference between the new value and the old value
-            let write_increment = (write_value as i64) - (ram[address] as i64);
+            let write_increment = (write_value as i128) - (ram[address] as i128);
             write_increments.push(write_increment);
             // Write the new value to ram
             ram[address] = write_value;
