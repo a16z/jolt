@@ -112,13 +112,16 @@ where
             .ok_or(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
     }
 
-    fn msm_field_elements(
-        bases: &[Self::MulBase],
+    fn msm_field_elements<G>(
+        bases: &[G],
         gpu_bases: Option<&[GpuBaseType<Self>]>,
         scalars: &[Self::ScalarField],
         max_num_bits: Option<usize>,
         use_icicle: bool,
-    ) -> Result<Self, ProofVerifyError> {
+    ) -> Result<Self, ProofVerifyError>
+    where
+        G: Borrow<Self::MulBase> + Sync,
+    {
         (bases.len() >= scalars.len())
             .then(|| {
                 let max_num_bits =
@@ -129,7 +132,7 @@ where
                         .iter()
                         .zip(bases)
                         .filter(|(scalar, _base)| !scalar.is_zero())
-                        .map(|(_scalar, base)| base)
+                        .map(|(_scalar, base)| base.borrow())
                         .fold(Self::zero(), |sum, base| sum + base),
                     2..=10 => {
                         let scalars_u16 = &map_field_elements_to_u16(scalars);
@@ -216,7 +219,8 @@ where
                 Self::msm_field_elements(bases, gpu_bases, &scalars, max_num_bits, use_icicle)
             }
             MultilinearPolynomial::OneHot(_) => todo!(),
-            MultilinearPolynomial::Sparse(_) => todo!(),
+            MultilinearPolynomial::RLC(_) => todo!(),
+            MultilinearPolynomial::Inc(_) => todo!(),
         }
     }
 
@@ -286,7 +290,8 @@ where
                             "MultilinearPolynomial::U8Scalars cannot have more than 10 bits"
                         ),
                         MultilinearPolynomial::OneHot(_) => todo!(),
-                        MultilinearPolynomial::Sparse(_) => todo!(),
+                        MultilinearPolynomial::RLC(_) => todo!(),
+                        MultilinearPolynomial::Inc(_) => todo!(),
                     }
                 } else {
                     Either::Left((i, max_num_bits, poly))
@@ -539,11 +544,16 @@ fn map_field_elements_to_u64<F: PrimeField>(field_elements: &[F]) -> Vec<u64> {
 
 // Compute msm using windowed non-adjacent form
 #[tracing::instrument(skip_all)]
-fn msm_bigint_wnaf<F: JoltField + PrimeField, V: VariableBaseMSM<ScalarField = F>>(
-    bases: &[V::MulBase],
+fn msm_bigint_wnaf<F, V, G>(
+    bases: &[G],
     scalars: &[<F as PrimeField>::BigInt],
     max_num_bits: usize,
-) -> V {
+) -> V
+where
+    F: JoltField + PrimeField,
+    V: VariableBaseMSM<ScalarField = F>,
+    G: Borrow<V::MulBase> + Sync,
+{
     let c = if bases.len() < 32 {
         3
     } else {
@@ -565,8 +575,8 @@ fn msm_bigint_wnaf<F: JoltField + PrimeField, V: VariableBaseMSM<ScalarField = F
                 // digits is the digits thing of the first scalar?
                 let scalar = digits[i];
                 match 0.cmp(&scalar) {
-                    Ordering::Less => buckets[(scalar - 1) as usize] += base,
-                    Ordering::Greater => buckets[(-scalar - 1) as usize] -= base,
+                    Ordering::Less => buckets[(scalar - 1) as usize] += base.borrow(),
+                    Ordering::Greater => buckets[(-scalar - 1) as usize] -= base.borrow(),
                     Ordering::Equal => (),
                 }
             }
@@ -599,11 +609,12 @@ fn msm_bigint_wnaf<F: JoltField + PrimeField, V: VariableBaseMSM<ScalarField = F
 }
 
 /// Optimized implementation of multi-scalar multiplication.
-fn msm_bigint<F: JoltField + PrimeField, V: VariableBaseMSM<ScalarField = F>>(
-    bases: &[V::MulBase],
-    scalars: &[<F as PrimeField>::BigInt],
-    max_num_bits: usize,
-) -> V {
+fn msm_bigint<F, V, G>(bases: &[G], scalars: &[<F as PrimeField>::BigInt], max_num_bits: usize) -> V
+where
+    F: JoltField + PrimeField,
+    V: VariableBaseMSM<ScalarField = F>,
+    G: Borrow<V::MulBase>,
+{
     let scalars_and_bases_iter = scalars.iter().zip(bases).filter(|(s, _)| !s.is_zero());
 
     let c = if bases.len() < 32 {
@@ -631,7 +642,7 @@ fn msm_bigint<F: JoltField + PrimeField, V: VariableBaseMSM<ScalarField = F>>(
                 if scalar == one {
                     // We only process unit scalars once in the first window.
                     if w_start == 0 {
-                        res += base;
+                        res += base.borrow();
                     }
                 } else {
                     let mut scalar = scalar;
@@ -647,7 +658,7 @@ fn msm_bigint<F: JoltField + PrimeField, V: VariableBaseMSM<ScalarField = F>>(
                     // bucket.
                     // (Recall that `buckets` doesn't have a zero bucket.)
                     if scalar != 0 {
-                        buckets[(scalar - 1) as usize] += base;
+                        buckets[(scalar - 1) as usize] += base.borrow();
                     }
                 }
             });
@@ -739,8 +750,8 @@ fn make_digits_bigint(
 
 /// Optimized implementation of multi-scalar multiplication.
 #[tracing::instrument(skip_all)]
-fn msm_medium<F, V, T>(
-    bases: &[V::MulBase],
+fn msm_medium<F, V, G, T>(
+    bases: &[G],
     _gpu_bases: Option<&[GpuBaseType<V>]>,
     scalars: &[T],
     max_num_bits: usize,
@@ -749,6 +760,7 @@ fn msm_medium<F, V, T>(
 where
     F: JoltField,
     V: VariableBaseMSM<ScalarField = F>,
+    G: Borrow<V::MulBase> + Sync,
     T: Into<u64> + Zero + Copy + Sync,
 {
     let c = if bases.len() < 32 {
@@ -777,7 +789,7 @@ where
                 if scalar == 1 {
                     // We only process unit scalars once in the first window.
                     if w_start == 0 {
-                        res += base;
+                        res += base.borrow();
                     }
                 } else {
                     let mut scalar = scalar;
@@ -793,7 +805,7 @@ where
                     // bucket.
                     // (Recall that `buckets` doesn't have a zero bucket.)
                     if scalar != 0 {
-                        buckets[(scalar - 1) as usize] += base;
+                        buckets[(scalar - 1) as usize] += base.borrow();
                     }
                 }
             });
@@ -852,10 +864,11 @@ fn msm_binary<F: JoltField, V: VariableBaseMSM<ScalarField = F>, T: Integer>(
 }
 
 #[tracing::instrument(skip_all)]
-fn msm_small<F, V, T>(bases: &[V::MulBase], scalars: &[T], max_num_bits: usize) -> V
+fn msm_small<F, V, G, T>(bases: &[G], scalars: &[T], max_num_bits: usize) -> V
 where
     F: JoltField,
     V: VariableBaseMSM<ScalarField = F>,
+    G: Borrow<V::MulBase>,
     T: Into<u64> + Zero + Copy,
 {
     let num_buckets: usize = 1 << max_num_bits;
@@ -867,7 +880,7 @@ where
         .filter(|(scalar, _base)| !scalar.is_zero())
         .for_each(|(scalar, base)| {
             let bucket_index: u64 = (*scalar).into();
-            buckets[bucket_index as usize] += base;
+            buckets[bucket_index as usize] += base.borrow();
         });
 
     let mut result = V::zero();

@@ -100,7 +100,7 @@ fn benchmark_prove<PCS, F, G, ProofTranscript>(
             b.iter(|| {
                 // Prove the grand product
                 let mut transcript = ProofTranscript::new(b"test_transcript");
-                let mut prover_accumulator: ProverOpeningAccumulator<F, ProofTranscript> =
+                let mut prover_accumulator: ProverOpeningAccumulator<F, PCS, ProofTranscript> =
                     ProverOpeningAccumulator::new();
                 let _proof: BatchedGrandProductProof<PCS, ProofTranscript> = grand_product
                     .prove_grand_product(Some(&mut prover_accumulator), &mut transcript, None)
@@ -120,7 +120,7 @@ fn benchmark_verify<PCS, F, G, ProofTranscript>(
     G: BatchedGrandProduct<F, PCS, ProofTranscript, Leaves = (Vec<F>, usize)>,
     ProofTranscript: Transcript,
 {
-    let (leaves, setup, known_products) = setup_bench::<PCS, F, ProofTranscript>(
+    let (leaves, _setup, known_products) = setup_bench::<PCS, F, ProofTranscript>(
         config.num_layers,
         config.layer_size,
         config.percentage_ones,
@@ -128,7 +128,7 @@ fn benchmark_verify<PCS, F, G, ProofTranscript>(
 
     let mut transcript = ProofTranscript::new(b"test_transcript");
     let mut grand_product = G::construct_with_config(leaves, grand_products_config);
-    let mut prover_accumulator: ProverOpeningAccumulator<F, ProofTranscript> =
+    let mut prover_accumulator: ProverOpeningAccumulator<F, PCS, ProofTranscript> =
         ProverOpeningAccumulator::new();
     let (proof, r_prover) =
         grand_product.prove_grand_product(Some(&mut prover_accumulator), &mut transcript, None);

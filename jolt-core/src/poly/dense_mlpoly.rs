@@ -1,5 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 use crate::poly::eq_poly::EqPolynomial;
+use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized};
 
@@ -301,6 +302,55 @@ impl<F: JoltField> Index<usize> for DensePolynomial<F> {
     #[inline(always)]
     fn index(&self, _index: usize) -> &F {
         &(self.Z[_index])
+    }
+}
+
+impl<F: JoltField> PolynomialEvaluation<F> for DensePolynomial<F> {
+    fn evaluate(&self, r: &[F]) -> F {
+        self.evaluate(r)
+    }
+
+    fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<F>, Vec<F>) {
+        let eq = EqPolynomial::evals(r);
+        let evals: Vec<F> = polys
+            .into_par_iter()
+            .map(|&poly| poly.evaluate_at_chi_low_optimized(&eq))
+            .collect();
+        (evals, eq)
+    }
+
+    fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F> {
+        debug_assert!(degree > 0);
+        debug_assert!(index < self.len() / 2);
+
+        let mut evals = vec![F::zero(); degree];
+        match order {
+            BindingOrder::HighToLow => {
+                evals[0] = self[index];
+                if degree == 1 {
+                    return evals;
+                }
+                let mut eval = self[index + self.len() / 2];
+                let m = eval - evals[0];
+                for i in 1..degree {
+                    eval += m;
+                    evals[i] = eval;
+                }
+            }
+            BindingOrder::LowToHigh => {
+                evals[0] = self[2 * index];
+                if degree == 1 {
+                    return evals;
+                }
+                let mut eval = self[2 * index + 1];
+                let m = eval - evals[0];
+                for i in 1..degree {
+                    eval += m;
+                    evals[i] = eval;
+                }
+            }
+        };
+        evals
     }
 }
 

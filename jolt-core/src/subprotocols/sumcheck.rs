@@ -305,7 +305,7 @@ impl BatchedSumcheck {
             .sum();
 
         if output_claim != expected_output_claim {
-            return Err(ProofVerifyError::InternalError);
+            return Err(ProofVerifyError::BatchedSumcheckError);
         }
 
         Ok(r_sumcheck)

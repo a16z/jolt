@@ -22,4 +22,6 @@ pub enum ProofVerifyError {
     InvalidOpeningProof,
     #[error("Dory proof verification failed: {0}")]
     DoryError(String),
+    #[error("Batched sumcheck verification failed")]
+    BatchedSumcheckError,
 }
