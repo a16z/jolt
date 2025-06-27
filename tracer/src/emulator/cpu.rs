@@ -356,7 +356,11 @@ impl Cpu {
             .ok()
             .unwrap();
 
-        instr.trace(self, trace);
+        if trace.is_none() {
+            instr.execute(self);
+        } else {
+            instr.trace(self, trace);
+        }
 
         // check if current instruction is real or not for cycle profiling
         if instr.is_real() {
@@ -1407,43 +1411,41 @@ impl Cpu {
 
     /// Disassembles an instruction pointed by Program Counter.
     pub fn disassemble_next_instruction(&mut self) -> String {
-        // // @TODO: Fetching can make a side effect,
-        // // for example updating page table entry or update peripheral hardware registers.
-        // // But ideally disassembling doesn't want to cause any side effect.
-        // // How can we avoid side effect?
-        // let mut original_word = match self.mmu.fetch_word(self.pc) {
-        //     Ok(data) => data,
-        //     Err(_e) => {
-        //         return format!("PC:{:016x}, InstructionPageFault Trap!\n", self.pc);
-        //     }
-        // };
+        // @TODO: Fetching can make a side effect,
+        // for example updating page table entry or update peripheral hardware registers.
+        // But ideally disassembling doesn't want to cause any side effect.
+        // How can we avoid side effect?
+        let mut original_word = match self.mmu.fetch_word(self.pc) {
+            Ok(data) => data,
+            Err(_e) => {
+                return format!("PC:{:016x}, InstructionPageFault Trap!\n", self.pc);
+            }
+        };
 
-        // let word = match (original_word & 0x3) == 0x3 {
-        //     true => original_word,
-        //     false => {
-        //         original_word &= 0xffff;
-        //         self.uncompress(original_word)
-        //     }
-        // };
+        let word = match (original_word & 0x3) == 0x3 {
+            true => original_word,
+            false => {
+                original_word &= 0xffff;
+                self.uncompress(original_word)
+            }
+        };
 
-        // let inst = {
-        //     match self.decode_raw(word) {
-        //         Ok(inst) => inst,
-        //         Err(()) => {
-        //             return format!(
-        //                 "Unknown instruction PC:{:x} WORD:{:x}",
-        //                 self.pc, original_word
-        //             );
-        //         }
-        //     }
-        // };
+        let inst = match RV32IMInstruction::decode(word, self.pc) {
+            Ok(inst) => inst,
+            Err(e) => {
+                return format!(
+                    "Unknown instruction PC:{:x} WORD:{:x}, {:?}",
+                    self.pc, original_word, e
+                );
+            }
+        };
 
-        // let mut s = format!("PC:{:016x} ", self.unsigned_data(self.pc as i64));
-        // s += &format!("{original_word:08x} ");
-        // s += &format!("{} ", inst.name);
+        let name: &'static str = inst.into();
+        let mut s = format!("PC:{:016x} ", self.unsigned_data(self.pc as i64));
+        s += &format!("{original_word:08x} ");
+        s += &format!("{}", name);
         // s += &format!("{}", (inst.disassemble)(self, word, self.pc, true));
-        // s
-        todo!()
+        s
     }
 
     /// Returns mutable `Mmu`

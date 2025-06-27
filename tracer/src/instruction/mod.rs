@@ -341,6 +341,23 @@ macro_rules! define_rv32im_enums {
                 }
             }
 
+            pub fn execute(&self, cpu: &mut Cpu) {
+                match self {
+                    RV32IMInstruction::NoOp(_) => panic!("Unsupported instruction: {:?}", self),
+                    RV32IMInstruction::UNIMPL => panic!("Unsupported instruction: {:?}", self),
+                    $(
+                        RV32IMInstruction::$instr(instr) => {
+                            let mut cycle: RISCVCycle<$instr> = RISCVCycle {
+                                instruction: *instr,
+                                register_state: Default::default(),
+                                ram_access: Default::default(),
+                            };
+                            instr.execute(cpu, &mut cycle.ram_access);
+                        }
+                    )*
+                }
+            }
+
             pub fn normalize(&self) -> NormalizedInstruction {
                 match self {
                     RV32IMInstruction::NoOp(address) => {

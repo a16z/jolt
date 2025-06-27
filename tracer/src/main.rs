@@ -23,6 +23,10 @@ struct Args {
     /// Signature granularity in bytes (must be a power of 2)
     #[arg(long, default_value = "4")]
     signature_granularity: usize,
+
+    /// Execute the program in trace mode
+    #[arg(short, long, value_name = "true|false")]
+    trace: Option<bool>,
 }
 
 fn main() {
@@ -38,7 +42,7 @@ fn main() {
     // Create and run the emulator
     let mut emulator = Emulator::new(Box::new(DefaultTerminal::new()));
     emulator.setup_program(elf_content);
-    emulator.run();
+    emulator.run_test(args.trace.unwrap_or(false));
 
     // If signature file is specified, write the signature with specified granularity
     if let Some(sig_path) = args.signature {

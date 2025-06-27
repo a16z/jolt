@@ -109,7 +109,7 @@ impl Emulator {
     /// * Disassembles every instruction and dumps to terminal
     /// * The emulator stops when the test finishes
     /// * Displays the result message (pass/fail) to terminal
-    pub fn run_test(&mut self) {
+    pub fn run_test(&mut self, trace: bool) {
         // @TODO: Send this message to terminal?
         #[cfg(feature = "std")]
         println!("This elf file seems like a riscv-tests elf file. Running in test mode.");
@@ -117,7 +117,8 @@ impl Emulator {
             let disas = self.cpu.disassemble_next_instruction();
             println!("{disas}");
 
-            self.tick(None);
+            let mut traces = if trace { Some(Vec::new()) } else { None };
+            self.tick(traces.as_mut());
 
             // Check if tohost has been written to
             let tohost_value = self.cpu.get_mut_mmu().load_doubleword_raw(self.tohost_addr);
