@@ -1205,12 +1205,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         r_prime: Vec<F>,
         transcript: &mut ProofTranscript,
     ) -> (ReadWriteCheckingProof<F, ProofTranscript>, Vec<F>, Vec<F>) {
-        const DEGREE: usize = 3;
-        let K = r.len().pow2();
-        let T = r_prime.len().pow2();
-
-        debug_assert_eq!(trace.len(), T);
-
         let read_values: Vec<u64> = trace
             .par_iter()
             .map(|cycle| {
@@ -1238,7 +1232,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             .enumerate()
             .map(|(j, cycle)| {
                 let ram_op = cycle.ram_access();
-                ram_op.address()
+                remap_address(ram_op.address() as u64, memory_layout) as usize
             })
             .collect();
 
@@ -1294,7 +1288,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 
         // eq(r', r_cycle)
         let eq_eval_cycle = EqPolynomial::new(r_prime).evaluate(&r_cycle);
-t
+
         assert_eq!(
             eq_eval_cycle
                 * self.ra_claim
@@ -1820,19 +1814,19 @@ mod tests {
         const K: usize = 16;
         let mut rng = test_rng();
 
-        let mut ram = [0u32; K];
+        let mut ram = [0u64; K];
         let mut addresses: Vec<usize> = Vec::with_capacity(T);
-        let mut read_values: Vec<u32> = Vec::with_capacity(T);
-        let mut write_values: Vec<u32> = Vec::with_capacity(T);
+        let mut read_values: Vec<u64> = Vec::with_capacity(T);
+        let mut write_values: Vec<u64> = Vec::with_capacity(T);
         let mut write_increments: Vec<i64> = Vec::with_capacity(T);
         for _ in 0..T {
             // Random read and write address
-            let address = rng.next_u32() as usize % K;
+            let address = rng.next_u64() as usize % K;
             addresses.push(address);
             // Read the value currently in the read register
             read_values.push(ram[address]);
             // Random write value
-            let write_value = rng.next_u32();
+            let write_value = rng.next_u64();
             write_values.push(write_value);
             // The increment is the difference between the new value and the old value
             let write_increment = (write_value as i64) - (ram[address] as i64);
