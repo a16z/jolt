@@ -16,19 +16,17 @@ pub struct RAProof<F: JoltField, ProofTranscript: Transcript> {
 }
 
 pub struct RAProverState<F: JoltField, const D: usize> {
-    /// ra polynomials for each chunk
+    /// `ra` polys to be constructed based on mem addresses
     ra_i_polys: [MultilinearPolynomial<F>; D],
-    /// Eq polynomial as a multilinear polynomial
+    /// eq poly
     eq_poly: MultilinearPolynomial<F>,
     /// Length of the trace
     T: usize,
 }
 
 pub struct RAVerifierState<F: JoltField, const D: usize> {
-    /// Random point r_cycle
+    /// Random challenge r_cycle
     r_cycle: Vec<F>,
-    /// Random points r_address^(i) for each chunk
-    r_address_chunks: [Vec<F>; D],
     /// Length of the trace
     T: usize,
 }
@@ -40,7 +38,7 @@ pub struct RASumcheck<F: JoltField, const D: usize> {
     prover_state: Option<RAProverState<F, D>>,
     /// Verifier state
     verifier_state: Option<RAVerifierState<F, D>>,
-    /// ra_i_ claims to be proved via evaluation proof
+    /// ra_i_ claims to be queried by verifier via evaluation proof
     ra_i_claims: Option<[F; D]>,
 }
 
@@ -59,33 +57,22 @@ impl<F: JoltField, const D: usize> RASumcheck<F, D> {
         );
 
         let chunk_size = r_address.len() / D;
-        let mut r_address_chunks_vec = Vec::with_capacity(D);
+        let k_one_over_d = 1 << chunk_size;
 
-        for i in 0..D {
-            let start = i * chunk_size;
-            let end = (i + 1) * chunk_size;
-            r_address_chunks_vec.push(r_address[start..end].to_vec());
-        }
-
-        let r_address_chunks: [Vec<F>; D] = r_address_chunks_vec
+        // Split r_address into D chunks
+        let r_address_chunks: [Vec<F>; D] = (0..D)
+            .map(|i| r_address[i * chunk_size..(i + 1) * chunk_size].to_vec())
+            .collect::<Vec<_>>()
             .try_into()
             .expect("Failed to convert Vec to array");
 
-        let eq_evals = EqPolynomial::evals(&r_cycle);
+        let eq_poly = MultilinearPolynomial::from(EqPolynomial::evals(&r_cycle));
 
-        let eq_poly = MultilinearPolynomial::from(eq_evals);
-
-        // Compute K^(1/D)
-        let k_one_over_d = 1 << chunk_size;
-
-        let mut eq_tables_vec = Vec::with_capacity(D);
-
-        for chunk in r_address_chunks.iter() {
-            let eq_table = EqPolynomial::evals(chunk);
-            eq_tables_vec.push(eq_table);
-        }
-
-        let eq_tables: [Vec<F>; D] = eq_tables_vec
+        // Precompute EQ tables for each chunk
+        let eq_tables: [Vec<F>; D] = r_address_chunks
+            .iter()
+            .map(|chunk| EqPolynomial::evals(chunk))
+            .collect::<Vec<_>>()
             .try_into()
             .expect("Failed to convert Vec to array for eq tables");
 
@@ -106,45 +93,27 @@ impl<F: JoltField, const D: usize> RASumcheck<F, D> {
             }
         }
 
-        let mut ra_i_polys: Vec<MultilinearPolynomial<F>> = ra_i_vecs
+        let ra_i_polys: [MultilinearPolynomial<F>; D] = ra_i_vecs
             .into_iter()
-            .map(|vec| MultilinearPolynomial::from(vec))
-            .collect();
-
-        let mut ra_i_polys: Vec<MultilinearPolynomial<F>> = ra_i_polys
-            .into_iter()
-            .map(|vec| MultilinearPolynomial::from(vec))
-            .collect();
-
-        let mut ra_i_polys: [MultilinearPolynomial<F>; D] = ra_i_polys
+            .map(MultilinearPolynomial::from)
+            .collect::<Vec<_>>()
             .try_into()
             .expect("Failed to convert Vec to array");
 
-        let prover_state = RAProverState {
-            ra_i_polys,
-            eq_poly,
-            T,
-        };
-
         Self {
             ra_claim,
-            prover_state: Some(prover_state),
+            prover_state: Some(RAProverState {
+                ra_i_polys,
+                eq_poly,
+                T,
+            }),
             verifier_state: None,
             ra_i_claims: None,
         }
     }
 
-    pub fn new_verifier(
-        ra_claim: F,
-        r_cycle: Vec<F>,
-        r_address_chunks: [Vec<F>; D],
-        T: usize,
-    ) -> Self {
-        let verifier_state = RAVerifierState {
-            r_cycle,
-            r_address_chunks,
-            T,
-        };
+    pub fn new_verifier(ra_claim: F, r_cycle: Vec<F>, T: usize) -> Self {
+        let verifier_state = RAVerifierState { r_cycle, T };
 
         Self {
             ra_claim,
@@ -178,12 +147,11 @@ impl<F: JoltField, const D: usize> RASumcheck<F, D> {
         ra_claim: F,
         ra_i_claims: Vec<F>,
         r_cycle: Vec<F>,
-        r_address_chunks: [Vec<F>; D],
         T: usize,
         sumcheck_proof: &SumcheckInstanceProof<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<Vec<F>, crate::utils::errors::ProofVerifyError> {
-        let mut verifier_sumcheck = Self::new_verifier(ra_claim, r_cycle, r_address_chunks, T);
+        let mut verifier_sumcheck = Self::new_verifier(ra_claim, r_cycle, T);
 
         let ra_i_claims_array: [F; D] = ra_i_claims
             .try_into()
@@ -325,110 +293,26 @@ mod tests {
     use super::*;
     use crate::utils::transcript::KeccakTranscript;
     use ark_bn254::Fr;
-    use ark_std::{rand::Rng, test_rng, One, Zero};
+    use ark_std::{One, Zero};
     use rand::thread_rng;
-
-    // #[test]
-    // fn test_ra_sumcheck_with_specific_memory() {
-    //     // k = 8
-    //     // d = 3
-    //     // T = 1
-    //     // RA polynomial: multilinear extension of 8-length vector with 3rd index (0-indexed) = 1
-    //     // RA_i vectors: [0, 1], [1, 0], [1, 0]
-
-    //     let mut rng = test_rng();
-    //     const D: usize = 3;
-    //     let T = 1;
-    //     let k = 8;
-
-    //     let mut ra_values = vec![Fr::zero(); k];
-    //     ra_values[3] = Fr::one(); // [0, 0, 0, 1, 0, 0, 0, 0]
-    //     let ra_poly = MultilinearPolynomial::from(ra_values);
-    //     println!("ra poly: {:?}", ra_poly);
-
-    //     // Create addresses vector - only address 3 has value 1
-    //     let addresses = vec![3];
-
-    //     let r_cycle: Vec<Fr> = (0..T.log_2()).map(|_| Fr::zero()).collect();
-    //     let r_address: Vec<Fr> = (0..D)
-    //         .map(|_| {
-    //             let addr = rng.gen::<u64>() % (k as u64);
-    //             Fr::from(addr)
-    //         })
-    //         .collect();
-
-    //     // let r_address = vec![Fr::from(4), Fr::from(4), Fr::from(1)];
-
-    //     let mut eval_point = r_cycle.clone();
-    //     eval_point.extend_from_slice(&r_address);
-    //     println!("eval point: {:?}", eval_point);
-    //     let ra_claim = ra_poly.evaluate(&eval_point);
-    //     println!("ra claim: {:?}", ra_claim);
-
-    //     let prover_sumcheck = RASumcheck::<Fr, D>::new(
-    //         ra_claim,
-    //         addresses.clone(),
-    //         r_cycle.clone(),
-    //         r_address.clone(),
-    //         T,
-    //     );
-
-    //     let mut prover_transcript = KeccakTranscript::new(b"test_ra_sumcheck");
-    //     let (proof, r_cycle_bound) = prover_sumcheck.prove(&mut prover_transcript);
-
-    //     let mut verifier_transcript = KeccakTranscript::new(b"test_ra_sumcheck");
-
-    //     let chunk_size = r_address.len() / D;
-    //     let mut r_address_chunks_vec = Vec::with_capacity(D);
-    //     for i in 0..D {
-    //         let start = i * chunk_size;
-    //         let end = (i + 1) * chunk_size;
-    //         r_address_chunks_vec.push(r_address[start..end].to_vec());
-    //     }
-    //     let r_address_chunks: [Vec<Fr>; D] = r_address_chunks_vec
-    //         .try_into()
-    //         .expect("Failed to convert Vec to array");
-
-    //     let verify_result = RASumcheck::<Fr, D>::verify(
-    //         ra_claim,
-    //         proof.ra_i_claims,
-    //         r_cycle,
-    //         r_address_chunks,
-    //         T,
-    //         &proof.sumcheck_proof,
-    //         &mut verifier_transcript,
-    //     );
-
-    //     assert!(verify_result.is_ok(), "Verification failed");
-    //     let verified_r_cycle_bound = verify_result.unwrap();
-    //     assert_eq!(
-    //         r_cycle_bound, verified_r_cycle_bound,
-    //         "r_cycle_bound mismatch"
-    //     );
-    // }
 
     #[test]
     fn test_ra_sumcheck_with_correct_tensor_decomposition() {
         use rand::Rng;
-        // Test with random one-hot RA and correct tensor decomposition
         let mut rng = thread_rng();
         const D: usize = 3;
         let T = 1;
-        let k = 8; // 2^3 = 8
+        let k = 8;
 
-        // Generate random index for the one-hot position
         let one_hot_index = rng.gen::<usize>() % k;
 
-        // Create one-hot RA vector
         let mut ra_values = vec![Fr::zero(); k];
         ra_values[one_hot_index] = Fr::one();
         let ra_poly = MultilinearPolynomial::from(ra_values);
 
-        // Create addresses vector - only one_hot_index has value 1
         let addresses = vec![one_hot_index];
 
         // Decompose the index: index = c0*2^0 + c1*2^1 + c2*2^2
-        // For index 3: 3 = 1*2^0 + 1*2^1 + 0*2^2 = 1 + 2 + 0
         let c0 = one_hot_index & 1; // LSB
         let c1 = (one_hot_index >> 1) & 1; // Middle bit
         let c2 = (one_hot_index >> 2) & 1; // MSB
@@ -440,41 +324,25 @@ mod tests {
             one_hot_index, c0, c1, c2
         );
 
-        // Generate random evaluation points
         let r_cycle: Vec<Fr> = (0..T.log_2()).map(|_| Fr::from(rng.gen::<u64>())).collect();
         let r_address: Vec<Fr> = (0..D).map(|_| Fr::from(rng.gen::<u64>())).collect();
 
-        // Evaluate RA at the random point
         let mut eval_point = r_cycle.clone();
         eval_point.extend_from_slice(&r_address);
         let ra_claim = ra_poly.evaluate(&eval_point);
 
-        // Create and run prover
         let prover_sumcheck =
             RASumcheck::<Fr, D>::new(ra_claim, addresses, r_cycle.clone(), r_address.clone(), T);
 
         let mut prover_transcript = KeccakTranscript::new(b"test_correct_tensor");
         let (proof, r_cycle_bound) = prover_sumcheck.prove(&mut prover_transcript);
 
-        // Verify the proof
         let mut verifier_transcript = KeccakTranscript::new(b"test_correct_tensor");
-
-        let chunk_size = r_address.len() / D;
-        let mut r_address_chunks_vec = Vec::with_capacity(D);
-        for i in 0..D {
-            let start = i * chunk_size;
-            let end = (i + 1) * chunk_size;
-            r_address_chunks_vec.push(r_address[start..end].to_vec());
-        }
-        let r_address_chunks: [Vec<Fr>; D] = r_address_chunks_vec
-            .try_into()
-            .expect("Failed to convert Vec to array");
 
         let verify_result = RASumcheck::<Fr, D>::verify(
             ra_claim,
             proof.ra_i_claims,
             r_cycle,
-            r_address_chunks,
             T,
             &proof.sumcheck_proof,
             &mut verifier_transcript,
