@@ -1,3 +1,5 @@
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
+
 use crate::{
     field::JoltField,
     poly::{
@@ -145,7 +147,7 @@ impl<F: JoltField, const D: usize> RASumcheck<F, D> {
         transcript: &mut ProofTranscript,
     ) -> Result<Vec<F>, crate::utils::errors::ProofVerifyError> {
         let mut verifier_sumcheck = Self::new_verifier(ra_claim, r_cycle, r_address_chunks, T);
-      
+
         let ra_i_claims_array: [F; D] = ra_i_claims
             .try_into()
             .map_err(|_| crate::utils::errors::ProofVerifyError::InternalError)?;
@@ -180,8 +182,11 @@ impl<F: JoltField, ProofTranscript: Transcript, const D: usize>
 
     fn cache_openings(&mut self) {
         debug_assert!(self.ra_i_claims.is_none());
-        let prover_state = self.prover_state.as_ref().expect("Prover state not initialized");
-        
+        let prover_state = self
+            .prover_state
+            .as_ref()
+            .expect("Prover state not initialized");
+
         let mut openings = [F::zero(); D];
         for i in 0..D {
             openings[i] = prover_state.ra_i_polys[i].final_sumcheck_claim();
@@ -191,12 +196,17 @@ impl<F: JoltField, ProofTranscript: Transcript, const D: usize>
     }
 
     fn bind(&mut self, r_j: F, _: usize) {
-        let prover_state = self.prover_state.as_mut().expect("Prover state not initialized");
-        
+        let prover_state = self
+            .prover_state
+            .as_mut()
+            .expect("Prover state not initialized");
+
         for ra_i in prover_state.ra_i_polys.iter_mut() {
             ra_i.bind_parallel(r_j, BindingOrder::LowToHigh);
         }
-        prover_state.eq_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
+        prover_state
+            .eq_poly
+            .bind_parallel(r_j, BindingOrder::LowToHigh);
     }
 
     fn input_claim(&self) -> F {
@@ -204,11 +214,13 @@ impl<F: JoltField, ProofTranscript: Transcript, const D: usize>
     }
 
     fn expected_output_claim(&self, r: &[F]) -> F {
-        // This is called on the verifier side
-        let verifier_state = self.verifier_state.as_ref().expect("Verifier state not initialized");
+        let verifier_state = self
+            .verifier_state
+            .as_ref()
+            .expect("Verifier state not initialized");
         let ra_i_claims = self.ra_i_claims.as_ref().expect("ra_i_claims not set");
-        
-        // Compute eq(r_cycle, r_cycle_bound)
+
+        // eq(r_cycle, r_cycle_bound)
         let eq_eval = EqPolynomial::new(verifier_state.r_cycle.clone()).evaluate(r);
 
         // Compute the product of all ra_i evaluations
@@ -221,7 +233,10 @@ impl<F: JoltField, ProofTranscript: Transcript, const D: usize>
     }
 
     fn compute_prover_message(&self, round: usize) -> Vec<F> {
-        let prover_state = self.prover_state.as_ref().expect("Prover state not initialized");
+        let prover_state = self
+            .prover_state
+            .as_ref()
+            .expect("Prover state not initialized");
         let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript>>::degree(self);
         let ra_i_polys = &prover_state.ra_i_polys;
         let eq_poly = &prover_state.eq_poly;
@@ -229,42 +244,128 @@ impl<F: JoltField, ProofTranscript: Transcript, const D: usize>
         // We need to compute evaluations at 0, 2, 3, ..., degree
         // = eq(r_cycle, j) * ∏_{i=0}^{D-1} ra_i(j)
 
-        let eval_points: Vec<usize> = (0..=degree).filter(|&i| i != 1).collect();
+        let univariate_poly_evals: Vec<F> = (0..eq_poly.len() / 2)
+            .into_par_iter()
+            .map(|i| {
+                let eq_evals = eq_poly.sumcheck_evals(i, degree, BindingOrder::LowToHigh);
+                
+                let mut evals = vec![F::zero(); degree];
 
-        let mut evals = vec![F::zero(); eval_points.len()];
-
-        let remaining_vars =
-            <Self as BatchableSumcheckInstance<F, ProofTranscript>>::num_rounds(&self) - round - 1;
-
-        for (eval_idx, &point) in eval_points.iter().enumerate() {
-            for j in 0..(1 << remaining_vars) {
-                let eq_evals = eq_poly.sumcheck_evals(j, degree, BindingOrder::LowToHigh);
-                // Extract the evaluation at the current point
-                let eq_eval = if point == 0 {
-                    eq_evals[0]
-                } else {
-                    eq_evals[point - 1]
-                };
-
-                // Compute ∏_{i=0}^{D-1} ra_i(j) evaluated at point
-                let mut ra_product = F::one();
-                for ra_i_poly in ra_i_polys.iter() {
-                    // Get sumcheck evaluations for this polynomial at index j
-                    let ra_i_evals = ra_i_poly.sumcheck_evals(j, degree, BindingOrder::LowToHigh);
-                    // The evaluation at point k is at index k (0-indexed for points 0, 2, 3, ...)
-                    let ra_i_eval = if point == 0 {
-                        ra_i_evals[0]
-                    } else {
-                        ra_i_evals[point - 1]
-                    };
-                    ra_product *= ra_i_eval;
+                for eval_point in 0..degree {
+                    if eval_point == 1 {
+                        continue;
+                    }
+                    
+                    let mut result = eq_evals[eval_point];
+                    
+                    for ra_i_poly in ra_i_polys.iter() {
+                        let ra_i_evals = ra_i_poly.sumcheck_evals(i, degree, BindingOrder::LowToHigh);
+                        result *= ra_i_evals[eval_point];
+                    }
+                    
+                    evals[eval_point] = result;
                 }
+                
+                evals
+            })
+            .reduce(
+                || vec![F::zero(); degree],
+                |mut running, new| {
+                    for i in 0..degree {
+                        running[i] += new[i];
+                    }
+                    running
+                },
+            );
+            
+        univariate_poly_evals
+    }
+}
 
-                // Add to the sum: eq(r_cycle, j) * ∏_{i=0}^{D-1} ra_i(j)
-                evals[eval_idx] += eq_eval * ra_product;
-            }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::transcript::KeccakTranscript;
+    use ark_bn254::Fr;
+    use ark_std::{rand::Rng, test_rng, One, Zero};
+
+    #[test]
+    fn test_ra_sumcheck_with_specific_memory() {
+        // k = 8
+        // d = 3 (three RA_i polynomials)
+        // T = 1 (one cycle)
+        // RA polynomial: multilinear extension of 8-length vector with 3rd index (0-indexed) = 1
+        // RA_i vectors: [0, 1], [1, 0], [1, 0]
+
+        let mut rng = test_rng();
+        const D: usize = 3;
+        let T = 1;
+        let k = 8;
+
+        let mut ra_values = vec![Fr::zero(); k];
+        ra_values[3] = Fr::one();
+        let ra_poly = MultilinearPolynomial::from(ra_values);
+
+        // RA_0: [0, 1]
+        let ra_0 = MultilinearPolynomial::from(vec![Fr::zero(), Fr::one()]);
+        // RA_1: [1, 0]
+        let ra_1 = MultilinearPolynomial::from(vec![Fr::one(), Fr::zero()]);
+        // RA_2: [1, 0]
+        let ra_2 = MultilinearPolynomial::from(vec![Fr::one(), Fr::zero()]);
+
+        let ra_i_polys = [ra_0, ra_1, ra_2];
+
+        let r_cycle: Vec<Fr> = (0..T.log_2()).map(|_| Fr::zero()).collect();
+        let r_address: Vec<Fr> = (0..D)
+            .map(|_| {
+                let addr = rng.gen::<u64>() % (k as u64);
+                Fr::from(addr)
+            })
+            .collect();
+
+        let mut eval_point = r_cycle.clone();
+        eval_point.extend_from_slice(&r_address);
+        let ra_claim = ra_poly.evaluate(&eval_point);
+
+        let prover_sumcheck = RASumcheck::<Fr, D>::new(
+            ra_claim,
+            ra_i_polys.clone(),
+            r_cycle.clone(),
+            r_address.clone(),
+            T,
+        );
+
+        let mut prover_transcript = KeccakTranscript::new(b"test_ra_sumcheck");
+        let (proof, r_cycle_bound) = prover_sumcheck.prove(&mut prover_transcript);
+
+        let mut verifier_transcript = KeccakTranscript::new(b"test_ra_sumcheck");
+
+        let chunk_size = r_address.len() / D;
+        let mut r_address_chunks_vec = Vec::with_capacity(D);
+        for i in 0..D {
+            let start = i * chunk_size;
+            let end = (i + 1) * chunk_size;
+            r_address_chunks_vec.push(r_address[start..end].to_vec());
         }
+        let r_address_chunks: [Vec<Fr>; D] = r_address_chunks_vec
+            .try_into()
+            .expect("Failed to convert Vec to array");
 
-        evals
+        let verify_result = RASumcheck::<Fr, D>::verify(
+            ra_claim,
+            proof.ra_i_claims,
+            r_cycle,
+            r_address_chunks,
+            T,
+            &proof.sumcheck_proof,
+            &mut verifier_transcript,
+        );
+
+        assert!(verify_result.is_ok(), "Verification failed");
+        let verified_r_cycle_bound = verify_result.unwrap();
+        assert_eq!(
+            r_cycle_bound, verified_r_cycle_bound,
+            "r_cycle_bound mismatch"
+        );
     }
 }
