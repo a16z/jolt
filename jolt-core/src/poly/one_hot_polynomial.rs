@@ -4,13 +4,12 @@ use std::rc::Rc;
 use super::multilinear_polynomial::BindingOrder;
 use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
-use crate::poly::commitment::dory::JoltGroupWrapper;
+use crate::poly::commitment::dory::{get_T, get_num_columns, JoltGroupWrapper};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{
     MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
-use crate::poly::rlc_polynomial::{get_T, get_num_columns};
 use crate::subprotocols::sparse_dense_shout::ExpandingTable;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
@@ -337,7 +336,9 @@ impl<F: JoltField> OneHotPolynomial<F> {
 
 #[cfg(test)]
 mod tests {
-    use crate::poly::rlc_polynomial::RLCPolynomial;
+    use crate::{
+        poly::commitment::dory::DoryCommitmentScheme, utils::transcript::KeccakTranscript,
+    };
 
     use super::*;
     use ark_bn254::Fr;
@@ -347,7 +348,7 @@ mod tests {
     fn dense_polynomial_equivalence<const LOG_K: usize, const LOG_T: usize>() {
         let K: usize = 1 << LOG_K;
         let T: usize = 1 << LOG_T;
-        RLCPolynomial::<Fr>::initialize(K, T);
+        DoryCommitmentScheme::<KeccakTranscript>::initialize_globals(K, T);
 
         let mut rng = test_rng();
 
@@ -401,6 +402,8 @@ mod tests {
             dense_poly[0],
             "final sumcheck claim"
         );
+
+        DoryCommitmentScheme::<KeccakTranscript>::reset_globals();
     }
 
     // #[test]

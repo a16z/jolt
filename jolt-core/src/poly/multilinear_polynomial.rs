@@ -1,8 +1,7 @@
 use crate::{
     poly::{
-        inc_polynomial::IncPolynomial,
-        one_hot_polynomial::OneHotPolynomial,
-        rlc_polynomial::{get_max_num_rows, RLCPolynomial},
+        commitment::dory::get_max_num_rows, inc_polynomial::IncPolynomial,
+        one_hot_polynomial::OneHotPolynomial, rlc_polynomial::RLCPolynomial,
     },
     utils::{compute_dotproduct, math::Math},
 };

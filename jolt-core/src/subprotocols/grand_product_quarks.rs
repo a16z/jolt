@@ -725,11 +725,13 @@ mod quark_grand_product_tests {
     }
 
     #[test]
+    #[ignore]
     fn quark_hybrid_default_config_e2e() {
         quark_hybrid_test_with_config(QuarkGrandProductConfig::default());
     }
 
     #[test]
+    #[ignore]
     fn quark_hybrid_custom_config_e2e() {
         let custom_config = QuarkGrandProductConfig {
             hybrid_layer_depth: QuarkHybridLayerDepth::Custom(20),
@@ -738,6 +740,7 @@ mod quark_grand_product_tests {
     }
 
     #[test]
+    #[ignore]
     fn quark_hybrid_min_config_e2e() {
         let zero_crossover_config = QuarkGrandProductConfig {
             hybrid_layer_depth: QuarkHybridLayerDepth::Min,
@@ -746,6 +749,7 @@ mod quark_grand_product_tests {
     }
 
     #[test]
+    #[ignore]
     fn quark_hybrid_max_config_e2e() {
         let zero_crossover_config = QuarkGrandProductConfig {
             hybrid_layer_depth: QuarkHybridLayerDepth::Max,

@@ -88,6 +88,7 @@ mod tests {
     use crate::poly::commitment::commitment_scheme::CommitmentScheme;
     use crate::poly::commitment::dory::DoryCommitmentScheme;
     use crate::poly::commitment::mock::MockCommitScheme;
+    use serial_test::serial;
 
     use crate::utils::transcript::{KeccakTranscript, Transcript};
     use std::sync::{LazyLock, Mutex};
@@ -136,16 +137,19 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn fib_e2e_mock() {
         fib_e2e::<Fr, MockCommitScheme<Fr, KeccakTranscript>, KeccakTranscript>();
     }
 
     #[test]
+    #[serial]
     fn fib_e2e_dory() {
         fib_e2e::<Fr, DoryCommitmentScheme<KeccakTranscript>, KeccakTranscript>();
     }
 
     #[test]
+    #[serial]
     fn sha3_e2e_dory() {
         let guard = SHA3_FILE_LOCK.lock().unwrap();
         let mut program = host::Program::new("sha3-guest");
@@ -189,6 +193,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn memory_ops_e2e_dory() {
         let mut program = host::Program::new("memory-ops-guest");
         let (bytecode, memory_init) = program.decode();

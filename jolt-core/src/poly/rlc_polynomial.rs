@@ -1,6 +1,6 @@
 use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
-use crate::poly::commitment::dory::{JoltFieldWrapper, JoltGroupWrapper};
+use crate::poly::commitment::dory::{get_T, get_num_columns, JoltFieldWrapper, JoltGroupWrapper};
 use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::inc_polynomial::IncPolynomial;
@@ -9,7 +9,6 @@ use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_bn254::{Fr, G1Projective};
 use ark_ec::CurveGroup;
 use num_traits::MulAdd;
-use once_cell::sync::OnceCell;
 use rayon::prelude::*;
 use tracing::trace_span;
 
@@ -27,41 +26,7 @@ pub struct RLCPolynomial<F: JoltField> {
     num_variables_bound: usize,
 }
 
-static GLOBAL_T: OnceCell<usize> = OnceCell::new();
-static MAX_NUM_ROWS: OnceCell<usize> = OnceCell::new();
-static NUM_COLUMNS: OnceCell<usize> = OnceCell::new();
-
-pub fn get_max_num_rows() -> usize {
-    MAX_NUM_ROWS
-        .get()
-        .cloned()
-        .expect("MAX_NUM_ROWS is uninitialized")
-}
-
-pub fn get_num_columns() -> usize {
-    NUM_COLUMNS
-        .get()
-        .cloned()
-        .expect("NUM_COLUMNS is uninitialized")
-}
-
-pub fn get_T() -> usize {
-    GLOBAL_T.get().cloned().expect("GLOBAL_T is uninitialized")
-}
-
 impl<F: JoltField> RLCPolynomial<F> {
-    pub fn initialize(K: usize, T: usize) {
-        let matrix_size = K as u128 * T as u128;
-        let num_columns = matrix_size.isqrt().next_power_of_two();
-        let num_rows = matrix_size / num_columns;
-        println!("# rows: {num_rows}");
-        println!("# cols: {num_columns}");
-
-        let _ = GLOBAL_T.set(T);
-        let _ = MAX_NUM_ROWS.set(num_rows as usize);
-        let _ = NUM_COLUMNS.set(num_columns as usize);
-    }
-
     pub fn new(num_rows: usize) -> Self {
         Self {
             num_rows,

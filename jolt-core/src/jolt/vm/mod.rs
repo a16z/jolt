@@ -7,10 +7,10 @@ use crate::jolt::vm::rv32i_vm::Serializable;
 use crate::jolt::witness::ALL_COMMITTED_POLYNOMIALS;
 use crate::msm::icicle;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::poly::opening_proof::{
     ProverOpeningAccumulator, ReducedOpeningProof, VerifierOpeningAccumulator,
 };
-use crate::poly::rlc_polynomial::RLCPolynomial;
 use crate::r1cs::constraints::R1CSConstraints;
 use crate::r1cs::spartan::UniformSpartanProof;
 use crate::utils::errors::ProofVerifyError;
@@ -305,7 +305,7 @@ where
         .unwrap();
         println!("T = {padded_trace_length}, K = {K}");
 
-        RLCPolynomial::<F>::initialize(K, padded_trace_length);
+        DoryCommitmentScheme::<ProofTranscript>::initialize_globals(K, padded_trace_length);
 
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
         let mut opening_accumulator: ProverOpeningAccumulator<F, PCS, ProofTranscript> =
@@ -403,6 +403,9 @@ where
         });
         #[cfg(not(test))]
         let debug_info = None;
+
+        DoryCommitmentScheme::<ProofTranscript>::reset_globals();
+
         (jolt_proof, program_io, debug_info)
     }
 
@@ -427,10 +430,25 @@ where
         );
 
         #[cfg(test)]
-        if let Some(debug_info) = _debug_info {
-            transcript.compare_to(debug_info.transcript);
-            opening_accumulator
-                .compare_to(debug_info.opening_accumulator, &debug_info.prover_setup);
+        {
+            if let Some(debug_info) = _debug_info {
+                transcript.compare_to(debug_info.transcript);
+                opening_accumulator
+                    .compare_to(debug_info.opening_accumulator, &debug_info.prover_setup);
+            }
+
+            let K = [
+                preprocessing.shared.bytecode.code_size,
+                proof.ram.K,
+                1 << 16, // K for instruction lookups Shout
+            ]
+            .into_iter()
+            .max()
+            .unwrap();
+            let T = proof.trace_length.next_power_of_two();
+            // Need to initialize globals because the verifier computes commitments
+            // in `VerifierOpeningAccumulator::append` inside of `#[cfg(test)] block
+            DoryCommitmentScheme::<ProofTranscript>::initialize_globals(K, T);
         }
 
         Self::fiat_shamir_preamble(
@@ -494,6 +512,9 @@ where
             &proof.opening_proof,
             &mut transcript,
         )?;
+
+        #[cfg(test)]
+        DoryCommitmentScheme::<ProofTranscript>::reset_globals();
 
         Ok(())
     }

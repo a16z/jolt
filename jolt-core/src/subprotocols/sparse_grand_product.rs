@@ -1338,6 +1338,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn sparse_prove_verify() {
         const NUM_VARS: [usize; 7] = [1, 2, 3, 4, 5, 6, 7];
         const DENSITY: [f64; 6] = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0];

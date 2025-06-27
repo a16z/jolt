@@ -1,11 +1,11 @@
 use std::borrow::Borrow;
 use std::marker::PhantomData;
 
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use crate::{
     field::JoltField,
-    poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
+    poly::multilinear_polynomial::MultilinearPolynomial,
     utils::{
         errors::ProofVerifyError,
         transcript::{AppendToTranscript, Transcript},
@@ -19,39 +19,9 @@ pub struct MockCommitScheme<F: JoltField, ProofTranscript: Transcript> {
     _marker: PhantomData<(F, ProofTranscript)>,
 }
 
-#[derive(Default, Debug, PartialEq, Clone)]
+#[derive(Default, Debug, PartialEq, Clone, CanonicalDeserialize, CanonicalSerialize)]
 pub struct MockCommitment<F: JoltField> {
-    poly: MultilinearPolynomial<F>,
-}
-
-impl<F: JoltField> Valid for MockCommitment<F> {
-    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
-        unimplemented!("satisfy trait bounds")
-    }
-}
-
-impl<F: JoltField> CanonicalSerialize for MockCommitment<F> {
-    fn serialize_with_mode<W: std::io::Write>(
-        &self,
-        _: W,
-        _: ark_serialize::Compress,
-    ) -> Result<(), ark_serialize::SerializationError> {
-        unimplemented!("satisfy trait bounds")
-    }
-
-    fn serialized_size(&self, _: ark_serialize::Compress) -> usize {
-        unimplemented!("satisfy trait bounds")
-    }
-}
-
-impl<F: JoltField> CanonicalDeserialize for MockCommitment<F> {
-    fn deserialize_with_mode<R: std::io::Read>(
-        _: R,
-        _: ark_serialize::Compress,
-        _: ark_serialize::Validate,
-    ) -> Result<Self, ark_serialize::SerializationError> {
-        unimplemented!("satisfy trait bounds")
-    }
+    _field: PhantomData<F>,
 }
 
 impl<F: JoltField> AppendToTranscript for MockCommitment<F> {
@@ -86,10 +56,10 @@ where
     }
 
     fn commit(
-        poly: &MultilinearPolynomial<Self::Field>,
+        _poly: &MultilinearPolynomial<Self::Field>,
         _setup: &Self::ProverSetup,
     ) -> Self::Commitment {
-        MockCommitment { poly: poly.clone() }
+        MockCommitment::default()
     }
     fn batch_commit<P>(polys: &[P], gens: &Self::ProverSetup) -> Vec<Self::Commitment>
     where
@@ -100,18 +70,12 @@ where
             .map(|poly| Self::commit(poly.borrow(), gens))
             .collect()
     }
-    fn combine_commitments(
-        commitments: &[&Self::Commitment],
-        coeffs: &[Self::Field],
-    ) -> Self::Commitment {
-        let polys: Vec<_> = commitments
-            .iter()
-            .map(|commitment| &commitment.poly)
-            .collect();
 
-        MockCommitment {
-            poly: MultilinearPolynomial::linear_combination(&polys, coeffs),
-        }
+    fn combine_commitments(
+        _commitments: &[&Self::Commitment],
+        _coeffs: &[Self::Field],
+    ) -> Self::Commitment {
+        MockCommitment::default()
     }
 
     fn prove(
@@ -130,11 +94,9 @@ where
         _setup: &Self::VerifierSetup,
         _transcript: &mut ProofTranscript,
         opening_point: &[Self::Field],
-        opening: &Self::Field,
-        commitment: &Self::Commitment,
+        _opening: &Self::Field,
+        _commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
-        let evaluation = commitment.poly.evaluate(opening_point);
-        assert_eq!(evaluation, *opening);
         assert_eq!(proof.opening_point, opening_point);
         Ok(())
     }
