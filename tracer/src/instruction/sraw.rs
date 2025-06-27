@@ -1,0 +1,23 @@
+use super::{
+    format::{format_r::FormatR, InstructionFormat},
+    RISCVInstruction, RISCVTrace,
+};
+use crate::{declare_riscv_instr, emulator::cpu::Cpu};
+use serde::{Deserialize, Serialize};
+
+declare_riscv_instr!(
+    name   = SRAW,
+    mask   = 0xfe00707f,
+    match  = 0x4000003b | (0b101 << 12),
+    format = FormatR,
+    ram    = ()
+);
+
+impl SRAW {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <SRAW as RISCVInstruction>::RAMAccess) {
+        let shamt = (cpu.x[self.operands.rs2] & 0x1f) as u32;
+        cpu.x[self.operands.rd] =
+            cpu.sign_extend(((cpu.x[self.operands.rs1] as i32) >> shamt) as i64);
+    }
+}
+impl RISCVTrace for SRAW {}
