@@ -567,18 +567,18 @@ impl RV32IMInstruction {
                 // I-type arithmetic instructions: ADDI, SLTI, SLTIU, XORI, ORI, ANDI,
                 // and also shift-immediate instructions SLLI, SRLI, SRAI.
                 let funct3 = (instr >> 12) & 0x7;
-                let funct7 = (instr >> 25) & 0x7f;
+                let funct6 = (instr >> 26) & 0x3f;
                 if funct3 == 0b001 {
-                    // SLLI uses shamt and expects funct7 == 0.
-                    if funct7 == 0 {
+                    // SLLI uses shamt and expects funct6 == 0.
+                    if funct6 == 0 {
                         Ok(SLLI::new(instr, address, true).into())
                     } else {
                         Err("Invalid funct7 for SLLI")
                     }
                 } else if funct3 == 0b101 {
-                    if funct7 == 0b0000000 {
+                    if funct6 == 0b000000 {
                         Ok(SRLI::new(instr, address, true).into())
-                    } else if funct7 == 0b0100000 {
+                    } else if funct6 == 0b010000 {
                         Ok(SRAI::new(instr, address, true).into())
                     } else {
                         Err("Invalid ALU shift funct7")
