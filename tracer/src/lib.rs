@@ -70,10 +70,6 @@ pub fn trace(
     memory_config: &MemoryConfig,
     checkpoint_interval: Option<usize>,
 ) -> (Vec<RV32IMCycle>, JoltDevice, Option<Vec<LazyTraceIterator>>) {
-    println!("elf_contents: {elf_contents:x?}");
-    println!("inputs: {inputs:x?}");
-    println!("memory_config: {memory_config:?}");
-
     let mut emulator_trace_iter =
         LazyTraceIterator::new(setup_emulator(elf_contents, inputs, memory_config));
     let mut checkpoints = Vec::new();
@@ -108,7 +104,7 @@ mod test {
 
     #[test]
     /// Test that the trace function produces the expected number of cycles for a given ELF input.
-    /// Test the checkpointing functionality by verifying the number of checkpoints created and 
+    /// Test the checkpointing functionality by verifying the number of checkpoints created and
     /// if the traces from checkpoints match the overall execution trace.
     /// The test is based on the muldiv benchmark.
     fn test_trace() {
@@ -523,12 +519,11 @@ mod test {
         let (execution_trace, _, checkpoints) =
             trace(elf_contents, &inputs, &memory_config, Some(n));
         assert_eq!(execution_trace.len(), expected_trace_length);
-        println!("checkpoints length: {:?}", checkpoints.as_ref().unwrap().len());
         assert_eq!(checkpoints.as_ref().unwrap().len(), 10);
-        
+
         for (i, checkpoint) in checkpoints.unwrap().into_iter().enumerate() {
             let ti: Vec<RV32IMCycle> = checkpoint.collect();
-            assert_eq!(&execution_trace[i*n..], &ti[..]);
+            assert_eq!(&execution_trace[i * n..], &ti[..]);
         }
     }
 }
