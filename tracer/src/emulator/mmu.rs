@@ -452,11 +452,12 @@ impl Mmu {
     /// # Arguments
     /// * `v_address` Virtual address
     /// * `value` data written
-    pub fn store_doubleword(&mut self, v_address: u64, value: u64) -> Result<(), Trap> {
+    pub fn store_doubleword(&mut self, v_address: u64, value: u64) -> Result<RAMWrite, Trap> {
         let effective_address = self.get_effective_address(v_address);
         assert_eq!(effective_address % 8, 0, "Unaligned store_doubleword");
-        self.trace_store(effective_address, value);
-        self.store_bytes(v_address, value, 8)
+        let memory_write = self.trace_store(effective_address, value);
+        self.store_bytes(v_address, value, 8)?;
+        Ok(memory_write)
     }
 
     /// Loads a byte from main memory or peripheral devices depending on

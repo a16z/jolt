@@ -1,5 +1,7 @@
 use add::ADD;
 use addi::ADDI;
+use addiw::ADDIW;
+use addw::ADDW;
 use and::AND;
 use andi::ANDI;
 use ark_serialize::{
@@ -14,40 +16,55 @@ use bltu::BLTU;
 use bne::BNE;
 use div::DIV;
 use divu::DIVU;
+use divuw::DIVUW;
+use divw::DIVW;
 use ecall::ECALL;
 use fence::FENCE;
 use jal::JAL;
 use jalr::JALR;
 use lb::LB;
 use lbu::LBU;
+use ld::LD;
 use lh::LH;
 use lhu::LHU;
 use lui::LUI;
 use lw::LW;
+use lwu::LWU;
 use mul::MUL;
 use mulh::MULH;
 use mulhsu::MULHSU;
 use mulhu::MULHU;
+use mulw::MULW;
 use or::OR;
 use ori::ORI;
 use rand::{rngs::StdRng, RngCore};
 use rem::REM;
 use remu::REMU;
+use remuw::REMUW;
+use remw::REMW;
 use sb::SB;
+use sd::SD;
 use serde::{Deserialize, Serialize};
 use sh::SH;
 use sll::SLL;
 use slli::SLLI;
+use slliw::SLLIW;
+use sllw::SLLW;
 use slt::SLT;
 use slti::SLTI;
 use sltiu::SLTIU;
 use sltu::SLTU;
 use sra::SRA;
 use srai::SRAI;
+use sraiw::SRAIW;
+use sraw::SRAW;
 use srl::SRL;
 use srli::SRLI;
+use srliw::SRLIW;
+use srlw::SRLW;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter, IntoStaticStr};
 use sub::SUB;
+use subw::SUBW;
 use sw::SW;
 use xor::XOR;
 use xori::XORI;
@@ -84,6 +101,8 @@ pub mod instruction_macros;
 
 pub mod add;
 pub mod addi;
+pub mod addiw;
+pub mod addw;
 pub mod and;
 pub mod andi;
 pub mod auipc;
@@ -102,10 +121,12 @@ pub mod jal;
 pub mod jalr;
 pub mod lb;
 pub mod lbu;
+pub mod ld;
 pub mod lh;
 pub mod lhu;
 pub mod lui;
 pub mod lw;
+pub mod lwu;
 pub mod mul;
 pub mod mulh;
 pub mod mulhsu;
@@ -115,18 +136,26 @@ pub mod ori;
 pub mod rem;
 pub mod remu;
 pub mod sb;
+pub mod sd;
 pub mod sh;
 pub mod sll;
 pub mod slli;
+pub mod slliw;
+pub mod sllw;
 pub mod slt;
 pub mod slti;
 pub mod sltiu;
 pub mod sltu;
 pub mod sra;
 pub mod srai;
+pub mod sraiw;
+pub mod sraw;
 pub mod srl;
 pub mod srli;
+pub mod srliw;
+pub mod srlw;
 pub mod sub;
+pub mod subw;
 pub mod sw;
 pub mod virtual_advice;
 pub mod virtual_assert_eq;
@@ -149,6 +178,12 @@ pub mod virtual_srl;
 pub mod virtual_srli;
 pub mod xor;
 pub mod xori;
+
+pub mod divuw;
+pub mod divw;
+pub mod mulw;
+pub mod remuw;
+pub mod remw;
 
 #[cfg(test)]
 pub mod test;
@@ -393,9 +428,13 @@ macro_rules! define_rv32im_enums {
 define_rv32im_enums! {
     instructions: [
         ADD, ADDI, AND, ANDI, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE, DIV, DIVU,
-        ECALL, FENCE, JAL, JALR, LB, LBU, LH, LHU, LUI, LW, MUL, MULH, MULHSU,
-        MULHU, OR, ORI, REM, REMU, SB, SH, SLL, SLLI, SLT, SLTI, SLTIU, SLTU,
+        ECALL, FENCE, JAL, JALR, LB, LBU, LD, LH, LHU, LUI, LW, MUL, MULH, MULHSU,
+        MULHU, OR, ORI, REM, REMU, SB, SD, SH, SLL, SLLI, SLT, SLTI, SLTIU, SLTU,
         SRA, SRAI, SRL, SRLI, SUB, SW, XOR, XORI,
+        // RV64I
+        ADDIW, SLLIW, SRLIW, SRAIW, ADDW, SUBW, SLLW, SRLW, SRAW, LWU,
+        // RV64M
+        DIVUW, DIVW, MULW, REMUW, REMW,
         // Virtual
         VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertLTE,
         VirtualAssertValidDiv0, VirtualAssertValidSignedRemainder, VirtualAssertValidUnsignedRemainder,
@@ -461,7 +500,7 @@ impl RV32IMInstruction {
 
         match self.normalize().virtual_sequence_remaining {
             None => true,     // ordinary instruction
-            Some(0) => true,  // “anchor” of a virtual sequence
+            Some(0) => true,  // "anchor" of a virtual sequence
             Some(_) => false, // helper within the sequence
         }
     }
@@ -502,13 +541,15 @@ impl RV32IMInstruction {
                 }
             }
             0b0000011 => {
-                // Load instructions (I-type): LB, LH, LW, LBU, LHU.
+                // Load instructions (I-type): LB, LH, LW, LBU, LHU, LD, LWU.
                 match (instr >> 12) & 0x7 {
                     0b000 => Ok(LB::new(instr, address, true).into()),
                     0b001 => Ok(LH::new(instr, address, true).into()),
                     0b010 => Ok(LW::new(instr, address, true).into()),
+                    0b011 => Ok(LD::new(instr, address, true).into()),
                     0b100 => Ok(LBU::new(instr, address, true).into()),
                     0b101 => Ok(LHU::new(instr, address, true).into()),
+                    0b110 => Ok(LWU::new(instr, address, true).into()),
                     _ => Err("Invalid load funct3"),
                 }
             }
@@ -518,6 +559,7 @@ impl RV32IMInstruction {
                     0b000 => Ok(SB::new(instr, address, true).into()),
                     0b001 => Ok(SH::new(instr, address, true).into()),
                     0b010 => Ok(SW::new(instr, address, true).into()),
+                    0b011 => Ok(SD::new(instr, address, true).into()),
                     _ => Err("Invalid store funct3"),
                 }
             }
@@ -553,6 +595,18 @@ impl RV32IMInstruction {
                     }
                 }
             }
+            0b0011011 => {
+                // RV64I I-type arithmetic instructions.
+                let funct3 = (instr >> 12) & 0x7;
+                let funct7 = (instr >> 25) & 0x7f;
+                match (funct3, funct7) {
+                    (0b000, _) => Ok(ADDIW::new(instr, address, true).into()),
+                    (0b001, 0b0000000) => Ok(SLLIW::new(instr, address, true).into()),
+                    (0b101, 0b0000000) => Ok(SRLIW::new(instr, address, true).into()),
+                    (0b101, 0b0100000) => Ok(SRAIW::new(instr, address, true).into()),
+                    _ => Err("Invalid RV64I I-type arithmetic instruction"),
+                }
+            }
             0b0110011 => {
                 // R-type arithmetic instructions.
                 let funct3 = (instr >> 12) & 0x7;
@@ -578,6 +632,24 @@ impl RV32IMInstruction {
                     (0b110, 0b0000001) => Ok(REM::new(instr, address, true).into()),
                     (0b111, 0b0000001) => Ok(REMU::new(instr, address, true).into()),
                     _ => Err("Invalid R-type arithmetic instruction"),
+                }
+            }
+            0b0111011 => {
+                // RV64I R-type arithmetic instructions.
+                let funct3 = (instr >> 12) & 0x7;
+                let funct7 = (instr >> 25) & 0x7f;
+                match (funct3, funct7) {
+                    (0b000, 0b0000000) => Ok(ADDW::new(instr, address, true).into()),
+                    (0b000, 0b0100000) => Ok(SUBW::new(instr, address, true).into()),
+                    (0b001, 0b0000000) => Ok(SLLW::new(instr, address, true).into()),
+                    (0b100, 0b0000001) => Ok(DIVW::new(instr, address, true).into()),
+                    (0b101, 0b0000000) => Ok(SRLW::new(instr, address, true).into()),
+                    (0b101, 0b0100000) => Ok(SRAW::new(instr, address, true).into()),
+                    (0b000, 0b0000001) => Ok(MULW::new(instr, address, true).into()),
+                    (0b101, 0b0000001) => Ok(DIVUW::new(instr, address, true).into()),
+                    (0b110, 0b0000001) => Ok(REMW::new(instr, address, true).into()),
+                    (0b111, 0b0000001) => Ok(REMUW::new(instr, address, true).into()),
+                    _ => Err("Invalid RV64I R-type arithmetic instruction"),
                 }
             }
             0b0001111 => {
