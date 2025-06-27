@@ -2,10 +2,7 @@
 //! https://eprint.iacr.org/2024/1210.pdf
 #[cfg(test)]
 use super::dense_mlpoly::DensePolynomial;
-use crate::{
-    field::JoltField,
-    poly::{eq_poly::EqPolynomial, multilinear_polynomial::BindingOrder},
-};
+use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
 
 #[derive(Debug, Clone, PartialEq)]
 /// A struct holding the equality polynomial evaluations for use in sum-check, when incorporating
@@ -31,14 +28,12 @@ pub struct GruenSplitEqPolynomial<F> {
 
 /// Old struct for split equality polynomial, without Gruen's optimization
 /// TODO: remove all usage of this struct with the new one
-#[derive(Clone, Debug, PartialEq, Default)]
 pub struct SplitEqPolynomial<F> {
     num_vars: usize,
     pub(crate) E1: Vec<F>,
     pub(crate) E1_len: usize,
     pub(crate) E2: Vec<F>,
     pub(crate) E2_len: usize,
-    final_sumcheck_claim: Option<F>,
 }
 
 impl<F: JoltField> GruenSplitEqPolynomial<F> {
@@ -243,22 +238,6 @@ impl<F: JoltField> SplitEqPolynomial<F> {
             E1_len,
             E2,
             E2_len,
-            final_sumcheck_claim: None,
-        }
-    }
-
-    #[tracing::instrument(skip_all, name = "SplitEqPolynomial::new_with_split")]
-    pub fn new_with_split(w1: &[F], w2: &[F]) -> Self {
-        let (E1, E2) = rayon::join(|| EqPolynomial::evals(w1), || EqPolynomial::evals(w2));
-        let E1_len = E1.len();
-        let E2_len = E2.len();
-        Self {
-            num_vars: w1.len() + w2.len(),
-            E1,
-            E1_len,
-            E2,
-            E2_len,
-            final_sumcheck_claim: None,
         }
     }
 
@@ -275,99 +254,36 @@ impl<F: JoltField> SplitEqPolynomial<F> {
     }
 
     #[tracing::instrument(skip_all, name = "SplitEqPolynomial::bind")]
-    pub fn bind(&mut self, r: F, binding_order: BindingOrder) {
-        match binding_order {
-            BindingOrder::LowToHigh => {
-                if self.E1_len == 1 {
-                    // E_1 is already completely bound, so we bind E_2
-                    let n = self.E2_len / 2;
-                    for i in 0..n {
-                        self.E2[i] = self.E2[2 * i] + r * (self.E2[2 * i + 1] - self.E2[2 * i]);
-                    }
-                    self.E2_len = n;
-                    if self.E2_len == 1 {
-                        self.final_sumcheck_claim = Some(self.E2[0]);
-                    }
-                } else {
-                    // Bind E_1
-                    let n = self.E1_len / 2;
-                    for i in 0..n {
-                        self.E1[i] = self.E1[2 * i] + r * (self.E1[2 * i + 1] - self.E1[2 * i]);
-                    }
-                    self.E1_len = n;
-
-                    // If E_1 is now completely bound, we will be switching over to the
-                    // linear-time sumcheck prover, using E_1 * E_2:
-                    if self.E1_len == 1 {
-                        self.E2[..self.E2_len]
-                            .iter_mut()
-                            .for_each(|eval| *eval *= self.E1[0]);
-                    }
-                }
+    pub fn bind(&mut self, r: F) {
+        if self.E1_len == 1 {
+            // E_1 is already completely bound, so we bind E_2
+            let n = self.E2_len / 2;
+            for i in 0..n {
+                self.E2[i] = self.E2[2 * i] + r * (self.E2[2 * i + 1] - self.E2[2 * i]);
             }
-            BindingOrder::HighToLow => {
-                if self.E2_len == 1 {
-                    // E_2 is already completely bound, so we bind E_1
-                    let n = self.E1_len / 2;
-                    for i in 0..n {
-                        self.E1[i] = self.E1[i] + r * (self.E1[i + n] - self.E1[i]);
-                    }
-                    self.E1_len = n;
-                    if self.E1_len == 1 {
-                        self.final_sumcheck_claim = Some(self.E1[0]);
-                    }
-                } else {
-                    // Bind E_2
-                    let n = self.E2_len / 2;
-                    for i in 0..n {
-                        self.E2[i] = self.E2[i] + r * (self.E2[i + n] - self.E2[i]);
-                    }
-                    self.E2_len = n;
+            self.E2_len = n;
+        } else {
+            // Bind E_1
+            let n = self.E1_len / 2;
+            for i in 0..n {
+                self.E1[i] = self.E1[2 * i] + r * (self.E1[2 * i + 1] - self.E1[2 * i]);
+            }
+            self.E1_len = n;
 
-                    // If E_2 is now completely bound, we will be switching over to the
-                    // linear-time sumcheck prover, using E_1 * E_2:
-                    if self.E2_len == 1 {
-                        self.E1[..self.E1_len]
-                            .iter_mut()
-                            .for_each(|eval| *eval *= self.E2[0]);
-                    }
-                }
+            // If E_1 is now completely bound, we will be switching over to the
+            // linear-time sumcheck prover, using E_1 * E_2:
+            if self.E1_len == 1 {
+                self.E2[..self.E2_len]
+                    .iter_mut()
+                    .for_each(|eval| *eval *= self.E1[0]);
             }
         }
-    }
-
-    pub fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F> {
-        debug_assert!(degree > 0);
-        let mut evals = vec![F::zero(); degree];
-
-        match order {
-            BindingOrder::LowToHigh => {
-                if self.E1_len == 1 {
-                    debug_assert!(index < self.E2_len / 2);
-                    evals[0] = self.E2[2 * index];
-                    if degree == 1 {
-                        return evals;
-                    }
-                    let mut eval = self.E2[2 * index + 1];
-                    let m = eval - evals[0];
-                    for i in 1..degree {
-                        eval += m;
-                        evals[i] = eval;
-                    }
-                } else {
-                }
-            }
-            BindingOrder::HighToLow => todo!(),
-        }
-        evals
     }
 
     #[cfg(test)]
-    pub fn merge(&self, binding_order: BindingOrder) -> DensePolynomial<F> {
-        if binding_order == BindingOrder::LowToHigh && self.E1_len == 1 {
+    pub fn merge(&self) -> DensePolynomial<F> {
+        if self.E1_len == 1 {
             DensePolynomial::new(self.E2[..self.E2_len].to_vec())
-        } else if binding_order == BindingOrder::HighToLow && self.E2_len == 1 {
-            DensePolynomial::new(self.E1[..self.E1_len].to_vec())
         } else {
             let mut merged = vec![];
             for i in 0..self.E2_len {
@@ -377,12 +293,6 @@ impl<F: JoltField> SplitEqPolynomial<F> {
             }
             DensePolynomial::new(merged)
         }
-    }
-
-    pub fn final_sumcheck_claim(&self) -> F {
-        debug_assert_eq!(self.E1_len, 1);
-        debug_assert_eq!(self.E2_len, 1);
-        self.final_sumcheck_claim.unwrap()
     }
 }
 
@@ -415,50 +325,6 @@ mod tests {
     }
 
     #[test]
-    fn bind_low_to_high() {
-        const NUM_VARS: usize = 10;
-        let mut rng = test_rng();
-        let w: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
-            .take(NUM_VARS)
-            .collect();
-
-        let mut regular_eq = DensePolynomial::new(EqPolynomial::evals(&w));
-        let mut split_eq = SplitEqPolynomial::new(&w);
-        assert_eq!(regular_eq, split_eq.merge(BindingOrder::LowToHigh));
-
-        for _ in 0..NUM_VARS {
-            let r = Fr::random(&mut rng);
-            regular_eq.bound_poly_var_bot(&r);
-            split_eq.bind(r, BindingOrder::LowToHigh);
-
-            let merged = split_eq.merge(BindingOrder::LowToHigh);
-            assert_eq!(regular_eq.Z[..regular_eq.len()], merged.Z[..merged.len()]);
-        }
-    }
-
-    #[test]
-    fn bind_high_to_low() {
-        const NUM_VARS: usize = 10;
-        let mut rng = test_rng();
-        let w: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
-            .take(NUM_VARS)
-            .collect();
-
-        let mut regular_eq = DensePolynomial::new(EqPolynomial::evals(&w));
-        let mut split_eq = SplitEqPolynomial::new(&w);
-        assert_eq!(regular_eq, split_eq.merge(BindingOrder::HighToLow));
-
-        for _ in 0..NUM_VARS {
-            let r = Fr::random(&mut rng);
-            regular_eq.bound_poly_var_top(&r);
-            split_eq.bind(r, BindingOrder::HighToLow);
-
-            let merged = split_eq.merge(BindingOrder::HighToLow);
-            assert_eq!(regular_eq.Z[..regular_eq.len()], merged.Z[..merged.len()]);
-        }
-    }
-
-    #[test]
     fn equal_old_and_new_split_eq() {
         const NUM_VARS: usize = 15;
         let mut rng = test_rng();
@@ -473,19 +339,13 @@ mod tests {
         assert_eq!(old_split_eq.len(), new_split_eq.len());
         assert_eq!(old_split_eq.E1, *new_split_eq.to_E1_old());
         assert_eq!(old_split_eq.E2, *new_split_eq.E_out_current());
-        assert_eq!(
-            old_split_eq.merge(BindingOrder::LowToHigh),
-            new_split_eq.merge()
-        );
+        assert_eq!(old_split_eq.merge(), new_split_eq.merge());
         // Show that they are the same after binding
         for i in (0..NUM_VARS).rev() {
             let r = Fr::random(&mut rng);
-            old_split_eq.bind(r, BindingOrder::LowToHigh);
+            old_split_eq.bind(r);
             new_split_eq.bind(r);
-            assert_eq!(
-                old_split_eq.merge(BindingOrder::LowToHigh),
-                new_split_eq.merge()
-            );
+            assert_eq!(old_split_eq.merge(), new_split_eq.merge());
             if NUM_VARS / 2 < i {
                 assert_eq!(old_split_eq.E1_len, new_split_eq.E_in_current_len() * 2);
                 assert_eq!(old_split_eq.E2_len, new_split_eq.E_out_current_len());

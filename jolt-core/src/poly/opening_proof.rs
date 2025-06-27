@@ -16,6 +16,7 @@ use super::{
 use crate::{
     field::JoltField,
     poly::{
+        dense_mlpoly::DensePolynomial,
         inc_polynomial::{IncPolynomial, IncPolynomialProverOpening},
         one_hot_polynomial::{
             OneHotPolynomial, OneHotPolynomialProverOpening, OneHotSumcheckState,
@@ -27,13 +28,13 @@ use crate::{
 
 pub struct SharedEqPolynomial<F: JoltField> {
     num_variables_bound: usize,
-    eq_poly: EqPolynomial<F>,
+    eq_poly: DensePolynomial<F>,
 }
 
-impl<F: JoltField> From<EqPolynomial<F>> for SharedEqPolynomial<F> {
-    fn from(eq_poly: EqPolynomial<F>) -> Self {
+impl<F: JoltField> From<Vec<F>> for SharedEqPolynomial<F> {
+    fn from(eq_evals: Vec<F>) -> Self {
         Self {
-            eq_poly,
+            eq_poly: DensePolynomial::new(eq_evals),
             num_variables_bound: 0,
         }
     }
@@ -59,21 +60,21 @@ pub struct DensePolynomialProverOpening<F: JoltField> {
 impl<F: JoltField> DensePolynomialProverOpening<F> {
     fn compute_prover_message(&self, _: usize) -> Vec<F> {
         let shared_eq = self.eq_poly.borrow();
-        match (&self.polynomial, &shared_eq.eq_poly) {
-            (MultilinearPolynomial::LargeScalars(_), EqPolynomial::Default(_)) => {
+        match &self.polynomial {
+            MultilinearPolynomial::LargeScalars(_) => {
                 let polynomial = &self.polynomial;
                 let mle_half = polynomial.len() / 2;
                 let eval_0: F = (0..mle_half)
-                    .map(|i| polynomial.get_bound_coeff(i) * shared_eq.eq_poly.get_bound_coeff(i))
+                    .map(|i| polynomial.get_bound_coeff(i) * shared_eq.eq_poly[i])
                     .sum();
                 let eval_2: F = (0..mle_half)
                     .map(|i| {
                         let poly_bound_point = polynomial.get_bound_coeff(i + mle_half)
                             + polynomial.get_bound_coeff(i + mle_half)
                             - polynomial.get_bound_coeff(i);
-                        let eq_bound_point = shared_eq.eq_poly.get_bound_coeff(i + mle_half)
-                            + shared_eq.eq_poly.get_bound_coeff(i + mle_half)
-                            - shared_eq.eq_poly.get_bound_coeff(i);
+                        let eq_bound_point = shared_eq.eq_poly[i + mle_half]
+                            + shared_eq.eq_poly[i + mle_half]
+                            - shared_eq.eq_poly[i];
                         poly_bound_point * eq_bound_point
                     })
                     .sum();
@@ -352,8 +353,8 @@ where
     }
 
     /// Adds openings to the accumulator. The given `polynomials` are opened at
-    /// `opening_point`, yielding the claimed evaluations `claims`. `eq_poly` is
-    /// the multilinear extension EQ(x, opening_point), which is typically an
+    /// `opening_point`, yielding the claimed evaluations `claims`. `eq_evals` is
+    /// the table of evaluations for EQ(x, opening_point), which is typically an
     /// intermediate value in computing `claims`. Multiple polynomials opened at
     /// a single point can be batched into a single polynomial opened at the same
     /// point. This function performs this batching before appending to `self.openings`.
@@ -361,7 +362,7 @@ where
     pub fn append_dense(
         &mut self,
         polynomials: &[&MultilinearPolynomial<F>],
-        eq_poly: EqPolynomial<F>,
+        eq_evals: Vec<F>,
         opening_point: Vec<F>,
         claims: &[F],
         transcript: &mut ProofTranscript,
@@ -388,21 +389,11 @@ where
                 assert!(!poly.is_bound())
             }
 
-            if let EqPolynomial::Default(eq_poly) = &eq_poly {
-                let expected_eq_poly = EqPolynomial::evals(&opening_point);
-                assert!(
-                    eq_poly.Z == expected_eq_poly,
-                    "eq_poly and opening point are inconsistent"
-                );
-            } else {
-                panic!("Unexpected EqPolynomial variant");
-            }
-
-            // let expected_claims: Vec<F> =
-            //     MultilinearPolynomial::batch_evaluate_with_eq(polynomials, &eq_poly);
-            // for (claim, expected_claim) in claims.iter().zip(expected_claims.into_iter()) {
-            //     assert_eq!(*claim, expected_claim, "Unexpected claim");
-            // }
+            let expected_eq_poly = EqPolynomial::evals(&opening_point);
+            assert!(
+                eq_evals == expected_eq_poly,
+                "eq_poly and opening point are inconsistent"
+            );
         }
 
         // Generate batching challenge \rho and powers 1,...,\rho^{m-1}
@@ -423,11 +414,9 @@ where
 
         #[cfg(test)]
         {
-            // let batched_eval = batched_poly.evaluate_with_eq(&eq_poly);
-            // assert_eq!(batched_eval, batched_claim);
             let mut opening = OpeningProofReductionSumcheck::new_prover_instance_dense(
                 batched_poly,
-                Rc::new(RefCell::new(eq_poly.into())),
+                Rc::new(RefCell::new(eq_evals.into())),
                 opening_point,
                 batched_claim,
             );
@@ -441,7 +430,7 @@ where
         {
             let opening = OpeningProofReductionSumcheck::new_prover_instance_dense(
                 batched_poly,
-                Rc::new(RefCell::new(eq_poly.into())),
+                Rc::new(RefCell::new(eq_evals.into())),
                 opening_point,
                 batched_claim,
             );
@@ -574,13 +563,6 @@ where
         #[cfg(test)]
         {
             self.joint_commitment = Some(PCS::commit(&joint_poly, pcs_setup));
-            // // Restore polynomials to unbound state
-            // self.openings
-            //     .iter_mut()
-            //     .zip(unbound_polys.into_iter())
-            //     .for_each(|(opening, poly)| {
-            //         opening.prover_state.as_mut().unwrap().polynomial = poly
-            //     });
         }
 
         ReducedOpeningProof {
@@ -726,12 +708,6 @@ where
                     "commitment mismatch at index {i}"
                 );
             }
-            // let prover_joint_commitment =
-            //     PCS::commit(&prover_state.polynomial, self.pcs_setup.as_ref().unwrap());
-            // assert_eq!(
-            //     prover_joint_commitment, joint_commitment,
-            //     "joint commitment mismatch"
-            // );
         }
 
         self.openings

@@ -309,7 +309,7 @@ where
 
         opening_accumulator.append_dense(
             &committed_polys,
-            EqPolynomial::from_evals(chis),
+            chis,
             r_cycle.to_vec(),
             &committed_poly_claims,
             transcript,

@@ -1,55 +1,18 @@
-use crate::{
-    field::JoltField,
-    poly::{
-        dense_mlpoly::DensePolynomial,
-        multilinear_polynomial::BindingOrder,
-        split_eq_poly::{GruenSplitEqPolynomial, SplitEqPolynomial},
-    },
-};
-use rayon::prelude::*;
-
+use crate::field::JoltField;
 use crate::utils::{math::Math, thread::unsafe_allocate_zero_vec};
-
-pub enum EqPolynomial<F: JoltField> {
-    Default(DensePolynomial<F>),
-    Split(SplitEqPolynomial<F>),
-    Gruen(GruenSplitEqPolynomial<F>),
-}
+use rayon::prelude::*;
+use std::marker::PhantomData;
 
 const PARALLEL_THRESHOLD: usize = 16;
 
+pub struct EqPolynomial<F: JoltField>(PhantomData<F>);
 impl<F: JoltField> EqPolynomial<F> {
-    pub fn from_evals(evals: Vec<F>) -> Self {
-        Self::Default(DensePolynomial::new(evals))
-    }
-
     pub fn mle(x: &[F], y: &[F]) -> F {
         assert_eq!(x.len(), y.len());
         x.par_iter()
             .zip(y.par_iter())
             .map(|(x_i, y_i)| *x_i * y_i + (F::one() - x_i) * (F::one() - y_i))
             .product()
-    }
-
-    pub fn get_bound_coeff(&self, index: usize) -> F {
-        match self {
-            EqPolynomial::Default(eq_poly) => eq_poly[index],
-            EqPolynomial::Split(eq_poly) => todo!(),
-            EqPolynomial::Gruen(eq_poly) => todo!(),
-        }
-    }
-
-    pub fn bind_parallel(&mut self, r_j: F, order: BindingOrder) {
-        match self {
-            EqPolynomial::Default(eq_poly) => eq_poly.bind_parallel(r_j, order),
-            EqPolynomial::Split(eq_poly) => {
-                eq_poly.bind(r_j, order);
-            }
-            EqPolynomial::Gruen(eq_poly) => {
-                assert_eq!(order, BindingOrder::LowToHigh);
-                eq_poly.bind(r_j);
-            }
-        }
     }
 
     #[tracing::instrument(skip_all, name = "EqPolynomial::evals")]
@@ -166,14 +129,6 @@ impl<F: JoltField> EqPolynomial<F> {
         }
 
         evals
-    }
-
-    pub fn final_sumcheck_claim(&self) -> F {
-        match self {
-            EqPolynomial::Default(eq_poly) => eq_poly[0],
-            EqPolynomial::Split(eq_poly) => eq_poly.final_sumcheck_claim(),
-            EqPolynomial::Gruen(_) => todo!(),
-        }
     }
 }
 

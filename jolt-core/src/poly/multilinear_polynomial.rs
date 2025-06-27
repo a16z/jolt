@@ -6,9 +6,6 @@ use crate::{
     },
     utils::{compute_dotproduct, math::Math},
 };
-use ark_serialize::{
-    CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
-};
 use num_traits::MulAdd;
 use rayon::prelude::*;
 use strum_macros::EnumIter;
@@ -61,9 +58,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.coeffs.len(),
             MultilinearPolynomial::U64Scalars(poly) => poly.coeffs.len(),
             MultilinearPolynomial::I64Scalars(poly) => poly.coeffs.len(),
-            MultilinearPolynomial::RLC(_) => todo!(),
-            MultilinearPolynomial::OneHot(_) => todo!(),
-            MultilinearPolynomial::Inc(_) => todo!(),
+            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
 
@@ -76,9 +71,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.len(),
             MultilinearPolynomial::U64Scalars(poly) => poly.len(),
             MultilinearPolynomial::I64Scalars(poly) => poly.len(),
-            MultilinearPolynomial::RLC(_) => todo!(),
-            MultilinearPolynomial::OneHot(_) => todo!(),
-            MultilinearPolynomial::Inc(_) => todo!(),
+            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
 
@@ -90,9 +83,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.get_num_vars(),
             MultilinearPolynomial::U64Scalars(poly) => poly.get_num_vars(),
             MultilinearPolynomial::I64Scalars(poly) => poly.get_num_vars(),
-            MultilinearPolynomial::RLC(_) => todo!(),
-            MultilinearPolynomial::OneHot(_) => todo!(),
-            MultilinearPolynomial::Inc(_) => todo!(),
+            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
 
@@ -123,9 +114,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                 // elements before computing the MSM
                 F::NUM_BYTES * 8
             }
-            MultilinearPolynomial::RLC(_) => todo!(),
-            MultilinearPolynomial::OneHot(_) => todo!(),
-            MultilinearPolynomial::Inc(_) => todo!(),
+            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
 
@@ -217,9 +206,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                                 *rlc += poly_eval.field_mul(*coeff);
                             }
                         }
-                        MultilinearPolynomial::RLC(_) => unreachable!(),
-                        MultilinearPolynomial::OneHot(_) => unreachable!(),
-                        MultilinearPolynomial::Inc(_) => todo!(),
+                        _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
                     }
                 }
                 chunk
@@ -238,9 +225,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => F::from_u32(poly.coeffs[index]),
             MultilinearPolynomial::U64Scalars(poly) => F::from_u64(poly.coeffs[index]),
             MultilinearPolynomial::I64Scalars(poly) => F::from_i64(poly.coeffs[index]),
-            MultilinearPolynomial::RLC(_) => todo!(),
-            MultilinearPolynomial::OneHot(_) => todo!(),
-            MultilinearPolynomial::Inc(_) => todo!(),
+            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
 
@@ -256,9 +241,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => i64::from(poly.coeffs[index]),
             MultilinearPolynomial::U64Scalars(poly) => i64::try_from(poly.coeffs[index]).unwrap(),
             MultilinearPolynomial::I64Scalars(poly) => poly.coeffs[index],
-            MultilinearPolynomial::RLC(_) => todo!(),
-            MultilinearPolynomial::OneHot(_) => todo!(),
-            MultilinearPolynomial::Inc(_) => todo!(),
+            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
 
@@ -274,9 +257,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => i128::from(poly.coeffs[index]),
             MultilinearPolynomial::U64Scalars(poly) => i128::from(poly.coeffs[index]),
             MultilinearPolynomial::I64Scalars(poly) => i128::from(poly.coeffs[index]),
-            MultilinearPolynomial::RLC(_) => todo!(),
-            MultilinearPolynomial::OneHot(_) => todo!(),
-            MultilinearPolynomial::Inc(_) => todo!(),
+            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
 
@@ -321,9 +302,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                     F::from_i64(poly.coeffs[index])
                 }
             }
-            MultilinearPolynomial::RLC(_) => todo!(),
-            MultilinearPolynomial::OneHot(_) => todo!(),
-            MultilinearPolynomial::Inc(_) => todo!(),
+            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
 
@@ -362,9 +341,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                 .zip_eq(other.par_iter())
                 .map(|(a, b)| a.field_mul(*b))
                 .sum(),
-            MultilinearPolynomial::RLC(_) => todo!(),
-            MultilinearPolynomial::OneHot(_) => todo!(),
-            MultilinearPolynomial::Inc(_) => todo!(),
+            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
 
@@ -387,77 +364,9 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::I64Scalars(poly) => {
                 poly.coeffs[index].field_mul(scaling_factor_r2_adjusted)
             }
-            MultilinearPolynomial::RLC(_) => todo!(),
-            MultilinearPolynomial::OneHot(_) => todo!(),
-            MultilinearPolynomial::Inc(_) => todo!(),
+            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
-
-    //     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::evaluate_with_eq")]
-    //     pub fn evaluate_with_eq(&self, eq_poly: &EqPolynomial<F>) -> F {
-    //         match eq_poly {
-    //             EqPolynomial::Default(eq) => match self {
-    //                 MultilinearPolynomial::LargeScalars(poly) => {
-    //                     poly.evaluate_at_chi_low_optimized(&eq.Z)
-    //                 }
-    //                 _ => self.dot_product(&eq.Z),
-    //             },
-    //             EqPolynomial::Split(split_eq) => match self {
-    //                 MultilinearPolynomial::OneHot(poly) => {
-    //                     assert_eq!(poly.nonzero_indices.len(), split_eq.E1_len);
-    //                     poly.nonzero_indices
-    //                         .iter()
-    //                         .map(|(t, k)| split_eq.E1[*t] * split_eq.E2[*k])
-    //                         .sum()
-    //                 }
-    //                 MultilinearPolynomial::RLC(poly) => {
-    //                     let sparse_eval: F = poly
-    //                         .sparse_rlc
-    //                         .par_iter()
-    //                         .map(|group| {
-    //                             group
-    //                                 .iter()
-    //                                 .map(|(t, k, coeff)| split_eq.E1[*t] * split_eq.E2[*k] * coeff)
-    //                                 .sum::<F>()
-    //                         })
-    //                         .sum();
-    //                     let dense_eval = compute_dotproduct(&poly.dense_rlc, &split_eq.E1);
-    //                     sparse_eval + dense_eval
-    //                 }
-    //                 _ => unimplemented!("Unexpected polynomial type"),
-    //             },
-    //             EqPolynomial::Gruen(gruen_split_eq) => todo!(),
-    //         }
-    //     }
-
-    //     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::batch_evaluate_with_eq")]
-    //     pub fn batch_evaluate_with_eq(polys: &[&Self], eq_poly: &EqPolynomial<F>) -> Vec<F> {
-    //         match eq_poly {
-    //             EqPolynomial::Default(eq) => polys
-    //                 .into_par_iter()
-    //                 .map(|&poly| match poly {
-    //                     MultilinearPolynomial::LargeScalars(poly) => {
-    //                         poly.evaluate_at_chi_low_optimized(&eq.Z)
-    //                     }
-    //                     _ => poly.dot_product(&eq.Z),
-    //                 })
-    //                 .collect(),
-    //             EqPolynomial::Split(split_eq) => polys
-    //                 .par_iter()
-    //                 .map(|poly| match poly {
-    //                     MultilinearPolynomial::OneHot(poly) => {
-    //                         assert_eq!(poly.nonzero_indices.len(), split_eq.E1_len);
-    //                         poly.nonzero_indices
-    //                             .iter()
-    //                             .map(|(t, k)| split_eq.E1[*t] * split_eq.E2[*k])
-    //                             .sum()
-    //                     }
-    //                     _ => unimplemented!("Unexpected polynomial type"),
-    //                 })
-    //                 .collect(),
-    //             EqPolynomial::Gruen(gruen_split_eq) => todo!(),
-    //         }
-    //     }
 }
 
 impl<F: JoltField> From<Vec<F>> for MultilinearPolynomial<F> {
@@ -568,121 +477,6 @@ impl<'a, F: JoltField> TryFrom<&'a MultilinearPolynomial<F>> for &'a CompactPoly
     }
 }
 
-impl<F: JoltField> CanonicalSerialize for MultilinearPolynomial<F> {
-    fn serialize_with_mode<W: std::io::Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        // TODO(protoben) Can we use strum for this?
-        match self {
-            MultilinearPolynomial::LargeScalars(dense_polynomial) => {
-                (0_u8).serialize_with_mode(&mut writer, compress)?;
-                dense_polynomial.serialize_with_mode(&mut writer, compress)?;
-            }
-            MultilinearPolynomial::U8Scalars(compact_polynomial) => {
-                (1_u8).serialize_with_mode(&mut writer, compress)?;
-                compact_polynomial.serialize_with_mode(&mut writer, compress)?;
-            }
-            MultilinearPolynomial::U16Scalars(compact_polynomial) => {
-                (2_u8).serialize_with_mode(&mut writer, compress)?;
-                compact_polynomial.serialize_with_mode(&mut writer, compress)?;
-            }
-            MultilinearPolynomial::U32Scalars(compact_polynomial) => {
-                (3_u8).serialize_with_mode(&mut writer, compress)?;
-                compact_polynomial.serialize_with_mode(&mut writer, compress)?;
-            }
-            MultilinearPolynomial::U64Scalars(compact_polynomial) => {
-                (4_u8).serialize_with_mode(&mut writer, compress)?;
-                compact_polynomial.serialize_with_mode(&mut writer, compress)?;
-            }
-            MultilinearPolynomial::I64Scalars(compact_polynomial) => {
-                (5_u8).serialize_with_mode(&mut writer, compress)?;
-                compact_polynomial.serialize_with_mode(&mut writer, compress)?;
-            }
-            MultilinearPolynomial::RLC(_) => todo!(),
-            MultilinearPolynomial::OneHot(_) => todo!(),
-            MultilinearPolynomial::Inc(_) => todo!(),
-        }
-        Ok(())
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        match self {
-            MultilinearPolynomial::LargeScalars(dense_polynomial) => {
-                (0_u8).serialized_size(compress) + dense_polynomial.serialized_size(compress)
-            }
-            MultilinearPolynomial::U8Scalars(compact_polynomial) => {
-                (1_u8).serialized_size(compress) + compact_polynomial.serialized_size(compress)
-            }
-            MultilinearPolynomial::U16Scalars(compact_polynomial) => {
-                (2_u8).serialized_size(compress) + compact_polynomial.serialized_size(compress)
-            }
-            MultilinearPolynomial::U32Scalars(compact_polynomial) => {
-                (3_u8).serialized_size(compress) + compact_polynomial.serialized_size(compress)
-            }
-            MultilinearPolynomial::U64Scalars(compact_polynomial) => {
-                (4_u8).serialized_size(compress) + compact_polynomial.serialized_size(compress)
-            }
-            MultilinearPolynomial::I64Scalars(compact_polynomial) => {
-                (5_u8).serialized_size(compress) + compact_polynomial.serialized_size(compress)
-            }
-            MultilinearPolynomial::RLC(_) => todo!(),
-            MultilinearPolynomial::OneHot(_) => todo!(),
-            MultilinearPolynomial::Inc(_) => todo!(),
-        }
-    }
-}
-
-impl<F: JoltField> CanonicalDeserialize for MultilinearPolynomial<F> {
-    fn deserialize_with_mode<R: std::io::Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-    ) -> Result<Self, SerializationError> {
-        // TODO(protoben) Can we use strum for this?
-        let discriminant = u8::deserialize_with_mode(&mut reader, compress, validate)?;
-        let res = match discriminant {
-            0 => MultilinearPolynomial::LargeScalars(DensePolynomial::deserialize_with_mode(
-                reader, compress, validate,
-            )?),
-            1 => MultilinearPolynomial::U8Scalars(CompactPolynomial::deserialize_with_mode(
-                reader, compress, validate,
-            )?),
-            2 => MultilinearPolynomial::U16Scalars(CompactPolynomial::deserialize_with_mode(
-                reader, compress, validate,
-            )?),
-            3 => MultilinearPolynomial::U32Scalars(CompactPolynomial::deserialize_with_mode(
-                reader, compress, validate,
-            )?),
-            4 => MultilinearPolynomial::U64Scalars(CompactPolynomial::deserialize_with_mode(
-                reader, compress, validate,
-            )?),
-            5 => MultilinearPolynomial::I64Scalars(CompactPolynomial::deserialize_with_mode(
-                reader, compress, validate,
-            )?),
-            _ => Err(SerializationError::InvalidData)?,
-        };
-        Ok(res)
-    }
-}
-
-impl<F: JoltField> Valid for MultilinearPolynomial<F> {
-    fn check(&self) -> Result<(), SerializationError> {
-        match self {
-            MultilinearPolynomial::LargeScalars(dense_polynomial) => dense_polynomial.check(),
-            MultilinearPolynomial::U8Scalars(compact_polynomial) => compact_polynomial.check(),
-            MultilinearPolynomial::U16Scalars(compact_polynomial) => compact_polynomial.check(),
-            MultilinearPolynomial::U32Scalars(compact_polynomial) => compact_polynomial.check(),
-            MultilinearPolynomial::U64Scalars(compact_polynomial) => compact_polynomial.check(),
-            MultilinearPolynomial::I64Scalars(compact_polynomial) => compact_polynomial.check(),
-            MultilinearPolynomial::RLC(_) => todo!(),
-            MultilinearPolynomial::OneHot(_) => todo!(),
-            MultilinearPolynomial::Inc(_) => todo!(),
-        }
-    }
-}
-
 pub trait PolynomialBinding<F: JoltField> {
     /// Returns whether or not the polynomial has been bound (in a sumcheck)
     fn is_bound(&self) -> bool;
@@ -717,9 +511,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.is_bound(),
             MultilinearPolynomial::U64Scalars(poly) => poly.is_bound(),
             MultilinearPolynomial::I64Scalars(poly) => poly.is_bound(),
-            MultilinearPolynomial::RLC(_) => todo!(),
-            MultilinearPolynomial::OneHot(_) => todo!(),
-            MultilinearPolynomial::Inc(_) => todo!(),
+            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
 
@@ -732,9 +524,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.bind(r, order),
             MultilinearPolynomial::U64Scalars(poly) => poly.bind(r, order),
             MultilinearPolynomial::I64Scalars(poly) => poly.bind(r, order),
-            MultilinearPolynomial::RLC(_) => todo!(),
-            MultilinearPolynomial::OneHot(_) => todo!(),
-            MultilinearPolynomial::Inc(_) => todo!(),
+            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
 
@@ -747,9 +537,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.bind_parallel(r, order),
             MultilinearPolynomial::U64Scalars(poly) => poly.bind_parallel(r, order),
             MultilinearPolynomial::I64Scalars(poly) => poly.bind_parallel(r, order),
-            MultilinearPolynomial::RLC(_) => todo!(),
-            MultilinearPolynomial::OneHot(_) => todo!(),
-            MultilinearPolynomial::Inc(_) => todo!(),
+            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
 
@@ -764,9 +552,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.final_sumcheck_claim(),
             MultilinearPolynomial::U64Scalars(poly) => poly.final_sumcheck_claim(),
             MultilinearPolynomial::I64Scalars(poly) => poly.final_sumcheck_claim(),
-            MultilinearPolynomial::RLC(_) => todo!(),
-            MultilinearPolynomial::OneHot(_) => todo!(),
-            MultilinearPolynomial::Inc(_) => todo!(),
+            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
 }
@@ -777,7 +563,9 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly.evaluate(r),
             MultilinearPolynomial::RLC(_) => {
-                // Not actually used
+                // TODO(moodlezoup): This case is only hit in the Dory opening proof,
+                // which doesn't actually do anything with this value. We should
+                // remove that call from Dory.
                 F::zero()
             }
             _ => {

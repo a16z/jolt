@@ -192,9 +192,7 @@ impl<F: JoltField> UniPoly<F> {
                 }
                 eval
             }
-            MultilinearPolynomial::RLC(_) => todo!(),
-            MultilinearPolynomial::OneHot(_) => todo!(),
-            MultilinearPolynomial::Inc(_) => todo!(),
+            _ => unimplemented!("Unsupported MultilinearPolynomial variant"),
         }
     }
 

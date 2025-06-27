@@ -374,10 +374,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
 {
     #[cfg(test)]
     fn sumcheck_sanity_check(&self, eq_poly: &SplitEqPolynomial<F>, round_claim: F) {
-        use crate::poly::multilinear_polynomial::BindingOrder;
-
         let (flags, fingerprints) = self.to_dense();
-        let merged_eq = eq_poly.merge(BindingOrder::LowToHigh);
+        let merged_eq = eq_poly.merge();
         let expected: F = flags
             .evals_ref()
             .iter()
@@ -837,10 +835,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
 
         #[cfg(test)]
         {
-            use crate::poly::multilinear_polynomial::BindingOrder;
-
             let (dense_flags, dense_fingerprints) = self.to_dense();
-            let eq_merged = eq_poly.merge(BindingOrder::LowToHigh);
+            let eq_merged = eq_poly.merge();
             let dense_cubic_evals = dense_flags
                 .evals()
                 .par_chunks(2)

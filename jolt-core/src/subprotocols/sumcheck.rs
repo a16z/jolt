@@ -62,7 +62,7 @@ where
             r.push(r_j);
             // bind polynomials to verifier's challenge
             self.bind(r_j);
-            eq_poly.bind(r_j, BindingOrder::LowToHigh);
+            eq_poly.bind(r_j);
 
             previous_claim = cubic_poly.evaluate(&r_j);
             cubic_polys.push(compressed_poly);
@@ -130,10 +130,8 @@ impl BatchedSumcheck {
             .map(|sumcheck| sumcheck.num_rounds())
             .max()
             .unwrap();
-        println!("max_num_rounds: {max_num_rounds}");
 
-        // let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
-        let batching_coeffs: Vec<F> = vec![F::one(); sumcheck_instances.len()];
+        let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
 
         // To see why we may need to scale by a power of two, consider a batch of
         // two sumchecks:
@@ -266,8 +264,7 @@ impl BatchedSumcheck {
             .max()
             .unwrap();
 
-        // let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
-        let batching_coeffs: Vec<F> = vec![F::one(); sumcheck_instances.len()];
+        let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
 
         // To see why we may need to scale by a power of two, consider a batch of
         // two sumchecks:
@@ -308,8 +305,7 @@ impl BatchedSumcheck {
             .sum();
 
         if output_claim != expected_output_claim {
-            println!("{} != {}", output_claim, expected_output_claim);
-            return Err(ProofVerifyError::InternalError);
+            return Err(ProofVerifyError::BatchedSumcheckError);
         }
 
         Ok(r_sumcheck)

@@ -1,7 +1,7 @@
 use std::borrow::Borrow;
 use std::marker::PhantomData;
 
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
 
 use crate::{
     field::JoltField,
@@ -19,9 +19,39 @@ pub struct MockCommitScheme<F: JoltField, ProofTranscript: Transcript> {
     _marker: PhantomData<(F, ProofTranscript)>,
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize, Default, Debug, PartialEq, Clone)]
+#[derive(Default, Debug, PartialEq, Clone)]
 pub struct MockCommitment<F: JoltField> {
     poly: MultilinearPolynomial<F>,
+}
+
+impl<F: JoltField> Valid for MockCommitment<F> {
+    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+        unimplemented!("satisfy trait bounds")
+    }
+}
+
+impl<F: JoltField> CanonicalSerialize for MockCommitment<F> {
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        _: W,
+        _: ark_serialize::Compress,
+    ) -> Result<(), ark_serialize::SerializationError> {
+        unimplemented!("satisfy trait bounds")
+    }
+
+    fn serialized_size(&self, _: ark_serialize::Compress) -> usize {
+        unimplemented!("satisfy trait bounds")
+    }
+}
+
+impl<F: JoltField> CanonicalDeserialize for MockCommitment<F> {
+    fn deserialize_with_mode<R: std::io::Read>(
+        _: R,
+        _: ark_serialize::Compress,
+        _: ark_serialize::Validate,
+    ) -> Result<Self, ark_serialize::SerializationError> {
+        unimplemented!("satisfy trait bounds")
+    }
 }
 
 impl<F: JoltField> AppendToTranscript for MockCommitment<F> {

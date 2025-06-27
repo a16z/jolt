@@ -221,31 +221,14 @@ where
         );
 
         let r_hamming_weight: Vec<_> = r_hamming_weight.iter().copied().rev().collect();
-        let r_concat = [r_hamming_weight.as_slice(), r_cycle.as_slice()].concat();
-        opening_accumulator.append(
-            &[&commitments.commitments[CommittedPolynomials::InstructionRa(0).to_index()]],
-            r_concat.clone(),
-            &[self.hamming_weight_proof.ra_claims[0]],
-            transcript,
-        );
-        opening_accumulator.append(
-            &[&commitments.commitments[CommittedPolynomials::InstructionRa(1).to_index()]],
-            r_concat.clone(),
-            &[self.hamming_weight_proof.ra_claims[1]],
-            transcript,
-        );
-        opening_accumulator.append(
-            &[&commitments.commitments[CommittedPolynomials::InstructionRa(2).to_index()]],
-            r_concat.clone(),
-            &[self.hamming_weight_proof.ra_claims[2]],
-            transcript,
-        );
-        opening_accumulator.append(
-            &[&commitments.commitments[CommittedPolynomials::InstructionRa(3).to_index()]],
-            r_concat,
-            &[self.hamming_weight_proof.ra_claims[3]],
-            transcript,
-        );
+        for i in 0..4 {
+            opening_accumulator.append(
+                &[&commitments.commitments[CommittedPolynomials::InstructionRa(i).to_index()]],
+                [r_hamming_weight.as_slice(), r_cycle.as_slice()].concat(),
+                &[self.hamming_weight_proof.ra_claims[i]],
+                transcript,
+            );
+        }
 
         Ok(())
     }

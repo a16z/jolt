@@ -5,7 +5,6 @@ use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::inc_polynomial::IncPolynomial;
 use crate::poly::one_hot_polynomial::OneHotPolynomial;
-use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_bn254::{Fr, G1Projective};
 use ark_ec::CurveGroup;
@@ -28,14 +27,9 @@ pub struct RLCPolynomial<F: JoltField> {
     num_variables_bound: usize,
 }
 
-static GLOBAL_K: OnceCell<usize> = OnceCell::new();
 static GLOBAL_T: OnceCell<usize> = OnceCell::new();
 static MAX_NUM_ROWS: OnceCell<usize> = OnceCell::new();
 static NUM_COLUMNS: OnceCell<usize> = OnceCell::new();
-
-pub fn get_max_num_vars() -> usize {
-    get_K().log_2() + get_T().log_2()
-}
 
 pub fn get_max_num_rows() -> usize {
     MAX_NUM_ROWS
@@ -55,10 +49,6 @@ pub fn get_T() -> usize {
     GLOBAL_T.get().cloned().expect("GLOBAL_T is uninitialized")
 }
 
-pub fn get_K() -> usize {
-    GLOBAL_K.get().cloned().expect("GLOBAL_K is uninitialized")
-}
-
 impl<F: JoltField> RLCPolynomial<F> {
     pub fn initialize(K: usize, T: usize) {
         let matrix_size = K as u128 * T as u128;
@@ -67,7 +57,6 @@ impl<F: JoltField> RLCPolynomial<F> {
         println!("# rows: {num_rows}");
         println!("# cols: {num_columns}");
 
-        let _ = GLOBAL_K.set(K);
         let _ = GLOBAL_T.set(T);
         let _ = MAX_NUM_ROWS.set(num_rows as usize);
         let _ = NUM_COLUMNS.set(num_columns as usize);

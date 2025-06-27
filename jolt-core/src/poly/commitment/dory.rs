@@ -808,28 +808,20 @@ where
         println!("num_columns: {num_columns}");
 
         match self {
-            MultilinearPolynomial::LargeScalars(poly) => {
-                // # Safety
-                // JoltFieldWrapper always has same memory layout as underlying F here.
-                let left_vec: &[F] = unsafe {
-                    std::slice::from_raw_parts(left_vec.as_ptr() as *const F, left_vec.len())
-                };
-
-                (0..num_columns)
-                    .into_par_iter()
-                    .map(|col_index| {
-                        JoltFieldWrapper(
-                            poly.Z
-                                .iter()
-                                .skip(col_index)
-                                .step_by(num_columns)
-                                .zip(left_vec.iter())
-                                .map(|(&a, &b)| -> F { a * b })
-                                .sum::<F>(),
-                        )
-                    })
-                    .collect()
-            }
+            MultilinearPolynomial::LargeScalars(poly) => (0..num_columns)
+                .into_par_iter()
+                .map(|col_index| {
+                    JoltFieldWrapper(
+                        poly.Z
+                            .iter()
+                            .skip(col_index)
+                            .step_by(num_columns)
+                            .zip(left_vec.iter())
+                            .map(|(&a, &b)| -> F { a * b.0 })
+                            .sum::<F>(),
+                    )
+                })
+                .collect(),
             MultilinearPolynomial::RLC(poly) => poly.vector_matrix_product(left_vec),
             _ => unimplemented!("Unexpected polynomial type"),
         }
@@ -963,7 +955,6 @@ where
         setup: &Self::ProverSetup,
     ) -> Self::Commitment {
         let sigma = get_num_columns().log_2();
-
         let commitment_val = commit::<JoltBn254, JoltMsmG1, _>(poly, 0, sigma, setup);
         DoryCommitment(commitment_val)
     }

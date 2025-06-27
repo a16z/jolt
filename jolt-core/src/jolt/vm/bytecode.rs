@@ -378,8 +378,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
             "Booleanity sumcheck failed"
         );
 
-        // TODO: Reduce 2 ra claims to 1 (Section 4.5.2 of Proofs, Arguments, and Zero-Knowledge)
-        // let r_address_prime = r_address_prime.iter().cloned().rev().collect::<Vec<_>>();
         let r_address_prime = r_address_prime.iter().copied().rev().collect::<Vec<_>>();
         let r_cycle_prime = r_cycle_prime.iter().rev().copied().collect::<Vec<_>>();
         let r_concat = [r_address_prime.as_slice(), r_cycle_prime.as_slice()].concat();

@@ -415,7 +415,7 @@ where
             MultilinearPolynomial::batch_evaluate(&[&g_polynomial], &r_sumcheck);
         opening_accumulator.append_dense(
             &[&g_polynomial],
-            EqPolynomial::from_evals(chis_r),
+            chis_r,
             r_sumcheck.clone(),
             &g_r_sumcheck,
             transcript,
@@ -444,7 +444,7 @@ where
             line_reduce::<PCS::Field, ProofTranscript>(&r_prime, &g_polynomial, transcript);
         opening_accumulator.append_dense(
             &[&g_polynomial],
-            EqPolynomial::from_evals(EqPolynomial::evals(&reduced_opening_point_g)),
+            EqPolynomial::evals(&reduced_opening_point_g),
             reduced_opening_point_g,
             &[reduced_opening_g],
             transcript,
