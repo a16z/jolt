@@ -496,20 +496,6 @@ pub trait PolynomialEvaluation<F: JoltField> {
     fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F>;
 }
 
-pub trait PrefixPolynomial<F: JoltField> {
-    type PrefixCheckpoints;
-    /// Computes P[i] polynomial
-    /// Assumes binding_order to be HighToLow
-    fn prefix_polynomial(&self, prefix_len: usize) -> MultilinearPolynomial<F>;
-    /// Updates checkpoints at the end of each phase. This would usually be the final value of the
-    /// bound PrefixPolynomial
-    fn update_checkpoints(&mut self, checkpoints: Self::PrefixCheckpoints);
-}
-
-pub trait SuffixPolynomial<F: JoltField> {
-    fn suffix_mle(&self, index: u64, suffix_len: usize) -> F;
-}
-
 impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
     fn is_bound(&self) -> bool {
         match self {

@@ -1,6 +1,10 @@
+use std::sync::{Arc, Mutex};
+
 use crate::field::JoltField;
-use crate::poly::multilinear_polynomial::{
-    MultilinearPolynomial, PrefixPolynomial, SuffixPolynomial,
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+use crate::poly::prefix_suffix::{
+    CachedMultilinearPolynomial, Prefix, PrefixCheckpoints, PrefixPolynomial, PrefixRegistry,
+    PrefixSuffixPolynomial, SuffixPolynomial,
 };
 use crate::utils::math::Math;
 use crate::utils::uninterleave_bits;
@@ -13,6 +17,7 @@ pub enum Endianness {
     Big,
 }
 
+#[derive(Clone, Debug)]
 pub struct IdentityPolynomial<F: JoltField> {
     num_vars: usize,
     num_bound_vars: usize,
@@ -107,22 +112,41 @@ impl<F: JoltField> PolynomialEvaluation<F> for IdentityPolynomial<F> {
     }
 }
 
-impl<F: JoltField> PrefixPolynomial<F> for IdentityPolynomial<F> {
-    type PrefixCheckpoints = F;
+impl<F: JoltField> PrefixSuffixPolynomial<F, 2> for IdentityPolynomial<F> {
+    fn suffixes(&self) -> [Box<dyn SuffixPolynomial<F> + Sync>; 2] {
+        [Box::new(ShiftSuffixPolynomial), Box::new(self.clone())]
+    }
 
-    fn prefix_polynomial(&self, prefix_len: usize) -> MultilinearPolynomial<F> {
+    fn prefixes(
+        &self,
+        prefix_len: usize,
+        registry: &mut PrefixRegistry<F>,
+    ) -> [Option<Arc<Mutex<CachedMultilinearPolynomial<F>>>>; 2] {
+        if registry[Prefix::Identity].is_none() {
+            registry[Prefix::Identity] = Some(Arc::new(Mutex::new(
+                self.prefix_polynomial(&registry.checkpoints, prefix_len),
+            )));
+        }
+        [registry[Prefix::Identity].clone(), None]
+    }
+}
+
+impl<F: JoltField> PrefixPolynomial<F> for IdentityPolynomial<F> {
+    fn prefix_polynomial(
+        &self,
+        checkpoints: &PrefixCheckpoints<F>,
+        prefix_len: usize,
+    ) -> CachedMultilinearPolynomial<F> {
         assert!(prefix_len % 2 == 0);
         assert_eq!(self.endianness, Endianness::Big);
-        let bound_value = self.bound_value.mul_u64(1 << prefix_len);
-        MultilinearPolynomial::from(
+        let bound_value = checkpoints[Prefix::Identity]
+            .unwrap_or(F::zero())
+            .mul_u64(1 << prefix_len);
+        CachedMultilinearPolynomial::new(MultilinearPolynomial::from(
             (0..prefix_len.pow2())
                 .map(|i| bound_value + F::from_u64(i as u64))
                 .collect::<Vec<F>>(),
-        )
-    }
-
-    fn update_checkpoints(&mut self, checkpoints: F) {
-        self.bound_value = checkpoints;
+        ))
     }
 }
 
@@ -144,6 +168,7 @@ impl<F: JoltField> SuffixPolynomial<F> for ShiftSuffixPolynomial {
 
 /// BatchedUninterleavePolynomial evaluates
 /// sum_{i=0}^{num_vars/2-1} (r[2i]  + z * r[2i + 1]) * 2^(num_vars/2 - 1 - i)
+#[derive(Clone)]
 pub struct BatchedUninterleavePolynomial<F: JoltField> {
     num_vars: usize,
     num_bound_vars: usize,
@@ -265,6 +290,25 @@ impl<F: JoltField> PolynomialEvaluation<F> for BatchedUninterleavePolynomial<F> 
     }
 }
 
+impl<F: JoltField> PrefixSuffixPolynomial<F, 2> for BatchedUninterleavePolynomial<F> {
+    fn suffixes(&self) -> [Box<dyn SuffixPolynomial<F> + Sync>; 2] {
+        [Box::new(ShiftHalfSuffixPolynomial), Box::new(self.clone())]
+    }
+
+    fn prefixes(
+        &self,
+        chunk_len: usize,
+        prefix_registry: &mut PrefixRegistry<F>,
+    ) -> [Option<Arc<Mutex<CachedMultilinearPolynomial<F>>>>; 2] {
+        if prefix_registry[Prefix::BatchedUninterleaved].is_none() {
+            prefix_registry[Prefix::BatchedUninterleaved] = Some(Arc::new(Mutex::new(
+                self.prefix_polynomial(&prefix_registry.checkpoints, chunk_len),
+            )));
+        }
+        [prefix_registry[Prefix::BatchedUninterleaved].clone(), None]
+    }
+}
+
 pub struct ShiftHalfSuffixPolynomial;
 impl<F: JoltField> SuffixPolynomial<F> for ShiftHalfSuffixPolynomial {
     fn suffix_mle(&self, _index: u64, suffix_len: usize) -> F {
@@ -283,13 +327,17 @@ impl<F: JoltField> SuffixPolynomial<F> for BatchedUninterleavePolynomial<F> {
 }
 
 impl<F: JoltField> PrefixPolynomial<F> for BatchedUninterleavePolynomial<F> {
-    type PrefixCheckpoints = F;
-
-    fn prefix_polynomial(&self, prefix_len: usize) -> MultilinearPolynomial<F> {
+    fn prefix_polynomial(
+        &self,
+        checkpoints: &PrefixCheckpoints<F>,
+        prefix_len: usize,
+    ) -> CachedMultilinearPolynomial<F> {
         assert!(prefix_len % 2 == 0);
         assert!(self.num_bound_vars % 2 == 0);
-        let bound_value = self.bound_value.mul_u64(1 << (prefix_len / 2));
-        MultilinearPolynomial::from(
+        let bound_value = checkpoints[Prefix::BatchedUninterleaved]
+            .unwrap_or(F::zero())
+            .mul_u64(1 << (prefix_len / 2));
+        CachedMultilinearPolynomial::new(MultilinearPolynomial::from(
             (0..prefix_len.pow2())
                 .map(|i| {
                     let (right, left) = uninterleave_bits(i as u64);
@@ -297,11 +345,7 @@ impl<F: JoltField> PrefixPolynomial<F> for BatchedUninterleavePolynomial<F> {
                     bound_value + comb
                 })
                 .collect::<Vec<F>>(),
-        )
-    }
-
-    fn update_checkpoints(&mut self, checkpoints: F) {
-        self.bound_value = checkpoints;
+        ))
     }
 }
 
@@ -482,9 +526,10 @@ mod tests {
         const PREFIX_LEN: usize = 2;
         const SUFFIX_LEN: usize = NUM_VARS - PREFIX_LEN;
 
+        let prefix_registry = PrefixRegistry::new();
         let identity_poly: IdentityPolynomial<Fr> =
             IdentityPolynomial::new_with_endianness(NUM_VARS, Endianness::Big);
-        let prefix_poly = identity_poly.prefix_polynomial(PREFIX_LEN);
+        let prefix_poly = identity_poly.prefix_polynomial(&prefix_registry.checkpoints, PREFIX_LEN);
         let shift_suffix = ShiftSuffixPolynomial;
 
         // Test over the entire boolean hypercube that:
@@ -593,8 +638,9 @@ mod tests {
 
         let mut rng = test_rng();
         let z = Fr::random(&mut rng);
+        let prefix_registry = PrefixRegistry::new();
         let batched_poly = BatchedUninterleavePolynomial::<Fr>::new(NUM_VARS, z);
-        let prefix_poly = batched_poly.prefix_polynomial(PREFIX_LEN);
+        let prefix_poly = batched_poly.prefix_polynomial(&prefix_registry.checkpoints, PREFIX_LEN);
         let shift_suffix = ShiftHalfSuffixPolynomial;
 
         // Test over the entire boolean hypercube that:
