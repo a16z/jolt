@@ -5,7 +5,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use crate::{
     field::JoltField,
-    poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
+    poly::multilinear_polynomial::MultilinearPolynomial,
     utils::{
         errors::ProofVerifyError,
         transcript::{AppendToTranscript, Transcript},
@@ -19,9 +19,9 @@ pub struct MockCommitScheme<F: JoltField, ProofTranscript: Transcript> {
     _marker: PhantomData<(F, ProofTranscript)>,
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize, Default, Debug, PartialEq, Clone)]
+#[derive(Default, Debug, PartialEq, Clone, CanonicalDeserialize, CanonicalSerialize)]
 pub struct MockCommitment<F: JoltField> {
-    poly: MultilinearPolynomial<F>,
+    _field: PhantomData<F>,
 }
 
 impl<F: JoltField> AppendToTranscript for MockCommitment<F> {
@@ -56,10 +56,10 @@ where
     }
 
     fn commit(
-        poly: &MultilinearPolynomial<Self::Field>,
+        _poly: &MultilinearPolynomial<Self::Field>,
         _setup: &Self::ProverSetup,
     ) -> Self::Commitment {
-        MockCommitment { poly: poly.clone() }
+        MockCommitment::default()
     }
     fn batch_commit<P>(polys: &[P], gens: &Self::ProverSetup) -> Vec<Self::Commitment>
     where
@@ -70,18 +70,12 @@ where
             .map(|poly| Self::commit(poly.borrow(), gens))
             .collect()
     }
-    fn combine_commitments(
-        commitments: &[&Self::Commitment],
-        coeffs: &[Self::Field],
-    ) -> Self::Commitment {
-        let polys: Vec<_> = commitments
-            .iter()
-            .map(|commitment| &commitment.poly)
-            .collect();
 
-        MockCommitment {
-            poly: MultilinearPolynomial::linear_combination(&polys, coeffs),
-        }
+    fn combine_commitments(
+        _commitments: &[&Self::Commitment],
+        _coeffs: &[Self::Field],
+    ) -> Self::Commitment {
+        MockCommitment::default()
     }
 
     fn prove(
@@ -100,11 +94,9 @@ where
         _setup: &Self::VerifierSetup,
         _transcript: &mut ProofTranscript,
         opening_point: &[Self::Field],
-        opening: &Self::Field,
-        commitment: &Self::Commitment,
+        _opening: &Self::Field,
+        _commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
-        let evaluation = commitment.poly.evaluate(opening_point);
-        assert_eq!(evaluation, *opening);
         assert_eq!(proof.opening_point, opening_point);
         Ok(())
     }

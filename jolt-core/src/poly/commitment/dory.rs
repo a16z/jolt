@@ -1,11 +1,11 @@
+#![allow(static_mut_refs)]
+
 use super::commitment_scheme::CommitmentScheme;
 use crate::{
     field::JoltField,
     msm::{Icicle, VariableBaseMSM},
-    poly::{
-        multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
-        sparse_matrix_polynomial::get_num_columns,
-    },
+    poly::compact_polynomial::SmallScalar,
+    poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     utils::{
         errors::ProofVerifyError,
         math::Math,
@@ -23,6 +23,7 @@ use ark_ec::{
 use ark_ff::{Field, One, PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{rand::RngCore, Zero};
+use once_cell::sync::OnceCell;
 use rayon::prelude::*;
 use std::{borrow::Borrow, marker::PhantomData};
 
@@ -35,6 +36,106 @@ use dory::{
     transcript::Transcript as DoryTranscript,
     verify, DoryProof, DoryProofBuilder, Polynomial as DoryPolynomial, ProverSetup, VerifierSetup,
 };
+
+/// The (padded) length of the execution trace currently being proven
+static mut GLOBAL_T: OnceCell<usize> = OnceCell::new();
+/// Dory works by viewing the coefficients of a polynomial as a matrix.
+/// In order to batch Dory opening proofs together for polynomials of
+/// different lengths, we fix one dimension of the matrix (the number of
+/// columns, i.e. the row length) and implicitly zero pad in the
+/// other dimension (i.e. the number of rows). This is the maximum number
+/// of rows across all committed polynomials, for the execution trace
+/// currently being proven.
+static mut MAX_NUM_ROWS: OnceCell<usize> = OnceCell::new();
+/// Dory works by viewing the coefficients of a polynomial as a matrix.
+/// In order to batch Dory opening proofs together for polynomials of
+/// different lengths, we fix one dimension of the matrix (the number of
+/// columns, i.e. the row length). This is the fixed dimension, the number
+/// of columns in the matrix.
+static mut NUM_COLUMNS: OnceCell<usize> = OnceCell::new();
+
+pub struct DoryGlobals();
+
+impl DoryGlobals {
+    /// Initializes the static variables (`GLOBAL_T`, `MAX_NUM_ROWS`, and
+    /// `NUM_COLUMNS`) used by Dory.
+    pub fn initialize(K: usize, T: usize) -> Self {
+        let matrix_size = K as u128 * T as u128;
+        let num_columns = matrix_size.isqrt().next_power_of_two();
+        let num_rows = matrix_size / num_columns;
+        println!("# rows: {num_rows}");
+        println!("# cols: {num_columns}");
+
+        unsafe {
+            GLOBAL_T.set(T).expect("GLOBAL_T is already initialized");
+            MAX_NUM_ROWS
+                .set(num_rows as usize)
+                .expect("MAX_NUM_ROWS is already initialized");
+            NUM_COLUMNS
+                .set(num_columns as usize)
+                .expect("NUM_COLUMNS is already initialized");
+        }
+
+        DoryGlobals()
+    }
+
+    /// Dory works by viewing the coefficients of a polynomial as a matrix.
+    /// In order to batch Dory opening proofs together for polynomials of
+    /// different lengths, we fix one dimension of the matrix (the number of
+    /// columns, i.e. the row length) and implicitly zero pad in the
+    /// other dimension (i.e. the number of rows). This is the maximum number
+    /// of rows across all committed polynomials, for the execution trace
+    /// currently being proven.
+    pub fn get_max_num_rows() -> usize {
+        unsafe {
+            MAX_NUM_ROWS
+                .get()
+                .cloned()
+                .expect("MAX_NUM_ROWS is uninitialized")
+        }
+    }
+
+    /// Dory works by viewing the coefficients of a polynomial as a matrix.
+    /// In order to batch Dory opening proofs together for polynomials of
+    /// different lengths, we fix one dimension of the matrix (the number of
+    /// columns, i.e. the row length). This is the fixed dimension, the number
+    /// of columns in the matrix.
+    pub fn get_num_columns() -> usize {
+        unsafe {
+            NUM_COLUMNS
+                .get()
+                .cloned()
+                .expect("NUM_COLUMNS is uninitialized")
+        }
+    }
+
+    /// The (padded) length of the execution trace currently being proven
+    pub fn get_T() -> usize {
+        unsafe { GLOBAL_T.get().cloned().expect("GLOBAL_T is uninitialized") }
+    }
+}
+
+/// Teardown for Dory global variables. In order to prevent contention between
+/// tests that may try to set the globals to different values, we:
+/// (a) use serial_test to run those tests serially
+/// (b) Use `OnceCell::take` to reset the globals when `DoryGlobals` is dropped.
+/// This ensures that the globals are uninitialized at the start of each test,
+/// regardless of whether a preceding test passed or failed.
+impl Drop for DoryGlobals {
+    fn drop(&mut self) {
+        unsafe {
+            GLOBAL_T
+                .take()
+                .expect("reset_globals: GLOBAL_T is uninitialized");
+            MAX_NUM_ROWS
+                .take()
+                .expect("reset_globals: MAX_NUM_ROWS is uninitialized");
+            NUM_COLUMNS
+                .take()
+                .expect("reset_globals: NUM_COLUMNS is uninitialized");
+        }
+    }
+}
 
 // NewType wrappers for Jolt + arkworks types to interop with Dory traits
 #[repr(transparent)]
@@ -732,7 +833,7 @@ where
             .par_iter()
             .map(|g| g.0.into_affine())
             .collect();
-        debug_assert_eq!(get_num_columns(), row_len);
+        debug_assert_eq!(DoryGlobals::get_num_columns(), row_len);
 
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly
@@ -789,8 +890,9 @@ where
                     )
                 })
                 .collect(),
-            MultilinearPolynomial::Sparse(_) => todo!(),
-            MultilinearPolynomial::OneHot(_) => todo!(),
+            MultilinearPolynomial::RLC(poly) => poly.commit_rows(&bases),
+            MultilinearPolynomial::OneHot(poly) => poly.commit_rows(&bases),
+            MultilinearPolynomial::Inc(poly) => poly.commit_rows(&bases),
         }
     }
 
@@ -801,12 +903,7 @@ where
         sigma: usize,
         nu: usize,
     ) -> Vec<JoltFieldWrapper<F>> {
-        // # Safety
-        // JoltFieldWrapper always has same memory layout as underlying F here.
-        let left_vec: &[F] =
-            unsafe { std::slice::from_raw_parts(left_vec.as_ptr() as *const F, left_vec.len()) };
-
-        let num_columns = get_num_columns();
+        let num_columns = DoryGlobals::get_num_columns();
         println!("sigma: {sigma}");
         println!("nu: {nu}");
         println!("num_columns: {num_columns}");
@@ -821,12 +918,83 @@ where
                             .skip(col_index)
                             .step_by(num_columns)
                             .zip(left_vec.iter())
-                            .map(|(&a, &b)| -> F { a * b })
+                            .map(|(&a, &b)| -> F { a * b.0 })
                             .sum::<F>(),
                     )
                 })
                 .collect(),
-            _ => todo!(),
+            MultilinearPolynomial::U8Scalars(poly) => (0..num_columns)
+                .into_par_iter()
+                .map(|col_index| {
+                    JoltFieldWrapper(
+                        poly.coeffs
+                            .iter()
+                            .skip(col_index)
+                            .step_by(num_columns)
+                            .zip(left_vec.iter())
+                            .map(|(&a, &b)| -> F { a.field_mul(b.0) })
+                            .sum::<F>(),
+                    )
+                })
+                .collect(),
+            MultilinearPolynomial::U16Scalars(poly) => (0..num_columns)
+                .into_par_iter()
+                .map(|col_index| {
+                    JoltFieldWrapper(
+                        poly.coeffs
+                            .iter()
+                            .skip(col_index)
+                            .step_by(num_columns)
+                            .zip(left_vec.iter())
+                            .map(|(&a, &b)| -> F { a.field_mul(b.0) })
+                            .sum::<F>(),
+                    )
+                })
+                .collect(),
+            MultilinearPolynomial::U32Scalars(poly) => (0..num_columns)
+                .into_par_iter()
+                .map(|col_index| {
+                    JoltFieldWrapper(
+                        poly.coeffs
+                            .iter()
+                            .skip(col_index)
+                            .step_by(num_columns)
+                            .zip(left_vec.iter())
+                            .map(|(&a, &b)| -> F { a.field_mul(b.0) })
+                            .sum::<F>(),
+                    )
+                })
+                .collect(),
+            MultilinearPolynomial::U64Scalars(poly) => (0..num_columns)
+                .into_par_iter()
+                .map(|col_index| {
+                    JoltFieldWrapper(
+                        poly.coeffs
+                            .iter()
+                            .skip(col_index)
+                            .step_by(num_columns)
+                            .zip(left_vec.iter())
+                            .map(|(&a, &b)| -> F { a.field_mul(b.0) })
+                            .sum::<F>(),
+                    )
+                })
+                .collect(),
+            MultilinearPolynomial::I64Scalars(poly) => (0..num_columns)
+                .into_par_iter()
+                .map(|col_index| {
+                    JoltFieldWrapper(
+                        poly.coeffs
+                            .iter()
+                            .skip(col_index)
+                            .step_by(num_columns)
+                            .zip(left_vec.iter())
+                            .map(|(&a, &b)| -> F { a.field_mul(b.0) })
+                            .sum::<F>(),
+                    )
+                })
+                .collect(),
+            MultilinearPolynomial::RLC(poly) => poly.vector_matrix_product(left_vec),
+            _ => unimplemented!("Unexpected polynomial type"),
         }
     }
 }
@@ -931,6 +1099,7 @@ where
     type Proof = DoryProofData;
     type BatchedProof = DoryBatchedProof;
 
+    #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::setup_prover")]
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
         let srs_file_name = format!("dory_srs_{max_num_vars}_variables.srs");
         let (prover_setup, _) = setup_with_srs_file::<JoltBn254, _>(
@@ -942,6 +1111,7 @@ where
         prover_setup
     }
 
+    #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::setup_verifier")]
     fn setup_verifier(prover_setup: &Self::ProverSetup) -> Self::VerifierSetup {
         prover_setup.to_verifier_setup()
     }
@@ -955,8 +1125,7 @@ where
         poly: &MultilinearPolynomial<Self::Field>,
         setup: &Self::ProverSetup,
     ) -> Self::Commitment {
-        let sigma = get_num_columns().log_2();
-
+        let sigma = DoryGlobals::get_num_columns().log_2();
         let commitment_val = commit::<JoltBn254, JoltMsmG1, _>(poly, 0, sigma, setup);
         DoryCommitment(commitment_val)
     }
@@ -983,7 +1152,7 @@ where
             .map(|&p| JoltFieldWrapper(p))
             .collect();
 
-        let sigma = get_num_columns().log_2();
+        let sigma = DoryGlobals::get_num_columns().log_2();
         let dory_transcript = JoltToDoryTranscriptRef::<Self::Field, _>::new(transcript);
 
         // dory evaluate returns the opening but in this case we don't use it, we pass directly the opening to verify()
@@ -1004,6 +1173,7 @@ where
         }
     }
 
+    #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::verify")]
     fn verify(
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
@@ -1080,6 +1250,7 @@ mod tests {
     use crate::utils::transcript::KeccakTranscript;
     use ark_std::rand::thread_rng;
     use ark_std::UniformRand;
+    use serial_test::serial;
     use std::time::Instant;
 
     fn test_commitment_scheme_with_poly(
@@ -1101,8 +1272,7 @@ mod tests {
             MultilinearPolynomial::U32Scalars(compact) => compact.coeffs.len(),
             MultilinearPolynomial::U64Scalars(compact) => compact.coeffs.len(),
             MultilinearPolynomial::I64Scalars(compact) => compact.coeffs.len(),
-            MultilinearPolynomial::Sparse(_) => todo!(),
-            MultilinearPolynomial::OneHot(_) => todo!(),
+            _ => todo!(),
         };
 
         println!(
@@ -1118,11 +1288,9 @@ mod tests {
 
         println!(" Commit time: {commit_time:?}");
 
-        let mut reversed_opening_point = opening_point.clone();
-        reversed_opening_point.reverse();
         let evaluation = <MultilinearPolynomial<Fr> as PolynomialEvaluation<Fr>>::evaluate(
             &poly,
-            &reversed_opening_point,
+            &opening_point,
         );
 
         let mut prove_transcript = KeccakTranscript::new(b"dory_test");
@@ -1163,12 +1331,14 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_dory_commitment_scheme_all_polynomial_types() {
         let max_num_vars = 18;
 
         let num_vars = 18;
 
         let num_coeffs = 1 << num_vars;
+        let _guard = DoryGlobals::initialize(1, num_coeffs);
 
         println!("Setting up Dory PCS with max_num_vars = {max_num_vars}");
         let setup_start = Instant::now();
@@ -1270,12 +1440,14 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_dory_soundness() {
         use ark_std::UniformRand;
 
         let num_vars = 10;
         let max_num_vars = 10;
         let num_coeffs = 1 << num_vars;
+        let _guard = DoryGlobals::initialize(1, num_coeffs);
 
         let mut rng = thread_rng();
         let coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
@@ -1293,8 +1465,11 @@ mod tests {
             KeccakTranscript::new(DoryCommitmentScheme::<KeccakTranscript>::protocol_name());
 
         // Compute the correct evaluation
-        let opening_point_dory: Vec<JoltFieldWrapper<Fr>> =
-            opening_point.iter().map(|&p| JoltFieldWrapper(p)).collect();
+        let opening_point_dory: Vec<JoltFieldWrapper<Fr>> = opening_point
+            .iter()
+            .rev()
+            .map(|&p| JoltFieldWrapper(p))
+            .collect();
         let correct_evaluation = <MultilinearPolynomial<Fr> as DoryPolynomial<
             JoltFieldWrapper<Fr>,
             JoltGroupWrapper<G1Projective>,
