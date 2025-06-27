@@ -150,7 +150,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         read_values_1: Vec<u64>,
         read_values_2: Vec<u64>,
         write_values: Vec<u64>,
-        write_increments: Vec<i64>,
+        write_increments: Vec<i128>,
         r: &[F],
         r_prime: &[F],
         transcript: &mut ProofTranscript,
@@ -237,7 +237,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                 let mut current_val = F::zero();
                 for j in 0..T {
                     if write_addresses[j] == k {
-                        inc_k[j] = F::from_i64(write_increments[j]);
+                        inc_k[j] = F::from_i128(write_increments[j]);
                     }
                 }
             });
@@ -247,11 +247,11 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let span = tracing::span!(tracing::Level::INFO, "compute deltas");
         let _guard = span.enter();
 
-        let deltas: Vec<Vec<i64>> = write_addresses[..T - chunk_size]
+        let deltas: Vec<Vec<i128>> = write_addresses[..T - chunk_size]
             .par_chunks_exact(chunk_size)
             .zip(write_increments[..T - chunk_size].par_chunks_exact(chunk_size))
             .map(|(address_chunk, increment_chunk)| {
-                let mut delta = vec![0i64; K];
+                let mut delta = vec![0; K];
                 for (k, increment) in address_chunk.iter().zip(increment_chunk.iter()) {
                     delta[*k] += increment;
                 }
@@ -266,11 +266,11 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let _guard = span.enter();
 
         // Value in register k before the jth cycle, for j \in {0, chunk_size, 2 * chunk_size, ...}
-        let mut checkpoints: Vec<Vec<i64>> = Vec::with_capacity(num_chunks);
+        let mut checkpoints: Vec<Vec<i128>> = Vec::with_capacity(num_chunks);
         checkpoints.push(vec![0; K]);
 
         for (chunk_index, delta) in deltas.into_iter().enumerate() {
-            let next_checkpoint: Vec<i64> = checkpoints[chunk_index]
+            let next_checkpoint: Vec<i128> = checkpoints[chunk_index]
                 .par_iter()
                 .zip(delta.into_par_iter())
                 .map(|(val_k, delta_k)| val_k + delta_k)
@@ -291,7 +291,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                 val_checkpoint
                     .iter_mut()
                     .zip(checkpoint.iter())
-                    .for_each(|(dest, src)| *dest = F::from_i64(*src))
+                    .for_each(|(dest, src)| *dest = F::from_i128(*src))
             });
 
         drop(_guard);
@@ -342,8 +342,8 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                             j,
                             *k,
                             F::zero(),
-                            F::from_i64(*increment),
-                            F::from_i64(*increment),
+                            F::from_i128(*increment),
+                            F::from_i128(*increment),
                         );
                         j += 1;
                         inc
@@ -1161,11 +1161,11 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let read_values_1: Vec<u64> = trace.par_iter().map(|cycle| cycle.rs1_read().1).collect();
         let read_values_2: Vec<u64> = trace.par_iter().map(|cycle| cycle.rs2_read().1).collect();
         let write_values: Vec<u64> = trace.par_iter().map(|cycle| cycle.rd_write().2).collect();
-        let write_increments: Vec<i64> = trace
+        let write_increments: Vec<i128> = trace
             .par_iter()
             .map(|cycle| {
                 let (_, prev, post) = cycle.rd_write();
-                let increment = post as i64 - prev as i64;
+                let increment = post as i128 - prev as i128;
                 increment
             })
             .collect();
@@ -1374,7 +1374,7 @@ mod tests {
         let mut read_values_1: Vec<u64> = Vec::with_capacity(T);
         let mut read_values_2: Vec<u64> = Vec::with_capacity(T);
         let mut write_values: Vec<u64> = Vec::with_capacity(T);
-        let mut write_increments: Vec<i64> = Vec::with_capacity(T);
+        let mut write_increments: Vec<i128> = Vec::with_capacity(T);
         for _ in 0..T {
             // Random read and write address
             let read_address_1 = rng.next_u64() as usize % K;
@@ -1392,7 +1392,7 @@ mod tests {
             let write_value = rng.next_u64();
             write_values.push(write_value);
             // The increment is the difference between the new value and the old value
-            let write_increment = (write_value as i64) - (register[write_address] as i64);
+            let write_increment = (write_value as i128) - (register[write_address] as i128);
             write_increments.push(write_increment);
             // Write the new value to ram
             register[write_address] = write_value;
