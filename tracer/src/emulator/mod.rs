@@ -92,17 +92,17 @@ impl Emulator {
     /// Runs program set by `setup_program()`. Calls `run_test()` if the program
     /// is [`riscv-tests`](https://github.com/riscv/riscv-tests).
     /// Otherwise calls `run_program()`.
-    pub fn run(&mut self) {
+    pub fn run(&mut self, trace: bool) {
         match self.is_test {
-            true => self.run_test(),
-            false => self.run_program(),
+            true => self.run_test(trace),
+            false => self.run_program(trace),
         };
     }
 
     /// Runs program set by `setup_program()`. The emulator won't stop forever.
-    pub fn run_program(&mut self) {
+    pub fn run_program(&mut self, trace: bool) {
         loop {
-            self.tick();
+            self.tick(trace);
         }
     }
 
@@ -111,7 +111,7 @@ impl Emulator {
     /// * Disassembles every instruction and dumps to terminal
     /// * The emulator stops when the test finishes
     /// * Displays the result message (pass/fail) to terminal
-    pub fn run_test(&mut self) {
+    pub fn run_test(&mut self, trace: bool) {
         // @TODO: Send this message to terminal?
         #[cfg(feature = "std")]
         println!("This elf file seems like a riscv-tests elf file. Running in test mode.");
@@ -119,7 +119,7 @@ impl Emulator {
             let disas = self.cpu.disassemble_next_instruction();
             println!("{disas}");
 
-            self.tick();
+            self.tick(trace);
 
             // Check if tohost has been written to
             let tohost_value = self.cpu.get_mut_mmu().load_doubleword_raw(self.tohost_addr);
@@ -149,8 +149,8 @@ impl Emulator {
     }
 
     /// Runs CPU one cycle
-    pub fn tick(&mut self) {
-        self.cpu.tick();
+    pub fn tick(&mut self, trace: bool) {
+        self.cpu.tick(trace);
     }
 
     /// Sets up program run by the program. This method analyzes the passed content
