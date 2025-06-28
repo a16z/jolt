@@ -15,9 +15,8 @@ declare_riscv_instr!(
 
 impl SRLIW {
     fn exec(&self, cpu: &mut Cpu, _: &mut <SRLIW as RISCVInstruction>::RAMAccess) {
-        let shamt = (cpu.x[self.operands.rs2] & 0x1f) as u32;
         cpu.x[self.operands.rd] =
-            cpu.sign_extend(((cpu.x[self.operands.rs1] as u32) >> shamt) as i32 as i64);
+            ((cpu.x[self.operands.rs1] as u32) >> self.operands.rs2) as i32 as i64;
     }
 }
 impl RISCVTrace for SRLIW {}
