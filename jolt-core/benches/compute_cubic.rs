@@ -4,7 +4,7 @@ use criterion::Criterion;
 use jolt_core::field::JoltField;
 use jolt_core::poly::dense_interleaved_poly::DenseInterleavedPolynomial;
 use jolt_core::poly::sparse_interleaved_poly::{SparseCoefficient, SparseInterleavedPolynomial};
-use jolt_core::poly::split_eq_poly::SplitEqPolynomial;
+use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
 use jolt_core::subprotocols::sumcheck::BatchedCubicSumcheck;
 use jolt_core::utils::math::Math;
 use jolt_core::utils::transcript::KeccakTranscript;
@@ -46,7 +46,7 @@ fn benchmark_dense_interleaved<F: JoltField>(c: &mut Criterion, num_vars: usize)
                     let r_eq: Vec<F> = std::iter::repeat_with(|| F::random(&mut rng))
                         .take(num_vars)
                         .collect();
-                    let eq_poly = SplitEqPolynomial::new(&r_eq);
+                    let eq_poly = GruenSplitEqPolynomial::new(&r_eq);
                     let claim = F::random(&mut rng);
                     (poly, eq_poly, claim)
                 },
@@ -84,7 +84,7 @@ fn benchmark_sparse_interleaved<F: JoltField>(
                     let r_eq: Vec<F> = std::iter::repeat_with(|| F::random(&mut rng))
                         .take((batch_size << num_vars).next_power_of_two().log_2())
                         .collect();
-                    let eq_poly = SplitEqPolynomial::new(&r_eq);
+                    let eq_poly = GruenSplitEqPolynomial::new(&r_eq);
                     let claim = F::random(&mut rng);
                     (poly, eq_poly, claim)
                 },
