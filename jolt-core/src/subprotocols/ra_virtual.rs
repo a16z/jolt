@@ -100,6 +100,16 @@ impl<F: JoltField, const D: usize> RASumcheck<F, D> {
             .try_into()
             .expect("Failed to convert Vec to array");
 
+        for j in 0..T {
+            println!(
+                "\\prod_i ra_i[{j}] = {}",
+                ra_i_polys
+                    .iter()
+                    .map(|ra_i| ra_i.get_coeff(j))
+                    .product::<F>()
+            );
+        }
+
         Self {
             ra_claim,
             prover_state: Some(RAProverState {
@@ -185,22 +195,9 @@ impl<F: JoltField, ProofTranscript: Transcript, const D: usize>
         }
     }
 
-    fn cache_openings(&mut self) {
-        debug_assert!(self.ra_i_claims.is_none());
-        let prover_state = self
-            .prover_state
-            .as_ref()
-            .expect("Prover state not initialized");
-
-        let mut openings = [F::zero(); D];
-        for i in 0..D {
-            openings[i] = prover_state.ra_i_polys[i].final_sumcheck_claim();
-        }
-
-        self.ra_i_claims = Some(openings);
-    }
-
     fn bind(&mut self, r_j: F, _: usize) {
+        println!("Binding to {r_j}");
+
         let prover_state = self
             .prover_state
             .as_mut()
@@ -218,6 +215,23 @@ impl<F: JoltField, ProofTranscript: Transcript, const D: usize>
         self.ra_claim.clone()
     }
 
+    fn cache_openings(&mut self) {
+        debug_assert!(self.ra_i_claims.is_none());
+        let prover_state = self
+            .prover_state
+            .as_ref()
+            .expect("Prover state not initialized");
+
+        let mut openings = [F::zero(); D];
+        for i in 0..D {
+            openings[i] = prover_state.ra_i_polys[i].final_sumcheck_claim();
+        }
+
+        println!("P eq_eval: {}", prover_state.eq_poly.final_sumcheck_claim());
+
+        self.ra_i_claims = Some(openings);
+    }
+
     fn expected_output_claim(&self, r: &[F]) -> F {
         let verifier_state = self
             .verifier_state
@@ -225,8 +239,10 @@ impl<F: JoltField, ProofTranscript: Transcript, const D: usize>
             .expect("Verifier state not initialized");
         let ra_i_claims = self.ra_i_claims.as_ref().expect("ra_i_claims not set");
 
-        // eq(r_cycle, r_cycle_bound)
-        let eq_eval = EqPolynomial::new(verifier_state.r_cycle.clone()).evaluate(r);
+        let r_rev: Vec<_> = r.iter().cloned().rev().collect();
+        let eq_eval = EqPolynomial::new(verifier_state.r_cycle.clone()).evaluate(&r_rev);
+
+        println!("V eq_eval (should be equal to P eq_eval): {eq_eval}");
 
         // Compute the product of all ra_i evaluations
         let mut product = F::one();
@@ -257,10 +273,6 @@ impl<F: JoltField, ProofTranscript: Transcript, const D: usize>
                 let mut evals = vec![F::zero(); degree];
 
                 for eval_point in 0..degree {
-                    if eval_point == 1 {
-                        continue;
-                    }
-
                     let mut result = eq_evals[eval_point];
 
                     for ra_i_poly in ra_i_polys.iter() {
@@ -300,9 +312,9 @@ mod tests {
     fn test_ra_sumcheck_with_correct_tensor_decomposition() {
         use rand::Rng;
         let mut rng = thread_rng();
-        const D: usize = 3;
+        const D: usize = 4;
         let T = 1;
-        let k = 8;
+        let k = 1 << 16;
 
         let one_hot_index = rng.gen::<usize>() % k;
 
@@ -325,7 +337,7 @@ mod tests {
         );
 
         let r_cycle: Vec<Fr> = (0..T.log_2()).map(|_| Fr::from(rng.gen::<u64>())).collect();
-        let r_address: Vec<Fr> = (0..D).map(|_| Fr::from(rng.gen::<u64>())).collect();
+        let r_address: Vec<Fr> = (0..k.log_2()).map(|_| Fr::from(rng.gen::<u64>())).collect();
 
         let mut eval_point = r_cycle.clone();
         eval_point.extend_from_slice(&r_address);
@@ -361,27 +373,37 @@ mod tests {
         use rand::Rng;
         let mut rng = thread_rng();
         const D: usize = 3;
-        let T = 2;
-        let k = 8;
+        let T = 1 << 10;
+        let k = 1 << 9;
 
-        let one_hot_index_0 = rng.gen::<usize>() % k;
-        let one_hot_index_1 = rng.gen::<usize>() % k;
-
+        let addresses: Vec<_> = (0..T).map(|_| rng.gen::<usize>() % k).collect();
         let mut ra_values = vec![Fr::zero(); k * T];
-        ra_values[one_hot_index_0] = Fr::one();
-        ra_values[k + one_hot_index_1] = Fr::one();
-        let ra_poly = MultilinearPolynomial::from(ra_values);
+        ra_values
+            .chunks_mut(k)
+            .zip(addresses.iter())
+            .for_each(|(ra_chunk, k)| ra_chunk[*k] = Fr::one());
 
-        let addresses = vec![one_hot_index_0, one_hot_index_1];
-
-        println!("One-hot indices: {}, {}", one_hot_index_0, one_hot_index_1);
+        let mut ra_poly = MultilinearPolynomial::from(ra_values);
 
         let r_cycle: Vec<Fr> = (0..T.log_2()).map(|_| Fr::from(rng.gen::<u64>())).collect();
-        let r_address: Vec<Fr> = (0..k.log_2()).map(|_| Fr::from(rng.gen::<u64>())).collect();
+        let mut r_address: Vec<Fr> = (0..k.log_2()).map(|_| Fr::from(rng.gen::<u64>())).collect();
 
         let mut eval_point = r_cycle.clone();
         eval_point.extend_from_slice(&r_address);
         let ra_claim = ra_poly.evaluate(&eval_point);
+
+        for r in r_address.iter().rev() {
+            ra_poly.bind_parallel(*r, BindingOrder::LowToHigh);
+        }
+
+        for j in 0..T {
+            println!("ra[{j}] = {}", ra_poly.get_bound_coeff(j));
+        }
+
+        for r in r_cycle.iter().rev() {
+            ra_poly.bind_parallel(*r, BindingOrder::LowToHigh);
+        }
+        assert_eq!(ra_poly.final_sumcheck_claim(), ra_claim);
 
         let prover_sumcheck =
             RASumcheck::<Fr, D>::new(ra_claim, addresses, r_cycle.clone(), r_address.clone(), T);
@@ -390,6 +412,7 @@ mod tests {
         let (proof, r_cycle_bound) = prover_sumcheck.prove(&mut prover_transcript);
 
         let mut verifier_transcript = KeccakTranscript::new(b"test_t_equals_2");
+        verifier_transcript.compare_to(prover_transcript);
 
         let verify_result = RASumcheck::<Fr, D>::verify(
             ra_claim,
