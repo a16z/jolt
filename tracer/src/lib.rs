@@ -42,7 +42,7 @@ pub fn trace(
     let mut prev_pc = 0;
     loop {
         let pc = emulator.get_cpu().read_pc();
-        emulator.tick();
+        emulator.tick(true);
 
         // This is a trick to see if the program has terminated by throwing itself
         // into an infinite loop. It seems to be a good heuristic for now but we

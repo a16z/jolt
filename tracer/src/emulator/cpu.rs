@@ -311,9 +311,9 @@ impl Cpu {
     }
 
     /// Runs program one cycle. Fetch, decode, and execution are completed in a cycle so far.
-    pub fn tick(&mut self) {
+    pub fn tick(&mut self, trace: bool) {
         let instruction_address = self.pc;
-        match self.tick_operate() {
+        match self.tick_operate(trace) {
             Ok(()) => {}
             Err(e) => self.handle_exception(e, instruction_address),
         }
@@ -328,7 +328,7 @@ impl Cpu {
     }
 
     // @TODO: Rename?
-    fn tick_operate(&mut self) -> Result<(), Trap> {
+    fn tick_operate(&mut self, trace: bool) -> Result<(), Trap> {
         if self.wfi {
             if (self.read_csr_raw(CSR_MIE_ADDRESS) & self.read_csr_raw(CSR_MIP_ADDRESS)) != 0 {
                 self.wfi = false;
@@ -352,7 +352,11 @@ impl Cpu {
         let instr = RV32IMInstruction::decode(word, instruction_address)
             .ok()
             .unwrap();
-        instr.trace(self);
+        if trace {
+            instr.trace(self);
+        } else {
+            instr.execute(self);
+        }
 
         // check if current instruction is real or not for cycle profiling
         if instr.is_real() {
@@ -872,8 +876,8 @@ impl Cpu {
     // @TODO: Rename to better name?
     pub(crate) fn most_negative(&self) -> i64 {
         match self.xlen {
-            Xlen::Bit32 => core::i32::MIN as i64,
-            Xlen::Bit64 => core::i64::MIN,
+            Xlen::Bit32 => i32::MIN as i64,
+            Xlen::Bit64 => i64::MIN,
         }
     }
 
@@ -889,10 +893,10 @@ impl Cpu {
                     // addi rd+8, x2, nzuimm
                     let rd = (halfword >> 2) & 0x7; // [4:2]
                     let nzuimm = ((halfword >> 7) & 0x30) | // nzuimm[5:4] <= [12:11]
-						((halfword >> 1) & 0x3c0) | // nzuimm{9:6] <= [10:7]
-						((halfword >> 4) & 0x4) | // nzuimm[2] <= [6]
-						((halfword >> 2) & 0x8); // nzuimm[3] <= [5]
-                               // nzuimm == 0 is reserved instruction
+                        ((halfword >> 1) & 0x3c0) | // nzuimm{9:6] <= [10:7]
+                        ((halfword >> 4) & 0x4) | // nzuimm[2] <= [6]
+                        ((halfword >> 2) & 0x8); // nzuimm[3] <= [5]
+                                                 // nzuimm == 0 is reserved instruction
                     if nzuimm != 0 {
                         return (nzuimm << 20) | (2 << 15) | ((rd + 8) << 7) | 0x13;
                     }
@@ -904,7 +908,7 @@ impl Cpu {
                     let rd = (halfword >> 2) & 0x7; // [4:2]
                     let rs1 = (halfword >> 7) & 0x7; // [9:7]
                     let offset = ((halfword >> 7) & 0x38) | // offset[5:3] <= [12:10]
-						((halfword << 1) & 0xc0); // offset[7:6] <= [6:5]
+                        ((halfword << 1) & 0xc0); // offset[7:6] <= [6:5]
                     return (offset << 20) | ((rs1 + 8) << 15) | (3 << 12) | ((rd + 8) << 7) | 0x7;
                 }
                 2 => {
@@ -913,8 +917,8 @@ impl Cpu {
                     let rs1 = (halfword >> 7) & 0x7; // [9:7]
                     let rd = (halfword >> 2) & 0x7; // [4:2]
                     let offset = ((halfword >> 7) & 0x38) | // offset[5:3] <= [12:10]
-						((halfword >> 4) & 0x4) | // offset[2] <= [6]
-						((halfword << 1) & 0x40); // offset[6] <= [5]
+                        ((halfword >> 4) & 0x4) | // offset[2] <= [6]
+                        ((halfword << 1) & 0x40); // offset[6] <= [5]
                     return (offset << 20) | ((rs1 + 8) << 15) | (2 << 12) | ((rd + 8) << 7) | 0x3;
                 }
                 3 => {
@@ -924,7 +928,7 @@ impl Cpu {
                     let rs1 = (halfword >> 7) & 0x7; // [9:7]
                     let rd = (halfword >> 2) & 0x7; // [4:2]
                     let offset = ((halfword >> 7) & 0x38) | // offset[5:3] <= [12:10]
-						((halfword << 1) & 0xc0); // offset[7:6] <= [6:5]
+                        ((halfword << 1) & 0xc0); // offset[7:6] <= [6:5]
                     return (offset << 20) | ((rs1 + 8) << 15) | (3 << 12) | ((rd + 8) << 7) | 0x3;
                 }
                 4 => {
@@ -936,7 +940,7 @@ impl Cpu {
                     let rs1 = (halfword >> 7) & 0x7; // [9:7]
                     let rs2 = (halfword >> 2) & 0x7; // [4:2]
                     let offset = ((halfword >> 7) & 0x38) | // uimm[5:3] <= [12:10]
-						((halfword << 1) & 0xc0); // uimm[7:6] <= [6:5]
+                        ((halfword << 1) & 0xc0); // uimm[7:6] <= [6:5]
                     let imm11_5 = (offset >> 5) & 0x7f;
                     let imm4_0 = offset & 0x1f;
                     return (imm11_5 << 25)
@@ -952,8 +956,8 @@ impl Cpu {
                     let rs1 = (halfword >> 7) & 0x7; // [9:7]
                     let rs2 = (halfword >> 2) & 0x7; // [4:2]
                     let offset = ((halfword >> 7) & 0x38) | // offset[5:3] <= [12:10]
-						((halfword << 1) & 0x40) | // offset[6] <= [5]
-						((halfword >> 4) & 0x4); // offset[2] <= [6]
+                        ((halfword << 1) & 0x40) | // offset[6] <= [5]
+                        ((halfword >> 4) & 0x4); // offset[2] <= [6]
                     let imm11_5 = (offset >> 5) & 0x7f;
                     let imm4_0 = offset & 0x1f;
                     return (imm11_5 << 25)
@@ -970,7 +974,7 @@ impl Cpu {
                     let rs1 = (halfword >> 7) & 0x7; // [9:7]
                     let rs2 = (halfword >> 2) & 0x7; // [4:2]
                     let offset = ((halfword >> 7) & 0x38) | // uimm[5:3] <= [12:10]
-						((halfword << 1) & 0xc0); // uimm[7:6] <= [6:5]
+                        ((halfword << 1) & 0xc0); // uimm[7:6] <= [6:5]
                     let imm11_5 = (offset >> 5) & 0x7f;
                     let imm4_0 = offset & 0x1f;
                     return (imm11_5 << 25)
@@ -985,56 +989,93 @@ impl Cpu {
             1 => {
                 match funct3 {
                     0 => {
+                        // C.ADDI
                         let r = (halfword >> 7) & 0x1f; // [11:7]
                         let imm = match halfword & 0x1000 {
-							0x1000 => 0xffffffc0,
-							_ => 0
-						} | // imm[31:6] <= [12]
-						((halfword >> 7) & 0x20) | // imm[5] <= [12]
-						((halfword >> 2) & 0x1f); // imm[4:0] <= [6:2]
-                        if r == 0 && imm == 0 {
-                            // C.NOP
-                            // addi x0, x0, 0
-                            return 0x13;
-                        } else if r != 0 {
-                            // C.ADDI
-                            // addi r, r, imm
-                            return (imm << 20) | (r << 15) | (r << 7) | 0x13;
+                            0x1000 => 0xffffffc0,
+                            _ => 0
+                        } | // imm[31:6] <= [12]
+                        ((halfword >> 7) & 0x20) | // imm[5] <= [12]
+                        ((halfword >> 2) & 0x1f); // imm[4:0] <= [6:2]
+
+                        match (r, imm) {
+                            (0, 0) => {
+                                // NOP
+                                return 0x13;
+                            }
+                            (0, _) => {
+                                // HINT
+                                return 0x13;
+                            }
+                            (_, 0) => {
+                                // HINT
+                                return 0x13;
+                            }
+                            (_, _) => {
+                                return (imm << 20) | (r << 15) | (r << 7) | 0x13;
+                            }
                         }
-                        // @TODO: Support HINTs
-                        // r == 0 and imm != 0 is HINTs
                     }
                     1 => {
-                        // @TODO: Support C.JAL in 32-bit mode
-                        // C.ADDIW
-                        // addiw r, r, imm
-                        let r = (halfword >> 7) & 0x1f;
-                        let imm = match halfword & 0x1000 {
-							0x1000 => 0xffffffc0,
-							_ => 0
-						} | // imm[31:6] <= [12]
-						((halfword >> 7) & 0x20) | // imm[5] <= [12]
-						((halfword >> 2) & 0x1f); // imm[4:0] <= [6:2]
-                        if r != 0 {
-                            return (imm << 20) | (r << 15) | (r << 7) | 0x1b;
+                        match self.xlen {
+                            Xlen::Bit32 => {
+                                // C.JAL (RV32C only)
+                                // jal x1, offset
+                                let offset = match halfword & 0x1000 {
+                                    0x1000 => 0xfffff000,
+                                    _ => 0
+                                } | // offset[31:12] <= [12]
+                                ((halfword >> 1) & 0x800) | // offset[11] <= [12]
+                                ((halfword >> 7) & 0x10) | // offset[4] <= [11]
+                                ((halfword >> 1) & 0x300) | // offset[9:8] <= [10:9]
+                                ((halfword << 2) & 0x400) | // offset[10] <= [8]
+                                ((halfword >> 1) & 0x40) | // offset[6] <= [7]
+                                ((halfword << 1) & 0x80) | // offset[7] <= [6]
+                                ((halfword >> 2) & 0xe) | // offset[3:1] <= [5:3]
+                                ((halfword << 3) & 0x20); // offset[5] <= [2]
+                                let imm = ((offset >> 1) & 0x80000) | // imm[19] <= offset[20]
+                                    ((offset << 8) & 0x7fe00) | // imm[18:9] <= offset[10:1]
+                                    ((offset >> 3) & 0x100) | // imm[8] <= offset[11]
+                                    ((offset >> 12) & 0xff); // imm[7:0] <= offset[19:12]
+                                return (imm << 12) | (1 << 7) | 0x6f;
+                            }
+                            Xlen::Bit64 => {
+                                // C.ADDIW (RV64C only)
+                                let r = (halfword >> 7) & 0x1f;
+                                let imm = match halfword & 0x1000 {
+                            0x1000 => 0xffffffc0,
+                            _ => 0
+                        } | // imm[31:6] <= [12]
+                        ((halfword >> 7) & 0x20) | // imm[5] <= [12]
+                        ((halfword >> 2) & 0x1f); // imm[4:0] <= [6:2]
+                                if r == 0 {
+                                    // Reserved
+                                } else if imm == 0 {
+                                    // sext.w rd
+                                    return (r << 15) | (r << 7) | 0x1b;
+                                } else {
+                                    // addiw r, r, imm
+                                    return (imm << 20) | (r << 15) | (r << 7) | 0x1b;
+                                }
+                            }
                         }
-                        // r == 0 is reserved instruction
                     }
                     2 => {
                         // C.LI
-                        // addi rd, x0, imm
                         let r = (halfword >> 7) & 0x1f;
                         let imm = match halfword & 0x1000 {
-							0x1000 => 0xffffffc0,
-							_ => 0
-						} | // imm[31:6] <= [12]
-						((halfword >> 7) & 0x20) | // imm[5] <= [12]
-						((halfword >> 2) & 0x1f); // imm[4:0] <= [6:2]
+                            0x1000 => 0xffffffc0,
+                            _ => 0
+                        } | // imm[31:6] <= [12]
+                        ((halfword >> 7) & 0x20) | // imm[5] <= [12]
+                        ((halfword >> 2) & 0x1f); // imm[4:0] <= [6:2]
                         if r != 0 {
+                            // addi rd, x0, imm
                             return (imm << 20) | (r << 7) | 0x13;
+                        } else {
+                            // HINT
+                            return 0x13;
                         }
-                        // @TODO: Support HINTs
-                        // r == 0 is for HINTs
                     }
                     3 => {
                         let r = (halfword >> 7) & 0x1f; // [11:7]
@@ -1042,14 +1083,14 @@ impl Cpu {
                             // C.ADDI16SP
                             // addi r, r, nzimm
                             let imm = match halfword & 0x1000 {
-								0x1000 => 0xfffffc00,
-								_ => 0
-							} | // imm[31:10] <= [12]
-							((halfword >> 3) & 0x200) | // imm[9] <= [12]
-							((halfword >> 2) & 0x10) | // imm[4] <= [6]
-							((halfword << 1) & 0x40) | // imm[6] <= [5]
-							((halfword << 4) & 0x180) | // imm[8:7] <= [4:3]
-							((halfword << 3) & 0x20); // imm[5] <= [2]
+                                0x1000 => 0xfffffc00,
+                                _ => 0
+                            } | // imm[31:10] <= [12]
+                            ((halfword >> 3) & 0x200) | // imm[9] <= [12]
+                            ((halfword >> 2) & 0x10) | // imm[4] <= [6]
+                            ((halfword << 1) & 0x40) | // imm[6] <= [5]
+                            ((halfword << 4) & 0x180) | // imm[8:7] <= [4:3]
+                            ((halfword << 3) & 0x20); // imm[5] <= [2]
                             if imm != 0 {
                                 return (imm << 20) | (r << 15) | (r << 7) | 0x13;
                             }
@@ -1059,15 +1100,19 @@ impl Cpu {
                             // C.LUI
                             // lui r, nzimm
                             let nzimm = match halfword & 0x1000 {
-								0x1000 => 0xfffc0000,
-								_ => 0
-							} | // nzimm[31:18] <= [12]
-							((halfword << 5) & 0x20000) | // nzimm[17] <= [12]
-							((halfword << 10) & 0x1f000); // nzimm[16:12] <= [6:2]
+                                0x1000 => 0xfffc0000,
+                                _ => 0
+                            } | // nzimm[31:18] <= [12]
+                            ((halfword << 5) & 0x20000) | // nzimm[17] <= [12]
+                            ((halfword << 10) & 0x1f000); // nzimm[16:12] <= [6:2]
                             if nzimm != 0 {
                                 return nzimm | (r << 7) | 0x37;
                             }
                             // nzimm == 0 is for reserved instruction
+                        }
+                        if r == 0 {
+                            // NOP
+                            return 0x13;
                         }
                     }
                     4 => {
@@ -1077,7 +1122,7 @@ impl Cpu {
                                 // C.SRLI
                                 // c.srli rs1+8, rs1+8, shamt
                                 let shamt = ((halfword >> 7) & 0x20) | // shamt[5] <= [12]
-									((halfword >> 2) & 0x1f); // shamt[4:0] <= [6:2]
+                                    ((halfword >> 2) & 0x1f); // shamt[4:0] <= [6:2]
                                 let rs1 = (halfword >> 7) & 0x7; // [9:7]
                                 return (shamt << 20)
                                     | ((rs1 + 8) << 15)
@@ -1089,7 +1134,7 @@ impl Cpu {
                                 // C.SRAI
                                 // srai rs1+8, rs1+8, shamt
                                 let shamt = ((halfword >> 7) & 0x20) | // shamt[5] <= [12]
-									((halfword >> 2) & 0x1f); // shamt[4:0] <= [6:2]
+                                    ((halfword >> 2) & 0x1f); // shamt[4:0] <= [6:2]
                                 let rs1 = (halfword >> 7) & 0x7; // [9:7]
                                 return (0x20 << 25)
                                     | (shamt << 20)
@@ -1103,11 +1148,11 @@ impl Cpu {
                                 // andi, r+8, r+8, imm
                                 let r = (halfword >> 7) & 0x7; // [9:7]
                                 let imm = match halfword & 0x1000 {
-									0x1000 => 0xffffffc0,
-									_ => 0
-								} | // imm[31:6] <= [12]
-								((halfword >> 7) & 0x20) | // imm[5] <= [12]
-								((halfword >> 2) & 0x1f); // imm[4:0] <= [6:2]
+                                    0x1000 => 0xffffffc0,
+                                    _ => 0
+                                } | // imm[31:6] <= [12]
+                                ((halfword >> 7) & 0x20) | // imm[5] <= [12]
+                                ((halfword >> 2) & 0x1f); // imm[4:0] <= [6:2]
                                 return (imm << 20)
                                     | ((r + 8) << 15)
                                     | (7 << 12)
@@ -1195,21 +1240,21 @@ impl Cpu {
                         // C.J
                         // jal x0, imm
                         let offset = match halfword & 0x1000 {
-								0x1000 => 0xfffff000,
-								_ => 0
-							} | // offset[31:12] <= [12]
-							((halfword >> 1) & 0x800) | // offset[11] <= [12]
-							((halfword >> 7) & 0x10) | // offset[4] <= [11]
-							((halfword >> 1) & 0x300) | // offset[9:8] <= [10:9]
-							((halfword << 2) & 0x400) | // offset[10] <= [8]
-							((halfword >> 1) & 0x40) | // offset[6] <= [7]
-							((halfword << 1) & 0x80) | // offset[7] <= [6]
-							((halfword >> 2) & 0xe) | // offset[3:1] <= [5:3]
-							((halfword << 3) & 0x20); // offset[5] <= [2]
+                                0x1000 => 0xfffff000,
+                                _ => 0
+                            } | // offset[31:12] <= [12]
+                            ((halfword >> 1) & 0x800) | // offset[11] <= [12]
+                            ((halfword >> 7) & 0x10) | // offset[4] <= [11]
+                            ((halfword >> 1) & 0x300) | // offset[9:8] <= [10:9]
+                            ((halfword << 2) & 0x400) | // offset[10] <= [8]
+                            ((halfword >> 1) & 0x40) | // offset[6] <= [7]
+                            ((halfword << 1) & 0x80) | // offset[7] <= [6]
+                            ((halfword >> 2) & 0xe) | // offset[3:1] <= [5:3]
+                            ((halfword << 3) & 0x20); // offset[5] <= [2]
                         let imm = ((offset >> 1) & 0x80000) | // imm[19] <= offset[20]
-							((offset << 8) & 0x7fe00) | // imm[18:9] <= offset[10:1]
-							((offset >> 3) & 0x100) | // imm[8] <= offset[11]
-							((offset >> 12) & 0xff); // imm[7:0] <= offset[19:12]
+                            ((offset << 8) & 0x7fe00) | // imm[18:9] <= offset[10:1]
+                            ((offset >> 3) & 0x100) | // imm[8] <= offset[11]
+                            ((offset >> 12) & 0xff); // imm[7:0] <= offset[19:12]
                         return (imm << 12) | 0x6f;
                     }
                     6 => {
@@ -1217,18 +1262,18 @@ impl Cpu {
                         // beq r+8, x0, offset
                         let r = (halfword >> 7) & 0x7;
                         let offset = match halfword & 0x1000 {
-								0x1000 => 0xfffffe00,
-								_ => 0
-							} | // offset[31:9] <= [12]
-							((halfword >> 4) & 0x100) | // offset[8] <= [12]
-							((halfword >> 7) & 0x18) | // offset[4:3] <= [11:10]
-							((halfword << 1) & 0xc0) | // offset[7:6] <= [6:5]
-							((halfword >> 2) & 0x6) | // offset[2:1] <= [4:3]
-							((halfword << 3) & 0x20); // offset[5] <= [2]
+                                0x1000 => 0xfffffe00,
+                                _ => 0
+                            } | // offset[31:9] <= [12]
+                            ((halfword >> 4) & 0x100) | // offset[8] <= [12]
+                            ((halfword >> 7) & 0x18) | // offset[4:3] <= [11:10]
+                            ((halfword << 1) & 0xc0) | // offset[7:6] <= [6:5]
+                            ((halfword >> 2) & 0x6) | // offset[2:1] <= [4:3]
+                            ((halfword << 3) & 0x20); // offset[5] <= [2]
                         let imm2 = ((offset >> 6) & 0x40) | // imm2[6] <= [12]
-							((offset >> 5) & 0x3f); // imm2[5:0] <= [10:5]
+                            ((offset >> 5) & 0x3f); // imm2[5:0] <= [10:5]
                         let imm1 = (offset & 0x1e) | // imm1[4:1] <= [4:1]
-							((offset >> 11) & 0x1); // imm1[0] <= [11]
+                            ((offset >> 11) & 0x1); // imm1[0] <= [11]
                         return (imm2 << 25) | ((r + 8) << 20) | (imm1 << 7) | 0x63;
                     }
                     7 => {
@@ -1236,18 +1281,18 @@ impl Cpu {
                         // bne r+8, x0, offset
                         let r = (halfword >> 7) & 0x7;
                         let offset = match halfword & 0x1000 {
-								0x1000 => 0xfffffe00,
-								_ => 0
-							} | // offset[31:9] <= [12]
-							((halfword >> 4) & 0x100) | // offset[8] <= [12]
-							((halfword >> 7) & 0x18) | // offset[4:3] <= [11:10]
-							((halfword << 1) & 0xc0) | // offset[7:6] <= [6:5]
-							((halfword >> 2) & 0x6) | // offset[2:1] <= [4:3]
-							((halfword << 3) & 0x20); // offset[5] <= [2]
+                                0x1000 => 0xfffffe00,
+                                _ => 0
+                            } | // offset[31:9] <= [12]
+                            ((halfword >> 4) & 0x100) | // offset[8] <= [12]
+                            ((halfword >> 7) & 0x18) | // offset[4:3] <= [11:10]
+                            ((halfword << 1) & 0xc0) | // offset[7:6] <= [6:5]
+                            ((halfword >> 2) & 0x6) | // offset[2:1] <= [4:3]
+                            ((halfword << 3) & 0x20); // offset[5] <= [2]
                         let imm2 = ((offset >> 6) & 0x40) | // imm2[6] <= [12]
-							((offset >> 5) & 0x3f); // imm2[5:0] <= [10:5]
+                            ((offset >> 5) & 0x3f); // imm2[5:0] <= [10:5]
                         let imm1 = (offset & 0x1e) | // imm1[4:1] <= [4:1]
-							((offset >> 11) & 0x1); // imm1[0] <= [11]
+                            ((offset >> 11) & 0x1); // imm1[0] <= [11]
                         return (imm2 << 25) | ((r + 8) << 20) | (1 << 12) | (imm1 << 7) | 0x63;
                     }
                     _ => {} // No happens
@@ -1260,7 +1305,7 @@ impl Cpu {
                         // slli r, r, shamt
                         let r = (halfword >> 7) & 0x1f;
                         let shamt = ((halfword >> 7) & 0x20) | // imm[5] <= [12]
-							((halfword >> 2) & 0x1f); // imm[4:0] <= [6:2]
+                            ((halfword >> 2) & 0x1f); // imm[4:0] <= [6:2]
                         if r != 0 {
                             return (shamt << 20) | (r << 15) | (1 << 12) | (r << 7) | 0x13;
                         }
@@ -1271,8 +1316,8 @@ impl Cpu {
                         // fld rd, offset(x2)
                         let rd = (halfword >> 7) & 0x1f;
                         let offset = ((halfword >> 7) & 0x20) | // offset[5] <= [12]
-							((halfword >> 2) & 0x18) | // offset[4:3] <= [6:5]
-							((halfword << 4) & 0x1c0); // offset[8:6] <= [4:2]
+                            ((halfword >> 2) & 0x18) | // offset[4:3] <= [6:5]
+                            ((halfword << 4) & 0x1c0); // offset[8:6] <= [4:2]
                         if rd != 0 {
                             return (offset << 20) | (2 << 15) | (3 << 12) | (rd << 7) | 0x7;
                         }
@@ -1283,8 +1328,8 @@ impl Cpu {
                         // lw r, offset(x2)
                         let r = (halfword >> 7) & 0x1f;
                         let offset = ((halfword >> 7) & 0x20) | // offset[5] <= [12]
-							((halfword >> 2) & 0x1c) | // offset[4:2] <= [6:4]
-							((halfword << 4) & 0xc0); // offset[7:6] <= [3:2]
+                            ((halfword >> 2) & 0x1c) | // offset[4:2] <= [6:4]
+                            ((halfword << 4) & 0xc0); // offset[7:6] <= [3:2]
                         if r != 0 {
                             return (offset << 20) | (2 << 15) | (2 << 12) | (r << 7) | 0x3;
                         }
@@ -1296,8 +1341,8 @@ impl Cpu {
                         // ld rd, offset(x2)
                         let rd = (halfword >> 7) & 0x1f;
                         let offset = ((halfword >> 7) & 0x20) | // offset[5] <= [12]
-							((halfword >> 2) & 0x18) | // offset[4:3] <= [6:5]
-							((halfword << 4) & 0x1c0); // offset[8:6] <= [4:2]
+                            ((halfword >> 2) & 0x18) | // offset[4:3] <= [6:5]
+                            ((halfword << 4) & 0x1c0); // offset[8:6] <= [4:2]
                         if rd != 0 {
                             return (offset << 20) | (2 << 15) | (3 << 12) | (rd << 7) | 0x3;
                         }
@@ -1309,39 +1354,48 @@ impl Cpu {
                         let rs2 = (halfword >> 2) & 0x1f; // [6:2]
                         match funct1 {
                             0 => {
-                                if rs1 != 0 && rs2 == 0 {
-                                    // C.JR
-                                    // jalr x0, 0(rs1)
-                                    return (rs1 << 15) | 0x67;
+                                // C.MV
+                                match (rs1, rs2) {
+                                    (0, 0) => {
+                                        // Reserved
+                                    }
+                                    (r, 0) if r != 0 => {
+                                        // C.JR: jalr x0, 0(rs1)
+                                        return (rs1 << 15) | 0x67;
+                                    }
+                                    (0, r2) if r2 != 0 => {
+                                        // HINT
+                                        return 0x13;
+                                    }
+                                    (rd, rs2) => {
+                                        // add rd, x0, rs2
+                                        return (rs2 << 20) | (rd << 7) | 0x33;
+                                    }
                                 }
-                                // rs1 == 0 is reserved instruction
-                                if rs1 != 0 && rs2 != 0 {
-                                    // C.MV
-                                    // add rs1, x0, rs2
-                                    // println!("C.MV RS1:{:x} RS2:{:x}", rs1, rs2);
-                                    return (rs2 << 20) | (rs1 << 7) | 0x33;
-                                }
-                                // rs1 == 0 && rs2 != 0 is Hints
-                                // @TODO: Support Hints
                             }
                             1 => {
-                                if rs1 == 0 && rs2 == 0 {
-                                    // C.EBREAK
-                                    // ebreak
-                                    return 0x00100073;
+                                // C.ADD
+                                match (rs1, rs2) {
+                                    (0, 0) => {
+                                        // C.EBREAK
+                                        // ebreak
+                                        return 0x00100073;
+                                    }
+                                    (rs1, 0) if rs1 != 0 => {
+                                        // C.JALR
+                                        // jalr x1, 0(rs1)
+                                        return (rs1 << 15) | (1 << 7) | 0x67;
+                                    }
+                                    (0, rs2) if rs2 != 0 => {
+                                        // HINT
+                                        return 0x13;
+                                    }
+                                    (rs1, rs2) => {
+                                        // C.ADD
+                                        // add rs1, rs1, rs2
+                                        return (rs2 << 20) | (rs1 << 15) | (rs1 << 7) | 0x33;
+                                    }
                                 }
-                                if rs1 != 0 && rs2 == 0 {
-                                    // C.JALR
-                                    // jalr x1, 0(rs1)
-                                    return (rs1 << 15) | (1 << 7) | 0x67;
-                                }
-                                if rs1 != 0 && rs2 != 0 {
-                                    // C.ADD
-                                    // add rs1, rs1, rs2
-                                    return (rs2 << 20) | (rs1 << 15) | (rs1 << 7) | 0x33;
-                                }
-                                // rs1 == 0 && rs2 != 0 is Hists
-                                // @TODO: Supports Hinsts
                             }
                             _ => {} // Not happens
                         };
@@ -1352,7 +1406,7 @@ impl Cpu {
                         // fsd rs2, offset(x2)
                         let rs2 = (halfword >> 2) & 0x1f; // [6:2]
                         let offset = ((halfword >> 7) & 0x38) | // offset[5:3] <= [12:10]
-							((halfword >> 1) & 0x1c0); // offset[8:6] <= [9:7]
+                            ((halfword >> 1) & 0x1c0); // offset[8:6] <= [9:7]
                         let imm11_5 = (offset >> 5) & 0x3f;
                         let imm4_0 = offset & 0x1f;
                         return (imm11_5 << 25)
@@ -1367,7 +1421,7 @@ impl Cpu {
                         // sw rs2, offset(x2)
                         let rs2 = (halfword >> 2) & 0x1f; // [6:2]
                         let offset = ((halfword >> 7) & 0x3c) | // offset[5:2] <= [12:9]
-							((halfword >> 1) & 0xc0); // offset[7:6] <= [8:7]
+                            ((halfword >> 1) & 0xc0); // offset[7:6] <= [8:7]
                         let imm11_5 = (offset >> 5) & 0x3f;
                         let imm4_0 = offset & 0x1f;
                         return (imm11_5 << 25)
@@ -1383,7 +1437,7 @@ impl Cpu {
                         // sd rs, offset(x2)
                         let rs2 = (halfword >> 2) & 0x1f; // [6:2]
                         let offset = ((halfword >> 7) & 0x38) | // offset[5:3] <= [12:10]
-							((halfword >> 1) & 0x1c0); // offset[8:6] <= [9:7]
+                            ((halfword >> 1) & 0x1c0); // offset[8:6] <= [9:7]
                         let imm11_5 = (offset >> 5) & 0x3f;
                         let imm4_0 = offset & 0x1f;
                         return (imm11_5 << 25)
@@ -1403,43 +1457,41 @@ impl Cpu {
 
     /// Disassembles an instruction pointed by Program Counter.
     pub fn disassemble_next_instruction(&mut self) -> String {
-        // // @TODO: Fetching can make a side effect,
-        // // for example updating page table entry or update peripheral hardware registers.
-        // // But ideally disassembling doesn't want to cause any side effect.
-        // // How can we avoid side effect?
-        // let mut original_word = match self.mmu.fetch_word(self.pc) {
-        //     Ok(data) => data,
-        //     Err(_e) => {
-        //         return format!("PC:{:016x}, InstructionPageFault Trap!\n", self.pc);
-        //     }
-        // };
+        // @TODO: Fetching can make a side effect,
+        // for example updating page table entry or update peripheral hardware registers.
+        // But ideally disassembling doesn't want to cause any side effect.
+        // How can we avoid side effect?
+        let mut original_word = match self.mmu.fetch_word(self.pc) {
+            Ok(data) => data,
+            Err(_e) => {
+                return format!("PC:{:016x}, InstructionPageFault Trap!\n", self.pc);
+            }
+        };
 
-        // let word = match (original_word & 0x3) == 0x3 {
-        //     true => original_word,
-        //     false => {
-        //         original_word &= 0xffff;
-        //         self.uncompress(original_word)
-        //     }
-        // };
+        let word = match (original_word & 0x3) == 0x3 {
+            true => original_word,
+            false => {
+                original_word &= 0xffff;
+                self.uncompress(original_word)
+            }
+        };
 
-        // let inst = {
-        //     match self.decode_raw(word) {
-        //         Ok(inst) => inst,
-        //         Err(()) => {
-        //             return format!(
-        //                 "Unknown instruction PC:{:x} WORD:{:x}",
-        //                 self.pc, original_word
-        //             );
-        //         }
-        //     }
-        // };
+        let inst = match RV32IMInstruction::decode(word, self.pc) {
+            Ok(inst) => inst,
+            Err(e) => {
+                return format!(
+                    "Unknown instruction PC:{:x} WORD:{:x}, {:?}",
+                    self.pc, original_word, e
+                );
+            }
+        };
 
-        // let mut s = format!("PC:{:016x} ", self.unsigned_data(self.pc as i64));
-        // s += &format!("{original_word:08x} ");
-        // s += &format!("{} ", inst.name);
+        let name: &'static str = inst.into();
+        let mut s = format!("PC:{:016x} ", self.unsigned_data(self.pc as i64));
+        s += &format!("{original_word:08x} ");
+        s += &format!("{name}");
         // s += &format!("{}", (inst.disassemble)(self, word, self.pc, true));
-        // s
-        todo!()
+        s
     }
 
     /// Returns mutable `Mmu`
@@ -1667,12 +1719,12 @@ mod test_cpu {
             Err(_e) => panic!("Failed to store"),
         };
 
-        cpu.tick();
+        cpu.tick(false);
 
         assert_eq!(DRAM_BASE + 4, cpu.read_pc());
         assert_eq!(1, cpu.read_register(1));
 
-        cpu.tick();
+        cpu.tick(false);
 
         assert_eq!(DRAM_BASE + 6, cpu.read_pc());
         assert_eq!(8, cpu.read_register(8));
@@ -1690,7 +1742,7 @@ mod test_cpu {
         };
         assert_eq!(DRAM_BASE, cpu.read_pc());
         assert_eq!(0, cpu.read_register(10));
-        match cpu.tick_operate() {
+        match cpu.tick_operate(false) {
             Ok(()) => {}
             Err(_e) => panic!("tick_operate() unexpectedly did panic"),
         };
@@ -1809,7 +1861,7 @@ mod test_cpu {
         cpu.write_csr_raw(CSR_MIP_ADDRESS, MIP_MTIP);
         cpu.write_csr_raw(CSR_MTVEC_ADDRESS, handler_vector);
 
-        cpu.tick();
+        cpu.tick(false);
 
         // Interrupt isn't caught because mie is disabled
         assert_eq!(DRAM_BASE + 4, cpu.read_pc());
@@ -1818,7 +1870,7 @@ mod test_cpu {
         // Enable mie in mstatus
         cpu.write_csr_raw(CSR_MSTATUS_ADDRESS, 0x8);
 
-        cpu.tick();
+        cpu.tick(false);
 
         // Interrupt happened and moved to handler
         assert_eq!(handler_vector, cpu.read_pc());
@@ -1846,7 +1898,7 @@ mod test_cpu {
         cpu.write_csr_raw(CSR_MTVEC_ADDRESS, handler_vector);
         cpu.update_pc(DRAM_BASE);
 
-        cpu.tick();
+        cpu.tick(false);
 
         // Interrupt happened and moved to handler
         assert_eq!(handler_vector, cpu.read_pc());
@@ -1879,14 +1931,14 @@ mod test_cpu {
 
         // Test x0
         assert_eq!(0, cpu.read_register(0));
-        cpu.tick(); // Execute  "addi x0, x0, 1"
-                    // x0 is still zero because it's hardcoded zero
+        cpu.tick(false); // Execute  "addi x0, x0, 1"
+                         // x0 is still zero because it's hardcoded zero
         assert_eq!(0, cpu.read_register(0));
 
         // Test x1
         assert_eq!(0, cpu.read_register(1));
-        cpu.tick(); // Execute  "addi x1, x1, 1"
-                    // x1 is not hardcoded zero
+        cpu.tick(false); // Execute  "addi x1, x1, 1"
+                         // x1 is not hardcoded zero
         assert_eq!(1, cpu.read_register(1));
     }
 
