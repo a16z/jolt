@@ -1,3 +1,4 @@
+#![allow(clippy::upper_case_acronyms)]
 use add::ADD;
 use addi::ADDI;
 use addiw::ADDIW;

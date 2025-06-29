@@ -880,8 +880,8 @@ impl Cpu {
     // @TODO: Rename to better name?
     pub(crate) fn most_negative(&self) -> i64 {
         match self.xlen {
-            Xlen::Bit32 => core::i32::MIN as i64,
-            Xlen::Bit64 => core::i64::MIN,
+            Xlen::Bit32 => i32::MIN as i64,
+            Xlen::Bit64 => i64::MIN,
         }
     }
 
@@ -1011,11 +1011,11 @@ impl Cpu {
                                 // HINT
                                 return 0x13;
                             }
-                            (r, 0) => {
+                            (_, 0) => {
                                 // HINT
                                 return 0x13;
                             }
-                            (r, imm) => {
+                            (_, _) => {
                                 return (imm << 20) | (r << 15) | (r << 7) | 0x13;
                             }
                         }
@@ -1385,16 +1385,16 @@ impl Cpu {
                                         // ebreak
                                         return 0x00100073;
                                     }
-                                    (r1, 0) if r1 != 0 => {
+                                    (rs1, 0) if rs1 != 0 => {
                                         // C.JALR
                                         // jalr x1, 0(rs1)
                                         return (rs1 << 15) | (1 << 7) | 0x67;
                                     }
-                                    (0, r2) if r2 != 0 => {
+                                    (0, rs2) if rs2 != 0 => {
                                         // HINT
                                         return 0x13;
                                     }
-                                    (rd, rs2) => {
+                                    (rs1, rs2) => {
                                         // C.ADD
                                         // add rs1, rs1, rs2
                                         return (rs2 << 20) | (rs1 << 15) | (rs1 << 7) | 0x33;
@@ -1493,7 +1493,7 @@ impl Cpu {
         let name: &'static str = inst.into();
         let mut s = format!("PC:{:016x} ", self.unsigned_data(self.pc as i64));
         s += &format!("{original_word:08x} ");
-        s += &format!("{}", name);
+        s += &format!("{name}");
         // s += &format!("{}", (inst.disassemble)(self, word, self.pc, true));
         s
     }
