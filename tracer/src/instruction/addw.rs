@@ -17,9 +17,12 @@ declare_riscv_instr!(
 
 impl ADDW {
     fn exec(&self, cpu: &mut Cpu, _: &mut <ADDW as RISCVInstruction>::RAMAccess) {
-        cpu.x[self.operands.rd] = cpu.sign_extend(
-            (cpu.x[self.operands.rs1].wrapping_add(cpu.x[self.operands.rs2]) as i32) as i64,
-        );
+        // ADDW and SUBW are RV64I-only instructions that are defined analogously to ADD and SUB
+        // but operate on 32-bit values and produce signed 32-bit results. Overflows are ignored,
+        // and the low 32-bits of the result is sign-extended to 64-bits and written to the
+        // destination register.
+        cpu.x[self.operands.rd] =
+            cpu.x[self.operands.rs1].wrapping_add(cpu.x[self.operands.rs2]) as i32 as i64;
     }
 }
 
