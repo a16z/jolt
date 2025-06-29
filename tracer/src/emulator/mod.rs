@@ -263,7 +263,7 @@ impl Emulator {
     }
 
     /// Writes the signature region to a writer with specified granularity.
-    /// The signature is written in little-endian byte order.
+    /// Each word of the signature is written as a hexadecimal string representation.
     ///
     /// # Arguments
     /// * `writer` - Any type that implements Write trait
