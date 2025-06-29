@@ -16,7 +16,7 @@ pub struct RAProof<F: JoltField, ProofTranscript: Transcript> {
 }
 
 pub struct RAProverState<F: JoltField, const D: usize> {
-    /// `ra` polys to be constructed based on mem addresses
+    /// `ra` polys to be constructed based addresses
     ra_i_polys: [MultilinearPolynomial<F>; D],
     /// eq poly
     eq_poly: MultilinearPolynomial<F>,
@@ -38,7 +38,7 @@ pub struct RASumcheck<F: JoltField, const D: usize> {
     prover_state: Option<RAProverState<F, D>>,
     /// Verifier state
     verifier_state: Option<RAVerifierState<F, D>>,
-    /// ra_i_ claims to be queried by verifier via evaluation proof
+    /// ra_i_ claims to be later queried by verifier
     ra_i_claims: Option<[F; D]>,
 }
 
@@ -99,16 +99,6 @@ impl<F: JoltField, const D: usize> RASumcheck<F, D> {
             .collect::<Vec<_>>()
             .try_into()
             .expect("Failed to convert Vec to array");
-
-        for j in 0..T {
-            println!(
-                "\\prod_i ra_i[{j}] = {}",
-                ra_i_polys
-                    .iter()
-                    .map(|ra_i| ra_i.get_coeff(j))
-                    .product::<F>()
-            );
-        }
 
         Self {
             ra_claim,
@@ -196,8 +186,6 @@ impl<F: JoltField, ProofTranscript: Transcript, const D: usize>
     }
 
     fn bind(&mut self, r_j: F, _: usize) {
-        println!("Binding to {r_j}");
-
         let prover_state = self
             .prover_state
             .as_mut()
@@ -227,8 +215,6 @@ impl<F: JoltField, ProofTranscript: Transcript, const D: usize>
             openings[i] = prover_state.ra_i_polys[i].final_sumcheck_claim();
         }
 
-        println!("P eq_eval: {}", prover_state.eq_poly.final_sumcheck_claim());
-
         self.ra_i_claims = Some(openings);
     }
 
@@ -239,10 +225,9 @@ impl<F: JoltField, ProofTranscript: Transcript, const D: usize>
             .expect("Verifier state not initialized");
         let ra_i_claims = self.ra_i_claims.as_ref().expect("ra_i_claims not set");
 
+        // we need opposite endian-ness here
         let r_rev: Vec<_> = r.iter().cloned().rev().collect();
         let eq_eval = EqPolynomial::new(verifier_state.r_cycle.clone()).evaluate(&r_rev);
-
-        println!("V eq_eval (should be equal to P eq_eval): {eq_eval}");
 
         // Compute the product of all ra_i evaluations
         let mut product = F::one();
@@ -264,7 +249,6 @@ impl<F: JoltField, ProofTranscript: Transcript, const D: usize>
 
         // We need to compute evaluations at 0, 2, 3, ..., degree
         // = eq(r_cycle, j) * ∏_{i=0}^{D-1} ra_i(j)
-
         let univariate_poly_evals: Vec<F> = (0..ra_i_polys[0].len() / 2)
             .into_par_iter()
             .map(|i| {
@@ -308,8 +292,9 @@ mod tests {
     use ark_std::{One, Zero};
     use rand::thread_rng;
 
+    // Test with just T = 1 (one cycle) for debugging:
     #[test]
-    fn test_ra_sumcheck_with_correct_tensor_decomposition() {
+    fn test_ra_sumcheck_tensor_decomp() {
         use rand::Rng;
         let mut rng = thread_rng();
         const D: usize = 4;
@@ -324,18 +309,6 @@ mod tests {
 
         let addresses = vec![one_hot_index];
 
-        // Decompose the index: index = c0*2^0 + c1*2^1 + c2*2^2
-        let c0 = one_hot_index & 1; // LSB
-        let c1 = (one_hot_index >> 1) & 1; // Middle bit
-        let c2 = (one_hot_index >> 2) & 1; // MSB
-
-        println!("One-hot index: {}", one_hot_index);
-        println!("Decomposition: c0={}, c1={}, c2={}", c0, c1, c2);
-        println!(
-            "Verification: {} = {}*1 + {}*2 + {}*4",
-            one_hot_index, c0, c1, c2
-        );
-
         let r_cycle: Vec<Fr> = (0..T.log_2()).map(|_| Fr::from(rng.gen::<u64>())).collect();
         let r_address: Vec<Fr> = (0..k.log_2()).map(|_| Fr::from(rng.gen::<u64>())).collect();
 
@@ -346,10 +319,10 @@ mod tests {
         let prover_sumcheck =
             RASumcheck::<Fr, D>::new(ra_claim, addresses, r_cycle.clone(), r_address.clone(), T);
 
-        let mut prover_transcript = KeccakTranscript::new(b"test_correct_tensor");
+        let mut prover_transcript = KeccakTranscript::new(b"test_one_cycle");
         let (proof, r_cycle_bound) = prover_sumcheck.prove(&mut prover_transcript);
 
-        let mut verifier_transcript = KeccakTranscript::new(b"test_correct_tensor");
+        let mut verifier_transcript = KeccakTranscript::new(b"test_one_cycle");
 
         let verify_result = RASumcheck::<Fr, D>::verify(
             ra_claim,
@@ -369,7 +342,7 @@ mod tests {
     }
 
     #[test]
-    fn test_ra_sumcheck_with_t_equals_2() {
+    fn test_ra_sumcheck_large_t() {
         use rand::Rng;
         let mut rng = thread_rng();
         const D: usize = 3;
@@ -386,7 +359,7 @@ mod tests {
         let mut ra_poly = MultilinearPolynomial::from(ra_values);
 
         let r_cycle: Vec<Fr> = (0..T.log_2()).map(|_| Fr::from(rng.gen::<u64>())).collect();
-        let mut r_address: Vec<Fr> = (0..k.log_2()).map(|_| Fr::from(rng.gen::<u64>())).collect();
+        let r_address: Vec<Fr> = (0..k.log_2()).map(|_| Fr::from(rng.gen::<u64>())).collect();
 
         let mut eval_point = r_cycle.clone();
         eval_point.extend_from_slice(&r_address);
@@ -394,10 +367,6 @@ mod tests {
 
         for r in r_address.iter().rev() {
             ra_poly.bind_parallel(*r, BindingOrder::LowToHigh);
-        }
-
-        for j in 0..T {
-            println!("ra[{j}] = {}", ra_poly.get_bound_coeff(j));
         }
 
         for r in r_cycle.iter().rev() {
@@ -408,10 +377,10 @@ mod tests {
         let prover_sumcheck =
             RASumcheck::<Fr, D>::new(ra_claim, addresses, r_cycle.clone(), r_address.clone(), T);
 
-        let mut prover_transcript = KeccakTranscript::new(b"test_t_equals_2");
+        let mut prover_transcript = KeccakTranscript::new(b"test_t_large");
         let (proof, r_cycle_bound) = prover_sumcheck.prove(&mut prover_transcript);
 
-        let mut verifier_transcript = KeccakTranscript::new(b"test_t_equals_2");
+        let mut verifier_transcript = KeccakTranscript::new(b"test_t_large");
         verifier_transcript.compare_to(prover_transcript);
 
         let verify_result = RASumcheck::<Fr, D>::verify(
