@@ -1,3 +1,5 @@
+use std::vec;
+
 use crate::{
     field::{JoltField, OptimizedMul},
     jolt::{
@@ -14,7 +16,7 @@ use crate::{
         opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
         unipoly::{CompressedUniPoly, UniPoly},
     },
-    subprotocols::sumcheck::SumcheckInstanceProof,
+    subprotocols::{ra_virtual::RASumcheck, sumcheck::SumcheckInstanceProof},
     utils::{
         errors::ProofVerifyError,
         math::Math,
@@ -363,6 +365,29 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
 
         let r_address_prime = r_address_prime.iter().copied().rev().collect::<Vec<_>>();
         let r_cycle_prime = r_cycle_prime.iter().rev().copied().collect::<Vec<_>>();
+
+        // We prove `ra_claim` using the ra virtualization sumcheck:
+        const D: usize = 2;
+        let addresses: Vec<usize> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        remap_address(
+                            cycle.ram_access().address() as u64,
+                            &preprocessing.shared.memory_layout,
+                        ) as usize
+                    })
+                    .collect();
+
+        let ra_sumcheck_instance = RASumcheck::<F, D>::new(
+            ra_claim,
+            addresses,
+            r_cycle_prime.clone(),
+            r_address_prime.clone(),
+            trace.len(),
+        );
+
+
+
         let unbound_ra_poly = CommittedPolynomials::RamRa.generate_witness(preprocessing, trace);
 
         opening_accumulator.append_sparse(

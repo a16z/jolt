@@ -227,7 +227,7 @@ impl<F: JoltField, ProofTranscript: Transcript, const D: usize>
 
         // we need opposite endian-ness here
         let r_rev: Vec<_> = r.iter().cloned().rev().collect();
-        let eq_eval = EqPolynomial::new(verifier_state.r_cycle.clone()).evaluate(&r_rev);
+        let eq_eval = EqPolynomial::mle(&verifier_state.r_cycle, &r_rev);
 
         // Compute the product of all ra_i evaluations
         let mut product = F::one();
