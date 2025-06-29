@@ -3,30 +3,24 @@
 
 use crate::field::JoltField;
 use crate::host;
-use crate::jolt::lookup_table::LookupTables;
 use crate::jolt::vm::rv32i_vm::RV32IJoltVM;
 use crate::jolt::vm::{Jolt, JoltProverPreprocessing, JoltVerifierPreprocessing};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::dory::DoryCommitmentScheme as Dory;
 use crate::poly::commitment::hyperkzg::HyperKZG;
-use crate::poly::commitment::zeromorph::Zeromorph;
 use crate::subprotocols::shout::ShoutProof;
-use crate::subprotocols::sparse_dense_shout::{
-    prove_sparse_dense_shout, verify_sparse_dense_shout,
-};
 use crate::subprotocols::twist::{TwistAlgorithm, TwistProof};
 use crate::utils::math::Math;
 use crate::utils::transcript::{KeccakTranscript, Transcript};
 use ark_bn254::{Bn254, Fr};
 use ark_std::test_rng;
-use rand::rngs::StdRng;
-use rand::SeedableRng;
 use rand_core::RngCore;
 use rand_distr::{Distribution, Zipf};
 use serde::Serialize;
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
 pub enum PCSType {
-    Zeromorph,
+    Dory,
     HyperKZG,
 }
 
@@ -47,15 +41,11 @@ pub fn benchmarks(
     bench_type: BenchType,
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     match pcs_type {
-        PCSType::Zeromorph => match bench_type {
-            BenchType::Sha2 => sha2::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>(),
-            BenchType::Sha3 => sha3::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>(),
-            BenchType::Sha2Chain => {
-                sha2chain::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>()
-            }
-            BenchType::Fibonacci => {
-                fibonacci::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>()
-            }
+        PCSType::Dory => match bench_type {
+            BenchType::Sha2 => sha2::<Fr, Dory<KeccakTranscript>, KeccakTranscript>(),
+            BenchType::Sha3 => sha3::<Fr, Dory<KeccakTranscript>, KeccakTranscript>(),
+            BenchType::Sha2Chain => sha2chain::<Fr, Dory<KeccakTranscript>, KeccakTranscript>(),
+            BenchType::Fibonacci => fibonacci::<Fr, Dory<KeccakTranscript>, KeccakTranscript>(),
             BenchType::Shout => shout::<Fr, KeccakTranscript>(),
             BenchType::Twist => twist::<Fr, KeccakTranscript>(),
             BenchType::SparseDenseShout => sparse_dense_shout::<Fr, KeccakTranscript>(),
@@ -308,7 +298,7 @@ where
                 memory_init,
                 1 << 18,
                 1 << 18,
-                1 << 18,
+                1 << 20,
             );
 
         let (jolt_proof, program_io, _) = <RV32IJoltVM as Jolt<32, _, PCS, ProofTranscript>>::prove(
@@ -321,8 +311,8 @@ where
             JoltVerifierPreprocessing::<F, PCS, ProofTranscript>::from(&preprocessing);
 
         println!("Proof sizing:");
-        // serialize_and_print_size("jolt_commitments", &jolt_commitments);
         serialize_and_print_size("jolt_proof", &jolt_proof);
+        serialize_and_print_size(" jolt_proof.commitments", &jolt_proof.commitments);
         serialize_and_print_size(" jolt_proof.r1cs", &jolt_proof.r1cs);
         serialize_and_print_size(" jolt_proof.bytecode", &jolt_proof.bytecode);
         serialize_and_print_size(" jolt_proof.ram", &jolt_proof.ram);
@@ -331,6 +321,7 @@ where
             " jolt_proof.instruction_lookups",
             &jolt_proof.instruction_lookups,
         );
+        serialize_and_print_size(" jolt_proof.opening_proof", &jolt_proof.opening_proof);
 
         let verification_result =
             RV32IJoltVM::verify(verifier_preprocessing, jolt_proof, program_io, None);
@@ -360,7 +351,7 @@ where
 
     let mut inputs = vec![];
     inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
-    inputs.append(&mut postcard::to_stdvec(&1000u32).unwrap());
+    inputs.append(&mut postcard::to_stdvec(&1500u32).unwrap());
 
     let task = move || {
         let (io_device, trace) = program.trace(&inputs);
@@ -371,9 +362,9 @@ where
                 bytecode.clone(),
                 io_device.memory_layout.clone(),
                 memory_init,
-                1 << 22,
-                1 << 22,
-                1 << 22,
+                1 << 20,
+                1 << 20,
+                1 << 24,
             );
 
         let (jolt_proof, program_io, _) = <RV32IJoltVM as Jolt<32, _, PCS, ProofTranscript>>::prove(

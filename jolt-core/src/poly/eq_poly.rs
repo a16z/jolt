@@ -1,27 +1,18 @@
 use crate::field::JoltField;
-use rayon::prelude::*;
-
 use crate::utils::{math::Math, thread::unsafe_allocate_zero_vec};
-
-pub struct EqPolynomial<F> {
-    r: Vec<F>,
-}
-
-pub struct EqPlusOnePolynomial<F> {
-    x: Vec<F>,
-}
+use rayon::prelude::*;
+use std::marker::PhantomData;
 
 const PARALLEL_THRESHOLD: usize = 16;
 
+pub struct EqPolynomial<F: JoltField>(PhantomData<F>);
 impl<F: JoltField> EqPolynomial<F> {
-    pub fn new(r: Vec<F>) -> Self {
-        EqPolynomial { r }
-    }
-
-    pub fn evaluate(&self, rx: &[F]) -> F {
-        assert_eq!(self.r.len(), rx.len());
-        (0..rx.len())
-            .map(|i| self.r[i] * rx[i] + (F::one() - self.r[i]) * (F::one() - rx[i]))
+    /// Computes the MLE evaluation EQ(x, y)
+    pub fn mle(x: &[F], y: &[F]) -> F {
+        assert_eq!(x.len(), y.len());
+        x.par_iter()
+            .zip(y.par_iter())
+            .map(|(x_i, y_i)| *x_i * y_i + (F::one() - x_i) * (F::one() - y_i))
             .product()
     }
 
@@ -140,10 +131,10 @@ impl<F: JoltField> EqPolynomial<F> {
 
         evals
     }
+}
 
-    pub fn len(&self) -> usize {
-        self.r.len().pow2()
-    }
+pub struct EqPlusOnePolynomial<F> {
+    x: Vec<F>,
 }
 
 impl<F: JoltField> EqPlusOnePolynomial<F> {

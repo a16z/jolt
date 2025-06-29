@@ -46,7 +46,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualShiftR
             8 => {
                 let shift = y % 8;
                 let ones = (1u64 << (8 - shift)) - 1;
-                (ones << shift) as u64
+                ones << shift
             }
             32 => {
                 let shift = y % 32;

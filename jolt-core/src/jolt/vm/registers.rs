@@ -1,11 +1,16 @@
 use crate::{
     field::{JoltField, OptimizedMul},
+    jolt::{
+        vm::{JoltCommitments, JoltProverPreprocessing},
+        witness::CommittedPolynomials,
+    },
     poly::{
+        commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
-        opening_proof::ProverOpeningAccumulator,
+        opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
         unipoly::{CompressedUniPoly, UniPoly},
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
@@ -72,10 +77,10 @@ pub struct ValEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
 
 impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTranscript> {
     #[tracing::instrument(skip_all, name = "RegistersTwistProof::prove")]
-    pub fn prove(
-        // generators: &PCS::Setup,
+    pub fn prove<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
+        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
         trace: &[RV32IMCycle],
-        _opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> RegistersTwistProof<F, ProofTranscript> {
         let log_T = trace.len().log_2();
@@ -86,15 +91,23 @@ impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTran
         let (read_write_checking_proof, r_address, r_cycle) =
             ReadWriteCheckingProof::prove(trace, r, r_prime, transcript);
 
-        let (val_evaluation_proof, _r_cycle_prime) = prove_val_evaluation(
+        let (val_evaluation_proof, mut r_cycle_prime) = prove_val_evaluation(
             trace,
-            r_address,
+            r_address.clone(),
             r_cycle,
             read_write_checking_proof.val_claim,
             transcript,
         );
+        // Cycle variables are bound from low to high
+        r_cycle_prime.reverse();
 
-        // TODO: Append to opening proof accumulator
+        let rd_inc_poly = CommittedPolynomials::RdInc.generate_witness(preprocessing, trace);
+        opening_accumulator.append_sparse(
+            vec![rd_inc_poly],
+            r_address,
+            r_cycle_prime,
+            vec![val_evaluation_proof.inc_claim],
+        );
 
         RegistersTwistProof {
             read_write_checking_proof,
@@ -102,30 +115,43 @@ impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTran
         }
     }
 
-    pub fn verify(
+    pub fn verify<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
         &self,
+        commitments: &JoltCommitments<F, PCS, ProofTranscript>,
         T: usize,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let log_T = T.log_2();
         let r: Vec<F> = transcript.challenge_vector((REGISTER_COUNT as usize).log_2());
         let r_prime: Vec<F> = transcript.challenge_vector(log_T);
 
-        let r_cycle = self
+        let (r_address, r_cycle) = self
             .read_write_checking_proof
             .verify(r, r_prime, transcript);
 
-        let (sumcheck_claim, r_cycle_prime) = self.val_evaluation_proof.sumcheck_proof.verify(
+        let (sumcheck_claim, mut r_cycle_prime) = self.val_evaluation_proof.sumcheck_proof.verify(
             self.read_write_checking_proof.val_claim,
             log_T,
             2,
             transcript,
         )?;
+        // Cycle variables are bound from low to high
+        r_cycle_prime.reverse();
+
+        let inc_commitment = &commitments.commitments[CommittedPolynomials::RdInc.to_index()];
+        let r_concat = [r_address.as_slice(), r_cycle_prime.as_slice()].concat();
+        opening_accumulator.append(
+            &[inc_commitment],
+            r_concat,
+            &[self.val_evaluation_proof.inc_claim],
+            transcript,
+        );
 
         // Compute LT(r_cycle', r_cycle)
         let mut lt_eval = F::zero();
         let mut eq_term = F::one();
-        for (x, y) in r_cycle_prime.iter().rev().zip(r_cycle.iter()) {
+        for (x, y) in r_cycle_prime.iter().zip(r_cycle.iter()) {
             lt_eval += (F::one() - x) * y * eq_term;
             eq_term *= F::one() - x - y + *x * y + *x * y;
         }
@@ -1033,7 +1059,12 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         (proof, r_address, r_cycle)
     }
 
-    pub fn verify(&self, r: Vec<F>, r_prime: Vec<F>, transcript: &mut ProofTranscript) -> Vec<F> {
+    pub fn verify(
+        &self,
+        r: Vec<F>,
+        r_prime: Vec<F>,
+        transcript: &mut ProofTranscript,
+    ) -> (Vec<F>, Vec<F>) {
         let K = r.len().pow2();
         let T = r_prime.len().pow2();
         let z: F = transcript.challenge_scalar();
@@ -1056,9 +1087,9 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let r_address = r_sumcheck[T.log_2()..].to_vec();
 
         // eq(r', r_cycle)
-        let eq_eval_cycle = EqPolynomial::new(r_prime).evaluate(&r_cycle);
+        let eq_eval_cycle = EqPolynomial::mle(&r_prime, &r_cycle);
         // eq(r, r_address)
-        let eq_eval_address = EqPolynomial::new(r).evaluate(&r_address);
+        let eq_eval_address = EqPolynomial::mle(&r, &r_address);
 
         assert_eq!(
             eq_eval_address
@@ -1071,7 +1102,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             "Read/write-checking sumcheck failed"
         );
 
-        r_cycle
+        (r_address, r_cycle)
     }
 }
 

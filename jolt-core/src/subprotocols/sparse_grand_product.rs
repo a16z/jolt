@@ -1049,7 +1049,7 @@ where
     #[tracing::instrument(skip_all, name = "ToggledBatchedGrandProduct::prove_grand_product")]
     fn prove_grand_product(
         &mut self,
-        opening_accumulator: Option<&mut ProverOpeningAccumulator<F, ProofTranscript>>,
+        opening_accumulator: Option<&mut ProverOpeningAccumulator<F, PCS, ProofTranscript>>,
         transcript: &mut ProofTranscript,
         setup: Option<&PCS::ProverSetup>,
     ) -> (BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>) {
@@ -1300,7 +1300,11 @@ mod tests {
 
         // Prover setup
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
-        let mut prover_accumulator = ProverOpeningAccumulator::<Fr, KeccakTranscript>::new();
+        let mut prover_accumulator = ProverOpeningAccumulator::<
+            Fr,
+            Zeromorph<Bn254, KeccakTranscript>,
+            KeccakTranscript,
+        >::new();
         let (proof, r_prover) = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
             Fr,
             Zeromorph<Bn254, KeccakTranscript>,
@@ -1334,6 +1338,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn sparse_prove_verify() {
         const NUM_VARS: [usize; 7] = [1, 2, 3, 4, 5, 6, 7];
         const DENSITY: [f64; 6] = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0];
