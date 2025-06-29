@@ -15,9 +15,12 @@ declare_riscv_instr!(
 
 impl MULW {
     fn exec(&self, cpu: &mut Cpu, _: &mut <MULW as RISCVInstruction>::RAMAccess) {
-        let a = cpu.x[self.operands.rs1] as i32 as i64;
-        let b = cpu.x[self.operands.rs2] as i32 as i64;
-        cpu.x[self.operands.rd] = a.wrapping_mul(b) as i32 as i64;
+        // MULW is an RV64 instruction that multiplies the lower 32 bits of the source registers,
+        // placing the sign extension of the lower 32 bits of the result into the destination
+        // register.
+        let a = cpu.x[self.operands.rs1] as i32;
+        let b = cpu.x[self.operands.rs2] as i32;
+        cpu.x[self.operands.rd] = a.wrapping_mul(b) as i64;
     }
 }
 impl RISCVTrace for MULW {}

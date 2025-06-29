@@ -15,8 +15,11 @@ declare_riscv_instr!(
 
 impl SRAIW {
     fn exec(&self, cpu: &mut Cpu, _: &mut <SRAIW as RISCVInstruction>::RAMAccess) {
-        cpu.x[self.operands.rd] =
-            ((cpu.x[self.operands.rs1] as i32) >> (self.operands.imm & 0x1f)) as i64;
+        // SLLIW, SRLIW, and SRAIW are RV64I-only instructions that are analogously defined but
+        // operate on 32-bit values and sign-extend their 32-bit results to 64 bits. SLLIW, SRLIW,
+        // and SRAIW encodings with imm[5] ≠ 0 are reserved.
+        let shamt = (self.operands.imm & 0x1f) as u32;
+        cpu.x[self.operands.rd] = ((cpu.x[self.operands.rs1] as i32) >> shamt) as i64;
     }
 }
 impl RISCVTrace for SRAIW {}

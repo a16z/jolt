@@ -344,12 +344,12 @@ impl Mmu {
     ///
     /// # Arguments
     /// * `v_address` Virtual address
-    pub fn load_doubleword(&mut self, v_address: u64) -> Result<u64, Trap> {
+    pub fn load_doubleword(&mut self, v_address: u64) -> Result<(u64, RAMRead), Trap> {
         let effective_address = self.get_effective_address(v_address);
         assert_eq!(effective_address % 8, 0, "Unaligned load_doubleword");
-        self.trace_load(effective_address);
+        let memory_read = self.trace_load(effective_address);
         match self.load_bytes(v_address, 8) {
-            Ok(data) => Ok(data),
+            Ok(data) => Ok((data, memory_read)),
             Err(e) => Err(e),
         }
     }
