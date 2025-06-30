@@ -1045,7 +1045,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                         }
                     }
                     // First time this k has been encountered
-                    let bound_value = if j_prime % 2 == 0 {
+                    let bound_value = if j_prime.is_multiple_of(2) {
                         // (1 - r_j) * inc_lt + r_j * inc
                         inc_lt + r_j * (inc - inc_lt)
                     } else {

@@ -484,7 +484,7 @@ pub fn prove_sparse_dense_shout<
             v.update(r_j);
 
             {
-                if r.len() % 2 == 0 {
+                if r.len().is_multiple_of(2) {
                     Prefixes::update_checkpoints::<WORD_SIZE, F>(
                         &mut prefix_checkpoints,
                         r[r.len() - 2],
