@@ -362,7 +362,7 @@ pub fn prove_sparse_dense_shout<
 
     let span = tracing::span!(tracing::Level::INFO, "compute input claim");
     let _guard = span.enter();
-    let rv_claim = trace
+    let rv_input_claim: F = trace
         .par_iter()
         .zip(lookup_indices.par_iter())
         .zip(u_evals.par_iter())
@@ -375,14 +375,15 @@ pub fn prove_sparse_dense_shout<
         })
         .sum();
     // TODO: these claims should be connected from spartan
-    let (right_operand_evals, left_operand_poly_evals): (Vec<u64>, Vec<u64>) = trace
+    let (right_operand_evals, left_operand_evals): (Vec<u64>, Vec<u64>) = trace
         .par_iter()
         .map(LookupQuery::<WORD_SIZE>::to_lookup_operands)
         .collect();
     let right_operand_claim = MultilinearPolynomial::from(right_operand_evals).evaluate(r_cycle);
-    let left_operand_claim = MultilinearPolynomial::from(left_operand_poly_evals).evaluate(r_cycle);
+    let left_operand_claim = MultilinearPolynomial::from(left_operand_evals).evaluate(r_cycle);
 
-    let input_claim = rv_claim + gamma * right_operand_claim + gamma_squared * left_operand_claim;
+    let input_claim =
+        rv_input_claim + gamma * right_operand_claim + gamma_squared * left_operand_claim;
     drop(_guard);
     drop(span);
 
@@ -408,8 +409,9 @@ pub fn prove_sparse_dense_shout<
     let batched_uninter_poly = BatchedUninterleavePolynomial::new(log_K, gamma);
     let identity_poly: IdentityPolynomial<F> =
         IdentityPolynomial::new_with_endianness(log_K, Endianness::Big);
-    let mut batched_ps = PrefixSuffixDecomposition::new(Box::new(batched_uninter_poly), m, log_K);
-    let mut identity_ps = PrefixSuffixDecomposition::new(Box::new(identity_poly), m, log_K);
+    let mut batched_ps =
+        PrefixSuffixDecomposition::new(Box::new(batched_uninter_poly), m.log_2(), log_K);
+    let mut identity_ps = PrefixSuffixDecomposition::new(Box::new(identity_poly), m.log_2(), log_K);
 
     let span = tracing::span!(tracing::Level::INFO, "Compute lookup_indices_by_table");
     let _guard = span.enter();
@@ -556,8 +558,8 @@ pub fn prove_sparse_dense_shout<
                     .par_iter_mut()
                     .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow))
             });
-            identity_ps.bind(r_j, BindingOrder::HighToLow);
-            batched_ps.bind(r_j, BindingOrder::HighToLow);
+            identity_ps.bind(r_j);
+            batched_ps.bind(r_j);
             v.update(r_j);
 
             {
@@ -753,7 +755,7 @@ pub fn prove_sparse_dense_shout<
 
     (
         SumcheckInstanceProof::new(compressed_polys),
-        rv_claim,
+        input_claim,
         ra_claims,
         add_mul_sub_claims,
         flag_claims,

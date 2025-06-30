@@ -479,6 +479,8 @@ impl<F: JoltField> PolynomialEvaluation<F> for UnmapRamAddressPolynomial<F> {
 #[cfg(test)]
 mod tests {
     use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+    use crate::poly::prefix_suffix::PrefixSuffixDecomposition;
+    use crate::subprotocols::sparse_dense_shout::LookupBits;
 
     use super::*;
     use ark_bn254::Fr;
@@ -520,54 +522,129 @@ mod tests {
         );
     }
 
+    fn prefix_suffix_decomposition_test<
+        const NUM_VARS: usize,
+        const PREFIX_LEN: usize,
+        const ORDER: usize,
+        P: PolynomialEvaluation<Fr>
+            + PrefixSuffixPolynomial<Fr, ORDER>
+            + Clone
+            + Send
+            + Sync
+            + 'static,
+    >(
+        poly: P,
+        prefix_registry_index: Prefix,
+    ) {
+        let SUFFIX_LEN: usize = NUM_VARS - PREFIX_LEN;
+
+        let mut rng = test_rng();
+        let mut prefix_registry = PrefixRegistry::new();
+        let mut ps = PrefixSuffixDecomposition::new(Box::new(poly.clone()), PREFIX_LEN, NUM_VARS);
+
+        let indices = (0..(1 << NUM_VARS))
+            .map(|i| LookupBits::new(i, NUM_VARS))
+            .collect::<Vec<_>>();
+        let enumerated_indices = indices.iter().enumerate().collect::<Vec<_>>();
+
+        let mut rr = vec![];
+        for phase in 0..(NUM_VARS / PREFIX_LEN) {
+            ps.init_P(&mut prefix_registry);
+            ps.init_Q(
+                &(0..(1 << (NUM_VARS - PREFIX_LEN * phase)))
+                    .map(|_| Fr::ONE)
+                    .collect::<Vec<_>>(),
+                enumerated_indices.iter(),
+            );
+
+            for round in (0..PREFIX_LEN).rev() {
+                for b in 0..round.pow2() {
+                    let eval = ps.sumcheck_evals(b);
+
+                    let eval_point = rr
+                        .iter()
+                        .cloned()
+                        .chain(std::iter::once(Fr::ZERO))
+                        .chain(
+                            std::iter::repeat_n(b, round)
+                                .enumerate()
+                                .rev()
+                                .map(|(i, b)| if (b >> i) & 1 == 1 { Fr::ONE } else { Fr::ZERO }),
+                        )
+                        .collect::<Vec<Fr>>();
+                    let suffix_len = SUFFIX_LEN - phase * PREFIX_LEN;
+                    let direct_eval: Fr = (0..(1 << suffix_len))
+                        .map(|i| {
+                            let mut eval_point = eval_point.clone();
+                            for j in (0..suffix_len).rev() {
+                                if (i >> j) & 1 == 1 {
+                                    eval_point.push(Fr::ONE);
+                                } else {
+                                    eval_point.push(Fr::ZERO);
+                                }
+                            }
+                            poly.evaluate(&eval_point)
+                        })
+                        .sum();
+
+                    assert_eq!(direct_eval, eval.0);
+
+                    let eval_point = rr
+                        .iter()
+                        .cloned()
+                        .chain(std::iter::once(Fr::ONE + Fr::ONE))
+                        .chain(
+                            std::iter::repeat_n(b, round)
+                                .enumerate()
+                                .rev()
+                                .map(|(i, b)| if (b >> i) & 1 == 1 { Fr::ONE } else { Fr::ZERO }),
+                        )
+                        .collect::<Vec<Fr>>();
+                    let direct_eval: Fr = (0..(1 << suffix_len))
+                        .map(|i| {
+                            let mut eval_point = eval_point.clone();
+                            for j in (0..suffix_len).rev() {
+                                if (i >> j) & 1 == 1 {
+                                    eval_point.push(Fr::ONE);
+                                } else {
+                                    eval_point.push(Fr::ZERO);
+                                }
+                            }
+                            poly.evaluate(&eval_point)
+                        })
+                        .sum();
+
+                    assert_eq!(direct_eval, eval.1);
+                }
+                let r = Fr::random(&mut rng);
+                rr.push(r);
+                ps.bind(r);
+                ps.next_round();
+            }
+
+            prefix_registry.next_phase();
+            ps.next_phase();
+        }
+        assert_eq!(
+            prefix_registry.checkpoints[prefix_registry_index],
+            Some(poly.evaluate(&rr))
+        )
+    }
+
     #[test]
     fn identity_poly_prefix_suffix_decomposition() {
-        const NUM_VARS: usize = 8;
-        const PREFIX_LEN: usize = 2;
-        const SUFFIX_LEN: usize = NUM_VARS - PREFIX_LEN;
+        prefix_suffix_decomposition_test::<8, 2, 2, _>(
+            IdentityPolynomial::new_with_endianness(8, Endianness::Big),
+            Prefix::Identity,
+        );
+    }
 
-        let prefix_registry = PrefixRegistry::new();
-        let identity_poly: IdentityPolynomial<Fr> =
-            IdentityPolynomial::new_with_endianness(NUM_VARS, Endianness::Big);
-        let prefix_poly = identity_poly.prefix_polynomial(&prefix_registry.checkpoints, PREFIX_LEN);
-        let shift_suffix = ShiftSuffixPolynomial;
-
-        // Test over the entire boolean hypercube that:
-        // IdentityPolynomial::evaluate(x_0, ..., x_7) =
-        //     IdentityPolynomial::prefix_polynomial().evaluate(x_0, x_1) * shift_suffix_mle(x_2, .., x_7) +
-        //     IdentityPolynomial::suffix_mle(x_2, ..., x_7)
-
-        for i in 0..(1 << NUM_VARS) {
-            let mut eval_point = vec![Fr::ZERO; NUM_VARS];
-            for j in 0..NUM_VARS {
-                if (i >> j) & 1 == 1 {
-                    eval_point[j] = Fr::ONE;
-                }
-            }
-
-            let direct_eval = identity_poly.evaluate(&eval_point);
-
-            let prefix_eval_point = &eval_point[0..PREFIX_LEN];
-            let suffix_eval_point = &eval_point[PREFIX_LEN..];
-
-            let mut suffix_index = 0u64;
-            for (j, &bit) in suffix_eval_point.iter().rev().enumerate() {
-                if bit == Fr::ONE {
-                    suffix_index |= 1 << j;
-                }
-            }
-
-            let prefix_eval = prefix_poly.evaluate(prefix_eval_point);
-            let shift_suffix_eval: Fr = shift_suffix.suffix_mle(suffix_index, SUFFIX_LEN);
-            let suffix_eval = identity_poly.suffix_mle(suffix_index, SUFFIX_LEN);
-
-            let decomposed_eval = prefix_eval * shift_suffix_eval + suffix_eval;
-
-            assert_eq!(
-                direct_eval, decomposed_eval,
-                "IdentityPolynomial decomposition failed at index {i}: direct={direct_eval}, decomposed={decomposed_eval}"
-            );
-        }
+    #[test]
+    fn batched_uninterleave_poly_prefix_suffix_decomposition() {
+        prefix_suffix_decomposition_test::<8, 2, 2, _>(
+            BatchedUninterleavePolynomial::new(8, Fr::random(&mut test_rng())),
+            Prefix::BatchedUninterleaved,
+        );
     }
 
     #[test]
@@ -631,63 +708,11 @@ mod tests {
     }
 
     #[test]
-    fn batched_uninterleave_poly_prefix_suffix_decomposition() {
-        const NUM_VARS: usize = 8;
-        const PREFIX_LEN: usize = 2;
-        const SUFFIX_LEN: usize = NUM_VARS - PREFIX_LEN;
-
-        let mut rng = test_rng();
-        let z = Fr::random(&mut rng);
-        let prefix_registry = PrefixRegistry::new();
-        let batched_poly = BatchedUninterleavePolynomial::<Fr>::new(NUM_VARS, z);
-        let prefix_poly = batched_poly.prefix_polynomial(&prefix_registry.checkpoints, PREFIX_LEN);
-        let shift_suffix = ShiftHalfSuffixPolynomial;
-
-        // Test over the entire boolean hypercube that:
-        // BatchedUninterleavePolynomial::evaluate(x_0, ..., x_7) =
-        //     BatchedUninterleavePolynomial::prefix_polynomial().evaluate(x_0, x_1) * shift_suffix_mle(x_2, .., x_7) +
-        //     BatchedUninterleavePolynomial::suffix_mle(x_2, ..., x_7)
-
-        for i in 0..(1 << NUM_VARS) {
-            let mut eval_point = vec![Fr::ZERO; NUM_VARS];
-            for j in 0..NUM_VARS {
-                if (i >> j) & 1 == 1 {
-                    eval_point[j] = Fr::ONE;
-                }
-            }
-
-            let direct_eval = batched_poly.evaluate(&eval_point);
-
-            let prefix_eval_point = &eval_point[0..PREFIX_LEN];
-            let suffix_eval_point = &eval_point[PREFIX_LEN..];
-
-            let mut suffix_index = 0u64;
-            for (j, &bit) in suffix_eval_point.iter().rev().enumerate() {
-                if bit == Fr::ONE {
-                    suffix_index |= 1 << j;
-                }
-            }
-
-            let prefix_eval = prefix_poly.evaluate(prefix_eval_point);
-            let shift_suffix_eval: Fr = shift_suffix.suffix_mle(suffix_index, SUFFIX_LEN);
-            let suffix_eval = batched_poly.suffix_mle(suffix_index, SUFFIX_LEN);
-
-            let decomposed_eval = prefix_eval * shift_suffix_eval + suffix_eval;
-
-            assert_eq!(
-                direct_eval, decomposed_eval,
-                "BatchedUninterleavePolynomial decomposition failed at index {i}: direct={direct_eval}, decomposed={decomposed_eval}"
-            );
-        }
-    }
-
-    #[test]
     fn batched_uninterleave_poly() {
         const NUM_VARS: usize = 8;
 
         let mut rng = test_rng();
         let z = Fr::random(&mut rng);
-        println!("z = {z}");
         let mut batched_poly = BatchedUninterleavePolynomial::<Fr>::new(NUM_VARS, z);
 
         // Create reference polynomial with evaluations

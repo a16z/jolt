@@ -147,6 +147,16 @@ macro_rules! define_rv32im_trait_impls {
                 }
             }
 
+            fn to_lookup_index(&self) -> u64 {
+                match self {
+                    RV32IMCycle::NoOp(_) => 0,
+                    $(
+                        RV32IMCycle::$instr(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_index(cycle),
+                    )*
+                    _ => panic!("Unexpected instruction: {:?}", self),
+                }
+            }
+
             fn to_lookup_operands(&self) -> (u64, u64) {
                 match self {
                     RV32IMCycle::NoOp(_) => (0, 0),

@@ -178,7 +178,6 @@ pub struct PrefixSuffixDecomposition<F: JoltField, const ORDER: usize> {
     poly: Box<dyn PrefixSuffixPolynomial<F, ORDER> + Send + Sync>,
     P: Vec<Option<Arc<Mutex<CachedMultilinearPolynomial<F>>>>>,
     Q: Vec<DensePolynomial<F>>,
-    m: usize,
     chunk_len: usize,
     total_len: usize,
     phase: usize,
@@ -187,19 +186,18 @@ pub struct PrefixSuffixDecomposition<F: JoltField, const ORDER: usize> {
 impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
     pub fn new(
         poly: Box<dyn PrefixSuffixPolynomial<F, ORDER> + Send + Sync>,
-        m: usize,
+        chunk_len: usize,
         total_len: usize,
     ) -> Self {
         assert!(
-            total_len % m.log_2() == 0,
-            "total_len must be a multiple of log_2(m)"
+            total_len % chunk_len == 0,
+            "total_len must be a multiple of chunk_len"
         );
         Self {
             poly,
             P: vec![],
-            Q: Self::alloc_Q(m),
-            m,
-            chunk_len: m.log_2(),
+            Q: Self::alloc_Q(chunk_len.pow2()),
+            chunk_len,
             total_len,
             phase: 0,
         }
@@ -212,6 +210,10 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
         suffix_chunks * self.chunk_len
     }
 
+    pub fn prefix_len(&self) -> usize {
+        (self.phase + 1) * self.chunk_len
+    }
+
     fn alloc_Q(m: usize) -> Vec<DensePolynomial<F>> {
         rayon::iter::repeatn(0, ORDER)
             .map(|_| DensePolynomial::new(unsafe_allocate_zero_vec(m)))
@@ -220,8 +222,8 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
 
     pub fn reset_Q(&mut self) {
         self.Q.iter_mut().for_each(|poly| {
-            poly.len = self.m;
-            poly.num_vars = poly.len.log_2();
+            poly.len = self.chunk_len.pow2();
+            poly.num_vars = self.chunk_len;
             unsafe_zero_slice(&mut poly.Z);
         });
     }
@@ -236,7 +238,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
         u_evals: &[F],
         indices: I,
     ) {
-        if self.phase == 0 {
+        if self.phase != 0 {
             self.reset_Q();
         }
         let suffix_len = self.suffix_len();
@@ -249,8 +251,9 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
                     let (prefix_bits, suffix_bits) = k.split(suffix_len);
                     let t = suffix.suffix_mle(suffix_bits.into(), suffix_len);
                     if t != F::zero() {
-                        let u = u_evals[*j];
-                        poly.Z[prefix_bits % self.m] += u * t;
+                        if let Some(u) = u_evals.get(*j) {
+                            poly.Z[prefix_bits % self.chunk_len.pow2()] += *u * t;
+                        }
                     }
                 }
             });
@@ -285,23 +288,18 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
                 || (F::zero(), F::zero(), F::zero()),
                 |running, new| (running.0 + new.0, running.1 + new.1, running.2 + new.2),
             );
-        (eval_0, eval_2_left + eval_2_left + eval_2_right)
+        (eval_0, eval_2_right + eval_2_right - eval_2_left)
     }
 
-    pub fn bind(&mut self, r: F, order: BindingOrder) {
-        assert_eq!(
-            BindingOrder::HighToLow,
-            order,
-            "PrefixSuffixDecomposition only supports high-to-low binding"
-        );
+    pub fn bind(&mut self, r: F) {
         self.P.par_iter().for_each(|p| {
             if let Some(p) = p {
                 let mut p = p.lock().unwrap();
-                p.bind_parallel(r, order);
+                p.bind_parallel(r, BindingOrder::HighToLow);
             }
         });
         self.Q.par_iter_mut().for_each(|poly| {
-            poly.bind_parallel(r, order);
+            poly.bind_parallel(r, BindingOrder::HighToLow);
         });
     }
 
