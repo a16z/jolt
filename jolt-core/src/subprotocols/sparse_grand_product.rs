@@ -237,7 +237,7 @@ impl<F: JoltField> Bindable<F> for BatchedGrandProductToggleLayer<F> {
             return;
         }
 
-        debug_assert!(self.layer_len % 4 == 0);
+        debug_assert!(self.layer_len.is_multiple_of(4));
 
         // Bind the fingerprints
         self.fingerprints
@@ -272,7 +272,7 @@ impl<F: JoltField> Bindable<F> for BatchedGrandProductToggleLayer<F> {
                     // Bind indices in place
                     flag_indices[bound_index] = index / 2;
 
-                    if index % 2 == 0 {
+                    if index.is_multiple_of(2) {
                         let neighbor = flag_indices.get(j + 1).cloned().unwrap_or(0);
                         if neighbor == index + 1 {
                             // Neighbor is flag's sibling
@@ -549,7 +549,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                             continue;
                         }
 
-                        let (flags, fingerprints) = if index % 2 == 0 {
+                        let (flags, fingerprints) = if index.is_multiple_of(2) {
                             let neighbor = flag_indices.get(j + 1).cloned().unwrap_or(0);
                             let flags = if neighbor == index + 1 {
                                 // Neighbor is flag's sibling
@@ -674,7 +674,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                             continue;
                         }
 
-                        let (flags, fingerprints) = if index % 2 == 0 {
+                        let (flags, fingerprints) = if index.is_multiple_of(2) {
                             let neighbor = flag_indices.get(j + 1).cloned().unwrap_or(0);
                             let flags = if neighbor == index + 1 {
                                 // Neighbor is flag's sibling
@@ -777,7 +777,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                 let chunk_size = self.batched_layer_len.next_power_of_two() / eq_poly.E2_len;
                 let num_all_one_chunks = self.batched_layer_len / chunk_size;
                 let E2_sum: F = eq_poly.E2[..num_all_one_chunks].iter().sum();
-                if self.batched_layer_len % chunk_size == 0 {
+                if self.batched_layer_len.is_multiple_of(chunk_size) {
                     // If `batched_layer_len` isn't a power of 2 but evenly divides `chunk_size`,
                     // that means that for the last values of x2, we have:
                     //   (1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)) = 0

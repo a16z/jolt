@@ -54,7 +54,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualAssert
     }
 
     fn to_lookup_output(&self) -> u64 {
-        (LookupQuery::<WORD_SIZE>::to_lookup_index(self) % 2 == 0).into()
+        LookupQuery::<WORD_SIZE>::to_lookup_index(self).is_multiple_of(2).into()
     }
 }
 

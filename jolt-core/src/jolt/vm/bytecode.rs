@@ -53,7 +53,7 @@ impl BytecodePreprocessing {
             }
             let instr = instruction.normalize();
             debug_assert!(instr.address >= RAM_START_ADDRESS as usize);
-            debug_assert!(instr.address % BYTES_PER_INSTRUCTION == 0);
+            debug_assert!(instr.address.is_multiple_of(BYTES_PER_INSTRUCTION));
             assert_eq!(
                 virtual_address_map.insert(
                     (instr.address, instr.virtual_sequence_remaining.unwrap_or(0)),

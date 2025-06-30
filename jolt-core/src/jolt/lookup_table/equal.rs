@@ -12,7 +12,7 @@ pub struct EqualTable<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for EqualTable<WORD_SIZE> {
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
-        debug_assert!(r.len() % 2 == 0);
+        debug_assert!(r.len().is_multiple_of(2));
 
         let x = r.iter().step_by(2);
         let y = r.iter().skip(1).step_by(2);

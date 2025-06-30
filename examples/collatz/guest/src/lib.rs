@@ -17,7 +17,7 @@ fn collatz_convergence(n: u128) -> u128 {
     let mut n = n;
     let mut num_steps = 0;
     while n != 1 {
-        if n % 2 == 0 {
+        if n.is_multiple_of(2) {
             n /= 2;
         } else {
             n += (n << 1) + 1;
