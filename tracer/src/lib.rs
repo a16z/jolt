@@ -577,7 +577,8 @@ pub struct LazyTraceIterator {
     emulator_state: EmulatorState,
     prev_pc: u64,
     current_traces: Vec<RV32IMCycle>,
-    // If length is None, the iterator will run until the program ends.
+    length: Option<usize>, // number of cycles to execute before stopping iteration
+                           // If length is None, the iterator will run until the program ends.
     count: usize, // number of cycles completed
 }
 
@@ -587,6 +588,17 @@ impl LazyTraceIterator {
             emulator_state,
             prev_pc: 0,
             current_traces: vec![],
+            length: None,
+            count: 0,
+        }
+    }
+
+    pub fn with_length(emulator_state: EmulatorState, length: usize) -> Self {
+        LazyTraceIterator {
+            emulator_state,
+            prev_pc: 0,
+            current_traces: vec![],
+            length: Some(length),
             count: 0,
         }
     }
@@ -622,6 +634,13 @@ impl Iterator for LazyTraceIterator {
         //Iterate over t returning in FIFO order before calling tick() again.
         if !self.current_traces.is_empty() {
             return self.current_traces.pop();
+        }
+
+        // Check if iterator length (checkpoint interval) is exhausted
+        match self.length {
+            Some(0) => return None, // If length is set and reached 0, stop iteration
+            Some(n) => self.length = Some(n - 1), // Decrement length
+            None => (), // If length is not set, continue till the program ends
         }
 
         // Step the emulator to execute the next instruction till the program ends.
