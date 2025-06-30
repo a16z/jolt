@@ -383,19 +383,20 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         let ra_sumcheck_instance = RASumcheck::<F, D>::new(
             ra_claim,
             addresses,
-            r_cycle_prime.clone(),
+            r_cycle_prime,
             r_address_prime.clone(),
-            trace.len(),
+            1 << log_T,
         );
 
-        let (ra_proof, _r_cycle_bound) = ra_sumcheck_instance.prove(transcript);
+        let (ra_proof, mut r_cycle_bound) = ra_sumcheck_instance.prove(transcript);
 
         let unbound_ra_poly = CommittedPolynomials::RamRa(0).generate_witness(preprocessing, trace);
+        r_cycle_bound.reverse();
 
         opening_accumulator.append_sparse(
             vec![unbound_ra_poly],
             r_address_prime,
-            r_cycle_prime,
+            r_cycle_bound,
             vec![ra_proof.ra_i_claims[0]],
         );
 
@@ -518,19 +519,21 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         let eq_eval_cycle = EqPolynomial::mle(&r_prime, &r_cycle_prime);
 
         let r_address_prime = r_address_prime.iter().copied().rev().collect::<Vec<_>>();
-        let r_concat = [r_address_prime.as_slice(), r_cycle_prime.as_slice()].concat();
         let ra_commitment = &commitments.commitments[CommittedPolynomials::RamRa(0).to_index()];
 
-        // verify ra_virtualization:
+        // verify ra virtualization:
         const D: usize = 1;
-        let _r_cycle_bound = RASumcheck::<F, D>::verify(
+        let mut r_cycle_bound = RASumcheck::<F, D>::verify(
             self.booleanity_proof.ra_claim,
             self.ra_proof.ra_i_claims.clone(),
-            r_cycle_prime.clone(),
+            r_cycle_prime,
             T,
             &self.ra_proof.sumcheck_proof,
             transcript,
         )?;
+
+        r_cycle_bound.reverse();
+        let r_concat = [r_address_prime.as_slice(), r_cycle_bound.as_slice()].concat();
 
         opening_accumulator.append(
             &[ra_commitment],

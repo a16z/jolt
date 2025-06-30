@@ -129,8 +129,7 @@ impl<F: JoltField, const D: usize> RASumcheck<F, D> {
         mut self,
         transcript: &mut ProofTranscript,
     ) -> (RAProof<F, ProofTranscript>, Vec<F>) {
-        let (sumcheck_proof, r_cycle_bound) =
-            crate::subprotocols::sumcheck::BatchedSumcheck::prove_single(&mut self, transcript);
+        let (sumcheck_proof, r_cycle_bound) = self.prove_single(transcript);
 
         let ra_i_claims = self
             .ra_i_claims
@@ -160,11 +159,7 @@ impl<F: JoltField, const D: usize> RASumcheck<F, D> {
             .map_err(|_| crate::utils::errors::ProofVerifyError::InternalError)?;
         verifier_sumcheck.ra_i_claims = Some(ra_i_claims_array);
 
-        let r_cycle_bound = crate::subprotocols::sumcheck::BatchedSumcheck::verify_single(
-            sumcheck_proof,
-            &verifier_sumcheck,
-            transcript,
-        )?;
+        let r_cycle_bound = verifier_sumcheck.verify_single(sumcheck_proof, transcript)?;
 
         Ok(r_cycle_bound)
     }
@@ -258,12 +253,16 @@ impl<F: JoltField, ProofTranscript: Transcript, const D: usize>
 
                 let mut evals = vec![F::zero(); degree];
 
+                // Firstly compute all ra_i_evals
+                let all_ra_i_evals: Vec<Vec<F>> = ra_i_polys
+                    .iter()
+                    .map(|ra_i_poly| ra_i_poly.sumcheck_evals(i, degree, BindingOrder::LowToHigh))
+                    .collect();
+
                 for eval_point in 0..degree {
                     let mut result = eq_evals[eval_point];
 
-                    for ra_i_poly in ra_i_polys.iter() {
-                        let ra_i_evals =
-                            ra_i_poly.sumcheck_evals(i, degree, BindingOrder::LowToHigh);
+                    for ra_i_evals in all_ra_i_evals.iter() {
                         result *= ra_i_evals[eval_point];
                     }
 

@@ -112,6 +112,29 @@ pub trait BatchableSumcheckInstance<F: JoltField, ProofTranscript: Transcript> {
     /// Computes the expected output claim given the verifier's challenges.
     /// This is used to verify the final result of the sumcheck protocol.
     fn expected_output_claim(&self, r: &[F]) -> F;
+
+    /// Proves a single sumcheck instance.
+    fn prove_single(
+        &mut self,
+        transcript: &mut ProofTranscript,
+    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>)
+    where
+        Self: Sized,
+    {
+        BatchedSumcheck::prove(vec![self], transcript)
+    }
+
+    /// Verifies a single sumcheck instance.
+    fn verify_single(
+        &self,
+        proof: &SumcheckInstanceProof<F, ProofTranscript>,
+        transcript: &mut ProofTranscript,
+    ) -> Result<Vec<F>, ProofVerifyError>
+    where
+        Self: Sized,
+    {
+        BatchedSumcheck::verify(proof, vec![self], transcript)
+    }
 }
 
 /// Implements the standard technique for batching parallel sumchecks to reduce
@@ -311,20 +334,6 @@ impl BatchedSumcheck {
         Ok(r_sumcheck)
     }
 
-    pub fn prove_single<F: JoltField, ProofTranscript: Transcript>(
-        sumcheck_instance: &mut dyn BatchableSumcheckInstance<F, ProofTranscript>,
-        transcript: &mut ProofTranscript,
-    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>) {
-        Self::prove(vec![sumcheck_instance], transcript)
-    }
-
-    pub fn verify_single<F: JoltField, ProofTranscript: Transcript>(
-        proof: &SumcheckInstanceProof<F, ProofTranscript>,
-        sumcheck_instance: &dyn BatchableSumcheckInstance<F, ProofTranscript>,
-        transcript: &mut ProofTranscript,
-    ) -> Result<Vec<F>, ProofVerifyError> {
-        Self::verify(proof, vec![sumcheck_instance], transcript)
-    }
 }
 
 impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTranscript> {
