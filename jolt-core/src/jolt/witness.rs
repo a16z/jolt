@@ -39,7 +39,8 @@ pub enum CommittedPolynomials {
     /// One-hot ra/wa polynomial for the RAM instance of Twist
     /// Note that for RAM, ra and wa are the same polynomial because
     /// there is at most one load or store per cycle.
-    RamRa,
+    /// d = 1 right now hence we only ever use RamRa(0) for now.
+    RamRa(usize),
     /// Inc polynomial for the registers instance of Twist
     RdInc,
     /// Inc polynomial for the RAM instance of Twist
@@ -57,7 +58,7 @@ pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 14] = [
     CommittedPolynomials::WritePCtoRD,
     CommittedPolynomials::ShouldBranch,
     CommittedPolynomials::BytecodeRa,
-    CommittedPolynomials::RamRa,
+    CommittedPolynomials::RamRa(0),
     CommittedPolynomials::RdInc,
     CommittedPolynomials::RamInc,
     CommittedPolynomials::InstructionRa(0),
@@ -163,7 +164,11 @@ impl CommittedPolynomials {
                     preprocessing.shared.bytecode.code_size,
                 ))
             }
-            CommittedPolynomials::RamRa => {
+            // TODO(markosg04) logic here needs to be adjusted for when d > 1 is implemented
+            CommittedPolynomials::RamRa(i) => {
+                if *i > 0 {
+                    panic!("RAM is implemented for only d=1 currently.");
+                }
                 let addresses: Vec<usize> = trace
                     .par_iter()
                     .map(|cycle| {

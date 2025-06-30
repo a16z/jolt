@@ -8,8 +8,10 @@ use crate::{
     subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof},
     utils::{math::Math, transcript::Transcript},
 };
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct RAProof<F: JoltField, ProofTranscript: Transcript> {
     pub ra_i_claims: Vec<F>,
     pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
