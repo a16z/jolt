@@ -333,7 +333,6 @@ impl BatchedSumcheck {
 
         Ok(r_sumcheck)
     }
-
 }
 
 impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTranscript> {

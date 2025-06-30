@@ -197,7 +197,7 @@ impl<F: JoltField, ProofTranscript: Transcript, const D: usize>
     }
 
     fn input_claim(&self) -> F {
-        self.ra_claim.clone()
+        self.ra_claim
     }
 
     fn cache_openings(&mut self) {
