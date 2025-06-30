@@ -460,7 +460,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
             .map(|shard_data: Vec<SparseCoefficient<i128>>| {
                 // shard_data is now owned Vec
                 // Estimate the number of bound coefficients to preallocate
-                // TODO: have a precise estimate. This is a (somewhat conservative) guess based on real workload (i.e. SHA-2 chain)
                 // Quick math: the shard data has Az + Bz unbound coeffs. Worst case is that each such coeff
                 // is in its own `Y_SVO_SPACE_SIZE`-sized block, thus giving a 1-1 correspondence between
                 // unbound and bound coeffs for Az and Bz. We also need to account for the same number of Cz coeffs.
@@ -1317,7 +1316,6 @@ where
                 }
             }
         } else {
-            // TODO: Implement Dao-Thaler optmisation.
             // There are multiple values of x_out_vars in the same shard. So we stream a shard and divide it into blocks
             // based on the value of x_out_vars.
             for _ in 0..num_shards {
@@ -1401,7 +1399,6 @@ where
         (svo_accums_zero, svo_accums_infty)
     }
 
-    // TODO: Implement Dao-Thaler optimisation.
     #[allow(clippy::too_many_arguments)]
     pub fn streaming_rounds(
         &mut self,
@@ -1418,14 +1415,12 @@ where
         let mut partially_bound_coeffs = Vec::<Vec<SparseCoefficient<F>>>::new();
         let mut r_i = F::zero();
 
-        // TODO: Add relevant assertions for piece length.
         let piece_size =
             (self.input_polys_oracle.shard_length / self.num_pieces) * self.padded_num_constraints;
 
         assert!(piece_size.is_power_of_two());
         let split_index = std::cmp::min(streaming_rounds_end, piece_size.ilog2() as usize - 1);
 
-        // TODO: Both for loops have a lot of repeated code. Put all that code in a function.
         // All blocks start and end in the same piece
         for round in streaming_rounds_start..=split_index {
             let block_size = 1 << (round + 1);
@@ -1837,7 +1832,6 @@ where
                             e_out_val * e_in_val * p_slope_term;
 
 
-                        // TODO: Here the vector will have length 1. So no need to make it a vector.
                         if round == streaming_rounds_end {
                             if !az0_at_r.is_zero() {
                                 partially_bound_coeff_current_block.push((6 * current_block_id, az0_at_r).into());

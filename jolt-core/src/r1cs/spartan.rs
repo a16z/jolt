@@ -1,12 +1,15 @@
 use crate::field::JoltField;
+use crate::jolt::vm::JoltCommitments;
 use crate::jolt::vm::JoltProverPreprocessing;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{
     process_large_scalar_polys, process_small_scalar_polys, PolynomialEvaluation,
 };
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial};
 use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
+use crate::r1cs::inputs::COMMITTED_R1CS_INPUTS;
 use crate::r1cs::inputs::{JoltR1CSInputs, R1CSInputsOracle, ALL_R1CS_INPUTS};
 use crate::r1cs::key::UniformSpartanKey;
 use crate::utils::math::Math;
@@ -23,10 +26,7 @@ use ark_serialize::CanonicalSerialize;
 use thiserror::Error;
 
 use crate::{
-    poly::{
-        dense_mlpoly::DensePolynomial,
-        eq_poly::{EqPlusOnePolynomial, EqPolynomial},
-    },
+    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPlusOnePolynomial},
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::small_value::NUM_SVO_ROUNDS,
 };
@@ -83,7 +83,7 @@ pub enum SpartanError {
 /// A succinct proof of knowledge of a witness to a relaxed R1CS instance
 /// The proof is produced using Spartan's combination of the sum-check and
 /// the commitment to a vector viewed as a polynomial commitment
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct UniformSpartanProof<F: JoltField, ProofTranscript: Transcript> {
     pub(crate) outer_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub(crate) outer_sumcheck_claims: (F, F, F),
@@ -117,7 +117,7 @@ where
         constraint_builder: &CombinedUniformBuilder<F>,
         key: &UniformSpartanKey<F>,
         trace: &[RV32IMCycle],
-        _opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<Self, SpartanError>
     where
@@ -238,7 +238,7 @@ where
         // Evaluate all witness polynomials P_i at r_cycle for the verifier
         // Verifier computes: z(r_inner, r_cycle) = Σ_i eq(r_inner, i) * P_i(r_cycle)
         let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
-        let (claimed_witness_evals, _chis) =
+        let (claimed_witness_evals, chis) =
             MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
 
         /*  Sumcheck 3: Batched sumcheck for NextUnexpandedPC and NextPC verification
@@ -301,25 +301,29 @@ where
 
         drop_in_background_thread(shift_sumcheck_polys);
 
-        // opening_accumulator.append(
-        //     &flattened_polys_ref,
-        //     DensePolynomial::new(chis),
-        //     r_cycle.to_vec(),
-        //     &claimed_witness_evals,
-        //     transcript,
-        // );
+        // Only non-virtual (i.e. committed) polynomials' openings are
+        // proven using the PCS opening proof. Virtual polynomial openings
+        // are proven in some subsequent sumcheck.
+        let committed_polys: Vec<_> = COMMITTED_R1CS_INPUTS
+            .iter()
+            .map(|input| &input_polys[input.to_index()])
+            .collect();
+        let committed_poly_claims: Vec<_> = COMMITTED_R1CS_INPUTS
+            .iter()
+            .map(|input| claimed_witness_evals[input.to_index()])
+            .collect();
+
+        opening_accumulator.append_dense(
+            &committed_polys,
+            chis,
+            r_cycle.to_vec(),
+            &committed_poly_claims,
+            transcript,
+        );
 
         let unexpanded_pc_eval_at_shift_r = shift_sumcheck_claims[0];
         let pc_eval_at_shift_r = shift_sumcheck_claims[1];
         let shift_sumcheck_witness_eval = vec![unexpanded_pc_eval_at_shift_r, pc_eval_at_shift_r];
-
-        // opening_accumulator.append(
-        //     &todo!(), // only unexpanded_pc and pc
-        //     DensePolynomial::new(chis2), // chis2 need to be computed as EqPolynomial
-        //     shift_sumcheck_r.to_vec(),
-        //     &shift_sumcheck_witness_eval,
-        //     transcript,
-        // );
 
         let outer_sumcheck_claims = (
             outer_sumcheck_claims[0],
@@ -344,7 +348,7 @@ where
         key: &UniformSpartanKey<F>,
         trace: &[RV32IMCycle],
         shard_length: usize,
-        _opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<Self, SpartanError>
     where
@@ -498,6 +502,7 @@ where
                                         shard_length,
                                     );
                                 }
+                                _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
                             };
                         });
                 },
@@ -596,25 +601,37 @@ where
                 2,
             );
 
+        // Only non-virtual (i.e. committed) polynomials' openings are
+        // proven using the PCS opening proof. Virtual polynomial openings
+        // are proven in some subsequent sumcheck.
+        //TODO:- We need to stream input polys here. Can be done while integrating Streamed version of PCS.
+        let input_polys: Vec<MultilinearPolynomial<F>> = ALL_R1CS_INPUTS
+            .par_iter()
+            .map(|var| var.generate_witness(trace, preprocessing))
+            .collect();
+
+        let committed_polys: Vec<_> = COMMITTED_R1CS_INPUTS
+            .iter()
+            .map(|input| &input_polys[input.to_index()])
+            .collect();
+        let committed_poly_claims: Vec<_> = COMMITTED_R1CS_INPUTS
+            .iter()
+            .map(|input| claimed_witness_evals[input.to_index()])
+            .collect();
+
+        //TODO:- Use SplitEQ for chis. Can be done while integrating Streamed version of PCS.
+        let chis = EqPolynomial::evals(r_cycle);
+        opening_accumulator.append_dense(
+            &committed_polys,
+            chis,
+            r_cycle.to_vec(),
+            &committed_poly_claims,
+            transcript,
+        );
+
         let unexpanded_pc_eval_at_shift_r = shift_sumcheck_claims[0];
         let pc_eval_at_shift_r = shift_sumcheck_claims[1];
         let shift_sumcheck_witness_eval = vec![unexpanded_pc_eval_at_shift_r, pc_eval_at_shift_r];
-
-        // opening_accumulator.append(
-        //     &flattened_polys_ref,
-        //     DensePolynomial::new(chis),
-        //     rx_step.to_vec(),
-        //     &claimed_witness_evals,
-        //     transcript,
-        // );
-
-        // opening_accumulator.append(
-        //     &flattened_polys_ref,
-        //     DensePolynomial::new(chis2),
-        //     shift_sumcheck_r.to_vec(),
-        //     &shift_sumcheck_witness_evals,
-        //     transcript,
-        // );
 
         // Outer sumcheck claims: [A(r_x), B(r_x), C(r_x)]
         let outer_sumcheck_claims = (
@@ -637,8 +654,8 @@ where
     pub fn verify<PCS>(
         &self,
         key: &UniformSpartanKey<F>,
-        // commitments: &JoltCommitments<PCS, ProofTranscript>,
-        _opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
+        commitments: &JoltCommitments<F, PCS, ProofTranscript>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError>
     where
@@ -661,7 +678,7 @@ where
         let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
 
         let (claim_Az, claim_Bz, claim_Cz) = self.outer_sumcheck_claims;
-        let taus_bound_rx = EqPolynomial::new(tau).evaluate(&outer_sumcheck_r);
+        let taus_bound_rx = EqPolynomial::mle(&tau, &outer_sumcheck_r);
         let claim_outer_final_expected = taus_bound_rx * (claim_Az * claim_Bz - claim_Cz);
         if claim_outer_final != claim_outer_final_expected {
             return Err(SpartanError::InvalidOuterSumcheckClaim);
@@ -752,28 +769,23 @@ where
             return Err(SpartanError::InvalidShiftSumcheckClaim);
         }
 
-        // TODO: In the openings must also verify that shift_witness_evals are correct
+        // TODO(moodlezoup): Relies on ordering of commitments
+        let r1cs_input_commitments = &commitments
+            .commitments
+            .iter()
+            .take(COMMITTED_R1CS_INPUTS.len())
+            .collect::<Vec<_>>();
 
-        // TODO(moodlezoup): Openings
-
-        // let flattened_commitments: Vec<_> = I::flatten()
-        //     .iter()
-        //     .map(|var| var.get_ref(commitments))
-        //     .collect();
-
-        // opening_accumulator.append(
-        //     &flattened_commitments,
-        //     rx_step.to_vec(),
-        //     &self.claimed_witness_evals.iter().collect::<Vec<_>>(),
-        //     transcript,
-        // );
-
-        // opening_accumulator.append(
-        //     &flattened_commitments,
-        //     shift_sumcheck_r.to_vec(),
-        //     &self.shift_sumcheck_witness_evals.iter().collect::<Vec<_>>(),
-        //     transcript,
-        // );
+        let claims: Vec<_> = COMMITTED_R1CS_INPUTS
+            .iter()
+            .map(|input| self.claimed_witness_evals[input.to_index()])
+            .collect();
+        opening_accumulator.append(
+            r1cs_input_commitments,
+            r_cycle.to_vec(),
+            &claims,
+            transcript,
+        );
 
         Ok(())
     }

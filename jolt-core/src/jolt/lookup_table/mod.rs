@@ -113,9 +113,9 @@ pub enum LookupTables<const WORD_SIZE: usize> {
 }
 
 impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
-    pub fn enum_index(instruction: &Self) -> usize {
+    pub fn enum_index(table: &Self) -> usize {
         // Discriminant: https://doc.rust-lang.org/reference/items/enumerations.html#pointer-casting
-        let byte = unsafe { *(instruction as *const Self as *const u8) };
+        let byte = unsafe { *(table as *const Self as *const u8) };
         byte as usize
     }
 

@@ -75,9 +75,9 @@ where
     #[tracing::instrument(skip_all, name = "BatchedGrandProduct::prove_grand_product")]
     fn prove_grand_product(
         &mut self,
-        _opening_accumulator: Option<&mut ProverOpeningAccumulator<F, ProofTranscript>>,
+        _opening_accumulator: Option<&mut ProverOpeningAccumulator<F, PCS, ProofTranscript>>,
         transcript: &mut ProofTranscript,
-        _setup: Option<&PCS::Setup>,
+        _setup: Option<&PCS::ProverSetup>,
     ) -> (BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>) {
         let mut proof_layers = Vec::with_capacity(self.num_layers());
 
@@ -175,7 +175,6 @@ where
         claimed_outputs: &[F],
         _opening_accumulator: Option<&mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>>,
         transcript: &mut ProofTranscript,
-        _setup: Option<&PCS::Setup>,
     ) -> (F, Vec<F>) {
         // Evaluate the MLE of the output layer at a random point to reduce the outputs to
         // a single claim.
@@ -443,7 +442,6 @@ mod tests {
                 &claims,
                 None,
                 &mut verifier_transcript,
-                None,
             );
             assert_eq!(r_prover, r_verifier);
         }

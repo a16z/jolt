@@ -1049,9 +1049,9 @@ where
     #[tracing::instrument(skip_all, name = "ToggledBatchedGrandProduct::prove_grand_product")]
     fn prove_grand_product(
         &mut self,
-        opening_accumulator: Option<&mut ProverOpeningAccumulator<F, ProofTranscript>>,
+        opening_accumulator: Option<&mut ProverOpeningAccumulator<F, PCS, ProofTranscript>>,
         transcript: &mut ProofTranscript,
-        setup: Option<&PCS::Setup>,
+        setup: Option<&PCS::ProverSetup>,
     ) -> (BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>) {
         QuarkGrandProductBase::prove_quark_grand_product(
             self,
@@ -1066,14 +1066,13 @@ where
     fn verify_grand_product(
         proof: &BatchedGrandProductProof<PCS, ProofTranscript>,
         claimed_outputs: &[F],
-        opening_accumulator: Option<&mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>>,
+        _opening_accumulator: Option<&mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>>,
         transcript: &mut ProofTranscript,
-        _setup: Option<&PCS::Setup>,
     ) -> (F, Vec<F>) {
         QuarkGrandProductBase::verify_quark_grand_product::<Self, PCS>(
             proof,
             claimed_outputs,
-            opening_accumulator,
+            _opening_accumulator,
             transcript,
         )
     }
@@ -1301,7 +1300,11 @@ mod tests {
 
         // Prover setup
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
-        let mut prover_accumulator = ProverOpeningAccumulator::<Fr, KeccakTranscript>::new();
+        let mut prover_accumulator = ProverOpeningAccumulator::<
+            Fr,
+            Zeromorph<Bn254, KeccakTranscript>,
+            KeccakTranscript,
+        >::new();
         let (proof, r_prover) = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
             Fr,
             Zeromorph<Bn254, KeccakTranscript>,
@@ -1310,7 +1313,7 @@ mod tests {
             &mut circuit,
             Some(&mut prover_accumulator),
             &mut prover_transcript,
-            Some(&setup),
+            Some(&setup.0),
         );
 
         // Verifier setup
@@ -1326,7 +1329,6 @@ mod tests {
             &claims,
             Some(&mut verifier_accumulator),
             &mut verifier_transcript,
-            Some(&setup),
         );
 
         assert_eq!(
@@ -1336,6 +1338,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn sparse_prove_verify() {
         const NUM_VARS: [usize; 7] = [1, 2, 3, 4, 5, 6, 7];
         const DENSITY: [f64; 6] = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0];

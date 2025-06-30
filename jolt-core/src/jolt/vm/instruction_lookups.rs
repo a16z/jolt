@@ -5,7 +5,12 @@ use tracer::instruction::RV32IMCycle;
 
 use crate::{
     field::JoltField,
-    jolt::{instruction::LookupQuery, lookup_table::LookupTables},
+    jolt::{
+        instruction::LookupQuery,
+        lookup_table::LookupTables,
+        vm::{JoltCommitments, JoltProverPreprocessing},
+        witness::CommittedPolynomials,
+    },
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
@@ -27,7 +32,7 @@ use crate::{
     },
 };
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct LookupsProof<const WORD_SIZE: usize, F, PCS, ProofTranscript>
 where
     F: JoltField,
@@ -41,7 +46,7 @@ where
     _marker: PhantomData<PCS>,
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct ReadCheckingProof<F, ProofTranscript>
 where
     F: JoltField,
@@ -53,7 +58,7 @@ where
     flag_claims: Vec<F>,
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct BooleanityProof<F, ProofTranscript>
 where
     F: JoltField,
@@ -63,7 +68,7 @@ where
     ra_claims: [F; 4],
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct HammingWeightProof<F, ProofTranscript>
 where
     F: JoltField,
@@ -84,15 +89,15 @@ where
 
     #[tracing::instrument(skip_all, name = "LookupsProof::prove")]
     pub fn prove(
-        _generators: &PCS::Setup,
+        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
         trace: &[RV32IMCycle],
-        _opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Self {
         let log_T = trace.len().log_2();
         let r_cycle: Vec<F> = transcript.challenge_vector(log_T);
         let (read_checking_sumcheck, rv_claim, ra_claims, flag_claims, eq_r_cycle) =
-            prove_sparse_dense_shout::<WORD_SIZE, _, _>(trace, r_cycle, transcript);
+            prove_sparse_dense_shout::<WORD_SIZE, _, _>(trace, &r_cycle, transcript);
         let read_checking_proof = ReadCheckingProof {
             sumcheck_proof: read_checking_sumcheck,
             rv_claim,
@@ -109,12 +114,28 @@ where
         };
 
         // TODO(moodlezoup): Openings
-        let (hamming_weight_sumcheck, _, ra_claims) =
+        let (hamming_weight_sumcheck, r_address, ra_claims) =
             prove_ra_hamming_weight::<F, ProofTranscript>(trace, eq_r_cycle, transcript);
         let hamming_weight_proof = HammingWeightProof {
             sumcheck_proof: hamming_weight_sumcheck,
             ra_claims,
         };
+
+        let unbound_ra_polys = vec![
+            CommittedPolynomials::InstructionRa(0).generate_witness(preprocessing, trace),
+            CommittedPolynomials::InstructionRa(1).generate_witness(preprocessing, trace),
+            CommittedPolynomials::InstructionRa(2).generate_witness(preprocessing, trace),
+            CommittedPolynomials::InstructionRa(3).generate_witness(preprocessing, trace),
+        ];
+
+        let r_address_rev = r_address.iter().copied().rev().collect::<Vec<_>>();
+
+        opening_accumulator.append_sparse(
+            unbound_ra_polys,
+            r_address_rev,
+            r_cycle,
+            ra_claims.to_vec(),
+        );
 
         // TODO(moodlezoup): Interleaved raf evaluation
 
@@ -129,7 +150,8 @@ where
 
     pub fn verify(
         &self,
-        _opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
+        commitments: &JoltCommitments<F, PCS, ProofTranscript>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let r_cycle: Vec<F> = transcript.challenge_vector(self.log_T);
@@ -157,9 +179,9 @@ where
         let (r_address_prime, r_cycle_prime) = r_booleanity.split_at(16);
 
         r_address = r_address.into_iter().rev().collect();
-        let eq_eval_address = EqPolynomial::new(r_address).evaluate(r_address_prime);
-        let r_cycle: Vec<_> = r_cycle.iter().copied().rev().collect();
-        let eq_eval_cycle = EqPolynomial::new(r_cycle).evaluate(r_cycle_prime);
+        let eq_eval_address = EqPolynomial::mle(&r_address, r_address_prime);
+        let r_cycle_rev: Vec<_> = r_cycle.iter().copied().rev().collect();
+        let eq_eval_cycle = EqPolynomial::mle(&r_cycle_rev, r_cycle_prime);
 
         assert_eq!(
             eq_eval_address
@@ -182,7 +204,7 @@ where
         let z_hamming_weight: F = transcript.challenge_scalar();
         let z_hamming_weight_squared: F = z_hamming_weight.square();
         let z_hamming_weight_cubed: F = z_hamming_weight_squared * z_hamming_weight;
-        let (sumcheck_claim, _r_hamming_weight) = self.hamming_weight_proof.sumcheck_proof.verify(
+        let (sumcheck_claim, r_hamming_weight) = self.hamming_weight_proof.sumcheck_proof.verify(
             F::one() + z_hamming_weight + z_hamming_weight_squared + z_hamming_weight_cubed,
             16,
             1,
@@ -197,6 +219,16 @@ where
             sumcheck_claim,
             "Hamming weight sumcheck failed"
         );
+
+        let r_hamming_weight: Vec<_> = r_hamming_weight.iter().copied().rev().collect();
+        for i in 0..4 {
+            opening_accumulator.append(
+                &[&commitments.commitments[CommittedPolynomials::InstructionRa(i).to_index()]],
+                [r_hamming_weight.as_slice(), r_cycle.as_slice()].concat(),
+                &[self.hamming_weight_proof.ra_claims[i]],
+                transcript,
+            );
+        }
 
         Ok(())
     }
