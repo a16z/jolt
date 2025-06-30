@@ -292,7 +292,9 @@ impl<F: JoltField> Bindable<F> for SparseInterleavedPolynomial<F> {
 
                     for j in 0..segment.len() {
                         let current = segment[j];
-                        if current.index.is_multiple_of(2) && current.index < next_left_node_to_process {
+                        if current.index.is_multiple_of(2)
+                            && current.index < next_left_node_to_process
+                        {
                             // This left node was already bound with its sibling in a previous iteration
                             continue;
                         }

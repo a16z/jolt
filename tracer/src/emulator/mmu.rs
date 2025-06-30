@@ -311,7 +311,10 @@ impl Mmu {
     /// * `v_address` Virtual address
     pub fn load_halfword(&mut self, v_address: u64) -> Result<(u16, RAMRead), Trap> {
         let effective_address = self.get_effective_address(v_address);
-        assert!(effective_address.is_multiple_of(2), "Unaligned load_halfword");
+        assert!(
+            effective_address.is_multiple_of(2),
+            "Unaligned load_halfword"
+        );
         let memory_read = self.trace_load(effective_address);
         match self.load_bytes(v_address, 2) {
             Ok(data) => Ok((data as u16, memory_read)),
