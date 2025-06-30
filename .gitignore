@@ -27,3 +27,4 @@ temp_file
 .vscode
 
 *.patch
+Cargo.lock
