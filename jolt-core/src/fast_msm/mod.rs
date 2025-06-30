@@ -5,6 +5,7 @@ use ark_ec::scalar_mul::variable_base::VariableBaseMSM as ArkVariableBaseMSM;
 use ark_ec::scalar_mul::variable_base::{msm_binary, msm_u16, msm_u32, msm_u64, msm_u8};
 use ark_ec::{CurveGroup, ScalarMul};
 use rayon::prelude::*;
+
 // A very light wrapper around Ark5.0 VariableBaseMSM
 pub trait VariableBaseMSM: ArkVariableBaseMSM
 where
@@ -108,9 +109,6 @@ where
             }
             _ => unimplemented!("This variant of MultilinearPolynomial is not yet handled"),
         }
-    }
-    fn joltified(&self) {
-        println!("Hello from Jolt-compatible MSM!");
     }
 }
 
