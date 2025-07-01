@@ -230,6 +230,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     #[should_panic]
     fn truncated_trace() {
         let artifact_guard = FIB_FILE_LOCK.lock().unwrap();
@@ -262,6 +263,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     #[should_panic]
     // TODO: Remove this ignore
     #[ignore]
