@@ -892,7 +892,6 @@ where
                 .collect(),
             MultilinearPolynomial::RLC(poly) => poly.commit_rows(&bases),
             MultilinearPolynomial::OneHot(poly) => poly.commit_rows(&bases),
-            MultilinearPolynomial::Inc(poly) => poly.commit_rows(&bases),
         }
     }
 
