@@ -7,9 +7,7 @@ use strum_macros::{EnumCount as EnumCountMacro, EnumIter as EnumIterMacro};
 
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::multilinear_polynomial::{
-    BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-};
+use crate::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding, PolynomialEvaluation};
 use crate::subprotocols::sparse_dense_shout::LookupBits;
 use crate::utils::math::Math;
 use crate::utils::thread::{unsafe_allocate_zero_vec, unsafe_zero_slice};
@@ -27,7 +25,7 @@ pub type PrefixCheckpoints<F> = [Option<F>; Prefix::COUNT];
 #[derive(Default)]
 pub struct PrefixRegistry<F: JoltField> {
     pub checkpoints: PrefixCheckpoints<F>,
-    pub polys: [Option<Arc<Mutex<CachedMultilinearPolynomial<F>>>>; Prefix::COUNT],
+    pub polys: [Option<Arc<Mutex<CachedPolynomial<F>>>>; Prefix::COUNT],
 }
 
 impl<F: JoltField> PrefixRegistry<F> {
@@ -46,7 +44,7 @@ impl<F: JoltField> PrefixRegistry<F> {
 }
 
 impl<F: JoltField> Index<Prefix> for PrefixRegistry<F> {
-    type Output = Option<Arc<Mutex<CachedMultilinearPolynomial<F>>>>;
+    type Output = Option<Arc<Mutex<CachedPolynomial<F>>>>;
 
     fn index(&self, index: Prefix) -> &Self::Output {
         &self.polys[index]
@@ -73,22 +71,24 @@ impl<T> IndexMut<Prefix> for [T; Prefix::COUNT] {
     }
 }
 
-pub struct CachedMultilinearPolynomial<F: JoltField> {
-    pub inner: MultilinearPolynomial<F>,
+pub trait CacheablePolynomial<F: JoltField>:
+    PolynomialEvaluation<F> + PolynomialBinding<F> + Send + Sync
+{
+}
+
+pub struct CachedPolynomial<F: JoltField> {
+    pub inner: Box<dyn CacheablePolynomial<F>>,
     pub sumcheck_evals_cache: Vec<Option<Vec<F>>>,
     pub bound_this_round: bool,
 }
 
-impl<F: JoltField> PolynomialEvaluation<F> for CachedMultilinearPolynomial<F> {
+impl<F: JoltField> PolynomialEvaluation<F> for CachedPolynomial<F> {
     fn evaluate(&self, x: &[F]) -> F {
         self.inner.evaluate(x)
     }
 
-    fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<F>, Vec<F>) {
-        MultilinearPolynomial::batch_evaluate(
-            &polys.iter().map(|p| &p.inner).collect::<Vec<_>>(),
-            r,
-        )
+    fn batch_evaluate(_polys: &[&Self], _r: &[F]) -> (Vec<F>, Vec<F>) {
+        unimplemented!("Currently unused")
     }
 
     fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F> {
@@ -96,7 +96,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for CachedMultilinearPolynomial<F> {
     }
 }
 
-impl<F: JoltField> PolynomialBinding<F> for CachedMultilinearPolynomial<F> {
+impl<F: JoltField> PolynomialBinding<F> for CachedPolynomial<F> {
     fn bind(&mut self, r: F, order: BindingOrder) {
         if !self.bound_this_round {
             self.inner.bind(r, order);
@@ -120,8 +120,8 @@ impl<F: JoltField> PolynomialBinding<F> for CachedMultilinearPolynomial<F> {
     }
 }
 
-impl<F: JoltField> CachedMultilinearPolynomial<F> {
-    pub fn new(inner: MultilinearPolynomial<F>) -> Self {
+impl<F: JoltField> CachedPolynomial<F> {
+    pub fn new(inner: Box<dyn CacheablePolynomial<F>>) -> Self {
         Self {
             inner,
             sumcheck_evals_cache: Vec::with_capacity(1 << 16),
@@ -134,25 +134,27 @@ impl<F: JoltField> CachedMultilinearPolynomial<F> {
         index: usize,
         degree: usize,
         order: BindingOrder,
+        use_cache: bool,
     ) -> Vec<F> {
-        let span = tracing::span!(
-            tracing::Level::INFO,
-            "CachedMultilinearPolynomial::cached_sumcheck_evals"
-        );
-        let _guard = span.enter();
-        // grow to the next power of two if needed
-        if index >= self.sumcheck_evals_cache.len() {
-            let new_len = (index + 1).next_power_of_two();
-            self.sumcheck_evals_cache.resize(new_len, None);
+        if use_cache {
+            // grow to the next power of two if needed
+            if index >= self.sumcheck_evals_cache.len() {
+                let new_len = (index + 1).next_power_of_two();
+                self.sumcheck_evals_cache.resize(new_len, None);
+            }
+            if self.sumcheck_evals_cache[index].is_none() {
+                self.sumcheck_evals_cache[index] = Some(self.sumcheck_evals(index, degree, order));
+            }
+            self.sumcheck_evals_cache[index].as_ref().unwrap().clone()
+        } else {
+            self.sumcheck_evals(index, degree, order)
         }
-        if self.sumcheck_evals_cache[index].is_none() {
-            self.sumcheck_evals_cache[index] = Some(self.sumcheck_evals(index, degree, order));
-        }
-        self.sumcheck_evals_cache[index].as_ref().unwrap().clone()
     }
 
-    pub fn clear_cache(&mut self) {
-        self.sumcheck_evals_cache.clear();
+    pub fn clear_cache(&mut self, use_cache: bool) {
+        if use_cache {
+            self.sumcheck_evals_cache.clear();
+        }
         self.bound_this_round = false;
     }
 }
@@ -163,8 +165,12 @@ pub trait PrefixPolynomial<F: JoltField> {
     fn prefix_polynomial(
         &self,
         checkpoints: &PrefixCheckpoints<F>,
-        prefix_len: usize,
-    ) -> CachedMultilinearPolynomial<F>;
+        chunk_len: usize,
+        phase: usize,
+    ) -> CachedPolynomial<F>;
+
+    /// Sets the checkpoint value
+    fn set_bound_value(&mut self, bound_value: F, bound_vars: usize);
 }
 
 pub trait SuffixPolynomial<F: JoltField> {
@@ -175,14 +181,15 @@ pub trait PrefixSuffixPolynomial<F: JoltField, const ORDER: usize> {
     fn prefixes(
         &self,
         chunk_len: usize,
+        phase: usize,
         prefix_registry: &mut PrefixRegistry<F>,
-    ) -> [Option<Arc<Mutex<CachedMultilinearPolynomial<F>>>>; ORDER];
+    ) -> [Option<Arc<Mutex<CachedPolynomial<F>>>>; ORDER];
     fn suffixes(&self) -> [Box<dyn SuffixPolynomial<F> + Sync>; ORDER];
 }
 
 pub struct PrefixSuffixDecomposition<F: JoltField, const ORDER: usize> {
     poly: Box<dyn PrefixSuffixPolynomial<F, ORDER> + Send + Sync>,
-    P: Vec<Option<Arc<Mutex<CachedMultilinearPolynomial<F>>>>>,
+    P: Vec<Option<Arc<Mutex<CachedPolynomial<F>>>>>,
     Q: Vec<DensePolynomial<F>>,
     chunk_len: usize,
     total_len: usize,
@@ -235,19 +242,18 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
     }
 
     pub fn init_P(&mut self, prefix_registry: &mut PrefixRegistry<F>) {
-        let span = tracing::span!(tracing::Level::INFO, "PrefixSuffixDecomposition::init_P");
-        let _guard = span.enter();
-        // TODO: Don't init this thing if our Q is ewerywhere zero
-        self.P = self.poly.prefixes(self.chunk_len, prefix_registry).into();
+        self.P = self
+            .poly
+            .prefixes(self.chunk_len, self.phase, prefix_registry)
+            .into();
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn init_Q<'a, I: IntoIterator<Item = &'a (usize, &'a LookupBits)> + Clone + Send + Sync>(
         &mut self,
         u_evals: &[F],
         indices: I,
     ) {
-        let span = tracing::span!(tracing::Level::INFO, "PrefixSuffixDecomposition::init_Q");
-        let _guard = span.enter();
         if self.phase != 0 {
             self.reset_Q();
         }
@@ -278,15 +284,11 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
             .zip(self.Q.par_iter())
             .map(|(p, q)| {
                 let p_evals = if let Some(p) = p {
-                    let lock_span = tracing::span!(
-                        tracing::Level::INFO,
-                        "mutex_lock_wait",
-                        method = "sumcheck_evals"
-                    );
-                    let _lock_guard = lock_span.enter();
+                    // one for registry and one for self
+                    let use_cache = Arc::strong_count(p) > 2;
                     let mut p = p.lock().unwrap();
-                    drop(_lock_guard);
-                    let p_evals = p.cached_sumcheck_evals(index, 2, BindingOrder::HighToLow);
+                    let p_evals =
+                        p.cached_sumcheck_evals(index, 2, BindingOrder::HighToLow, use_cache);
                     drop(p);
                     p_evals
                 } else {
@@ -309,15 +311,9 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
     }
 
     pub fn bind(&mut self, r: F) {
-        let span = tracing::span!(tracing::Level::INFO, "PrefixSuffixDecomposition::bind");
-        let _guard = span.enter();
         self.P.par_iter().for_each(|p| {
             if let Some(p) = p {
-                let lock_span =
-                    tracing::span!(tracing::Level::INFO, "mutex_lock_wait", method = "bind");
-                let _lock_guard = lock_span.enter();
                 let mut p = p.lock().unwrap();
-                drop(_lock_guard);
                 p.bind_parallel(r, BindingOrder::HighToLow);
             }
         });
@@ -336,14 +332,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
                     return F::zero();
                 }
                 if let Some(p) = p {
-                    let lock_span = tracing::span!(
-                        tracing::Level::INFO,
-                        "mutex_lock_wait",
-                        method = "final_sumcheck_claim"
-                    );
-                    let _lock_guard = lock_span.enter();
                     let p = p.lock().unwrap();
-                    drop(_lock_guard);
                     p.final_sumcheck_claim().mul_u64(suff)
                 } else {
                     F::from_u64(suff)
@@ -355,20 +344,133 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
     pub fn next_round(&self) {
         self.P.par_iter().for_each(|p| {
             if let Some(p) = p {
-                let lock_span = tracing::span!(
-                    tracing::Level::INFO,
-                    "mutex_lock_wait",
-                    method = "next_round"
-                );
-                let _lock_guard = lock_span.enter();
+                // one for registry and one for self
+                let use_cache = Arc::strong_count(p) > 2;
                 let mut p = p.lock().unwrap();
-                drop(_lock_guard);
-                p.clear_cache();
+                p.clear_cache(use_cache);
             }
         });
     }
 
     pub fn next_phase(&mut self) {
         self.phase += 1;
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use ark_bn254::Fr;
+    use ark_ff::{AdditiveGroup, Field};
+    use ark_std::test_rng;
+
+    use super::*;
+
+    pub fn prefix_suffix_decomposition_test<
+        const NUM_VARS: usize,
+        const PREFIX_LEN: usize,
+        const ORDER: usize,
+        P: PolynomialEvaluation<Fr>
+            + PrefixSuffixPolynomial<Fr, ORDER>
+            + Clone
+            + Send
+            + Sync
+            + 'static,
+    >(
+        poly: P,
+        prefix_registry_index: Prefix,
+    ) {
+        let SUFFIX_LEN: usize = NUM_VARS - PREFIX_LEN;
+
+        let mut rng = test_rng();
+        let mut prefix_registry = PrefixRegistry::new();
+        let mut ps = PrefixSuffixDecomposition::new(Box::new(poly.clone()), PREFIX_LEN, NUM_VARS);
+
+        let indices = (0..(1 << NUM_VARS))
+            .map(|i| LookupBits::new(i, NUM_VARS))
+            .collect::<Vec<_>>();
+        let enumerated_indices = indices.iter().enumerate().collect::<Vec<_>>();
+
+        let mut rr = vec![];
+        for phase in 0..(NUM_VARS / PREFIX_LEN) {
+            ps.init_P(&mut prefix_registry);
+            ps.init_Q(
+                &(0..(1 << (NUM_VARS - PREFIX_LEN * phase)))
+                    .map(|_| Fr::ONE)
+                    .collect::<Vec<_>>(),
+                enumerated_indices.iter(),
+            );
+
+            for round in (0..PREFIX_LEN).rev() {
+                for b in 0..round.pow2() {
+                    let eval = ps.sumcheck_evals(b);
+
+                    let eval_point = rr
+                        .iter()
+                        .cloned()
+                        .chain(std::iter::once(Fr::ZERO))
+                        .chain(
+                            std::iter::repeat_n(b, round)
+                                .enumerate()
+                                .rev()
+                                .map(|(i, b)| if (b >> i) & 1 == 1 { Fr::ONE } else { Fr::ZERO }),
+                        )
+                        .collect::<Vec<Fr>>();
+                    let suffix_len = SUFFIX_LEN - phase * PREFIX_LEN;
+                    let direct_eval: Fr = (0..(1 << suffix_len))
+                        .map(|i| {
+                            let mut eval_point = eval_point.clone();
+                            for j in (0..suffix_len).rev() {
+                                if (i >> j) & 1 == 1 {
+                                    eval_point.push(Fr::ONE);
+                                } else {
+                                    eval_point.push(Fr::ZERO);
+                                }
+                            }
+                            poly.evaluate(&eval_point)
+                        })
+                        .sum();
+
+                    assert_eq!(direct_eval, eval.0);
+
+                    let eval_point = rr
+                        .iter()
+                        .cloned()
+                        .chain(std::iter::once(Fr::ONE + Fr::ONE))
+                        .chain(
+                            std::iter::repeat_n(b, round)
+                                .enumerate()
+                                .rev()
+                                .map(|(i, b)| if (b >> i) & 1 == 1 { Fr::ONE } else { Fr::ZERO }),
+                        )
+                        .collect::<Vec<Fr>>();
+                    let direct_eval: Fr = (0..(1 << suffix_len))
+                        .map(|i| {
+                            let mut eval_point = eval_point.clone();
+                            for j in (0..suffix_len).rev() {
+                                if (i >> j) & 1 == 1 {
+                                    eval_point.push(Fr::ONE);
+                                } else {
+                                    eval_point.push(Fr::ZERO);
+                                }
+                            }
+                            poly.evaluate(&eval_point)
+                        })
+                        .sum();
+
+                    assert_eq!(direct_eval, eval.1);
+                }
+                let r = Fr::random(&mut rng);
+                rr.push(r);
+                ps.bind(r);
+                ps.next_round();
+            }
+
+            prefix_registry.next_phase();
+            ps.next_phase();
+        }
+        assert_eq!(
+            prefix_registry.checkpoints[prefix_registry_index],
+            Some(poly.evaluate(&rr))
+        )
     }
 }

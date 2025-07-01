@@ -490,7 +490,9 @@ pub trait PolynomialEvaluation<F: JoltField> {
     /// Returns: (evals, EQ table)
     /// where EQ table is EQ(x, r) for x \in {0, 1}^|r|. This is used for
     /// batched opening proofs (see opening_proof.rs)
-    fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<F>, Vec<F>);
+    fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<F>, Vec<F>)
+    where
+        Self: Sized;
     /// Computes this polynomial's contribution to the computation of a prover
     /// sumcheck message (i.e. a univariate polynomial of the given `degree`).
     fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F>;

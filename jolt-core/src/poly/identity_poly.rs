@@ -1,10 +1,9 @@
 use std::sync::{Arc, Mutex};
 
 use crate::field::JoltField;
-use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::prefix_suffix::{
-    CachedMultilinearPolynomial, Prefix, PrefixCheckpoints, PrefixPolynomial, PrefixRegistry,
-    PrefixSuffixPolynomial, SuffixPolynomial,
+    CacheablePolynomial, CachedPolynomial, Prefix, PrefixCheckpoints, PrefixPolynomial,
+    PrefixRegistry, PrefixSuffixPolynomial, SuffixPolynomial,
 };
 use crate::utils::math::Math;
 use crate::utils::uninterleave_bits;
@@ -47,17 +46,26 @@ impl<F: JoltField> PolynomialBinding<F> for IdentityPolynomial<F> {
 
     fn bind(&mut self, r: F, order: BindingOrder) {
         debug_assert!(self.num_bound_vars < self.num_vars);
-        debug_assert_eq!(
-            order,
-            BindingOrder::LowToHigh,
-            "IdentityPolynomial only supports low-to-high binding"
-        );
 
-        let pow = match self.endianness {
-            Endianness::Little => self.num_bound_vars,
-            Endianness::Big => self.num_vars - 1 - self.num_bound_vars,
-        };
-        self.bound_value += F::from_u64(1u64 << pow) * r;
+        match order {
+            BindingOrder::LowToHigh => {
+                debug_assert_eq!(
+                    self.endianness,
+                    Endianness::Little,
+                    "Big endian not supported on LowToHigh"
+                );
+                self.bound_value += F::from_u64(1u64 << self.num_bound_vars) * r;
+            }
+            BindingOrder::HighToLow => {
+                debug_assert_eq!(
+                    self.endianness,
+                    Endianness::Big,
+                    "Lower endian not supported on HighToLow"
+                );
+                self.bound_value += self.bound_value;
+                self.bound_value += r;
+            }
+        }
         self.num_bound_vars += 1;
     }
 
@@ -75,7 +83,7 @@ impl<F: JoltField> PolynomialBinding<F> for IdentityPolynomial<F> {
 impl<F: JoltField> PolynomialEvaluation<F> for IdentityPolynomial<F> {
     fn evaluate(&self, r: &[F]) -> F {
         let len = r.len();
-        assert_eq!(len, self.num_vars);
+        debug_assert_eq!(len, self.num_vars);
         match self.endianness {
             Endianness::Little => (0..len).map(|i| F::from_u64(i.pow2() as u64) * r[i]).sum(),
             Endianness::Big => (0..len)
@@ -91,18 +99,23 @@ impl<F: JoltField> PolynomialEvaluation<F> for IdentityPolynomial<F> {
     fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F> {
         debug_assert!(degree > 0);
         debug_assert!(index < self.num_vars.pow2() / 2);
-        debug_assert_eq!(
-            order,
-            BindingOrder::LowToHigh,
-            "IdentityPolynomial only supports low-to-high binding"
-        );
 
         let mut evals = vec![F::zero(); degree];
-        let m = match self.endianness {
-            Endianness::Little => F::from_u32(1 << self.num_bound_vars),
-            Endianness::Big => F::from_u32(1 << (self.num_vars - 1 - self.num_bound_vars)),
+        let m = match order {
+            BindingOrder::LowToHigh => {
+                debug_assert_eq!(self.endianness, Endianness::Little);
+                let m = F::from_u32(1 << self.num_bound_vars);
+                evals[0] = self.bound_value + (m + m).mul_u64(index as u64);
+                m
+            }
+            BindingOrder::HighToLow => {
+                debug_assert_eq!(self.endianness, Endianness::Big);
+                let m = F::from_u32(1 << (self.num_vars - 1 - self.num_bound_vars));
+                evals[0] = self.bound_value * (m + m) + F::from_u64(index as u64);
+                m
+            }
         };
-        evals[0] = self.bound_value + (m + m).mul_u64(index as u64);
+
         let mut eval = evals[0] + m;
         for i in 1..degree {
             eval += m;
@@ -112,6 +125,8 @@ impl<F: JoltField> PolynomialEvaluation<F> for IdentityPolynomial<F> {
     }
 }
 
+impl<F: JoltField> CacheablePolynomial<F> for IdentityPolynomial<F> {}
+
 impl<F: JoltField> PrefixSuffixPolynomial<F, 2> for IdentityPolynomial<F> {
     fn suffixes(&self) -> [Box<dyn SuffixPolynomial<F> + Sync>; 2] {
         [Box::new(ShiftSuffixPolynomial), Box::new(self.clone())]
@@ -119,13 +134,16 @@ impl<F: JoltField> PrefixSuffixPolynomial<F, 2> for IdentityPolynomial<F> {
 
     fn prefixes(
         &self,
-        prefix_len: usize,
+        chunk_len: usize,
+        phase: usize,
         registry: &mut PrefixRegistry<F>,
-    ) -> [Option<Arc<Mutex<CachedMultilinearPolynomial<F>>>>; 2] {
+    ) -> [Option<Arc<Mutex<CachedPolynomial<F>>>>; 2] {
         if registry[Prefix::Identity].is_none() {
-            registry[Prefix::Identity] = Some(Arc::new(Mutex::new(
-                self.prefix_polynomial(&registry.checkpoints, prefix_len),
-            )));
+            registry[Prefix::Identity] = Some(Arc::new(Mutex::new(self.prefix_polynomial(
+                &registry.checkpoints,
+                chunk_len,
+                phase,
+            ))));
         }
         [registry[Prefix::Identity].clone(), None]
     }
@@ -135,25 +153,28 @@ impl<F: JoltField> PrefixPolynomial<F> for IdentityPolynomial<F> {
     fn prefix_polynomial(
         &self,
         checkpoints: &PrefixCheckpoints<F>,
-        prefix_len: usize,
-    ) -> CachedMultilinearPolynomial<F> {
-        assert!(prefix_len % 2 == 0);
-        assert_eq!(self.endianness, Endianness::Big);
-        let bound_value = checkpoints[Prefix::Identity]
-            .unwrap_or(F::zero())
-            .mul_u64(1 << prefix_len);
-        CachedMultilinearPolynomial::new(MultilinearPolynomial::from(
-            (0..prefix_len.pow2())
-                .map(|i| bound_value + F::from_u64(i as u64))
-                .collect::<Vec<F>>(),
-        ))
+        chunk_len: usize,
+        phase: usize,
+    ) -> CachedPolynomial<F> {
+        debug_assert!(chunk_len % 2 == 0);
+        debug_assert_eq!(self.endianness, Endianness::Big);
+        let bound_value = checkpoints[Prefix::Identity].unwrap_or(F::zero());
+        let mut poly =
+            IdentityPolynomial::new_with_endianness((phase + 1) * chunk_len, Endianness::Big);
+        poly.set_bound_value(bound_value, phase * chunk_len);
+        CachedPolynomial::new(Box::new(poly))
+    }
+
+    fn set_bound_value(&mut self, bound_value: F, bound_vars: usize) {
+        self.bound_value = bound_value;
+        self.num_bound_vars = bound_vars;
     }
 }
 
 impl<F: JoltField> SuffixPolynomial<F> for IdentityPolynomial<F> {
     fn suffix_mle(&self, index: u64, suffix_len: usize) -> u64 {
-        assert!(suffix_len % 2 == 0);
-        assert_eq!(self.endianness, Endianness::Big);
+        debug_assert!(suffix_len % 2 == 0);
+        debug_assert_eq!(self.endianness, Endianness::Big);
         index
     }
 }
@@ -161,7 +182,7 @@ impl<F: JoltField> SuffixPolynomial<F> for IdentityPolynomial<F> {
 pub struct ShiftSuffixPolynomial;
 impl<F: JoltField> SuffixPolynomial<F> for ShiftSuffixPolynomial {
     fn suffix_mle(&self, _index: u64, suffix_len: usize) -> u64 {
-        assert!(suffix_len % 2 == 0);
+        debug_assert!(suffix_len % 2 == 0);
         1 << suffix_len
     }
 }
@@ -169,7 +190,7 @@ impl<F: JoltField> SuffixPolynomial<F> for ShiftSuffixPolynomial {
 pub struct ShiftHalfSuffixPolynomial;
 impl<F: JoltField> SuffixPolynomial<F> for ShiftHalfSuffixPolynomial {
     fn suffix_mle(&self, _index: u64, suffix_len: usize) -> u64 {
-        assert!(suffix_len % 2 == 0);
+        debug_assert!(suffix_len % 2 == 0);
         1 << (suffix_len / 2)
     }
 }
@@ -193,7 +214,7 @@ pub struct OperandPolynomial<F: JoltField> {
 
 impl<F: JoltField> OperandPolynomial<F> {
     pub fn new(num_vars: usize, side: OperandSide) -> Self {
-        assert_eq!(num_vars % 2, 0, "num_vars must be divisible by 2");
+        debug_assert_eq!(num_vars % 2, 0, "num_vars must be divisible by 2");
         OperandPolynomial {
             num_vars,
             num_bound_vars: 0,
@@ -219,7 +240,8 @@ impl<F: JoltField> PolynomialBinding<F> for OperandPolynomial<F> {
         if (self.num_bound_vars % 2 == 0 && self.side == OperandSide::Right)
             || (self.num_bound_vars % 2 == 1 && self.side == OperandSide::Left)
         {
-            self.bound_value = self.bound_value + self.bound_value + r;
+            self.bound_value += self.bound_value;
+            self.bound_value += r;
         }
         self.num_bound_vars += 1;
     }
@@ -238,8 +260,8 @@ impl<F: JoltField> PolynomialBinding<F> for OperandPolynomial<F> {
 impl<F: JoltField> PolynomialEvaluation<F> for OperandPolynomial<F> {
     fn evaluate(&self, r: &[F]) -> F {
         let len = r.len();
-        assert_eq!(len, self.num_vars);
-        assert_eq!(len % 2, 0);
+        debug_assert_eq!(len, self.num_vars);
+        debug_assert_eq!(len % 2, 0);
 
         match self.side {
             OperandSide::Right => (0..len / 2)
@@ -274,7 +296,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for OperandPolynomial<F> {
 
         if self.num_bound_vars % 2 == 0 {
             let unbound_pairs = (self.num_vars - self.num_bound_vars) / 2;
-            assert!(unbound_pairs > 0);
+            debug_assert!(unbound_pairs > 0);
             evals[0] = self.bound_value.mul_u64(1 << unbound_pairs) + index;
             if self.side == OperandSide::Right {
                 let m = F::from_u32(1 << (unbound_pairs - 1));
@@ -311,6 +333,8 @@ impl<F: JoltField> PolynomialEvaluation<F> for OperandPolynomial<F> {
     }
 }
 
+impl<F: JoltField> CacheablePolynomial<F> for OperandPolynomial<F> {}
+
 impl<F: JoltField> PrefixSuffixPolynomial<F, 2> for OperandPolynomial<F> {
     fn suffixes(&self) -> [Box<dyn SuffixPolynomial<F> + Sync>; 2] {
         [Box::new(ShiftHalfSuffixPolynomial), Box::new(self.clone())]
@@ -319,14 +343,15 @@ impl<F: JoltField> PrefixSuffixPolynomial<F, 2> for OperandPolynomial<F> {
     fn prefixes(
         &self,
         chunk_len: usize,
+        phase: usize,
         prefix_registry: &mut PrefixRegistry<F>,
-    ) -> [Option<Arc<Mutex<CachedMultilinearPolynomial<F>>>>; 2] {
+    ) -> [Option<Arc<Mutex<CachedPolynomial<F>>>>; 2] {
         match self.side {
             OperandSide::Right => {
                 if prefix_registry[Prefix::RightOperand].is_none() {
                     let ro_poly = OperandPolynomial::new(self.num_vars, OperandSide::Right);
                     prefix_registry[Prefix::RightOperand] = Some(Arc::new(Mutex::new(
-                        ro_poly.prefix_polynomial(&prefix_registry.checkpoints, chunk_len),
+                        ro_poly.prefix_polynomial(&prefix_registry.checkpoints, chunk_len, phase),
                     )));
                 }
                 [prefix_registry[Prefix::RightOperand].clone(), None]
@@ -335,7 +360,7 @@ impl<F: JoltField> PrefixSuffixPolynomial<F, 2> for OperandPolynomial<F> {
                 if prefix_registry[Prefix::LeftOperand].is_none() {
                     let lo_poly = OperandPolynomial::new(self.num_vars, OperandSide::Left);
                     prefix_registry[Prefix::LeftOperand] = Some(Arc::new(Mutex::new(
-                        lo_poly.prefix_polynomial(&prefix_registry.checkpoints, chunk_len),
+                        lo_poly.prefix_polynomial(&prefix_registry.checkpoints, chunk_len, phase),
                     )));
                 }
                 [prefix_registry[Prefix::LeftOperand].clone(), None]
@@ -346,8 +371,8 @@ impl<F: JoltField> PrefixSuffixPolynomial<F, 2> for OperandPolynomial<F> {
 
 impl<F: JoltField> SuffixPolynomial<F> for OperandPolynomial<F> {
     fn suffix_mle(&self, index: u64, suffix_len: usize) -> u64 {
-        assert!(suffix_len % 2 == 0);
-        assert!(self.num_bound_vars % 2 == 0);
+        debug_assert!(suffix_len % 2 == 0);
+        debug_assert!(self.num_bound_vars % 2 == 0);
         let (right, left) = uninterleave_bits(index);
         match self.side {
             OperandSide::Right => right as u64,
@@ -360,39 +385,25 @@ impl<F: JoltField> PrefixPolynomial<F> for OperandPolynomial<F> {
     fn prefix_polynomial(
         &self,
         checkpoints: &PrefixCheckpoints<F>,
-        prefix_len: usize,
-    ) -> CachedMultilinearPolynomial<F> {
-        assert!(prefix_len % 2 == 0);
-        assert!(self.num_bound_vars % 2 == 0);
+        chunk_len: usize,
+        phase: usize,
+    ) -> CachedPolynomial<F> {
+        debug_assert!(chunk_len % 2 == 0);
+        debug_assert!(self.num_bound_vars % 2 == 0);
 
-        match self.side {
-            OperandSide::Right => {
-                let bound_value = checkpoints[Prefix::RightOperand]
-                    .unwrap_or(F::zero())
-                    .mul_u64(1 << (prefix_len / 2));
-                CachedMultilinearPolynomial::new(MultilinearPolynomial::from(
-                    (0..prefix_len.pow2())
-                        .map(|i| {
-                            let (right, _left) = uninterleave_bits(i as u64);
-                            bound_value + F::from_u32(right)
-                        })
-                        .collect::<Vec<F>>(),
-                ))
-            }
-            OperandSide::Left => {
-                let bound_value = checkpoints[Prefix::LeftOperand]
-                    .unwrap_or(F::zero())
-                    .mul_u64(1 << (prefix_len / 2));
-                CachedMultilinearPolynomial::new(MultilinearPolynomial::from(
-                    (0..prefix_len.pow2())
-                        .map(|i| {
-                            let (_right, left) = uninterleave_bits(i as u64);
-                            bound_value + F::from_u32(left)
-                        })
-                        .collect::<Vec<F>>(),
-                ))
-            }
-        }
+        let bound_value = match self.side {
+            OperandSide::Right => checkpoints[Prefix::RightOperand].unwrap_or(F::zero()),
+            OperandSide::Left => checkpoints[Prefix::LeftOperand].unwrap_or(F::zero()),
+        };
+
+        let mut poly = OperandPolynomial::new((phase + 1) * chunk_len, self.side);
+        poly.set_bound_value(bound_value, phase * chunk_len);
+        CachedPolynomial::new(Box::new(poly))
+    }
+
+    fn set_bound_value(&mut self, value: F, bound_vars: usize) {
+        self.bound_value = value;
+        self.num_bound_vars = bound_vars;
     }
 }
 
@@ -526,8 +537,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for UnmapRamAddressPolynomial<F> {
 #[cfg(test)]
 mod tests {
     use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-    use crate::poly::prefix_suffix::PrefixSuffixDecomposition;
-    use crate::subprotocols::sparse_dense_shout::LookupBits;
+    use crate::poly::prefix_suffix::tests::prefix_suffix_decomposition_test;
 
     use super::*;
     use ark_bn254::Fr;
@@ -567,115 +577,6 @@ mod tests {
             identity_poly.final_sumcheck_claim(),
             reference_poly.final_sumcheck_claim()
         );
-    }
-
-    fn prefix_suffix_decomposition_test<
-        const NUM_VARS: usize,
-        const PREFIX_LEN: usize,
-        const ORDER: usize,
-        P: PolynomialEvaluation<Fr>
-            + PrefixSuffixPolynomial<Fr, ORDER>
-            + Clone
-            + Send
-            + Sync
-            + 'static,
-    >(
-        poly: P,
-        prefix_registry_index: Prefix,
-    ) {
-        let SUFFIX_LEN: usize = NUM_VARS - PREFIX_LEN;
-
-        let mut rng = test_rng();
-        let mut prefix_registry = PrefixRegistry::new();
-        let mut ps = PrefixSuffixDecomposition::new(Box::new(poly.clone()), PREFIX_LEN, NUM_VARS);
-
-        let indices = (0..(1 << NUM_VARS))
-            .map(|i| LookupBits::new(i, NUM_VARS))
-            .collect::<Vec<_>>();
-        let enumerated_indices = indices.iter().enumerate().collect::<Vec<_>>();
-
-        let mut rr = vec![];
-        for phase in 0..(NUM_VARS / PREFIX_LEN) {
-            ps.init_P(&mut prefix_registry);
-            ps.init_Q(
-                &(0..(1 << (NUM_VARS - PREFIX_LEN * phase)))
-                    .map(|_| Fr::ONE)
-                    .collect::<Vec<_>>(),
-                enumerated_indices.iter(),
-            );
-
-            for round in (0..PREFIX_LEN).rev() {
-                for b in 0..round.pow2() {
-                    let eval = ps.sumcheck_evals(b);
-
-                    let eval_point = rr
-                        .iter()
-                        .cloned()
-                        .chain(std::iter::once(Fr::ZERO))
-                        .chain(
-                            std::iter::repeat_n(b, round)
-                                .enumerate()
-                                .rev()
-                                .map(|(i, b)| if (b >> i) & 1 == 1 { Fr::ONE } else { Fr::ZERO }),
-                        )
-                        .collect::<Vec<Fr>>();
-                    let suffix_len = SUFFIX_LEN - phase * PREFIX_LEN;
-                    let direct_eval: Fr = (0..(1 << suffix_len))
-                        .map(|i| {
-                            let mut eval_point = eval_point.clone();
-                            for j in (0..suffix_len).rev() {
-                                if (i >> j) & 1 == 1 {
-                                    eval_point.push(Fr::ONE);
-                                } else {
-                                    eval_point.push(Fr::ZERO);
-                                }
-                            }
-                            poly.evaluate(&eval_point)
-                        })
-                        .sum();
-
-                    assert_eq!(direct_eval, eval.0);
-
-                    let eval_point = rr
-                        .iter()
-                        .cloned()
-                        .chain(std::iter::once(Fr::ONE + Fr::ONE))
-                        .chain(
-                            std::iter::repeat_n(b, round)
-                                .enumerate()
-                                .rev()
-                                .map(|(i, b)| if (b >> i) & 1 == 1 { Fr::ONE } else { Fr::ZERO }),
-                        )
-                        .collect::<Vec<Fr>>();
-                    let direct_eval: Fr = (0..(1 << suffix_len))
-                        .map(|i| {
-                            let mut eval_point = eval_point.clone();
-                            for j in (0..suffix_len).rev() {
-                                if (i >> j) & 1 == 1 {
-                                    eval_point.push(Fr::ONE);
-                                } else {
-                                    eval_point.push(Fr::ZERO);
-                                }
-                            }
-                            poly.evaluate(&eval_point)
-                        })
-                        .sum();
-
-                    assert_eq!(direct_eval, eval.1);
-                }
-                let r = Fr::random(&mut rng);
-                rr.push(r);
-                ps.bind(r);
-                ps.next_round();
-            }
-
-            prefix_registry.next_phase();
-            ps.next_phase();
-        }
-        assert_eq!(
-            prefix_registry.checkpoints[prefix_registry_index],
-            Some(poly.evaluate(&rr))
-        )
     }
 
     #[test]
@@ -744,13 +645,11 @@ mod tests {
                 }
             }
             eval_point.reverse();
-            println!("eval_point: {eval_point:?}");
 
             // Use uninterleave_bits to match the polynomial's implementation
             let (right, left) = uninterleave_bits(i as u64);
             let expected_r = Fr::from_u32(right);
             let expected_l = Fr::from_u32(left);
-            println!("expected_r: {expected_r}, expected_l: {expected_l}");
 
             assert_eq!(
                 ro_poly.evaluate(&eval_point),

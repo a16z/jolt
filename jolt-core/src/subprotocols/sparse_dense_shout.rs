@@ -486,43 +486,41 @@ pub fn prove_sparse_dense_shout<
         // Initialize suffix poly for each suffix
         let suffix_poly_span = tracing::span!(tracing::Level::INFO, "Compute suffix polys");
         let _suffix_poly_guard = suffix_poly_span.enter();
-        lookup_tables
-            .par_iter()
-            .zip(suffix_polys.par_iter_mut())
-            .zip(lookup_indices_by_table.par_iter())
-            .for_each(|((table, polys), lookup_indices)| {
-                table
-                    .suffixes()
-                    .par_iter()
-                    .zip(polys.par_iter_mut())
-                    .for_each(|(suffix, poly)| {
-                        if phase != 0 {
-                            // Reset polynomial
-                            poly.len = m;
-                            poly.num_vars = poly.len.log_2();
-                            unsafe_zero_slice(&mut poly.Z);
-                        }
 
-                        for (j, k) in lookup_indices.iter() {
-                            let (prefix_bits, suffix_bits) = k.split(suffix_len);
-                            let t = suffix.suffix_mle::<WORD_SIZE>(suffix_bits);
-                            if t != 0 {
-                                let u = u_evals[*j];
-                                poly.Z[prefix_bits % m] += u.mul_u64(t as u64);
-                            }
-                        }
+        rayon::scope(|s| {
+            s.spawn(|_| {
+                lookup_tables
+                    .par_iter()
+                    .zip(suffix_polys.par_iter_mut())
+                    .zip(lookup_indices_by_table.par_iter())
+                    .for_each(|((table, polys), lookup_indices)| {
+                        table
+                            .suffixes()
+                            .par_iter()
+                            .zip(polys.par_iter_mut())
+                            .for_each(|(suffix, poly)| {
+                                if phase != 0 {
+                                    // Reset polynomial
+                                    poly.len = m;
+                                    poly.num_vars = poly.len.log_2();
+                                    unsafe_zero_slice(&mut poly.Z);
+                                }
+
+                                for (j, k) in lookup_indices.iter() {
+                                    let (prefix_bits, suffix_bits) = k.split(suffix_len);
+                                    let t = suffix.suffix_mle::<WORD_SIZE>(suffix_bits);
+                                    if t != 0 {
+                                        let u = u_evals[*j];
+                                        poly.Z[prefix_bits % m] += u.mul_u64(t as u64);
+                                    }
+                                }
+                            });
                     });
             });
-
-        rayon::join(
-            || identity_ps.init_Q(&u_evals, lookup_indices_identity.iter()),
-            || {
-                rayon::join(
-                    || right_operand_ps.init_Q(&u_evals, lookup_indices_uninterleave.iter()),
-                    || left_operand_ps.init_Q(&u_evals, lookup_indices_uninterleave.iter()),
-                )
-            },
-        );
+            s.spawn(|_| right_operand_ps.init_Q(&u_evals, lookup_indices_uninterleave.iter()));
+            s.spawn(|_| left_operand_ps.init_Q(&u_evals, lookup_indices_uninterleave.iter()));
+            s.spawn(|_| identity_ps.init_Q(&u_evals, lookup_indices_identity.iter()));
+        });
         identity_ps.init_P(&mut prefix_registry);
         right_operand_ps.init_P(&mut prefix_registry);
         left_operand_ps.init_P(&mut prefix_registry);
@@ -565,15 +563,19 @@ pub fn prove_sparse_dense_shout<
             let binding_span = tracing::span!(tracing::Level::INFO, "binding");
             let _binding_guard = binding_span.enter();
 
-            suffix_polys.par_iter_mut().for_each(|polys| {
-                polys
-                    .par_iter_mut()
-                    .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow))
+            rayon::scope(|s| {
+                s.spawn(|_| {
+                    suffix_polys.par_iter_mut().for_each(|polys| {
+                        polys
+                            .par_iter_mut()
+                            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow))
+                    });
+                });
+                s.spawn(|_| identity_ps.bind(r_j));
+                s.spawn(|_| right_operand_ps.bind(r_j));
+                s.spawn(|_| left_operand_ps.bind(r_j));
+                s.spawn(|_| v.update(r_j));
             });
-            identity_ps.bind(r_j);
-            right_operand_ps.bind(r_j);
-            left_operand_ps.bind(r_j);
-            v.update(r_j);
 
             {
                 if r.len().is_multiple_of(2) {
