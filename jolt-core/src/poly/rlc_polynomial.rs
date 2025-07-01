@@ -3,7 +3,6 @@ use crate::msm::VariableBaseMSM;
 use crate::poly::commitment::dory::{DoryGlobals, JoltFieldWrapper, JoltGroupWrapper};
 use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::inc_polynomial::IncPolynomial;
 use crate::poly::one_hot_polynomial::OneHotPolynomial;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_bn254::{Fr, G1Projective};
@@ -25,12 +24,6 @@ pub struct RLCPolynomial<F: JoltField> {
     /// pairs and lazily handle the linear combination in `commit_rows`
     /// and `vector_matrix_product`.
     one_hot_rlc: Vec<(F, OneHotPolynomial<F>)>,
-    /// Random linear combination of Inc polynomials (length T x K
-    /// for some K). Instead of pre-emptively combining these polynomials,
-    /// as we do for `dense_rlc`, we store a vector of (coefficient, polynomial)
-    /// pairs and lazily handle the linear combination in `commit_rows`
-    /// and `vector_matrix_product`.
-    inc_rlc: Vec<(F, IncPolynomial<F>)>,
 }
 
 impl<F: JoltField> RLCPolynomial<F> {
@@ -38,7 +31,6 @@ impl<F: JoltField> RLCPolynomial<F> {
         Self {
             dense_rlc: unsafe_allocate_zero_vec(DoryGlobals::get_T()),
             one_hot_rlc: vec![],
-            inc_rlc: vec![],
         }
     }
 
@@ -76,42 +68,6 @@ impl<F: JoltField> RLCPolynomial<F> {
             let mut new_row_commitments: Vec<JoltGroupWrapper<G>> = poly.commit_rows(bases);
 
             // TODO(moodlezoup): Avoid resize
-            new_row_commitments.resize(num_rows, JoltGroupWrapper(G::zero()));
-
-            let updated_row_commitments: &mut [G1Projective] = unsafe {
-                std::slice::from_raw_parts_mut(
-                    new_row_commitments.as_mut_ptr() as *mut G1Projective,
-                    new_row_commitments.len(),
-                )
-            };
-
-            let current_row_commitments: &[G1Projective] = unsafe {
-                std::slice::from_raw_parts(
-                    row_commitments.as_ptr() as *const G1Projective,
-                    row_commitments.len(),
-                )
-            };
-
-            let coeff_fr = unsafe { *(&raw const *coeff as *const Fr) };
-
-            let _span = trace_span!("vector_scalar_mul_add_gamma_g1_online");
-            let _enter = _span.enter();
-
-            // Scales the row commitments for the current polynomial by
-            // its coefficient
-            jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
-                updated_row_commitments,
-                coeff_fr,
-                current_row_commitments,
-            );
-
-            let _ = std::mem::replace(&mut row_commitments, new_row_commitments);
-        }
-
-        // Compute the row commitments for Inc polynomials
-        for (coeff, poly) in self.inc_rlc.iter() {
-            let mut new_row_commitments: Vec<JoltGroupWrapper<G>> = poly.commit_rows(bases);
-
             new_row_commitments.resize(num_rows, JoltGroupWrapper(G::zero()));
 
             let updated_row_commitments: &mut [G1Projective] = unsafe {
@@ -190,18 +146,6 @@ impl<F: JoltField> RLCPolynomial<F> {
                 });
         }
 
-        // Compute the vector-matrix product for Inc polynomials
-        for (coeff, poly) in self.inc_rlc.iter() {
-            // TODO(moodlezoup): Pass result by mutable reference to
-            // poly.vector_matrix_product
-            result
-                .par_iter_mut()
-                .zip(poly.vector_matrix_product(left_vec).into_par_iter())
-                .for_each(|(result, new)| {
-                    result.0 += new * coeff;
-                });
-        }
-
         result
     }
 }
@@ -211,15 +155,6 @@ impl<F: JoltField> MulAdd<F, RLCPolynomial<F>> for &OneHotPolynomial<F> {
 
     fn mul_add(self, a: F, mut b: RLCPolynomial<F>) -> RLCPolynomial<F> {
         b.one_hot_rlc.push((a, self.clone())); // TODO(moodlezoup): avoid clone
-        b
-    }
-}
-
-impl<F: JoltField> MulAdd<F, RLCPolynomial<F>> for &IncPolynomial<F> {
-    type Output = RLCPolynomial<F>;
-
-    fn mul_add(self, a: F, mut b: RLCPolynomial<F>) -> RLCPolynomial<F> {
-        b.inc_rlc.push((a, self.clone())); // TODO(moodlezoup): avoid clone
         b
     }
 }

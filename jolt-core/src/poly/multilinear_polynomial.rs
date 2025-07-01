@@ -1,8 +1,5 @@
 use crate::{
-    poly::{
-        inc_polynomial::IncPolynomial, one_hot_polynomial::OneHotPolynomial,
-        rlc_polynomial::RLCPolynomial,
-    },
+    poly::{one_hot_polynomial::OneHotPolynomial, rlc_polynomial::RLCPolynomial},
     utils::{compute_dotproduct, math::Math},
 };
 use num_traits::MulAdd;
@@ -31,7 +28,6 @@ pub enum MultilinearPolynomial<F: JoltField> {
     I64Scalars(CompactPolynomial<i64, F>),
     RLC(RLCPolynomial<F>),
     OneHot(OneHotPolynomial<F>),
-    Inc(IncPolynomial<F>),
 }
 
 /// The order in which polynomial variables are bound in sumcheck
@@ -124,12 +120,10 @@ impl<F: JoltField> MultilinearPolynomial<F> {
         // If there's at least one sparse polynomial in `polynomials`, the linear
         // combination will be represented by an `RLCPolynomial`. Otherwise, it will
         // be represented by a `DensePolynomial`.
-        if polynomials.iter().any(|poly| {
-            matches!(
-                poly,
-                MultilinearPolynomial::OneHot(_) | MultilinearPolynomial::Inc(_)
-            )
-        }) {
+        if polynomials
+            .iter()
+            .any(|poly| matches!(poly, MultilinearPolynomial::OneHot(_)))
+        {
             let mut result = RLCPolynomial::<F>::new();
             for (coeff, polynomial) in coefficients.iter().zip(polynomials.iter()) {
                 result = match polynomial {
@@ -140,7 +134,6 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                     MultilinearPolynomial::U64Scalars(poly) => poly.mul_add(*coeff, result),
                     MultilinearPolynomial::I64Scalars(poly) => poly.mul_add(*coeff, result),
                     MultilinearPolynomial::OneHot(poly) => poly.mul_add(*coeff, result),
-                    MultilinearPolynomial::Inc(poly) => poly.mul_add(*coeff, result),
                     _ => unimplemented!("Unexpected polynomial type"),
                 };
             }
