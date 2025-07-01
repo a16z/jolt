@@ -11,7 +11,7 @@ use crate::{
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
-        identity_poly::{BatchedUninterleavePolynomial, Endianness, IdentityPolynomial},
+        identity_poly::{Endianness, IdentityPolynomial, OperandPolynomial, OperandSide},
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
@@ -240,7 +240,8 @@ fn compute_sumcheck_prover_message<const WORD_SIZE: usize, F: JoltField>(
     prefix_checkpoints: &[PrefixCheckpoint<F>],
     suffix_polys: &[Vec<DensePolynomial<F>>],
     identity_ps: &PrefixSuffixDecomposition<F, 2>,
-    batched_ps: &PrefixSuffixDecomposition<F, 2>,
+    right_operand_ps: &PrefixSuffixDecomposition<F, 2>,
+    left_operand_ps: &PrefixSuffixDecomposition<F, 2>,
     gamma: F,
     r: &[F],
     j: usize,
@@ -287,12 +288,13 @@ fn compute_sumcheck_prover_message<const WORD_SIZE: usize, F: JoltField>(
             |running, new| (running.0 + new.0, running.1 + new.1, running.2 + new.2),
         );
 
-    let (identity_0, identity_2, batched_0, batched_2): (F, F, F, F) = (0..len / 2)
+    let (left_0, left_2, right_0, right_2): (F, F, F, F) = (0..len / 2)
         .into_par_iter()
         .map(|b| {
             let (i0, i2) = identity_ps.sumcheck_evals(b);
-            let (b0, b2) = batched_ps.sumcheck_evals(b);
-            (i0, i2, b0, b2)
+            let (r0, r2) = right_operand_ps.sumcheck_evals(b);
+            let (l0, l2) = left_operand_ps.sumcheck_evals(b);
+            (i0 + l0, i2 + l2, r0, r2)
         })
         .reduce(
             || (F::zero(), F::zero(), F::zero(), F::zero()),
@@ -308,8 +310,8 @@ fn compute_sumcheck_prover_message<const WORD_SIZE: usize, F: JoltField>(
 
     let gamma_squared = gamma.square();
     [
-        eval_0 + gamma * batched_0 + gamma_squared * identity_0,
-        eval_2_right + eval_2_right - eval_2_left + gamma * batched_2 + gamma_squared * identity_2,
+        eval_0 + gamma * right_0 + gamma_squared * left_0,
+        eval_2_right + eval_2_right - eval_2_left + gamma * right_2 + gamma_squared * left_2,
     ]
 }
 
@@ -406,11 +408,14 @@ pub fn prove_sparse_dense_shout<
 
     let mut prefix_registry = PrefixRegistry::new();
 
-    let batched_uninter_poly = BatchedUninterleavePolynomial::new(log_K, gamma);
+    let right_operand_poly = OperandPolynomial::new(log_K, OperandSide::Right);
+    let left_operand_poly = OperandPolynomial::new(log_K, OperandSide::Left);
     let identity_poly: IdentityPolynomial<F> =
         IdentityPolynomial::new_with_endianness(log_K, Endianness::Big);
-    let mut batched_ps =
-        PrefixSuffixDecomposition::new(Box::new(batched_uninter_poly), m.log_2(), log_K);
+    let mut right_operand_ps =
+        PrefixSuffixDecomposition::new(Box::new(right_operand_poly), m.log_2(), log_K);
+    let mut left_operand_ps =
+        PrefixSuffixDecomposition::new(Box::new(left_operand_poly), m.log_2(), log_K);
     let mut identity_ps = PrefixSuffixDecomposition::new(Box::new(identity_poly), m.log_2(), log_K);
 
     let span = tracing::span!(tracing::Level::INFO, "Compute lookup_indices_by_table");
@@ -439,7 +444,7 @@ pub fn prove_sparse_dense_shout<
             table_lookups
         })
         .collect();
-    let (lookup_indices_batched, lookup_indices_identity): (Vec<_>, Vec<_>) = lookup_indices
+    let (lookup_indices_uninterleave, lookup_indices_identity): (Vec<_>, Vec<_>) = lookup_indices
         .par_iter()
         .enumerate()
         .zip(trace.par_iter())
@@ -511,10 +516,16 @@ pub fn prove_sparse_dense_shout<
 
         rayon::join(
             || identity_ps.init_Q(&u_evals, lookup_indices_identity.iter()),
-            || batched_ps.init_Q(&u_evals, lookup_indices_batched.iter()),
+            || {
+                rayon::join(
+                    || right_operand_ps.init_Q(&u_evals, lookup_indices_uninterleave.iter()),
+                    || left_operand_ps.init_Q(&u_evals, lookup_indices_uninterleave.iter()),
+                )
+            },
         );
         identity_ps.init_P(&mut prefix_registry);
-        batched_ps.init_P(&mut prefix_registry);
+        right_operand_ps.init_P(&mut prefix_registry);
+        left_operand_ps.init_P(&mut prefix_registry);
 
         drop(_suffix_poly_guard);
         drop(suffix_poly_span);
@@ -529,7 +540,8 @@ pub fn prove_sparse_dense_shout<
                 &prefix_checkpoints,
                 &suffix_polys,
                 &identity_ps,
-                &batched_ps,
+                &right_operand_ps,
+                &left_operand_ps,
                 gamma,
                 &r,
                 j,
@@ -559,7 +571,8 @@ pub fn prove_sparse_dense_shout<
                     .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow))
             });
             identity_ps.bind(r_j);
-            batched_ps.bind(r_j);
+            right_operand_ps.bind(r_j);
+            left_operand_ps.bind(r_j);
             v.update(r_j);
 
             {
@@ -574,7 +587,8 @@ pub fn prove_sparse_dense_shout<
             }
 
             identity_ps.next_round();
-            batched_ps.next_round();
+            right_operand_ps.next_round();
+            left_operand_ps.next_round();
             j += 1;
         }
 
@@ -592,7 +606,8 @@ pub fn prove_sparse_dense_shout<
         ra.push(MultilinearPolynomial::from(ra_i));
 
         identity_ps.next_phase();
-        batched_ps.next_phase();
+        right_operand_ps.next_phase();
+        left_operand_ps.next_phase();
         prefix_registry.next_phase();
     }
 
@@ -629,7 +644,8 @@ pub fn prove_sparse_dense_shout<
             }
 
             if step.instruction().circuit_flags().is_interleaved_operands() {
-                *val += gamma * prefix_registry.checkpoints[Prefix::BatchedUninterleaved].unwrap();
+                *val += gamma * prefix_registry.checkpoints[Prefix::RightOperand].unwrap()
+                    + gamma_squared * prefix_registry.checkpoints[Prefix::LeftOperand].unwrap();
             } else {
                 *val += gamma_squared * prefix_registry.checkpoints[Prefix::Identity].unwrap();
             }
@@ -795,13 +811,14 @@ pub fn verify_sparse_dense_shout<
         .map(|(flag, val)| *flag * val)
         .sum::<F>();
 
-    let batched_uninter_poly_eval =
-        BatchedUninterleavePolynomial::new(log_K, gamma).evaluate(&r_address);
+    let right_operand_eval = OperandPolynomial::new(log_K, OperandSide::Right).evaluate(&r_address);
+    let left_operand_eval = OperandPolynomial::new(log_K, OperandSide::Left).evaluate(&r_address);
     let identity_poly_eval =
         IdentityPolynomial::new_with_endianness(log_K, Endianness::Big).evaluate(&r_address);
 
     let val_claim = rv_val_claim
-        + gamma * (F::one() - is_add_mul_sub_flag_claim) * batched_uninter_poly_eval
+        + (F::one() - is_add_mul_sub_flag_claim)
+            * (gamma * right_operand_eval + gamma_squared * left_operand_eval)
         + gamma_squared * is_add_mul_sub_flag_claim * identity_poly_eval;
 
     assert_eq!(

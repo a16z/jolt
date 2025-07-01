@@ -17,7 +17,8 @@ use crate::utils::thread::{unsafe_allocate_zero_vec, unsafe_zero_slice};
 #[repr(u8)]
 #[derive(Clone, Copy, EnumIterMacro, EnumCountMacro)]
 pub enum Prefix {
-    BatchedUninterleaved,
+    RightOperand,
+    LeftOperand,
     Identity,
 }
 
@@ -134,6 +135,11 @@ impl<F: JoltField> CachedMultilinearPolynomial<F> {
         degree: usize,
         order: BindingOrder,
     ) -> Vec<F> {
+        let span = tracing::span!(
+            tracing::Level::INFO,
+            "CachedMultilinearPolynomial::cached_sumcheck_evals"
+        );
+        let _guard = span.enter();
         // grow to the next power of two if needed
         if index >= self.sumcheck_evals_cache.len() {
             let new_len = (index + 1).next_power_of_two();
@@ -162,7 +168,7 @@ pub trait PrefixPolynomial<F: JoltField> {
 }
 
 pub trait SuffixPolynomial<F: JoltField> {
-    fn suffix_mle(&self, index: u64, suffix_len: usize) -> F;
+    fn suffix_mle(&self, index: u64, suffix_len: usize) -> u64;
 }
 
 pub trait PrefixSuffixPolynomial<F: JoltField, const ORDER: usize> {
@@ -229,6 +235,8 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
     }
 
     pub fn init_P(&mut self, prefix_registry: &mut PrefixRegistry<F>) {
+        let span = tracing::span!(tracing::Level::INFO, "PrefixSuffixDecomposition::init_P");
+        let _guard = span.enter();
         // TODO: Don't init this thing if our Q is ewerywhere zero
         self.P = self.poly.prefixes(self.chunk_len, prefix_registry).into();
     }
@@ -238,6 +246,8 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
         u_evals: &[F],
         indices: I,
     ) {
+        let span = tracing::span!(tracing::Level::INFO, "PrefixSuffixDecomposition::init_Q");
+        let _guard = span.enter();
         if self.phase != 0 {
             self.reset_Q();
         }
@@ -250,9 +260,9 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
                 for (j, k) in indices.clone() {
                     let (prefix_bits, suffix_bits) = k.split(suffix_len);
                     let t = suffix.suffix_mle(suffix_bits.into(), suffix_len);
-                    if t != F::zero() {
+                    if t != 0 {
                         if let Some(u) = u_evals.get(*j) {
-                            poly.Z[prefix_bits % self.chunk_len.pow2()] += *u * t;
+                            poly.Z[prefix_bits % self.chunk_len.pow2()] += (*u).mul_u64(t);
                         }
                     }
                 }
@@ -268,7 +278,14 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
             .zip(self.Q.par_iter())
             .map(|(p, q)| {
                 let p_evals = if let Some(p) = p {
+                    let lock_span = tracing::span!(
+                        tracing::Level::INFO,
+                        "mutex_lock_wait",
+                        method = "sumcheck_evals"
+                    );
+                    let _lock_guard = lock_span.enter();
                     let mut p = p.lock().unwrap();
+                    drop(_lock_guard);
                     let p_evals = p.cached_sumcheck_evals(index, 2, BindingOrder::HighToLow);
                     drop(p);
                     p_evals
@@ -292,9 +309,15 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
     }
 
     pub fn bind(&mut self, r: F) {
+        let span = tracing::span!(tracing::Level::INFO, "PrefixSuffixDecomposition::bind");
+        let _guard = span.enter();
         self.P.par_iter().for_each(|p| {
             if let Some(p) = p {
+                let lock_span =
+                    tracing::span!(tracing::Level::INFO, "mutex_lock_wait", method = "bind");
+                let _lock_guard = lock_span.enter();
                 let mut p = p.lock().unwrap();
+                drop(_lock_guard);
                 p.bind_parallel(r, BindingOrder::HighToLow);
             }
         });
@@ -309,14 +332,21 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
             .zip(self.poly.suffixes().par_iter())
             .map(|(p, suffix)| {
                 let suff = suffix.suffix_mle(0, 0);
-                if suff == F::zero() {
+                if suff == 0 {
                     return F::zero();
                 }
                 if let Some(p) = p {
+                    let lock_span = tracing::span!(
+                        tracing::Level::INFO,
+                        "mutex_lock_wait",
+                        method = "final_sumcheck_claim"
+                    );
+                    let _lock_guard = lock_span.enter();
                     let p = p.lock().unwrap();
-                    p.final_sumcheck_claim() * suff
+                    drop(_lock_guard);
+                    p.final_sumcheck_claim().mul_u64(suff)
                 } else {
-                    suff
+                    F::from_u64(suff)
                 }
             })
             .sum()
@@ -325,7 +355,15 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
     pub fn next_round(&self) {
         self.P.par_iter().for_each(|p| {
             if let Some(p) = p {
-                p.lock().unwrap().clear_cache();
+                let lock_span = tracing::span!(
+                    tracing::Level::INFO,
+                    "mutex_lock_wait",
+                    method = "next_round"
+                );
+                let _lock_guard = lock_span.enter();
+                let mut p = p.lock().unwrap();
+                drop(_lock_guard);
+                p.clear_cache();
             }
         });
     }

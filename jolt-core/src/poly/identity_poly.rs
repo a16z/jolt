@@ -151,47 +151,59 @@ impl<F: JoltField> PrefixPolynomial<F> for IdentityPolynomial<F> {
 }
 
 impl<F: JoltField> SuffixPolynomial<F> for IdentityPolynomial<F> {
-    fn suffix_mle(&self, index: u64, suffix_len: usize) -> F {
+    fn suffix_mle(&self, index: u64, suffix_len: usize) -> u64 {
         assert!(suffix_len % 2 == 0);
         assert_eq!(self.endianness, Endianness::Big);
-        F::from_u64(index)
+        index
     }
 }
 
 pub struct ShiftSuffixPolynomial;
 impl<F: JoltField> SuffixPolynomial<F> for ShiftSuffixPolynomial {
-    fn suffix_mle(&self, _index: u64, suffix_len: usize) -> F {
+    fn suffix_mle(&self, _index: u64, suffix_len: usize) -> u64 {
         assert!(suffix_len % 2 == 0);
-        F::from_u64(1 << suffix_len)
+        1 << suffix_len
     }
 }
 
-/// BatchedUninterleavePolynomial evaluates
-/// sum_{i=0}^{num_vars/2-1} (r[2i]  + z * r[2i + 1]) * 2^(num_vars/2 - 1 - i)
-#[derive(Clone)]
-pub struct BatchedUninterleavePolynomial<F: JoltField> {
-    num_vars: usize,
-    num_bound_vars: usize,
-    z: F,
-    bound_value: F,
-    /// Stores the odd variable that's been bound but hasn't updated bound_value yet
-    pending_odd_bind: Option<F>,
+pub struct ShiftHalfSuffixPolynomial;
+impl<F: JoltField> SuffixPolynomial<F> for ShiftHalfSuffixPolynomial {
+    fn suffix_mle(&self, _index: u64, suffix_len: usize) -> u64 {
+        assert!(suffix_len % 2 == 0);
+        1 << (suffix_len / 2)
+    }
 }
 
-impl<F: JoltField> BatchedUninterleavePolynomial<F> {
-    pub fn new(num_vars: usize, z: F) -> Self {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OperandSide {
+    Right,
+    Left,
+}
+
+/// OperandPolynomial evaluates to either the right or left operand value from uninterleaved bits
+/// For Right: sum_{i=0}^{num_vars/2-1} r[2i] * 2^(num_vars/2 - 1 - i)
+/// For Left: sum_{i=0}^{num_vars/2-1} r[2i + 1] * 2^(num_vars/2 - 1 - i)
+#[derive(Clone)]
+pub struct OperandPolynomial<F: JoltField> {
+    num_vars: usize,
+    num_bound_vars: usize,
+    bound_value: F,
+    side: OperandSide,
+}
+
+impl<F: JoltField> OperandPolynomial<F> {
+    pub fn new(num_vars: usize, side: OperandSide) -> Self {
         assert_eq!(num_vars % 2, 0, "num_vars must be divisible by 2");
-        BatchedUninterleavePolynomial {
+        OperandPolynomial {
             num_vars,
             num_bound_vars: 0,
-            z,
             bound_value: F::zero(),
-            pending_odd_bind: None,
+            side,
         }
     }
 }
 
-impl<F: JoltField> PolynomialBinding<F> for BatchedUninterleavePolynomial<F> {
+impl<F: JoltField> PolynomialBinding<F> for OperandPolynomial<F> {
     fn is_bound(&self) -> bool {
         self.num_bound_vars != 0
     }
@@ -201,17 +213,13 @@ impl<F: JoltField> PolynomialBinding<F> for BatchedUninterleavePolynomial<F> {
         debug_assert_eq!(
             order,
             BindingOrder::HighToLow,
-            "BatchedUninterleavePolynomial only supports high-to-low binding"
+            "OperandPolynomial only supports high-to-low binding"
         );
 
-        if self.num_bound_vars % 2 == 0 {
-            // Binding an even variable (r[2i])
-            self.pending_odd_bind = Some(r);
-        } else {
-            // Binding an odd variable (r[2i+1])
-            let odd_r = self.pending_odd_bind.take().unwrap();
-            self.bound_value += self.bound_value; // multiply by 2
-            self.bound_value += odd_r + self.z * r;
+        if (self.num_bound_vars % 2 == 0 && self.side == OperandSide::Right)
+            || (self.num_bound_vars % 2 == 1 && self.side == OperandSide::Left)
+        {
+            self.bound_value = self.bound_value + self.bound_value + r;
         }
         self.num_bound_vars += 1;
     }
@@ -223,23 +231,24 @@ impl<F: JoltField> PolynomialBinding<F> for BatchedUninterleavePolynomial<F> {
 
     fn final_sumcheck_claim(&self) -> F {
         debug_assert_eq!(self.num_vars, self.num_bound_vars);
-        debug_assert!(self.pending_odd_bind.is_none());
         self.bound_value
     }
 }
 
-impl<F: JoltField> PolynomialEvaluation<F> for BatchedUninterleavePolynomial<F> {
+impl<F: JoltField> PolynomialEvaluation<F> for OperandPolynomial<F> {
     fn evaluate(&self, r: &[F]) -> F {
         let len = r.len();
         assert_eq!(len, self.num_vars);
         assert_eq!(len % 2, 0);
 
-        (0..len / 2)
-            .map(|i| {
-                F::from_u64(1u64 << (self.num_vars / 2 - 1 - i))
-                    * (r[2 * i] + self.z * r[2 * i + 1])
-            })
-            .sum()
+        match self.side {
+            OperandSide::Right => (0..len / 2)
+                .map(|i| r[2 * i].mul_u64(1u64 << (self.num_vars / 2 - 1 - i)))
+                .sum(),
+            OperandSide::Left => (0..len / 2)
+                .map(|i| r[2 * i + 1].mul_u64(1u64 << (self.num_vars / 2 - 1 - i)))
+                .sum(),
+        }
     }
 
     fn batch_evaluate(_polys: &[&Self], _r: &[F]) -> (Vec<F>, Vec<F>) {
@@ -252,45 +261,57 @@ impl<F: JoltField> PolynomialEvaluation<F> for BatchedUninterleavePolynomial<F> 
         debug_assert_eq!(
             order,
             BindingOrder::HighToLow,
-            "BatchedUninterleavePolynomial only supports high-to-low binding"
+            "OperandPolynomial only supports high-to-low binding"
         );
 
         let mut evals = vec![F::zero(); degree];
-
         let (right, left) = uninterleave_bits(index as u64);
-        let comb = F::from_u32(right) + self.z.mul_u64(left as u64);
+
+        let index = match self.side {
+            OperandSide::Right => F::from_u32(right),
+            OperandSide::Left => F::from_u32(left),
+        };
 
         if self.num_bound_vars % 2 == 0 {
-            assert!(self.pending_odd_bind.is_none());
             let unbound_pairs = (self.num_vars - self.num_bound_vars) / 2;
             assert!(unbound_pairs > 0);
-            evals[0] = self.bound_value.mul_u64(1 << unbound_pairs) + comb;
+            evals[0] = self.bound_value.mul_u64(1 << unbound_pairs) + index;
+            if self.side == OperandSide::Right {
+                let m = F::from_u32(1 << (unbound_pairs - 1));
+                let mut eval = evals[0] + m;
+                for i in 1..degree {
+                    eval += m;
+                    evals[i] = eval;
+                }
+            } else {
+                for i in 1..degree {
+                    evals[i] = evals[0];
+                }
+            }
+        } else if self.side == OperandSide::Left {
+            // We are currently bindinng the left operand variable
+            let unbound_pairs = (self.num_vars - self.num_bound_vars).div_ceil(2);
+            evals[0] = self.bound_value.mul_u64(1 << unbound_pairs) + index;
             let m = F::from_u32(1 << (unbound_pairs - 1));
             let mut eval = evals[0] + m;
             for i in 1..degree {
                 eval += m;
                 evals[i] = eval;
             }
-            evals
         } else {
-            assert!(self.pending_odd_bind.is_some());
-            let odd_r = self.pending_odd_bind.unwrap();
-            let unbound_pairs = (self.num_vars - self.num_bound_vars).div_ceil(2);
-            evals[0] = self.bound_value.mul_u64(1 << unbound_pairs)
-                + comb
-                + odd_r.mul_u64(1 << (unbound_pairs - 1));
-            let m = self.z.mul_u64(1 << (unbound_pairs - 1));
-            let mut eval = evals[0] + m;
+            // We are currently binding left operand variable, but polynoimal is RightOperand
+            let unbound_pairs = (self.num_vars - self.num_bound_vars) / 2;
+            evals[0] = self.bound_value.mul_u64(1 << unbound_pairs) + index;
             for i in 1..degree {
-                eval += m;
-                evals[i] = eval;
+                evals[i] = evals[0];
             }
-            evals
         }
+
+        evals
     }
 }
 
-impl<F: JoltField> PrefixSuffixPolynomial<F, 2> for BatchedUninterleavePolynomial<F> {
+impl<F: JoltField> PrefixSuffixPolynomial<F, 2> for OperandPolynomial<F> {
     fn suffixes(&self) -> [Box<dyn SuffixPolynomial<F> + Sync>; 2] {
         [Box::new(ShiftHalfSuffixPolynomial), Box::new(self.clone())]
     }
@@ -300,33 +321,42 @@ impl<F: JoltField> PrefixSuffixPolynomial<F, 2> for BatchedUninterleavePolynomia
         chunk_len: usize,
         prefix_registry: &mut PrefixRegistry<F>,
     ) -> [Option<Arc<Mutex<CachedMultilinearPolynomial<F>>>>; 2] {
-        if prefix_registry[Prefix::BatchedUninterleaved].is_none() {
-            prefix_registry[Prefix::BatchedUninterleaved] = Some(Arc::new(Mutex::new(
-                self.prefix_polynomial(&prefix_registry.checkpoints, chunk_len),
-            )));
+        match self.side {
+            OperandSide::Right => {
+                if prefix_registry[Prefix::RightOperand].is_none() {
+                    let ro_poly = OperandPolynomial::new(self.num_vars, OperandSide::Right);
+                    prefix_registry[Prefix::RightOperand] = Some(Arc::new(Mutex::new(
+                        ro_poly.prefix_polynomial(&prefix_registry.checkpoints, chunk_len),
+                    )));
+                }
+                [prefix_registry[Prefix::RightOperand].clone(), None]
+            }
+            OperandSide::Left => {
+                if prefix_registry[Prefix::LeftOperand].is_none() {
+                    let lo_poly = OperandPolynomial::new(self.num_vars, OperandSide::Left);
+                    prefix_registry[Prefix::LeftOperand] = Some(Arc::new(Mutex::new(
+                        lo_poly.prefix_polynomial(&prefix_registry.checkpoints, chunk_len),
+                    )));
+                }
+                [prefix_registry[Prefix::LeftOperand].clone(), None]
+            }
         }
-        [prefix_registry[Prefix::BatchedUninterleaved].clone(), None]
     }
 }
 
-pub struct ShiftHalfSuffixPolynomial;
-impl<F: JoltField> SuffixPolynomial<F> for ShiftHalfSuffixPolynomial {
-    fn suffix_mle(&self, _index: u64, suffix_len: usize) -> F {
-        assert!(suffix_len % 2 == 0);
-        F::from_u64(1 << (suffix_len / 2))
-    }
-}
-
-impl<F: JoltField> SuffixPolynomial<F> for BatchedUninterleavePolynomial<F> {
-    fn suffix_mle(&self, index: u64, suffix_len: usize) -> F {
+impl<F: JoltField> SuffixPolynomial<F> for OperandPolynomial<F> {
+    fn suffix_mle(&self, index: u64, suffix_len: usize) -> u64 {
         assert!(suffix_len % 2 == 0);
         assert!(self.num_bound_vars % 2 == 0);
         let (right, left) = uninterleave_bits(index);
-        F::from_u32(right) + self.z.mul_u64(left as u64)
+        match self.side {
+            OperandSide::Right => right as u64,
+            OperandSide::Left => left as u64,
+        }
     }
 }
 
-impl<F: JoltField> PrefixPolynomial<F> for BatchedUninterleavePolynomial<F> {
+impl<F: JoltField> PrefixPolynomial<F> for OperandPolynomial<F> {
     fn prefix_polynomial(
         &self,
         checkpoints: &PrefixCheckpoints<F>,
@@ -334,18 +364,35 @@ impl<F: JoltField> PrefixPolynomial<F> for BatchedUninterleavePolynomial<F> {
     ) -> CachedMultilinearPolynomial<F> {
         assert!(prefix_len % 2 == 0);
         assert!(self.num_bound_vars % 2 == 0);
-        let bound_value = checkpoints[Prefix::BatchedUninterleaved]
-            .unwrap_or(F::zero())
-            .mul_u64(1 << (prefix_len / 2));
-        CachedMultilinearPolynomial::new(MultilinearPolynomial::from(
-            (0..prefix_len.pow2())
-                .map(|i| {
-                    let (right, left) = uninterleave_bits(i as u64);
-                    let comb = F::from_u32(right) + self.z.mul_u64(left as u64);
-                    bound_value + comb
-                })
-                .collect::<Vec<F>>(),
-        ))
+
+        match self.side {
+            OperandSide::Right => {
+                let bound_value = checkpoints[Prefix::RightOperand]
+                    .unwrap_or(F::zero())
+                    .mul_u64(1 << (prefix_len / 2));
+                CachedMultilinearPolynomial::new(MultilinearPolynomial::from(
+                    (0..prefix_len.pow2())
+                        .map(|i| {
+                            let (right, _left) = uninterleave_bits(i as u64);
+                            bound_value + F::from_u32(right)
+                        })
+                        .collect::<Vec<F>>(),
+                ))
+            }
+            OperandSide::Left => {
+                let bound_value = checkpoints[Prefix::LeftOperand]
+                    .unwrap_or(F::zero())
+                    .mul_u64(1 << (prefix_len / 2));
+                CachedMultilinearPolynomial::new(MultilinearPolynomial::from(
+                    (0..prefix_len.pow2())
+                        .map(|i| {
+                            let (_right, left) = uninterleave_bits(i as u64);
+                            bound_value + F::from_u32(left)
+                        })
+                        .collect::<Vec<F>>(),
+                ))
+            }
+        }
     }
 }
 
@@ -640,10 +687,14 @@ mod tests {
     }
 
     #[test]
-    fn batched_uninterleave_poly_prefix_suffix_decomposition() {
+    fn operand_poly_prefix_suffix_decomposition() {
         prefix_suffix_decomposition_test::<8, 2, 2, _>(
-            BatchedUninterleavePolynomial::new(8, Fr::random(&mut test_rng())),
-            Prefix::BatchedUninterleaved,
+            OperandPolynomial::new(8, OperandSide::Right),
+            Prefix::RightOperand,
+        );
+        prefix_suffix_decomposition_test::<8, 2, 2, _>(
+            OperandPolynomial::new(8, OperandSide::Left),
+            Prefix::LeftOperand,
         );
     }
 
@@ -678,12 +729,11 @@ mod tests {
     }
 
     #[test]
-    fn batched_uninterleave_poly_boolean_hypercube() {
+    fn operand_poly_boolean_hypercube() {
         const NUM_VARS: usize = 8;
 
-        let mut rng = test_rng();
-        let z = Fr::random(&mut rng);
-        let batched_poly = BatchedUninterleavePolynomial::<Fr>::new(NUM_VARS, z);
+        let ro_poly = OperandPolynomial::<Fr>::new(NUM_VARS, OperandSide::Right);
+        let lo_poly = OperandPolynomial::<Fr>::new(NUM_VARS, OperandSide::Left);
 
         // Test evaluation on boolean hypercube
         for i in 0..(1 << NUM_VARS) {
@@ -694,35 +744,44 @@ mod tests {
                 }
             }
             eval_point.reverse();
+            println!("eval_point: {eval_point:?}");
 
             // Use uninterleave_bits to match the polynomial's implementation
             let (right, left) = uninterleave_bits(i as u64);
-            let expected = Fr::from_u32(right) + z * Fr::from_u32(left);
+            let expected_r = Fr::from_u32(right);
+            let expected_l = Fr::from_u32(left);
+            println!("expected_r: {expected_r}, expected_l: {expected_l}");
 
             assert_eq!(
-                batched_poly.evaluate(&eval_point),
-                expected,
-                "Boolean hypercube evaluation failed at index {i}"
+                ro_poly.evaluate(&eval_point),
+                expected_r,
+                "Boolean hypercube RIGHT OPERAND evaluation failed at index {i}"
+            );
+            assert_eq!(
+                lo_poly.evaluate(&eval_point),
+                expected_l,
+                "Boolean hypercube LEFT OPERAND evaluation failed at index {i}"
             );
         }
     }
 
     #[test]
-    fn batched_uninterleave_poly() {
+    fn operand_poly() {
         const NUM_VARS: usize = 8;
 
         let mut rng = test_rng();
-        let z = Fr::random(&mut rng);
-        let mut batched_poly = BatchedUninterleavePolynomial::<Fr>::new(NUM_VARS, z);
+        let mut ro_poly = OperandPolynomial::<Fr>::new(NUM_VARS, OperandSide::Right);
+        let mut lo_poly = OperandPolynomial::<Fr>::new(NUM_VARS, OperandSide::Left);
 
         // Create reference polynomial with evaluations
-        let reference_evals: Vec<Fr> = (0u64..(1 << NUM_VARS))
+        let (reference_evals_r, reference_evals_l): (Vec<Fr>, Vec<Fr>) = (0u64..(1 << NUM_VARS))
             .map(|i| {
                 let (right, left) = uninterleave_bits(i);
-                Fr::from_u32(right) + z * Fr::from_u32(left)
+                (Fr::from_u32(right), Fr::from_u32(left))
             })
             .collect();
-        let mut reference_poly = MultilinearPolynomial::from(reference_evals);
+        let mut reference_poly_r = MultilinearPolynomial::from(reference_evals_r);
+        let mut reference_poly_l = MultilinearPolynomial::from(reference_evals_l);
 
         // Verify that both polynomials agree on the entire boolean hypercube
         for i in 0..(1 << NUM_VARS) {
@@ -732,11 +791,13 @@ mod tests {
                     eval_point[j] = Fr::ONE;
                 }
             }
-            let batched_eval = batched_poly.evaluate(&eval_point);
-            let reference_eval = reference_poly.evaluate(&eval_point);
+            let ro_poly = ro_poly.evaluate(&eval_point);
+            let lo_poly = lo_poly.evaluate(&eval_point);
+            let reference_r = reference_poly_r.evaluate(&eval_point);
+            let reference_l = reference_poly_l.evaluate(&eval_point);
             assert_eq!(
-                batched_eval, reference_eval,
-                "Evaluation mismatch at index {i}: batched={batched_eval}, reference={reference_eval}"
+                (ro_poly, lo_poly), (reference_r, reference_l),
+                "Evaluation mismatch at index {i}:, operand_poly={ro_poly}, {lo_poly}, reference={reference_r}, {reference_l}"
             );
         }
 
@@ -744,23 +805,33 @@ mod tests {
             let num_evals = 1 << (NUM_VARS - round - 1);
 
             for i in 0..num_evals {
-                let batched_evals = batched_poly.sumcheck_evals(i, 3, BindingOrder::HighToLow);
-                let reference_evals = reference_poly.sumcheck_evals(i, 3, BindingOrder::HighToLow);
+                let ro_poly = ro_poly.sumcheck_evals(i, 3, BindingOrder::HighToLow);
+                let lo_poly = lo_poly.sumcheck_evals(i, 3, BindingOrder::HighToLow);
+                let reference_r = reference_poly_r.sumcheck_evals(i, 3, BindingOrder::HighToLow);
+                let reference_l = reference_poly_l.sumcheck_evals(i, 3, BindingOrder::HighToLow);
 
                 assert_eq!(
-                    batched_evals, reference_evals,
+                    (ro_poly, lo_poly),
+                    (reference_r, reference_l),
                     "Round {round}, index {i}: sumcheck_evals mismatch"
                 );
             }
 
             let r = Fr::random(&mut rng);
-            batched_poly.bind(r, BindingOrder::HighToLow);
-            reference_poly.bind(r, BindingOrder::HighToLow);
+            ro_poly.bind(r, BindingOrder::HighToLow);
+            lo_poly.bind(r, BindingOrder::HighToLow);
+            reference_poly_r.bind(r, BindingOrder::HighToLow);
+            reference_poly_l.bind(r, BindingOrder::HighToLow);
         }
 
         assert_eq!(
-            batched_poly.final_sumcheck_claim(),
-            reference_poly.final_sumcheck_claim(),
+            ro_poly.final_sumcheck_claim(),
+            reference_poly_r.final_sumcheck_claim(),
+            "Final sumcheck claims don't match"
+        );
+        assert_eq!(
+            lo_poly.final_sumcheck_claim(),
+            reference_poly_l.final_sumcheck_claim(),
             "Final sumcheck claims don't match"
         );
     }
