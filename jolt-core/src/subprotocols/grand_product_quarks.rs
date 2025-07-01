@@ -71,7 +71,7 @@ where
     #[tracing::instrument(skip_all, name = "BatchedGrandProduct::construct_with_config")]
     fn construct_with_config(leaves: Self::Leaves, config: Self::Config) -> Self {
         let (leaves, batch_size) = leaves;
-        assert!(leaves.len() % batch_size == 0);
+        assert!(leaves.len().is_multiple_of(batch_size));
         assert!((leaves.len() / batch_size).is_power_of_two());
 
         let tree_depth = (leaves.len() / batch_size).log_2();
@@ -586,7 +586,7 @@ fn v_into_f<F: JoltField>(
     let mut f_x_0 = Vec::new();
     let mut f_x_1 = Vec::new();
     for (i, x) in f_evals.iter().enumerate() {
-        if i % 2 == 0 {
+        if i.is_multiple_of(2) {
             f_x_0.push(*x);
         } else {
             f_x_1.push(*x);

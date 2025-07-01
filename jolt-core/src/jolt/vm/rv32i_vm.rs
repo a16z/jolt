@@ -193,6 +193,50 @@ mod tests {
 
     #[test]
     #[serial]
+    fn sha3_chain_e2e_dory() {
+        let guard = SHA3_FILE_LOCK.lock().unwrap();
+        let mut program = host::Program::new("sha3-chain-guest");
+        let (bytecode, memory_init) = program.decode();
+        let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
+        let (io_device, trace) = program.trace(&inputs);
+        drop(guard);
+
+        let preprocessing = RV32IJoltVM::prover_preprocess(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            memory_init,
+            1 << 16,
+            1 << 16,
+            1 << 16,
+        );
+        let (jolt_proof, jolt_commitments, debug_info) =
+            <RV32IJoltVM as Jolt<
+                32,
+                Fr,
+                DoryCommitmentScheme<KeccakTranscript>,
+                KeccakTranscript,
+            >>::prove(io_device, trace, preprocessing.clone());
+
+        let verifier_preprocessing = JoltVerifierPreprocessing::<
+            Fr,
+            DoryCommitmentScheme<KeccakTranscript>,
+            KeccakTranscript,
+        >::from(&preprocessing);
+        let verification_result = RV32IJoltVM::verify(
+            verifier_preprocessing,
+            jolt_proof,
+            jolt_commitments,
+            debug_info,
+        );
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+    }
+
+    #[test]
+    #[serial]
     fn memory_ops_e2e_dory() {
         let mut program = host::Program::new("memory-ops-guest");
         let (bytecode, memory_init) = program.decode();

@@ -1,3 +1,5 @@
+use std::vec;
+
 use crate::{
     field::{JoltField, OptimizedMul},
     jolt::{
@@ -14,7 +16,7 @@ use crate::{
         opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
         unipoly::{CompressedUniPoly, UniPoly},
     },
-    subprotocols::sumcheck::SumcheckInstanceProof,
+    subprotocols::{ra_virtual::RAProof, ra_virtual::RASumcheck, sumcheck::SumcheckInstanceProof},
     utils::{
         errors::ProofVerifyError,
         math::Math,
@@ -83,6 +85,7 @@ pub struct RAMTwistProof<F: JoltField, ProofTranscript: Transcript> {
     val_evaluation_proof: ValEvaluationProof<F, ProofTranscript>,
 
     booleanity_proof: BooleanityProof<F, ProofTranscript>,
+    ra_proof: RAProof<F, ProofTranscript>,
     hamming_weight_proof: HammingWeightProof<F, ProofTranscript>,
     raf_evaluation_proof: RafEvaluationProof<F, ProofTranscript>,
 }
@@ -363,13 +366,38 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
 
         let r_address_prime = r_address_prime.iter().copied().rev().collect::<Vec<_>>();
         let r_cycle_prime = r_cycle_prime.iter().rev().copied().collect::<Vec<_>>();
-        let unbound_ra_poly = CommittedPolynomials::RamRa.generate_witness(preprocessing, trace);
+
+        // We prove `ra_claim` using the ra virtualization sumcheck.
+        // Right now we have D = 1, hence it mostly looks the same as before but we make use of the our new ra prover.
+        const D: usize = 1;
+        let addresses: Vec<usize> = trace
+            .par_iter()
+            .map(|cycle| {
+                remap_address(
+                    cycle.ram_access().address() as u64,
+                    &preprocessing.shared.memory_layout,
+                ) as usize
+            })
+            .collect();
+
+        let ra_sumcheck_instance = RASumcheck::<F, D>::new(
+            ra_claim,
+            addresses,
+            r_cycle_prime,
+            r_address_prime.clone(),
+            1 << log_T,
+        );
+
+        let (ra_proof, mut r_cycle_bound) = ra_sumcheck_instance.prove(transcript);
+
+        let unbound_ra_poly = CommittedPolynomials::RamRa(0).generate_witness(preprocessing, trace);
+        r_cycle_bound.reverse();
 
         opening_accumulator.append_sparse(
             vec![unbound_ra_poly],
             r_address_prime,
-            r_cycle_prime,
-            vec![ra_claim],
+            r_cycle_bound,
+            vec![ra_proof.ra_i_claims[0]],
         );
 
         let (hamming_weight_sumcheck, _, ra_claim) =
@@ -389,6 +417,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             read_write_checking_proof,
             val_evaluation_proof,
             booleanity_proof,
+            ra_proof,
             hamming_weight_proof,
             raf_evaluation_proof,
         }
@@ -490,12 +519,26 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         let eq_eval_cycle = EqPolynomial::mle(&r_prime, &r_cycle_prime);
 
         let r_address_prime = r_address_prime.iter().copied().rev().collect::<Vec<_>>();
-        let r_concat = [r_address_prime.as_slice(), r_cycle_prime.as_slice()].concat();
-        let ra_commitment = &commitments.commitments[CommittedPolynomials::RamRa.to_index()];
+        let ra_commitment = &commitments.commitments[CommittedPolynomials::RamRa(0).to_index()];
+
+        // verify ra virtualization:
+        const D: usize = 1;
+        let mut r_cycle_bound = RASumcheck::<F, D>::verify(
+            self.booleanity_proof.ra_claim,
+            self.ra_proof.ra_i_claims.clone(),
+            r_cycle_prime,
+            T,
+            &self.ra_proof.sumcheck_proof,
+            transcript,
+        )?;
+
+        r_cycle_bound.reverse();
+        let r_concat = [r_address_prime.as_slice(), r_cycle_bound.as_slice()].concat();
+
         opening_accumulator.append(
             &[ra_commitment],
             r_concat,
-            &[self.booleanity_proof.ra_claim],
+            &self.ra_proof.ra_i_claims,
             transcript,
         );
 
@@ -1002,7 +1045,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                         }
                     }
                     // First time this k has been encountered
-                    let bound_value = if j_prime % 2 == 0 {
+                    let bound_value = if j_prime.is_multiple_of(2) {
                         // (1 - r_j) * inc_lt + r_j * inc
                         inc_lt + r_j * (inc - inc_lt)
                     } else {

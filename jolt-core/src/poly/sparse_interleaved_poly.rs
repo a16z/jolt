@@ -192,7 +192,7 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
             let mut right = vec![F::one(); self.dense_len / 2];
 
             self.coeffs.iter().flatten().for_each(|coeff| {
-                if coeff.index % 2 == 0 {
+                if coeff.index.is_multiple_of(2) {
                     left[coeff.index / 2] = coeff.value;
                 } else {
                     right[coeff.index / 2] = coeff.value;
@@ -228,7 +228,7 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
                             // Node was already multiplied with its sibling in a previous iteration
                             continue;
                         }
-                        if coeff.index % 2 == 0 {
+                        if coeff.index.is_multiple_of(2) {
                             // Left node; try to find corresponding right node
                             let right = segment
                                 .get(j + 1)
@@ -292,7 +292,9 @@ impl<F: JoltField> Bindable<F> for SparseInterleavedPolynomial<F> {
 
                     for j in 0..segment.len() {
                         let current = segment[j];
-                        if current.index % 2 == 0 && current.index < next_left_node_to_process {
+                        if current.index.is_multiple_of(2)
+                            && current.index < next_left_node_to_process
+                        {
                             // This left node was already bound with its sibling in a previous iteration
                             continue;
                         }
@@ -647,7 +649,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                 let chunk_size = self.dense_len.next_power_of_two() / eq_poly.E2_len;
                 let num_all_one_chunks = self.dense_len / chunk_size;
                 let E2_sum: F = eq_poly.E2[..num_all_one_chunks].iter().sum();
-                if self.dense_len % chunk_size == 0 {
+                if self.dense_len.is_multiple_of(chunk_size) {
                     // If `dense_len` isn't a power of 2 but evenly divides `chunk_size`,
                     // that means that for the last values of x2, we have:
                     //   (1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)) = 0
