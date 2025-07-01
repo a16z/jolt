@@ -777,11 +777,8 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                     prover_state
                         .B
                         .sumcheck_evals(k_prime, DEGREE, BindingOrder::LowToHigh);
-                // We need evaluations at points 0, 2, 3 for the sumcheck
-                // B(2) = B_evals_012[2]
-                // B(1) + 2*m where m = B(1) - B(0)
-                let B_eval_3 = B_evals_012[1] + F::from_u8(2) * (B_evals_012[1] - B_evals_012[0]);
-                let B_evals = vec![B_evals_012[0], B_evals_012[2], B_eval_3];
+            
+                let B_evals = vec![B_evals_012[0], B_evals_012[1], B_evals_012[2]];
 
                 let inner_sum = prover_state.G[k_prime << m..(k_prime + 1) << m]
                     .par_iter()
@@ -847,11 +844,8 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                     .H
                     .sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
 
-                let D_eval_3 = D_evals_012[1] + F::from_u8(2) * (D_evals_012[1] - D_evals_012[0]);
-                let H_eval_3 = H_evals_012[1] + F::from_u8(2) * (H_evals_012[1] - H_evals_012[0]);
-
-                let D_evals = vec![D_evals_012[0], D_evals_012[2], D_eval_3];
-                let H_evals = vec![H_evals_012[0], H_evals_012[2], H_eval_3];
+                let D_evals = vec![D_evals_012[0], D_evals_012[1], D_evals_012[2]];
+                let H_evals = vec![H_evals_012[0], H_evals_012[1], H_evals_012[2]];
 
                 vec![
                     D_evals[0] * (H_evals[0].square() - H_evals[0]),
