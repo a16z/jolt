@@ -5,6 +5,7 @@
 #[cfg(not(feature = "std"))]
 extern crate alloc;
 
+use itertools::Itertools;
 use std::vec;
 
 #[cfg(not(feature = "std"))]
@@ -68,34 +69,223 @@ pub fn trace(
     elf_contents: Vec<u8>,
     inputs: &[u8],
     memory_config: &MemoryConfig,
-    checkpoint_interval: Option<usize>,
-) -> (Vec<RV32IMCycle>, JoltDevice, Option<Vec<LazyTraceIterator>>) {
+) -> (Vec<RV32IMCycle>, JoltDevice) {
+    let mut lazy_trace_iter =
+        LazyTraceIterator::new(setup_emulator(elf_contents, inputs, memory_config));
+    let trace: Vec<RV32IMCycle> = lazy_trace_iter.by_ref().collect();
+    (trace, lazy_trace_iter.get_jolt_device())
+}
+
+#[tracing::instrument(skip_all)]
+pub fn trace_lazy(
+    elf_contents: Vec<u8>,
+    inputs: &[u8],
+    memory_config: &MemoryConfig,
+) -> LazyTraceIterator {
+    LazyTraceIterator::new(setup_emulator(elf_contents, inputs, memory_config))
+}
+
+#[tracing::instrument(skip_all)]
+pub fn trace_checkpoints(
+    elf_contents: Vec<u8>,
+    inputs: &[u8],
+    memory_config: &MemoryConfig,
+    checkpoint_interval: usize,
+) -> (Vec<std::iter::Take<LazyTraceIterator>>, JoltDevice) {
     let mut emulator_trace_iter =
         LazyTraceIterator::new(setup_emulator(elf_contents, inputs, memory_config));
     let mut checkpoints = Vec::new();
 
-    let trace = match checkpoint_interval {
-        Some(n) => {
-            let mut trace = Vec::with_capacity(1 << 24); // TODO(moodlezoup): make configurable
-            loop {
-                checkpoints.push(emulator_trace_iter.clone());
-                let trace_n = emulator_trace_iter.by_ref().take(n);
-                let prev_len = trace.len();
-                trace.extend(trace_n);
-                if trace.len() - prev_len < n {
-                    break;
-                }
-            }
-            trace
+    // let mut trace = Vec::with_capacity(1 << 24); // TODO(moodlezoup): make configurable
+    // loop {
+    //     let mut trace_n = emulator_trace_iter.clone();
+    //     trace_n.set_length(checkpoint_interval);
+    //     checkpoints.push(trace_n);
+    //     emulator_trace_iter = emulator_trace_iter.dropping(checkpoint_interval);
+    //     if emulator_trace_iter.is_empty() {
+    //         break;
+    //     }
+    // }
+    loop {
+        let chkpt = emulator_trace_iter.clone().take(checkpoint_interval);
+        checkpoints.push(chkpt);
+        emulator_trace_iter = emulator_trace_iter.dropping(checkpoint_interval);
+        if emulator_trace_iter.is_empty() {
+            break;
+        }
+    }
+    (checkpoints, emulator_trace_iter.get_jolt_device())
+}
+
+#[tracing::instrument(skip_all)]
+fn step_emulator(emulator: &mut Emulator, prev_pc: &mut u64, trace: Option<&mut Vec<RV32IMCycle>>) {
+    let pc = emulator.get_cpu().read_pc();
+    // This is a trick to see if the program has terminated by throwing itself
+    // into an infinite loop. It seems to be a good heuristic for now but we
+    // should eventually migrate to an explicit shutdown signal.
+    if *prev_pc == pc {
+        return;
+    }
+    emulator.tick(trace);
+    *prev_pc = pc;
+}
+
+#[tracing::instrument(skip_all)]
+fn setup_emulator(elf_contents: Vec<u8>, inputs: &[u8], memory_config: &MemoryConfig) -> Emulator {
+    let term = DefaultTerminal::new();
+    let mut emulator = Emulator::new(Box::new(term));
+    emulator.update_xlen(get_xlen());
+
+    let mut jolt_device = JoltDevice::new(memory_config);
+    jolt_device.inputs = inputs.to_vec();
+    emulator.get_mut_cpu().get_mut_mmu().jolt_device = jolt_device;
+
+    emulator.setup_program(elf_contents);
+    emulator
+}
+
+/// An iterator that lazily generates execution traces from a RISC-V emulator checkpoint.
+///
+/// This iterator produces instruction traces one at a time, executing the emulator
+/// as needed rather than generating the entire trace upfront. It buffers traces
+/// in `current_traces` since some instructions generate multiple trace entries.
+/// When the `current_traces` buffer is exhausted, it executes another emulator tick
+/// to generate more.
+///
+/// # Fields
+///
+/// * `emulator` - Clone of the checkpoint emulator state to execute from
+/// * `prev_pc` - Previous program counter value, used for termination detection
+/// * `current_traces` - Buffer of trace entries from the most recent emulator tick
+#[derive(Clone)]
+pub struct LazyTraceIterator {
+    emulator_state: EmulatorState,
+    prev_pc: u64,
+    current_traces: Vec<RV32IMCycle>,
+    count: usize, // number of cycles completed
+    finished: bool,
+}
+
+impl LazyTraceIterator {
+    pub fn new(emulator_state: EmulatorState) -> Self {
+        LazyTraceIterator {
+            emulator_state,
+            prev_pc: 0,
+            current_traces: vec![],
+            count: 0,
+            finished: false,
+        }
+    }
+
+    pub fn at_tick_boundary(&self) -> bool {
+        self.current_traces.is_empty()
+    }
+
+    pub fn get_emulator_state(self) -> EmulatorState {
+        self.emulator_state
+    }
+
+    pub fn clone_emulator_state(&self) -> EmulatorState {
+        self.emulator_state.clone()
+    }
+
+    pub fn get_jolt_device(self) -> JoltDevice {
+        let mut final_emulator_state = self.get_emulator_state();
+        let mut_jolt_device = &mut final_emulator_state.get_mut_cpu().get_mut_mmu().jolt_device;
+        std::mem::take(mut_jolt_device)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.finished
+    }
+}
+
+impl Iterator for LazyTraceIterator {
+    type Item = RV32IMCycle;
+    /// Advances the iterator and returns the next trace entry.
+    ///
+    /// # Returns
+    ///
+    /// * `Some(RV32IMCycle)` - The next instruction trace in the execution sequence
+    /// * `None` - If program execution has completed.
+    ///
+    /// # Details
+    ///
+    /// The function follows this sequence:
+    /// 1. Returns any remaining traces from the previous emulator tick
+    /// 2. If buffer `current_traces` is empty, and the number of ticks
+    ///    is not reached, executes another emulator tick``
+    /// 3. Checks for program termination using the heuristic of PC not changing
+    /// 4. Buffers new traces in FIFO order
+    /// 5. Returns the next trace or None if execution is complete
+    fn next(&mut self) -> Option<Self::Item> {
+        //Iterate over t returning in FIFO order before calling tick() again.
+        if !self.current_traces.is_empty() {
+            return self.current_traces.pop();
         }
 
-        None => emulator_trace_iter.by_ref().collect(),
-    };
+        // Step the emulator to execute the next instruction till the program ends.
+        self.count += 1;
+        assert!(self.current_traces.is_empty());
+        step_emulator(
+            get_mut_emulator(&mut self.emulator_state),
+            &mut self.prev_pc,
+            Some(&mut self.current_traces),
+        );
+        if self.current_traces.is_empty() {
+            self.finished = true;
+            None
+        } else {
+            self.current_traces.reverse();
+            self.current_traces.pop()
+        }
+    }
+}
 
-    let mut final_emulator_state = emulator_trace_iter.get_emulator_state();
-    let mut_jolt_device = &mut final_emulator_state.get_mut_cpu().get_mut_mmu().jolt_device;
-    let device = std::mem::take(mut_jolt_device);
-    (trace, device, checkpoint_interval.map(|_| checkpoints))
+#[tracing::instrument(skip_all)]
+pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>) {
+    let obj = object::File::parse(elf).unwrap();
+
+    let sections = obj
+        .sections()
+        .filter(|s| s.address() >= RAM_START_ADDRESS)
+        .collect::<Vec<_>>();
+
+    let mut instructions = Vec::new();
+    let mut data = Vec::new();
+
+    for section in sections {
+        let raw_data = section.data().unwrap();
+
+        if let SectionKind::Text = section.kind() {
+            for (chunk, word) in raw_data.chunks(4).enumerate() {
+                let word = u32::from_le_bytes(word.try_into().unwrap());
+                let address = chunk as u64 * 4 + section.address();
+
+                if let Ok(inst) = RV32IMInstruction::decode(word, address) {
+                    instructions.push(inst);
+                    continue;
+                }
+                // Unrecognized instruction, or from a ReadOnlyData section
+                eprintln!("Warning: word: {word:08X} at address: {address:08X} is not recognized as a valid instruction.");
+                instructions.push(RV32IMInstruction::UNIMPL);
+            }
+        }
+        let address = section.address();
+        for (offset, byte) in raw_data.iter().enumerate() {
+            data.push((address + offset as u64, *byte));
+        }
+    }
+
+    (instructions, data)
+}
+
+fn get_xlen() -> Xlen {
+    match common::constants::XLEN {
+        32 => cpu::Xlen::Bit32,
+        64 => cpu::Xlen::Bit64,
+        _ => panic!("Emulator only supports 32 / 64 bit registers."),
+    }
 }
 
 #[cfg(test)]
@@ -493,29 +683,25 @@ mod test {
 
         let expected_trace_length = 495;
         let n = 50;
-        let (execution_trace, _, checkpoints) = trace(
-            ELF_CONTENTS.to_vec(),
-            &INPUTS,
-            &MemoryConfig::default(),
-            Some(n),
-        );
+        let (execution_trace, _) = trace(ELF_CONTENTS.to_vec(), &INPUTS, &MemoryConfig::default());
+        let (checkpoints, _) =
+            trace_checkpoints(ELF_CONTENTS.to_vec(), &INPUTS, &MemoryConfig::default(), n);
         assert_eq!(execution_trace.len(), expected_trace_length);
-        assert_eq!(checkpoints.as_ref().unwrap().len(), 10);
+        assert_eq!(checkpoints.len(), 10);
 
-        for (i, checkpoint) in checkpoints.unwrap().into_iter().enumerate() {
+        let trace_chunk = execution_trace
+            .chunks(n)
+            .map(|x| x.to_vec())
+            .collect::<Vec<_>>();
+        for (i, checkpoint) in checkpoints.into_iter().enumerate() {
             let ti: Vec<RV32IMCycle> = checkpoint.collect();
-            assert_eq!(&execution_trace[i * n..], &ti[..]);
+            assert_eq!(trace_chunk[i], ti);
         }
     }
 
     #[test]
     fn test_lazy_iterator() {
-        let (execution_trace, _, _) = trace(
-            ELF_CONTENTS.to_vec(),
-            &INPUTS,
-            &MemoryConfig::default(),
-            None,
-        );
+        let (execution_trace, _) = trace(ELF_CONTENTS.to_vec(), &INPUTS, &MemoryConfig::default());
 
         let mut emulator = setup_emulator(ELF_CONTENTS.to_vec(), &INPUTS, &MemoryConfig::default());
         let mut prev_pc: u64 = 0;
@@ -529,179 +715,5 @@ mod test {
             prev_trace_len = trace.len();
         }
         assert_eq!(execution_trace, trace);
-    }
-}
-
-#[tracing::instrument(skip_all)]
-fn step_emulator(emulator: &mut Emulator, prev_pc: &mut u64, trace: Option<&mut Vec<RV32IMCycle>>) {
-    let pc = emulator.get_cpu().read_pc();
-    // This is a trick to see if the program has terminated by throwing itself
-    // into an infinite loop. It seems to be a good heuristic for now but we
-    // should eventually migrate to an explicit shutdown signal.
-    if *prev_pc == pc {
-        return;
-    }
-    emulator.tick(trace);
-    *prev_pc = pc;
-}
-
-#[tracing::instrument(skip_all)]
-fn setup_emulator(elf_contents: Vec<u8>, inputs: &[u8], memory_config: &MemoryConfig) -> Emulator {
-    let term = DefaultTerminal::new();
-    let mut emulator = Emulator::new(Box::new(term));
-    emulator.update_xlen(get_xlen());
-
-    let mut jolt_device = JoltDevice::new(memory_config);
-    jolt_device.inputs = inputs.to_vec();
-    emulator.get_mut_cpu().get_mut_mmu().jolt_device = jolt_device;
-
-    emulator.setup_program(elf_contents);
-    emulator
-}
-
-/// An iterator that lazily generates execution traces from a RISC-V emulator checkpoint.
-///
-/// This iterator produces instruction traces one at a time, executing the emulator
-/// as needed rather than generating the entire trace upfront. It buffers traces
-/// in `current_traces` since some instructions generate multiple trace entries.
-/// When the `current_traces` buffer is exhausted, it executes another emulator tick
-/// to generate more.
-///
-/// # Fields
-///
-/// * `emulator` - Clone of the checkpoint emulator state to execute from
-/// * `prev_pc` - Previous program counter value, used for termination detection
-/// * `current_traces` - Buffer of trace entries from the most recent emulator tick
-#[derive(Clone)]
-pub struct LazyTraceIterator {
-    emulator_state: EmulatorState,
-    prev_pc: u64,
-    current_traces: Vec<RV32IMCycle>,
-    length: Option<usize>, // number of cycles to execute before stopping iteration
-                           // If length is None, the iterator will run until the program ends.
-    count: usize, // number of cycles completed
-}
-
-impl LazyTraceIterator {
-    pub fn new(emulator_state: EmulatorState) -> Self {
-        LazyTraceIterator {
-            emulator_state,
-            prev_pc: 0,
-            current_traces: vec![],
-            length: None,
-            count: 0,
-        }
-    }
-
-    pub fn with_length(emulator_state: EmulatorState, length: usize) -> Self {
-        LazyTraceIterator {
-            emulator_state,
-            prev_pc: 0,
-            current_traces: vec![],
-            length: Some(length),
-            count: 0,
-        }
-    }
-
-    pub fn at_tick_boundary(self) -> bool {
-        self.current_traces.is_empty()
-    }
-
-    pub fn get_emulator_state(self) -> EmulatorState {
-        self.emulator_state
-    }
-}
-
-impl Iterator for LazyTraceIterator {
-    type Item = RV32IMCycle;
-    /// Advances the iterator and returns the next trace entry.
-    ///
-    /// # Returns
-    ///
-    /// * `Some(RV32IMCycle)` - The next instruction trace in the execution sequence
-    /// * `None` - If program execution has completed.
-    ///
-    /// # Details
-    ///
-    /// The function follows this sequence:
-    /// 1. Returns any remaining traces from the previous emulator tick
-    /// 2. If buffer `current_traces` is empty, and the number of ticks
-    ///    is not reached, executes another emulator tick``
-    /// 3. Checks for program termination using the heuristic of PC not changing
-    /// 4. Buffers new traces in FIFO order
-    /// 5. Returns the next trace or None if execution is complete
-    fn next(&mut self) -> Option<Self::Item> {
-        //Iterate over t returning in FIFO order before calling tick() again.
-        if !self.current_traces.is_empty() {
-            return self.current_traces.pop();
-        }
-
-        // Check if iterator length (checkpoint interval) is exhausted
-        match self.length {
-            Some(0) => return None, // If length is set and reached 0, stop iteration
-            Some(n) => self.length = Some(n - 1), // Decrement length
-            None => (), // If length is not set, continue till the program ends
-        }
-
-        // Step the emulator to execute the next instruction till the program ends.
-        self.count += 1;
-        assert!(self.current_traces.is_empty());
-        step_emulator(
-            get_mut_emulator(&mut self.emulator_state),
-            &mut self.prev_pc,
-            Some(&mut self.current_traces),
-        );
-        if self.current_traces.is_empty() {
-            None
-        } else {
-            self.current_traces.reverse();
-            self.current_traces.pop()
-        }
-    }
-}
-
-#[tracing::instrument(skip_all)]
-pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>) {
-    let obj = object::File::parse(elf).unwrap();
-
-    let sections = obj
-        .sections()
-        .filter(|s| s.address() >= RAM_START_ADDRESS)
-        .collect::<Vec<_>>();
-
-    let mut instructions = Vec::new();
-    let mut data = Vec::new();
-
-    for section in sections {
-        let raw_data = section.data().unwrap();
-
-        if let SectionKind::Text = section.kind() {
-            for (chunk, word) in raw_data.chunks(4).enumerate() {
-                let word = u32::from_le_bytes(word.try_into().unwrap());
-                let address = chunk as u64 * 4 + section.address();
-
-                if let Ok(inst) = RV32IMInstruction::decode(word, address) {
-                    instructions.push(inst);
-                    continue;
-                }
-                // Unrecognized instruction, or from a ReadOnlyData section
-                eprintln!("Warning: word: {word:08X} at address: {address:08X} is not recognized as a valid instruction.");
-                instructions.push(RV32IMInstruction::UNIMPL);
-            }
-        }
-        let address = section.address();
-        for (offset, byte) in raw_data.iter().enumerate() {
-            data.push((address + offset as u64, *byte));
-        }
-    }
-
-    (instructions, data)
-}
-
-fn get_xlen() -> Xlen {
-    match common::constants::XLEN {
-        32 => cpu::Xlen::Bit32,
-        64 => cpu::Xlen::Bit64,
-        _ => panic!("Emulator only supports 32 / 64 bit registers."),
     }
 }

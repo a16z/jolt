@@ -36,5 +36,6 @@ strum_macros = "0.26.4"
 strum = "0.26.3"
 rand = "0.7.3"
 paste = "1.0.15"
+itertools = "0.10.0"
 
 common = { path = "../common", default-features = false }
