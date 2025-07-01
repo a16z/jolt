@@ -59,28 +59,23 @@ pub struct DensePolynomialProverOpening<F: JoltField> {
 impl<F: JoltField> DensePolynomialProverOpening<F> {
     fn compute_prover_message(&self, _: usize) -> Vec<F> {
         let shared_eq = self.eq_poly.borrow();
-        match &self.polynomial {
-            MultilinearPolynomial::LargeScalars(_) => {
-                let polynomial = &self.polynomial;
-                let mle_half = polynomial.len() / 2;
-                let eval_0: F = (0..mle_half)
-                    .map(|i| polynomial.get_bound_coeff(i) * shared_eq.eq_poly[i])
-                    .sum();
-                let eval_2: F = (0..mle_half)
-                    .map(|i| {
-                        let poly_bound_point = polynomial.get_bound_coeff(i + mle_half)
-                            + polynomial.get_bound_coeff(i + mle_half)
-                            - polynomial.get_bound_coeff(i);
-                        let eq_bound_point = shared_eq.eq_poly[i + mle_half]
-                            + shared_eq.eq_poly[i + mle_half]
-                            - shared_eq.eq_poly[i];
-                        poly_bound_point * eq_bound_point
-                    })
-                    .sum();
-                vec![eval_0, eval_2]
-            }
-            _ => panic!("Unexpected polynomial types"),
-        }
+        let polynomial = &self.polynomial;
+        let mle_half = polynomial.len() / 2;
+        let eval_0: F = (0..mle_half)
+            .map(|i| polynomial.get_bound_coeff(i) * shared_eq.eq_poly[i])
+            .sum();
+        let eval_2: F = (0..mle_half)
+            .map(|i| {
+                let poly_bound_point = polynomial.get_bound_coeff(i + mle_half)
+                    + polynomial.get_bound_coeff(i + mle_half)
+                    - polynomial.get_bound_coeff(i);
+                let eq_bound_point = shared_eq.eq_poly[i + mle_half]
+                    + shared_eq.eq_poly[i + mle_half]
+                    - shared_eq.eq_poly[i];
+                poly_bound_point * eq_bound_point
+            })
+            .sum();
+        vec![eval_0, eval_2]
     }
 
     fn bind(&mut self, r_j: F, round: usize) {
@@ -352,6 +347,7 @@ where
         claims: &[F],
         transcript: &mut ProofTranscript,
     ) {
+        assert_eq!(polynomials.len(), claims.len());
         #[cfg(test)]
         {
             let all_dense = polynomials.iter().all(|poly| {
@@ -381,21 +377,26 @@ where
             );
         }
 
-        // Generate batching challenge \rho and powers 1,...,\rho^{m-1}
-        let rho: F = transcript.challenge_scalar();
-        let mut rho_powers = vec![F::one()];
-        for i in 1..polynomials.len() {
-            rho_powers.push(rho_powers[i - 1] * rho);
-        }
+        let (batched_claim, batched_poly) = if claims.len() > 1 {
+            // Generate batching challenge \rho and powers 1,...,\rho^{m-1}
+            let rho: F = transcript.challenge_scalar();
+            let mut rho_powers = vec![F::one()];
+            for i in 1..polynomials.len() {
+                rho_powers.push(rho_powers[i - 1] * rho);
+            }
 
-        // Compute the random linear combination of the claims
-        let batched_claim: F = rho_powers
-            .iter()
-            .zip(claims.iter())
-            .map(|(scalar, eval)| *scalar * *eval)
-            .sum();
+            // Compute the random linear combination of the claims
+            let batched_claim: F = rho_powers
+                .iter()
+                .zip(claims.iter())
+                .map(|(scalar, eval)| *scalar * *eval)
+                .sum();
 
-        let batched_poly = MultilinearPolynomial::linear_combination(polynomials, &rho_powers);
+            let batched_poly = MultilinearPolynomial::linear_combination(polynomials, &rho_powers);
+            (batched_claim, batched_poly)
+        } else {
+            (claims[0], polynomials[0].clone())
+        };
 
         #[cfg(test)]
         {
