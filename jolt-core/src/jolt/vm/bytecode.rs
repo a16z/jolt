@@ -786,8 +786,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             .expect("r_address not set");
         let r_cycle = verifier_state.r_cycle.as_ref().expect("r_cycle not set");
 
-        let eq_eval_address = EqPolynomial::mle(&r_address, r_address_prime);
-        let eq_eval_cycle = EqPolynomial::mle(&r_cycle, r_cycle_prime);
+        let eq_eval_address = EqPolynomial::mle(r_address, r_address_prime);
+        let eq_eval_cycle = EqPolynomial::mle(r_cycle, r_cycle_prime);
 
         eq_eval_address * eq_eval_cycle * (ra_claim_prime.square() - ra_claim_prime)
     }
@@ -808,7 +808,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                         .B
                         .sumcheck_evals(k_prime, DEGREE, BindingOrder::LowToHigh);
 
-                let B_evals = vec![B_evals_012[0], B_evals_012[1], B_evals_012[2]];
+                let B_evals = [B_evals_012[0], B_evals_012[1], B_evals_012[2]];
 
                 let inner_sum = prover_state.G[k_prime << m..(k_prime + 1) << m]
                     .par_iter()
@@ -874,8 +874,8 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                     .H
                     .sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
 
-                let D_evals = vec![D_evals_012[0], D_evals_012[1], D_evals_012[2]];
-                let H_evals = vec![H_evals_012[0], H_evals_012[1], H_evals_012[2]];
+                let D_evals = [D_evals_012[0], D_evals_012[1], D_evals_012[2]];
+                let H_evals = [H_evals_012[0], H_evals_012[1], H_evals_012[2]];
 
                 vec![
                     D_evals[0] * (H_evals[0].square() - H_evals[0]),
