@@ -520,12 +520,12 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
     }
 
     #[tracing::instrument(skip_all, name = "prove_spartan_small_value_streaming")]
-    pub fn prove_spartan_small_value_streaming<'a, const NUM_SVO_ROUNDS: usize, PCS>(
+    pub fn prove_spartan_small_value_streaming<const NUM_SVO_ROUNDS: usize, PCS>(
         num_rounds: usize,
         padded_num_constraints: usize,
         uniform_constraints: &[Constraint],
         trace: &[RV32IMCycle],
-        preprocessing: &'a JoltProverPreprocessing<F, PCS, ProofTranscript>,
+        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
         shard_len: usize,
         tau: &[F],
         transcript: &mut ProofTranscript,
@@ -841,7 +841,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                                 |mut acc, chunk_iter| {
                                     let base_chunk_idx = chunk_iter * chunk_size;
                                     let witness_eval = (0..chunk_size).fold(
-                                        (|| vec![vec![F::zero(); degree + 1]; num_polys])(),
+                                        vec![vec![F::zero(); degree + 1]; num_polys],
                                         |mut acc, idx_in_chunk| {
                                             let idx_in_shard = base_chunk_idx + idx_in_chunk;
                                             let idx_in_poly = base_poly_idx + idx_in_shard;
@@ -948,10 +948,10 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             );
         }
 
-        let mut bind_polys = bind_shards
+        let mut bind_polys: Vec<MultilinearPolynomial<F>> = bind_shards
             .into_par_iter()
-            .map(|poly| MultilinearPolynomial::from(poly))
-            .collect::<Vec<MultilinearPolynomial<F>>>();
+            .map(MultilinearPolynomial::from)
+            .collect();
 
         let second_half_claim = (0..1 << (num_rounds - split_at))
             .into_par_iter()

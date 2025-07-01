@@ -1528,11 +1528,11 @@ pub mod svo_helpers {
         tA_sum_for_current_x_out: &mut [F],
         E_in_val: F,
     ) {
-        let mut az_binary_evals = [0 as i128; Y_SVO_SPACE_SIZE];
-        let mut bz_binary_evals = [0 as i128; Y_SVO_SPACE_SIZE];
+        let mut az_binary_evals = [0_i128; Y_SVO_SPACE_SIZE];
+        let mut bz_binary_evals = [0_i128; Y_SVO_SPACE_SIZE];
 
         for sparce_coeff in block {
-            if sparce_coeff.index % 2 == 0 {
+            if sparce_coeff.index.is_multiple_of(2) {
                 az_binary_evals[(sparce_coeff.index >> 1) % Y_SVO_SPACE_SIZE] = sparce_coeff.value;
             } else {
                 bz_binary_evals[(sparce_coeff.index >> 1) % Y_SVO_SPACE_SIZE] = sparce_coeff.value;

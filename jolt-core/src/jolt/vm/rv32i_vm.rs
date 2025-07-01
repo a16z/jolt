@@ -197,7 +197,8 @@ mod tests {
         let guard = SHA3_FILE_LOCK.lock().unwrap();
         let mut program = host::Program::new("sha3-chain-guest");
         let (bytecode, memory_init) = program.decode();
-        let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
+        let mut inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
+        inputs.append(&mut postcard::to_stdvec(&2u32).unwrap());
         let (io_device, trace) = program.trace(&inputs);
         drop(guard);
 

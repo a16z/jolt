@@ -1662,7 +1662,6 @@ where
             for _ in 0..num_shards {
                 let shard = self.next_shard();
 
-                // TODO: Refactor. Put this in a sepearte funciton or closure.
                 let num_x_in_vars = eq_poly.E_in_current_len().log_2();
 
                 let collected_outputs: Vec<(F, F, Vec<SparseCoefficient<F>>)> = shard
