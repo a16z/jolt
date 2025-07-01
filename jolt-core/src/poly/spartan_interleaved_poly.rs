@@ -1918,7 +1918,6 @@ where
             self.binding_scratch_space.set_len(binding_output_length);
         }
 
-        // Create mutable slices into binding_scratch_space, one for each task's output
         let mut output_slices: Vec<&mut [SparseCoefficient<F>]> = Vec::with_capacity(num_chunks);
         let mut scratch_remainder = self.binding_scratch_space.as_mut_slice();
         for slice_len in binding_output_lengths {

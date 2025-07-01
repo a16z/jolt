@@ -302,7 +302,6 @@ impl JoltR1CSInputs {
 impl_r1cs_input_lc_conversions!(JoltR1CSInputs);
 
 /// An oracle to stream all witness polynomials of the R1CS instance.
-/// This oracle is used by the shift sum-check of the Spartan prover.
 pub struct R1CSInputsOracle<'a, F: JoltField, PCS, ProofTranscript>
 where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
