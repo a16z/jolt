@@ -77,6 +77,19 @@ pub enum CircuitFlags {
 
 pub const NUM_CIRCUIT_FLAGS: usize = CircuitFlags::COUNT;
 
+pub trait InterleavedBitsMarker {
+    fn is_interleaved_operands(&self) -> bool;
+}
+
+impl InterleavedBitsMarker for [bool; NUM_CIRCUIT_FLAGS] {
+    fn is_interleaved_operands(&self) -> bool {
+        !self[CircuitFlags::AddOperands]
+            && !self[CircuitFlags::SubtractOperands]
+            && !self[CircuitFlags::MultiplyOperands]
+            && !self[CircuitFlags::Advice]
+    }
+}
+
 impl Index<CircuitFlags> for [bool; NUM_CIRCUIT_FLAGS] {
     type Output = bool;
     fn index(&self, index: CircuitFlags) -> &bool {

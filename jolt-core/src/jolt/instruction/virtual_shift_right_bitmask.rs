@@ -27,7 +27,13 @@ impl InstructionFlags for VirtualShiftRightBitmask {
 
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualShiftRightBitmask> {
     fn to_instruction_inputs(&self) -> (u64, i64) {
-        (self.register_state.rs1, 0)
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => (self.register_state.rs1 as u8 as u64, 0),
+            32 => (self.register_state.rs1 as u32 as u64, 0),
+            64 => (self.register_state.rs1, 0),
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+        }
     }
 
     fn to_lookup_operands(&self) -> (u64, u64) {

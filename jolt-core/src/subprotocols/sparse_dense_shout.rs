@@ -2,7 +2,7 @@ use super::sumcheck::SumcheckInstanceProof;
 use crate::{
     field::JoltField,
     jolt::{
-        instruction::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery},
+        instruction::{InstructionFlags, InstructionLookup, InterleavedBitsMarker, LookupQuery},
         lookup_table::{
             prefixes::{PrefixCheckpoint, PrefixEval, Prefixes},
             LookupTables,
@@ -15,7 +15,7 @@ use crate::{
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
-        prefix_suffix::{PrefixRegistry, PrefixSuffixDecomposition},
+        prefix_suffix::{Prefix, PrefixRegistry, PrefixSuffixDecomposition},
         unipoly::{CompressedUniPoly, UniPoly},
     },
     utils::{
@@ -444,14 +444,14 @@ pub fn prove_sparse_dense_shout<
         .enumerate()
         .zip(trace.par_iter())
         .partition_map(|((idx, item), cycle)| {
-            let flags = cycle.instruction().circuit_flags();
-            if flags[CircuitFlags::AddOperands]
-                || flags[CircuitFlags::SubtractOperands]
-                || flags[CircuitFlags::MultiplyOperands]
+            if cycle
+                .instruction()
+                .circuit_flags()
+                .is_interleaved_operands()
             {
-                itertools::Either::Right((idx, item))
-            } else {
                 itertools::Either::Left((idx, item))
+            } else {
+                itertools::Either::Right((idx, item))
             }
         });
 
@@ -593,9 +593,7 @@ pub fn prove_sparse_dense_shout<
 
         identity_ps.next_phase();
         batched_ps.next_phase();
-        if phase != 3 {
-            prefix_registry.next_phase();
-        }
+        prefix_registry.next_phase();
     }
 
     drop_in_background_thread(suffix_polys);
@@ -630,14 +628,10 @@ pub fn prove_sparse_dense_shout<
                 *val += table.combine(&prefixes, &suffixes);
             }
 
-            let flags = step.instruction().circuit_flags();
-            let is_add_mul_sub = flags[CircuitFlags::AddOperands]
-                || flags[CircuitFlags::MultiplyOperands]
-                || flags[CircuitFlags::SubtractOperands];
-            if is_add_mul_sub {
-                *val += gamma_squared * identity_ps.final_sumcheck_claim();
+            if step.instruction().circuit_flags().is_interleaved_operands() {
+                *val += gamma * prefix_registry.checkpoints[Prefix::BatchedUninterleaved].unwrap();
             } else {
-                *val += gamma * batched_ps.final_sumcheck_claim();
+                *val += gamma_squared * prefix_registry.checkpoints[Prefix::Identity].unwrap();
             }
         });
     let mut combined_instruction_val_poly =
