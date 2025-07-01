@@ -328,7 +328,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let _guard = span.enter();
 
         // Data structure described in Equation (72)
-        let mut I: Vec<Vec<(usize, usize, F, F, F)>> = write_addresses
+        let mut I: Vec<Vec<(usize, usize, F, F)>> = write_addresses
             .par_chunks(chunk_size)
             .zip(write_increments.par_chunks(chunk_size))
             .enumerate()
@@ -339,13 +339,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                     .iter()
                     .zip(increment_chunk.iter())
                     .map(|(k, increment)| {
-                        let inc = (
-                            j,
-                            *k,
-                            F::zero(),
-                            F::from_i128(*increment),
-                            F::from_i128(*increment),
-                        );
+                        let inc = (j, *k, F::zero(), F::from_i128(*increment));
                         j += 1;
                         inc
                     })
@@ -477,9 +471,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                     I_chunk
                         .chunk_by(|a, b| a.0 / 2 == b.0 / 2)
                         .for_each(|inc_chunk| {
-                            let mut inc_evals: [Vec<F>; 2] =
-                                [unsafe_allocate_zero_vec(K), unsafe_allocate_zero_vec(K)];
-
                             let j_prime = inc_chunk[0].0; // row index
 
                             for j in j_prime << round..(j_prime + 1) << round {
@@ -533,11 +524,10 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 
                             // First of the two rows
                             loop {
-                                let (row, col, inc_lt, inc, inc_eval) = inc_iter.next().unwrap();
+                                let (row, col, inc_lt, inc) = inc_iter.next().unwrap();
                                 debug_assert_eq!(*row, j_prime);
                                 val_j_r[0][*col] += *inc_lt;
                                 val_j_0[*col] += *inc;
-                                inc_evals[row % 2][*col] = *inc_eval;
                                 if inc_iter.peek().unwrap().0 != j_prime {
                                     break;
                                 }
@@ -548,11 +538,10 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 
                             // Second of the two rows
                             for inc in inc_iter {
-                                let (row, col, inc_lt, inc, inc_eval) = *inc;
+                                let (row, col, inc_lt, inc) = *inc;
                                 debug_assert_eq!(row, j_prime + 1);
                                 val_j_r[1][col] += inc_lt;
                                 val_j_0[col] += inc;
-                                inc_evals[row % 2][col] = inc_eval;
                             }
 
                             let eq_r_prime_evals = eq_r_prime.sumcheck_evals(
@@ -734,7 +723,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                     .reduce(
                         || [F::zero(); READ_WRITE_CHECK_DEGREE],
                         |running, new| {
-                           [
+                            [
                                 running[0] + new[0],
                                 running[1] + new[1],
                                 running[2] + new[2],
@@ -777,13 +766,13 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             // TODO: We can abstract this into a separate function.
             // Bind I
             I.par_iter_mut()
-                .for_each(|I_chunk: &mut Vec<(usize, usize, F, F, F)>| {
+                .for_each(|I_chunk: &mut Vec<(usize, usize, F, F)>| {
                     // Note: A given row in an I_chunk may not be ordered by k after binding
                     let mut next_bound_index = 0;
                     let mut bound_indices: Vec<Option<usize>> = vec![None; K];
 
                     for i in 0..I_chunk.len() {
-                        let (j_prime, k, inc_lt, inc, inc_eval) = I_chunk[i];
+                        let (j_prime, k, inc_lt, inc) = I_chunk[i];
 
                         if let Some(bound_index) = bound_indices[k] {
                             if I_chunk[bound_index].0 == j_prime / 2 {
@@ -791,7 +780,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                                 debug_assert!(j_prime % 2 == 1);
                                 I_chunk[bound_index].2 += r_j * inc_lt;
                                 I_chunk[bound_index].3 += inc;
-                                I_chunk[bound_index].4 += inc_eval * r_j;
                                 continue;
                             }
                         }
@@ -803,14 +791,8 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                         } else {
                             r_j * inc_lt
                         };
-                        let new_inc_eval = if j_prime % 2 == 0 {
-                            inc_eval - inc_eval * r_j
-                        } else {
-                            inc_eval * r_j
-                        };
 
-                        I_chunk[next_bound_index] =
-                            (j_prime / 2, k, bound_value, inc, new_inc_eval);
+                        I_chunk[next_bound_index] = (j_prime / 2, k, bound_value, inc);
                         bound_indices[k] = Some(next_bound_index);
                         next_bound_index += 1;
                     }
@@ -927,7 +909,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             .zip(I.par_iter())
             .enumerate()
             .for_each(|(chunk_index, (val_chunk, I_chunk))| {
-                for (j, k, inc_lt, _inc, _inc_eval) in I_chunk.into_iter() {
+                for (j, k, inc_lt, _inc) in I_chunk.into_iter() {
                     debug_assert_eq!(*j, chunk_index);
                     val_chunk[*k] += *inc_lt;
                 }
@@ -1050,7 +1032,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                         let val_evals =
                             val.sumcheck_evals(k, READ_WRITE_CHECK_DEGREE, BindingOrder::HighToLow);
                         let inc_eval = inc_cycle.final_sumcheck_claim();
-                            
 
                         [
                             wa_evals[0] * (inc_eval + val_evals[0])
@@ -1138,7 +1119,16 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             sumcheck_switch_index: chunk_size.log_2(),
         };
 
-        drop_in_background_thread((rs1_ra, rs2_ra, rd_wa, val, inc_cycle, data_buffers, eq_r_prime, A));
+        drop_in_background_thread((
+            rs1_ra,
+            rs2_ra,
+            rd_wa,
+            val,
+            inc_cycle,
+            data_buffers,
+            eq_r_prime,
+            A,
+        ));
 
         (proof, r_address, r_cycle)
     }
