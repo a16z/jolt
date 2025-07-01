@@ -81,6 +81,8 @@ pub struct RAMTwistProof<F: JoltField, ProofTranscript: Transcript> {
     raf_evaluation_proof: RafEvaluationProof<F, ProofTranscript>,
 }
 
+const READ_WRITE_CHECK_DEGREE: usize = 3;
+
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct ReadWriteCheckingProof<F: JoltField, ProofTranscript: Transcript> {
     /// Joint sumcheck proof for the read-checking and write-checking sumchecks
@@ -497,7 +499,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         r_prime: &[F],
         transcript: &mut ProofTranscript,
     ) -> (ReadWriteCheckingProof<F, ProofTranscript>, Vec<F>, Vec<F>) {
-        const DEGREE: usize = 4;
         let K = r.len().pow2();
         let T = r_prime.len().pow2();
         debug_assert_eq!(addresses.len(), T);
@@ -739,12 +740,12 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             let inner_span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
             let _inner_guard = inner_span.enter();
 
-            let univariate_poly_evals: [F; DEGREE] = I
+            let univariate_poly_evals: [F; READ_WRITE_CHECK_DEGREE] = I
                 .par_iter()
                 .zip(data_buffers.par_iter_mut())
                 .zip(val_checkpoints.par_chunks(K))
                 .map(|((I_chunk, buffers), checkpoint)| {
-                    let mut evals = [F::zero(), F::zero(), F::zero(), F::zero()];
+                    let mut evals = [F::zero(), F::zero(), F::zero()]; 
 
                     let DataBuffers {
                         val_j_0,
@@ -814,44 +815,34 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 
                             let eq_r_prime_evals = eq_r_prime.sumcheck_evals(
                                 j_prime / 2,
-                                DEGREE,
+                                READ_WRITE_CHECK_DEGREE,
                                 BindingOrder::LowToHigh,
                             );
                             let inc_cycle_evals = inc_cycle.sumcheck_evals(
                                 j_prime / 2,
-                                DEGREE,
+                                READ_WRITE_CHECK_DEGREE,
                                 BindingOrder::LowToHigh,
                             );
 
-                            let mut inner_sum_evals = [F::zero(); DEGREE];
+                            let mut inner_sum_evals = [F::zero(); READ_WRITE_CHECK_DEGREE];
                             for k in dirty_indices.drain(..) {
                                 if !ra[0][k].is_zero() || !ra[1][k].is_zero() {
                                     // let kj = k * (T >> (round - 1)) + j_prime / 2;
                                     let m_ra = ra[1][k] - ra[0][k];
                                     let ra_eval_2 = ra[1][k] + m_ra;
                                     let ra_eval_3 = ra_eval_2 + m_ra;
-                                    let ra_eval_4 = ra_eval_3 + m_ra;
 
                                     let m_val = val_j_r[1][k] - val_j_r[0][k];
                                     let val_eval_2 = val_j_r[1][k] + m_val;
                                     let val_eval_3 = val_eval_2 + m_val;
-                                    let val_eval_4 = val_eval_3 + m_val;
-
-                                    // Inc(k, j) = wa(k, j) * Inc(j), where by abuse of notation we should how to relate the two Inc functions.
-                                    let inc_eval_0 = inc_cycle_evals[0] * ra[0][k];
-                                    let inc_eval_2 = inc_cycle_evals[1] * ra_eval_2;
-                                    let inc_eval_3 = inc_cycle_evals[2] * ra_eval_3;
-                                    let inc_eval_4 = inc_cycle_evals[3] * ra_eval_4;
 
                                     inner_sum_evals[0] += ra[0][k].mul_0_optimized(
-                                        val_j_r[0][k] + z * (inc_eval_0 + val_j_r[0][k]),
+                                        val_j_r[0][k] + z * (inc_cycle_evals[0] + val_j_r[0][k]),
                                     );
                                     inner_sum_evals[1] +=
-                                        ra_eval_2 * (val_eval_2 + z * (inc_eval_2 + val_eval_2));
+                                        ra_eval_2 * (val_eval_2 + z * (inc_cycle_evals[1] + val_eval_2));
                                     inner_sum_evals[2] +=
-                                        ra_eval_3 * (val_eval_3 + z * (inc_eval_3 + val_eval_3));
-                                    inner_sum_evals[3] +=
-                                        ra_eval_4 * (val_eval_4 + z * (inc_eval_4 + val_eval_4));
+                                        ra_eval_3 * (val_eval_3 + z * (inc_cycle_evals[2] + val_eval_3));
 
                                     ra[0][k] = F::zero();
                                     ra[1][k] = F::zero();
@@ -864,19 +855,17 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                             evals[0] += eq_r_prime_evals[0] * inner_sum_evals[0];
                             evals[1] += eq_r_prime_evals[1] * inner_sum_evals[1];
                             evals[2] += eq_r_prime_evals[2] * inner_sum_evals[2];
-                            evals[3] += eq_r_prime_evals[3] * inner_sum_evals[3];
                         });
 
                     evals
                 })
                 .reduce(
-                    || [F::zero(); DEGREE],
+                    || [F::zero(); READ_WRITE_CHECK_DEGREE],
                     |running, new| {
                         [
                             running[0] + new[0],
                             running[1] + new[1],
                             running[2] + new[2],
-                            running[3] + new[3],
                         ]
                     },
                 );
@@ -886,7 +875,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                 previous_claim - univariate_poly_evals[0],
                 univariate_poly_evals[1],
                 univariate_poly_evals[2],
-                univariate_poly_evals[3],
             ]);
 
             drop(_inner_guard);
@@ -897,20 +885,15 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                 let test_univariate_poly_evals = (0..K * T / (round + 1).pow2())
                     .into_par_iter()
                     .map(|j| {
-                        let ra_evals = ra_test.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
-                        let val_evals = val_test.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+                        let ra_evals = ra_test.sumcheck_evals(j, READ_WRITE_CHECK_DEGREE, BindingOrder::LowToHigh);
+                        let val_evals = val_test.sumcheck_evals(j, READ_WRITE_CHECK_DEGREE, BindingOrder::LowToHigh);
                         let t = j % (T / (round + 1).pow2());
 
                         let eq_r_prime_evals =
-                            eq_r_prime.sumcheck_evals(t, DEGREE, BindingOrder::LowToHigh);
+                            eq_r_prime.sumcheck_evals(t, READ_WRITE_CHECK_DEGREE, BindingOrder::LowToHigh);
 
                         let inc_evals =
-                            inc_cycle.sumcheck_evals(t, DEGREE, BindingOrder::LowToHigh);
-                        let inc_evals = inc_evals
-                            .iter()
-                            .zip(ra_evals.iter())
-                            .map(|(inc_eval, ra_eval)| *inc_eval * *ra_eval)
-                            .collect::<Vec<F>>();
+                            inc_cycle.sumcheck_evals(t, READ_WRITE_CHECK_DEGREE, BindingOrder::LowToHigh);
 
                         [
                             eq_r_prime_evals[0]
@@ -922,19 +905,15 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                             eq_r_prime_evals[2]
                                 * ra_evals[2]
                                 * (val_evals[2] + z * (inc_evals[2] + val_evals[2])),
-                            eq_r_prime_evals[3]
-                                * ra_evals[3]
-                                * (val_evals[3] + z * (inc_evals[3] + val_evals[3])),
                         ]
                     })
                     .reduce(
-                        || [F::zero(); DEGREE],
+                        || [F::zero(); READ_WRITE_CHECK_DEGREE],
                         |running, new| {
                             [
                                 running[0] + new[0],
                                 running[1] + new[1],
                                 running[2] + new[2],
-                                running[3] + new[3],
                             ]
                         },
                     );
@@ -1077,54 +1056,45 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             let inner_span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
             let _inner_guard = inner_span.enter();
 
-            let univariate_poly_evals: [F; DEGREE] = if eq_r_prime.len() > 1 {
+            let univariate_poly_evals: [F; READ_WRITE_CHECK_DEGREE] = if eq_r_prime.len() > 1 {
                 // Not done binding cycle variables yet
                 (0..eq_r_prime.len() / 2)
                     .into_par_iter()
                     .map(|j| {
                         let eq_r_prime_evals =
-                            eq_r_prime.sumcheck_evals(j, DEGREE, BindingOrder::HighToLow);
+                            eq_r_prime.sumcheck_evals(j, READ_WRITE_CHECK_DEGREE, BindingOrder::HighToLow);
 
-                        let inner_sum_evals: [F; DEGREE] = (0..K)
+                        let inner_sum_evals: [F; READ_WRITE_CHECK_DEGREE] = (0..K)
                             .into_par_iter()
                             .map(|k| {
                                 let index = j * K + k;
                                 let ra_evals =
-                                    ra.sumcheck_evals(index, DEGREE, BindingOrder::HighToLow);
+                                    ra.sumcheck_evals(index, READ_WRITE_CHECK_DEGREE, BindingOrder::HighToLow);
                                 let val_evals =
-                                    val.sumcheck_evals(index, DEGREE, BindingOrder::HighToLow);
+                                    val.sumcheck_evals(index, READ_WRITE_CHECK_DEGREE, BindingOrder::HighToLow);
 
                                 let inc_cycle_evals =
-                                    inc_cycle.sumcheck_evals(j, DEGREE, BindingOrder::HighToLow);
-                                let inc_evals = ra_evals
-                                    .iter()
-                                    .zip(inc_cycle_evals.iter())
-                                    .map(|(ra_eval, inc_eval)| *ra_eval * *inc_eval)
-                                    .collect::<Vec<F>>();
+                                    inc_cycle.sumcheck_evals(j, READ_WRITE_CHECK_DEGREE, BindingOrder::HighToLow);
 
                                 [
                                     ra_evals[0].mul_0_optimized(
-                                        val_evals[0] + z * (inc_evals[0] + val_evals[0]),
+                                        val_evals[0] + z * (inc_cycle_evals[0] + val_evals[0]),
                                     ),
                                     ra_evals[1].mul_0_optimized(
-                                        val_evals[1] + z * (inc_evals[1] + val_evals[1]),
+                                        val_evals[1] + z * (inc_cycle_evals[1] + val_evals[1]),
                                     ),
                                     ra_evals[2].mul_0_optimized(
-                                        val_evals[2] + z * (inc_evals[2] + val_evals[2]),
-                                    ),
-                                    ra_evals[3].mul_0_optimized(
-                                        val_evals[3] + z * (inc_evals[3] + val_evals[3]),
+                                        val_evals[2] + z * (inc_cycle_evals[2] + val_evals[2]),
                                     ),
                                 ]
                             })
                             .reduce(
-                                || [F::zero(); DEGREE],
+                                || [F::zero(); READ_WRITE_CHECK_DEGREE],
                                 |running, new| {
                                     [
                                         running[0] + new[0],
                                         running[1] + new[1],
                                         running[2] + new[2],
-                                        running[3] + new[3],
                                     ]
                                 },
                             );
@@ -1133,17 +1103,15 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                             eq_r_prime_evals[0] * inner_sum_evals[0],
                             eq_r_prime_evals[1] * inner_sum_evals[1],
                             eq_r_prime_evals[2] * inner_sum_evals[2],
-                            eq_r_prime_evals[3] * inner_sum_evals[3],
                         ]
                     })
                     .reduce(
-                        || [F::zero(); DEGREE],
+                        || [F::zero(); READ_WRITE_CHECK_DEGREE],
                         |running, new| {
                             [
                                 running[0] + new[0],
                                 running[1] + new[1],
                                 running[2] + new[2],
-                                running[3] + new[3],
                             ]
                         },
                     )
@@ -1156,28 +1124,23 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                 let evals = (0..ra.len() / 2)
                     .into_par_iter()
                     .map(|k| {
-                        let ra_evals = ra.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
-                        let val_evals = val.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
-                        let inc_evals: Vec<F> = ra_evals
-                            .iter()
-                            .map(|ra_eval| *ra_eval * inc_cycle.final_sumcheck_claim())
-                            .collect();
+                        let ra_evals = ra.sumcheck_evals(k, READ_WRITE_CHECK_DEGREE, BindingOrder::HighToLow);
+                        let val_evals = val.sumcheck_evals(k, READ_WRITE_CHECK_DEGREE, BindingOrder::HighToLow);
+                        let inc_cycle_eval = inc_cycle.final_sumcheck_claim();
 
                         [
-                            ra_evals[0] * (val_evals[0] + z * (val_evals[0] + inc_evals[0])),
-                            ra_evals[1] * (val_evals[1] + z * (val_evals[1] + inc_evals[1])),
-                            ra_evals[2] * (val_evals[2] + z * (val_evals[2] + inc_evals[2])),
-                            ra_evals[3] * (val_evals[3] + z * (val_evals[3] + inc_evals[3])),
+                            ra_evals[0] * (val_evals[0] + z * (val_evals[0] + inc_cycle_eval)),
+                            ra_evals[1] * (val_evals[1] + z * (val_evals[1] + inc_cycle_eval)),
+                            ra_evals[2] * (val_evals[2] + z * (val_evals[2] + inc_cycle_eval)),
                         ]
                     })
                     .reduce(
-                        || [F::zero(); DEGREE],
+                        || [F::zero(); READ_WRITE_CHECK_DEGREE],
                         |running, new| {
                             [
                                 running[0] + new[0],
                                 running[1] + new[1],
                                 running[2] + new[2],
-                                running[3] + new[3],
                             ]
                         },
                     );
@@ -1185,7 +1148,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                     eq_r_prime_eval * evals[0],
                     eq_r_prime_eval * evals[1],
                     eq_r_prime_eval * evals[2],
-                    eq_r_prime_eval * evals[3],
                 ]
             };
 
@@ -1194,7 +1156,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                 previous_claim - univariate_poly_evals[0],
                 univariate_poly_evals[1],
                 univariate_poly_evals[2],
-                univariate_poly_evals[3],
             ]);
 
             drop(_inner_guard);
@@ -1322,7 +1283,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             .verify(
                 self.rv_claim + z * self.wv_claim,
                 T.log_2() + K.log_2(),
-                4,
+                READ_WRITE_CHECK_DEGREE,
                 transcript,
             )
             .unwrap();
@@ -1340,7 +1301,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         assert_eq!(
             eq_eval_cycle
                 * self.ra_claim
-                * (self.val_claim + z * (self.val_claim + self.inc_claim * self.ra_claim)),
+                * (self.val_claim + z * (self.val_claim + self.inc_claim)),
             sumcheck_claim,
             "Read/write-checking sumcheck failed"
         );
