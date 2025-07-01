@@ -206,7 +206,8 @@ impl Program {
             max_input_size: self.max_input_size,
             max_output_size: self.max_output_size,
         };
-        let (trace, io_device) = tracer::trace(elf_contents, inputs, &memory_config);
+        let (trace, final_memory_state, io_device) =
+            tracer::trace(elf_contents, inputs, &memory_config);
         (io_device, trace)
     }
 

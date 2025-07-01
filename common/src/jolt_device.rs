@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::constants::{
     DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
-    RAM_START_ADDRESS, REGISTER_COUNT,
+    RAM_START_ADDRESS,
 };
 
 #[allow(clippy::too_long_first_doc_paragraph)]
@@ -199,12 +199,9 @@ impl MemoryLayout {
             .and_then(|s| s.checked_add(8))
             .expect("I/O region size overflow");
 
-        // Padded so that the witness index corresponding to `RAM_START_ADDRESS`
-        // is a power of 2
-        let io_region_words = (REGISTER_COUNT + io_region_bytes / 4)
-            .next_power_of_two()
-            .checked_sub(REGISTER_COUNT)
-            .expect("I/O region words underflow");
+        // Padded so that the witness index corresponding to `input_start`
+        // has the form 0b11...100...0
+        let io_region_words = (io_region_bytes / 4).next_power_of_two();
 
         let io_bytes = io_region_words
             .checked_mul(4)

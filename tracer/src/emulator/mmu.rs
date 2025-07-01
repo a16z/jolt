@@ -1058,7 +1058,7 @@ impl Mmu {
 /// using [`DRAM_BASE`](constant.DRAM_BASE.html) and accesses [`Memory`](../memory/struct.Memory.html).
 #[derive(Clone)]
 pub struct MemoryWrapper {
-    memory: Memory,
+    pub memory: Memory,
 }
 
 impl MemoryWrapper {
