@@ -497,7 +497,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         r_prime: &[F],
         transcript: &mut ProofTranscript,
     ) -> (ReadWriteCheckingProof<F, ProofTranscript>, Vec<F>, Vec<F>) {
-        const DEGREE: usize = 3;
+        const DEGREE: usize = 4;
         let K = r.len().pow2();
         let T = r_prime.len().pow2();
         debug_assert_eq!(addresses.len(), T);
@@ -739,12 +739,12 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             let inner_span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
             let _inner_guard = inner_span.enter();
 
-            let univariate_poly_evals: [F; 3] = I
+            let univariate_poly_evals: [F; DEGREE] = I
                 .par_iter()
                 .zip(data_buffers.par_iter_mut())
                 .zip(val_checkpoints.par_chunks(K))
                 .map(|((I_chunk, buffers), checkpoint)| {
-                    let mut evals = [F::zero(), F::zero(), F::zero()];
+                    let mut evals = [F::zero(), F::zero(), F::zero(), F::zero()];
 
                     let DataBuffers {
                         val_j_0,
@@ -823,22 +823,25 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                                 BindingOrder::LowToHigh,
                             );
 
-                            let mut inner_sum_evals = [F::zero(); 3];
+                            let mut inner_sum_evals = [F::zero(); DEGREE];
                             for k in dirty_indices.drain(..) {
                                 if !ra[0][k].is_zero() || !ra[1][k].is_zero() {
                                     // let kj = k * (T >> (round - 1)) + j_prime / 2;
                                     let m_ra = ra[1][k] - ra[0][k];
                                     let ra_eval_2 = ra[1][k] + m_ra;
                                     let ra_eval_3 = ra_eval_2 + m_ra;
+                                    let ra_eval_4 = ra_eval_3 + m_ra;
 
                                     let m_val = val_j_r[1][k] - val_j_r[0][k];
                                     let val_eval_2 = val_j_r[1][k] + m_val;
                                     let val_eval_3 = val_eval_2 + m_val;
+                                    let val_eval_4 = val_eval_3 + m_val;
 
                                     // Inc(k, j) = wa(k, j) * Inc(j), where by abuse of notation we should how to relate the two Inc functions.
                                     let inc_eval_0 = inc_cycle_evals[0] * ra[0][k];
-                                    let inc_eval_2 =  inc_cycle_evals[1] * ra_eval_2;
+                                    let inc_eval_2 = inc_cycle_evals[1] * ra_eval_2;
                                     let inc_eval_3 = inc_cycle_evals[2] * ra_eval_3;
+                                    let inc_eval_4 = inc_cycle_evals[3] * ra_eval_4;
 
                                     inner_sum_evals[0] += ra[0][k].mul_0_optimized(
                                         val_j_r[0][k] + z * (inc_eval_0 + val_j_r[0][k]),
@@ -847,6 +850,8 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                                         ra_eval_2 * (val_eval_2 + z * (inc_eval_2 + val_eval_2));
                                     inner_sum_evals[2] +=
                                         ra_eval_3 * (val_eval_3 + z * (inc_eval_3 + val_eval_3));
+                                    inner_sum_evals[3] +=
+                                        ra_eval_4 * (val_eval_4 + z * (inc_eval_4 + val_eval_4));
 
                                     ra[0][k] = F::zero();
                                     ra[1][k] = F::zero();
@@ -859,6 +864,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                             evals[0] += eq_r_prime_evals[0] * inner_sum_evals[0];
                             evals[1] += eq_r_prime_evals[1] * inner_sum_evals[1];
                             evals[2] += eq_r_prime_evals[2] * inner_sum_evals[2];
+                            evals[3] += eq_r_prime_evals[3] * inner_sum_evals[3];
                         });
 
                     evals
@@ -870,6 +876,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                             running[0] + new[0],
                             running[1] + new[1],
                             running[2] + new[2],
+                            running[3] + new[3],
                         ]
                     },
                 );
@@ -879,6 +886,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                 previous_claim - univariate_poly_evals[0],
                 univariate_poly_evals[1],
                 univariate_poly_evals[2],
+                univariate_poly_evals[3],
             ]);
 
             drop(_inner_guard);
@@ -914,6 +922,9 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                             eq_r_prime_evals[2]
                                 * ra_evals[2]
                                 * (val_evals[2] + z * (inc_evals[2] + val_evals[2])),
+                            eq_r_prime_evals[3]
+                                * ra_evals[3]
+                                * (val_evals[3] + z * (inc_evals[3] + val_evals[3])),
                         ]
                     })
                     .reduce(
@@ -923,6 +934,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                                 running[0] + new[0],
                                 running[1] + new[1],
                                 running[2] + new[2],
+                                running[3] + new[3],
                             ]
                         },
                     );
@@ -932,7 +944,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                     round
                 );
             }
-            panic!("Success");
 
             let compressed_poly = univariate_poly.compress();
             compressed_poly.append_to_transcript(transcript);
@@ -1015,6 +1026,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 
         drop(_guard);
         drop(span);
+        panic!("Success");
 
         // At this point I has been bound to a point where each chunk contains a single row,
         // so we might as well materialize the full `ra`, `wa`, and `Val` polynomials and perform
