@@ -144,7 +144,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
         opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Self {
-        //// start of state gen (to be hanled by state manager)
+        //// start of state gen (to be handled by state manager)
         let bytecode_preprocessing = &preprocessing.shared.bytecode;
         let K = bytecode_preprocessing.bytecode.len().next_power_of_two();
         let T = trace.len();
@@ -210,7 +210,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
 
         //// End of state gen
 
-        // Prove core PIOP and Hamming weight sumcheck
+        // Prove core PIOP and Hamming weight sumcheck (they're combined into one here)
         let (core_piop_hamming_proof, r_address, raf_ra) =
             CorePIOPHammingProof::prove(F.clone(), val, z, rv_claim, K, transcript);
         let ra_claim = core_piop_hamming_proof.ra_claim;
@@ -219,6 +219,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
             CommittedPolynomials::BytecodeRa.generate_witness(preprocessing, trace);
 
         let r_address_rev = r_address.iter().copied().rev().collect::<Vec<_>>();
+
         opening_accumulator.append_sparse(
             vec![unbound_ra_poly.clone()],
             r_address_rev,
@@ -226,6 +227,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
             vec![ra_claim],
         );
 
+        // Prove booleanity
         let (booleanity_proof, r_address_prime, r_cycle_prime) =
             BooleanityProof::prove(bytecode_preprocessing, trace, &r_address, E, F, transcript);
         let ra_claim_prime = booleanity_proof.ra_claim_prime;
@@ -241,6 +243,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
             vec![ra_claim_prime],
         );
 
+        // Prove raf
         let challenge: F = transcript.challenge_scalar();
         let raf_ra_shift = MultilinearPolynomial::from(F_shift);
         let raf_sumcheck = RafEvaluationProof::prove(
@@ -304,6 +307,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
         let r_address_prime = r_address_prime.iter().copied().rev().collect::<Vec<_>>();
         let r_cycle_prime = r_cycle_prime.iter().rev().copied().collect::<Vec<_>>();
         let r_concat = [r_address_prime.as_slice(), r_cycle_prime.as_slice()].concat();
+
         opening_accumulator.append(&[ra_commitment], r_concat, &[ra_claim_prime], transcript);
 
         let challenge: F = transcript.challenge_scalar();
@@ -328,9 +332,9 @@ struct CorePIOPHammingVerifierState<F: JoltField> {
 pub struct CorePIOPHammingSumcheck<F: JoltField> {
     /// Input claim: rv_claim + z
     input_claim: F,
-    /// Prover state (optional for prover)
+    /// Prover state
     prover_state: Option<CorePIOPHammingProverState<F>>,
-    /// Verifier state (optional for verifier)
+    /// Verifier state
     verifier_state: Option<CorePIOPHammingVerifierState<F>>,
     /// Cached ra claim after sumcheck completes
     ra_claim: Option<F>,
@@ -497,7 +501,7 @@ impl<F: JoltField, ProofTranscript: Transcript> CorePIOPHammingProof<F, ProofTra
         let input_claim = rv_claim + z;
 
         let ra_poly = MultilinearPolynomial::from(F);
-        let raf_ra = ra_poly.clone(); // Clone before binding for RAF sumcheck
+        let raf_ra = ra_poly.clone(); // Clone before binding for RAF sumcheck to return original
         let val_poly = MultilinearPolynomial::from(val);
 
         let mut core_piop_sumcheck =
@@ -524,7 +528,7 @@ impl<F: JoltField, ProofTranscript: Transcript> CorePIOPHammingProof<F, ProofTra
 
     pub fn verify(
         &self,
-        val: &[F],
+        _val: &[F],
         z: F,
         K: usize,
         transcript: &mut ProofTranscript,
@@ -535,10 +539,7 @@ impl<F: JoltField, ProofTranscript: Transcript> CorePIOPHammingProof<F, ProofTra
         core_piop_sumcheck.ra_claim = Some(self.ra_claim);
         core_piop_sumcheck.val_eval = Some(self.val_eval);
 
-        // Run verify_single to get r_address
         let r_address = core_piop_sumcheck.verify_single(&self.sumcheck_proof, transcript)?;
-
-        // TODO(markosg04) assert here?
 
         Ok(r_address)
     }
@@ -561,19 +562,21 @@ struct BooleanityProverState<F: JoltField> {
 struct BooleanityVerifierState<F: JoltField> {
     K: usize,
     T: usize,
+    r_address: Option<Vec<F>>,
+    r_cycle: Option<Vec<F>>,
     _marker: std::marker::PhantomData<F>,
 }
 
 pub struct BooleanitySumcheck<F: JoltField> {
     /// Input claim: always F::zero() for booleanity
     input_claim: F,
-    /// Prover state (optional for prover)
+    /// Prover state
     prover_state: Option<BooleanityProverState<F>>,
-    /// Verifier state (optional for verifier)
+    /// Verifier state
     verifier_state: Option<BooleanityVerifierState<F>>,
     /// Cached ra claim after sumcheck completes
     ra_claim_prime: Option<F>,
-    /// Current round (to track phase)
+    /// Current round
     current_round: usize,
     /// Store preprocessing and trace for phase transition
     preprocessing: Option<Arc<BytecodePreprocessing>>,
@@ -599,7 +602,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         // Compute H (will be used in phase 2)
         let H: Vec<F> = preprocessing
             .map_trace_to_pc(trace)
-            .map(|pc| F::zero()) // Will be computed during phase 1
+            .map(|_pc| F::zero()) // Will be computed during phase 1
             .collect();
         let H = MultilinearPolynomial::from(H);
         let D = MultilinearPolynomial::from(D);
@@ -653,6 +656,8 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             verifier_state: Some(BooleanityVerifierState::<F> {
                 K,
                 T,
+                r_address: None,
+                r_cycle: None,
                 _marker: std::marker::PhantomData,
             }),
             ra_claim_prime: None,
@@ -661,13 +666,20 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             trace: None,
         }
     }
+
+    pub fn set_r_values(&mut self, r_address: Vec<F>, r_cycle: Vec<F>) {
+        if let Some(verifier_state) = self.verifier_state.as_mut() {
+            verifier_state.r_address = Some(r_address);
+            verifier_state.r_cycle = Some(r_cycle);
+        }
+    }
 }
 
 impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
     for BooleanitySumcheck<F>
 {
     fn degree(&self) -> usize {
-        3 // Degree 3 for booleanity sumcheck
+        3
     }
 
     fn num_rounds(&self) -> usize {
@@ -759,7 +771,25 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 
     fn expected_output_claim(&self, r: &[F]) -> F {
-        F::zero()
+        let ra_claim_prime = self.ra_claim_prime.expect("ra_claim_prime not set");
+        let verifier_state = self
+            .verifier_state
+            .as_ref()
+            .expect("Verifier state not initialized");
+
+        // Split r into r_address_prime and r_cycle_prime
+        let (r_address_prime, r_cycle_prime) = r.split_at(verifier_state.K.log_2());
+
+        let r_address = verifier_state
+            .r_address
+            .as_ref()
+            .expect("r_address not set");
+        let r_cycle = verifier_state.r_cycle.as_ref().expect("r_cycle not set");
+
+        let eq_eval_address = EqPolynomial::mle(&r_address, r_address_prime);
+        let eq_eval_cycle = EqPolynomial::mle(&r_cycle, r_cycle_prime);
+
+        eq_eval_address * eq_eval_cycle * (ra_claim_prime.square() - ra_claim_prime)
     }
 }
 
@@ -777,7 +807,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                     prover_state
                         .B
                         .sumcheck_evals(k_prime, DEGREE, BindingOrder::LowToHigh);
-            
+
                 let B_evals = vec![B_evals_012[0], B_evals_012[1], B_evals_012[2]];
 
                 let inner_sum = prover_state.G[k_prime << m..(k_prime + 1) << m]
@@ -829,7 +859,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         univariate_poly_evals
     }
 
-    fn compute_phase2_message(&self, round: usize) -> Vec<F> {
+    fn compute_phase2_message(&self, _round: usize) -> Vec<F> {
         let prover_state = self.prover_state.as_ref().unwrap();
         const DEGREE: usize = 3;
 
@@ -891,16 +921,12 @@ impl<F: JoltField, ProofTranscript: Transcript> BooleanityProof<F, ProofTranscri
         let K = r.len().pow2();
         let T = trace.len();
 
-        // Create BooleanitySumcheck instance
         let mut booleanity_sumcheck = BooleanitySumcheck::new(preprocessing, trace, r, D, G, K, T);
 
-        // Run the sumcheck protocol using prove_single
         let (sumcheck_proof, r_combined) = booleanity_sumcheck.prove_single(transcript);
 
-        // Split r_combined into r_address_prime and r_cycle_prime
         let (r_address_prime, r_cycle_prime) = r_combined.split_at(K.log_2());
 
-        // Get the cached ra_claim_prime
         let ra_claim_prime = booleanity_sumcheck
             .ra_claim_prime
             .expect("ra_claim_prime should be set after prove_single");
@@ -921,31 +947,13 @@ impl<F: JoltField, ProofTranscript: Transcript> BooleanityProof<F, ProofTranscri
         T: usize,
         transcript: &mut ProofTranscript,
     ) -> Result<(Vec<F>, F), ProofVerifyError> {
-        // Create BooleanitySumcheck verifier instance
         let mut booleanity_sumcheck = BooleanitySumcheck::new_verifier(K, T);
 
-        // Set the cached ra_claim_prime
+        booleanity_sumcheck.set_r_values(r_address.to_vec(), r_cycle.to_vec());
+
         booleanity_sumcheck.ra_claim_prime = Some(self.ra_claim_prime);
 
-        // Run verify_single
         let r_combined = booleanity_sumcheck.verify_single(&self.sumcheck_proof, transcript)?;
-
-        // Split r_combined into r_address_prime and r_cycle_prime
-        let (r_address_prime, r_cycle_prime) = r_combined.split_at(K.log_2());
-
-        // Verify the expected output claim
-        let r_address_rev: Vec<_> = r_address.iter().copied().rev().collect();
-        let r_cycle_rev: Vec<_> = r_cycle.iter().copied().rev().collect();
-        let eq_eval_address = EqPolynomial::mle(&r_address_rev, r_address_prime);
-        let eq_eval_cycle = EqPolynomial::mle(&r_cycle_rev, r_cycle_prime);
-
-        let expected_claim =
-            eq_eval_address * eq_eval_cycle * (self.ra_claim_prime.square() - self.ra_claim_prime);
-        assert_eq!(
-            expected_claim,
-            F::zero(),
-            "Booleanity sumcheck verification failed"
-        );
 
         Ok((r_combined, self.ra_claim_prime))
     }
@@ -967,9 +975,9 @@ struct RafBytecodeVerifierState<F: JoltField> {
 pub struct RafBytecode<F: JoltField> {
     /// Input claim: raf_claim + challenge * raf_claim_shift
     input_claim: F,
-    /// Prover state (optional for prover)
+    /// Prover state
     prover_state: Option<RafBytecodeProverState<F>>,
-    /// Verifier state (optional for verifier)
+    /// Verifier state
     verifier_state: Option<RafBytecodeVerifierState<F>>,
     /// Cached ra claims after sumcheck completes
     ra_claims: Option<(F, F)>,
@@ -1036,7 +1044,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             .expect("Prover state not initialized");
         let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript>>::degree(self);
 
-        // Compute univariate polynomial evaluations for degree-2 sumcheck
         let univariate_poly_evals: Vec<F> = (0..prover_state.ra_poly.len() / 2)
             .into_par_iter()
             .map(|i| {
@@ -1053,7 +1060,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                         .int_poly
                         .sumcheck_evals(i, degree, BindingOrder::LowToHigh);
 
-                // Compute the product evaluations at 0 and 2
                 vec![
                     (ra_evals[0] + prover_state.challenge * ra_evals_shift[0]) * int_evals[0],
                     (ra_evals[1] + prover_state.challenge * ra_evals_shift[1]) * int_evals[1],
