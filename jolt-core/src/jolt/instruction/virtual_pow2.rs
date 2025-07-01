@@ -43,7 +43,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualPow2> 
         let y = LookupQuery::<WORD_SIZE>::to_lookup_index(self);
         match WORD_SIZE {
             #[cfg(test)]
-            8 => (1u64 << (y % 8)) as u64,
+            8 => 1u64 << (y % 8),
             32 => 1u64 << (y % 32),
             64 => 1u64 << (y % 64),
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),

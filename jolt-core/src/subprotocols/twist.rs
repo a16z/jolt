@@ -204,9 +204,9 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let r_address = r_sumcheck[T.log_2()..].to_vec();
 
         // eq(r', r_cycle)
-        let eq_eval_cycle = EqPolynomial::new(r_prime).evaluate(&r_cycle);
+        let eq_eval_cycle = EqPolynomial::mle(&r_prime, &r_cycle);
         // eq(r, r_address)
-        let eq_eval_address = EqPolynomial::new(r).evaluate(&r_address);
+        let eq_eval_address = EqPolynomial::mle(&r, &r_address);
 
         assert_eq!(
             eq_eval_cycle * self.ra_claim * self.val_claim
@@ -709,7 +709,7 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
                     }
                 }
                 // First time this k has been encountered
-                let bound_value = if j_prime % 2 == 0 {
+                let bound_value = if j_prime.is_multiple_of(2) {
                     // (1 - r_j) * inc_lt + r_j * inc
                     inc_lt + r_j * (inc - inc_lt)
                 } else {

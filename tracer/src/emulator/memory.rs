@@ -2,6 +2,7 @@
 use alloc::{vec, vec::Vec};
 
 /// Emulates main memory.
+#[derive(Clone)]
 pub struct Memory {
     /// Memory content
     data: Vec<u64>,
@@ -39,7 +40,7 @@ impl Memory {
     /// # Arguments
     /// * `address`
     pub fn read_halfword(&self, address: u64) -> u16 {
-        if (address % 2) == 0 {
+        if address.is_multiple_of(2) {
             let index = (address >> 3) as usize;
             let pos = (address % 8) * 8;
             (self.data[index] >> pos) as u16
@@ -53,7 +54,7 @@ impl Memory {
     /// # Arguments
     /// * `address`
     pub fn read_word(&self, address: u64) -> u32 {
-        if (address % 4) == 0 {
+        if address.is_multiple_of(4) {
             let index = (address >> 3) as usize;
             let pos = (address % 8) * 8;
             (self.data[index] >> pos) as u32
@@ -67,10 +68,10 @@ impl Memory {
     /// # Arguments
     /// * `address`
     pub fn read_doubleword(&self, address: u64) -> u64 {
-        if (address % 8) == 0 {
+        if address.is_multiple_of(8) {
             let index = (address >> 3) as usize;
             self.data[index]
-        } else if (address % 4) == 0 {
+        } else if address.is_multiple_of(4) {
             (self.read_word(address) as u64)
                 | ((self.read_word(address.wrapping_add(4)) as u64) << 32)
         } else {
@@ -108,7 +109,7 @@ impl Memory {
     /// * `address`
     /// * `value`
     pub fn write_halfword(&mut self, address: u64, value: u16) {
-        if (address % 2) == 0 {
+        if address.is_multiple_of(2) {
             let index = (address >> 3) as usize;
             let pos = (address % 8) * 8;
             self.data[index] = (self.data[index] & !(0xffff << pos)) | ((value as u64) << pos);
@@ -123,7 +124,7 @@ impl Memory {
     /// * `address`
     /// * `value`
     pub fn write_word(&mut self, address: u64, value: u32) {
-        if (address % 4) == 0 {
+        if address.is_multiple_of(4) {
             let index = (address >> 3) as usize;
             let pos = (address % 8) * 8;
             self.data[index] = (self.data[index] & !(0xffffffff << pos)) | ((value as u64) << pos);
@@ -138,10 +139,10 @@ impl Memory {
     /// * `address`
     /// * `value`
     pub fn write_doubleword(&mut self, address: u64, value: u64) {
-        if (address % 8) == 0 {
+        if address.is_multiple_of(8) {
             let index = (address >> 3) as usize;
             self.data[index] = value;
-        } else if (address % 4) == 0 {
+        } else if address.is_multiple_of(4) {
             self.write_word(address, (value & 0xffffffff) as u32);
             self.write_word(address.wrapping_add(4), (value >> 32) as u32);
         } else {

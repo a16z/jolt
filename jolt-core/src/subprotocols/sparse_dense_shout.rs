@@ -32,8 +32,8 @@ use tracer::instruction::RV32IMCycle;
 /// Table containing the evaluations `EQ(x_1, ..., x_j, r_1, ..., r_j)`,
 /// built up incrementally as we receive random challenges `r_j` over the
 /// course of sumcheck.
-#[derive(Clone)]
-struct ExpandingTable<F: JoltField> {
+#[derive(Clone, Debug)]
+pub struct ExpandingTable<F: JoltField> {
     len: usize,
     values: Vec<F>,
     scratch_space: Vec<F>,
@@ -42,7 +42,7 @@ struct ExpandingTable<F: JoltField> {
 impl<F: JoltField> ExpandingTable<F> {
     /// Initializes an `ExpandingTable` with the given `capacity`.
     #[tracing::instrument(skip_all, name = "ExpandingTable::new")]
-    fn new(capacity: usize) -> Self {
+    pub fn new(capacity: usize) -> Self {
         let (values, scratch_space) = rayon::join(
             || unsafe_allocate_zero_vec(capacity),
             || unsafe_allocate_zero_vec(capacity),
@@ -55,7 +55,7 @@ impl<F: JoltField> ExpandingTable<F> {
     }
 
     /// Resets this table to be length 1, containing only the given `value`.
-    fn reset(&mut self, value: F) {
+    pub fn reset(&mut self, value: F) {
         self.values[0] = value;
         self.len = 1;
     }
@@ -63,7 +63,7 @@ impl<F: JoltField> ExpandingTable<F> {
     /// Updates this table (expanding it by a factor of 2) to incorporate
     /// the new random challenge `r_j`.
     #[tracing::instrument(skip_all, name = "ExpandingTable::update")]
-    fn update(&mut self, r_j: F) {
+    pub fn update(&mut self, r_j: F) {
         self.values[..self.len]
             .par_iter()
             .zip(self.scratch_space.par_chunks_mut(2))
@@ -292,7 +292,7 @@ pub fn prove_sparse_dense_shout<
     ProofTranscript: Transcript,
 >(
     trace: &[RV32IMCycle],
-    r_cycle: Vec<F>,
+    r_cycle: &[F],
     transcript: &mut ProofTranscript,
 ) -> (
     SumcheckInstanceProof<F, ProofTranscript>,
@@ -322,7 +322,7 @@ pub fn prove_sparse_dense_shout<
     drop(_guard);
     drop(span);
 
-    let eq_r_prime_evals = EqPolynomial::evals(&r_cycle);
+    let eq_r_prime_evals = EqPolynomial::evals(r_cycle);
     let mut u_evals = eq_r_prime_evals.clone();
 
     let mut prefix_checkpoints: Vec<PrefixCheckpoint<F>> = vec![None.into(); Prefixes::COUNT];
@@ -484,7 +484,7 @@ pub fn prove_sparse_dense_shout<
             v.update(r_j);
 
             {
-                if r.len() % 2 == 0 {
+                if r.len().is_multiple_of(2) {
                     Prefixes::update_checkpoints::<WORD_SIZE, F>(
                         &mut prefix_checkpoints,
                         r[r.len() - 2],
@@ -686,7 +686,7 @@ pub fn verify_sparse_dense_shout<
     let val_evals: Vec<_> = LookupTables::<WORD_SIZE>::iter()
         .map(|table| table.evaluate_mle(&r_address))
         .collect();
-    let eq_eval_cycle = EqPolynomial::new(r_cycle).evaluate(&r_cycle_prime);
+    let eq_eval_cycle = EqPolynomial::mle(&r_cycle, &r_cycle_prime);
 
     assert_eq!(
         eq_eval_cycle
@@ -787,7 +787,7 @@ mod tests {
         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(LOG_T);
 
         let (proof, rv_claim, ra_claims, flag_claims, _) =
-            prove_sparse_dense_shout::<WORD_SIZE, _, _>(&trace, r_cycle, &mut prover_transcript);
+            prove_sparse_dense_shout::<WORD_SIZE, _, _>(&trace, &r_cycle, &mut prover_transcript);
 
         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
         verifier_transcript.compare_to(prover_transcript);

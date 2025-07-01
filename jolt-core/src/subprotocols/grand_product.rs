@@ -75,7 +75,7 @@ where
     #[tracing::instrument(skip_all, name = "BatchedGrandProduct::prove_grand_product")]
     fn prove_grand_product(
         &mut self,
-        _opening_accumulator: Option<&mut ProverOpeningAccumulator<F, ProofTranscript>>,
+        _opening_accumulator: Option<&mut ProverOpeningAccumulator<F, PCS, ProofTranscript>>,
         transcript: &mut ProofTranscript,
         _setup: Option<&PCS::ProverSetup>,
     ) -> (BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>) {
@@ -261,7 +261,7 @@ where
     #[tracing::instrument(skip_all, name = "BatchedDenseGrandProduct::construct")]
     fn construct(leaves: Self::Leaves) -> Self {
         let (leaves, batch_size) = leaves;
-        assert!(leaves.len() % batch_size == 0);
+        assert!(leaves.len().is_multiple_of(batch_size));
         assert!((leaves.len() / batch_size).is_power_of_two());
 
         let num_layers = (leaves.len() / batch_size).log_2();

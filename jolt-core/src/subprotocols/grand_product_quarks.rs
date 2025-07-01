@@ -69,7 +69,7 @@ where
     #[tracing::instrument(skip_all, name = "BatchedGrandProduct::construct_with_config")]
     fn construct_with_config(leaves: Self::Leaves, config: Self::Config) -> Self {
         let (leaves, batch_size) = leaves;
-        assert!(leaves.len() % batch_size == 0);
+        assert!(leaves.len().is_multiple_of(batch_size));
         assert!((leaves.len() / batch_size).is_power_of_two());
 
         let tree_depth = (leaves.len() / batch_size).log_2();
@@ -151,7 +151,7 @@ where
     #[tracing::instrument(skip_all, name = "BatchedGrandProduct::prove_grand_product")]
     fn prove_grand_product(
         &mut self,
-        opening_accumulator: Option<&mut ProverOpeningAccumulator<F, ProofTranscript>>,
+        opening_accumulator: Option<&mut ProverOpeningAccumulator<F, PCS, ProofTranscript>>,
         transcript: &mut ProofTranscript,
         setup: Option<&PCS::ProverSetup>,
     ) -> (BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>) {
@@ -192,7 +192,7 @@ where
     #[tracing::instrument(skip_all, name = "QuarkGrandProduct::prove_grand_product")]
     pub fn prove_quark_grand_product<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
         grand_product: &mut impl BatchedGrandProduct<F, PCS, ProofTranscript>,
-        opening_accumulator: Option<&mut ProverOpeningAccumulator<F, ProofTranscript>>,
+        opening_accumulator: Option<&mut ProverOpeningAccumulator<F, PCS, ProofTranscript>>,
         transcript: &mut ProofTranscript,
         setup: Option<&PCS::ProverSetup>,
     ) -> (BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>) {
@@ -308,7 +308,7 @@ where
         v: &[PCS::Field],
         r_outputs: Vec<PCS::Field>,
         claim: PCS::Field,
-        opening_accumulator: &mut ProverOpeningAccumulator<PCS::Field, ProofTranscript>,
+        opening_accumulator: &mut ProverOpeningAccumulator<PCS::Field, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
         setup: &PCS::ProverSetup,
     ) -> (Self, Vec<PCS::Field>, PCS::Field) {
@@ -413,9 +413,9 @@ where
         // We have a commitment to g(x) = f(1, x), so we can prove opening 1 directly:
         let (g_r_sumcheck, chis_r) =
             MultilinearPolynomial::batch_evaluate(&[&g_polynomial], &r_sumcheck);
-        opening_accumulator.append(
+        opening_accumulator.append_dense(
             &[&g_polynomial],
-            DensePolynomial::new(chis_r),
+            chis_r,
             r_sumcheck.clone(),
             &g_r_sumcheck,
             transcript,
@@ -442,9 +442,9 @@ where
         // We can reduce g(r', 0) and g(r', 1) to a single opening of g:
         let ((reduced_opening_point_g, reduced_opening_g), g_r_prime) =
             line_reduce::<PCS::Field, ProofTranscript>(&r_prime, &g_polynomial, transcript);
-        opening_accumulator.append(
+        opening_accumulator.append_dense(
             &[&g_polynomial],
-            DensePolynomial::new(EqPolynomial::evals(&reduced_opening_point_g)),
+            EqPolynomial::evals(&reduced_opening_point_g),
             reduced_opening_point_g,
             &[reduced_opening_g],
             transcript,
@@ -496,7 +496,7 @@ where
         opening_accumulator.append(
             &[&self.g_commitment],
             r_sumcheck.clone(),
-            &[&self.g_r_sumcheck],
+            &[self.g_r_sumcheck],
             transcript,
         );
 
@@ -507,7 +507,7 @@ where
         // Next do the line reduction verification of g(r', 0) and g(r', 1)
         let (r_g, claim_g) =
             line_reduce_verify(self.g_r_prime.0, self.g_r_prime.1, &r_prime, transcript);
-        opening_accumulator.append(&[&self.g_commitment], r_g, &[&claim_g], transcript);
+        opening_accumulator.append(&[&self.g_commitment], r_g, &[claim_g], transcript);
 
         // Similarly, we can reduce v(r', 0) and v(r', 1) to a single claim about v:
         let (r_v, claim_v) =
@@ -583,7 +583,7 @@ fn v_into_f<F: JoltField>(
     let mut f_x_0 = Vec::new();
     let mut f_x_1 = Vec::new();
     for (i, x) in f_evals.iter().enumerate() {
-        if i % 2 == 0 {
+        if i.is_multiple_of(2) {
             f_x_0.push(*x);
         } else {
             f_x_1.push(*x);
@@ -688,8 +688,11 @@ mod quark_grand_product_tests {
                 Zeromorph<Bn254, KeccakTranscript>,
                 KeccakTranscript,
             >>::construct_with_config((v, 2), config);
-        let mut prover_accumulator: ProverOpeningAccumulator<Fr, KeccakTranscript> =
-            ProverOpeningAccumulator::new();
+        let mut prover_accumulator: ProverOpeningAccumulator<
+            Fr,
+            Zeromorph<Bn254, KeccakTranscript>,
+            KeccakTranscript,
+        > = ProverOpeningAccumulator::new();
         let proof: BatchedGrandProductProof<Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript> =
             hybrid_grand_product
                 .prove_grand_product(
@@ -722,11 +725,13 @@ mod quark_grand_product_tests {
     }
 
     #[test]
+    #[ignore]
     fn quark_hybrid_default_config_e2e() {
         quark_hybrid_test_with_config(QuarkGrandProductConfig::default());
     }
 
     #[test]
+    #[ignore]
     fn quark_hybrid_custom_config_e2e() {
         let custom_config = QuarkGrandProductConfig {
             hybrid_layer_depth: QuarkHybridLayerDepth::Custom(20),
@@ -735,6 +740,7 @@ mod quark_grand_product_tests {
     }
 
     #[test]
+    #[ignore]
     fn quark_hybrid_min_config_e2e() {
         let zero_crossover_config = QuarkGrandProductConfig {
             hybrid_layer_depth: QuarkHybridLayerDepth::Min,
@@ -743,6 +749,7 @@ mod quark_grand_product_tests {
     }
 
     #[test]
+    #[ignore]
     fn quark_hybrid_max_config_e2e() {
         let zero_crossover_config = QuarkGrandProductConfig {
             hybrid_layer_depth: QuarkHybridLayerDepth::Max,

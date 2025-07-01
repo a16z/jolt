@@ -192,6 +192,7 @@ impl<F: JoltField> UniPoly<F> {
                 }
                 eval
             }
+            _ => unimplemented!("Unsupported MultilinearPolynomial variant"),
         }
     }
 

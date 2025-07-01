@@ -1,15 +1,27 @@
+#![allow(clippy::too_many_arguments)]
+
+use std::vec;
+
 use crate::{
     field::{JoltField, OptimizedMul},
+    jolt::{
+        vm::{JoltCommitments, JoltProverPreprocessing},
+        witness::CommittedPolynomials,
+    },
     poly::{
+        commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         identity_poly::UnmapRamAddressPolynomial,
         multilinear_polynomial::{
             self, BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
-        opening_proof::ProverOpeningAccumulator,
+        opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
         unipoly::{CompressedUniPoly, UniPoly},
     },
-    subprotocols::sumcheck::SumcheckInstanceProof,
+    subprotocols::{
+        ra_virtual::{RAProof, RASumcheck},
+        sumcheck::SumcheckInstanceProof,
+    },
     utils::{
         errors::ProofVerifyError,
         math::Math,
@@ -70,6 +82,7 @@ impl RAMPreprocessing {
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct RAMTwistProof<F: JoltField, ProofTranscript: Transcript> {
+    pub(crate) K: usize,
     /// Proof for the read-checking and write-checking sumchecks
     /// (steps 3 and 4 of Figure 9).
     read_write_checking_proof: ReadWriteCheckingProof<F, ProofTranscript>,
@@ -77,6 +90,7 @@ pub struct RAMTwistProof<F: JoltField, ProofTranscript: Transcript> {
     val_evaluation_proof: ValEvaluationProof<F, ProofTranscript>,
 
     booleanity_proof: BooleanityProof<F, ProofTranscript>,
+    ra_proof: RAProof<F, ProofTranscript>,
     hamming_weight_proof: HammingWeightProof<F, ProofTranscript>,
     raf_evaluation_proof: RafEvaluationProof<F, ProofTranscript>,
 }
@@ -110,8 +124,10 @@ pub struct ReadWriteCheckingProof<F: JoltField, ProofTranscript: Transcript> {
 pub struct ValEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
     /// Sumcheck proof for the Val-evaluation sumcheck (steps 6 of Figure 9).
     sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    /// The claimed evaluation Inc(r_address, r_cycle') output by the Val-evaluation sumcheck.
+    /// The claimed evaluation Inc(r_cycle') output by the Val-evaluation sumcheck.
     inc_claim: F,
+    /// The claimed evaluation wa(r_address, r_cycle') output by the Val-evaluation sumcheck.
+    wa_claim: F,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
@@ -276,14 +292,15 @@ impl<F: JoltField, ProofTranscript: Transcript> RafEvaluationProof<F, ProofTrans
 
 impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript> {
     #[tracing::instrument(skip_all, name = "RAMTwistProof::prove")]
-    pub fn prove(
-        preprocessing: &RAMPreprocessing,
+    pub fn prove<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
+        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
         trace: &[RV32IMCycle],
         program_io: &JoltDevice,
         K: usize,
-        _opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> RAMTwistProof<F, ProofTranscript> {
+        let ram_preprocessing = &preprocessing.shared.ram;
         let log_T = trace.len().log_2();
 
         let r: Vec<F> = transcript.challenge_vector(K.log_2());
@@ -294,10 +311,10 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         let mut initial_memory_state = vec![0; K];
         // Copy bytecode
         let mut index = remap_address(
-            preprocessing.min_bytecode_address,
+            ram_preprocessing.min_bytecode_address,
             &program_io.memory_layout,
         ) as usize;
-        for word in preprocessing.bytecode_words.iter() {
+        for word in ram_preprocessing.bytecode_words.iter() {
             initial_memory_state[index] = *word as i64;
             index += 1;
         }
@@ -329,22 +346,70 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         let init: MultilinearPolynomial<F> = MultilinearPolynomial::from(initial_memory_state);
         let init_eval = init.evaluate(&r_address);
 
-        let (val_evaluation_proof, _r_cycle_prime) = prove_val_evaluation(
+        let (val_evaluation_proof, mut r_cycle_prime) = prove_val_evaluation(
+            preprocessing,
             trace,
             &program_io.memory_layout,
-            r_address,
+            r_address.clone(),
             r_cycle.clone(),
             init_eval,
             read_write_checking_proof.val_claim,
             transcript,
         );
+        // Cycle variables are bound from low to high
+        r_cycle_prime.reverse();
 
-        let (booleanity_sumcheck, _, _, ra_claim) =
+        let inc_poly = CommittedPolynomials::RamInc.generate_witness(preprocessing, trace);
+        opening_accumulator.append_dense(
+            &[&inc_poly],
+            EqPolynomial::evals(&r_cycle_prime),
+            r_cycle_prime,
+            &[val_evaluation_proof.inc_claim],
+            transcript,
+        );
+
+        let (booleanity_sumcheck, r_address_prime, r_cycle_prime, ra_claim) =
             prove_ra_booleanity(trace, &program_io.memory_layout, &eq_r_cycle, K, transcript);
         let booleanity_proof = BooleanityProof {
             sumcheck_proof: booleanity_sumcheck,
             ra_claim,
         };
+
+        let r_address_prime = r_address_prime.iter().copied().rev().collect::<Vec<_>>();
+        let r_cycle_prime = r_cycle_prime.iter().rev().copied().collect::<Vec<_>>();
+
+        // We prove `ra_claim` using the ra virtualization sumcheck.
+        // Right now we have D = 1, hence it mostly looks the same as before but we make use of the our new ra prover.
+        const D: usize = 1;
+        let addresses: Vec<usize> = trace
+            .par_iter()
+            .map(|cycle| {
+                remap_address(
+                    cycle.ram_access().address() as u64,
+                    &preprocessing.shared.memory_layout,
+                ) as usize
+            })
+            .collect();
+
+        let ra_sumcheck_instance = RASumcheck::<F, D>::new(
+            ra_claim,
+            addresses,
+            r_cycle_prime,
+            r_address_prime.clone(),
+            1 << log_T,
+        );
+
+        let (ra_proof, mut r_cycle_bound) = ra_sumcheck_instance.prove(transcript);
+
+        let unbound_ra_poly = CommittedPolynomials::RamRa(0).generate_witness(preprocessing, trace);
+        r_cycle_bound.reverse();
+
+        opening_accumulator.append_sparse(
+            vec![unbound_ra_poly],
+            r_address_prime,
+            r_cycle_bound,
+            vec![ra_proof.ra_i_claims[0]],
+        );
 
         let (hamming_weight_sumcheck, _, ra_claim) =
             prove_ra_hamming_weight(trace, &program_io.memory_layout, eq_r_cycle, K, transcript);
@@ -359,23 +424,26 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         // TODO: Append to opening proof accumulator
 
         RAMTwistProof {
+            K,
             read_write_checking_proof,
             val_evaluation_proof,
             booleanity_proof,
+            ra_proof,
             hamming_weight_proof,
             raf_evaluation_proof,
         }
     }
 
-    pub fn verify(
+    pub fn verify<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
         &self,
-        K: usize,
         T: usize,
         preprocessing: &RAMPreprocessing,
+        commitments: &JoltCommitments<F, PCS, ProofTranscript>,
         program_io: &JoltDevice,
         transcript: &mut ProofTranscript,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
     ) -> Result<(), ProofVerifyError> {
-        let log_K = K.log_2();
+        let log_K = self.K.log_2();
         let log_T = T.log_2();
         let r: Vec<F> = transcript.challenge_vector(log_K);
         let r_prime: Vec<F> = transcript.challenge_vector(log_T);
@@ -384,7 +452,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             self.read_write_checking_proof
                 .verify(r, r_prime.clone(), transcript);
 
-        let mut initial_memory_state = vec![0; K];
+        let mut initial_memory_state = vec![0; self.K];
         // Copy bytecode
         let mut index = remap_address(
             preprocessing.min_bytecode_address,
@@ -413,24 +481,34 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         let init: MultilinearPolynomial<F> = MultilinearPolynomial::from(initial_memory_state);
         let init_eval = init.evaluate(&r_address);
 
-        let (sumcheck_claim, r_cycle_prime) = self.val_evaluation_proof.sumcheck_proof.verify(
+        let (sumcheck_claim, mut r_cycle_prime) = self.val_evaluation_proof.sumcheck_proof.verify(
             self.read_write_checking_proof.val_claim - init_eval,
             log_T,
-            2,
+            3,
             transcript,
         )?;
+        // Cycle variables are bound from low to high
+        r_cycle_prime.reverse();
+
+        let inc_commitment = &commitments.commitments[CommittedPolynomials::RamInc.to_index()];
+        opening_accumulator.append(
+            &[inc_commitment],
+            r_cycle_prime.clone(),
+            &[self.val_evaluation_proof.inc_claim],
+            transcript,
+        );
 
         // Compute LT(r_cycle', r_cycle)
         let mut lt_eval = F::zero();
         let mut eq_term = F::one();
-        for (x, y) in r_cycle_prime.iter().rev().zip(r_cycle.iter()) {
+        for (x, y) in r_cycle_prime.iter().zip(r_cycle.iter()) {
             lt_eval += (F::one() - x) * y * eq_term;
             eq_term *= F::one() - x - y + *x * y + *x * y;
         }
 
         assert_eq!(
             sumcheck_claim,
-            lt_eval * self.val_evaluation_proof.inc_claim,
+            self.val_evaluation_proof.inc_claim * self.val_evaluation_proof.wa_claim * lt_eval,
             "Val evaluation sumcheck failed"
         );
 
@@ -446,10 +524,33 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
 
         let (r_address_prime, r_cycle_prime) = r_booleanity.split_at(log_K);
 
-        let eq_eval_address = EqPolynomial::new(r_address).evaluate(r_address_prime);
+        let eq_eval_address = EqPolynomial::mle(&r_address, r_address_prime);
         let r_cycle_prime: Vec<_> = r_cycle_prime.iter().copied().rev().collect();
-        // let r_cycle: Vec<_> = r_cycle.iter().copied().rev().collect();
-        let eq_eval_cycle = EqPolynomial::new(r_prime).evaluate(&r_cycle_prime);
+        let eq_eval_cycle = EqPolynomial::mle(&r_prime, &r_cycle_prime);
+
+        let r_address_prime = r_address_prime.iter().copied().rev().collect::<Vec<_>>();
+        let ra_commitment = &commitments.commitments[CommittedPolynomials::RamRa(0).to_index()];
+
+        // verify ra virtualization:
+        const D: usize = 1;
+        let mut r_cycle_bound = RASumcheck::<F, D>::verify(
+            self.booleanity_proof.ra_claim,
+            self.ra_proof.ra_i_claims.clone(),
+            r_cycle_prime,
+            T,
+            &self.ra_proof.sumcheck_proof,
+            transcript,
+        )?;
+
+        r_cycle_bound.reverse();
+        let r_concat = [r_address_prime.as_slice(), r_cycle_bound.as_slice()].concat();
+
+        opening_accumulator.append(
+            &[ra_commitment],
+            r_concat,
+            &self.ra_proof.ra_i_claims,
+            transcript,
+        );
 
         assert_eq!(
             eq_eval_address
@@ -472,7 +573,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         // Verify RAF evaluation proof
         let _r_address_raf =
             self.raf_evaluation_proof
-                .verify(K, transcript, &program_io.memory_layout)?;
+                .verify(self.K, transcript, &program_io.memory_layout)?;
 
         // TODO: Add opening proof verification for ra(r_address_raf, r_cycle)
 
@@ -956,7 +1057,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                         }
                     }
                     // First time this k has been encountered
-                    let bound_value = if j_prime % 2 == 0 {
+                    let bound_value = if j_prime.is_multiple_of(2) {
                         // (1 - r_j) * inc_lt + r_j * inc
                         inc_lt + r_j * (inc - inc_lt)
                     } else {
@@ -1283,7 +1384,9 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let r_address = r_sumcheck[T.log_2()..].to_vec();
 
         // eq(r', r_cycle)
-        let eq_eval_cycle = EqPolynomial::new(r_prime).evaluate(&r_cycle);
+        let eq_eval_cycle = EqPolynomial::mle(&r_prime, &r_cycle);
+        // eq(r, r_address)
+        let eq_eval_address = EqPolynomial::mle(&r, &r_address);
 
         assert_eq!(
             eq_eval_cycle
@@ -1301,7 +1404,12 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 /// Section 8.1 and Appendix B of the Twist+Shout paper
 /// TODO(moodlezoup): incorporate optimization from Appendix B.2
 #[tracing::instrument(skip_all)]
-pub fn prove_val_evaluation<F: JoltField, ProofTranscript: Transcript>(
+pub fn prove_val_evaluation<
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+>(
+    preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
     trace: &[RV32IMCycle],
     memory_layout: &MemoryLayout,
     r_address: Vec<F>,
@@ -1316,30 +1424,31 @@ pub fn prove_val_evaluation<F: JoltField, ProofTranscript: Transcript>(
     // k \in {0, 1}^log(K)
     let eq_r_address = EqPolynomial::evals(&r_address);
 
-    let span = tracing::span!(tracing::Level::INFO, "compute Inc");
+    let span = tracing::span!(tracing::Level::INFO, "compute wa(r_address, j)");
     let _guard = span.enter();
 
-    // Compute the Inc polynomial using the above table
-    let inc: Vec<F> = trace
+    // Compute the wa polynomial using the above table
+    let wa: Vec<F> = trace
         .par_iter()
         .map(|cycle| {
             let ram_op = cycle.ram_access();
             match ram_op {
                 RAMAccess::Write(write) => {
                     let k = remap_address(write.address, memory_layout) as usize;
-                    let increment = write.post_value as i64 - write.pre_value as i64;
-                    eq_r_address[k] * F::from_i64(increment)
+                    eq_r_address[k]
                 }
                 _ => F::zero(),
             }
         })
         .collect();
-    let mut inc = MultilinearPolynomial::from(inc);
+    let mut wa = MultilinearPolynomial::from(wa);
 
     drop(_guard);
     drop(span);
 
-    let span = tracing::span!(tracing::Level::INFO, "compute LT");
+    let mut inc = CommittedPolynomials::RamInc.generate_witness(preprocessing, trace);
+
+    let span = tracing::span!(tracing::Level::INFO, "compute LT(j, r_cycle)");
     let _guard = span.enter();
 
     let mut lt: Vec<F> = unsafe_allocate_zero_vec(T);
@@ -1362,7 +1471,7 @@ pub fn prove_val_evaluation<F: JoltField, ProofTranscript: Transcript>(
     let mut previous_claim = claimed_evaluation - init_eval;
     let mut r_cycle_prime: Vec<F> = Vec::with_capacity(num_rounds);
 
-    const DEGREE: usize = 2;
+    const DEGREE: usize = 3;
 
     let span = tracing::span!(tracing::Level::INFO, "Val-evaluation sumcheck");
     let _guard = span.enter();
@@ -1372,7 +1481,7 @@ pub fn prove_val_evaluation<F: JoltField, ProofTranscript: Transcript>(
         #[cfg(test)]
         {
             let expected: F = (0..inc.len())
-                .map(|j| inc.get_bound_coeff(j) * lt.get_bound_coeff(j))
+                .map(|j| inc.get_bound_coeff(j) * wa.get_bound_coeff(j) * lt.get_bound_coeff(j))
                 .sum::<F>();
             assert_eq!(
                 expected, previous_claim,
@@ -1383,23 +1492,35 @@ pub fn prove_val_evaluation<F: JoltField, ProofTranscript: Transcript>(
         let inner_span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
         let _inner_guard = inner_span.enter();
 
-        let univariate_poly_evals: [F; 2] = (0..inc.len() / 2)
+        let univariate_poly_evals: [F; 3] = (0..inc.len() / 2)
             .into_par_iter()
             .map(|i| {
                 let inc_evals = inc.sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
+                let wa_evals = wa.sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
                 let lt_evals = lt.sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
 
-                [inc_evals[0] * lt_evals[0], inc_evals[1] * lt_evals[1]]
+                [
+                    inc_evals[0] * wa_evals[0] * lt_evals[0],
+                    inc_evals[1] * wa_evals[1] * lt_evals[1],
+                    inc_evals[2] * wa_evals[2] * lt_evals[2],
+                ]
             })
             .reduce(
-                || [F::zero(); 2],
-                |running, new| [running[0] + new[0], running[1] + new[1]],
+                || [F::zero(); 3],
+                |running, new| {
+                    [
+                        running[0] + new[0],
+                        running[1] + new[1],
+                        running[2] + new[2],
+                    ]
+                },
             );
 
         let univariate_poly = UniPoly::from_evals(&[
             univariate_poly_evals[0],
             previous_claim - univariate_poly_evals[0],
             univariate_poly_evals[1],
+            univariate_poly_evals[2],
         ]);
 
         drop(_inner_guard);
@@ -1415,23 +1536,23 @@ pub fn prove_val_evaluation<F: JoltField, ProofTranscript: Transcript>(
         previous_claim = univariate_poly.evaluate(&r_j);
 
         // Bind polynomials
-        rayon::join(
-            || inc.bind_parallel(r_j, BindingOrder::LowToHigh),
-            || lt.bind_parallel(r_j, BindingOrder::LowToHigh),
-        );
+        [&mut inc, &mut wa, &mut lt]
+            .par_iter_mut()
+            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
     }
 
     let proof = ValEvaluationProof {
         sumcheck_proof: SumcheckInstanceProof::new(compressed_polys),
         inc_claim: inc.final_sumcheck_claim(),
+        wa_claim: wa.final_sumcheck_claim(),
     };
 
-    drop_in_background_thread((inc, eq_r_address, lt));
+    drop_in_background_thread((inc, wa, eq_r_address, lt));
 
     (proof, r_cycle_prime)
 }
 
-fn remap_address(address: u64, memory_layout: &MemoryLayout) -> u64 {
+pub fn remap_address(address: u64, memory_layout: &MemoryLayout) -> u64 {
     if address == 0 {
         return 0; // TODO(moodlezoup): Better handling for no-ops
     }

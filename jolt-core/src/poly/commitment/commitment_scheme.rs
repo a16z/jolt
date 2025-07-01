@@ -20,8 +20,9 @@ pub trait CommitmentScheme<ProofTranscript: Transcript>: Clone + Sync + Send + '
         + PartialEq
         + CanonicalSerialize
         + CanonicalDeserialize
-        + AppendToTranscript;
-    type Proof: Sync + Send + CanonicalSerialize + CanonicalDeserialize;
+        + AppendToTranscript
+        + Clone;
+    type Proof: Sync + Send + CanonicalSerialize + CanonicalDeserialize + Clone + Debug;
     type BatchedProof: Sync + Send + CanonicalSerialize + CanonicalDeserialize;
 
     fn setup_prover(max_len: usize) -> Self::ProverSetup;

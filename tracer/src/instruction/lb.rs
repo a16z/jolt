@@ -16,7 +16,7 @@ use super::{RAMRead, RV32IMInstruction, VirtualInstructionSequence};
 
 use super::{
     format::{format_load::FormatLoad, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
+    RISCVInstruction, RISCVTrace, RV32IMCycle,
 };
 
 declare_riscv_instr!(
@@ -43,10 +43,12 @@ impl LB {
 }
 
 impl RISCVTrace for LB {
-    fn trace(&self, cpu: &mut Cpu) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
         let virtual_sequence = self.virtual_sequence();
+        let mut trace = trace;
         for instr in virtual_sequence {
-            instr.trace(cpu);
+            // In each iteration, create a new Option containing a re-borrowed reference
+            instr.trace(cpu, trace.as_deref_mut());
         }
     }
 }

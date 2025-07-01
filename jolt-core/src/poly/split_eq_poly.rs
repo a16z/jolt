@@ -363,7 +363,7 @@ mod tests {
             let w: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
                 .take(num_vars)
                 .collect();
-            println!("Testing for {} variables", num_vars);
+            println!("Testing for {num_vars} variables");
 
             let start_old_split_eq_time = std::time::Instant::now();
             let _old_split_eq = SplitEqPolynomial::new(&w);
@@ -436,7 +436,7 @@ mod tests {
         // E_out_vec[0] should be cached_E_out1[4] (evals for w=[0])
         assert_eq!(
             split_eq1.E_out_vec[0],
-            cached_E_out1[w_E_out_vars_expected1.len() - 0]
+            cached_E_out1[w_E_out_vars_expected1.len()]
         );
         // E_out_vec[1] should be cached_E_out1[3] (evals for w=[0,1])
         assert_eq!(
@@ -452,7 +452,7 @@ mod tests {
         // Test case 2: Edge case L0 = 0
         let num_x_out_vars_2 = N / 2; // Max possible value for num_x_out_vars if num_x_in_vars is also N/2 and L0=0
         let w2: Vec<Fr> = (0..N).map(|_| Fr::random(&mut rng)).collect();
-        let num_x_in_vars_2 = N - num_x_out_vars_2 - 0; // L0 is 0
+        let num_x_in_vars_2 = N - num_x_out_vars_2; // L0 is 0
         let split_eq2 =
             GruenSplitEqPolynomial::new_for_small_value(&w2, num_x_out_vars_2, num_x_in_vars_2, 0);
         assert_eq!(split_eq2.E_out_vec.len(), 0);
