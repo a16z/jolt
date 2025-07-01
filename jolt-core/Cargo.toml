@@ -133,6 +133,10 @@ harness = false
 name = "msm_adapter_batch"
 harness = false
 
+[[bench]]
+name = "poly_bench"
+harness= false
+
 [lib]
 name = "jolt_core"
 path = "src/lib.rs"
