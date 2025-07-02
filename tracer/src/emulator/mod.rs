@@ -4,6 +4,8 @@ const PROGRAM_MEMORY_CAPACITY: u64 = 1024 * 1024 * 128; // big enough to run Lin
 
 extern crate fnv;
 
+use crate::instruction::RV32IMCycle;
+
 #[cfg(feature = "std")]
 use self::fnv::FnvHashMap;
 #[cfg(not(feature = "std"))]
@@ -42,6 +44,7 @@ use self::terminal::Terminal;
 /// // Go!
 /// emulator.run();
 /// ```
+#[derive(Clone)]
 pub struct Emulator {
     cpu: Cpu,
 
@@ -56,6 +59,14 @@ pub struct Emulator {
     /// [`riscv-tests`](https://github.com/riscv/riscv-tests) specific properties.
     /// The address where data will be sent to terminal
     tohost_addr: u64,
+}
+
+// type alias EmulatorState to Emulator for now
+pub type EmulatorState = Emulator;
+
+// Create a new Emulator from a saved state.
+pub fn get_mut_emulator(state: &mut EmulatorState) -> &mut Emulator {
+    state
 }
 
 impl Emulator {
@@ -76,21 +87,8 @@ impl Emulator {
         }
     }
 
-    /// Runs program set by `setup_program()`. Calls `run_test()` if the program
-    /// is [`riscv-tests`](https://github.com/riscv/riscv-tests).
-    /// Otherwise calls `run_program()`.
-    pub fn run(&mut self) {
-        match self.is_test {
-            true => self.run_test(),
-            false => self.run_program(),
-        };
-    }
-
-    /// Runs program set by `setup_program()`. The emulator won't stop forever.
-    pub fn run_program(&mut self) {
-        loop {
-            self.tick();
-        }
+    pub fn save_state(&self) -> EmulatorState {
+        self.clone()
     }
 
     /// Method for running [`riscv-tests`](https://github.com/riscv/riscv-tests) program.
@@ -106,7 +104,7 @@ impl Emulator {
             let disas = self.cpu.disassemble_next_instruction();
             println!("{disas}");
 
-            self.tick();
+            self.tick(None);
 
             // It seems in riscv-tests ends with end code
             // written to a certain physical memory address
@@ -126,8 +124,8 @@ impl Emulator {
     }
 
     /// Runs CPU one cycle
-    pub fn tick(&mut self) {
-        self.cpu.tick();
+    pub fn tick(&mut self, trace: Option<&mut Vec<RV32IMCycle>>) {
+        self.cpu.tick(trace)
     }
 
     /// Sets up program run by the program. This method analyzes the passed content

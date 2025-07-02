@@ -4005,6 +4005,7 @@ dependencies = [
  "common",
  "derive_more 2.0.1",
  "fnv",
+ "itertools 0.10.5",
  "object",
  "paste",
  "rand 0.7.3",

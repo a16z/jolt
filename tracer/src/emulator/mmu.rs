@@ -14,6 +14,7 @@ use super::terminal::Terminal;
 /// It also manages virtual-physical address translation and memory protection.
 /// It may also be said Bus.
 /// @TODO: Memory protection is not implemented yet. We should support.
+#[derive(Clone)]
 pub struct Mmu {
     clock: u64,
     xlen: Xlen,
@@ -29,6 +30,7 @@ pub struct Mmu {
     mstatus: u64,
 }
 
+#[derive(Clone)]
 pub enum AddressingMode {
     None,
     SV32,
@@ -1054,6 +1056,7 @@ impl Mmu {
 
 /// [`Memory`](../memory/struct.Memory.html) wrapper. Converts physical address to the one in memory
 /// using [`DRAM_BASE`](constant.DRAM_BASE.html) and accesses [`Memory`](../memory/struct.Memory.html).
+#[derive(Clone)]
 pub struct MemoryWrapper {
     memory: Memory,
 }

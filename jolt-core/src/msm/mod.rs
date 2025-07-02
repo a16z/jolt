@@ -220,7 +220,6 @@ where
             }
             MultilinearPolynomial::OneHot(_) => todo!(),
             MultilinearPolynomial::RLC(_) => todo!(),
-            MultilinearPolynomial::Inc(_) => todo!(),
         }
     }
 
@@ -291,7 +290,6 @@ where
                         ),
                         MultilinearPolynomial::OneHot(_) => todo!(),
                         MultilinearPolynomial::RLC(_) => todo!(),
-                        MultilinearPolynomial::Inc(_) => todo!(),
                     }
                 } else {
                     Either::Left((i, max_num_bits, poly))
