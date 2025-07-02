@@ -1920,16 +1920,8 @@ fn prove_ra_hamming_weight<F: JoltField, ProofTranscript: Transcript>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        host,
-        jolt::vm::{
-            rv32i_vm::{ProofTranscript, RV32IJoltVM},
-            Jolt, JoltProverPreprocessing,
-        },
-        poly::commitment::zeromorph::Zeromorph,
-        utils::transcript::KeccakTranscript,
-    };
-    use ark_bn254::{Bn254, Fr};
+    use crate::utils::transcript::KeccakTranscript;
+    use ark_bn254::Fr;
     use ark_std::test_rng;
     use rand_core::RngCore;
 
