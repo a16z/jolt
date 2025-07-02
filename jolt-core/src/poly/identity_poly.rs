@@ -156,7 +156,7 @@ impl<F: JoltField> PrefixPolynomial<F> for IdentityPolynomial<F> {
         chunk_len: usize,
         phase: usize,
     ) -> CachedPolynomial<F> {
-        debug_assert!(chunk_len % 2 == 0);
+        debug_assert!(chunk_len.is_multiple_of(2));
         debug_assert_eq!(self.endianness, Endianness::Big);
         let bound_value = checkpoints[Prefix::Identity].unwrap_or(F::zero());
         let mut poly =
@@ -173,7 +173,7 @@ impl<F: JoltField> PrefixPolynomial<F> for IdentityPolynomial<F> {
 
 impl<F: JoltField> SuffixPolynomial<F> for IdentityPolynomial<F> {
     fn suffix_mle(&self, index: u64, suffix_len: usize) -> u64 {
-        debug_assert!(suffix_len % 2 == 0);
+        debug_assert!(suffix_len.is_multiple_of(2));
         debug_assert_eq!(self.endianness, Endianness::Big);
         index
     }
@@ -182,7 +182,7 @@ impl<F: JoltField> SuffixPolynomial<F> for IdentityPolynomial<F> {
 pub struct ShiftSuffixPolynomial;
 impl<F: JoltField> SuffixPolynomial<F> for ShiftSuffixPolynomial {
     fn suffix_mle(&self, _index: u64, suffix_len: usize) -> u64 {
-        debug_assert!(suffix_len % 2 == 0);
+        debug_assert!(suffix_len.is_multiple_of(2));
         1 << suffix_len
     }
 }
@@ -190,7 +190,7 @@ impl<F: JoltField> SuffixPolynomial<F> for ShiftSuffixPolynomial {
 pub struct ShiftHalfSuffixPolynomial;
 impl<F: JoltField> SuffixPolynomial<F> for ShiftHalfSuffixPolynomial {
     fn suffix_mle(&self, _index: u64, suffix_len: usize) -> u64 {
-        debug_assert!(suffix_len % 2 == 0);
+        debug_assert!(suffix_len.is_multiple_of(2));
         1 << (suffix_len / 2)
     }
 }
@@ -237,7 +237,7 @@ impl<F: JoltField> PolynomialBinding<F> for OperandPolynomial<F> {
             "OperandPolynomial only supports high-to-low binding"
         );
 
-        if (self.num_bound_vars % 2 == 0 && self.side == OperandSide::Right)
+        if (self.num_bound_vars.is_multiple_of(2) && self.side == OperandSide::Right)
             || (self.num_bound_vars % 2 == 1 && self.side == OperandSide::Left)
         {
             self.bound_value += self.bound_value;
@@ -294,7 +294,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for OperandPolynomial<F> {
             OperandSide::Left => F::from_u32(left),
         };
 
-        if self.num_bound_vars % 2 == 0 {
+        if self.num_bound_vars.is_multiple_of(2) {
             let unbound_pairs = (self.num_vars - self.num_bound_vars) / 2;
             debug_assert!(unbound_pairs > 0);
             evals[0] = self.bound_value.mul_u64(1 << unbound_pairs) + index;
@@ -371,8 +371,8 @@ impl<F: JoltField> PrefixSuffixPolynomial<F, 2> for OperandPolynomial<F> {
 
 impl<F: JoltField> SuffixPolynomial<F> for OperandPolynomial<F> {
     fn suffix_mle(&self, index: u64, suffix_len: usize) -> u64 {
-        debug_assert!(suffix_len % 2 == 0);
-        debug_assert!(self.num_bound_vars % 2 == 0);
+        debug_assert!(suffix_len.is_multiple_of(2));
+        debug_assert!(self.num_bound_vars.is_multiple_of(2));
         let (right, left) = uninterleave_bits(index);
         match self.side {
             OperandSide::Right => right as u64,
@@ -388,8 +388,8 @@ impl<F: JoltField> PrefixPolynomial<F> for OperandPolynomial<F> {
         chunk_len: usize,
         phase: usize,
     ) -> CachedPolynomial<F> {
-        debug_assert!(chunk_len % 2 == 0);
-        debug_assert!(self.num_bound_vars % 2 == 0);
+        debug_assert!(chunk_len.is_multiple_of(2));
+        debug_assert!(self.num_bound_vars.is_multiple_of(2));
 
         let bound_value = match self.side {
             OperandSide::Right => checkpoints[Prefix::RightOperand].unwrap_or(F::zero()),

@@ -205,7 +205,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
         total_len: usize,
     ) -> Self {
         assert!(
-            total_len % chunk_len == 0,
+            total_len.is_multiple_of(chunk_len),
             "total_len must be a multiple of chunk_len"
         );
         Self {
