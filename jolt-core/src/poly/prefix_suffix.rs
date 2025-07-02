@@ -1,5 +1,5 @@
 use std::ops::{Index, IndexMut};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
@@ -25,7 +25,7 @@ pub type PrefixCheckpoints<F> = [Option<F>; Prefix::COUNT];
 #[derive(Default)]
 pub struct PrefixRegistry<F: JoltField> {
     pub checkpoints: PrefixCheckpoints<F>,
-    pub polys: [Option<Arc<Mutex<CachedPolynomial<F>>>>; Prefix::COUNT],
+    pub polys: [Option<Arc<RwLock<CachedPolynomial<F>>>>; Prefix::COUNT],
 }
 
 impl<F: JoltField> PrefixRegistry<F> {
@@ -37,14 +37,14 @@ impl<F: JoltField> PrefixRegistry<F> {
         Prefix::iter().for_each(|p| {
             self.checkpoints[p] = self[p]
                 .as_ref()
-                .map(|p| p.lock().unwrap().final_sumcheck_claim());
+                .map(|p| p.read().unwrap().final_sumcheck_claim());
             self[p] = None;
         });
     }
 }
 
 impl<F: JoltField> Index<Prefix> for PrefixRegistry<F> {
-    type Output = Option<Arc<Mutex<CachedPolynomial<F>>>>;
+    type Output = Option<Arc<RwLock<CachedPolynomial<F>>>>;
 
     fn index(&self, index: Prefix) -> &Self::Output {
         &self.polys[index]
@@ -78,7 +78,7 @@ pub trait CacheablePolynomial<F: JoltField>:
 
 pub struct CachedPolynomial<F: JoltField> {
     pub inner: Box<dyn CacheablePolynomial<F>>,
-    pub sumcheck_evals_cache: Vec<Option<Vec<F>>>,
+    pub sumcheck_evals_cache: Vec<Mutex<Option<Vec<F>>>>,
     pub bound_this_round: bool,
 }
 
@@ -121,31 +121,31 @@ impl<F: JoltField> PolynomialBinding<F> for CachedPolynomial<F> {
 }
 
 impl<F: JoltField> CachedPolynomial<F> {
-    pub fn new(inner: Box<dyn CacheablePolynomial<F>>) -> Self {
+    #[tracing::instrument(skip(inner), name = "Allocating mutexes")]
+    pub fn new(inner: Box<dyn CacheablePolynomial<F>>, cache_capacity: usize) -> Self {
         Self {
             inner,
-            sumcheck_evals_cache: Vec::with_capacity(1 << 16),
+            sumcheck_evals_cache: std::iter::repeat_with(|| Mutex::new(None))
+                .take(cache_capacity)
+                .collect(),
             bound_this_round: false,
         }
     }
 
     pub fn cached_sumcheck_evals(
-        &mut self,
+        &self,
         index: usize,
         degree: usize,
         order: BindingOrder,
         use_cache: bool,
     ) -> Vec<F> {
         if use_cache {
-            // grow to the next power of two if needed
-            if index >= self.sumcheck_evals_cache.len() {
-                let new_len = (index + 1).next_power_of_two();
-                self.sumcheck_evals_cache.resize(new_len, None);
+            // lock value before computaiton
+            let mut val = self.sumcheck_evals_cache[index].lock().unwrap();
+            if val.is_none() {
+                *val = Some(self.sumcheck_evals(index, degree, order));
             }
-            if self.sumcheck_evals_cache[index].is_none() {
-                self.sumcheck_evals_cache[index] = Some(self.sumcheck_evals(index, degree, order));
-            }
-            self.sumcheck_evals_cache[index].as_ref().unwrap().clone()
+            val.as_ref().unwrap().clone()
         } else {
             self.sumcheck_evals(index, degree, order)
         }
@@ -153,7 +153,9 @@ impl<F: JoltField> CachedPolynomial<F> {
 
     pub fn clear_cache(&mut self, use_cache: bool) {
         if use_cache {
-            self.sumcheck_evals_cache.clear();
+            self.sumcheck_evals_cache
+                .par_iter_mut()
+                .for_each(|v| *v = Mutex::new(None))
         }
         self.bound_this_round = false;
     }
@@ -183,13 +185,13 @@ pub trait PrefixSuffixPolynomial<F: JoltField, const ORDER: usize> {
         chunk_len: usize,
         phase: usize,
         prefix_registry: &mut PrefixRegistry<F>,
-    ) -> [Option<Arc<Mutex<CachedPolynomial<F>>>>; ORDER];
+    ) -> [Option<Arc<RwLock<CachedPolynomial<F>>>>; ORDER];
     fn suffixes(&self) -> [Box<dyn SuffixPolynomial<F> + Sync>; ORDER];
 }
 
 pub struct PrefixSuffixDecomposition<F: JoltField, const ORDER: usize> {
     poly: Box<dyn PrefixSuffixPolynomial<F, ORDER> + Send + Sync>,
-    P: Vec<Option<Arc<Mutex<CachedPolynomial<F>>>>>,
+    P: Vec<Option<Arc<RwLock<CachedPolynomial<F>>>>>,
     Q: Vec<DensePolynomial<F>>,
     chunk_len: usize,
     total_len: usize,
@@ -286,7 +288,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
                 let p_evals = if let Some(p) = p {
                     // one for registry and one for self
                     let use_cache = Arc::strong_count(p) > 2;
-                    let mut p = p.lock().unwrap();
+                    let p = p.read().unwrap();
                     let p_evals =
                         p.cached_sumcheck_evals(index, 2, BindingOrder::HighToLow, use_cache);
                     drop(p);
@@ -313,7 +315,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
     pub fn bind(&mut self, r: F) {
         self.P.par_iter().for_each(|p| {
             if let Some(p) = p {
-                let mut p = p.lock().unwrap();
+                let mut p = p.write().unwrap();
                 p.bind_parallel(r, BindingOrder::HighToLow);
             }
         });
@@ -332,7 +334,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
                     return F::zero();
                 }
                 if let Some(p) = p {
-                    let p = p.lock().unwrap();
+                    let p = p.read().unwrap();
                     p.final_sumcheck_claim().mul_u64(suff)
                 } else {
                     F::from_u64(suff)
@@ -346,7 +348,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
             if let Some(p) = p {
                 // one for registry and one for self
                 let use_cache = Arc::strong_count(p) > 2;
-                let mut p = p.lock().unwrap();
+                let mut p = p.write().unwrap();
                 p.clear_cache(use_cache);
             }
         });

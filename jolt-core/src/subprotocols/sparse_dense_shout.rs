@@ -253,66 +253,77 @@ fn compute_sumcheck_prover_message<const WORD_SIZE: usize, F: JoltField>(
 
     let r_x = if j % 2 == 1 { r.last().copied() } else { None };
 
-    let (eval_0, eval_2_left, eval_2_right): (F, F, F) = (0..len / 2)
-        .into_par_iter()
-        .flat_map_iter(|b| {
-            let b = LookupBits::new(b as u64, log_len - 1);
-            // Evaluate all prefix MLEs with the current variable fixed to c=0
-            let prefixes_c0: Vec<_> = Prefixes::iter()
-                .map(|prefix| prefix.prefix_mle::<WORD_SIZE, F>(prefix_checkpoints, r_x, 0, b, j))
-                .collect();
-            // Evaluate all prefix MLEs with the current variable fixed to c=2
-            let prefixes_c2: Vec<_> = Prefixes::iter()
-                .map(|prefix| prefix.prefix_mle::<WORD_SIZE, F>(prefix_checkpoints, r_x, 2, b, j))
-                .collect();
-
-            lookup_tables
-                .iter()
-                .zip(suffix_polys.iter())
-                .map(move |(table, suffixes)| {
-                    let suffixes_left: Vec<_> =
-                        suffixes.iter().map(|suffix| suffix[b.into()]).collect();
-                    let suffixes_right: Vec<_> = suffixes
-                        .iter()
-                        .map(|suffix| suffix[usize::from(b) + len / 2])
-                        .collect();
-                    (
-                        table.combine(&prefixes_c0, &suffixes_left),
-                        table.combine(&prefixes_c2, &suffixes_left),
-                        table.combine(&prefixes_c2, &suffixes_right),
-                    )
-                })
-        })
-        .reduce(
-            || (F::zero(), F::zero(), F::zero()),
-            |running, new| (running.0 + new.0, running.1 + new.1, running.2 + new.2),
-        );
-
-    let (left_0, left_2, right_0, right_2): (F, F, F, F) = (0..len / 2)
-        .into_par_iter()
-        .map(|b| {
-            let (i0, i2) = identity_ps.sumcheck_evals(b);
-            let (r0, r2) = right_operand_ps.sumcheck_evals(b);
-            let (l0, l2) = left_operand_ps.sumcheck_evals(b);
-            (i0 + l0, i2 + l2, r0, r2)
-        })
-        .reduce(
-            || (F::zero(), F::zero(), F::zero(), F::zero()),
-            |running, new| {
-                (
-                    running.0 + new.0,
-                    running.1 + new.1,
-                    running.2 + new.2,
-                    running.3 + new.3,
-                )
-            },
-        );
-
     let gamma_squared = gamma.square();
-    [
-        eval_0 + gamma * right_0 + gamma_squared * left_0,
-        eval_2_right + eval_2_right - eval_2_left + gamma * right_2 + gamma_squared * left_2,
-    ]
+    let mut result0 = (F::zero(), F::zero());
+    let mut result2 = (F::zero(), F::zero());
+
+    rayon::join(
+        || {
+            let (eval_0, eval_2_left, eval_2_right) = (0..len / 2)
+                .into_par_iter()
+                .flat_map_iter(|b| {
+                    let b = LookupBits::new(b as u64, log_len - 1);
+                    let prefixes_c0: Vec<_> = Prefixes::iter()
+                        .map(|prefix| {
+                            prefix.prefix_mle::<WORD_SIZE, F>(prefix_checkpoints, r_x, 0, b, j)
+                        })
+                        .collect();
+                    let prefixes_c2: Vec<_> = Prefixes::iter()
+                        .map(|prefix| {
+                            prefix.prefix_mle::<WORD_SIZE, F>(prefix_checkpoints, r_x, 2, b, j)
+                        })
+                        .collect();
+                    lookup_tables
+                        .iter()
+                        .zip(suffix_polys.iter())
+                        .map(move |(table, suffixes)| {
+                            let suffixes_left: Vec<_> =
+                                suffixes.iter().map(|suffix| suffix[b.into()]).collect();
+                            let suffixes_right: Vec<_> = suffixes
+                                .iter()
+                                .map(|suffix| suffix[usize::from(b) + len / 2])
+                                .collect();
+                            (
+                                table.combine(&prefixes_c0, &suffixes_left),
+                                table.combine(&prefixes_c2, &suffixes_left),
+                                table.combine(&prefixes_c2, &suffixes_right),
+                            )
+                        })
+                })
+                .reduce(
+                    || (F::zero(), F::zero(), F::zero()),
+                    |running, new| (running.0 + new.0, running.1 + new.1, running.2 + new.2),
+                );
+            result0 = (eval_0, eval_2_right + eval_2_right - eval_2_left);
+        },
+        || {
+            let (left_0, left_2, right_0, right_2) = (0..len / 2)
+                .into_par_iter()
+                .map(|b| {
+                    let (i0, i2) = identity_ps.sumcheck_evals(b);
+                    let (r0, r2) = right_operand_ps.sumcheck_evals(b);
+                    let (l0, l2) = left_operand_ps.sumcheck_evals(b);
+                    (i0 + l0, i2 + l2, r0, r2)
+                })
+                .reduce(
+                    || (F::zero(), F::zero(), F::zero(), F::zero()),
+                    |running, new| {
+                        (
+                            running.0 + new.0,
+                            running.1 + new.1,
+                            running.2 + new.2,
+                            running.3 + new.3,
+                        )
+                    },
+                );
+            result2 = (
+                gamma * right_0 + gamma_squared * left_0,
+                gamma * right_2 + gamma_squared * left_2,
+            );
+        },
+    );
+
+    [result0.0 + result2.0, result0.1 + result2.1]
 }
 
 #[allow(clippy::type_complexity)]

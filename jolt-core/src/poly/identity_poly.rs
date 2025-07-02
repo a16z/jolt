@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 use crate::field::JoltField;
 use crate::poly::prefix_suffix::{
@@ -137,9 +137,9 @@ impl<F: JoltField> PrefixSuffixPolynomial<F, 2> for IdentityPolynomial<F> {
         chunk_len: usize,
         phase: usize,
         registry: &mut PrefixRegistry<F>,
-    ) -> [Option<Arc<Mutex<CachedPolynomial<F>>>>; 2] {
+    ) -> [Option<Arc<RwLock<CachedPolynomial<F>>>>; 2] {
         if registry[Prefix::Identity].is_none() {
-            registry[Prefix::Identity] = Some(Arc::new(Mutex::new(self.prefix_polynomial(
+            registry[Prefix::Identity] = Some(Arc::new(RwLock::new(self.prefix_polynomial(
                 &registry.checkpoints,
                 chunk_len,
                 phase,
@@ -162,7 +162,7 @@ impl<F: JoltField> PrefixPolynomial<F> for IdentityPolynomial<F> {
         let mut poly =
             IdentityPolynomial::new_with_endianness((phase + 1) * chunk_len, Endianness::Big);
         poly.set_bound_value(bound_value, phase * chunk_len);
-        CachedPolynomial::new(Box::new(poly))
+        CachedPolynomial::new(Box::new(poly), (chunk_len - 1).pow2())
     }
 
     fn set_bound_value(&mut self, bound_value: F, bound_vars: usize) {
@@ -345,12 +345,12 @@ impl<F: JoltField> PrefixSuffixPolynomial<F, 2> for OperandPolynomial<F> {
         chunk_len: usize,
         phase: usize,
         prefix_registry: &mut PrefixRegistry<F>,
-    ) -> [Option<Arc<Mutex<CachedPolynomial<F>>>>; 2] {
+    ) -> [Option<Arc<RwLock<CachedPolynomial<F>>>>; 2] {
         match self.side {
             OperandSide::Right => {
                 if prefix_registry[Prefix::RightOperand].is_none() {
                     let ro_poly = OperandPolynomial::new(self.num_vars, OperandSide::Right);
-                    prefix_registry[Prefix::RightOperand] = Some(Arc::new(Mutex::new(
+                    prefix_registry[Prefix::RightOperand] = Some(Arc::new(RwLock::new(
                         ro_poly.prefix_polynomial(&prefix_registry.checkpoints, chunk_len, phase),
                     )));
                 }
@@ -359,7 +359,7 @@ impl<F: JoltField> PrefixSuffixPolynomial<F, 2> for OperandPolynomial<F> {
             OperandSide::Left => {
                 if prefix_registry[Prefix::LeftOperand].is_none() {
                     let lo_poly = OperandPolynomial::new(self.num_vars, OperandSide::Left);
-                    prefix_registry[Prefix::LeftOperand] = Some(Arc::new(Mutex::new(
+                    prefix_registry[Prefix::LeftOperand] = Some(Arc::new(RwLock::new(
                         lo_poly.prefix_polynomial(&prefix_registry.checkpoints, chunk_len, phase),
                     )));
                 }
@@ -398,7 +398,7 @@ impl<F: JoltField> PrefixPolynomial<F> for OperandPolynomial<F> {
 
         let mut poly = OperandPolynomial::new((phase + 1) * chunk_len, self.side);
         poly.set_bound_value(bound_value, phase * chunk_len);
-        CachedPolynomial::new(Box::new(poly))
+        CachedPolynomial::new(Box::new(poly), (chunk_len - 1).pow2())
     }
 
     fn set_bound_value(&mut self, value: F, bound_vars: usize) {
