@@ -320,22 +320,17 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
 struct CorePIOPHammingProverState<F: JoltField> {
     ra_poly: MultilinearPolynomial<F>,
     val_poly: MultilinearPolynomial<F>,
-    z: F,
-    K: usize,
-}
-
-struct CorePIOPHammingVerifierState<F: JoltField> {
-    z: F,
-    K: usize,
 }
 
 pub struct CorePIOPHammingSumcheck<F: JoltField> {
     /// Input claim: rv_claim + z
     input_claim: F,
+    /// z value shared by prover and verifier
+    z: F,
+    /// K value shared by prover and verifier
+    K: usize,
     /// Prover state
     prover_state: Option<CorePIOPHammingProverState<F>>,
-    /// Verifier state
-    verifier_state: Option<CorePIOPHammingVerifierState<F>>,
     /// Cached ra claim after sumcheck completes
     ra_claim: Option<F>,
     /// Cached val evaluation after sumcheck completes
@@ -352,13 +347,9 @@ impl<F: JoltField> CorePIOPHammingSumcheck<F> {
     ) -> Self {
         Self {
             input_claim,
-            prover_state: Some(CorePIOPHammingProverState {
-                ra_poly,
-                val_poly,
-                z,
-                K,
-            }),
-            verifier_state: None,
+            z,
+            K,
+            prover_state: Some(CorePIOPHammingProverState { ra_poly, val_poly }),
             ra_claim: None,
             val_eval: None,
         }
@@ -367,8 +358,9 @@ impl<F: JoltField> CorePIOPHammingSumcheck<F> {
     pub fn new_verifier(input_claim: F, z: F, K: usize) -> Self {
         Self {
             input_claim,
+            z,
+            K,
             prover_state: None,
-            verifier_state: Some(CorePIOPHammingVerifierState { z, K }),
             ra_claim: None,
             val_eval: None,
         }
@@ -383,13 +375,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 
     fn num_rounds(&self) -> usize {
-        if self.prover_state.is_some() {
-            self.prover_state.as_ref().unwrap().K.log_2()
-        } else if self.verifier_state.is_some() {
-            self.verifier_state.as_ref().unwrap().K.log_2()
-        } else {
-            panic!("Neither prover state nor verifier state is initialized");
-        }
+        self.K.log_2()
     }
 
     fn input_claim(&self) -> F {
@@ -417,8 +403,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
 
                 // Compute ra[i] * (z + val[i]) for points 0 and 2
                 [
-                    ra_evals[0] * (prover_state.z + val_evals[0]),
-                    ra_evals[1] * (prover_state.z + val_evals[1]),
+                    ra_evals[0] * (self.z + val_evals[0]),
+                    ra_evals[1] * (self.z + val_evals[1]),
                 ]
             })
             .reduce(
@@ -467,15 +453,11 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 
     fn expected_output_claim(&self, _r: &[F]) -> F {
-        let verifier_state = self
-            .verifier_state
-            .as_ref()
-            .expect("Verifier state not initialized");
         let ra_claim = self.ra_claim.as_ref().expect("ra_claim not set");
         let val_eval = self.val_eval.as_ref().expect("val_eval not set");
 
         // Verify sumcheck_claim = ra_claim * (z + val_eval)
-        *ra_claim * (verifier_state.z + *val_eval)
+        *ra_claim * (self.z + *val_eval)
     }
 }
 
@@ -552,16 +534,12 @@ struct BooleanityProverState<F: JoltField> {
     G: Vec<F>,
     F: Vec<F>,
     eq_r_r: F,
-    K: usize,
-    T: usize,
     // Precomputed arrays for phase 1
     eq_km_c: [[F; 3]; 2],
     eq_km_c_squared: [[F; 3]; 2],
 }
 
 struct BooleanityVerifierState<F: JoltField> {
-    K: usize,
-    T: usize,
     r_address: Option<Vec<F>>,
     r_cycle: Option<Vec<F>>,
 }
@@ -569,6 +547,10 @@ struct BooleanityVerifierState<F: JoltField> {
 pub struct BooleanitySumcheck<F: JoltField> {
     /// Input claim: always F::zero() for booleanity
     input_claim: F,
+    /// K value shared by prover and verifier
+    K: usize,
+    /// T value shared by prover and verifier
+    T: usize,
     /// Prover state
     prover_state: Option<BooleanityProverState<F>>,
     /// Verifier state
@@ -628,6 +610,8 @@ impl<F: JoltField> BooleanitySumcheck<F> {
 
         Self {
             input_claim: F::zero(),
+            K,
+            T,
             prover_state: Some(BooleanityProverState {
                 B,
                 D,
@@ -635,8 +619,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                 G,
                 F: F_vec,
                 eq_r_r: F::zero(), // Will be set after phase 1
-                K,
-                T,
                 eq_km_c,
                 eq_km_c_squared,
             }),
@@ -648,27 +630,26 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         }
     }
 
-    pub fn new_verifier(K: usize, T: usize) -> Self {
+    pub fn new_verifier(
+        K: usize,
+        T: usize,
+        r_address: Vec<F>,
+        r_cycle: Vec<F>,
+        ra_claim_prime: F,
+    ) -> Self {
         Self {
             input_claim: F::zero(),
+            K,
+            T,
             prover_state: None,
             verifier_state: Some(BooleanityVerifierState::<F> {
-                K,
-                T,
-                r_address: None,
-                r_cycle: None,
+                r_address: Some(r_address),
+                r_cycle: Some(r_cycle),
             }),
-            ra_claim_prime: None,
+            ra_claim_prime: Some(ra_claim_prime),
             current_round: 0,
             preprocessing: None,
             trace: None,
-        }
-    }
-
-    pub fn set_r_values(&mut self, r_address: Vec<F>, r_cycle: Vec<F>) {
-        if let Some(verifier_state) = self.verifier_state.as_mut() {
-            verifier_state.r_address = Some(r_address);
-            verifier_state.r_cycle = Some(r_cycle);
         }
     }
 }
@@ -681,15 +662,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 
     fn num_rounds(&self) -> usize {
-        if self.prover_state.is_some() {
-            let state = self.prover_state.as_ref().unwrap();
-            state.K.log_2() + state.T.log_2()
-        } else if self.verifier_state.is_some() {
-            let state = self.verifier_state.as_ref().unwrap();
-            state.K.log_2() + state.T.log_2()
-        } else {
-            panic!("Neither prover state nor verifier state is initialized");
-        }
+        self.K.log_2() + self.T.log_2()
     }
 
     fn input_claim(&self) -> F {
@@ -702,7 +675,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             .as_ref()
             .expect("Prover state not initialized");
 
-        let K_log = prover_state.K.log_2();
+        let K_log = self.K.log_2();
 
         if round < K_log {
             // Phase 1: First log(K) rounds
@@ -719,7 +692,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             .as_mut()
             .expect("Prover state not initialized");
 
-        let K_log = prover_state.K.log_2();
+        let K_log = self.K.log_2();
 
         if round < K_log {
             // Phase 1: Bind B and update F
@@ -776,7 +749,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             .expect("Verifier state not initialized");
 
         // Split r into r_address_prime and r_cycle_prime
-        let (r_address_prime, r_cycle_prime) = r.split_at(verifier_state.K.log_2());
+        let (r_address_prime, r_cycle_prime) = r.split_at(self.K.log_2());
 
         let r_address = verifier_state
             .r_address
@@ -810,9 +783,16 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                     .par_iter()
                     .enumerate()
                     .map(|(k, &G_k)| {
+                        // Since we're binding variables from low to high, k_m is the high bit
                         let k_m = k >> (m - 1);
+                        // We then index into F using (k_{m-1}, ..., k_1)
                         let F_k = prover_state.F[k % (1 << (m - 1))];
+                        // G_times_F := G[k] * F[k_1, ...., k_{m-1}]
                         let G_times_F = G_k * F_k;
+
+                        // For c \in {0, 2, 3} compute:
+                        //    G[k] * (F[k_1, ...., k_{m-1}, c]^2 - F[k_1, ...., k_{m-1}, c])
+                        //    = G_times_F * (eq(k_m, c)^2 * F[k_1, ...., k_{m-1}] - eq(k_m, c))
                         [
                             G_times_F
                                 * (prover_state.eq_km_c_squared[k_m][0] * F_k
@@ -940,11 +920,13 @@ impl<F: JoltField, ProofTranscript: Transcript> BooleanityProof<F, ProofTranscri
         T: usize,
         transcript: &mut ProofTranscript,
     ) -> Result<(Vec<F>, F), ProofVerifyError> {
-        let mut booleanity_sumcheck = BooleanitySumcheck::new_verifier(K, T);
-
-        booleanity_sumcheck.set_r_values(r_address.to_vec(), r_cycle.to_vec());
-
-        booleanity_sumcheck.ra_claim_prime = Some(self.ra_claim_prime);
+        let booleanity_sumcheck = BooleanitySumcheck::new_verifier(
+            K,
+            T,
+            r_address.to_vec(),
+            r_cycle.to_vec(),
+            self.ra_claim_prime,
+        );
 
         let r_combined = booleanity_sumcheck.verify_single(&self.sumcheck_proof, transcript)?;
 
@@ -956,22 +938,17 @@ struct RafBytecodeProverState<F: JoltField> {
     ra_poly: MultilinearPolynomial<F>,
     ra_poly_shift: MultilinearPolynomial<F>,
     int_poly: IdentityPolynomial<F>,
-    challenge: F,
-    K: usize,
-}
-
-struct RafBytecodeVerifierState<F: JoltField> {
-    challenge: F,
-    K: usize,
 }
 
 pub struct RafBytecode<F: JoltField> {
     /// Input claim: raf_claim + challenge * raf_claim_shift
     input_claim: F,
+    /// Challenge value shared by prover and verifier
+    challenge: F,
+    /// K value shared by prover and verifier
+    K: usize,
     /// Prover state
     prover_state: Option<RafBytecodeProverState<F>>,
-    /// Verifier state
-    verifier_state: Option<RafBytecodeVerifierState<F>>,
     /// Cached ra claims after sumcheck completes
     ra_claims: Option<(F, F)>,
 }
@@ -987,14 +964,13 @@ impl<F: JoltField> RafBytecode<F> {
     ) -> Self {
         Self {
             input_claim,
+            challenge,
+            K,
             prover_state: Some(RafBytecodeProverState {
                 ra_poly,
                 ra_poly_shift,
                 int_poly,
-                challenge,
-                K,
             }),
-            verifier_state: None,
             ra_claims: None,
         }
     }
@@ -1002,8 +978,9 @@ impl<F: JoltField> RafBytecode<F> {
     pub fn new_verifier(input_claim: F, challenge: F, K: usize) -> Self {
         Self {
             input_claim,
+            challenge,
+            K,
             prover_state: None,
-            verifier_state: Some(RafBytecodeVerifierState { challenge, K }),
             ra_claims: None,
         }
     }
@@ -1017,13 +994,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 
     fn num_rounds(&self) -> usize {
-        if self.prover_state.is_some() {
-            self.prover_state.as_ref().unwrap().K.log_2()
-        } else if self.verifier_state.is_some() {
-            self.verifier_state.as_ref().unwrap().K.log_2()
-        } else {
-            panic!("Neither prover state nor verifier state is initialized");
-        }
+        self.K.log_2()
     }
 
     fn input_claim(&self) -> F {
@@ -1054,8 +1025,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                         .sumcheck_evals(i, degree, BindingOrder::LowToHigh);
 
                 [
-                    (ra_evals[0] + prover_state.challenge * ra_evals_shift[0]) * int_evals[0],
-                    (ra_evals[1] + prover_state.challenge * ra_evals_shift[1]) * int_evals[1],
+                    (ra_evals[0] + self.challenge * ra_evals_shift[0]) * int_evals[0],
+                    (ra_evals[1] + self.challenge * ra_evals_shift[1]) * int_evals[1],
                 ]
             })
             .reduce(
@@ -1114,16 +1085,12 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 
     fn expected_output_claim(&self, r: &[F]) -> F {
-        let verifier_state = self
-            .verifier_state
-            .as_ref()
-            .expect("Verifier state not initialized");
         let (ra_claim, ra_claim_shift) = self.ra_claims.as_ref().expect("ra_claims not set");
 
-        let int_eval = IdentityPolynomial::new(verifier_state.K.log_2()).evaluate(r);
+        let int_eval = IdentityPolynomial::new(self.K.log_2()).evaluate(r);
 
         // Verify sumcheck_claim = int(r) * (ra_claim + challenge * ra_claim_shift)
-        int_eval * (*ra_claim + verifier_state.challenge * *ra_claim_shift)
+        int_eval * (*ra_claim + self.challenge * *ra_claim_shift)
     }
 }
 
