@@ -13,7 +13,7 @@ use crate::{
         eq_poly::EqPolynomial,
         identity_poly::UnmapRamAddressPolynomial,
         multilinear_polynomial::{
-            self, BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
+            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
         unipoly::{CompressedUniPoly, UniPoly},
@@ -582,13 +582,6 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
 }
 
 impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofTranscript> {
-    fn cycle_to_address(trace: &[RV32IMCycle], memory_layout: &MemoryLayout) -> Vec<usize> {
-        trace
-            .iter()
-            .map(|cycle| remap_address(cycle.ram_access().address() as u64, memory_layout) as usize)
-            .collect()
-    }
-
     #[tracing::instrument(skip_all, name = "ReadWriteCheckingProof::prove_from_array")]
     pub fn prove_from_array(
         addresses: Vec<usize>,
@@ -614,9 +607,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 
         let span = tracing::span!(tracing::Level::INFO, "compute deltas");
         let _guard = span.enter();
-
-        // eq(r', j)
-        let mut eq_r_prime = MultilinearPolynomial::from(EqPolynomial::evals(&r_prime));
 
         let deltas: Vec<Vec<i128>> = addresses[..T - chunk_size]
             .par_chunks_exact(chunk_size)
@@ -768,12 +758,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                     .iter()
                     .zip(increment_chunk.iter())
                     .map(|(k, increment)| {
-                        let inc = (
-                            j,
-                            *k,
-                            F::zero(),
-                            F::from_i128(*increment),
-                        );
+                        let inc = (j, *k, F::zero(), F::from_i128(*increment));
                         j += 1;
                         inc
                     })
@@ -788,9 +773,11 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let rv = MultilinearPolynomial::from(read_values);
         let wv = MultilinearPolynomial::from(write_values);
 
-        // rv(r')
-        let rv_eval = rv.evaluate(&r_prime);
-        let wv_eval = wv.evaluate(&r_prime);
+        // rv(r') and wv(r')
+        let (evals, eq_r_prime) = MultilinearPolynomial::batch_evaluate(&[&rv, &wv], &r_prime);
+        let rv_eval = evals[0];
+        let wv_eval = evals[1];
+        let mut eq_r_prime = MultilinearPolynomial::from(eq_r_prime);
 
         // Linear combination of the read-checking claim (which is rv(r')) and the
         // write-checking claim (which is Inc(r, r'))
@@ -845,7 +832,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                 .zip(data_buffers.par_iter_mut())
                 .zip(val_checkpoints.par_chunks(K))
                 .map(|((I_chunk, buffers), checkpoint)| {
-                    let mut evals = [F::zero(), F::zero(), F::zero()]; 
+                    let mut evals = [F::zero(), F::zero(), F::zero()];
 
                     let DataBuffers {
                         val_j_0,
@@ -933,10 +920,10 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                                     inner_sum_evals[0] += ra[0][k].mul_0_optimized(
                                         val_j_r[0][k] + z * (inc_cycle_evals[0] + val_j_r[0][k]),
                                     );
-                                    inner_sum_evals[1] +=
-                                        ra_eval_2 * (val_eval_2 + z * (inc_cycle_evals[1] + val_eval_2));
-                                    inner_sum_evals[2] +=
-                                        ra_eval_3 * (val_eval_3 + z * (inc_cycle_evals[2] + val_eval_3));
+                                    inner_sum_evals[1] += ra_eval_2
+                                        * (val_eval_2 + z * (inc_cycle_evals[1] + val_eval_2));
+                                    inner_sum_evals[2] += ra_eval_3
+                                        * (val_eval_3 + z * (inc_cycle_evals[2] + val_eval_3));
 
                                     ra[0][k] = F::zero();
                                     ra[1][k] = F::zero();
@@ -979,15 +966,29 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                 let test_univariate_poly_evals = (0..K * T / (round + 1).pow2())
                     .into_par_iter()
                     .map(|j| {
-                        let ra_evals = ra_test.sumcheck_evals(j, READ_WRITE_CHECK_DEGREE, BindingOrder::LowToHigh);
-                        let val_evals = val_test.sumcheck_evals(j, READ_WRITE_CHECK_DEGREE, BindingOrder::LowToHigh);
+                        let ra_evals = ra_test.sumcheck_evals(
+                            j,
+                            READ_WRITE_CHECK_DEGREE,
+                            BindingOrder::LowToHigh,
+                        );
+                        let val_evals = val_test.sumcheck_evals(
+                            j,
+                            READ_WRITE_CHECK_DEGREE,
+                            BindingOrder::LowToHigh,
+                        );
                         let t = j % (T / (round + 1).pow2());
 
-                        let eq_r_prime_evals =
-                            eq_r_prime.sumcheck_evals(t, READ_WRITE_CHECK_DEGREE, BindingOrder::LowToHigh);
+                        let eq_r_prime_evals = eq_r_prime.sumcheck_evals(
+                            t,
+                            READ_WRITE_CHECK_DEGREE,
+                            BindingOrder::LowToHigh,
+                        );
 
-                        let inc_evals =
-                            inc_cycle.sumcheck_evals(t, READ_WRITE_CHECK_DEGREE, BindingOrder::LowToHigh);
+                        let inc_evals = inc_cycle.sumcheck_evals(
+                            t,
+                            READ_WRITE_CHECK_DEGREE,
+                            BindingOrder::LowToHigh,
+                        );
 
                         [
                             eq_r_prime_evals[0]
@@ -1149,20 +1150,32 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                 (0..eq_r_prime.len() / 2)
                     .into_par_iter()
                     .map(|j| {
-                        let eq_r_prime_evals =
-                            eq_r_prime.sumcheck_evals(j, READ_WRITE_CHECK_DEGREE, BindingOrder::HighToLow);
+                        let eq_r_prime_evals = eq_r_prime.sumcheck_evals(
+                            j,
+                            READ_WRITE_CHECK_DEGREE,
+                            BindingOrder::HighToLow,
+                        );
 
                         let inner_sum_evals: [F; READ_WRITE_CHECK_DEGREE] = (0..K)
                             .into_par_iter()
                             .map(|k| {
                                 let index = j * K + k;
-                                let ra_evals =
-                                    ra.sumcheck_evals(index, READ_WRITE_CHECK_DEGREE, BindingOrder::HighToLow);
-                                let val_evals =
-                                    val.sumcheck_evals(index, READ_WRITE_CHECK_DEGREE, BindingOrder::HighToLow);
+                                let ra_evals = ra.sumcheck_evals(
+                                    index,
+                                    READ_WRITE_CHECK_DEGREE,
+                                    BindingOrder::HighToLow,
+                                );
+                                let val_evals = val.sumcheck_evals(
+                                    index,
+                                    READ_WRITE_CHECK_DEGREE,
+                                    BindingOrder::HighToLow,
+                                );
 
-                                let inc_cycle_evals =
-                                    inc_cycle.sumcheck_evals(j, READ_WRITE_CHECK_DEGREE, BindingOrder::HighToLow);
+                                let inc_cycle_evals = inc_cycle.sumcheck_evals(
+                                    j,
+                                    READ_WRITE_CHECK_DEGREE,
+                                    BindingOrder::HighToLow,
+                                );
 
                                 [
                                     ra_evals[0].mul_0_optimized(
@@ -1212,8 +1225,10 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                 let evals = (0..ra.len() / 2)
                     .into_par_iter()
                     .map(|k| {
-                        let ra_evals = ra.sumcheck_evals(k, READ_WRITE_CHECK_DEGREE, BindingOrder::HighToLow);
-                        let val_evals = val.sumcheck_evals(k, READ_WRITE_CHECK_DEGREE, BindingOrder::HighToLow);
+                        let ra_evals =
+                            ra.sumcheck_evals(k, READ_WRITE_CHECK_DEGREE, BindingOrder::HighToLow);
+                        let val_evals =
+                            val.sumcheck_evals(k, READ_WRITE_CHECK_DEGREE, BindingOrder::HighToLow);
                         let inc_cycle_eval = inc_cycle.final_sumcheck_claim();
 
                         [
@@ -1268,7 +1283,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             } else {
                 // Bind an address variable k
                 r_address.push(r_j);
-                // Note that and `eq_r_prime` is a polynomial over only the cycle
+                // Note that `eq_r_prime` is a polynomial over only the cycle
                 // variables, so they are not bound here
                 [&mut ra, &mut val]
                     .into_par_iter()
@@ -1327,7 +1342,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let addresses: Vec<usize> = trace
             .par_iter()
             .enumerate()
-            .map(|(j, cycle)| {
+            .map(|(_j, cycle)| {
                 let ram_op = cycle.ram_access();
                 remap_address(ram_op.address() as u64, memory_layout) as usize
             })
@@ -1385,8 +1400,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 
         // eq(r', r_cycle)
         let eq_eval_cycle = EqPolynomial::mle(&r_prime, &r_cycle);
-        // eq(r, r_address)
-        let eq_eval_address = EqPolynomial::mle(&r, &r_address);
 
         assert_eq!(
             eq_eval_cycle
