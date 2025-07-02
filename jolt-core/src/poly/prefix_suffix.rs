@@ -1,6 +1,7 @@
 use std::ops::{Index, IndexMut};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 
+use once_cell::sync::OnceCell;
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter as EnumIterMacro};
@@ -78,7 +79,7 @@ pub trait CacheablePolynomial<F: JoltField>:
 
 pub struct CachedPolynomial<F: JoltField> {
     pub inner: Box<dyn CacheablePolynomial<F>>,
-    pub sumcheck_evals_cache: Vec<Mutex<Option<Vec<F>>>>,
+    pub sumcheck_evals_cache: Vec<OnceCell<Vec<F>>>,
     pub bound_this_round: bool,
 }
 
@@ -121,13 +122,10 @@ impl<F: JoltField> PolynomialBinding<F> for CachedPolynomial<F> {
 }
 
 impl<F: JoltField> CachedPolynomial<F> {
-    #[tracing::instrument(skip(inner), name = "Allocating mutexes")]
     pub fn new(inner: Box<dyn CacheablePolynomial<F>>, cache_capacity: usize) -> Self {
         Self {
             inner,
-            sumcheck_evals_cache: std::iter::repeat_with(|| Mutex::new(None))
-                .take(cache_capacity)
-                .collect(),
+            sumcheck_evals_cache: vec![OnceCell::new(); cache_capacity],
             bound_this_round: false,
         }
     }
@@ -140,12 +138,9 @@ impl<F: JoltField> CachedPolynomial<F> {
         use_cache: bool,
     ) -> Vec<F> {
         if use_cache {
-            // lock value before computaiton
-            let mut val = self.sumcheck_evals_cache[index].lock().unwrap();
-            if val.is_none() {
-                *val = Some(self.sumcheck_evals(index, degree, order));
-            }
-            val.as_ref().unwrap().clone()
+            self.sumcheck_evals_cache[index]
+                .get_or_init(|| self.sumcheck_evals(index, degree, order))
+                .clone()
         } else {
             self.sumcheck_evals(index, degree, order)
         }
@@ -153,9 +148,9 @@ impl<F: JoltField> CachedPolynomial<F> {
 
     pub fn clear_cache(&mut self, use_cache: bool) {
         if use_cache {
-            self.sumcheck_evals_cache
-                .par_iter_mut()
-                .for_each(|v| *v = Mutex::new(None))
+            // OnceCell doesn't support clearing, so we need to replace with new ones
+            let len = self.sumcheck_evals_cache.len();
+            self.sumcheck_evals_cache = vec![OnceCell::new(); len];
         }
         self.bound_this_round = false;
     }
