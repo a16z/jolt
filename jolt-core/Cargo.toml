@@ -28,7 +28,6 @@ default = [
     "ark-ff/asm",
     "host",
     "rayon",
-    "test_incremental",
 ]
 host = ["dep:reqwest", "dep:tokio"]
 icicle = [
