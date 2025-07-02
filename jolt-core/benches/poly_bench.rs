@@ -1,3 +1,4 @@
+#![allow(clippy::uninlined_format_args)]
 use ark_bn254::Fr;
 use criterion::{criterion_group, criterion_main, Criterion};
 use dory::arithmetic::Field;
@@ -20,22 +21,41 @@ fn setup_inputs(n: u64) -> (MultilinearPolynomial<Fr>, Vec<Fr>) {
 }
 
 fn bench_all(c: &mut Criterion) {
-    let num_vars = 1 << 12; // this is really num_coefs
-    let (poly, eval_point) = setup_inputs(num_vars as u64);
-    // Create a benchmark group
     let mut group = c.benchmark_group("evals");
+    group.measurement_time(std::time::Duration::from_secs(20));
 
-    let id = format!("serial-{num_vars}");
-    group.bench_function(id, |b| {
-        b.iter(|| poly.evaluate(eval_point.as_slice()));
-    });
-    let id = format!("serial_fast-{num_vars}");
-    group.bench_function(id, |b| {
-        b.iter(|| poly.optimised_evaluate(eval_point.as_slice()));
-    });
+    for &exp in &[18, 20, 22, 24] {
+        let num_vars = 1 << exp; // 2^exp
+        let (poly, eval_point) = setup_inputs(num_vars as u64);
+
+        let id_dot = format!("dot-product-{}", exp);
+        group.bench_function(&id_dot, |b| b.iter(|| poly.evaluate(eval_point.as_slice())));
+
+        let id_opt = format!("inside-out-{}", exp);
+        group.bench_function(&id_opt, |b| {
+            b.iter(|| poly.optimised_evaluate(eval_point.as_slice()))
+        });
+    }
 
     group.finish();
 }
-
+//fn bench_all(c: &mut Criterion) {
+//    let num_vars = 1 << 12; // this is really num_coefs
+//    let (poly, eval_point) = setup_inputs(num_vars as u64);
+//    // Create a benchmark group
+//    let mut group = c.benchmark_group("evals");
+//
+//    let id = format!("dot-product-{num_vars}");
+//    group.bench_function(id, |b| {
+//        b.iter(|| poly.evaluate(eval_point.as_slice()));
+//    });
+//    let id = format!("inside-out-{num_vars}");
+//    group.bench_function(id, |b| {
+//        b.iter(|| poly.optimised_evaluate(eval_point.as_slice()));
+//    });
+//
+//    group.finish();
+//}
+//
 criterion_group!(benches, bench_all);
 criterion_main!(benches);

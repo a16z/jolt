@@ -307,6 +307,19 @@ impl<F: JoltField> MultilinearPolynomial<F> {
         }
     }
 
+    pub fn optimised_evaluate(&self, r: &[F]) -> F {
+        match self {
+            MultilinearPolynomial::LargeScalars(poly) => poly.optimised_evaluate(r),
+            MultilinearPolynomial::RLC(_) => F::zero(),
+            _ => {
+                // I don't think this should exist!
+                // Needs a bit of field mul work.
+                let chis = EqPolynomial::evals(r);
+                self.dot_product(&chis)
+            }
+        }
+    }
+
     /// Computes the dot product of the polynomial's coefficients and a vector
     /// of field elements.
     pub fn dot_product(&self, other: &[F]) -> F {
@@ -554,18 +567,6 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
             MultilinearPolynomial::U64Scalars(poly) => poly.final_sumcheck_claim(),
             MultilinearPolynomial::I64Scalars(poly) => poly.final_sumcheck_claim(),
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
-        }
-    }
-}
-impl<F: JoltField> MultilinearPolynomial<F> {
-    pub fn optimised_evaluate(&self, r: &[F]) -> F {
-        match self {
-            MultilinearPolynomial::LargeScalars(poly) => poly.optimised_evaluate(r),
-            MultilinearPolynomial::RLC(_) => F::zero(),
-            _ => {
-                let chis = EqPolynomial::evals(r);
-                self.dot_product(&chis)
-            }
         }
     }
 }

@@ -13,6 +13,12 @@ use rayon::prelude::*;
 
 use super::multilinear_polynomial::BindingOrder;
 
+// Copied over from eq_poly
+// If the number of variables are greater
+// than 2^16 -- use parallel evaluate
+// Below that it's better to just do things linearly.
+const PARALLEL_THRESHOLD: usize = 16;
+
 #[derive(Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DensePolynomial<F: JoltField> {
     pub num_vars: usize, // the number of variables in the multilinear polynomial
@@ -257,23 +263,50 @@ impl<F: JoltField> DensePolynomial<F> {
         // r must have a value for each variable
         assert_eq!(r.len(), self.get_num_vars());
         let m = r.len();
-        //assert that m is a power of 2
-        assert_eq!(self.Z.len(), 1 << m);
+        if m < PARALLEL_THRESHOLD {
+            self.evaluate_optimised_serial(r)
+        } else {
+            self.evaluate_optimised_parallel(r)
+        }
+    }
 
+    fn evaluate_optimised_serial(&self, r: &[F]) -> F {
         let mut current = self.Z.clone();
 
+        let m = r.len();
         for i in (0..m).rev() {
             let stride = 1 << i;
+
             for j in 0..stride {
                 let f0 = current[j];
                 let f1 = current[j + stride];
                 current[j] = f0 + r[m - 1 - i] * (f1 - f0);
             }
-            // I am not sure we need to truncate this.
-            // Double check
-            current.truncate(stride);
+            // No benefit to truncating really.
+            //current.truncate(stride);
         }
+        current[0]
+    }
 
+    fn evaluate_optimised_parallel(&self, r: &[F]) -> F {
+        let mut current = self.Z.clone();
+        let m = r.len();
+        // Invoking the same parallelisation structure
+        // currently in evaluating in Lagrange bases.
+        // See eq_poly::evals()
+        for i in (0..m).rev() {
+            let stride = 1 << i;
+            let r_val = r[m - 1 - i];
+            let (evals_left, evals_right) = current.split_at_mut(stride);
+            let (evals_right, _) = evals_right.split_at_mut(stride);
+
+            evals_left
+                .par_iter_mut()
+                .zip(evals_right.par_iter())
+                .for_each(|(x, y)| {
+                    *x = *x + r_val * (*y - *x);
+                });
+        }
         current[0]
     }
 
