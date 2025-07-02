@@ -250,8 +250,14 @@ impl<F: JoltField> DensePolynomial<F> {
         compute_dotproduct(&self.Z, &chis)
     }
 
+    // Faster evaluation based on
+    // https://randomwalks.xyz/publish/fast_polynomial_evaluation.html
+    // Shaves a factor of 2 from run time.
     pub fn optimised_evaluate(&self, r: &[F]) -> F {
+        // r must have a value for each variable
+        assert_eq!(r.len(), self.get_num_vars());
         let m = r.len();
+        //assert that m is a power of 2
         assert_eq!(self.Z.len(), 1 << m);
 
         let mut current = self.Z.clone();
@@ -263,6 +269,8 @@ impl<F: JoltField> DensePolynomial<F> {
                 let f1 = current[j + stride];
                 current[j] = f0 + r[m - 1 - i] * (f1 - f0);
             }
+            // I am not sure we need to truncate this.
+            // Double check
             current.truncate(stride);
         }
 
@@ -435,6 +443,31 @@ mod tests {
         // g(5, 10) = 8*(1 - 5)(1 - 10) + 8*(1 - 5)(10) + 8*(5)(1-10) + 8*(5)(10) = 96 + -16 + -72 + 96  = 8
         assert_eq!(
             dense_poly.evaluate(vec![Fr::from(3), Fr::from(4)].as_slice()),
+            Fr::from(8)
+        );
+    }
+
+    #[test]
+    fn fast_evaluation() {
+        // Uses the above test with the new polynomial evaluation
+        // algorithm.
+        let num_evals = 4;
+        let mut evals: Vec<Fr> = Vec::with_capacity(num_evals);
+        for _ in 0..num_evals {
+            evals.push(Fr::from(8));
+        }
+        let dense_poly: DensePolynomial<Fr> = DensePolynomial::new(evals.clone());
+
+        // Evaluate at 3:
+        // (0, 0) = 1
+        // (0, 1) = 1
+        // (1, 0) = 1
+        // (1, 1) = 1
+        // g(x_0,x_1) => c_0*(1 - x_0)(1 - x_1) + c_1*(1-x_0)(x_1) + c_2*(x_0)(1-x_1) + c_3*(x_0)(x_1)
+        // g(3, 4) = 8*(1 - 3)(1 - 4) + 8*(1-3)(4) + 8*(3)(1-4) + 8*(3)(4) = 48 + -64 + -72 + 96  = 8
+        // g(5, 10) = 8*(1 - 5)(1 - 10) + 8*(1 - 5)(10) + 8*(5)(1-10) + 8*(5)(10) = 96 + -16 + -72 + 96  = 8
+        assert_eq!(
+            dense_poly.optimised_evaluate(vec![Fr::from(3), Fr::from(4)].as_slice()),
             Fr::from(8)
         );
     }

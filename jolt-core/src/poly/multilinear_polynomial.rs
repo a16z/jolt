@@ -573,6 +573,8 @@ impl<F: JoltField> MultilinearPolynomial<F> {
 impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::evaluate")]
     fn evaluate(&self, r: &[F]) -> F {
+        // NOTE (Ari): There is some redundancy here.
+        // The default checker does the same check again for poly.evaluate(r)
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly.evaluate(r),
             MultilinearPolynomial::RLC(_) => {
