@@ -30,11 +30,11 @@ impl Tracer {
     pub fn capture_pre_state(&mut self, io_map: &HashMap<String, QuantizedTensor>) {
         let row = self.rows.last_mut().unwrap();
         let mut input_vals = Vec::new();
-        for input_name in row.instruction.inputs.iter() {
+        for input_name in row.instruction.input_refs.iter() {
             let input_tensor = io_map.get(input_name).unwrap();
             input_vals.push(input_tensor.clone());
         }
-        row.layer_state.input_vals = Some(input_vals);
+        row.layer_state.input_vals = input_vals;
     }
 
     /// Capture the output values of a layer.
@@ -43,10 +43,10 @@ impl Tracer {
     pub fn capture_post_state(&mut self, io_map: &HashMap<String, QuantizedTensor>) {
         let row = self.rows.last_mut().unwrap();
         let mut output_vals = Vec::new();
-        for output_name in row.instruction.outputs.iter() {
+        for output_name in row.instruction.output_refs.iter() {
             let output_tensor = io_map.get(output_name).unwrap();
             output_vals.push(output_tensor.clone());
         }
-        row.layer_state.output_vals = Some(output_vals);
+        row.layer_state.output_vals = output_vals;
     }
 }
