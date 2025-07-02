@@ -79,7 +79,7 @@ pub trait CacheablePolynomial<F: JoltField>:
 
 pub struct CachedPolynomial<F: JoltField> {
     pub inner: Box<dyn CacheablePolynomial<F>>,
-    pub sumcheck_evals_cache: Vec<OnceCell<Vec<F>>>,
+    pub sumcheck_evals_cache: Vec<OnceCell<(F, F)>>,
     pub bound_this_round: bool,
 }
 
@@ -130,19 +130,23 @@ impl<F: JoltField> CachedPolynomial<F> {
         }
     }
 
+    /// Returns evaluation at 0 and 2
     pub fn cached_sumcheck_evals(
         &self,
         index: usize,
         degree: usize,
         order: BindingOrder,
         use_cache: bool,
-    ) -> Vec<F> {
+    ) -> (F, F) {
+        assert!(degree == 2);
         if use_cache {
-            self.sumcheck_evals_cache[index]
-                .get_or_init(|| self.sumcheck_evals(index, degree, order))
-                .clone()
+            *self.sumcheck_evals_cache[index].get_or_init(|| {
+                let evals = self.sumcheck_evals(index, degree, order);
+                (evals[0], evals[1])
+            })
         } else {
-            self.sumcheck_evals(index, degree, order)
+            let evals = self.sumcheck_evals(index, degree, order);
+            (evals[0], evals[1])
         }
     }
 
@@ -186,8 +190,8 @@ pub trait PrefixSuffixPolynomial<F: JoltField, const ORDER: usize> {
 
 pub struct PrefixSuffixDecomposition<F: JoltField, const ORDER: usize> {
     poly: Box<dyn PrefixSuffixPolynomial<F, ORDER> + Send + Sync>,
-    P: Vec<Option<Arc<RwLock<CachedPolynomial<F>>>>>,
-    Q: Vec<DensePolynomial<F>>,
+    P: [Option<Arc<RwLock<CachedPolynomial<F>>>>; ORDER],
+    Q: [DensePolynomial<F>; ORDER],
     chunk_len: usize,
     total_len: usize,
     phase: usize,
@@ -206,7 +210,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
         );
         Self {
             poly,
-            P: vec![],
+            P: std::array::from_fn(|_| None),
             Q: Self::alloc_Q(chunk_len.pow2()),
             chunk_len,
             total_len,
@@ -226,10 +230,12 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
         (self.phase + 1) * self.chunk_len
     }
 
-    fn alloc_Q(m: usize) -> Vec<DensePolynomial<F>> {
+    fn alloc_Q(m: usize) -> [DensePolynomial<F>; ORDER] {
         rayon::iter::repeatn(0, ORDER)
             .map(|_| DensePolynomial::new(unsafe_allocate_zero_vec(m)))
-            .collect()
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap()
     }
 
     pub fn reset_Q(&mut self) {
@@ -243,8 +249,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
     pub fn init_P(&mut self, prefix_registry: &mut PrefixRegistry<F>) {
         self.P = self
             .poly
-            .prefixes(self.chunk_len, self.phase, prefix_registry)
-            .into();
+            .prefixes(self.chunk_len, self.phase, prefix_registry);
     }
 
     #[tracing::instrument(skip_all)]
@@ -292,14 +297,14 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
                     p_evals
                 } else {
                     // Prefixes are just constant 1, 1 if it's none
-                    vec![F::one(), F::one()]
+                    (F::one(), F::one())
                 };
                 let q_left = q[index];
                 let q_right = q[index + len / 2];
                 (
-                    p_evals[0] * q_left,  // prefix(0) * suffix(0)
-                    p_evals[1] * q_left,  // prefix(2) * suffix(0)
-                    p_evals[1] * q_right, // prefix(2) * suffix(1)
+                    p_evals.0 * q_left,  // prefix(0) * suffix(0)
+                    p_evals.1 * q_left,  // prefix(2) * suffix(0)
+                    p_evals.1 * q_right, // prefix(2) * suffix(1)
                 )
             })
             .reduce(
