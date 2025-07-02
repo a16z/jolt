@@ -146,7 +146,7 @@ pub fn quantize(data: &[f32]) -> (Vec<i8>, f32) {
     let quantized_data: Vec<i8> = data
         .iter()
         .map(|&x| {
-            let scaled = (x / scale).round(); // bring float into [-127, 127]
+            let scaled = (x * scale).round(); // bring float into [-127, 127]
             scaled.clamp(-128.0, 127.0) as i8 // clamp in case of overflow, cast to i8
         })
         .collect();
@@ -159,7 +159,7 @@ pub fn dequantize(tensor: &QuantizedTensor) -> Vec<f32> {
     tensor
         .data
         .iter()
-        .map(|&x| x as f32 * tensor.scale)
+        .map(|&x| x as f32 / tensor.scale)
         .collect()
 }
 
@@ -169,5 +169,39 @@ impl From<Tensor> for QuantizedTensor {
         let data = tensor.as_slice::<f32>().unwrap().to_vec();
         let (data, scale) = quantize(&data);
         Self { shape, data, scale }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_quantize() {
+        let data = vec![1.0, 2.0, 3.0, 4.0];
+        let (quantized_data, scale) = quantize(&data);
+        assert_eq!(quantized_data, vec![32, 64, 95, 127]);
+        assert_eq!(scale, 127.0 / 4.0);
+    }
+
+    fn vectors_f32_equal(a: &[f32], b: &[f32], epsilon: f32) -> bool {
+        if a.len() != b.len() {
+            return false;
+        }
+        a.iter()
+            .zip(b.iter())
+            .all(|(x, y)| {
+                let diff = (x - y).abs();
+                diff < epsilon
+            })
+    }
+
+    #[test]
+    fn test_dequantize() {
+        let data = vec![32, 64, 95, 127];
+        let scale = 127.0 / 4.0;
+        let tensor = QuantizedTensor { shape: vec![1, 4], data, scale };
+        let dequantized_data = dequantize(&tensor);
+        assert!(vectors_f32_equal(&dequantized_data, &vec![1.0, 2.0, 3.0, 4.0], 0.02));
     }
 }
