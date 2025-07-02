@@ -159,7 +159,7 @@ pub fn dequantize(tensor: &QuantizedTensor) -> Vec<f32> {
     tensor
         .data
         .iter()
-        .map(|&x| x as f32 * tensor.scale)
+        .map(|&x| x as f32 / tensor.scale)
         .collect()
 }
 
@@ -182,5 +182,26 @@ mod test {
         let (quantized_data, scale) = quantize(&data);
         assert_eq!(quantized_data, vec![32, 64, 95, 127]);
         assert_eq!(scale, 127.0 / 4.0);
+    }
+
+    fn vectors_f32_equal(a: &[f32], b: &[f32], epsilon: f32) -> bool {
+        if a.len() != b.len() {
+            return false;
+        }
+        a.iter()
+            .zip(b.iter())
+            .all(|(x, y)| {
+                let diff = (x - y).abs();
+                diff < epsilon
+            })
+    }
+
+    #[test]
+    fn test_dequantize() {
+        let data = vec![32, 64, 95, 127];
+        let scale = 127.0 / 4.0;
+        let tensor = QuantizedTensor { shape: vec![1, 4], data, scale };
+        let dequantized_data = dequantize(&tensor);
+        assert!(vectors_f32_equal(&dequantized_data, &vec![1.0, 2.0, 3.0, 4.0], 0.02));
     }
 }
