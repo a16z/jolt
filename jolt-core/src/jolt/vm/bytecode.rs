@@ -670,11 +670,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 
     fn compute_prover_message(&self, round: usize) -> Vec<F> {
-        let prover_state = self
-            .prover_state
-            .as_ref()
-            .expect("Prover state not initialized");
-
         let K_log = self.K.log_2();
 
         if round < K_log {
