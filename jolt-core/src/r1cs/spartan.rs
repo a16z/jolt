@@ -33,6 +33,19 @@ use super::builder::CombinedUniformBuilder;
 
 use rayon::prelude::*;
 
+#[derive(Clone, Debug)]
+pub struct SumcheckClaims<F: JoltField> {
+    az: F,
+    bz: F,
+    cz: F,
+}
+
+#[derive(Clone, Debug)]
+pub struct InnerSumcheckParams<F: JoltField> {
+    r_cycle: Vec<F>,
+    rx_var: Vec<F>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum SpartanError {
     /// returned if the supplied row or col in (row,col,val) tuple is out of range
@@ -172,14 +185,20 @@ where
 
         let (r_cycle, rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
+        let claims = SumcheckClaims {
+            az: claim_Az,
+            bz: claim_Bz,
+            cz: claim_Cz,
+        };
+        let params = InnerSumcheckParams {
+            r_cycle: r_cycle.to_vec(),
+            rx_var: rx_var.to_vec(),
+        };
         let (inner_sumcheck_proof, _inner_sumcheck_r) = Self::prove_inner_sumcheck(
             key,
             &input_polys,
-            claim_Az,
-            claim_Bz,
-            claim_Cz,
-            r_cycle,
-            rx_var,
+            &claims,
+            &params,
             inner_sumcheck_RLC,
             transcript,
         );
@@ -246,26 +265,15 @@ where
     fn prove_inner_sumcheck(
         key: &UniformSpartanKey<F>,
         input_polys: &[MultilinearPolynomial<F>],
-        claim_Az: F,
-        claim_Bz: F,
-        claim_Cz: F,
-        r_cycle: &[F],
-        rx_var: &[F],
+        claims: &SumcheckClaims<F>,
+        params: &InnerSumcheckParams<F>,
         inner_sumcheck_RLC: F,
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>) {
         let span = span!(Level::INFO, "prove_inner_sumcheck");
         let _guard = span.enter();
-        let mut inner_sumcheck = InnerSumcheck::new_prover(
-            key,
-            input_polys,
-            claim_Az,
-            claim_Bz,
-            claim_Cz,
-            r_cycle,
-            rx_var,
-            inner_sumcheck_RLC,
-        );
+        let mut inner_sumcheck =
+            InnerSumcheck::new_prover(key, input_polys, claims, params, inner_sumcheck_RLC);
 
         let (inner_sumcheck_proof, r) = inner_sumcheck.prove_single(transcript);
 
@@ -442,22 +450,19 @@ impl<'a, F: JoltField> InnerSumcheck<'a, F> {
     pub fn new_prover(
         key: &UniformSpartanKey<F>,
         input_polys: &[MultilinearPolynomial<F>],
-        claim_Az: F,
-        claim_Bz: F,
-        claim_Cz: F,
-        r_cycle: &[F],
-        rx_var: &[F],
+        claims: &SumcheckClaims<F>,
+        params: &InnerSumcheckParams<F>,
         inner_sumcheck_RLC: F,
     ) -> Self {
         let num_vars_uniform = key.num_vars_uniform_padded();
         let claim_inner_joint =
-            claim_Az + inner_sumcheck_RLC * claim_Bz + inner_sumcheck_RLC.square() * claim_Cz;
+            claims.az + inner_sumcheck_RLC * claims.bz + inner_sumcheck_RLC.square() * claims.cz;
 
-        let (eq_r_cycle, _) = EqPlusOnePolynomial::evals(r_cycle, None);
+        let (eq_r_cycle, _) = EqPlusOnePolynomial::evals(&params.r_cycle, None);
 
         // Evaluate A_small, B_small, C_small combined with RLC at point rx_var
         let poly_abc_small =
-            DensePolynomial::new(key.evaluate_small_matrix_rlc(rx_var, inner_sumcheck_RLC));
+            DensePolynomial::new(key.evaluate_small_matrix_rlc(&params.rx_var, inner_sumcheck_RLC));
 
         let span = span!(Level::INFO, "binding_z_second_sumcheck");
         let _guard = span.enter();
