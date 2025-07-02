@@ -148,9 +148,9 @@ impl<F: JoltField> CachedPolynomial<F> {
 
     pub fn clear_cache(&mut self, use_cache: bool) {
         if use_cache {
-            // OnceCell doesn't support clearing, so we need to replace with new ones
-            let len = self.sumcheck_evals_cache.len();
-            self.sumcheck_evals_cache = vec![OnceCell::new(); len];
+            self.sumcheck_evals_cache.iter_mut().for_each(|c| {
+                c.take();
+            });
         }
         self.bound_this_round = false;
     }
