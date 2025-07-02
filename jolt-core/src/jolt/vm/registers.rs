@@ -186,7 +186,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         r_prime: &[F],
         transcript: &mut ProofTranscript,
     ) -> (ReadWriteCheckingProof<F, ProofTranscript>, Vec<F>, Vec<F>) {
-        let K = r.len().pow2();
+        const K: usize = REGISTER_COUNT as usize;
 
         let T = r_prime.len().pow2();
 
@@ -294,7 +294,8 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                 .collect::<Vec<_>>()
                 .try_into()
                 .unwrap();
-            // debug_assert_eq!(next_checkpoint[0], 0); // Zero register
+            // In RISC-V, the first register is the zero register.
+            debug_assert_eq!(next_checkpoint[0], 0);
             checkpoints.push(next_checkpoint);
         }
         // TODO(moodlezoup): could potentially generate these checkpoints in the tracer
@@ -411,37 +412,37 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             /// Contains
             ///     Val(k, j', 0, ..., 0)
             /// as we iterate over rows j' \in {0, 1}^(log(T) - i)
-            val_j_0: Vec<F>,
+            val_j_0: [F; K],
             /// `val_j_r[0]` contains
             ///     Val(k, j'', 0, r_i, ..., r_1)
             /// `val_j_r[1]` contains
             ///     Val(k, j'', 1, r_i, ..., r_1)
             /// as we iterate over rows j' \in {0, 1}^(log(T) - i)
-            val_j_r: [Vec<F>; 2],
+            val_j_r: [[F; K]; 2],
             /// `ra[0]` contains
             ///     ra(k, j'', 0, r_i, ..., r_1)
             /// `ra[1]` contains
             ///     ra(k, j'', 1, r_i, ..., r_1)
             /// as we iterate over rows j' \in {0, 1}^(log(T) - i),
-            rs1_ra: [Vec<F>; 2],
-            rs2_ra: [Vec<F>; 2],
+            rs1_ra: [[F; K]; 2],
+            rs2_ra: [[F; K]; 2],
             /// `wa[0]` contains
             ///     wa(k, j'', 0, r_i, ..., r_1)
             /// `wa[1]` contains
             ///     wa(k, j'', 1, r_i, ..., r_1)
             /// as we iterate over rows j' \in {0, 1}^(log(T) - i),
             /// where j'' are the higher (log(T) - i - 1) bits of j'
-            rd_wa: [Vec<F>; 2],
+            rd_wa: [[F; K]; 2],
             dirty_indices: FixedBitSet,
         }
         let mut data_buffers: Vec<DataBuffers<F>> = (0..num_chunks)
             .into_par_iter()
             .map(|_| DataBuffers {
-                val_j_0: vec![F::zero(); K],
-                val_j_r: [vec![F::zero(); K], vec![F::zero(); K]],
-                rs1_ra: [vec![F::zero(); K], vec![F::zero(); K]],
-                rs2_ra: [vec![F::zero(); K], vec![F::zero(); K]],
-                rd_wa: [vec![F::zero(); K], vec![F::zero(); K]],
+                val_j_0: [F::zero(); K],
+                val_j_r: [[F::zero(); K], [F::zero(); K]],
+                rs1_ra: [[F::zero(); K], [F::zero(); K]],
+                rs2_ra: [[F::zero(); K], [F::zero(); K]],
+                rd_wa: [[F::zero(); K], [F::zero(); K]],
                 dirty_indices: FixedBitSet::with_capacity(K),
             })
             .collect();
@@ -494,7 +495,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                     } = buffers;
 
                     // val_j_0.as_mut_slice().copy_from_slice(checkpoint);
-                    *val_j_0 = checkpoint.to_vec();
+                    val_j_0.as_mut_slice().copy_from_slice(checkpoint);
 
                     // Iterate over I_chunk, two rows at a time.
                     I_chunk
@@ -636,11 +637,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 
                                 // Write-checking sumcheck
                                 if !rd_wa[0][k].is_zero() || !rd_wa[1][k].is_zero() {
-                                    let wa_eval_0 = if rd_wa[0][k].is_zero() {
-                                        F::zero()
-                                    } else {
-                                        rd_wa[0][k]
-                                    };
+                                    let wa_eval_0 = rd_wa[0][k];
                                     let wa_eval_1 = rd_wa[1][k];
                                     let m_wa = wa_eval_1 - wa_eval_0;
                                     let wa_eval_2 = wa_eval_1 + m_wa;
@@ -651,8 +648,8 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                                     let val_eval_2 = val_eval_2.unwrap_or(val_j_r[1][k] + m_val);
                                     let val_eval_3 = val_eval_3.unwrap_or(val_eval_2 + m_val);
 
-                                    inner_sum_evals[0] +=
-                                        wa_eval_0 * (inc_cycle_evals[0] + val_j_r[0][k]);
+                                    inner_sum_evals[0] += wa_eval_0
+                                        .mul_0_optimized(inc_cycle_evals[0] + val_j_r[0][k]);
                                     inner_sum_evals[1] +=
                                         wa_eval_2 * (inc_cycle_evals[1] + val_eval_2);
                                     inner_sum_evals[2] +=
@@ -831,8 +828,10 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             drop(_inner_guard);
             drop(inner_span);
 
-            eq_r_prime.bind_parallel(r_j, BindingOrder::LowToHigh);
-            inc_cycle.bind_parallel(r_j, BindingOrder::LowToHigh);
+            rayon::join(
+                || eq_r_prime.bind_parallel(r_j, BindingOrder::LowToHigh),
+                || inc_cycle.bind_parallel(r_j, BindingOrder::LowToHigh),
+            );
 
             // #[cfg(test)]
             // {
@@ -1187,7 +1186,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             trace
                 .par_iter()
                 .enumerate()
-                .map(|(j, cycle)| {
+                .map(|(_j, cycle)| {
                     let instr = cycle.instruction().normalize();
                     instr.operands.rs1
                 })
@@ -1195,7 +1194,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             trace
                 .par_iter()
                 .enumerate()
-                .map(|(j, cycle)| {
+                .map(|(_j, cycle)| {
                     let instr = cycle.instruction().normalize();
                     instr.operands.rs2
                 })
@@ -1255,8 +1254,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 
         // eq(r', r_cycle)
         let eq_eval_cycle = EqPolynomial::mle(&r_prime, &r_cycle);
-        // eq(r, r_address)
-        let eq_eval_address = EqPolynomial::mle(&r, &r_address);
 
         assert_eq!(
             eq_eval_cycle * self.rd_wa_claim * (self.inc_claim + self.val_claim)
@@ -1431,7 +1428,7 @@ mod tests {
     #[test]
     fn test_read_write_sumcheck() {
         const T: usize = 1 << 8;
-        const K: usize = 16;
+        const K: usize = 64;
         let mut rng = test_rng();
 
         let mut register = [0u64; K];
@@ -1448,7 +1445,11 @@ mod tests {
             read_addresses[0].push(read_address_1);
             read_addresses[1].push(read_address_2);
 
-            let write_address = rng.next_u64() as usize % K;
+            let mut write_address = rng.next_u64() as usize % K;
+            // So that we don't write to the zero register.
+            if write_address == 0 {
+                write_address = 1;
+            }
             write_addresses.push(write_address);
 
             // Read the value currently in the read register
