@@ -169,9 +169,6 @@ pub trait PrefixPolynomial<F: JoltField> {
         chunk_len: usize,
         phase: usize,
     ) -> CachedPolynomial<F>;
-
-    /// Sets the checkpoint value
-    fn set_bound_value(&mut self, bound_value: F, bound_vars: usize);
 }
 
 pub trait SuffixPolynomial<F: JoltField> {

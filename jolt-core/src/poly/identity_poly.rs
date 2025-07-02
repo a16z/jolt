@@ -163,13 +163,9 @@ impl<F: JoltField> PrefixPolynomial<F> for IdentityPolynomial<F> {
         let bound_value = checkpoints[Prefix::Identity].unwrap_or(F::zero());
         let mut poly =
             IdentityPolynomial::new_with_endianness((phase + 1) * chunk_len, Endianness::Big);
-        poly.set_bound_value(bound_value, phase * chunk_len);
+        poly.bound_value = bound_value;
+        poly.num_bound_vars = phase * chunk_len;
         CachedPolynomial::new(Box::new(poly), (chunk_len - 1).pow2())
-    }
-
-    fn set_bound_value(&mut self, bound_value: F, bound_vars: usize) {
-        self.bound_value = bound_value;
-        self.num_bound_vars = bound_vars;
     }
 }
 
@@ -399,13 +395,9 @@ impl<F: JoltField> PrefixPolynomial<F> for OperandPolynomial<F> {
         };
 
         let mut poly = OperandPolynomial::new((phase + 1) * chunk_len, self.side);
-        poly.set_bound_value(bound_value, phase * chunk_len);
+        poly.bound_value = bound_value;
+        poly.num_bound_vars = phase * chunk_len;
         CachedPolynomial::new(Box::new(poly), (chunk_len - 1).pow2())
-    }
-
-    fn set_bound_value(&mut self, value: F, bound_vars: usize) {
-        self.bound_value = value;
-        self.num_bound_vars = bound_vars;
     }
 }
 
