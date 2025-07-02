@@ -39,23 +39,5 @@ fn bench_all(c: &mut Criterion) {
 
     group.finish();
 }
-//fn bench_all(c: &mut Criterion) {
-//    let num_vars = 1 << 12; // this is really num_coefs
-//    let (poly, eval_point) = setup_inputs(num_vars as u64);
-//    // Create a benchmark group
-//    let mut group = c.benchmark_group("evals");
-//
-//    let id = format!("dot-product-{num_vars}");
-//    group.bench_function(id, |b| {
-//        b.iter(|| poly.evaluate(eval_point.as_slice()));
-//    });
-//    let id = format!("inside-out-{num_vars}");
-//    group.bench_function(id, |b| {
-//        b.iter(|| poly.optimised_evaluate(eval_point.as_slice()));
-//    });
-//
-//    group.finish();
-//}
-//
 criterion_group!(benches, bench_all);
 criterion_main!(benches);
