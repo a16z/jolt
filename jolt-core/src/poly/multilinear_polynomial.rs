@@ -557,6 +557,18 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
         }
     }
 }
+impl<F: JoltField> MultilinearPolynomial<F> {
+    pub fn optimised_evaluate(&self, r: &[F]) -> F {
+        match self {
+            MultilinearPolynomial::LargeScalars(poly) => poly.optimised_evaluate(r),
+            MultilinearPolynomial::RLC(_) => F::zero(),
+            _ => {
+                let chis = EqPolynomial::evals(r);
+                self.dot_product(&chis)
+            }
+        }
+    }
+}
 
 impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::evaluate")]

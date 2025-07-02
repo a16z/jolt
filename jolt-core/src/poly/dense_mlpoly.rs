@@ -250,6 +250,25 @@ impl<F: JoltField> DensePolynomial<F> {
         compute_dotproduct(&self.Z, &chis)
     }
 
+    pub fn optimised_evaluate(&self, r: &[F]) -> F {
+        let m = r.len();
+        assert_eq!(self.Z.len(), 1 << m);
+
+        let mut current = self.Z.clone();
+
+        for i in (0..m).rev() {
+            let stride = 1 << i;
+            for j in 0..stride {
+                let f0 = current[j];
+                let f1 = current[j + stride];
+                current[j] = f0 + r[m - 1 - i] * (f1 - f0);
+            }
+            current.truncate(stride);
+        }
+
+        current[0]
+    }
+
     pub fn evaluate_at_chi(&self, chis: &[F]) -> F {
         compute_dotproduct(&self.Z, chis)
     }
