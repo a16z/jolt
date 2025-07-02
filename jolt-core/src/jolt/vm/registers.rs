@@ -24,6 +24,7 @@ use crate::{
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::REGISTER_COUNT;
 use fixedbitset::FixedBitSet;
+use num::Integer;
 use rayon::prelude::*;
 use tracer::instruction::RV32IMCycle;
 
@@ -804,7 +805,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                         }
 
                         // First time this k has been encountered
-                        let bound_value = if j_prime % 2 == 0 {
+                        let bound_value = if j_prime.is_even() {
                             // (1 - r_j) * inc_lt + r_j * inc
                             inc_lt + r_j * (inc - inc_lt)
                         } else {

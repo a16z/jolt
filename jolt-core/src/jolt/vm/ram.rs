@@ -643,7 +643,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             MultilinearPolynomial::from(val.iter().map(|v| F::from_i128(*v)).collect::<Vec<F>>())
         };
 
-        #[cfg(feature="test_incremental")]
+        #[cfg(feature = "test_incremental")]
         let mut ra_test = {
             // Compute ra in cycle-major order, since we will be binding
             // from low-to-high starting with the cycle variables
@@ -658,7 +658,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             MultilinearPolynomial::from(ra)
         };
 
-        #[cfg(feature="test_incremental")]
+        #[cfg(feature = "test_incremental")]
         let mut inc_test = {
             let mut inc = unsafe_allocate_zero_vec(K * T);
             inc.par_chunks_mut(T).enumerate().for_each(|(k, inc_k)| {
@@ -960,7 +960,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             drop(_inner_guard);
             drop(inner_span);
 
-            #[cfg(feature="test_incremental")]
+            #[cfg(feature = "test_incremental")]
             {
                 let test_univariate_poly_evals = (0..K * T / (round + 1).pow2())
                     .into_par_iter()
@@ -1011,9 +1011,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                             ]
                         },
                     );
-                assert_eq!(
-                    test_univariate_poly_evals, univariate_poly_evals
-                );
+                assert_eq!(test_univariate_poly_evals, univariate_poly_evals);
             }
 
             let compressed_poly = univariate_poly.compress();
@@ -1023,7 +1021,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             let r_j = transcript.challenge_scalar::<F>();
             r_cycle.insert(0, r_j);
 
-            #[cfg(feature="test_incremental")]
+            #[cfg(feature = "test_incremental")]
             {
                 [&mut ra_test, &mut val_test, &mut inc_test]
                     .into_par_iter()
