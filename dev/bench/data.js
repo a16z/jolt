@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751046278687,
+  "lastUpdate": 1751421899167,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -7126,6 +7126,138 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 7024584,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4633847+protoben@users.noreply.github.com",
+            "name": "Ben Hamlin",
+            "username": "protoben"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2343e36fc541b9b890317c5e155000430a01a72d",
+          "message": "Make example commands in extractor readme run out of the box (#736)\n\nPreviously, the example commands in the zklean extractor readme required some\nmodifications to their arguments in order to run, which was confusing. In\naddition, the readme included some non-standard ways of running the extractor\nand didn't include the required Lean commands. This commit clarifies the readme\nby\n* including only the standard way of running the extractor;\n* adding in the Lean commands required for compilation; and\n* ensuring that all commands run when copied verbatim into the command line.",
+          "timestamp": "2025-07-01T21:27:43-04:00",
+          "tree_id": "be632c06c28275d8db0b3d91761139b8e190efca",
+          "url": "https://github.com/a16z/jolt/commit/2343e36fc541b9b890317c5e155000430a01a72d"
+        },
+        "date": 1751421898626,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 1.6909,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 4594292,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 1.6263,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 4587368,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.5793,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 4586696,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 1.5554,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 4589848,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 1.5223,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 6970496,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 45.0891,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 9310032,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 2.1826,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 4588688,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.8317,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 4588736,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 1.8853,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 7036044,
             "unit": "KB",
             "extra": ""
           }
