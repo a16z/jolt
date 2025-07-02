@@ -1,3 +1,5 @@
+use std::array::from_fn;
+
 use crate::{
     field::{JoltField, OptimizedMul},
     jolt::{
@@ -264,11 +266,11 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let span = tracing::span!(tracing::Level::INFO, "compute deltas");
         let _guard = span.enter();
 
-        let deltas: Vec<Vec<i128>> = write_addresses[..T - chunk_size]
+        let deltas: Vec<[i128; K]> = write_addresses[..T - chunk_size]
             .par_chunks_exact(chunk_size)
             .zip(write_increments[..T - chunk_size].par_chunks_exact(chunk_size))
             .map(|(address_chunk, increment_chunk)| {
-                let mut delta = vec![0; K];
+                let mut delta = [0; K];
                 for (k, increment) in address_chunk.iter().zip(increment_chunk.iter()) {
                     delta[*k] += increment;
                 }
@@ -283,19 +285,17 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let _guard = span.enter();
 
         // Value in register k before the jth cycle, for j \in {0, chunk_size, 2 * chunk_size, ...}
-        let mut checkpoints: Vec<Vec<i128>> = Vec::with_capacity(num_chunks);
-        checkpoints.push(vec![0; K]);
+        let mut checkpoints: Vec<[i128; K]> = Vec::with_capacity(num_chunks);
+        checkpoints.push([0; K]);
 
         for (chunk_index, delta) in deltas.into_iter().enumerate() {
-            let next_checkpoint: Vec<i128> = checkpoints[chunk_index]
-                .par_iter()
-                .zip(delta.into_par_iter())
-                .map(|(val_k, delta_k)| val_k + delta_k)
-                .collect::<Vec<_>>();
+            // https://stackoverflow.com/questions/68049221/rust-array-initialization-from-range-or-collect for collecting a fixed-size array.
+            let next_checkpoint: [i128; K] = from_fn(|k| checkpoints[chunk_index][k] + delta[k]);
             // In RISC-V, the first register is the zero register.
             debug_assert_eq!(next_checkpoint[0], 0);
             checkpoints.push(next_checkpoint);
         }
+
         // TODO(moodlezoup): could potentially generate these checkpoints in the tracer
         // Generate checkpoints as a flat vector because it will be turned into the
         // materialized Val polynomial after the first half of sumcheck.
@@ -1405,6 +1405,8 @@ pub fn prove_val_evaluation<
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "test_incremental")]
+    use crate::utils::{math::Math, transcript::Transcript};
+    #[cfg(feature = "test_incremental")]
     use crate::{jolt::vm::registers::ReadWriteCheckingProof, utils::transcript::KeccakTranscript};
     #[cfg(feature = "test_incremental")]
     use ark_bn254::Fr;
@@ -1458,7 +1460,7 @@ mod tests {
         let r: Vec<Fr> = prover_transcript.challenge_vector(K.log_2());
         let r_prime: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
 
-        let (proof, r_address, r_cycle) = ReadWriteCheckingProof::prove_from_array(
+        let (proof, _r_address, _r_cycle) = ReadWriteCheckingProof::prove_from_array(
             write_addresses,
             read_addresses,
             [read_values_1, read_values_2],
