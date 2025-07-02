@@ -310,10 +310,13 @@ impl<F: JoltField> MultilinearPolynomial<F> {
     pub fn optimised_evaluate(&self, r: &[F]) -> F {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly.optimised_evaluate(r),
+            MultilinearPolynomial::U8Scalars(poly) => poly.optimised_evaluate(r),
+            MultilinearPolynomial::U16Scalars(poly) => poly.optimised_evaluate(r),
+            MultilinearPolynomial::U32Scalars(poly) => poly.optimised_evaluate(r),
+            MultilinearPolynomial::U64Scalars(poly) => poly.optimised_evaluate(r),
+            MultilinearPolynomial::I64Scalars(poly) => poly.optimised_evaluate(r),
             MultilinearPolynomial::RLC(_) => F::zero(),
             _ => {
-                // I don't think this should exist!
-                // Needs a bit of field mul work.
                 let chis = EqPolynomial::evals(r);
                 self.dot_product(&chis)
             }
@@ -574,8 +577,6 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
 impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::evaluate")]
     fn evaluate(&self, r: &[F]) -> F {
-        // NOTE (Ari): There is some redundancy here.
-        // The default checker does the same check again for poly.evaluate(r)
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly.evaluate(r),
             MultilinearPolynomial::RLC(_) => {

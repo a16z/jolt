@@ -1,4 +1,5 @@
 #![allow(clippy::too_many_arguments)]
+#![allow(clippy::uninlined_format_args)]
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::utils::thread::unsafe_allocate_zero_vec;
@@ -12,12 +13,6 @@ use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
 
 use super::multilinear_polynomial::BindingOrder;
-
-// Copied over from eq_poly
-// If the number of variables are greater
-// than 2^16 -- use parallel evaluate
-// Below that it's better to just do things linearly.
-const PARALLEL_THRESHOLD: usize = 16;
 
 #[derive(Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DensePolynomial<F: JoltField> {
@@ -260,6 +255,12 @@ impl<F: JoltField> DensePolynomial<F> {
     // https://randomwalks.xyz/publish/fast_polynomial_evaluation.html
     // Shaves a factor of 2 from run time.
     pub fn optimised_evaluate(&self, r: &[F]) -> F {
+        // Copied over from eq_poly
+        // If the number of variables are greater
+        // than 2^16 -- use parallel evaluate
+        // Below that it's better to just do things linearly.
+        const PARALLEL_THRESHOLD: usize = 16;
+
         // r must have a value for each variable
         assert_eq!(r.len(), self.get_num_vars());
         let m = r.len();
@@ -289,7 +290,7 @@ impl<F: JoltField> DensePolynomial<F> {
     }
 
     fn evaluate_optimised_parallel(&self, r: &[F]) -> F {
-        let mut current = self.Z.clone();
+        let mut current: Vec<_> = self.Z.par_iter().cloned().collect();
         let m = r.len();
         // Invoking the same parallelisation structure
         // currently in evaluating in Lagrange bases.
@@ -479,7 +480,38 @@ mod tests {
             Fr::from(8)
         );
     }
+    #[test]
+    fn compare_random_evaluations() {
+        // Compares optimised polynomial evaluation
+        // with the old polynomial evaluation
+        use rand_chacha::ChaCha20Rng;
+        use rand_core::SeedableRng;
 
+        let mut rng = ChaCha20Rng::seed_from_u64(42);
+
+        for &exp in &[2, 4, 6, 8] {
+            let num_evals = 1 << exp; // must be a power of 2
+            let num_vars = exp;
+
+            // Generate random coefficients for the multilinear polynomial
+            let evals: Vec<Fr> = (0..num_evals).map(|_| Fr::random(&mut rng)).collect();
+            let poly = DensePolynomial::<Fr>::new(evals);
+
+            // Try 10 random evaluation points
+            for _ in 0..10 {
+                let eval_point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
+
+                let eval1 = poly.evaluate(&eval_point);
+                let eval2 = poly.optimised_evaluate(&eval_point);
+
+                assert_eq!(
+                    eval1, eval2,
+                    "Mismatch at point {:?} for num_vars = {}: eval = {:?}, opt = {:?}",
+                    eval_point, num_vars, eval1, eval2
+                );
+            }
+        }
+    }
     #[test]
     fn fast_evaluation() {
         // Uses the above test with the new polynomial evaluation
