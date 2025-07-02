@@ -780,6 +780,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
     #[tracing::instrument(skip_all, name = "shift_sumcheck")]
     pub fn shift_sumcheck<Func, PCS>(
         num_rounds: usize,
+        initial_claim: F,
         stream_poly: &mut ShiftSumCheckOracle<F, PCS, ProofTranscript>,
         comb_func: Func,
         shard_length: usize,
@@ -790,6 +791,32 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         Func: Fn(&[F]) -> F + Sync,
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
     {
+        let num_shards = (1 << num_rounds) / shard_length;
+
+        let shift_sumcheck_claim: F = (0..num_shards)
+            .map(|_| {
+                let shards = stream_poly.next_shard();
+                (0..shard_length)
+                    .into_par_iter()
+                    .fold(
+                        || F::zero(),
+                        |mut acc, shard_idx| {
+                            let params: Vec<F> = shards
+                                .iter()
+                                .map(|shard| shard.get_coeff(shard_idx))
+                                .collect();
+                            acc += comb_func(&params);
+                            acc
+                        },
+                    )
+                    .reduce(F::zero, |acc, value| acc + value)
+            })
+            .sum();
+        assert_eq!(
+            shift_sumcheck_claim, initial_claim,
+            "Shift sumcheck claim is wrong"
+        );
+
         let mut r: Vec<F> = Vec::with_capacity(num_rounds);
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
@@ -804,8 +831,6 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         let mut evals_2 = vec![F::zero(); 1 << (num_rounds - split_at)];
         evals_1[0] = F::one();
         evals_2[0] = F::one();
-
-        let num_shards = (1 << num_rounds) / shard_length;
 
         let update_evals = |evals: &mut Vec<F>, r: F, size: usize| {
             for i in 0..size {

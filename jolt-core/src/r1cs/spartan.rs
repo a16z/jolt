@@ -589,11 +589,15 @@ where
         };
 
         // The batched claim equals NextUnexpandedPC(r_cycle) + r * NextPC(r_cycle)
-        // let shift_sumcheck_claim = claimed_witness_evals[next_unexpanded_pc_index]
-        //     + r * claimed_witness_evals[next_pc_index];
+
+        let next_unexpanded_pc_index = JoltR1CSInputs::NextUnexpandedPC.to_index();
+        let next_pc_index = JoltR1CSInputs::NextPC.to_index();
+        let shift_sumcheck_claim = claimed_witness_evals[next_unexpanded_pc_index]
+            + r * claimed_witness_evals[next_pc_index];
         let (shift_sumcheck_proof, _shift_sumcheck_r, shift_sumcheck_claims) =
             SumcheckInstanceProof::shift_sumcheck(
                 num_rounds_shift_sumcheck,
+                shift_sumcheck_claim,
                 &mut shift_sumcheck_polys_oracle,
                 batched_comb_func,
                 shard_length,

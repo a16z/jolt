@@ -276,7 +276,6 @@ mod tests {
     #[test]
     #[serial]
     #[should_panic]
-    #[ignore]
     fn truncated_trace() {
         let artifact_guard = FIB_FILE_LOCK.lock().unwrap();
         let mut program = host::Program::new("fibonacci-guest");
