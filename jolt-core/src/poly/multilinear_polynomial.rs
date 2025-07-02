@@ -300,6 +300,22 @@ impl<F: JoltField> MultilinearPolynomial<F> {
         }
     }
 
+    pub fn optimised_evaluate(&self, r: &[F]) -> F {
+        match self {
+            MultilinearPolynomial::LargeScalars(poly) => poly.optimised_evaluate(r),
+            MultilinearPolynomial::U8Scalars(poly) => poly.optimised_evaluate(r),
+            MultilinearPolynomial::U16Scalars(poly) => poly.optimised_evaluate(r),
+            MultilinearPolynomial::U32Scalars(poly) => poly.optimised_evaluate(r),
+            MultilinearPolynomial::U64Scalars(poly) => poly.optimised_evaluate(r),
+            MultilinearPolynomial::I64Scalars(poly) => poly.optimised_evaluate(r),
+            MultilinearPolynomial::RLC(_) => F::zero(),
+            _ => {
+                let chis = EqPolynomial::evals(r);
+                self.dot_product(&chis)
+            }
+        }
+    }
+
     /// Computes the dot product of the polynomial's coefficients and a vector
     /// of field elements.
     pub fn dot_product(&self, other: &[F]) -> F {
