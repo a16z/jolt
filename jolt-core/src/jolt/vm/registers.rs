@@ -178,17 +178,16 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
     pub fn prove_from_array(
         write_addresses: Vec<usize>,
         read_addresses: [Vec<usize>; 2],
-        read_values_1: Vec<u64>,
-        read_values_2: Vec<u64>,
+        read_values: [Vec<u64>; 2],
         write_values: Vec<u64>,
         write_increments: Vec<i128>,
-        r: &[F],
         r_prime: &[F],
         transcript: &mut ProofTranscript,
     ) -> (ReadWriteCheckingProof<F, ProofTranscript>, Vec<F>, Vec<F>) {
         const K: usize = REGISTER_COUNT as usize;
 
         let T = r_prime.len().pow2();
+        let [read_values_1, read_values_2] = read_values;
 
         // Used to batch the read-checking and write-checking sumcheck
         // (see Section 4.2.1)
@@ -291,9 +290,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                 .par_iter()
                 .zip(delta.into_par_iter())
                 .map(|(val_k, delta_k)| val_k + delta_k)
-                .collect::<Vec<_>>()
-                .try_into()
-                .unwrap();
+                .collect::<Vec<_>>();
             // In RISC-V, the first register is the zero register.
             debug_assert_eq!(next_checkpoint[0], 0);
             checkpoints.push(next_checkpoint);
@@ -386,10 +383,10 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 
         // rv(r')
         let (rv_evals, eq_r_prime) =
-            MultilinearPolynomial::batch_evaluate(&[&rs1_rv, &rs2_rv], &r_prime);
+            MultilinearPolynomial::batch_evaluate(&[&rs1_rv, &rs2_rv], r_prime);
         let (rs1_rv_eval, rs2_rv_eval) = (rv_evals[0], rv_evals[1]);
         // eq(r, k)
-        let wv_eval = MultilinearPolynomial::from(write_values).evaluate(&r_prime);
+        let wv_eval = MultilinearPolynomial::from(write_values).evaluate(r_prime);
 
         // eq(r', j)
         let mut eq_r_prime = MultilinearPolynomial::from(eq_r_prime);
@@ -756,11 +753,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                             ]
                         },
                     );
-                assert_eq!(
-                    test_univariate_poly_evals, univariate_poly_evals,
-                    "Round: {}",
-                    round
-                );
+                assert_eq!(test_univariate_poly_evals, univariate_poly_evals)
             }
 
             let compressed_poly = univariate_poly.compress();
@@ -937,7 +930,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             .zip(I.par_iter())
             .enumerate()
             .for_each(|(chunk_index, (val_chunk, I_chunk))| {
-                for (j, k, inc_lt, _inc) in I_chunk.into_iter() {
+                for (j, k, inc_lt, _inc) in I_chunk.iter() {
                     debug_assert_eq!(*j, chunk_index);
                     val_chunk[*k] += *inc_lt;
                 }
@@ -1208,19 +1201,16 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             .par_iter()
             .map(|cycle| {
                 let (_, prev, post) = cycle.rd_write();
-                let increment = post as i128 - prev as i128;
-                increment
+                post as i128 - prev as i128
             })
             .collect();
 
         Self::prove_from_array(
             write_addresses,
             read_addresses,
-            read_values_1,
-            read_values_2,
+            [read_values_1, read_values_2],
             write_values,
             write_increments,
-            &r,
             &r_prime,
             transcript,
         )
@@ -1473,11 +1463,9 @@ mod tests {
         let (proof, r_address, r_cycle) = ReadWriteCheckingProof::prove_from_array(
             write_addresses,
             read_addresses,
-            read_values_1,
-            read_values_2,
+            [read_values_1, read_values_2],
             write_values,
             write_increments,
-            &r,
             &r_prime,
             &mut prover_transcript,
         );

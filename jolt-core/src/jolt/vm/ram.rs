@@ -632,7 +632,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             // from low-to-high starting with the cycle variables
             let mut val: Vec<i128> = vec![0; K * T];
             val.par_chunks_mut(T).enumerate().for_each(|(k, val_k)| {
-                let mut current_val = initial_memory_state[k].clone();
+                let mut current_val = initial_memory_state[k];
                 for j in 0..T {
                     val_k[j] = current_val;
                     if addresses[j] == k {
@@ -662,7 +662,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let mut inc_test = {
             let mut inc = unsafe_allocate_zero_vec(K * T);
             inc.par_chunks_mut(T).enumerate().for_each(|(k, inc_k)| {
-                let mut current_val = initial_memory_state[k].clone();
                 for j in 0..T {
                     if addresses[j] == k {
                         inc_k[j] = F::from_i128(write_increments[j]);
@@ -774,7 +773,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let wv = MultilinearPolynomial::from(write_values);
 
         // rv(r') and wv(r')
-        let (evals, eq_r_prime) = MultilinearPolynomial::batch_evaluate(&[&rv, &wv], &r_prime);
+        let (evals, eq_r_prime) = MultilinearPolynomial::batch_evaluate(&[&rv, &wv], r_prime);
         let rv_eval = evals[0];
         let wv_eval = evals[1];
         let mut eq_r_prime = MultilinearPolynomial::from(eq_r_prime);
@@ -1013,9 +1012,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                         },
                     );
                 assert_eq!(
-                    test_univariate_poly_evals, univariate_poly_evals,
-                    "round: {:?}",
-                    round
+                    test_univariate_poly_evals, univariate_poly_evals
                 );
             }
 
@@ -1970,7 +1967,7 @@ mod tests {
         let r: Vec<Fr> = prover_transcript.challenge_vector(K.log_2());
         let r_prime: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
 
-        let (proof, r_address, r_cycle) = ReadWriteCheckingProof::prove_from_array(
+        let (proof, _r_address, _r_cycle) = ReadWriteCheckingProof::prove_from_array(
             addresses,
             read_values,
             write_values,
