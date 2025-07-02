@@ -34,7 +34,7 @@ impl<F: JoltField> PrefixRegistry<F> {
         Self::default()
     }
 
-    pub fn next_phase(&mut self) {
+    pub fn update_checkpoints(&mut self) {
         Prefix::iter().for_each(|p| {
             self.checkpoints[p] = self[p]
                 .as_ref()
@@ -191,6 +191,7 @@ pub struct PrefixSuffixDecomposition<F: JoltField, const ORDER: usize> {
     chunk_len: usize,
     total_len: usize,
     phase: usize,
+    round: usize,
 }
 
 impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
@@ -210,6 +211,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
             chunk_len,
             total_len,
             phase: 0,
+            round: 0,
         }
     }
 
@@ -317,6 +319,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
         self.Q.par_iter_mut().for_each(|poly| {
             poly.bind_parallel(r, BindingOrder::HighToLow);
         });
+        self.next_round();
     }
 
     pub fn final_sumcheck_claim(&self) -> F {
@@ -338,7 +341,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
             .sum()
     }
 
-    pub fn next_round(&self) {
+    fn next_round(&mut self) {
         self.P.par_iter().for_each(|p| {
             if let Some(p) = p {
                 // one for registry and one for self
@@ -347,10 +350,10 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
                 p.clear_cache(use_cache);
             }
         });
-    }
-
-    pub fn next_phase(&mut self) {
-        self.phase += 1;
+        self.round += 1;
+        if self.round.is_multiple_of(self.chunk_len) {
+            self.phase += 1;
+        }
     }
 }
 
@@ -459,11 +462,9 @@ pub mod tests {
                 let r = Fr::random(&mut rng);
                 rr.push(r);
                 ps.bind(r);
-                ps.next_round();
             }
 
-            prefix_registry.next_phase();
-            ps.next_phase();
+            prefix_registry.update_checkpoints();
         }
         assert_eq!(
             prefix_registry.checkpoints[prefix_registry_index],

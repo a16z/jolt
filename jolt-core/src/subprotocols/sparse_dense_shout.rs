@@ -599,9 +599,6 @@ pub fn prove_sparse_dense_shout<
                 }
             }
 
-            identity_ps.next_round();
-            right_operand_ps.next_round();
-            left_operand_ps.next_round();
             j += 1;
         }
 
@@ -618,10 +615,7 @@ pub fn prove_sparse_dense_shout<
             .collect();
         ra.push(MultilinearPolynomial::from(ra_i));
 
-        identity_ps.next_phase();
-        right_operand_ps.next_phase();
-        left_operand_ps.next_phase();
-        prefix_registry.next_phase();
+        prefix_registry.update_checkpoints();
     }
 
     drop_in_background_thread(suffix_polys);
