@@ -146,7 +146,7 @@ pub fn quantize(data: &[f32]) -> (Vec<i8>, f32) {
     let quantized_data: Vec<i8> = data
         .iter()
         .map(|&x| {
-            let scaled = (x / scale).round(); // bring float into [-127, 127]
+            let scaled = (x * scale).round(); // bring float into [-127, 127]
             scaled.clamp(-128.0, 127.0) as i8 // clamp in case of overflow, cast to i8
         })
         .collect();
@@ -169,5 +169,18 @@ impl From<Tensor> for QuantizedTensor {
         let data = tensor.as_slice::<f32>().unwrap().to_vec();
         let (data, scale) = quantize(&data);
         Self { shape, data, scale }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_quantize() {
+        let data = vec![1.0, 2.0, 3.0, 4.0];
+        let (quantized_data, scale) = quantize(&data);
+        assert_eq!(quantized_data, vec![32, 64, 95, 127]);
+        assert_eq!(scale, 127.0 / 4.0);
     }
 }
