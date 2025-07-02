@@ -403,7 +403,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             .expect("Prover state not initialized");
         let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript>>::degree(self);
 
-        let univariate_poly_evals: Vec<F> = (0..prover_state.ra_poly.len() / 2)
+        let univariate_poly_evals: [F; 2] = (0..prover_state.ra_poly.len() / 2)
             .into_par_iter()
             .map(|i| {
                 let ra_evals =
@@ -416,13 +416,13 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                         .sumcheck_evals(i, degree, BindingOrder::LowToHigh);
 
                 // Compute ra[i] * (z + val[i]) for points 0 and 2
-                vec![
+                [
                     ra_evals[0] * (prover_state.z + val_evals[0]),
                     ra_evals[1] * (prover_state.z + val_evals[1]),
                 ]
             })
             .reduce(
-                || vec![F::zero(); 2],
+                || [F::zero(); 2],
                 |mut running, new| {
                     for i in 0..2 {
                         running[i] += new[i];
@@ -431,7 +431,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                 },
             );
 
-        univariate_poly_evals
+        univariate_poly_evals.to_vec()
     }
 
     fn bind(&mut self, r_j: F, _round: usize) {
@@ -564,7 +564,6 @@ struct BooleanityVerifierState<F: JoltField> {
     T: usize,
     r_address: Option<Vec<F>>,
     r_cycle: Option<Vec<F>>,
-    _marker: std::marker::PhantomData<F>,
 }
 
 pub struct BooleanitySumcheck<F: JoltField> {
@@ -658,7 +657,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                 T,
                 r_address: None,
                 r_cycle: None,
-                _marker: std::marker::PhantomData,
             }),
             ra_claim_prime: None,
             current_round: 0,
@@ -799,16 +797,14 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         let m = round + 1;
         const DEGREE: usize = 3;
 
-        let univariate_poly_evals: Vec<F> = (0..prover_state.B.len() / 2)
+        let univariate_poly_evals: [F; 3] = (0..prover_state.B.len() / 2)
             .into_par_iter()
             .map(|k_prime| {
-                // Get B evaluations at points 0, 1, 2
-                let B_evals_012 =
+                // Get B evaluations at points 0, 2, 3
+                let B_evals =
                     prover_state
                         .B
                         .sumcheck_evals(k_prime, DEGREE, BindingOrder::LowToHigh);
-
-                let B_evals = [B_evals_012[0], B_evals_012[1], B_evals_012[2]];
 
                 let inner_sum = prover_state.G[k_prime << m..(k_prime + 1) << m]
                     .par_iter()
@@ -840,14 +836,14 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                         },
                     );
 
-                vec![
+                [
                     B_evals[0] * inner_sum[0],
                     B_evals[1] * inner_sum[1],
                     B_evals[2] * inner_sum[2],
                 ]
             })
             .reduce(
-                || vec![F::zero(); 3],
+                || [F::zero(); 3],
                 |mut running, new| {
                     for i in 0..3 {
                         running[i] += new[i];
@@ -856,35 +852,32 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                 },
             );
 
-        univariate_poly_evals
+        univariate_poly_evals.to_vec()
     }
 
     fn compute_phase2_message(&self, _round: usize) -> Vec<F> {
         let prover_state = self.prover_state.as_ref().unwrap();
         const DEGREE: usize = 3;
 
-        let mut univariate_poly_evals: Vec<F> = (0..prover_state.D.len() / 2)
+        let mut univariate_poly_evals: [F; 3] = (0..prover_state.D.len() / 2)
             .into_par_iter()
             .map(|i| {
-                // Get D and H evaluations at points 0, 1, 2
-                let D_evals_012 = prover_state
+                // Get D and H evaluations at points 0, 2, 3
+                let D_evals = prover_state
                     .D
                     .sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
-                let H_evals_012 = prover_state
+                let H_evals = prover_state
                     .H
                     .sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
 
-                let D_evals = [D_evals_012[0], D_evals_012[1], D_evals_012[2]];
-                let H_evals = [H_evals_012[0], H_evals_012[1], H_evals_012[2]];
-
-                vec![
+                [
                     D_evals[0] * (H_evals[0].square() - H_evals[0]),
                     D_evals[1] * (H_evals[1].square() - H_evals[1]),
                     D_evals[2] * (H_evals[2].square() - H_evals[2]),
                 ]
             })
             .reduce(
-                || vec![F::zero(); 3],
+                || [F::zero(); 3],
                 |mut running, new| {
                     for i in 0..3 {
                         running[i] += new[i];
@@ -898,7 +891,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             *eval *= prover_state.eq_r_r;
         }
 
-        univariate_poly_evals
+        univariate_poly_evals.to_vec()
     }
 }
 
@@ -1044,7 +1037,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             .expect("Prover state not initialized");
         let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript>>::degree(self);
 
-        let univariate_poly_evals: Vec<F> = (0..prover_state.ra_poly.len() / 2)
+        let univariate_poly_evals: [F; 2] = (0..prover_state.ra_poly.len() / 2)
             .into_par_iter()
             .map(|i| {
                 let ra_evals =
@@ -1060,13 +1053,13 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                         .int_poly
                         .sumcheck_evals(i, degree, BindingOrder::LowToHigh);
 
-                vec![
+                [
                     (ra_evals[0] + prover_state.challenge * ra_evals_shift[0]) * int_evals[0],
                     (ra_evals[1] + prover_state.challenge * ra_evals_shift[1]) * int_evals[1],
                 ]
             })
             .reduce(
-                || vec![F::zero(); 2],
+                || [F::zero(); 2],
                 |mut running, new| {
                     for i in 0..2 {
                         running[i] += new[i];
@@ -1075,7 +1068,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                 },
             );
 
-        univariate_poly_evals
+        univariate_poly_evals.to_vec()
     }
 
     fn bind(&mut self, r_j: F, _round: usize) {
