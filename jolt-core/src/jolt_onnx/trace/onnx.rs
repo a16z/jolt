@@ -40,8 +40,7 @@ impl ONNXTraceRow {
             Operator::Relu => self
                 .layer_state
                 .input_vals
-                .as_ref()
-                .and_then(|inputs| inputs.first())
+                .first()
                 .map(|tensor| {
                     let lookups = tensor
                         .data
@@ -60,11 +59,9 @@ impl ONNXTraceRow {
             Operator::MatMul => {
                 // --- # Note ---
                 // We pad the tensor dimensions to the next power of two
-                let inputs = self
+                let inputs = &self
                     .layer_state
-                    .input_vals
-                    .as_ref()
-                    .expect("input values should be present");
+                    .input_vals;
                 let a = inputs[0].pad();
                 let b = inputs[1].pad();
                 Some(PrecompileOperators::MatMult(MatMultPrecompile::new(a, b)))

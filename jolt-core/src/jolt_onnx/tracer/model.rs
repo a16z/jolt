@@ -88,11 +88,11 @@ impl QuantizedONNXModel {
                     // A: [M, K], B: [N, K], C: [N]
 
                     // TODO: I do not think it is guaranteed that instr.inputs[0] will be a, and instr.inputs[1] will be b, etc...
-                    let a = io_map.get(&instr.inputs[0]).unwrap(); // shape: [M, K]
-                    let b = io_map.get(&instr.inputs[1]).unwrap(); // shape: [N, K]
+                    let a = io_map.get(&instr.input_refs[0]).unwrap(); // shape: [M, K]
+                    let b = io_map.get(&instr.input_refs[1]).unwrap(); // shape: [N, K]
 
                     // TODO: Handle bias, alpha, and beta operations in a separate operator (similar to virtual instructions)
-                    let _bias = io_map.get(&instr.inputs[2]).unwrap(); // shape: [N]
+                    let _bias = io_map.get(&instr.input_refs[2]).unwrap(); // shape: [N]
                     let (_alpha, _beta) = {
                         let attributes = instr.attributes.as_ref().unwrap();
                         (
@@ -112,29 +112,29 @@ impl QuantizedONNXModel {
                         .map(|&x| (x as f32 / output_scale).round().clamp(-128.0, 127.0) as i8)
                         .collect();
                     let output_tensor = QuantizedTensor::new(shape, quantized_result, output_scale);
-                    io_map.insert(instr.outputs[0].to_string(), output_tensor);
+                    io_map.insert(instr.output_refs[0].to_string(), output_tensor);
                 }
 
                 Operator::Relu => {
-                    let a = io_map.get(&instr.inputs[0]).unwrap();
+                    let a = io_map.get(&instr.input_refs[0]).unwrap();
                     let relu_data = a.data.iter().map(|&x| x.max(0)).collect_vec();
                     let output_tensor = QuantizedTensor {
                         shape: a.shape.clone(),
                         data: relu_data,
                         scale: a.scale,
                     };
-                    io_map.insert(instr.outputs[0].to_string(), output_tensor);
+                    io_map.insert(instr.output_refs[0].to_string(), output_tensor);
                 }
                 Operator::Conv => {
-                    let input = io_map.get(&instr.inputs[0]).unwrap();
-                    let weight = io_map.get(&instr.inputs[1]).unwrap();
-                    let bias = io_map.get(&instr.inputs[2]).unwrap();
+                    let input = io_map.get(&instr.input_refs[0]).unwrap();
+                    let weight = io_map.get(&instr.input_refs[1]).unwrap();
+                    let bias = io_map.get(&instr.input_refs[2]).unwrap();
 
                     println!("input: {input:#?}");
                     println!("weight: {weight:#?}");
                     println!("bias: {bias:#?}");
                     println!("\x1b[33mwarning\x1b[0m: unimplemented instruction: {instr:?}");
-                    io_map.insert(instr.outputs[0].to_string(), input.clone());
+                    io_map.insert(instr.output_refs[0].to_string(), input.clone());
                 }
                 _ => {
                     unimplemented!("Unsupported operator: {:?}", instr.opcode);
@@ -148,7 +148,7 @@ impl QuantizedONNXModel {
         // and that the output will be the first output.
         // For now, we assume that the last instruction has a single output and that it is the first output.
         // This is a hacky way to get the output tensor, we should improve this in the future.
-        let output_tensor = io_map.get(&self.instrs.last().unwrap().outputs[0]).unwrap();
+        let output_tensor = io_map.get(&self.instrs.last().unwrap().output_refs[0]).unwrap();
         output_tensor.clone()
     }
 
@@ -174,7 +174,7 @@ impl QuantizedONNXModel {
                     let a_shape = input_shape.clone();
                     let b_shape = self
                         .initializer_map
-                        .get(&instr.inputs[1])
+                        .get(&instr.input_refs[1])
                         .unwrap()
                         .shape
                         .clone();
@@ -194,7 +194,7 @@ impl QuantizedONNXModel {
                     let x_shape = input_shape.clone();
                     let w_shape = self
                         .initializer_map
-                        .get(&instr.inputs[1])
+                        .get(&instr.input_refs[1])
                         .unwrap()
                         .shape
                         .clone();
