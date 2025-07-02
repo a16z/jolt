@@ -95,6 +95,8 @@ pub struct RAMTwistProof<F: JoltField, ProofTranscript: Transcript> {
     raf_evaluation_proof: RafEvaluationProof<F, ProofTranscript>,
 }
 
+const READ_WRITE_CHECK_DEGREE: usize = 3;
+
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct ReadWriteCheckingProof<F: JoltField, ProofTranscript: Transcript> {
     /// Joint sumcheck proof for the read-checking and write-checking sumchecks
@@ -580,24 +582,22 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
 }
 
 impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofTranscript> {
-    #[tracing::instrument(skip_all, name = "ReadWriteCheckingProof::prove")]
-    pub fn prove(
-        trace: &[RV32IMCycle],
-        initial_memory_state: &[i64],
-        memory_layout: &MemoryLayout,
-        r: Vec<F>,
-        r_prime: Vec<F>,
+    #[tracing::instrument(skip_all, name = "ReadWriteCheckingProof::prove_from_array")]
+    pub fn prove_from_array(
+        addresses: Vec<usize>,
+        read_values: Vec<u64>,
+        write_values: Vec<u64>,
+        write_increments: Vec<i128>,
+        initial_memory_state: Vec<i128>,
+        r: &[F],
+        r_prime: &[F],
         transcript: &mut ProofTranscript,
     ) -> (ReadWriteCheckingProof<F, ProofTranscript>, Vec<F>, Vec<F>) {
-        const DEGREE: usize = 3;
         let K = r.len().pow2();
         let T = r_prime.len().pow2();
-        debug_assert_eq!(trace.len(), T);
-
-        // Used to batch the read-checking and write-checking sumcheck
-        // (see Section 4.2.1)
+        debug_assert_eq!(addresses.len(), T);
+        debug_assert_eq!(read_values.len(), T);
         let z: F = transcript.challenge_scalar();
-
         let num_rounds = K.log_2() + T.log_2();
         let mut r_cycle: Vec<F> = Vec::with_capacity(T.log_2());
         let mut r_address: Vec<F> = Vec::with_capacity(K.log_2());
@@ -608,17 +608,13 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let span = tracing::span!(tracing::Level::INFO, "compute deltas");
         let _guard = span.enter();
 
-        let deltas: Vec<Vec<i64>> = trace[..T - chunk_size]
+        let deltas: Vec<Vec<i128>> = addresses[..T - chunk_size]
             .par_chunks_exact(chunk_size)
-            .map(|trace_chunk| {
-                let mut delta = vec![0i64; K];
-                for cycle in trace_chunk.iter() {
-                    let ram_op = cycle.ram_access();
-                    if let RAMAccess::Write(write) = ram_op {
-                        let increment = write.post_value as i64 - write.pre_value as i64;
-                        let k = remap_address(write.address, memory_layout) as usize;
-                        delta[k] += increment;
-                    }
+            .zip(write_increments[..T - chunk_size].par_chunks_exact(chunk_size))
+            .map(|(address_chunk, increment_chunk)| {
+                let mut delta = vec![0; K];
+                for (k, increment) in address_chunk.iter().zip(increment_chunk.iter()) {
+                    delta[*k] += increment;
                 }
                 delta
             })
@@ -630,44 +626,54 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let span = tracing::span!(tracing::Level::INFO, "compute checkpoints");
         let _guard = span.enter();
 
-        // #[cfg(test)]
-        // let mut val_test: MultilinearPolynomial<F> = {
-        //     // Compute Val in cycle-major order, since we will be binding
-        //     // from low-to-high starting with the cycle variables
-        //     let mut val: Vec<u64> = vec![0; K * T];
-        //     val.par_chunks_mut(T).enumerate().for_each(|(k, val_k)| {
-        //         let mut current_val = initial_memory_state[k] as u64;
-        //         for j in 0..T {
-        //             val_k[j] = current_val;
-        //             if let RAMAccess::Write(write) = trace[j].ram_access() {
-        //                 if remap_address(write.address, memory_layout) == k as u64 {
-        //                     current_val = write.post_value;
-        //                 }
-        //             }
-        //         }
-        //     });
-        //     MultilinearPolynomial::from(val)
-        // };
-        // #[cfg(test)]
-        // let mut ra_test = {
-        //     // Compute ra in cycle-major order, since we will be binding
-        //     // from low-to-high starting with the cycle variables
-        //     let mut ra: Vec<F> = unsafe_allocate_zero_vec(K * T);
-        //     ra.par_chunks_mut(T).enumerate().for_each(|(k, ra_k)| {
-        //         for j in 0..T {
-        //             if remap_address(trace[j].ram_access().address() as u64, memory_layout)
-        //                 == k as u64
-        //             {
-        //                 ra_k[j] = F::one();
-        //             }
-        //         }
-        //     });
-        //     MultilinearPolynomial::from(ra)
-        // };
+        #[cfg(feature = "test_incremental")]
+        let mut val_test: MultilinearPolynomial<F> = {
+            // Compute Val in cycle-major order, since we will be binding
+            // from low-to-high starting with the cycle variables
+            let mut val: Vec<i128> = vec![0; K * T];
+            val.par_chunks_mut(T).enumerate().for_each(|(k, val_k)| {
+                let mut current_val = initial_memory_state[k];
+                for j in 0..T {
+                    val_k[j] = current_val;
+                    if addresses[j] == k {
+                        current_val = write_values[j] as i128;
+                    }
+                }
+            });
+            MultilinearPolynomial::from(val.iter().map(|v| F::from_i128(*v)).collect::<Vec<F>>())
+        };
+
+        #[cfg(feature = "test_incremental")]
+        let mut ra_test = {
+            // Compute ra in cycle-major order, since we will be binding
+            // from low-to-high starting with the cycle variables
+            let mut ra: Vec<F> = unsafe_allocate_zero_vec(K * T);
+            ra.par_chunks_mut(T).enumerate().for_each(|(k, ra_k)| {
+                for j in 0..T {
+                    if addresses[j] == k {
+                        ra_k[j] = F::one();
+                    }
+                }
+            });
+            MultilinearPolynomial::from(ra)
+        };
+
+        #[cfg(feature = "test_incremental")]
+        let mut inc_test = {
+            let mut inc = unsafe_allocate_zero_vec(K * T);
+            inc.par_chunks_mut(T).enumerate().for_each(|(k, inc_k)| {
+                for j in 0..T {
+                    if addresses[j] == k {
+                        inc_k[j] = F::from_i128(write_increments[j]);
+                    }
+                }
+            });
+            MultilinearPolynomial::from(inc)
+        };
 
         // Value in register k before the jth cycle, for j \in {0, chunk_size, 2 * chunk_size, ...}
-        let mut checkpoints: Vec<Vec<i64>> = Vec::with_capacity(num_chunks);
-        checkpoints.push(initial_memory_state.to_vec());
+        let mut checkpoints: Vec<Vec<i128>> = Vec::with_capacity(num_chunks);
+        checkpoints.push(initial_memory_state);
 
         for (chunk_index, delta) in deltas.into_iter().enumerate() {
             let next_checkpoint = checkpoints[chunk_index]
@@ -688,8 +694,24 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                 val_checkpoint
                     .iter_mut()
                     .zip(checkpoint.iter())
-                    .for_each(|(dest, src)| *dest = F::from_i64(*src))
+                    .for_each(|(dest, src)| *dest = F::from_i128(*src))
             });
+
+        drop(_guard);
+        drop(span);
+
+        let span = tracing::span!(
+            tracing::Level::INFO,
+            "Materialize inc polynomial (only in cycle variables)"
+        );
+        let _guard = span.enter();
+
+        let mut inc_cycle = MultilinearPolynomial::from(
+            write_increments
+                .iter()
+                .map(|i| F::from_i128(*i))
+                .collect::<Vec<F>>(),
+        );
 
         drop(_guard);
         drop(span);
@@ -724,28 +746,18 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let _guard = span.enter();
 
         // Data structure described in Equation (72)
-        let mut I: Vec<Vec<(usize, usize, F, F)>> = trace
+        let mut I: Vec<Vec<(usize, usize, F, F)>> = addresses
             .par_chunks(chunk_size)
+            .zip(write_increments.par_chunks(chunk_size))
             .enumerate()
-            .map(|(chunk_index, trace_chunk)| {
+            .map(|(chunk_index, (address_chunk, increment_chunk))| {
                 // Row index of the I matrix
                 let mut j = chunk_index * chunk_size;
-                let I_chunk = trace_chunk
+                let I_chunk = address_chunk
                     .iter()
-                    .map(|cycle| {
-                        let ram_op = cycle.ram_access();
-                        let inc = match ram_op {
-                            RAMAccess::Read(read) => {
-                                let k = remap_address(read.address, memory_layout) as usize;
-                                (j, k, F::zero(), F::zero())
-                            }
-                            RAMAccess::Write(write) => {
-                                let k = remap_address(write.address, memory_layout) as usize;
-                                let increment = write.post_value as i64 - write.pre_value as i64;
-                                (j, k, F::zero(), F::from_i64(increment))
-                            }
-                            RAMAccess::NoOp => (j, 0, F::zero(), F::zero()),
-                        };
+                    .zip(increment_chunk.iter())
+                    .map(|(k, increment)| {
+                        let inc = (j, *k, F::zero(), F::from_i128(*increment));
                         j += 1;
                         inc
                     })
@@ -757,68 +769,18 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         drop(_guard);
         drop(span);
 
-        let read_values: Vec<u64> = trace
-            .par_iter()
-            .map(|cycle| {
-                let ram_op = cycle.ram_access();
-                match ram_op {
-                    RAMAccess::Read(read) => read.value,
-                    RAMAccess::Write(write) => write.pre_value,
-                    RAMAccess::NoOp => 0,
-                }
-            })
-            .collect();
         let rv = MultilinearPolynomial::from(read_values);
-        let write_values: Vec<u64> = trace
-            .par_iter()
-            .map(|cycle| {
-                let ram_op = cycle.ram_access();
-                match ram_op {
-                    RAMAccess::Read(read) => read.value,
-                    RAMAccess::Write(write) => write.post_value,
-                    RAMAccess::NoOp => 0,
-                }
-            })
-            .collect();
-        let mut wv = MultilinearPolynomial::from(write_values);
+        let wv = MultilinearPolynomial::from(write_values);
 
-        // z * eq(r, k)
-        let mut z_eq_r = MultilinearPolynomial::from(EqPolynomial::evals_parallel(&r, Some(z)));
-        // eq(r', j)
-        let mut eq_r_prime = MultilinearPolynomial::from(EqPolynomial::evals(&r_prime));
-
-        // rv(r')
-        let rv_eval = rv.evaluate(&r_prime);
-
-        let span = tracing::span!(tracing::Level::INFO, "compute Inc(r, r')");
-        let _guard = span.enter();
-
-        // z * Inc(r, r')
-        let inc_eval: F = trace
-            .par_iter()
-            .enumerate()
-            .map(|(j, cycle)| {
-                let ram_op = cycle.ram_access();
-                let (address, increment) = match ram_op {
-                    RAMAccess::Read(read) => {
-                        (remap_address(read.address, memory_layout), F::zero())
-                    }
-                    RAMAccess::Write(write) => (
-                        remap_address(write.address, memory_layout),
-                        F::from_i64(write.post_value as i64 - write.pre_value as i64),
-                    ),
-                    RAMAccess::NoOp => (0, F::zero()),
-                };
-                z_eq_r.get_coeff(address as usize) * eq_r_prime.get_coeff(j) * increment
-            })
-            .sum();
-
-        drop(_guard);
-        drop(span);
+        // rv(r') and wv(r')
+        let (evals, eq_r_prime) = MultilinearPolynomial::batch_evaluate(&[&rv, &wv], r_prime);
+        let rv_eval = evals[0];
+        let wv_eval = evals[1];
+        let mut eq_r_prime = MultilinearPolynomial::from(eq_r_prime);
 
         // Linear combination of the read-checking claim (which is rv(r')) and the
         // write-checking claim (which is Inc(r, r'))
-        let mut previous_claim = rv_eval + inc_eval;
+        let mut previous_claim = rv_eval + z * wv_eval;
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
         let span = tracing::span!(
@@ -861,32 +823,10 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 
         // First log(T / num_chunks) rounds of sumcheck
         for round in 0..chunk_size.log_2() {
-            // #[cfg(test)]
-            // {
-            //     let mut expected_claim = F::zero();
-            //     for j in 0..(T >> round) {
-            //         let mut inner_sum = F::zero();
-            //         for k in 0..K {
-            //             let kj = k * (T >> round) + j;
-            //             // read-checking sumcheck
-            //             inner_sum += ra_test.get_bound_coeff(kj) * val_test.get_bound_coeff(kj);
-            //             // write-checking sumcheck
-            //             inner_sum += z_eq_r.get_bound_coeff(k)
-            //                 * ra_test.get_bound_coeff(kj)
-            //                 * (wv.get_bound_coeff(j) - val_test.get_bound_coeff(kj))
-            //         }
-            //         expected_claim += eq_r_prime.get_bound_coeff(j) * inner_sum;
-            //     }
-            //     assert_eq!(
-            //         expected_claim, previous_claim,
-            //         "Sumcheck sanity check failed in round {round}"
-            //     );
-            // }
-
             let inner_span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
             let _inner_guard = inner_span.enter();
 
-            let univariate_poly_evals: [F; 3] = I
+            let univariate_poly_evals: [F; READ_WRITE_CHECK_DEGREE] = I
                 .par_iter()
                 .zip(data_buffers.par_iter_mut())
                 .zip(val_checkpoints.par_chunks(K))
@@ -910,10 +850,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 
                             for j in j_prime << round..(j_prime + 1) << round {
                                 let j_bound = j % (1 << round);
-                                let k = remap_address(
-                                    trace[j].ram_access().address() as u64,
-                                    memory_layout,
-                                ) as usize;
+                                let k = addresses[j];
                                 if ra[0][k].is_zero() {
                                     dirty_indices.push(k);
                                 }
@@ -922,10 +859,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 
                             for j in (j_prime + 1) << round..(j_prime + 2) << round {
                                 let j_bound = j % (1 << round);
-                                let k = remap_address(
-                                    trace[j].ram_access().address() as u64,
-                                    memory_layout,
-                                ) as usize;
+                                let k = addresses[j];
                                 if ra[0][k].is_zero() && ra[1][k].is_zero() {
                                     dirty_indices.push(k);
                                 }
@@ -961,15 +895,19 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 
                             let eq_r_prime_evals = eq_r_prime.sumcheck_evals(
                                 j_prime / 2,
-                                DEGREE,
+                                READ_WRITE_CHECK_DEGREE,
                                 BindingOrder::LowToHigh,
                             );
-                            let wv_evals =
-                                wv.sumcheck_evals(j_prime / 2, DEGREE, BindingOrder::LowToHigh);
+                            let inc_cycle_evals = inc_cycle.sumcheck_evals(
+                                j_prime / 2,
+                                READ_WRITE_CHECK_DEGREE,
+                                BindingOrder::LowToHigh,
+                            );
 
-                            let mut inner_sum_evals = [F::zero(); 3];
+                            let mut inner_sum_evals = [F::zero(); READ_WRITE_CHECK_DEGREE];
                             for k in dirty_indices.drain(..) {
                                 if !ra[0][k].is_zero() || !ra[1][k].is_zero() {
+                                    // let kj = k * (T >> (round - 1)) + j_prime / 2;
                                     let m_ra = ra[1][k] - ra[0][k];
                                     let ra_eval_2 = ra[1][k] + m_ra;
                                     let ra_eval_3 = ra_eval_2 + m_ra;
@@ -978,14 +916,13 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                                     let val_eval_2 = val_j_r[1][k] + m_val;
                                     let val_eval_3 = val_eval_2 + m_val;
 
-                                    let z_eq_r_eval = z_eq_r.get_coeff(k);
                                     inner_sum_evals[0] += ra[0][k].mul_0_optimized(
-                                        val_j_r[0][k] + z_eq_r_eval * (wv_evals[0] - val_j_r[0][k]),
+                                        val_j_r[0][k] + z * (inc_cycle_evals[0] + val_j_r[0][k]),
                                     );
                                     inner_sum_evals[1] += ra_eval_2
-                                        * (val_eval_2 + z_eq_r_eval * (wv_evals[1] - val_eval_2));
+                                        * (val_eval_2 + z * (inc_cycle_evals[1] + val_eval_2));
                                     inner_sum_evals[2] += ra_eval_3
-                                        * (val_eval_3 + z_eq_r_eval * (wv_evals[2] - val_eval_3));
+                                        * (val_eval_3 + z * (inc_cycle_evals[2] + val_eval_3));
 
                                     ra[0][k] = F::zero();
                                     ra[1][k] = F::zero();
@@ -1003,7 +940,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                     evals
                 })
                 .reduce(
-                    || [F::zero(); DEGREE],
+                    || [F::zero(); READ_WRITE_CHECK_DEGREE],
                     |running, new| {
                         [
                             running[0] + new[0],
@@ -1023,12 +960,75 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             drop(_inner_guard);
             drop(inner_span);
 
+            #[cfg(feature = "test_incremental")]
+            {
+                let test_univariate_poly_evals = (0..K * T / (round + 1).pow2())
+                    .into_par_iter()
+                    .map(|j| {
+                        let ra_evals = ra_test.sumcheck_evals(
+                            j,
+                            READ_WRITE_CHECK_DEGREE,
+                            BindingOrder::LowToHigh,
+                        );
+                        let val_evals = val_test.sumcheck_evals(
+                            j,
+                            READ_WRITE_CHECK_DEGREE,
+                            BindingOrder::LowToHigh,
+                        );
+                        let t = j % (T / (round + 1).pow2());
+
+                        let eq_r_prime_evals = eq_r_prime.sumcheck_evals(
+                            t,
+                            READ_WRITE_CHECK_DEGREE,
+                            BindingOrder::LowToHigh,
+                        );
+
+                        let inc_evals = inc_cycle.sumcheck_evals(
+                            t,
+                            READ_WRITE_CHECK_DEGREE,
+                            BindingOrder::LowToHigh,
+                        );
+
+                        [
+                            eq_r_prime_evals[0]
+                                * ra_evals[0]
+                                * (val_evals[0] + z * (inc_evals[0] + val_evals[0])),
+                            eq_r_prime_evals[1]
+                                * ra_evals[1]
+                                * (val_evals[1] + z * (inc_evals[1] + val_evals[1])),
+                            eq_r_prime_evals[2]
+                                * ra_evals[2]
+                                * (val_evals[2] + z * (inc_evals[2] + val_evals[2])),
+                        ]
+                    })
+                    .reduce(
+                        || [F::zero(); READ_WRITE_CHECK_DEGREE],
+                        |running, new| {
+                            [
+                                running[0] + new[0],
+                                running[1] + new[1],
+                                running[2] + new[2],
+                            ]
+                        },
+                    );
+                assert_eq!(test_univariate_poly_evals, univariate_poly_evals);
+            }
+
             let compressed_poly = univariate_poly.compress();
             compressed_poly.append_to_transcript(transcript);
             compressed_polys.push(compressed_poly);
 
             let r_j = transcript.challenge_scalar::<F>();
             r_cycle.insert(0, r_j);
+
+            #[cfg(feature = "test_incremental")]
+            {
+                [&mut ra_test, &mut val_test, &mut inc_test]
+                    .into_par_iter()
+                    .for_each(|poly| {
+                        poly.bind_parallel(r_j, BindingOrder::LowToHigh);
+                    });
+            }
 
             previous_claim = univariate_poly.evaluate(&r_j);
 
@@ -1059,6 +1059,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                     } else {
                         r_j * inc_lt
                     };
+
                     I_chunk[next_bound_index] = (j_prime / 2, k, bound_value, inc);
                     bound_indices[k] = Some(next_bound_index);
                     next_bound_index += 1;
@@ -1069,27 +1070,8 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             drop(_inner_guard);
             drop(inner_span);
 
-            rayon::join(
-                || wv.bind_parallel(r_j, BindingOrder::LowToHigh),
-                || eq_r_prime.bind_parallel(r_j, BindingOrder::LowToHigh),
-            );
-
-            // #[cfg(test)]
-            // {
-            //     val_test.bind_parallel(r_j, BindingOrder::LowToHigh);
-            //     ra_test.bind_parallel(r_j, BindingOrder::LowToHigh);
-
-            //     // Check that row indices of I are non-decreasing
-            //     let mut current_row = 0;
-            //     for I_chunk in I.iter() {
-            //         for (row, _, _, _) in I_chunk {
-            //             if *row != current_row {
-            //                 assert_eq!(*row, current_row + 1);
-            //                 current_row = *row;
-            //             }
-            //         }
-            //     }
-            // }
+            eq_r_prime.bind_parallel(r_j, BindingOrder::LowToHigh);
+            inc_cycle.bind_parallel(r_j, BindingOrder::LowToHigh);
 
             let inner_span = tracing::span!(tracing::Level::INFO, "Update A");
             let _inner_guard = inner_span.enter();
@@ -1119,14 +1101,12 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         ra.par_chunks_mut(K)
             .enumerate()
             .for_each(|(chunk_index, ra_chunk)| {
-                for (j_bound, cycle) in trace
+                for (j_bound, k) in addresses
                     [chunk_index * chunk_size..(chunk_index + 1) * chunk_size]
                     .iter()
                     .enumerate()
                 {
-                    let ram_op = cycle.ram_access();
-                    let k = remap_address(ram_op.address() as u64, memory_layout) as usize;
-                    ra_chunk[k] += A[j_bound];
+                    ra_chunk[*k] += A[j_bound];
                 }
             });
         let mut ra = MultilinearPolynomial::from(ra);
@@ -1160,42 +1140,52 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             let inner_span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
             let _inner_guard = inner_span.enter();
 
-            let univariate_poly_evals: [F; 3] = if eq_r_prime.len() > 1 {
+            let univariate_poly_evals: [F; READ_WRITE_CHECK_DEGREE] = if eq_r_prime.len() > 1 {
                 // Not done binding cycle variables yet
                 (0..eq_r_prime.len() / 2)
                     .into_par_iter()
                     .map(|j| {
-                        let eq_r_prime_evals =
-                            eq_r_prime.sumcheck_evals(j, DEGREE, BindingOrder::HighToLow);
-                        let wv_evals = wv.sumcheck_evals(j, DEGREE, BindingOrder::HighToLow);
+                        let eq_r_prime_evals = eq_r_prime.sumcheck_evals(
+                            j,
+                            READ_WRITE_CHECK_DEGREE,
+                            BindingOrder::HighToLow,
+                        );
 
-                        let inner_sum_evals: [F; 3] = (0..K)
+                        let inner_sum_evals: [F; READ_WRITE_CHECK_DEGREE] = (0..K)
                             .into_par_iter()
                             .map(|k| {
                                 let index = j * K + k;
-                                let ra_evals =
-                                    ra.sumcheck_evals(index, DEGREE, BindingOrder::HighToLow);
-                                let val_evals =
-                                    val.sumcheck_evals(index, DEGREE, BindingOrder::HighToLow);
-                                let z_eq_r_eval = z_eq_r.get_coeff(k);
+                                let ra_evals = ra.sumcheck_evals(
+                                    index,
+                                    READ_WRITE_CHECK_DEGREE,
+                                    BindingOrder::HighToLow,
+                                );
+                                let val_evals = val.sumcheck_evals(
+                                    index,
+                                    READ_WRITE_CHECK_DEGREE,
+                                    BindingOrder::HighToLow,
+                                );
+
+                                let inc_cycle_evals = inc_cycle.sumcheck_evals(
+                                    j,
+                                    READ_WRITE_CHECK_DEGREE,
+                                    BindingOrder::HighToLow,
+                                );
 
                                 [
-                                    ra_evals[0].mul_0_optimized(val_evals[0])
-                                        + z_eq_r_eval
-                                            .mul_0_optimized(ra_evals[0])
-                                            .mul_0_optimized(wv_evals[0] - val_evals[0]),
-                                    ra_evals[1].mul_0_optimized(val_evals[1])
-                                        + z_eq_r_eval
-                                            .mul_0_optimized(ra_evals[1])
-                                            .mul_0_optimized(wv_evals[1] - val_evals[1]),
-                                    ra_evals[2].mul_0_optimized(val_evals[2])
-                                        + z_eq_r_eval
-                                            .mul_0_optimized(ra_evals[2])
-                                            .mul_0_optimized(wv_evals[2] - val_evals[2]),
+                                    ra_evals[0].mul_0_optimized(
+                                        val_evals[0] + z * (inc_cycle_evals[0] + val_evals[0]),
+                                    ),
+                                    ra_evals[1].mul_0_optimized(
+                                        val_evals[1] + z * (inc_cycle_evals[1] + val_evals[1]),
+                                    ),
+                                    ra_evals[2].mul_0_optimized(
+                                        val_evals[2] + z * (inc_cycle_evals[2] + val_evals[2]),
+                                    ),
                                 ]
                             })
                             .reduce(
-                                || [F::zero(); 3],
+                                || [F::zero(); READ_WRITE_CHECK_DEGREE],
                                 |running, new| {
                                     [
                                         running[0] + new[0],
@@ -1212,7 +1202,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                         ]
                     })
                     .reduce(
-                        || [F::zero(); 3],
+                        || [F::zero(); READ_WRITE_CHECK_DEGREE],
                         |running, new| {
                             [
                                 running[0] + new[0],
@@ -1226,27 +1216,24 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                 // eq(r', r_cycle) is a constant
                 let eq_r_prime_eval = eq_r_prime.final_sumcheck_claim();
                 // ...and wv(r_cycle) is a constant
-                let wv_eval = wv.final_sumcheck_claim();
 
                 let evals = (0..ra.len() / 2)
                     .into_par_iter()
                     .map(|k| {
-                        let z_eq_r_evals =
-                            z_eq_r.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
-                        let ra_evals = ra.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
-                        let val_evals = val.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
+                        let ra_evals =
+                            ra.sumcheck_evals(k, READ_WRITE_CHECK_DEGREE, BindingOrder::HighToLow);
+                        let val_evals =
+                            val.sumcheck_evals(k, READ_WRITE_CHECK_DEGREE, BindingOrder::HighToLow);
+                        let inc_cycle_eval = inc_cycle.final_sumcheck_claim();
 
                         [
-                            ra_evals[0] * val_evals[0]
-                                + z_eq_r_evals[0] * ra_evals[0] * (wv_eval - val_evals[0]),
-                            ra_evals[1] * val_evals[1]
-                                + z_eq_r_evals[1] * ra_evals[1] * (wv_eval - val_evals[1]),
-                            ra_evals[2] * val_evals[2]
-                                + z_eq_r_evals[2] * ra_evals[2] * (wv_eval - val_evals[2]),
+                            ra_evals[0] * (val_evals[0] + z * (val_evals[0] + inc_cycle_eval)),
+                            ra_evals[1] * (val_evals[1] + z * (val_evals[1] + inc_cycle_eval)),
+                            ra_evals[2] * (val_evals[2] + z * (val_evals[2] + inc_cycle_eval)),
                         ]
                     })
                     .reduce(
-                        || [F::zero(); 3],
+                        || [F::zero(); READ_WRITE_CHECK_DEGREE],
                         |running, new| {
                             [
                                 running[0] + new[0],
@@ -1285,15 +1272,15 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                 r_cycle.insert(round, r_j);
                 // Note that `eq_r` is a polynomial over only the address variables,
                 // so it is not bound here
-                [&mut ra, &mut wv, &mut val, &mut eq_r_prime]
+                [&mut ra, &mut val, &mut inc_cycle, &mut eq_r_prime]
                     .into_par_iter()
                     .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
             } else {
                 // Bind an address variable k
                 r_address.push(r_j);
-                // Note that `wv` and `eq_r_prime` are polynomials over only the cycle
+                // Note that `eq_r_prime` is a polynomial over only the cycle
                 // variables, so they are not bound here
-                [&mut ra, &mut val, &mut z_eq_r]
+                [&mut ra, &mut val]
                     .into_par_iter()
                     .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
             }
@@ -1303,15 +1290,80 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             sumcheck_proof: SumcheckInstanceProof::new(compressed_polys),
             ra_claim: ra.final_sumcheck_claim(),
             rv_claim: rv_eval,
-            wv_claim: wv.final_sumcheck_claim(),
+            wv_claim: wv_eval,
             val_claim: val.final_sumcheck_claim(),
-            inc_claim: inc_eval * z.inverse().unwrap(),
+            inc_claim: inc_cycle.final_sumcheck_claim(),
             sumcheck_switch_index: chunk_size.log_2(),
         };
 
-        drop_in_background_thread((ra, wv, val, data_buffers, z_eq_r, eq_r_prime, A));
+        drop_in_background_thread((ra, wv, val, inc_cycle, data_buffers, eq_r_prime, A));
 
         (proof, r_address, r_cycle)
+    }
+
+    #[tracing::instrument(skip_all, name = "ReadWriteCheckingProof::prove")]
+    pub fn prove(
+        trace: &[RV32IMCycle],
+        initial_memory_state: &[i64],
+        memory_layout: &MemoryLayout,
+        r: Vec<F>,
+        r_prime: Vec<F>,
+        transcript: &mut ProofTranscript,
+    ) -> (ReadWriteCheckingProof<F, ProofTranscript>, Vec<F>, Vec<F>) {
+        // TODO: initial_memory_state should probably be a Vec<i128>
+
+        let read_values: Vec<u64> = trace
+            .par_iter()
+            .map(|cycle| {
+                let ram_op = cycle.ram_access();
+                match ram_op {
+                    RAMAccess::Read(read) => read.value,
+                    RAMAccess::Write(write) => write.pre_value,
+                    RAMAccess::NoOp => 0,
+                }
+            })
+            .collect();
+        let write_values: Vec<u64> = trace
+            .par_iter()
+            .map(|cycle| {
+                let ram_op = cycle.ram_access();
+                match ram_op {
+                    RAMAccess::Read(read) => read.value,
+                    RAMAccess::Write(write) => write.post_value,
+                    RAMAccess::NoOp => 0,
+                }
+            })
+            .collect();
+        let addresses: Vec<usize> = trace
+            .par_iter()
+            .enumerate()
+            .map(|(_j, cycle)| {
+                let ram_op = cycle.ram_access();
+                remap_address(ram_op.address() as u64, memory_layout) as usize
+            })
+            .collect();
+
+        let write_increments: Vec<i128> = trace
+            .par_iter()
+            .map(|cycle| {
+                let ram_op = cycle.ram_access();
+                match ram_op {
+                    RAMAccess::Write(write) => write.post_value as i128 - write.pre_value as i128,
+                    _ => 0,
+                }
+            })
+            .collect();
+
+        Self::prove_from_array(
+            addresses,
+            read_values,
+            write_values,
+            write_increments,
+            initial_memory_state.iter().map(|v| *v as i128).collect(),
+            &r,
+            &r_prime,
+            transcript,
+        )
     }
 
     pub fn verify(
@@ -1327,9 +1379,9 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let (sumcheck_claim, r_sumcheck) = self
             .sumcheck_proof
             .verify(
-                self.rv_claim + z * self.inc_claim,
+                self.rv_claim + z * self.wv_claim,
                 T.log_2() + K.log_2(),
-                3,
+                READ_WRITE_CHECK_DEGREE,
                 transcript,
             )
             .unwrap();
@@ -1343,15 +1395,11 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 
         // eq(r', r_cycle)
         let eq_eval_cycle = EqPolynomial::mle(&r_prime, &r_cycle);
-        // eq(r, r_address)
-        let eq_eval_address = EqPolynomial::mle(&r, &r_address);
 
         assert_eq!(
-            eq_eval_cycle * self.ra_claim * self.val_claim
-                + z * eq_eval_address
-                    * eq_eval_cycle
-                    * self.ra_claim
-                    * (self.wv_claim - self.val_claim),
+            eq_eval_cycle
+                * self.ra_claim
+                * (self.val_claim + z * (self.val_claim + self.inc_claim)),
             sumcheck_claim,
             "Read/write-checking sumcheck failed"
         );
@@ -1874,11 +1922,66 @@ mod tests {
     use super::*;
     use crate::utils::transcript::KeccakTranscript;
     use ark_bn254::Fr;
+    #[cfg(feature = "test_incremental")]
+    use ark_std::test_rng;
+    #[cfg(feature = "test_incremental")]
+    use rand_core::RngCore;
+
+    #[test]
+    #[cfg(feature = "test_incremental")]
+    fn test_read_write_sumcheck() {
+        const T: usize = 1 << 8;
+        const K: usize = 16;
+        let mut rng = test_rng();
+
+        let mut ram = [0u64; K];
+        let mut addresses: Vec<usize> = Vec::with_capacity(T);
+        let mut read_values: Vec<u64> = Vec::with_capacity(T);
+        let mut write_values: Vec<u64> = Vec::with_capacity(T);
+        let mut write_increments: Vec<i128> = Vec::with_capacity(T);
+        for _ in 0..T {
+            // Random read and write address
+            let address = rng.next_u64() as usize % K;
+            addresses.push(address);
+            // Read the value currently in the read register
+            read_values.push(ram[address]);
+            // Random write value
+            let write_value = rng.next_u64();
+            write_values.push(write_value);
+            // The increment is the difference between the new value and the old value
+            let write_increment = (write_value as i128) - (ram[address] as i128);
+            write_increments.push(write_increment);
+            // Write the new value to ram
+            ram[address] = write_value;
+        }
+
+        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+        let r: Vec<Fr> = prover_transcript.challenge_vector(K.log_2());
+        let r_prime: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
+
+        let (proof, _r_address, _r_cycle) = ReadWriteCheckingProof::prove_from_array(
+            addresses,
+            read_values,
+            write_values,
+            write_increments,
+            vec![0; K],
+            &r,
+            &r_prime,
+            &mut prover_transcript,
+        );
+
+        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+        verifier_transcript.compare_to(prover_transcript);
+        let r: Vec<Fr> = verifier_transcript.challenge_vector(K.log_2());
+        let r_prime: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
+
+        proof.verify(r, r_prime, &mut verifier_transcript);
+    }
 
     #[test]
     fn test_raf_evaluation_no_ops() {
-        const K: usize = 1 << 8;
-        const T: usize = 1 << 6;
+        const K: usize = 1 << 16;
+        const T: usize = 1 << 8;
 
         let memory_layout = MemoryLayout {
             max_input_size: 256,
