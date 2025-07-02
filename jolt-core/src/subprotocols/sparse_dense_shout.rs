@@ -246,6 +246,61 @@ fn compute_sumcheck_prover_message<const WORD_SIZE: usize, F: JoltField>(
     r: &[F],
     j: usize,
 ) -> [F; 2] {
+    let mut read_checking = [F::zero(), F::zero()];
+    let mut raf = [F::zero(), F::zero()];
+
+    rayon::join(
+        || {
+            read_checking =
+                prover_msg_read_checking::<WORD_SIZE, _>(prefix_checkpoints, suffix_polys, r, j);
+        },
+        || {
+            raf = prover_msg_raf(identity_ps, right_operand_ps, left_operand_ps, gamma);
+        },
+    );
+
+    [read_checking[0] + raf[0], read_checking[1] + raf[1]]
+}
+
+fn prover_msg_raf<F: JoltField>(
+    identity_ps: &PrefixSuffixDecomposition<F, 2>,
+    right_operand_ps: &PrefixSuffixDecomposition<F, 2>,
+    left_operand_ps: &PrefixSuffixDecomposition<F, 2>,
+    gamma: F,
+) -> [F; 2] {
+    let len = identity_ps.Q_len();
+    let gamma_squared = gamma.square();
+    let (left_0, left_2, right_0, right_2) = (0..len / 2)
+        .into_par_iter()
+        .map(|b| {
+            let (i0, i2) = identity_ps.sumcheck_evals(b);
+            let (r0, r2) = right_operand_ps.sumcheck_evals(b);
+            let (l0, l2) = left_operand_ps.sumcheck_evals(b);
+            (i0 + l0, i2 + l2, r0, r2)
+        })
+        .reduce(
+            || (F::zero(), F::zero(), F::zero(), F::zero()),
+            |running, new| {
+                (
+                    running.0 + new.0,
+                    running.1 + new.1,
+                    running.2 + new.2,
+                    running.3 + new.3,
+                )
+            },
+        );
+    [
+        gamma * right_0 + gamma_squared * left_0,
+        gamma * right_2 + gamma_squared * left_2,
+    ]
+}
+
+fn prover_msg_read_checking<const WORD_SIZE: usize, F: JoltField>(
+    prefix_checkpoints: &[PrefixCheckpoint<F>],
+    suffix_polys: &[Vec<DensePolynomial<F>>],
+    r: &[F],
+    j: usize,
+) -> [F; 2] {
     let lookup_tables: Vec<_> = LookupTables::<WORD_SIZE>::iter().collect();
 
     let len = suffix_polys[0][0].len();
@@ -253,77 +308,38 @@ fn compute_sumcheck_prover_message<const WORD_SIZE: usize, F: JoltField>(
 
     let r_x = if j % 2 == 1 { r.last().copied() } else { None };
 
-    let gamma_squared = gamma.square();
-    let mut result0 = (F::zero(), F::zero());
-    let mut result2 = (F::zero(), F::zero());
-
-    rayon::join(
-        || {
-            let (eval_0, eval_2_left, eval_2_right) = (0..len / 2)
-                .into_par_iter()
-                .flat_map_iter(|b| {
-                    let b = LookupBits::new(b as u64, log_len - 1);
-                    let prefixes_c0: Vec<_> = Prefixes::iter()
-                        .map(|prefix| {
-                            prefix.prefix_mle::<WORD_SIZE, F>(prefix_checkpoints, r_x, 0, b, j)
-                        })
-                        .collect();
-                    let prefixes_c2: Vec<_> = Prefixes::iter()
-                        .map(|prefix| {
-                            prefix.prefix_mle::<WORD_SIZE, F>(prefix_checkpoints, r_x, 2, b, j)
-                        })
-                        .collect();
-                    lookup_tables
+    let (eval_0, eval_2_left, eval_2_right) = (0..len / 2)
+        .into_par_iter()
+        .flat_map_iter(|b| {
+            let b = LookupBits::new(b as u64, log_len - 1);
+            let prefixes_c0: Vec<_> = Prefixes::iter()
+                .map(|prefix| prefix.prefix_mle::<WORD_SIZE, F>(prefix_checkpoints, r_x, 0, b, j))
+                .collect();
+            let prefixes_c2: Vec<_> = Prefixes::iter()
+                .map(|prefix| prefix.prefix_mle::<WORD_SIZE, F>(prefix_checkpoints, r_x, 2, b, j))
+                .collect();
+            lookup_tables
+                .iter()
+                .zip(suffix_polys.iter())
+                .map(move |(table, suffixes)| {
+                    let suffixes_left: Vec<_> =
+                        suffixes.iter().map(|suffix| suffix[b.into()]).collect();
+                    let suffixes_right: Vec<_> = suffixes
                         .iter()
-                        .zip(suffix_polys.iter())
-                        .map(move |(table, suffixes)| {
-                            let suffixes_left: Vec<_> =
-                                suffixes.iter().map(|suffix| suffix[b.into()]).collect();
-                            let suffixes_right: Vec<_> = suffixes
-                                .iter()
-                                .map(|suffix| suffix[usize::from(b) + len / 2])
-                                .collect();
-                            (
-                                table.combine(&prefixes_c0, &suffixes_left),
-                                table.combine(&prefixes_c2, &suffixes_left),
-                                table.combine(&prefixes_c2, &suffixes_right),
-                            )
-                        })
+                        .map(|suffix| suffix[usize::from(b) + len / 2])
+                        .collect();
+                    (
+                        table.combine(&prefixes_c0, &suffixes_left),
+                        table.combine(&prefixes_c2, &suffixes_left),
+                        table.combine(&prefixes_c2, &suffixes_right),
+                    )
                 })
-                .reduce(
-                    || (F::zero(), F::zero(), F::zero()),
-                    |running, new| (running.0 + new.0, running.1 + new.1, running.2 + new.2),
-                );
-            result0 = (eval_0, eval_2_right + eval_2_right - eval_2_left);
-        },
-        || {
-            let (left_0, left_2, right_0, right_2) = (0..len / 2)
-                .into_par_iter()
-                .map(|b| {
-                    let (i0, i2) = identity_ps.sumcheck_evals(b);
-                    let (r0, r2) = right_operand_ps.sumcheck_evals(b);
-                    let (l0, l2) = left_operand_ps.sumcheck_evals(b);
-                    (i0 + l0, i2 + l2, r0, r2)
-                })
-                .reduce(
-                    || (F::zero(), F::zero(), F::zero(), F::zero()),
-                    |running, new| {
-                        (
-                            running.0 + new.0,
-                            running.1 + new.1,
-                            running.2 + new.2,
-                            running.3 + new.3,
-                        )
-                    },
-                );
-            result2 = (
-                gamma * right_0 + gamma_squared * left_0,
-                gamma * right_2 + gamma_squared * left_2,
-            );
-        },
-    );
-
-    [result0.0 + result2.0, result0.1 + result2.1]
+        })
+        .reduce(
+            || (F::zero(), F::zero(), F::zero()),
+            |running, new| (running.0 + new.0, running.1 + new.1, running.2 + new.2),
+        );
+    [eval_0, eval_2_right + eval_2_right - eval_2_left]
 }
 
 #[allow(clippy::type_complexity)]

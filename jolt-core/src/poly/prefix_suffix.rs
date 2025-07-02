@@ -357,6 +357,10 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
             self.phase += 1;
         }
     }
+
+    pub fn Q_len(&self) -> usize {
+        self.Q[0].len()
+    }
 }
 
 #[cfg(test)]
