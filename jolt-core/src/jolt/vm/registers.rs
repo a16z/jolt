@@ -1408,13 +1408,7 @@ mod tests {
     use ark_std::test_rng;
     use rand_core::RngCore;
 
-    use crate::{
-        jolt::vm::registers::ReadWriteCheckingProof,
-        utils::{
-            math::Math,
-            transcript::{KeccakTranscript, Transcript},
-        },
-    };
+    use crate::{jolt::vm::registers::ReadWriteCheckingProof, utils::transcript::KeccakTranscript};
 
     #[test]
     #[cfg(feature = "test_incremental")]
