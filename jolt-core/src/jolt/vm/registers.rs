@@ -1404,10 +1404,13 @@ pub fn prove_val_evaluation<
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "test_incremental")]
     use ark_bn254::Fr;
+    #[cfg(feature = "test_incremental")]
     use ark_std::test_rng;
+    #[cfg(feature = "test_incremental")]
     use rand_core::RngCore;
-
+    #[cfg(feature = "test_incremental")]
     use crate::{jolt::vm::registers::ReadWriteCheckingProof, utils::transcript::KeccakTranscript};
 
     #[test]

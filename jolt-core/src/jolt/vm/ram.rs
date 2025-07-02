@@ -1922,7 +1922,9 @@ mod tests {
     use super::*;
     use crate::utils::transcript::KeccakTranscript;
     use ark_bn254::Fr;
+    #[cfg(feature = "test_incremental")]
     use ark_std::test_rng;
+    #[cfg(feature = "test_incremental")]
     use rand_core::RngCore;
 
     #[test]
