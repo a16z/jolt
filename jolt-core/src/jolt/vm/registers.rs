@@ -174,7 +174,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTran
 }
 
 impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofTranscript> {
-    #[tracing::instrument(skip_all, name = "ReadWriteCheckingProof::prove_with_array")]
+    #[tracing::instrument(skip_all, name = "ReadWriteCheckingProof::prove_from_array")]
     pub fn prove_from_array(
         write_addresses: Vec<usize>,
         read_addresses: [Vec<usize>; 2],
@@ -202,7 +202,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = T / num_chunks;
 
-        #[cfg(test)]
+        #[cfg(feature = "test_incremental")]
         let mut val_test = {
             // Compute Val in cycle-major order, since we will be binding
             // from low-to-high starting with the cycle variables
@@ -218,7 +218,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             });
             MultilinearPolynomial::from(val)
         };
-        #[cfg(test)]
+        #[cfg(feature = "test_incremental")]
         let mut rs1_ra_test = {
             // Compute ra in cycle-major order, since we will be binding
             // from low-to-high starting with the cycle variables
@@ -232,7 +232,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             });
             MultilinearPolynomial::from(ra)
         };
-        #[cfg(test)]
+        #[cfg(feature = "test_incremental")]
         let mut rs2_ra_test = {
             // Compute ra in cycle-major order, since we will be binding
             // from low-to-high starting with the cycle variables
@@ -246,7 +246,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             });
             MultilinearPolynomial::from(ra)
         };
-        #[cfg(test)]
+        #[cfg(feature = "test_incremental")]
         let mut wa_test = {
             // Compute wa in cycle-major order, since we will be binding
             // from low-to-high starting with the cycle variables
@@ -692,7 +692,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             drop(_inner_guard);
             drop(inner_span);
 
-            #[cfg(test)]
+            #[cfg(feature = "test_incremental")]
             {
                 let test_univariate_poly_evals = (0..K * T / (round + 1).pow2())
                     .into_par_iter()
@@ -770,7 +770,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             let r_j = transcript.challenge_scalar::<F>();
             r_cycle.insert(0, r_j);
 
-            #[cfg(test)]
+            #[cfg(feature = "test_incremental")]
             {
                 [
                     &mut rs1_ra_test,
@@ -1426,6 +1426,7 @@ mod tests {
     };
 
     #[test]
+    #[cfg(feature = "test_incremental")]
     fn test_read_write_sumcheck() {
         const T: usize = 1 << 8;
         const K: usize = 64;
