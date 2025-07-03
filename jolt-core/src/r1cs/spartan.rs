@@ -34,7 +34,7 @@ use super::builder::CombinedUniformBuilder;
 use rayon::prelude::*;
 
 #[derive(Clone, Debug)]
-pub struct SumcheckClaims<F: JoltField> {
+pub struct OuterSumcheckClaims<F: JoltField> {
     az: F,
     bz: F,
     cz: F,
@@ -185,7 +185,7 @@ where
 
         let (r_cycle, rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
-        let claims = SumcheckClaims {
+        let claims = OuterSumcheckClaims {
             az: claim_Az,
             bz: claim_Bz,
             cz: claim_Cz,
@@ -262,23 +262,19 @@ where
         })
     }
 
+    #[tracing::instrument(skip_all)]
     fn prove_inner_sumcheck(
         key: &UniformSpartanKey<F>,
         input_polys: &[MultilinearPolynomial<F>],
-        claims: &SumcheckClaims<F>,
+        claims: &OuterSumcheckClaims<F>,
         params: &InnerSumcheckParams<F>,
         inner_sumcheck_RLC: F,
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>) {
-        let span = span!(Level::INFO, "prove_inner_sumcheck");
-        let _guard = span.enter();
         let mut inner_sumcheck =
             InnerSumcheck::new_prover(key, input_polys, claims, params, inner_sumcheck_RLC);
 
         let (inner_sumcheck_proof, r) = inner_sumcheck.prove_single(transcript);
-
-        drop(_guard);
-        drop(span);
 
         (inner_sumcheck_proof, r)
     }
@@ -300,8 +296,8 @@ where
         let (shift_sumcheck_proof, _r) = pc_sumcheck.prove_single(transcript);
 
         let cached_claims = pc_sumcheck.cached_claims.expect("Claims not cached");
-        let unexpanded_pc_eval_at_shift_r = cached_claims[0];
-        let pc_eval_at_shift_r = cached_claims[1];
+        let unexpanded_pc_eval_at_shift_r = cached_claims.0;
+        let pc_eval_at_shift_r = cached_claims.1;
         let shift_sumcheck_witness_eval = vec![unexpanded_pc_eval_at_shift_r, pc_eval_at_shift_r];
 
         drop(_guard);
@@ -450,7 +446,7 @@ impl<'a, F: JoltField> InnerSumcheck<'a, F> {
     pub fn new_prover(
         key: &UniformSpartanKey<F>,
         input_polys: &[MultilinearPolynomial<F>],
-        claims: &SumcheckClaims<F>,
+        claims: &OuterSumcheckClaims<F>,
         params: &InnerSumcheckParams<F>,
         inner_sumcheck_RLC: F,
     ) -> Self {
@@ -665,7 +661,7 @@ pub struct PCSumcheck<F: JoltField> {
     input_claim: F,
     prover_state: Option<PCSumcheckProverState<F>>,
     verifier_state: Option<PCSumcheckVerifierState<F>>,
-    cached_claims: Option<Vec<F>>, // (unexpanded_pc_eval, pc_eval, eq_plus_one_eval)
+    cached_claims: Option<(F, F)>, // (unexpanded_pc_eval, pc_eval)
 }
 
 impl<F: JoltField> PCSumcheck<F> {
@@ -819,9 +815,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
 
         let unexpanded_pc_eval = prover_state.unexpanded_pc_poly.final_sumcheck_claim();
         let pc_eval = prover_state.pc_poly.final_sumcheck_claim();
-        let eq_plus_one_eval = prover_state.eq_plus_one_poly.final_sumcheck_claim();
 
-        self.cached_claims = Some(vec![unexpanded_pc_eval, pc_eval, eq_plus_one_eval]);
+        self.cached_claims = Some((unexpanded_pc_eval, pc_eval));
     }
 
     fn expected_output_claim(&self, r: &[F]) -> F {
