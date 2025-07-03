@@ -144,7 +144,7 @@ mod test {
     use crate::{
         jolt::instruction::{
             test::{
-                instruction_mle_full_hypercube_test, instruction_mle_random_test,
+                instruction_mle_random_test,
                 materialize_entry_test, prefix_suffix_test,
             },
             JoltInstruction,

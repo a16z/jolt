@@ -1,17 +1,17 @@
-//! A sum-check precompile implementation for softmax operation.
-//! Used for proving correctness of the execution of the softmax ONNX operator.
+//! A sum-check precompile implementation for sum operation of a tensor.
+//! Used for proving correctness of the execution of the sum ONNX operator.
 //! You can see it in action in [`crate::jolt_onnx::vm::precompiles`]
 //!
 //! # Overview:
-//!   - [`SoftmaxPrecompile`] - We specify the precompile for softmax op, by defining the input (z) vector.
-//!   - [`SoftmaxSumcheck`] - Defines the prover and verifier states that will be used to instantiate a [`super::sumcheck_engine::BatchedSumcheck`] instance.
+//!   - [`SumPrecompile`] - We specify the precompile for sum op, by defining the input (z) vector.
+//!   - [`SumSumcheck`] - Defines the prover and verifier states that will be used to instantiate a [`super::sumcheck_engine::BatchedSumcheck`] instance.
 //!     These sum-check instances are then fed into [`super::sumcheck_engine::BatchedSumcheck::prove`] and [`super::sumcheck_engine::BatchedSumcheck::verify`].
-//!   - [`SoftmaxProverState`] - Handles/Defines the prover state for the softmax sum-check precompile (handles witness polynomials for sum-check prover).
-//!   - [`SoftmaxVerifierState`] - Handles/Defines the verifier state for the softmax sum-check precompile.
+//!   - [`SumProverState`] - Handles/Defines the prover state for the sum sum-check precompile (handles witness polynomials for sum-check prover).
+//!   - [`SumVerifierState`] - Handles/Defines the verifier state for the sum sum-check precompile.
 
 use crate::{
     field::JoltField,
-    jolt_onnx::precompiles::sumcheck_engine::BatchableSumcheckInstance,
+    jolt_onnx::{precompiles::sumcheck_engine::BatchableSumcheckInstance, tracer::tensor::QuantizedTensor},
     poly::{
         dense_mlpoly::DensePolynomial, multilinear_polynomial::BindingOrder,
     },
@@ -25,12 +25,12 @@ use serde::{Deserialize, Serialize};
 /// The type is used to intialize the [`SumProverState`]
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct SumPrecompile {
-    z: Vec<u64>,
+    z: QuantizedTensor,
 }
 
 impl SumPrecompile {
     /// Create a new instance of [`SumPrecompile`].
-    pub fn new(z: Vec<u64>) -> Self {
+    pub fn new(z: QuantizedTensor) -> Self {
         Self { z }
     }
 
@@ -38,7 +38,7 @@ impl SumPrecompile {
     where
         F: JoltField,
     {
-        DensePolynomial::new(self.z.iter().map(|&x| F::from_u64(x as u64)).collect_vec())
+        DensePolynomial::new(self.z.data.iter().map(|&x| F::from_i64(x as i64)).collect_vec())
     }
 }
 
@@ -71,13 +71,12 @@ where
     where
         ProofTranscript: Transcript,
     {
-        let n = input.z.len();
+        let n = input.z.data.len();
         let num_rounds = n.log_2();
-        // let r: Vec<F> = transcript.challenge_scalar_powers(num_rounds);
+        let _r: Vec<F> = transcript.challenge_scalar_powers(num_rounds);
 
         let z_poly = input.z_poly();
-        // let input_claim = z_poly.evaluate(&r);
-        let input_claim = F::from_u64(input.z.iter().sum::<u64>());
+        let input_claim = F::from_i64(input.z.data.iter().fold(0, |acc, &x| acc + x as i64));
 
         transcript.append_scalar(&input_claim);
         Self {
@@ -96,7 +95,7 @@ pub struct SumPrecompileDims {
     pub n: usize,
 }
 
-/// Container type to manage the verifier state in the [`BatchableSumcheckInstance`] for the softmax precompile.
+/// Container type to manage the verifier state in the [`BatchableSumcheckInstance`] for the sum precompile.
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
 pub struct SumVerifierState<F>
 where
@@ -121,7 +120,7 @@ where
         ProofTranscript: Transcript,
     {
         let num_rounds = dims.n.log_2();
-        // let _ri: Vec<F> = transcript.challenge_scalar_powers(dims.n.log_2());
+        let _ri: Vec<F> = transcript.challenge_scalar_powers(dims.n.log_2());
         transcript.append_scalar(&input_claim);
         Self {
             num_rounds,
@@ -141,7 +140,7 @@ where
     sum: F,
 }
 
-/// Batchable sum-check instance for softmax precompile.
+/// Batchable sum-check instance for sum precompile.
 /// Used to construct the [`PrecompileProof`] by passing in these instances into [`BatchedSumcheck`].
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
 pub struct SumSumcheck<F>
@@ -152,7 +151,7 @@ where
     pub prover_state: Option<SumProverState<F>>,
     /// Handles state for verifier portion of the sum-check protocol.
     pub verifier_state: Option<SumVerifierState<F>>,
-    /// Holds the final claims for the softmax sum-check precompile.
+    /// Holds the final claims for the sum sum-check precompile.
     pub claims: Option<SumClaims<F>>,
 }
 
@@ -160,7 +159,7 @@ impl<F> SumSumcheck<F>
 where
     F: JoltField,
 {
-    /// Create a new instance of [`SoftmaxSumcheck`]
+    /// Create a new instance of [`SumSumcheck`]
     pub fn new(
         prover_state: Option<SumProverState<F>>,
         verifier_state: Option<SumVerifierState<F>>,
@@ -245,16 +244,16 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{
-        jolt_onnx::precompiles::{
+        jolt_onnx::{precompiles::{
             sum::{
                 SumPrecompile, SumPrecompileDims, SumProverState, SumSumcheck, SumVerifierState,
             },
             sumcheck_engine::{BatchableSumcheckInstance, BatchedSumcheck},
-        },
+        }, tracer::tensor::QuantizedTensor},
         utils::transcript::{KeccakTranscript, Transcript},
     };
     use ark_bn254::Fr;
-    use ark_std::{rand::Rng, test_rng};
+    use ark_std::test_rng;
     use itertools::Itertools;
     use rand_core::RngCore;
 
@@ -267,10 +266,8 @@ mod tests {
         let mut sumcheck_instances = Vec::with_capacity(trace_length);
         for _ in 0..trace_length {
             let n = (rng.next_u32() as usize % 200 + 50).next_power_of_two();
-            let z: Vec<u8> = (0..n)
-                .map(|_| rng.gen())
-                .collect_vec();
-            let precompile = SumPrecompile::new(z.iter().map(|&x| x as u64).collect_vec());
+            let z = QuantizedTensor::random(&mut rng, n, 1);
+            let precompile = SumPrecompile::new(z);
             pp.push(SumPrecompileDims { n });
             let prover_state = SumProverState::<Fr>::initialize(&precompile, &mut ptranscript);
             let sumcheck_instance = SumSumcheck::new(Some(prover_state), None, None);

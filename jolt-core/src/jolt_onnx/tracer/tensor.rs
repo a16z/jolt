@@ -43,7 +43,7 @@ impl QuantizedTensor {
     /// Takes in [`QuantizedTensor`] and returns a vector of f32 values.
     pub fn dequantized_data(&self) -> Vec<f32> {
         // Dequantize the data by multiplying each quantized value by the scale factor.
-        self.data.iter().map(|&x| x as f32 * self.scale).collect()
+        self.data.iter().map(|&x| x as f32 / self.scale).collect()
     }
 
     /// Matrix multiplication of two quantized tensors.
