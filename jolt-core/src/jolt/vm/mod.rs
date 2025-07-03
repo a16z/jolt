@@ -547,6 +547,7 @@ where
 
 pub mod bytecode;
 pub mod instruction_lookups;
+pub mod output_check;
 pub mod ram;
 pub mod registers;
 pub mod rv32i_vm;
