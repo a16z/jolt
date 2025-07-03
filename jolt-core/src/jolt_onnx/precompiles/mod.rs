@@ -6,6 +6,7 @@
 
 pub mod conv;
 pub mod matmult;
+pub mod sum;
 pub mod sumcheck_engine;
 
 use crate::jolt_onnx::precompiles::conv::ConvPrecompile;
