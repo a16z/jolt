@@ -192,11 +192,12 @@ impl MemoryLayout {
         let stack_size = align_up(config.stack_size, 4);
         let memory_size = align_up(config.memory_size, 4);
 
-        // Adds 8 to account for panic bit and termination bit
+        // Adds 12 to account for panic bit and termination bit
         // (they each occupy one full 4-byte word)
+        // plus a reserved always-zero word for dummy RAM accesses
         let io_region_bytes = max_input_size
             .checked_add(max_output_size)
-            .and_then(|s| s.checked_add(8))
+            .and_then(|s| s.checked_add(12))
             .expect("I/O region size overflow");
 
         // Padded so that the witness index corresponding to `input_start`
@@ -218,7 +219,7 @@ impl MemoryLayout {
             .expect("output_end overflow");
         let panic = output_end;
         let termination = panic.checked_add(4).expect("termination overflow");
-        let io_end = termination.checked_add(4).expect("io_end overflow");
+        let io_end = termination.checked_add(8).expect("io_end overflow");
 
         // stack grows *down* from input_start
         let stack_end = input_start

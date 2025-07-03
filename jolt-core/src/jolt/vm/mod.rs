@@ -28,6 +28,7 @@ use std::{
     io::{Read, Write},
     path::Path,
 };
+use tracer::emulator::memory::Memory;
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
 use tracer::JoltDevice;
 
@@ -245,10 +246,10 @@ where
     fn prove(
         mut program_io: JoltDevice,
         mut trace: Vec<RV32IMCycle>,
+        final_memory_state: Memory,
         mut preprocessing: JoltProverPreprocessing<F, PCS, ProofTranscript>,
     ) -> (
         JoltProof<WORD_SIZE, F, PCS, ProofTranscript>,
-        // JoltCommitments<PCS, ProofTranscript>,
         JoltDevice,
         Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
     ) {
@@ -368,6 +369,7 @@ where
         let ram_proof = RAMTwistProof::prove(
             &preprocessing,
             &trace,
+            final_memory_state,
             &program_io,
             ram_K,
             &mut opening_accumulator,

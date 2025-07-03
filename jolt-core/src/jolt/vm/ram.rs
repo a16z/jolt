@@ -38,6 +38,7 @@ use common::{
 };
 use rayon::prelude::*;
 use tracer::{
+    emulator::memory::Memory,
     instruction::{RAMAccess, RV32IMCycle},
     JoltDevice,
 };
@@ -98,6 +99,7 @@ pub struct RAMTwistProof<F: JoltField, ProofTranscript: Transcript> {
     ra_proof: RAProof<F, ProofTranscript>,
     hamming_weight_proof: HammingWeightProof<F, ProofTranscript>,
     raf_evaluation_proof: RafEvaluationProof<F, ProofTranscript>,
+    output_proof: OutputProof<F, ProofTranscript>,
 }
 
 const READ_WRITE_CHECK_DEGREE: usize = 3;
@@ -206,7 +208,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RafEvaluationProof<F, ProofTrans
             );
 
         let mut ra_poly = MultilinearPolynomial::from(ra_evals);
-        let mut unmap_poly = UnmapRamAddressPolynomial::new(K.log_2(), memory_layout.stack_end);
+        let mut unmap_poly = UnmapRamAddressPolynomial::new(K.log_2(), memory_layout.input_start);
 
         let num_rounds = K.log_2();
         let mut r_address: Vec<F> = Vec::with_capacity(num_rounds);
@@ -282,7 +284,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RafEvaluationProof<F, ProofTrans
             self.sumcheck_proof
                 .verify(self.raf_claim, K.log_2(), DEGREE, transcript)?;
 
-        let unmap_eval = UnmapRamAddressPolynomial::new(K.log_2(), memory_layout.stack_end)
+        let unmap_eval = UnmapRamAddressPolynomial::new(K.log_2(), memory_layout.input_start)
             .evaluate(&r_raf_sumcheck);
 
         // Verify sumcheck_claim = unmap(r_raf_sumcheck) * ra(r_raf_sumcheck, r_cycle)
@@ -300,6 +302,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
     pub fn prove<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
         preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
         trace: &[RV32IMCycle],
+        final_memory: Memory,
         program_io: &JoltDevice,
         K: usize,
         opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
@@ -323,12 +326,25 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             initial_memory_state[index] = *word as i64;
             index += 1;
         }
-        // Copy input bytes
+
+        let dram_start_index = remap_address(RAM_START_ADDRESS, &program_io.memory_layout) as usize;
+        let mut final_memory_state = vec![0; K];
+        // Note that `final_memory` only contains memory at addresses >= `RAM_START_ADDRESS`
+        // so we will still need to populate `final_memory_state` with the contents of
+        // `program_io`, which lives at addresses < `RAM_START_ADDRESS`
+        final_memory_state[dram_start_index..]
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(k, word)| {
+                *word = final_memory.read_word(4 * k as u64);
+            });
+
         index = remap_address(
             program_io.memory_layout.input_start,
             &program_io.memory_layout,
         ) as usize;
-        // Convert input bytes into words and populate `v_init`
+        // Convert input bytes into words and populate
+        // `initial_memory_state` and `final_memory_state`
         for chunk in program_io.inputs.chunks(4) {
             let mut word = [0u8; 4];
             for (i, byte) in chunk.iter().enumerate() {
@@ -336,7 +352,52 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             }
             let word = u32::from_le_bytes(word);
             initial_memory_state[index] = word as i64;
+            final_memory_state[index] = word;
             index += 1;
+        }
+
+        // Convert output bytes into words and populate
+        // `final_memory_state`
+        index = remap_address(
+            program_io.memory_layout.output_start,
+            &program_io.memory_layout,
+        ) as usize;
+        for chunk in program_io.outputs.chunks(4) {
+            let mut word = [0u8; 4];
+            for (i, byte) in chunk.iter().enumerate() {
+                word[i] = *byte;
+            }
+            let word = u32::from_le_bytes(word);
+            final_memory_state[index] = word;
+            index += 1;
+        }
+
+        // Copy panic bit
+        let panic_index =
+            remap_address(program_io.memory_layout.panic, &program_io.memory_layout) as usize;
+        final_memory_state[panic_index] = program_io.panic as u32;
+        if !program_io.panic {
+            // Set termination bit
+            let termination_index = remap_address(
+                program_io.memory_layout.termination,
+                &program_io.memory_layout,
+            ) as usize;
+            final_memory_state[termination_index] = 1;
+        }
+
+        #[cfg(test)]
+        {
+            let mut expected_final_memory_state: Vec<_> = initial_memory_state
+                .iter()
+                .map(|word| *word as u32)
+                .collect();
+            for cycle in trace.iter() {
+                if let RAMAccess::Write(write) = cycle.ram_access() {
+                    let k = remap_address(write.address, &program_io.memory_layout) as usize;
+                    expected_final_memory_state[k] = write.post_value as u32;
+                }
+            }
+            assert_eq!(expected_final_memory_state, final_memory_state);
         }
 
         let (read_write_checking_proof, r_address, r_cycle) = ReadWriteCheckingProof::prove(
@@ -426,6 +487,19 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         let raf_evaluation_proof =
             RafEvaluationProof::prove(trace, &program_io.memory_layout, r_cycle, K, transcript);
 
+        let mut output_sumcheck = OutputSumcheck::new_prover(
+            preprocessing,
+            trace,
+            final_memory_state,
+            program_io,
+            &r_address,
+        );
+        let (sumcheck_proof, _r_output) = output_sumcheck.prove_single(transcript);
+        let output_proof = OutputProof {
+            sumcheck_proof,
+            sumcheck_claims: std::mem::take(output_sumcheck.claims.as_mut().unwrap()),
+        };
+
         // TODO: Append to opening proof accumulator
 
         RAMTwistProof {
@@ -436,6 +510,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             ra_proof,
             hamming_weight_proof,
             raf_evaluation_proof,
+            output_proof,
         }
     }
 
@@ -565,6 +640,8 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             "Booleanity sumcheck failed"
         );
 
+        println!("Verifying Hamming weight sumcheck");
+
         let (sumcheck_claim, _r_hamming_weight) =
             self.hamming_weight_proof
                 .sumcheck_proof
@@ -575,11 +652,22 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             "Hamming weight sumcheck failed"
         );
 
+        println!("Verifying raf-evaluation sumcheck");
+
         // Verify RAF evaluation proof
         let _r_address_raf =
             self.raf_evaluation_proof
                 .verify(self.K, transcript, &program_io.memory_layout)?;
 
+        println!("Verifying output sumcheck");
+        let output_sumcheck = OutputSumcheck::new_verifier(
+            program_io,
+            &r_address,
+            T,
+            &self.output_proof.sumcheck_claims,
+        );
+        let _r_output =
+            output_sumcheck.verify_single(&self.output_proof.sumcheck_proof, transcript)?;
         // TODO: Add opening proof verification for ra(r_address_raf, r_cycle)
 
         Ok(())
@@ -1567,10 +1655,13 @@ pub fn prove_val_evaluation<
 
 pub fn remap_address(address: u64, memory_layout: &MemoryLayout) -> u64 {
     if address == 0 {
-        return 0; // TODO(moodlezoup): Better handling for no-ops
+        return 0;
+        // // HACK: The word after termination is reserved as an
+        // // always-zero word for the purpose of "dummy" reads/writes
+        // return remap_address(memory_layout.termination + 4, memory_layout);
     }
-    if address >= memory_layout.stack_end {
-        (address - memory_layout.stack_end) / 4 + 1
+    if address >= memory_layout.input_start {
+        (address - memory_layout.input_start) / 4 + 1
     } else {
         panic!("Unexpected address {address}")
     }
@@ -2001,10 +2092,16 @@ impl<F: JoltField> OutputSumcheckVerifierState<F> {
     }
 }
 
-#[derive(Clone)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone, Default)]
 struct OutputSumcheckClaims<F: JoltField> {
     inc_claim: F,
     wa_claim: F,
+}
+
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
+struct OutputProof<F: JoltField, ProofTranscript: Transcript> {
+    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
+    sumcheck_claims: OutputSumcheckClaims<F>,
 }
 
 struct OutputSumcheck<F: JoltField> {
@@ -2013,6 +2110,58 @@ struct OutputSumcheck<F: JoltField> {
     verifier_state: Option<OutputSumcheckVerifierState<F>>,
     prover_state: Option<OutputSumcheckProverState<F>>,
     claims: Option<OutputSumcheckClaims<F>>,
+}
+
+impl<F: JoltField> OutputSumcheck<F> {
+    fn new_prover<
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    >(
+        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
+        trace: &[RV32IMCycle],
+        final_ram_state: Vec<u32>,
+        program_io: &JoltDevice,
+        r_address: &[F],
+    ) -> Self {
+        let K = final_ram_state.len();
+        let T = trace.len();
+        let prover_state = OutputSumcheckProverState::initialize(
+            preprocessing,
+            trace,
+            final_ram_state,
+            program_io,
+            &r_address,
+        );
+
+        Self {
+            prover_state: Some(prover_state),
+            verifier_state: None,
+            claims: None,
+            K,
+            T,
+        }
+    }
+
+    fn new_verifier(
+        program_io: &JoltDevice,
+        r_address: &[F],
+        T: usize,
+        claims: &OutputSumcheckClaims<F>,
+    ) -> Self {
+        let K = r_address.len().pow2();
+        let verifier_state = OutputSumcheckVerifierState {
+            program_io: program_io.clone(),
+            r_address: r_address.to_vec(),
+        };
+
+        Self {
+            prover_state: None,
+            verifier_state: Some(verifier_state),
+            claims: Some(claims.clone()),
+            T,
+            K,
+        }
+    }
 }
 
 impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>

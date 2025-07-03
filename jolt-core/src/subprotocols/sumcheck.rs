@@ -213,10 +213,16 @@ impl BatchedSumcheck {
                 })
                 .collect();
 
+            let max_degree = sumcheck_instances
+                .iter()
+                .map(|sumcheck| sumcheck.degree())
+                .max()
+                .unwrap();
+
             // Linear combination of individual univariate polynomials
             let batched_univariate_poly: UniPoly<F> =
                 univariate_polys.iter().zip(batching_coeffs.iter()).fold(
-                    UniPoly::from_coeff(vec![]),
+                    UniPoly::from_coeff(vec![F::zero(); max_degree + 1]),
                     |mut batched_poly, (poly, coeff)| {
                         batched_poly += &(poly * coeff);
                         batched_poly
@@ -328,6 +334,7 @@ impl BatchedSumcheck {
             .sum();
 
         if output_claim != expected_output_claim {
+            println!("BatchedSumcheckError: {output_claim} != {expected_output_claim}");
             return Err(ProofVerifyError::BatchedSumcheckError);
         }
 

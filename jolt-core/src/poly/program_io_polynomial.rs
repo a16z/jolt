@@ -9,7 +9,6 @@ use crate::{
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
         range_mask_polynomial::is_valid_range,
     },
-    utils::thread::unsafe_allocate_zero_vec,
 };
 
 pub struct ProgramIOPolynomial<F: JoltField> {

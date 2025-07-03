@@ -21,7 +21,7 @@ use emulator::{
 use instruction::{RV32IMCycle, RV32IMInstruction};
 use object::{Object, ObjectSection, SectionKind};
 
-mod emulator;
+pub mod emulator;
 pub mod instruction;
 
 pub use common::jolt_device::JoltDevice;
