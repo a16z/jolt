@@ -9,7 +9,7 @@ pub mod matmult;
 pub mod sum;
 pub mod sumcheck_engine;
 
-use crate::jolt_onnx::precompiles::conv::ConvPrecompile;
+use crate::jolt_onnx::precompiles::{conv::ConvPrecompile, sum::SumPrecompile};
 use matmult::MatMultPrecompile;
 use serde::{Deserialize, Serialize};
 
@@ -21,4 +21,6 @@ pub enum PrecompileOperators {
     MatMult(MatMultPrecompile),
     /// Conv operator precompile.
     Conv(ConvPrecompile),
+    /// Sum precompile.
+    Sum(SumPrecompile),
 }

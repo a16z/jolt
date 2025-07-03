@@ -11,10 +11,10 @@
 
 use crate::{
     field::JoltField,
-    jolt_onnx::{precompiles::sumcheck_engine::BatchableSumcheckInstance, tracer::tensor::QuantizedTensor},
-    poly::{
-        dense_mlpoly::DensePolynomial, multilinear_polynomial::BindingOrder,
+    jolt_onnx::{
+        precompiles::sumcheck_engine::BatchableSumcheckInstance, tracer::tensor::QuantizedTensor,
     },
+    poly::{dense_mlpoly::DensePolynomial, multilinear_polynomial::BindingOrder},
     utils::{math::Math, transcript::Transcript},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -38,7 +38,13 @@ impl SumPrecompile {
     where
         F: JoltField,
     {
-        DensePolynomial::new(self.z.data.iter().map(|&x| F::from_i64(x as i64)).collect_vec())
+        DensePolynomial::new(
+            self.z
+                .data
+                .iter()
+                .map(|&x| F::from_i64(x as i64))
+                .collect_vec(),
+        )
     }
 }
 
@@ -85,7 +91,6 @@ where
             num_rounds,
         }
     }
-
 }
 
 /// Dimensions for the sum inputs.
@@ -205,15 +210,11 @@ where
 
     #[tracing::instrument(skip_all)]
     fn compute_prover_message(&self, _: usize) -> Vec<F> {
-        let SumProverState {
-            z_poly, ..
-        } = self.prover_state.as_ref().unwrap();
-        let len = z_poly.len() / 2; 
+        let SumProverState { z_poly, .. } = self.prover_state.as_ref().unwrap();
+        let len = z_poly.len() / 2;
         let g0 = (0..len)
             .into_iter()
-            .map(|i| {
-                z_poly[i]
-            })
+            .map(|i| z_poly[i])
             .reduce(|acc, v| acc + v)
             .unwrap_or(F::zero());
         vec![g0]
@@ -226,12 +227,8 @@ where
     }
 
     fn cache_openings(&mut self) {
-        let SumProverState {
-            z_poly, ..
-        } = self.prover_state.as_ref().unwrap();
-        self.claims = Some(SumClaims {
-            sum: z_poly[0],
-        });
+        let SumProverState { z_poly, .. } = self.prover_state.as_ref().unwrap();
+        self.claims = Some(SumClaims { sum: z_poly[0] });
     }
 
     /// final check: Σ_i z_i
@@ -244,12 +241,15 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{
-        jolt_onnx::{precompiles::{
-            sum::{
-                SumPrecompile, SumPrecompileDims, SumProverState, SumSumcheck, SumVerifierState,
+        jolt_onnx::{
+            precompiles::{
+                sum::{
+                    SumPrecompile, SumPrecompileDims, SumProverState, SumSumcheck, SumVerifierState,
+                },
+                sumcheck_engine::{BatchableSumcheckInstance, BatchedSumcheck},
             },
-            sumcheck_engine::{BatchableSumcheckInstance, BatchedSumcheck},
-        }, tracer::tensor::QuantizedTensor},
+            tracer::tensor::QuantizedTensor,
+        },
         utils::transcript::{KeccakTranscript, Transcript},
     };
     use ark_bn254::Fr;
