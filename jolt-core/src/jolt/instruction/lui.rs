@@ -26,7 +26,13 @@ impl InstructionFlags for LUI {
 
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<LUI> {
     fn to_instruction_inputs(&self) -> (u64, i64) {
-        (0, self.instruction.operands.imm as i64)
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => (0, self.instruction.operands.imm as u8 as i64),
+            32 => (0, self.instruction.operands.imm as u32 as i64),
+            64 => (0, self.instruction.operands.imm as i64),
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+        }
     }
 
     fn to_lookup_index(&self) -> u64 {

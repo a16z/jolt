@@ -55,6 +55,7 @@ where
     sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     rv_claim: F,
     ra_claims: [F; 4],
+    add_sub_mul_flag_claim: F,
     flag_claims: Vec<F>,
 }
 
@@ -96,12 +97,19 @@ where
     ) -> Self {
         let log_T = trace.len().log_2();
         let r_cycle: Vec<F> = transcript.challenge_vector(log_T);
-        let (read_checking_sumcheck, rv_claim, ra_claims, flag_claims, eq_r_cycle) =
-            prove_sparse_dense_shout::<WORD_SIZE, _, _>(trace, &r_cycle, transcript);
+        let (
+            read_checking_sumcheck,
+            rv_claim,
+            ra_claims,
+            add_sub_mul_flag_claim,
+            flag_claims,
+            eq_r_cycle,
+        ) = prove_sparse_dense_shout::<WORD_SIZE, _, _>(trace, &r_cycle, transcript);
         let read_checking_proof = ReadCheckingProof {
             sumcheck_proof: read_checking_sumcheck,
             rv_claim,
             ra_claims,
+            add_sub_mul_flag_claim,
             flag_claims,
         };
 
@@ -161,6 +169,7 @@ where
             r_cycle.clone(),
             self.read_checking_proof.rv_claim,
             self.read_checking_proof.ra_claims,
+            self.read_checking_proof.add_sub_mul_flag_claim,
             &self.read_checking_proof.flag_claims,
             transcript,
         )?;

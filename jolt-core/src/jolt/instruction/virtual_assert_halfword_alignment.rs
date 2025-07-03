@@ -42,11 +42,11 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualAssert
             #[cfg(test)]
             8 => (
                 self.register_state.rs1 as u8 as u64,
-                self.instruction.operands.imm,
+                self.instruction.operands.imm as u8 as i64,
             ),
             32 => (
                 self.register_state.rs1 as u32 as u64,
-                self.instruction.operands.imm,
+                self.instruction.operands.imm as u32 as i64,
             ),
             64 => (self.register_state.rs1, self.instruction.operands.imm),
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
