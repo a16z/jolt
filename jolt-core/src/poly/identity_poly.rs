@@ -99,9 +99,6 @@ impl<F: JoltField> PolynomialEvaluation<F> for IdentityPolynomial<F> {
     }
 
     fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F> {
-        debug_assert!(degree > 0);
-        debug_assert!(index < self.num_vars.pow2() / 2);
-
         let mut evals = vec![F::zero(); degree];
         let m = match order {
             BindingOrder::LowToHigh => {
@@ -276,8 +273,6 @@ impl<F: JoltField> PolynomialEvaluation<F> for OperandPolynomial<F> {
     }
 
     fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F> {
-        debug_assert!(degree > 0);
-        debug_assert!(index < self.num_vars.pow2() / 2);
         debug_assert_eq!(
             order,
             BindingOrder::HighToLow,
