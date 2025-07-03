@@ -122,7 +122,7 @@ impl<F: JoltField> OutputSumcheck<F> {
             initial_ram_state,
             final_ram_state,
             program_io,
-            &r_address,
+            r_address,
         );
         let mut output_sumcheck = OutputSumcheck {
             K,
@@ -318,7 +318,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             ),
             remap_address(RAM_START_ADDRESS, &program_io.memory_layout),
         );
-        let val_io = ProgramIOPolynomial::new(&program_io);
+        let val_io = ProgramIOPolynomial::new(program_io);
 
         let eq_eval = EqPolynomial::mle(r_address, r_address_prime);
         let io_mask_eval = io_mask.evaluate_mle(r_address_prime);

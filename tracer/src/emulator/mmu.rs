@@ -823,32 +823,6 @@ impl Mmu {
         }
     }
 
-    /// Checks if passed virtual address is valid (pointing a certain device) or not.
-    /// This method can return page fault trap.
-    ///
-    /// # Arguments
-    /// * `v_address` Virtual address
-    pub fn validate_address(&mut self, v_address: u64) -> Result<bool, ()> {
-        // @TODO: Support other access types?
-        let p_address = match self.translate_address(v_address, &MemoryAccessType::DontCare) {
-            Ok(address) => address,
-            Err(()) => return Err(()),
-        };
-        let effective_address = self.get_effective_address(p_address);
-        let valid = match effective_address >= DRAM_BASE {
-            true => self.memory.validate_address(effective_address),
-            false => matches!(
-                effective_address,
-                0x00001020..=0x00001fff |
-                0x02000000..=0x0200ffff |
-                0x0C000000..=0x0fffffff |
-                0x10000000..=0x100000ff |
-                0x10001000..=0x10001FFF
-            ),
-        };
-        Ok(valid)
-    }
-
     fn translate_address(
         &mut self,
         v_address: u64,
