@@ -324,7 +324,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             &program_io.memory_layout,
         ) as usize;
         for word in ram_preprocessing.bytecode_words.iter() {
-            initial_memory_state[index] = *word as i64;
+            initial_memory_state[index] = *word;
             index += 1;
         }
 
@@ -352,7 +352,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
                 word[i] = *byte;
             }
             let word = u32::from_le_bytes(word);
-            initial_memory_state[index] = word as i64;
+            initial_memory_state[index] = word;
             final_memory_state[index] = word;
             index += 1;
         }
@@ -388,7 +388,10 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
 
         #[cfg(test)]
         {
-            let mut expected_final_memory_state = initial_memory_state.clone();
+            let mut expected_final_memory_state: Vec<_> = initial_memory_state
+                .iter()
+                .map(|word| *word as i64)
+                .collect();
             let inc = CommittedPolynomials::RamInc.generate_witness(preprocessing, trace);
             for (j, cycle) in trace.iter().enumerate() {
                 if let RAMAccess::Write(write) = cycle.ram_access() {
@@ -412,13 +415,8 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             transcript,
         );
 
-        // TODO: avoid this collect
-        let initial_memory_state: Vec<u32> = initial_memory_state
-            .into_par_iter()
-            .map(|word| word as u32)
-            .collect();
         let val_init: MultilinearPolynomial<F> =
-            MultilinearPolynomial::from(initial_memory_state.clone());
+            MultilinearPolynomial::from(initial_memory_state.clone()); // TODO(moodlezoup): avoid clone
         let init_eval = val_init.evaluate(&r_address);
 
         let (val_evaluation_proof, mut r_cycle_prime) = prove_val_evaluation(
@@ -1401,13 +1399,13 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
     #[tracing::instrument(skip_all, name = "ReadWriteCheckingProof::prove")]
     pub fn prove(
         trace: &[RV32IMCycle],
-        initial_memory_state: &[i64],
+        initial_memory_state: &[u32],
         memory_layout: &MemoryLayout,
         r: Vec<F>,
         r_prime: Vec<F>,
         transcript: &mut ProofTranscript,
     ) -> (ReadWriteCheckingProof<F, ProofTranscript>, Vec<F>, Vec<F>) {
-        // TODO: initial_memory_state should probably be a Vec<i128>
+        // TODO: initial_memory_state should probably be a Vec<u64>
 
         let read_values: Vec<u64> = trace
             .par_iter()
@@ -1659,10 +1657,7 @@ pub fn prove_val_evaluation<
 
 pub fn remap_address(address: u64, memory_layout: &MemoryLayout) -> u64 {
     if address == 0 {
-        return 0;
-        // // HACK: The word after termination is reserved as an
-        // // always-zero word for the purpose of "dummy" reads/writes
-        // return remap_address(memory_layout.termination + 4, memory_layout);
+        return 0; // [JOLT-135]: Better handling for no-ops
     }
     if address >= memory_layout.input_start {
         (address - memory_layout.input_start) / 4 + 1

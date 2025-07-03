@@ -125,6 +125,7 @@ impl<F: JoltField, const D: usize> RASumcheck<F, D> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "ra virtualization")]
     pub fn prove<ProofTranscript: Transcript>(
         mut self,
         transcript: &mut ProofTranscript,
@@ -152,7 +153,6 @@ impl<F: JoltField, const D: usize> RASumcheck<F, D> {
         sumcheck_proof: &SumcheckInstanceProof<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<Vec<F>, crate::utils::errors::ProofVerifyError> {
-        println!("Verifying ra virtualization sumcheck...");
         let mut verifier_sumcheck = Self::new_verifier(ra_claim, r_cycle, T);
 
         let ra_i_claims_array: [F; D] = ra_i_claims
@@ -161,7 +161,6 @@ impl<F: JoltField, const D: usize> RASumcheck<F, D> {
         verifier_sumcheck.ra_i_claims = Some(ra_i_claims_array);
 
         let r_cycle_bound = verifier_sumcheck.verify_single(sumcheck_proof, transcript)?;
-        println!("Verified");
 
         Ok(r_cycle_bound)
     }

@@ -266,8 +266,6 @@ where
                 .map_or(0, |pos| pos + 1),
         );
 
-        println!("memory layout: {:?}", program_io.memory_layout);
-
         F::initialize_lookup_tables(std::mem::take(&mut preprocessing.field));
 
         // TODO(moodlezoup): Truncate generators
@@ -483,7 +481,6 @@ where
                 &mut transcript,
             )
             .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))?;
-        println!("Spartan verified");
 
         proof.instruction_lookups.verify(
             &proof.commitments,
@@ -491,14 +488,13 @@ where
             &mut transcript,
         )?;
 
-        println!("instruction_lookups verified");
         proof.registers.verify(
             &proof.commitments,
             padded_trace_length,
             &mut opening_accumulator,
             &mut transcript,
         )?;
-        println!("registers verified");
+
         proof.ram.verify(
             padded_trace_length,
             &preprocessing.shared.ram,
@@ -507,7 +503,7 @@ where
             &mut transcript,
             &mut opening_accumulator,
         )?;
-        println!("ram verified");
+
         proof.bytecode.verify(
             &preprocessing.shared.bytecode,
             &proof.commitments,
@@ -515,7 +511,6 @@ where
             &mut transcript,
             &mut opening_accumulator,
         )?;
-        println!("bytecode verified");
 
         // Batch-verify all openings
         opening_accumulator.reduce_and_verify(

@@ -233,7 +233,6 @@ mod tests {
     #[test]
     #[serial]
     #[should_panic]
-    #[ignore]
     fn truncated_trace() {
         let artifact_guard = FIB_FILE_LOCK.lock().unwrap();
         let mut program = host::Program::new("fibonacci-guest");
@@ -267,8 +266,6 @@ mod tests {
     #[test]
     #[serial]
     #[should_panic]
-    // TODO: Remove this ignore
-    #[ignore]
     fn malicious_trace() {
         let artifact_guard = FIB_FILE_LOCK.lock().unwrap();
         let mut program = host::Program::new("fibonacci-guest");
@@ -289,9 +286,9 @@ mod tests {
             bytecode.clone(),
             memory_layout,
             init_memory_state,
-            1 << 20,
-            1 << 20,
-            1 << 20,
+            1 << 16,
+            1 << 16,
+            1 << 16,
         );
         let (proof, commitments, debug_info) =
             <RV32IJoltVM as Jolt<

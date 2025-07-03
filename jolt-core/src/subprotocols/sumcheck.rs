@@ -154,8 +154,7 @@ impl BatchedSumcheck {
             .max()
             .unwrap();
 
-        // let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
-        let batching_coeffs: Vec<F> = vec![F::one(); sumcheck_instances.len()];
+        let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
 
         // To see why we may need to scale by a power of two, consider a batch of
         // two sumchecks:
@@ -214,16 +213,10 @@ impl BatchedSumcheck {
                 })
                 .collect();
 
-            let max_degree = sumcheck_instances
-                .iter()
-                .map(|sumcheck| sumcheck.degree())
-                .max()
-                .unwrap();
-
             // Linear combination of individual univariate polynomials
             let batched_univariate_poly: UniPoly<F> =
                 univariate_polys.iter().zip(batching_coeffs.iter()).fold(
-                    UniPoly::from_coeff(vec![F::zero(); max_degree + 1]),
+                    UniPoly::from_coeff(vec![]),
                     |mut batched_poly, (poly, coeff)| {
                         batched_poly += &(poly * coeff);
                         batched_poly
@@ -294,8 +287,7 @@ impl BatchedSumcheck {
             .max()
             .unwrap();
 
-        // let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
-        let batching_coeffs: Vec<F> = vec![F::one(); sumcheck_instances.len()];
+        let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
 
         // To see why we may need to scale by a power of two, consider a batch of
         // two sumchecks:
@@ -336,7 +328,6 @@ impl BatchedSumcheck {
             .sum();
 
         if output_claim != expected_output_claim {
-            println!("BatchedSumcheckError: {output_claim} != {expected_output_claim}");
             return Err(ProofVerifyError::BatchedSumcheckError);
         }
 

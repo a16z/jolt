@@ -44,27 +44,6 @@ impl<F: JoltField> Default for MultilinearPolynomial<F> {
 }
 
 impl<F: JoltField> MultilinearPolynomial<F> {
-    pub fn sumcheck_evals_debug(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F> {
-        debug_assert!(degree > 0);
-        debug_assert!(index < self.len() / 2);
-
-        let mut evals = vec![F::zero(); degree + 1];
-        match order {
-            BindingOrder::HighToLow => {
-                evals[0] = self.get_bound_coeff(index);
-                evals[1] = self.get_bound_coeff(index + self.len() / 2);
-                let m = evals[1] - evals[0];
-                for i in 2..degree {
-                    evals[i] = evals[i - 1] + m;
-                }
-            }
-            BindingOrder::LowToHigh => {
-                todo!()
-            }
-        };
-        evals
-    }
-
     /// The length of the polynomial before it was bound
     pub fn original_len(&self) -> usize {
         match self {
