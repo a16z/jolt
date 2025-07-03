@@ -412,8 +412,14 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             transcript,
         );
 
-        let init: MultilinearPolynomial<F> = MultilinearPolynomial::from(initial_memory_state);
-        let init_eval = init.evaluate(&r_address);
+        // TODO: avoid this collect
+        let initial_memory_state: Vec<u32> = initial_memory_state
+            .into_par_iter()
+            .map(|word| word as u32)
+            .collect();
+        let val_init: MultilinearPolynomial<F> =
+            MultilinearPolynomial::from(initial_memory_state.clone());
+        let init_eval = val_init.evaluate(&r_address);
 
         let (val_evaluation_proof, mut r_cycle_prime) = prove_val_evaluation(
             preprocessing,
@@ -493,6 +499,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         let mut output_sumcheck = OutputSumcheck::new_prover(
             preprocessing,
             trace,
+            initial_memory_state,
             final_memory_state,
             program_io,
             &r_address_prime,
@@ -561,8 +568,10 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             index += 1;
         }
 
-        let init: MultilinearPolynomial<F> = MultilinearPolynomial::from(initial_memory_state);
-        let init_eval = init.evaluate(&r_address);
+        // TODO: Verifier currently materializes and evaluates Val_init itself,
+        // but this is not tractable for large K
+        let val_init: MultilinearPolynomial<F> = MultilinearPolynomial::from(initial_memory_state);
+        let init_eval = val_init.evaluate(&r_address);
 
         let (sumcheck_claim, mut r_cycle_prime) = self.val_evaluation_proof.sumcheck_proof.verify(
             self.read_write_checking_proof.val_claim - init_eval,
@@ -665,6 +674,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         println!("Verifying output sumcheck");
         let output_sumcheck = OutputSumcheck::new_verifier(
             program_io,
+            val_init,
             &r_address_prime,
             T,
             &self.output_proof.sumcheck_claims,
@@ -2019,6 +2029,7 @@ fn prove_ra_hamming_weight<F: JoltField, ProofTranscript: Transcript>(
 }
 
 struct OutputSumcheckProverState<F: JoltField> {
+    val_init: MultilinearPolynomial<F>,
     val_final: MultilinearPolynomial<F>,
     val_io: MultilinearPolynomial<F>,
     eq_poly: MultilinearPolynomial<F>,
@@ -2036,11 +2047,13 @@ impl<F: JoltField> OutputSumcheckProverState<F> {
     >(
         preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
         trace: &[RV32IMCycle],
+        initial_ram_state: Vec<u32>,
         final_ram_state: Vec<u32>,
         program_io: &JoltDevice,
         r_address: &[F],
     ) -> Self {
         let K = final_ram_state.len();
+        debug_assert_eq!(initial_ram_state.len(), final_ram_state.len());
         debug_assert!(K.is_power_of_two());
 
         let io_start = remap_address(
@@ -2074,6 +2087,7 @@ impl<F: JoltField> OutputSumcheckProverState<F> {
         eq_table.reset(F::one());
 
         Self {
+            val_init: initial_ram_state.into(),
             val_final: final_ram_state.into(),
             val_io: val_io.into(),
             eq_poly: EqPolynomial::evals(r_address).into(),
@@ -2088,13 +2102,19 @@ impl<F: JoltField> OutputSumcheckProverState<F> {
 
 struct OutputSumcheckVerifierState<F: JoltField> {
     r_address: Vec<F>,
+    val_init: MultilinearPolynomial<F>,
     program_io: JoltDevice,
 }
 
 impl<F: JoltField> OutputSumcheckVerifierState<F> {
-    fn initialize(r_address: &[F], program_io: &JoltDevice) -> Self {
+    fn initialize(
+        r_address: &[F],
+        val_init: MultilinearPolynomial<F>,
+        program_io: &JoltDevice,
+    ) -> Self {
         Self {
             r_address: r_address.to_vec(),
+            val_init,
             program_io: program_io.clone(),
         }
     }
@@ -2127,6 +2147,7 @@ impl<F: JoltField> OutputSumcheck<F> {
     >(
         preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
         trace: &[RV32IMCycle],
+        initial_ram_state: Vec<u32>,
         final_ram_state: Vec<u32>,
         program_io: &JoltDevice,
         r_address: &[F],
@@ -2136,12 +2157,11 @@ impl<F: JoltField> OutputSumcheck<F> {
         let prover_state = OutputSumcheckProverState::initialize(
             preprocessing,
             trace,
+            initial_ram_state,
             final_ram_state,
             program_io,
             &r_address,
         );
-
-        println!("P r_address: {r_address:?}");
 
         Self {
             prover_state: Some(prover_state),
@@ -2154,6 +2174,7 @@ impl<F: JoltField> OutputSumcheck<F> {
 
     fn new_verifier(
         program_io: &JoltDevice,
+        val_init: MultilinearPolynomial<F>,
         r_address: &[F],
         T: usize,
         claims: &OutputSumcheckClaims<F>,
@@ -2161,10 +2182,9 @@ impl<F: JoltField> OutputSumcheck<F> {
         let K = r_address.len().pow2();
         let verifier_state = OutputSumcheckVerifierState {
             program_io: program_io.clone(),
+            val_init,
             r_address: r_address.to_vec(),
         };
-
-        println!("V r_address: {r_address:?}");
 
         Self {
             prover_state: None,
@@ -2202,14 +2222,27 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                 ..
             } = self.prover_state.as_ref().unwrap();
 
+            #[cfg(test)]
+            {
+                let temp: F = (0..eq_poly.len())
+                    .into_par_iter()
+                    .map(|k| {
+                        eq_poly.get_bound_coeff(k)
+                            * io_mask.get_bound_coeff(k)
+                            * (val_final.get_bound_coeff(k) - val_io.get_bound_coeff(k))
+                    })
+                    .sum();
+                println!("before: {temp}");
+            }
+
             let univariate_poly_evals: [F; DEGREE] = (0..eq_poly.len() / 2)
                 .into_par_iter()
-                .map(|j| {
-                    let eq_evals = eq_poly.sumcheck_evals(j, DEGREE, BindingOrder::HighToLow);
-                    let io_mask_evals = io_mask.sumcheck_evals(j, DEGREE, BindingOrder::HighToLow);
+                .map(|k| {
+                    let eq_evals = eq_poly.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
+                    let io_mask_evals = io_mask.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
                     let val_final_evals =
-                        val_final.sumcheck_evals(j, DEGREE, BindingOrder::HighToLow);
-                    let val_io_evals = val_io.sumcheck_evals(j, DEGREE, BindingOrder::HighToLow);
+                        val_final.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
+                    let val_io_evals = val_io.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
                     [
                         eq_evals[0] * io_mask_evals[0] * (val_final_evals[0] - val_io_evals[0]),
                         eq_evals[1] * io_mask_evals[1] * (val_final_evals[1] - val_io_evals[1]),
@@ -2240,25 +2273,79 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                 wa,
                 eq_poly,
                 io_mask,
+                val_init,
                 val_io,
                 ..
             } = self.prover_state.as_ref().unwrap();
+            let wa = wa.as_ref().unwrap();
 
-            // eq, io_mask, and val_io polynomials are fully bound at this point
+            // eq, io_mask, val_init, and val_io polynomials are fully bound at this point
             let eq = eq_poly.final_sumcheck_claim();
             let io_mask = io_mask.final_sumcheck_claim();
+            let val_init = val_init.final_sumcheck_claim();
             let val_io = val_io.final_sumcheck_claim();
 
-            let wa = wa.as_ref().unwrap();
+            #[cfg(test)]
+            {
+                assert_eq!(inc.len(), wa.len());
+                // let temp: F = (0..inc.len())
+                //     .into_par_iter()
+                //     .map(|j| inc.get_bound_coeff(j) * wa.get_bound_coeff(j))
+                //     .sum();
+                // let temp = eq * io_mask * (val_init + temp - val_io);
+                // println!("after: {temp}");
+
+                let temp: F = (0..inc.len() / 2)
+                    .into_par_iter()
+                    .map(|j| inc.get_bound_coeff(j) * wa.get_bound_coeff(j))
+                    .sum();
+                let expected_0 = eq * io_mask * (val_init + temp - val_io);
+                println!("expected_0: {expected_0}");
+
+                let temp: F = (inc.len() / 2..inc.len())
+                    .into_par_iter()
+                    .map(|j| inc.get_bound_coeff(j) * wa.get_bound_coeff(j))
+                    .sum();
+                let expected_1 = eq * io_mask * (val_init + temp - val_io);
+                println!("expected_1: {expected_1}");
+            }
+
+            let mut univariate_poly_evals: [F; 3] = (0..inc.len() / 2)
+                .into_par_iter()
+                .map(|j| {
+                    let inc_evals = inc.sumcheck_evals_debug(j, DEGREE, BindingOrder::HighToLow);
+                    let wa_evals = wa.sumcheck_evals_debug(j, DEGREE, BindingOrder::HighToLow);
+                    [
+                        inc_evals[0] * wa_evals[0],
+                        inc_evals[1] * wa_evals[1],
+                        inc_evals[2] * wa_evals[2],
+                    ]
+                })
+                .reduce(
+                    || [F::zero(); 3],
+                    |running, new| {
+                        [
+                            running[0] + new[0],
+                            running[1] + new[1],
+                            running[2] + new[2],
+                        ]
+                    },
+                );
+            println!("hypothesis: {}", eq * io_mask * univariate_poly_evals[1]);
+            univariate_poly_evals = [
+                eq * io_mask * (val_init + univariate_poly_evals[0] - val_io),
+                eq * io_mask * (val_init + univariate_poly_evals[1] - val_io),
+                eq * io_mask * (val_init + univariate_poly_evals[2] - val_io),
+            ];
+            println!("actual_0: {}", univariate_poly_evals[0]);
+            println!("actual_1: {}", univariate_poly_evals[1]);
+
             let mut univariate_poly_evals: [F; DEGREE] = (0..inc.len() / 2)
                 .into_par_iter()
                 .map(|j| {
                     let inc_evals = inc.sumcheck_evals(j, DEGREE, BindingOrder::HighToLow);
                     let wa_evals = wa.sumcheck_evals(j, DEGREE, BindingOrder::HighToLow);
-                    [
-                        eq * io_mask * (inc_evals[0] * wa_evals[0] - val_io),
-                        eq * io_mask * (inc_evals[1] * wa_evals[1] - val_io),
-                    ]
+                    [inc_evals[0] * wa_evals[0], inc_evals[1] * wa_evals[1]]
                 })
                 .reduce(
                     || [F::zero(); DEGREE],
@@ -2266,11 +2353,10 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                 );
 
             // TODO: is this correct?
-            univariate_poly_evals = [univariate_poly_evals[0], univariate_poly_evals[1]];
-            // univariate_poly_evals = [
-            //     eq * io_mask * univariate_poly_evals[0],
-            //     eq * io_mask * univariate_poly_evals[1],
-            // ];
+            univariate_poly_evals = [
+                eq * io_mask * (val_init + univariate_poly_evals[0] - val_io),
+                eq * io_mask * (val_init + univariate_poly_evals[1] - val_io),
+            ];
 
             univariate_poly_evals.to_vec()
         }
@@ -2280,16 +2366,55 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         if round < self.K.log_2() {
             // Bind address variable
             let OutputSumcheckProverState {
+                val_init,
                 val_final,
                 val_io,
                 eq_poly,
                 io_mask,
+                eq_table,
                 ..
             } = self.prover_state.as_mut().unwrap();
 
-            [val_final, val_io, eq_poly, io_mask]
+            [val_init, val_final, val_io, eq_poly, io_mask]
                 .into_par_iter()
                 .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+            eq_table.update(r_j);
+
+            if round == self.K.log_2() - 1 {
+                let OutputSumcheckProverState {
+                    wa,
+                    eq_table,
+                    write_addresses,
+                    #[cfg(test)]
+                    val_init,
+                    #[cfg(test)]
+                    val_final,
+                    #[cfg(test)]
+                    inc,
+                    ..
+                } = self.prover_state.as_mut().unwrap();
+
+                // wa(r_address, j)
+                let wa_r_address: Vec<_> =
+                    write_addresses.par_iter().map(|k| eq_table[*k]).collect();
+
+                #[cfg(test)]
+                {
+                    let expected = val_final.final_sumcheck_claim();
+                    let actual = val_init.final_sumcheck_claim()
+                        + wa_r_address
+                            .par_iter()
+                            .enumerate()
+                            .map(|(j, wa)| inc.get_coeff(j) * wa)
+                            .sum::<F>();
+                    assert_eq!(
+                        expected, actual,
+                        "Val_final(r_address) ≠ Val_init(r_address) + \\sum_j wa(r_address, j) * Inc(j)"
+                    );
+                }
+
+                *wa = Some(wa_r_address.into());
+            }
         } else {
             // Bind cycle variable
             let OutputSumcheckProverState { inc, wa, .. } = self.prover_state.as_mut().unwrap();
@@ -2302,39 +2427,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                         .bind_parallel(r_j, BindingOrder::HighToLow)
                 },
             );
-        }
-
-        let OutputSumcheckProverState {
-            wa,
-            eq_table,
-            write_addresses,
-            #[cfg(test)]
-            val_final,
-            #[cfg(test)]
-            inc,
-            ..
-        } = self.prover_state.as_mut().unwrap();
-        eq_table.update(r_j);
-
-        if round == self.K.log_2() - 1 {
-            // wa(r_address, j)
-            let wa_r_address: Vec<_> = write_addresses.par_iter().map(|k| eq_table[*k]).collect();
-
-            #[cfg(test)]
-            {
-                let expected = val_final.final_sumcheck_claim();
-                let actual: F = wa_r_address
-                    .par_iter()
-                    .enumerate()
-                    .map(|(j, wa)| inc.get_coeff(j) * wa)
-                    .sum();
-                assert_eq!(
-                    expected, actual,
-                    "Val_final(r_address) ≠ \\sum_j wa(r_address, j) * Inc(j)"
-                );
-            }
-
-            *wa = Some(wa_r_address.into());
         }
     }
 
@@ -2353,6 +2445,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             let OutputSumcheckProverState {
                 inc,
                 wa,
+                val_init,
                 val_io,
                 io_mask,
                 eq_poly,
@@ -2360,10 +2453,12 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             } = self.prover_state.as_mut().unwrap();
             println!("P eq_eval: {}", eq_poly.final_sumcheck_claim());
             println!("P io_mask_eval: {}", io_mask.final_sumcheck_claim());
+            println!("P val_init_eval: {}", val_init.final_sumcheck_claim());
             println!("P val_io_eval: {}", val_io.final_sumcheck_claim());
             let prover_final_claim = eq_poly.final_sumcheck_claim()
                 * io_mask.final_sumcheck_claim()
-                * (inc.final_sumcheck_claim() * wa.as_ref().unwrap().final_sumcheck_claim()
+                * (val_init.final_sumcheck_claim()
+                    + inc.final_sumcheck_claim() * wa.as_ref().unwrap().final_sumcheck_claim()
                     - val_io.final_sumcheck_claim());
             println!("P final claim: {prover_final_claim}");
 
@@ -2377,6 +2472,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     fn expected_output_claim(&self, r: &[F]) -> F {
         let OutputSumcheckVerifierState {
             r_address,
+            val_init,
             program_io,
         } = self.verifier_state.as_ref().unwrap();
         let OutputSumcheckClaims {
@@ -2397,14 +2493,14 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
 
         let eq_eval = EqPolynomial::mle(r_address, r_address_prime);
         let io_mask_eval = io_mask.evaluate_mle(r_address_prime);
+        let val_init_eval = val_init.evaluate(r_address_prime);
         let val_io_eval = val_io.evaluate(r_address_prime);
         println!("V eq_eval: {eq_eval}");
         println!("V io_mask_eval: {io_mask_eval}");
+        println!("V val_init_eval: {val_init_eval}");
         println!("V val_io_eval: {val_io_eval}");
 
-        EqPolynomial::mle(r_address, r_address_prime)
-            * io_mask.evaluate_mle(r_address_prime)
-            * (*inc_claim * wa_claim - val_io.evaluate(r_address_prime))
+        eq_eval * io_mask_eval * (val_init_eval + *inc_claim * wa_claim - val_io_eval)
     }
 }
 

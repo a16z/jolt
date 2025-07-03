@@ -208,6 +208,10 @@ impl BatchedSumcheck {
                         let offset = max_num_rounds - sumcheck.num_rounds();
                         let mut univariate_poly_evals =
                             sumcheck.compute_prover_message(round - offset);
+                        println!(
+                            "interpolated: {}",
+                            *previous_claim - univariate_poly_evals[0]
+                        );
                         univariate_poly_evals.insert(1, *previous_claim - univariate_poly_evals[0]);
                         UniPoly::from_evals(&univariate_poly_evals)
                     }
