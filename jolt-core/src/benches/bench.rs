@@ -288,14 +288,14 @@ where
     let inputs = postcard::to_stdvec(input).unwrap();
 
     let task = move || {
-        let (io_device, trace) = program.trace(&inputs);
-        let (bytecode, memory_init) = program.decode();
+        let (trace, final_memory_state, io_device) = program.trace(&inputs);
+        let (bytecode, init_memory_state) = program.decode();
 
         let preprocessing: JoltProverPreprocessing<F, PCS, ProofTranscript> =
             RV32IJoltVM::prover_preprocess(
                 bytecode.clone(),
                 io_device.memory_layout.clone(),
-                memory_init,
+                init_memory_state,
                 1 << 18,
                 1 << 18,
                 1 << 20,
@@ -304,6 +304,7 @@ where
         let (jolt_proof, program_io, _) = <RV32IJoltVM as Jolt<32, _, PCS, ProofTranscript>>::prove(
             io_device,
             trace,
+            final_memory_state,
             preprocessing.clone(),
         );
 
@@ -354,14 +355,14 @@ where
     inputs.append(&mut postcard::to_stdvec(&1500u32).unwrap());
 
     let task = move || {
-        let (io_device, trace) = program.trace(&inputs);
-        let (bytecode, memory_init) = program.decode();
+        let (trace, final_memory_state, io_device) = program.trace(&inputs);
+        let (bytecode, init_memory_state) = program.decode();
 
         let preprocessing: JoltProverPreprocessing<F, PCS, ProofTranscript> =
             RV32IJoltVM::prover_preprocess(
                 bytecode.clone(),
                 io_device.memory_layout.clone(),
-                memory_init,
+                init_memory_state,
                 1 << 20,
                 1 << 20,
                 1 << 24,
@@ -370,6 +371,7 @@ where
         let (jolt_proof, program_io, _) = <RV32IJoltVM as Jolt<32, _, PCS, ProofTranscript>>::prove(
             io_device,
             trace,
+            final_memory_state,
             preprocessing.clone(),
         );
 

@@ -23,6 +23,12 @@ pub trait Terminal {
 /// For the test or whatever.
 pub struct DummyTerminal {}
 
+impl Default for DummyTerminal {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DummyTerminal {
     pub fn new() -> Self {
         DummyTerminal {}

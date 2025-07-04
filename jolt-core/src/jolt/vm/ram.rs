@@ -5,7 +5,10 @@ use std::vec;
 use crate::{
     field::{JoltField, OptimizedMul},
     jolt::{
-        vm::{JoltCommitments, JoltProverPreprocessing},
+        vm::{
+            output_check::{OutputProof, OutputSumcheck},
+            JoltCommitments, JoltProverPreprocessing,
+        },
         witness::CommittedPolynomials,
     },
     poly::{
@@ -30,9 +33,13 @@ use crate::{
     },
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::{constants::BYTES_PER_INSTRUCTION, jolt_device::MemoryLayout};
+use common::{
+    constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS},
+    jolt_device::MemoryLayout,
+};
 use rayon::prelude::*;
 use tracer::{
+    emulator::memory::Memory,
     instruction::{RAMAccess, RV32IMCycle},
     JoltDevice,
 };
@@ -93,6 +100,7 @@ pub struct RAMTwistProof<F: JoltField, ProofTranscript: Transcript> {
     ra_proof: RAProof<F, ProofTranscript>,
     hamming_weight_proof: HammingWeightProof<F, ProofTranscript>,
     raf_evaluation_proof: RafEvaluationProof<F, ProofTranscript>,
+    output_proof: OutputProof<F, ProofTranscript>,
 }
 
 const READ_WRITE_CHECK_DEGREE: usize = 3;
@@ -295,6 +303,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
     pub fn prove<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
         preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
         trace: &[RV32IMCycle],
+        final_memory: Memory,
         program_io: &JoltDevice,
         K: usize,
         opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
@@ -315,23 +324,86 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             &program_io.memory_layout,
         ) as usize;
         for word in ram_preprocessing.bytecode_words.iter() {
-            initial_memory_state[index] = *word as i64;
+            initial_memory_state[index] = *word;
             index += 1;
         }
-        // Copy input bytes
+
+        let dram_start_index = remap_address(RAM_START_ADDRESS, &program_io.memory_layout) as usize;
+        let mut final_memory_state = vec![0; K];
+        // Note that `final_memory` only contains memory at addresses >= `RAM_START_ADDRESS`
+        // so we will still need to populate `final_memory_state` with the contents of
+        // `program_io`, which lives at addresses < `RAM_START_ADDRESS`
+        final_memory_state[dram_start_index..]
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(k, word)| {
+                *word = final_memory.read_word(4 * k as u64);
+            });
+
         index = remap_address(
             program_io.memory_layout.input_start,
             &program_io.memory_layout,
         ) as usize;
-        // Convert input bytes into words and populate `v_init`
+        // Convert input bytes into words and populate
+        // `initial_memory_state` and `final_memory_state`
         for chunk in program_io.inputs.chunks(4) {
             let mut word = [0u8; 4];
             for (i, byte) in chunk.iter().enumerate() {
                 word[i] = *byte;
             }
             let word = u32::from_le_bytes(word);
-            initial_memory_state[index] = word as i64;
+            initial_memory_state[index] = word;
+            final_memory_state[index] = word;
             index += 1;
+        }
+
+        // Convert output bytes into words and populate
+        // `final_memory_state`
+        index = remap_address(
+            program_io.memory_layout.output_start,
+            &program_io.memory_layout,
+        ) as usize;
+        for chunk in program_io.outputs.chunks(4) {
+            let mut word = [0u8; 4];
+            for (i, byte) in chunk.iter().enumerate() {
+                word[i] = *byte;
+            }
+            let word = u32::from_le_bytes(word);
+            final_memory_state[index] = word;
+            index += 1;
+        }
+
+        // Copy panic bit
+        let panic_index =
+            remap_address(program_io.memory_layout.panic, &program_io.memory_layout) as usize;
+        final_memory_state[panic_index] = program_io.panic as u32;
+        if !program_io.panic {
+            // Set termination bit
+            let termination_index = remap_address(
+                program_io.memory_layout.termination,
+                &program_io.memory_layout,
+            ) as usize;
+            final_memory_state[termination_index] = 1;
+        }
+
+        #[cfg(test)]
+        {
+            let mut expected_final_memory_state: Vec<_> = initial_memory_state
+                .iter()
+                .map(|word| *word as i64)
+                .collect();
+            let inc = CommittedPolynomials::RamInc.generate_witness(preprocessing, trace);
+            for (j, cycle) in trace.iter().enumerate() {
+                if let RAMAccess::Write(write) = cycle.ram_access() {
+                    let k = remap_address(write.address, &program_io.memory_layout) as usize;
+                    expected_final_memory_state[k] += inc.get_coeff_i64(j);
+                }
+            }
+            let expected_final_memory_state: Vec<u32> = expected_final_memory_state
+                .into_iter()
+                .map(|word| word.try_into().unwrap())
+                .collect();
+            assert_eq!(expected_final_memory_state, final_memory_state);
         }
 
         let (read_write_checking_proof, r_address, r_cycle) = ReadWriteCheckingProof::prove(
@@ -343,8 +415,9 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             transcript,
         );
 
-        let init: MultilinearPolynomial<F> = MultilinearPolynomial::from(initial_memory_state);
-        let init_eval = init.evaluate(&r_address);
+        let val_init: MultilinearPolynomial<F> =
+            MultilinearPolynomial::from(initial_memory_state.clone()); // TODO(moodlezoup): avoid clone
+        let init_eval = val_init.evaluate(&r_address);
 
         let (val_evaluation_proof, mut r_cycle_prime) = prove_val_evaluation(
             preprocessing,
@@ -406,7 +479,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
 
         opening_accumulator.append_sparse(
             vec![unbound_ra_poly],
-            r_address_prime,
+            r_address_prime.clone(),
             r_cycle_bound,
             vec![ra_proof.ra_i_claims[0]],
         );
@@ -421,6 +494,16 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         let raf_evaluation_proof =
             RafEvaluationProof::prove(trace, &program_io.memory_layout, r_cycle, K, transcript);
 
+        let output_proof = OutputSumcheck::prove(
+            preprocessing,
+            trace,
+            initial_memory_state,
+            final_memory_state,
+            program_io,
+            &r_address_prime,
+            transcript,
+        );
+
         // TODO: Append to opening proof accumulator
 
         RAMTwistProof {
@@ -431,6 +514,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             ra_proof,
             hamming_weight_proof,
             raf_evaluation_proof,
+            output_proof,
         }
     }
 
@@ -478,8 +562,10 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             index += 1;
         }
 
-        let init: MultilinearPolynomial<F> = MultilinearPolynomial::from(initial_memory_state);
-        let init_eval = init.evaluate(&r_address);
+        // TODO: Verifier currently materializes and evaluates Val_init itself,
+        // but this is not tractable for large K
+        let val_init: MultilinearPolynomial<F> = MultilinearPolynomial::from(initial_memory_state);
+        let init_eval = val_init.evaluate(&r_address);
 
         let (sumcheck_claim, mut r_cycle_prime) = self.val_evaluation_proof.sumcheck_proof.verify(
             self.read_write_checking_proof.val_claim - init_eval,
@@ -575,7 +661,16 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             self.raf_evaluation_proof
                 .verify(self.K, transcript, &program_io.memory_layout)?;
 
-        // TODO: Add opening proof verification for ra(r_address_raf, r_cycle)
+        OutputSumcheck::verify(
+            program_io,
+            val_init,
+            &r_address_prime,
+            T,
+            &self.output_proof,
+            transcript,
+        )?;
+
+        // TODO: Append to opening proof accumulator
 
         Ok(())
     }
@@ -1304,13 +1399,13 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
     #[tracing::instrument(skip_all, name = "ReadWriteCheckingProof::prove")]
     pub fn prove(
         trace: &[RV32IMCycle],
-        initial_memory_state: &[i64],
+        initial_memory_state: &[u32],
         memory_layout: &MemoryLayout,
         r: Vec<F>,
         r_prime: Vec<F>,
         transcript: &mut ProofTranscript,
     ) -> (ReadWriteCheckingProof<F, ProofTranscript>, Vec<F>, Vec<F>) {
-        // TODO: initial_memory_state should probably be a Vec<i128>
+        // TODO: initial_memory_state should probably be a Vec<u64>
 
         let read_values: Vec<u64> = trace
             .par_iter()
@@ -1562,7 +1657,7 @@ pub fn prove_val_evaluation<
 
 pub fn remap_address(address: u64, memory_layout: &MemoryLayout) -> u64 {
     if address == 0 {
-        return 0; // TODO(moodlezoup): Better handling for no-ops
+        return 0; // [JOLT-135]: Better handling for no-ops
     }
     if address >= memory_layout.input_start {
         (address - memory_layout.input_start) / 4 + 1
