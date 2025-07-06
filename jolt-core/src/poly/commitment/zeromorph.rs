@@ -440,6 +440,10 @@ where
         .trim(max_poly_len)
     }
 
+    fn srs_size(setup: &Self::Setup) -> usize {
+        setup.0.commit_pp.g1_powers().len()
+    }
+
     fn commit(poly: &MultilinearPolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
         assert!(
             setup.0.commit_pp.g1_powers().len() > poly.len(),

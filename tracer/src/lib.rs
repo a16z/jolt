@@ -18,7 +18,7 @@ use emulator::{
 use object::{Object, ObjectSection, SectionKind};
 
 mod decode;
-mod emulator;
+pub mod emulator;
 mod trace;
 
 use crate::decode::decode_raw;
@@ -33,7 +33,7 @@ pub fn trace(
     inputs: &[u8],
     memory_config: &MemoryConfig,
 ) -> (Vec<RVTraceRow>, JoltDevice) {
-    let term = DefaultTerminal::new();
+    let term = DefaultTerminal::default();
     let mut emulator = Emulator::new(Box::new(term));
     emulator.update_xlen(get_xlen());
 

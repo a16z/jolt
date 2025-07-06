@@ -233,7 +233,6 @@ where
         assert!(polys
             .par_iter()
             .all(|s| s.borrow().len() == polys[0].borrow().len()));
-        assert!(polys[0].borrow().len() <= g1_powers.len());
 
         if let Some(invalid) = polys
             .iter()

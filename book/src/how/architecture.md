@@ -25,7 +25,7 @@ To handle reads/writes to RAM (and registers) Jolt uses a memory checking argume
 
 ### R1CS constraints
 
-To handle the "fetch" part of the fetch-decode-execute loop, there is a minimal R1CS instance (about 60 constraints per cycle of the RISC-V VM). These constraints handle program counter (PC) updates and serves as the "glue" enforcing consistency between polynomials used in the components below. Jolt uses [Spartan](https://eprint.iacr.org/2019/550), optimized for the highly-structured nature of the constraint system (e.g., the R1CS constraint matrices are block-diagonal with blocks of size only about 60 x 80). This is implemented in [jolt-core/src/r1cs](../../../jolt-core/src/r1cs/).
+To handle the "fetch" part of the fetch-decode-execute loop, there is a minimal R1CS instance (about 60 constraints per cycle of the RISC-V VM). These constraints handle program counter (PC) updates and serves as the "glue" enforcing consistency between polynomials used in the components below. Jolt uses [Spartan](https://eprint.iacr.org/2019/550), optimized for the highly-structured nature of the constraint system (e.g., the R1CS constraint matrices are block-diagonal with blocks of size only about 60 x 80). This is implemented in [jolt-core/src/r1cs](./r1cs_constraints.md).
 
 *For more details: [R1CS constraints](./r1cs_constraints.md)*
 

@@ -1,7 +1,7 @@
-# Multilinear Extensions 
-For any $v$-variate polynomial $g(x_1, ... x_v)$ polynomial, it's multilinear extension $f(x_1, ... x_v)$ is the polynomial which agrees over all $2^v$ points $x \in \{0,1\}^v$: $g(x_1, ... x_v) = \tilde{f}(x_1, ... x_v) \forall x \in \{0,1\}^v$. By the Schwartz-Zippel lemma, if $g$ and $f$ disagree at even a single input, then $g$ and $f$ must disagree *almost everywhere*.
+# Multilinear Extensions
+For any $v$-variate polynomial $g(x_1, ... x_v)$, its multilinear extension $f(x_1, ... x_v)$ is the polynomial which agrees over all $2^v$ points $x \in \{0,1\}^v$: $g(x_1, ... x_v) = \tilde{f}(x_1, ... x_v) \forall x \in \{0,1\}^v$. By the Schwartz-Zippel lemma, if $g$ and $f$ disagree at even a single input, then $g$ and $f$ must disagree *almost everywhere*.
 
-For more precise details please read **Section 3.5 of [Proofs and Args ZK](https://people.cs.georgetown.edu/jthaler/ProofsArgsAndZK.pdf)**. 
+For more precise details please read **Section 3.5 of [Proofs and Args ZK](https://people.cs.georgetown.edu/jthaler/ProofsArgsAndZK.pdf)**.
 
 ## Engineering
 In practice, MLE's are stored as the vector of evaluations over the $v$-variate boolean hypercube $\{0,1\}^v$. There are two important algorithms over multilinear extensions: single variable binding, and evaluation.
@@ -29,4 +29,4 @@ for i in 0..half {
 ```
 
 ### Multi Variable Binding
-Another common algorithm is to take the MLE $\tilde{f}(x_1, ... x_v)$ and compute its evaluation at a single $v$-variate point outside the boolean hypercube $x \in \mathbb{F}^v$. This algorithm can be performed in $O(n)$ time by preforming the single variable binding algorithm $\log(n)$ times. The time spent on $i$'th variable binding is $O(n/2^i)$, so the total time across all $\log n$ bindings is proportional to $\sum_{i=1}^{\log n} n/2^i = O(n)$. 
+Another common algorithm is to take the MLE $\tilde{f}(x_1, ... x_v)$ and compute its evaluation at a single $v$-variate point outside the boolean hypercube $x \in \mathbb{F}^v$. This algorithm can be performed in $O(n)$ time by performing the single variable binding algorithm $\log(n)$ times. The time spent on $i$'th variable binding is $O(n/2^i)$, so the total time across all $\log n$ bindings is proportional to $\sum_{i=1}^{\log n} n/2^i = O(n)$.

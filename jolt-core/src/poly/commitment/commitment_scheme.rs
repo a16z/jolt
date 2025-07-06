@@ -24,6 +24,7 @@ pub trait CommitmentScheme<ProofTranscript: Transcript>: Clone + Sync + Send + '
     type BatchedProof: Sync + Send + CanonicalSerialize + CanonicalDeserialize;
 
     fn setup(max_len: usize) -> Self::Setup;
+    fn srs_size(setup: &Self::Setup) -> usize;
     fn commit(poly: &MultilinearPolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment;
     fn batch_commit<U>(polys: &[U], gens: &Self::Setup) -> Vec<Self::Commitment>
     where

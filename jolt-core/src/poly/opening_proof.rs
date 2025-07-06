@@ -1,5 +1,6 @@
 //! This is a port of the sumcheck-based batch opening proof protocol implemented
 //! in Nova: https://github.com/microsoft/Nova/blob/2772826ba296b66f1cd5deecf7aca3fd1d10e1f4/src/spartan/snark.rs#L410-L424
+//! and such code is Copyright (c) Microsoft Corporation.
 //! For additively homomorphic commitment schemes (including Zeromorph, HyperKZG) we
 //! can use a sumcheck to reduce multiple opening proofs (multiple polynomials, not
 //! necessarily of the same size, each opened at a different point) into a single opening.

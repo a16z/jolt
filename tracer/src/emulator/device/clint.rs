@@ -2,24 +2,16 @@ use crate::emulator::cpu::{MIP_MSIP, MIP_MTIP};
 
 /// Emulates CLINT known as Timer. Refer to the [specification](https://sifive.cdn.prismic.io/sifive%2Fc89f6e5a-cf9e-44c3-a3db-04420702dcc1_sifive+e31+manual+v19.08.pdf)
 /// for the detail.
+#[derive(Default)]
 pub struct Clint {
     clock: u64,
     msip: u32,
     mtimecmp: u64,
+    // @TODO: Should be bound to csr time register on init
     mtime: u64,
 }
 
 impl Clint {
-    /// Creates a new `Clint`
-    pub fn new() -> Self {
-        Clint {
-            clock: 0,
-            msip: 0,
-            mtimecmp: 0,
-            mtime: 0, // @TODO: Should be bound to csr time register
-        }
-    }
-
     /// Runs one cycle. `Clint` can raise interrupt. If it does it rises a certain bit
     /// depending on interrupt type of CPU `mip` register.
     ///

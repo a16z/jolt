@@ -42,9 +42,9 @@ pub struct VirtioBlockDisk {
     contents: Vec<u64>,
 }
 
-impl VirtioBlockDisk {
+impl Default for VirtioBlockDisk {
     /// Creates a new `VirtioBlockDisk`.
-    pub fn new() -> Self {
+    fn default() -> Self {
         VirtioBlockDisk {
             used_ring_index: 0,
             clock: 0,
@@ -64,7 +64,9 @@ impl VirtioBlockDisk {
             contents: vec![],
         }
     }
+}
 
+impl VirtioBlockDisk {
     /// Indicates whether `VirtioBlockDisk` raises an interrupt signal
     pub fn is_interrupting(&mut self) -> bool {
         (self.interrupt_status & 0x1) == 1

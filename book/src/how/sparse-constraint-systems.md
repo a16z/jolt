@@ -54,7 +54,7 @@ Jolt uses this approach within Lasso as well. Across all of the primitive RISC-V
 there are about 80 "subtables" that get used. Any particular primitive instruction only needs
 to access between 4 and 10 of these subtables. We "pretend" that every primitive instruction
 actually accesses all 80 of the subtables, but use binary flags to "turn off" any subtable
-lookups that do not actually occur (i.e., that is, we tell the grand product 
+lookups that do not actually occur (i.e., we tell the grand product 
 in the guts of the Lasso lookup argument for that subtable to ``ignore'' that lookup). 
 This is why about 93% of the factors multiplied in Jolt's various grand product arguments are 1. 
 The same algorithmic approach ensures that the "turned off lookups" do not increase
@@ -67,7 +67,7 @@ But the above approach is compatible with a streaming prover, avoids committing 
 and has other benefits.
 
 We call this technique (fast proving for) "sparse constraint systems". Note that the term sparse here
-does not refer to there being the sparsity of the R1CS constraint matrices themselves, 
+does not refer to the sparsity of the R1CS constraint matrices themselves, 
 but rather to almost all of the left-hand sides of the constraints being $0$
 when the constraints are evaluated on the valid witness vector $z$.
 

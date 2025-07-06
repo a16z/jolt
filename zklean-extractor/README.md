@@ -8,16 +8,17 @@ Running
 
 This tool allows you to produce a package containing a ZkLean representation of the Jolt VM by running the following command from the root of the Jolt repo:
 ```sh
-cargo run --release -p zklean-extractor -- -p $PATH_TO_MODULE
+cargo run --release -p zklean-extractor -- -o -p ./jolt-zk-lean
 ```
-The other files in the module will be read from the template directory in `$PATH_TO_JOLT_REPO/zklean-extractor/package-template` when the tool is built. You can specify a different template directory at run time by running this, instead:
+This will generate a Lean package in `./jolt-zk-lean`, creating this directory if it doesn't exist, and overwriting the files in it if it does. To use a different output directory, simply use that directory for the argument to `-p` instead. Assuming you have a valid ZkLean installation, you can then compile the Lean module by running the following:
 ```sh
-cargo run --release -p zklean-extractor -- -t $PATH_TO_TEMPLATE_DIR -p $PATH_TO_MODULE
+cd ./jolt-zk-lean/src
+lake build
 ```
 
-Alternatively, you can produce a single source file in the ZkLean repo by running the following command from the root of the Jolt repo:
+For additional tool options, you can view the tool's help message by running the following from the root directory of the Jolt repo:
 ```sh
-cargo run --release -p zklean-extractor -- -f $PATH_TO_ZKLEAN_REPO/src/ZkLean/SubtableMles.lean
+cargo run --release -p zklean-extractor -- -h
 ```
 
 Testing
@@ -28,7 +29,7 @@ You can run tests on the internal representation produced by the `zklean-extract
 cargo test -p zklean-extractor
 ```
 
-This tests use the [`proptest`](https://docs.rs/proptest/latest/proptest/index.html) library to ensure that extracting a representation of each constraint and MLE and executing it produces the same result as computing the constraint or MLE on its own. By default we run proptest for 256 iterations, however this can be changed by running
+These tests use the [`proptest`](https://docs.rs/proptest/latest/proptest/index.html) library to ensure that extracting a representation of each constraint and MLE and executing it produces the same result as computing the constraint or MLE on its own. By default we run proptest for 256 iterations, however this can be changed on the command line. For example, to run 512 iterations instead, you can run
 ```sh
-PROPTEST_CASES=$DESIRED_NUMBER_OF_ITERS cargo test -p zklean-extractor
+PROPTEST_CASES=512 cargo test -p zklean-extractor
 ```

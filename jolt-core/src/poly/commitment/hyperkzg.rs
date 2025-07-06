@@ -1,4 +1,5 @@
 //! This is a port of https://github.com/microsoft/Nova/blob/main/src/provider/hyperkzg.rs
+//! and such code is Copyright (c) Microsoft Corporation.
 //!
 //! This module implements `HyperKZG`, a KZG-based polynomial commitment for multilinear polynomials
 //! HyperKZG is based on the transformation from univariate PCS to multilinear PCS in the Gemini paper (section 2.4.2 in <https://eprint.iacr.org/2022/420.pdf>).
@@ -425,6 +426,10 @@ where
             2,
         )))
         .trim(max_poly_len)
+    }
+
+    fn srs_size(setup: &Self::Setup) -> usize {
+        setup.0.kzg_pk.g1_powers().len()
     }
 
     #[tracing::instrument(skip_all, name = "HyperKZG::commit")]

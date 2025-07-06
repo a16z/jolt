@@ -238,7 +238,7 @@ impl Cpu {
     /// # Arguments
     /// * `Terminal`
     pub fn new(terminal: Box<dyn Terminal>) -> Self {
-        let tracer = Rc::new(Tracer::new());
+        let tracer = Rc::new(Tracer::default());
         let mut cpu = Cpu {
             clock: 0,
             xlen: Xlen::Bit64,
@@ -887,8 +887,8 @@ impl Cpu {
     // @TODO: Rename to better name?
     fn most_negative(&self) -> i64 {
         match self.xlen {
-            Xlen::Bit32 => core::i32::MIN as i64,
-            Xlen::Bit64 => core::i64::MIN,
+            Xlen::Bit32 => i32::MIN as i64,
+            Xlen::Bit64 => i64::MIN,
         }
     }
 
@@ -2494,7 +2494,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
             let divisor = cpu.x[f.rs2] as i32;
             if divisor == 0 {
                 cpu.x[f.rd] = -1;
-            } else if dividend == core::i32::MIN && divisor == -1 {
+            } else if dividend == i32::MIN && divisor == -1 {
                 cpu.x[f.rd] = dividend as i32 as i64;
             } else {
                 cpu.x[f.rd] = dividend.wrapping_div(divisor) as i32 as i64
@@ -2631,10 +2631,10 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
             let divisor = cpu.f[f.rs2];
             // Is this implementation correct?
             if divisor == 0.0 {
-                cpu.f[f.rd] = core::f64::INFINITY;
+                cpu.f[f.rd] = f64::INFINITY;
                 cpu.set_fcsr_dz();
             } else if divisor == -0.0 {
-                cpu.f[f.rd] = core::f64::NEG_INFINITY;
+                cpu.f[f.rd] = f64::NEG_INFINITY;
                 cpu.set_fcsr_dz();
             } else {
                 cpu.f[f.rd] = dividend / divisor;
@@ -3306,7 +3306,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
             let divisor = cpu.x[f.rs2] as i32;
             if divisor == 0 {
                 cpu.x[f.rd] = dividend as i64;
-            } else if dividend == core::i32::MIN && divisor == -1 {
+            } else if dividend == i32::MIN && divisor == -1 {
                 cpu.x[f.rd] = 0;
             } else {
                 cpu.x[f.rd] = dividend.wrapping_rem(divisor) as i64;
@@ -3945,7 +3945,7 @@ mod test_cpu {
     use crate::emulator::terminal::DummyTerminal;
 
     fn create_cpu() -> Cpu {
-        Cpu::new(Box::new(DummyTerminal::new()))
+        Cpu::new(Box::new(DummyTerminal::default()))
     }
 
     #[test]
