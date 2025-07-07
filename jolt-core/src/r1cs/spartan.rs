@@ -24,6 +24,7 @@ use ark_serialize::CanonicalSerialize;
 use thiserror::Error;
 
 use crate::{
+    dag::{Stage, StageContributor},
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPlusOnePolynomial},
     subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof},
     utils::small_value::NUM_SVO_ROUNDS,
@@ -834,5 +835,61 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             EqPlusOnePolynomial::new(verifier_state.r_cycle.clone()).evaluate(r);
 
         batched_eval_at_shift_r * eq_plus_one_shift_sumcheck
+    }
+}
+
+pub struct SpartanStage2<F: JoltField, ProofTranscript: Transcript> {
+    _phantom: PhantomData<(F, ProofTranscript)>,
+}
+
+impl<F: JoltField, ProofTranscript: Transcript> SpartanStage2<F, ProofTranscript> {
+    pub fn new() -> Self {
+        Self {
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<F: JoltField, ProofTranscript: Transcript, SM> StageContributor<F, ProofTranscript, SM>
+    for SpartanStage2<F, ProofTranscript>
+{
+    fn stage(&self) -> Stage {
+        Stage::Stage2
+    }
+
+    fn instances(
+        &self,
+        state_manager: &SM,
+    ) -> Vec<Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>> {
+        let key: &UniformSpartanKey<F> = todo!("extract from state_manager");
+        let input_polys: &[MultilinearPolynomial<F>] = todo!("extract from state_manager");
+        let outer_sumcheck_claims: &OuterSumcheckClaims<F> = todo!("extract from state_manager");
+        let inner_sumcheck_params: &InnerSumcheckParams<F> = todo!("extract from state_manager");
+        let inner_sumcheck_rlc: F = todo!("extract from state_manager");
+        let claimed_witness_evals: &[F] = todo!("extract from state_manager");
+        let eq_plus_one_r_cycle: Vec<F> = todo!("extract from state_manager");
+        let pc_sumcheck_r: F = todo!("extract from state_manager");
+
+        // Create InnerSumcheck
+        let inner_sumcheck = InnerSumcheck::new_prover(
+            key,
+            input_polys,
+            outer_sumcheck_claims,
+            inner_sumcheck_params,
+            inner_sumcheck_rlc,
+        );
+
+        // Create PCSumcheck
+        let pc_sumcheck = PCSumcheck::new_prover(
+            input_polys,
+            claimed_witness_evals,
+            eq_plus_one_r_cycle,
+            pc_sumcheck_r,
+        );
+
+        vec![
+            Box::new(inner_sumcheck) as Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>,
+            Box::new(pc_sumcheck) as Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>,
+        ]
     }
 }
