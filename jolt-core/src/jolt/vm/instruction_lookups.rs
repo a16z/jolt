@@ -7,12 +7,17 @@ use tracer::instruction::RV32IMCycle;
 use crate::{
     field::JoltField,
     jolt::{
-        instruction::{InstructionFlags, InstructionLookup, InterleavedBitsMarker, LookupQuery},
+        instruction::{
+            CircuitFlags, InstructionFlags, InstructionLookup, InterleavedBitsMarker, LookupQuery,
+        },
         lookup_table::{
             prefixes::{PrefixCheckpoint, PrefixEval, Prefixes},
             LookupTables,
         },
-        vm::{state_manager::StateManager, JoltCommitments, JoltProverPreprocessing},
+        vm::{
+            state_manager::{OpeningsKeys, StateManager},
+            JoltCommitments, JoltProverPreprocessing,
+        },
         witness::CommittedPolynomials,
     },
     poly::{
@@ -369,8 +374,7 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
             .collect();
         let mut s = Self {
             gamma: sm.challenges.instruction_read_raf,
-            gamma_squared: sm.challenges.instruction_read_raf
-                * sm.challenges.instruction_read_raf,
+            gamma_squared: sm.challenges.instruction_read_raf * sm.challenges.instruction_read_raf,
             prover_state: Some(ReadRafProverState {
                 trace: sm.trace(),
                 r: Vec::with_capacity(sm.log_T + LOG_K),
@@ -392,11 +396,10 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
                 identity_ps,
                 combined_val_polynomial: None,
             }),
-            r_cycle: sm.r_cycle.clone().unwrap(),
+            r_cycle: sm.r_cycle(),
             rv_claim: sm.z(JoltR1CSInputs::LookupOutput),
             raf_claim: sm.z(JoltR1CSInputs::LeftLookupOperand)
-                + sm.challenges.instruction_read_raf
-                    * sm.z(JoltR1CSInputs::RightLookupOperand),
+                + sm.challenges.instruction_read_raf * sm.z(JoltR1CSInputs::RightLookupOperand),
             ra_claims: None,
             raf_flag_claim: None,
             flag_claims: None,
@@ -407,20 +410,36 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
     }
 
     pub fn new_verifier(sm: &mut StateManager<F, impl Transcript>) -> Self {
-        let flag_claims = sm
         Self {
             gamma: sm.challenges.instruction_read_raf,
-            gamma_squared: sm.challenges.instruction_read_raf
-                * sm.challenges.instruction_read_raf,
+            gamma_squared: sm.challenges.instruction_read_raf * sm.challenges.instruction_read_raf,
             prover_state: None,
-            r_cycle: sm.r_cycle.clone().unwrap(),
+            r_cycle: sm.r_cycle(),
             rv_claim: sm.z(JoltR1CSInputs::LookupOutput),
             raf_claim: sm.z(JoltR1CSInputs::LeftLookupOperand)
-                + sm.challenges.instruction_read_raf
-                    * sm.z(JoltR1CSInputs::RightLookupOperand),
-            ra_claims: None,
-            raf_flag_claim: None,
-            flag_claims: None,
+                + sm.challenges.instruction_read_raf * sm.z(JoltR1CSInputs::RightLookupOperand),
+            ra_claims: Some(
+                (0..D)
+                    .into_iter()
+                    .map(|i| sm.openings(OpeningsKeys::InstructionRa(i)))
+                    .collect::<Vec<F>>()
+                    .try_into()
+                    .unwrap(),
+            ),
+            raf_flag_claim: Some(
+                sm.z(JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands))
+                    + sm.z(JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands))
+                    + sm.z(JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands))
+                    + sm.z(JoltR1CSInputs::OpFlags(CircuitFlags::Advice)),
+            ),
+            flag_claims: Some(
+                (0..LookupTables::<WORD_SIZE>::COUNT)
+                    .into_iter()
+                    .map(|i| sm.openings(OpeningsKeys::InstructionTypeFlag(i)))
+                    .collect::<Vec<F>>()
+                    .try_into()
+                    .unwrap(),
+            ),
             log_T: sm.log_T,
         }
     }
@@ -751,7 +770,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             gamma_powers[i] = gamma_powers[i - 1] * state.challenges.instruction_booleanity;
         }
 
-        let B = MultilinearPolynomial::from(EqPolynomial::evals(state.r_address.as_ref().unwrap()));
+        let B = MultilinearPolynomial::from(EqPolynomial::evals(&state.r_address()));
         let mut F: Vec<F> = unsafe_allocate_zero_vec(K_CHUNK);
         F[0] = F::one();
 
@@ -797,10 +816,32 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                 eq_km_c,
                 eq_km_c_squared,
             }),
-            r_address: state.r_address.as_ref().unwrap().to_vec(),
-            r_cycle: state.r_cycle.as_ref().unwrap().to_vec(),
+            r_address: state.r_address(),
+            r_cycle: state.r_cycle(),
             ra_claims: None,
             log_T: state.trace().len().log_2(),
+        }
+    }
+
+    pub fn new_verifier(sm: &mut StateManager<F, impl Transcript>) -> Self {
+        let mut gamma_powers = [F::one(); D];
+        for i in 1..D {
+            gamma_powers[i] = gamma_powers[i - 1] * sm.challenges.instruction_booleanity;
+        }
+        Self {
+            gamma: gamma_powers,
+            prover_state: None,
+            r_address: sm.r_address(),
+            r_cycle: sm.r_cycle(),
+            log_T: sm.log_T,
+            ra_claims: Some(
+                (0..D)
+                    .into_iter()
+                    .map(|i| sm.openings(OpeningsKeys::InstructionRa(i)))
+                    .collect::<Vec<F>>()
+                    .try_into()
+                    .unwrap(),
+            ),
         }
     }
 }
@@ -1043,13 +1084,17 @@ pub struct HammingSumcheck<F: JoltField> {
 }
 
 impl<F: JoltField> HammingSumcheck<F> {
-    pub fn new(state: &StateManager<F, impl Transcript>, mut F: [Vec<F>; D]) -> Self {
+    pub fn new(state: &StateManager<F, impl Transcript>, F: [Vec<F>; D]) -> Self {
         let mut gamma_powers = [F::one(); D];
         for i in 1..D {
             gamma_powers[i] = gamma_powers[i - 1] * state.challenges.instruction_hamming;
         }
-
-        let ra = [0, 1, 2, 3].map(|i| MultilinearPolynomial::from(std::mem::take(&mut F[i])));
+        let ra = F
+            .into_iter()
+            .map(MultilinearPolynomial::from)
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
         Self {
             gamma: gamma_powers,
             prover_state: Some(HammingProverState { ra }),
@@ -1057,15 +1102,21 @@ impl<F: JoltField> HammingSumcheck<F> {
         }
     }
 
-    pub fn new_verifier(ra_claims: [F; D], gamma: F) -> Self {
+    pub fn new_verifier(sm: &mut StateManager<F, impl Transcript>) -> Self {
         let mut gamma_powers = [F::one(); D];
         for i in 1..D {
-            gamma_powers[i] = gamma_powers[i - 1] * gamma;
+            gamma_powers[i] = gamma_powers[i - 1] * sm.challenges.instruction_hamming;
         }
         Self {
             gamma: gamma_powers,
             prover_state: None,
-            ra_claims: Some(ra_claims),
+            ra_claims: Some(
+                (0..D)
+                    .map(|i| sm.openings(OpeningsKeys::InstructionRa(i)))
+                    .collect::<Vec<F>>()
+                    .try_into()
+                    .unwrap(),
+            ),
         }
     }
 }
@@ -1157,8 +1208,8 @@ where
         state_manager: &mut StateManager<F, T>,
     ) -> Vec<Box<dyn BatchableSumcheckInstance<F, T>>> {
         let read_raf = Box::new(ReadRafSumcheck::new_verifier(state_manager));
-        let booleanity = Box::new(BooleanitySumcheck::new(state_manager, ra_evals.clone()));
-        let hamming_weight = Box::new(HammingSumcheck::new(state_manager, ra_evals));
+        let booleanity = Box::new(BooleanitySumcheck::new_verifier(state_manager));
+        let hamming_weight = Box::new(HammingSumcheck::new_verifier(state_manager));
 
         vec![read_raf, booleanity, hamming_weight]
     }
