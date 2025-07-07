@@ -192,8 +192,8 @@ impl<F: JoltField> SuffixPolynomial<F> for ShiftHalfSuffixPolynomial {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OperandSide {
-    Right,
     Left,
+    Right,
 }
 
 /// OperandPolynomial evaluates to either the right or left operand value from uninterleaved bits
@@ -232,8 +232,8 @@ impl<F: JoltField> PolynomialBinding<F> for OperandPolynomial<F> {
             "OperandPolynomial only supports high-to-low binding"
         );
 
-        if (self.num_bound_vars.is_even() && self.side == OperandSide::Right)
-            || (self.num_bound_vars.is_odd() && self.side == OperandSide::Left)
+        if (self.num_bound_vars.is_even() && self.side == OperandSide::Left)
+            || (self.num_bound_vars.is_odd() && self.side == OperandSide::Right)
         {
             self.bound_value += self.bound_value;
             self.bound_value += r;
@@ -259,10 +259,10 @@ impl<F: JoltField> PolynomialEvaluation<F> for OperandPolynomial<F> {
         debug_assert!(len.is_even());
 
         match self.side {
-            OperandSide::Right => (0..len / 2)
+            OperandSide::Left => (0..len / 2)
                 .map(|i| r[2 * i].mul_u64(1u64 << (self.num_vars / 2 - 1 - i)))
                 .sum(),
-            OperandSide::Left => (0..len / 2)
+            OperandSide::Right => (0..len / 2)
                 .map(|i| r[2 * i + 1].mul_u64(1u64 << (self.num_vars / 2 - 1 - i)))
                 .sum(),
         }
@@ -283,15 +283,15 @@ impl<F: JoltField> PolynomialEvaluation<F> for OperandPolynomial<F> {
         let (right, left) = uninterleave_bits(index as u64);
 
         let index = match self.side {
-            OperandSide::Right => F::from_u32(right),
-            OperandSide::Left => F::from_u32(left),
+            OperandSide::Left => F::from_u32(right),
+            OperandSide::Right => F::from_u32(left),
         };
 
         if self.num_bound_vars.is_even() {
             let unbound_pairs = (self.num_vars - self.num_bound_vars) / 2;
             debug_assert!(unbound_pairs > 0);
             evals[0] = self.bound_value.mul_u64(1 << unbound_pairs) + index;
-            if self.side == OperandSide::Right {
+            if self.side == OperandSide::Left {
                 let m = F::from_u32(1 << (unbound_pairs - 1));
                 let mut eval = evals[0] + m;
                 for i in 1..degree {
@@ -303,7 +303,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for OperandPolynomial<F> {
                     evals[i] = evals[0];
                 }
             }
-        } else if self.side == OperandSide::Left {
+        } else if self.side == OperandSide::Right {
             // We are currently bindinng the left operand variable
             let unbound_pairs = (self.num_vars - self.num_bound_vars).div_ceil(2);
             evals[0] = self.bound_value.mul_u64(1 << unbound_pairs) + index;
@@ -340,18 +340,18 @@ impl<F: JoltField> PrefixSuffixPolynomial<F, 2> for OperandPolynomial<F> {
         prefix_registry: &mut PrefixRegistry<F>,
     ) -> [Option<Arc<RwLock<CachedPolynomial<F>>>>; 2] {
         match self.side {
-            OperandSide::Right => {
+            OperandSide::Left => {
                 if prefix_registry[Prefix::RightOperand].is_none() {
-                    let ro_poly = OperandPolynomial::new(self.num_vars, OperandSide::Right);
+                    let ro_poly = OperandPolynomial::new(self.num_vars, OperandSide::Left);
                     prefix_registry[Prefix::RightOperand] = Some(Arc::new(RwLock::new(
                         ro_poly.prefix_polynomial(&prefix_registry.checkpoints, chunk_len, phase),
                     )));
                 }
                 [prefix_registry[Prefix::RightOperand].clone(), None]
             }
-            OperandSide::Left => {
+            OperandSide::Right => {
                 if prefix_registry[Prefix::LeftOperand].is_none() {
-                    let lo_poly = OperandPolynomial::new(self.num_vars, OperandSide::Left);
+                    let lo_poly = OperandPolynomial::new(self.num_vars, OperandSide::Right);
                     prefix_registry[Prefix::LeftOperand] = Some(Arc::new(RwLock::new(
                         lo_poly.prefix_polynomial(&prefix_registry.checkpoints, chunk_len, phase),
                     )));
@@ -368,8 +368,8 @@ impl<F: JoltField> SuffixPolynomial<F> for OperandPolynomial<F> {
         debug_assert!(self.num_bound_vars.is_even());
         let (right, left) = uninterleave_bits(index);
         match self.side {
-            OperandSide::Right => right as u64,
-            OperandSide::Left => left as u64,
+            OperandSide::Left => right as u64,
+            OperandSide::Right => left as u64,
         }
     }
 }
@@ -385,8 +385,8 @@ impl<F: JoltField> PrefixPolynomial<F> for OperandPolynomial<F> {
         debug_assert!(self.num_bound_vars.is_even());
 
         let bound_value = match self.side {
-            OperandSide::Right => checkpoints[Prefix::RightOperand].unwrap_or(F::zero()),
-            OperandSide::Left => checkpoints[Prefix::LeftOperand].unwrap_or(F::zero()),
+            OperandSide::Left => checkpoints[Prefix::RightOperand].unwrap_or(F::zero()),
+            OperandSide::Right => checkpoints[Prefix::LeftOperand].unwrap_or(F::zero()),
         };
 
         let mut poly = OperandPolynomial::new((phase + 1) * chunk_len, self.side);
@@ -579,11 +579,11 @@ mod tests {
     #[test]
     fn operand_poly_prefix_suffix_decomposition() {
         prefix_suffix_decomposition_test::<8, 2, 2, _>(
-            OperandPolynomial::new(8, OperandSide::Right),
+            OperandPolynomial::new(8, OperandSide::Left),
             Prefix::RightOperand,
         );
         prefix_suffix_decomposition_test::<8, 2, 2, _>(
-            OperandPolynomial::new(8, OperandSide::Left),
+            OperandPolynomial::new(8, OperandSide::Right),
             Prefix::LeftOperand,
         );
     }
@@ -622,8 +622,8 @@ mod tests {
     fn operand_poly_boolean_hypercube() {
         const NUM_VARS: usize = 8;
 
-        let ro_poly = OperandPolynomial::<Fr>::new(NUM_VARS, OperandSide::Right);
-        let lo_poly = OperandPolynomial::<Fr>::new(NUM_VARS, OperandSide::Left);
+        let ro_poly = OperandPolynomial::<Fr>::new(NUM_VARS, OperandSide::Left);
+        let lo_poly = OperandPolynomial::<Fr>::new(NUM_VARS, OperandSide::Right);
 
         // Test evaluation on boolean hypercube
         for i in 0..(1 << NUM_VARS) {
@@ -658,8 +658,8 @@ mod tests {
         const NUM_VARS: usize = 8;
 
         let mut rng = test_rng();
-        let mut ro_poly = OperandPolynomial::<Fr>::new(NUM_VARS, OperandSide::Right);
-        let mut lo_poly = OperandPolynomial::<Fr>::new(NUM_VARS, OperandSide::Left);
+        let mut ro_poly = OperandPolynomial::<Fr>::new(NUM_VARS, OperandSide::Left);
+        let mut lo_poly = OperandPolynomial::<Fr>::new(NUM_VARS, OperandSide::Right);
 
         // Create reference polynomial with evaluations
         let (reference_evals_r, reference_evals_l): (Vec<Fr>, Vec<Fr>) = (0u64..(1 << NUM_VARS))

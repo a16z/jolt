@@ -250,7 +250,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
     }
 
     #[tracing::instrument(skip_all)]
-    pub fn init_Q<'a, I: IntoIterator<Item = &'a (usize, &'a LookupBits)> + Clone + Send + Sync>(
+    pub fn init_Q<'a, I: IntoIterator<Item = &'a (usize, LookupBits)> + Clone + Send + Sync>(
         &mut self,
         u_evals: &[F],
         indices: I,
