@@ -76,13 +76,12 @@ pub struct ReadWriteCheckingProof<F: JoltField, ProofTranscript: Transcript> {
 pub struct ValEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
     /// Sumcheck proof for the Val-evaluation sumcheck (steps 6 of Figure 9).
     sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    /// The claimed evaluation Inc(r_cycle') output by the Val-evaluation sumcheck.
+    /// Inc(r_cycle')
     inc_claim: F,
-    /// The claimed evaluation wa(r_address, r_cycle') output by the Val-evaluation sumcheck.
+    /// wa(r_address, r_cycle')
     wa_claim: F,
 }
 
-/// Prover state for the Val-evaluation sumcheck
 struct ValEvaluationProverState<F: JoltField> {
     /// Inc polynomial
     inc: MultilinearPolynomial<F>,
@@ -105,9 +104,9 @@ struct ValEvaluationVerifierState<F: JoltField> {
 /// Claims output by the Val-evaluation sumcheck
 #[derive(Clone)]
 struct ValEvaluationSumcheckClaims<F: JoltField> {
-    /// The claimed evaluation Inc(r_cycle')
+    /// Inc(r_cycle')
     inc_claim: F,
-    /// The claimed evaluation wa(r_address, r_cycle')
+    /// wa(r_address, r_cycle')
     wa_claim: F,
 }
 
@@ -115,11 +114,11 @@ struct ValEvaluationSumcheckClaims<F: JoltField> {
 struct ValEvaluationSumcheck<F: JoltField> {
     /// Initial claim value
     claimed_evaluation: F,
-    /// Prover state (if prover)
+    /// Prover state
     prover_state: Option<ValEvaluationProverState<F>>,
-    /// Verifier state (if verifier)
+    /// Verifier state
     verifier_state: Option<ValEvaluationVerifierState<F>>,
-    /// Claims (set after sumcheck completes)
+    /// Claims
     claims: Option<ValEvaluationSumcheckClaims<F>>,
 }
 
@@ -127,7 +126,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     for ValEvaluationSumcheck<F>
 {
     fn degree(&self) -> usize {
-        3 // Val-evaluation sumcheck has degree 3
+        3
     }
 
     fn num_rounds(&self) -> usize {
@@ -285,7 +284,6 @@ impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTran
             .read_write_checking_proof
             .verify(r, r_prime, transcript);
 
-        // Create the sumcheck instance for verification
         let sumcheck_instance = ValEvaluationSumcheck {
             claimed_evaluation: self.read_write_checking_proof.val_claim,
             prover_state: None,
@@ -300,7 +298,6 @@ impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTran
             }),
         };
 
-        // Verify the sumcheck proof
         let mut r_cycle_prime = <ValEvaluationSumcheck<F> as BatchableSumcheckInstance<
             F,
             ProofTranscript,
@@ -1466,7 +1463,6 @@ pub fn prove_val_evaluation<
     drop(_guard);
     drop(span);
 
-    // Create the sumcheck instance
     let mut sumcheck_instance: ValEvaluationSumcheck<F> = ValEvaluationSumcheck {
         claimed_evaluation,
         prover_state: Some(ValEvaluationProverState { inc, wa, lt }),
@@ -1477,7 +1473,6 @@ pub fn prove_val_evaluation<
     let span = tracing::span!(tracing::Level::INFO, "Val-evaluation sumcheck");
     let _guard = span.enter();
 
-    // Run the sumcheck protocol
     let (sumcheck_proof, r_cycle_prime) = <ValEvaluationSumcheck<F> as BatchableSumcheckInstance<
         F,
         ProofTranscript,
