@@ -201,9 +201,8 @@ mod tests {
             .iter()
             .map(|data| MultilinearPolynomial::<Fr>::from(data.clone()))
             .collect::<Vec<_>>();
-        let length = test_polys[0].len();
 
-        let prev_claim = (0..length)
+        let mut prev_claim = (0..test_polys[0].len())
             .into_par_iter()
             .map(|i| {
                 test_polys
@@ -213,29 +212,32 @@ mod tests {
             })
             .reduce(|| Fr::from_u32(0), |running, new| running + new);
 
-        let r_j = Fr::from(rng.next_u32());
         let binding_order = BindingOrder::LowToHigh;
+        for _ in 0..num_vars {
+            let length = test_polys[0].len();
+            let r_j = Fr::from(rng.next_u32());
+            let result = mle_eval_naive(
+                &mut test_polys,
+                r_j,
+                prev_claim,
+                binding_order,
+                length,
+                num_polys,
+            );
+            let result_optimized = mle_eval_diamond_optimized(
+                &mut test_polys,
+                r_j,
+                prev_claim,
+                binding_order,
+                length,
+                num_polys,
+            );
+            assert_eq!(result, result_optimized);
 
-        let result = mle_eval_naive(
-            &mut test_polys,
-            r_j,
-            prev_claim,
-            binding_order,
-            length,
-            num_polys,
-        );
-        let result_optimized = mle_eval_diamond_optimized(
-            &mut test_polys,
-            r_j,
-            prev_claim,
-            binding_order,
-            length,
-            num_polys,
-        );
-        assert_eq!(result, result_optimized);
-
-        test_polys.par_iter_mut().for_each(|poly| {
-            poly.bind_parallel(r_j, binding_order);
-        });
+            test_polys.par_iter_mut().for_each(|poly| {
+                poly.bind_parallel(r_j, binding_order);
+            });
+            prev_claim = result;
+        }
     }
 }
