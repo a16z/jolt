@@ -296,6 +296,289 @@ where
     ra_claim: F,
 }
 
+/// Prover state for the Booleanity sumcheck
+struct BooleanityProverState<F: JoltField> {
+    /// B polynomial (EqPolynomial)
+    B: MultilinearPolynomial<F>,
+    /// F array for phase 1
+    F: Vec<F>,
+    /// G array (precomputed)
+    G: Vec<F>,
+    /// D polynomial for phase 2
+    D: MultilinearPolynomial<F>,
+    /// H polynomial for phase 2
+    H: Option<MultilinearPolynomial<F>>,
+    /// eq(r, r) value computed at end of phase 1
+    eq_r_r: F,
+}
+
+/// Verifier state for the Booleanity sumcheck
+struct BooleanityVerifierState<F: JoltField> {
+    /// Size of address space
+    K: usize,
+    /// Number of trace steps
+    T: usize,
+    /// r_address challenge vector
+    r_address: Vec<F>,
+    /// r_prime (r_cycle) challenge vector
+    r_prime: Vec<F>,
+}
+
+/// Booleanity sumcheck instance implementing BatchableSumcheckInstance
+struct BooleanitySumcheck<F: JoltField> {
+    /// Size of address space
+    K: usize,
+    /// Number of trace steps
+    T: usize,
+    /// Prover state (if prover)
+    prover_state: Option<BooleanityProverState<F>>,
+    /// Verifier state (if verifier)
+    verifier_state: Option<BooleanityVerifierState<F>>,
+    /// Cached ra claim after sumcheck completes
+    ra_claim: Option<F>,
+    /// Current round
+    current_round: usize,
+    /// Store trace and memory layout for phase transition
+    trace: Option<Vec<RV32IMCycle>>,
+    memory_layout: Option<MemoryLayout>,
+}
+
+impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
+    for BooleanitySumcheck<F>
+{
+    fn degree(&self) -> usize {
+        3 // Booleanity sumcheck has degree 3
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.K.log_2() + self.T.log_2()
+    }
+
+    fn input_claim(&self) -> F {
+        F::zero() // Always zero for booleanity
+    }
+
+    fn compute_prover_message(&self, round: usize) -> Vec<F> {
+        let K_log = self.K.log_2();
+        
+        if round < K_log {
+            // Phase 1: First log(K) rounds
+            self.compute_phase1_message(round)
+        } else {
+            // Phase 2: Last log(T) rounds
+            self.compute_phase2_message(round - K_log)
+        }
+    }
+
+    fn bind(&mut self, r_j: F, round: usize) {
+        let prover_state = self
+            .prover_state
+            .as_mut()
+            .expect("Prover state not initialized");
+        let K_log = self.K.log_2();
+
+        if round < K_log {
+            // Phase 1: Bind B and update F
+            prover_state.B.bind_parallel(r_j, BindingOrder::LowToHigh);
+
+            // Update F for this round (see Equation 55)
+            let (F_left, F_right) = prover_state.F.split_at_mut(1 << round);
+            F_left
+                .par_iter_mut()
+                .zip(F_right.par_iter_mut())
+                .for_each(|(x, y)| {
+                    *y = *x * r_j;
+                    *x -= *y;
+                });
+
+            // If transitioning to phase 2, prepare H
+            if round == K_log - 1 {
+                prover_state.eq_r_r = prover_state.B.final_sumcheck_claim();
+                
+                // Compute H using the final F values
+                let trace = self.trace.as_ref().expect("Trace not set");
+                let memory_layout = self.memory_layout.as_ref().expect("Memory layout not set");
+                
+                let H_vec: Vec<F> = trace
+                    .iter()
+                    .map(|cycle| {
+                        let k = remap_address(cycle.ram_access().address() as u64, memory_layout) as usize;
+                        prover_state.F[k]
+                    })
+                    .collect();
+                prover_state.H = Some(MultilinearPolynomial::from(H_vec));
+            }
+        } else {
+            // Phase 2: Bind D and H
+            let h_poly = prover_state.H.as_mut().expect("H not initialized");
+            rayon::join(
+                || prover_state.D.bind_parallel(r_j, BindingOrder::LowToHigh),
+                || h_poly.bind_parallel(r_j, BindingOrder::LowToHigh),
+            );
+        }
+
+        self.current_round += 1;
+    }
+
+    fn cache_openings(&mut self) {
+        if let Some(prover_state) = &self.prover_state {
+            if let Some(h_poly) = &prover_state.H {
+                self.ra_claim = Some(h_poly.final_sumcheck_claim());
+            }
+        }
+    }
+
+    fn expected_output_claim(&self, r: &[F]) -> F {
+        let verifier_state = self
+            .verifier_state
+            .as_ref()
+            .expect("Verifier state not initialized");
+        let ra_claim = self.ra_claim.expect("RA claim not cached");
+
+        let K_log = self.K.log_2();
+        let (r_address_prime, r_cycle_prime) = r.split_at(K_log);
+
+        let eq_eval_address = EqPolynomial::mle(&verifier_state.r_address, r_address_prime);
+        let r_cycle_prime: Vec<_> = r_cycle_prime.iter().copied().rev().collect();
+        let eq_eval_cycle = EqPolynomial::mle(&verifier_state.r_prime, &r_cycle_prime);
+
+        // Return eq_eval_address * eq_eval_cycle * (ra_claim^2 - ra_claim)
+        eq_eval_address * eq_eval_cycle * (ra_claim.square() - ra_claim)
+    }
+}
+
+impl<F: JoltField> BooleanitySumcheck<F> {
+    /// Compute prover message for phase 1 (first log(K) rounds)
+    fn compute_phase1_message(&self, round: usize) -> Vec<F> {
+        const DEGREE: usize = 3;
+        let prover_state = self
+            .prover_state
+            .as_ref()
+            .expect("Prover state not initialized");
+        
+        let m = round + 1;
+        
+        // EQ(k_m, c) for k_m \in {0, 1} and c \in {0, 2, 3}
+        let eq_km_c: [[F; DEGREE]; 2] = [
+            [
+                F::one(),        // eq(0, 0) = 0 * 0 + (1 - 0) * (1 - 0)
+                F::from_i64(-1), // eq(0, 2) = 0 * 2 + (1 - 0) * (1 - 2)
+                F::from_i64(-2), // eq(0, 3) = 0 * 3 + (1 - 0) * (1 - 3)
+            ],
+            [
+                F::zero(),     // eq(1, 0) = 1 * 0 + (1 - 1) * (1 - 0)
+                F::from_u8(2), // eq(1, 2) = 1 * 2 + (1 - 1) * (1 - 2)
+                F::from_u8(3), // eq(1, 3) = 1 * 3 + (1 - 1) * (1 - 3)
+            ],
+        ];
+        // EQ(k_m, c)^2 for k_m \in {0, 1} and c \in {0, 2, 3}
+        let eq_km_c_squared: [[F; DEGREE]; 2] = [
+            [F::one(), F::one(), F::from_u8(4)],
+            [F::zero(), F::from_u8(4), F::from_u8(9)],
+        ];
+
+        let univariate_poly_evals: [F; 3] = (0..prover_state.B.len() / 2)
+            .into_par_iter()
+            .map(|k_prime| {
+                let B_evals = prover_state
+                    .B
+                    .sumcheck_evals(k_prime, DEGREE, BindingOrder::LowToHigh);
+
+                let inner_sum = prover_state.G[k_prime << m..(k_prime + 1) << m]
+                    .par_iter()
+                    .enumerate()
+                    .map(|(k, &G_k)| {
+                        // Since we're binding variables from low to high, k_m is the high bit
+                        let k_m = k >> (m - 1);
+                        // We then index into F using (k_{m-1}, ..., k_1)
+                        let F_k = prover_state.F[k % (1 << (m - 1))];
+                        // G_times_F := G[k] * F[k_1, ...., k_{m-1}]
+                        let G_times_F = G_k * F_k;
+                        // For c \in {0, 2, 3} compute:
+                        //    G[k] * (F[k_1, ...., k_{m-1}, c]^2 - F[k_1, ...., k_{m-1}, c])
+                        //    = G_times_F * (eq(k_m, c)^2 * F[k_1, ...., k_{m-1}] - eq(k_m, c))
+                        [
+                            G_times_F * (eq_km_c_squared[k_m][0] * F_k - eq_km_c[k_m][0]),
+                            G_times_F * (eq_km_c_squared[k_m][1] * F_k - eq_km_c[k_m][1]),
+                            G_times_F * (eq_km_c_squared[k_m][2] * F_k - eq_km_c[k_m][2]),
+                        ]
+                    })
+                    .reduce(
+                        || [F::zero(); 3],
+                        |running, new| {
+                            [
+                                running[0] + new[0],
+                                running[1] + new[1],
+                                running[2] + new[2],
+                            ]
+                        },
+                    );
+
+                [
+                    B_evals[0] * inner_sum[0],
+                    B_evals[1] * inner_sum[1],
+                    B_evals[2] * inner_sum[2],
+                ]
+            })
+            .reduce(
+                || [F::zero(); 3],
+                |running, new| {
+                    [
+                        running[0] + new[0],
+                        running[1] + new[1],
+                        running[2] + new[2],
+                    ]
+                },
+            );
+
+        univariate_poly_evals.to_vec()
+    }
+
+    /// Compute prover message for phase 2 (last log(T) rounds)
+    fn compute_phase2_message(&self, round: usize) -> Vec<F> {
+        const DEGREE: usize = 3;
+        let prover_state = self
+            .prover_state
+            .as_ref()
+            .expect("Prover state not initialized");
+        let h_poly = prover_state.H.as_ref().expect("H not initialized");
+
+        let mut univariate_poly_evals: [F; 3] = (0..prover_state.D.len() / 2)
+            .into_par_iter()
+            .map(|i| {
+                let D_evals = prover_state
+                    .D
+                    .sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
+                let H_evals = h_poly.sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
+
+                [
+                    D_evals[0] * (H_evals[0] * H_evals[0] - H_evals[0]),
+                    D_evals[1] * (H_evals[1] * H_evals[1] - H_evals[1]),
+                    D_evals[2] * (H_evals[2] * H_evals[2] - H_evals[2]),
+                ]
+            })
+            .reduce(
+                || [F::zero(); 3],
+                |running, new| {
+                    [
+                        running[0] + new[0],
+                        running[1] + new[1],
+                        running[2] + new[2],
+                    ]
+                },
+            );
+
+        // Multiply by eq_r_r
+        univariate_poly_evals = [
+            prover_state.eq_r_r * univariate_poly_evals[0],
+            prover_state.eq_r_r * univariate_poly_evals[1],
+            prover_state.eq_r_r * univariate_poly_evals[2],
+        ];
+
+        univariate_poly_evals.to_vec()
+    }
+}
+
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct HammingWeightProof<F, ProofTranscript>
 where
@@ -757,17 +1040,36 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         let mut r_address: Vec<F> = transcript.challenge_vector(log_K);
         r_address = r_address.into_iter().rev().collect();
 
-        let (sumcheck_claim, r_booleanity) =
-            self.booleanity_proof
-                .sumcheck_proof
-                .verify(F::zero(), log_K + log_T, 3, transcript)?;
+        // Create the sumcheck instance for verification
+        let sumcheck_instance = BooleanitySumcheck {
+            K: self.K,
+            T,
+            prover_state: None,
+            verifier_state: Some(BooleanityVerifierState {
+                K: self.K,
+                T,
+                r_address: r_address.clone(),
+                r_prime: r_prime.clone(),
+            }),
+            ra_claim: Some(self.booleanity_proof.ra_claim),
+            current_round: 0,
+            trace: None,
+            memory_layout: None,
+        };
+
+        // Verify the sumcheck proof
+        let r_booleanity = <BooleanitySumcheck<F> as BatchableSumcheckInstance<
+            F,
+            ProofTranscript,
+        >>::verify_single(
+            &sumcheck_instance,
+            &self.booleanity_proof.sumcheck_proof,
+            transcript,
+        )?;
 
         let (r_address_prime, r_cycle_prime) = r_booleanity.split_at(log_K);
 
-        let eq_eval_address = EqPolynomial::mle(&r_address, r_address_prime);
         let r_cycle_prime: Vec<_> = r_cycle_prime.iter().copied().rev().collect();
-        let eq_eval_cycle = EqPolynomial::mle(&r_prime, &r_cycle_prime);
-
         let r_address_prime = r_address_prime.iter().copied().rev().collect::<Vec<_>>();
         let ra_commitment = &commitments.commitments[CommittedPolynomials::RamRa(0).to_index()];
 
@@ -790,14 +1092,6 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             r_concat,
             &self.ra_proof.ra_i_claims,
             transcript,
-        );
-
-        assert_eq!(
-            eq_eval_address
-                * eq_eval_cycle
-                * (self.booleanity_proof.ra_claim.square() - self.booleanity_proof.ra_claim),
-            sumcheck_claim,
-            "Booleanity sumcheck failed"
         );
 
         let (sumcheck_claim, _r_hamming_weight) =
@@ -1789,13 +2083,11 @@ fn prove_ra_booleanity<F: JoltField, ProofTranscript: Transcript>(
     K: usize,
     transcript: &mut ProofTranscript,
 ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, Vec<F>, F) {
-    const DEGREE: usize = 3;
-    let log_K: usize = K.log_2();
     let T = trace.len();
     let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
     let chunk_size = (T / num_chunks).max(1);
 
-    let r_address: Vec<F> = transcript.challenge_vector(log_K);
+    let r_address: Vec<F> = transcript.challenge_vector(K.log_2());
 
     let span = tracing::span!(tracing::Level::INFO, "compute G");
     let _guard = span.enter();
@@ -1827,229 +2119,57 @@ fn prove_ra_booleanity<F: JoltField, ProofTranscript: Transcript>(
     drop(_guard);
     drop(span);
 
-    let mut B = MultilinearPolynomial::from(EqPolynomial::evals(&r_address)); // (53)
-
-    // First log(K) rounds of sumcheck
+    let B = MultilinearPolynomial::from(EqPolynomial::evals(&r_address));
+    let D = MultilinearPolynomial::from(eq_r_cycle.to_vec());
 
     let mut F: Vec<F> = unsafe_allocate_zero_vec(K);
     F[0] = F::one();
 
-    let num_rounds = log_K + T.log_2();
-    let mut r_address_prime: Vec<F> = Vec::with_capacity(log_K);
-    let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
+    // Create the sumcheck instance
+    let mut sumcheck_instance = BooleanitySumcheck {
+        K,
+        T,
+        prover_state: Some(BooleanityProverState {
+            B,
+            F,
+            G,
+            D,
+            H: None,
+            eq_r_r: F::zero(),
+        }),
+        verifier_state: None,
+        ra_claim: None,
+        current_round: 0,
+        trace: Some(trace.to_vec()),
+        memory_layout: Some(memory_layout.clone()),
+    };
 
-    let mut previous_claim = F::zero();
-
-    // EQ(k_m, c) for k_m \in {0, 1} and c \in {0, 2, 3}
-    let eq_km_c: [[F; DEGREE]; 2] = [
-        [
-            F::one(),        // eq(0, 0) = 0 * 0 + (1 - 0) * (1 - 0)
-            F::from_i64(-1), // eq(0, 2) = 0 * 2 + (1 - 0) * (1 - 2)
-            F::from_i64(-2), // eq(0, 3) = 0 * 3 + (1 - 0) * (1 - 3)
-        ],
-        [
-            F::zero(),     // eq(1, 0) = 1 * 0 + (1 - 1) * (1 - 0)
-            F::from_u8(2), // eq(1, 2) = 1 * 2 + (1 - 1) * (1 - 2)
-            F::from_u8(3), // eq(1, 3) = 1 * 3 + (1 - 1) * (1 - 3)
-        ],
-    ];
-    // EQ(k_m, c)^2 for k_m \in {0, 1} and c \in {0, 2, 3}
-    let eq_km_c_squared: [[F; DEGREE]; 2] = [
-        [F::one(), F::one(), F::from_u8(4)],
-        [F::zero(), F::from_u8(4), F::from_u8(9)],
-    ];
-
-    // First log(K) rounds of sumcheck
-    let span = tracing::span!(
-        tracing::Level::INFO,
-        "First log(K) rounds of Booleanity sumcheck"
-    );
+    let span = tracing::span!(tracing::Level::INFO, "Booleanity sumcheck");
     let _guard = span.enter();
 
-    for round in 0..log_K {
-        let m = round + 1;
-
-        let inner_span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
-        let _inner_guard = inner_span.enter();
-
-        let univariate_poly_evals: [F; 3] = (0..B.len() / 2)
-            .into_par_iter()
-            .map(|k_prime| {
-                let B_evals = B.sumcheck_evals(k_prime, DEGREE, BindingOrder::LowToHigh);
-
-                let inner_sum = G[k_prime << m..(k_prime + 1) << m]
-                    .par_iter()
-                    .enumerate()
-                    .map(|(k, &G_k)| {
-                        // Since we're binding variables from low to high, k_m is the high bit
-                        let k_m = k >> (m - 1);
-                        // We then index into F using (k_{m-1}, ..., k_1)
-                        let F_k = F[k % (1 << (m - 1))];
-                        // G_times_F := G[k] * F[k_1, ...., k_{m-1}]
-                        let G_times_F = G_k * F_k;
-                        // For c \in {0, 2, 3} compute:
-                        //    G[k] * (F[k_1, ...., k_{m-1}, c]^2 - F[k_1, ...., k_{m-1}, c])
-                        //    = G_times_F * (eq(k_m, c)^2 * F[k_1, ...., k_{m-1}] - eq(k_m, c))
-                        [
-                            G_times_F * (eq_km_c_squared[k_m][0] * F_k - eq_km_c[k_m][0]),
-                            G_times_F * (eq_km_c_squared[k_m][1] * F_k - eq_km_c[k_m][1]),
-                            G_times_F * (eq_km_c_squared[k_m][2] * F_k - eq_km_c[k_m][2]),
-                        ]
-                    })
-                    .reduce(
-                        || [F::zero(); 3],
-                        |running, new| {
-                            [
-                                running[0] + new[0],
-                                running[1] + new[1],
-                                running[2] + new[2],
-                            ]
-                        },
-                    );
-
-                [
-                    B_evals[0] * inner_sum[0],
-                    B_evals[1] * inner_sum[1],
-                    B_evals[2] * inner_sum[2],
-                ]
-            })
-            .reduce(
-                || [F::zero(); 3],
-                |running, new| {
-                    [
-                        running[0] + new[0],
-                        running[1] + new[1],
-                        running[2] + new[2],
-                    ]
-                },
-            );
-
-        let univariate_poly = UniPoly::from_evals(&[
-            univariate_poly_evals[0],
-            previous_claim - univariate_poly_evals[0],
-            univariate_poly_evals[1],
-            univariate_poly_evals[2],
-        ]);
-
-        drop(_inner_guard);
-        drop(inner_span);
-
-        let compressed_poly = univariate_poly.compress();
-        compressed_poly.append_to_transcript(transcript);
-        compressed_polys.push(compressed_poly);
-
-        let r_j = transcript.challenge_scalar::<F>();
-        r_address_prime.push(r_j);
-
-        previous_claim = univariate_poly.evaluate(&r_j);
-
-        B.bind_parallel(r_j, BindingOrder::LowToHigh);
-
-        let inner_span = tracing::span!(tracing::Level::INFO, "Update F");
-        let _inner_guard = inner_span.enter();
-
-        // Update F for this round (see Equation 55)
-        let (F_left, F_right) = F.split_at_mut(1 << round);
-        F_left
-            .par_iter_mut()
-            .zip(F_right.par_iter_mut())
-            .for_each(|(x, y)| {
-                *y = *x * r_j;
-                *x -= *y;
-            });
-    }
+    // Run the sumcheck protocol
+    let (sumcheck_proof, r) = <BooleanitySumcheck<F> as BatchableSumcheckInstance<
+        F,
+        ProofTranscript,
+    >>::prove_single(&mut sumcheck_instance, transcript);
 
     drop(_guard);
     drop(span);
 
-    let span = tracing::span!(
-        tracing::Level::INFO,
-        "Last log(T) rounds of Booleanity sumcheck"
+    // Cache the opening claims
+    <BooleanitySumcheck<F> as BatchableSumcheckInstance<F, ProofTranscript>>::cache_openings(
+        &mut sumcheck_instance,
     );
-    let _guard = span.enter();
+    let ra_claim = sumcheck_instance.ra_claim.expect("RA claim should be set");
 
-    let eq_r_r = B.final_sumcheck_claim();
-
-    let mut H: MultilinearPolynomial<F> = {
-        let coeffs: Vec<F> = trace
-            .par_iter()
-            .map(|cycle| {
-                let k = remap_address(cycle.ram_access().address() as u64, memory_layout) as usize;
-                F[k]
-            })
-            .collect();
-        MultilinearPolynomial::from(coeffs)
-    };
-    let mut D = MultilinearPolynomial::from(eq_r_cycle.to_vec());
-    let mut r_cycle_prime: Vec<F> = Vec::with_capacity(T.log_2());
-
-    // TODO(moodlezoup): Implement optimization from Section 6.2.2 "An optimization leveraging small memory size"
-    // Last log(T) rounds of sumcheck
-    for _round in 0..T.log_2() {
-        let inner_span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
-        let _inner_guard = inner_span.enter();
-
-        let mut univariate_poly_evals: [F; 3] = (0..D.len() / 2)
-            .into_par_iter()
-            .map(|i| {
-                let D_evals = D.sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
-                let H_evals = H.sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
-
-                [
-                    D_evals[0] * (H_evals[0] * H_evals[0] - H_evals[0]),
-                    D_evals[1] * (H_evals[1] * H_evals[1] - H_evals[1]),
-                    D_evals[2] * (H_evals[2] * H_evals[2] - H_evals[2]),
-                ]
-            })
-            .reduce(
-                || [F::zero(); 3],
-                |running, new| {
-                    [
-                        running[0] + new[0],
-                        running[1] + new[1],
-                        running[2] + new[2],
-                    ]
-                },
-            );
-
-        univariate_poly_evals = [
-            eq_r_r * univariate_poly_evals[0],
-            eq_r_r * univariate_poly_evals[1],
-            eq_r_r * univariate_poly_evals[2],
-        ];
-
-        let univariate_poly = UniPoly::from_evals(&[
-            univariate_poly_evals[0],
-            previous_claim - univariate_poly_evals[0],
-            univariate_poly_evals[1],
-            univariate_poly_evals[2],
-        ]);
-
-        drop(_inner_guard);
-        drop(inner_span);
-
-        let compressed_poly = univariate_poly.compress();
-        compressed_poly.append_to_transcript(transcript);
-        compressed_polys.push(compressed_poly);
-
-        let r_j = transcript.challenge_scalar::<F>();
-        r_cycle_prime.push(r_j);
-
-        previous_claim = univariate_poly.evaluate(&r_j);
-
-        // Bind polynomials
-        rayon::join(
-            || D.bind_parallel(r_j, BindingOrder::LowToHigh),
-            || H.bind_parallel(r_j, BindingOrder::LowToHigh),
-        );
-    }
-
-    let ra_claim = H.final_sumcheck_claim();
+    // Extract r_address_prime and r_cycle_prime from r
+    let K_log = K.log_2();
+    let (r_address_prime, r_cycle_prime) = r.split_at(K_log);
 
     (
-        SumcheckInstanceProof::new(compressed_polys),
-        r_address_prime,
-        r_cycle_prime,
+        sumcheck_proof,
+        r_address_prime.to_vec(),
+        r_cycle_prime.to_vec(),
         ra_claim,
     )
 }
