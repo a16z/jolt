@@ -1,8 +1,10 @@
 #![allow(clippy::too_many_arguments)]
 
+use std::marker::PhantomData;
 use std::vec;
 
 use crate::{
+    dag::{Stage, StageContributor},
     field::{JoltField, OptimizedMul},
     jolt::{
         vm::{
@@ -2395,6 +2397,191 @@ fn prove_ra_hamming_weight<F: JoltField, ProofTranscript: Transcript>(
         .expect("ra_claim should be cached after proving");
 
     (sumcheck_proof, r_address_double_prime, ra_claim)
+}
+
+/// Stage 2 contributor for RAM - Everything else (Read/Write checking, etc.)
+/// Currently Read/Write checking doesn't implement BatchableSumcheckInstance, so marked as todo
+pub struct RAMStage2<F: JoltField, ProofTranscript: Transcript> {
+    _phantom: PhantomData<(F, ProofTranscript)>,
+}
+
+impl<F: JoltField, ProofTranscript: Transcript, SM> StageContributor<F, ProofTranscript, SM>
+    for RAMStage2<F, ProofTranscript>
+{
+    fn stage(&self) -> Stage {
+        Stage::Stage2
+    }
+
+    fn prover_instances(
+        &self,
+        _state_manager: &SM,
+    ) -> Vec<Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>> {
+        // TODO: Implement when Read/Write checking and other Stage 2 sumchecks implement BatchableSumcheckInstance
+        todo!("Stage 2 RAM sumchecks do not yet implement BatchableSumcheckInstance")
+    }
+
+    fn verifier_instances(
+        &self,
+        _state_manager: &SM,
+    ) -> Vec<Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>> {
+        // TODO: Implement when Read/Write checking and other Stage 2 sumchecks implement BatchableSumcheckInstance
+        todo!("Stage 2 RAM sumchecks do not yet implement BatchableSumcheckInstance")
+    }
+}
+
+/// Stage 3 contributor for RAM - Val eval, Val-final
+pub struct RAMStage3<F: JoltField, ProofTranscript: Transcript> {
+    _phantom: PhantomData<(F, ProofTranscript)>,
+}
+
+impl<F: JoltField, ProofTranscript: Transcript, SM> StageContributor<F, ProofTranscript, SM>
+    for RAMStage3<F, ProofTranscript>
+{
+    fn stage(&self) -> Stage {
+        Stage::Stage3
+    }
+
+    fn prover_instances(
+        &self,
+        _state_manager: &SM,
+    ) -> Vec<Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>> {
+        vec![
+            // Val evaluation sumcheck
+            Box::new(ValEvaluationSumcheck {
+                claimed_evaluation: todo!("Extract from state manager"),
+                init_eval: todo!("Extract from state manager"),
+                prover_state: Some(ValEvaluationProverState {
+                    inc: todo!("Extract from state manager"),
+                    wa: todo!("Extract from state manager"),
+                    lt: todo!("Extract from state manager"),
+                }),
+                verifier_state: None,
+                claims: None,
+            }),
+            // Val-final (RAF evaluation) sumcheck
+            Box::new(RafEvaluationSumcheck::new_prover(
+                todo!("Extract ra from state manager"),
+                todo!("Extract unmap from state manager"),
+                todo!("Extract raf_claim from state manager"),
+            )),
+        ]
+    }
+
+    fn verifier_instances(
+        &self,
+        _state_manager: &SM,
+    ) -> Vec<Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>> {
+        vec![
+            // Val evaluation sumcheck
+            Box::new(ValEvaluationSumcheck {
+                claimed_evaluation: todo!("Extract from state manager"),
+                init_eval: todo!("Extract from state manager"),
+                prover_state: None,
+                verifier_state: Some(ValEvaluationVerifierState {
+                    num_rounds: todo!("Extract from state manager"),
+                    r_address: todo!("Extract from state manager"),
+                    r_cycle: todo!("Extract from state manager"),
+                }),
+                claims: Some(ValEvaluationSumcheckClaims {
+                    inc_claim: todo!("Extract from state manager"),
+                    wa_claim: todo!("Extract from state manager"),
+                }),
+            }),
+            // Val-final (RAF evaluation) sumcheck
+            Box::new(RafEvaluationSumcheck::new_verifier(
+                todo!("Extract raf_claim from state manager"),
+                todo!("Extract log_K from state manager"),
+                todo!("Extract start_address from state manager"),
+                todo!("Extract ra_claim from state manager"),
+            )),
+        ]
+    }
+}
+
+/// Stage 4 contributor for RAM - RA virtualization, Hamming weight, Booleanity
+pub struct RAMStage4<F: JoltField, ProofTranscript: Transcript> {
+    _phantom: PhantomData<(F, ProofTranscript)>,
+}
+
+impl<F: JoltField, ProofTranscript: Transcript, SM> StageContributor<F, ProofTranscript, SM>
+    for RAMStage4<F, ProofTranscript>
+{
+    fn stage(&self) -> Stage {
+        Stage::Stage4
+    }
+
+    fn prover_instances(
+        &self,
+        _state_manager: &SM,
+    ) -> Vec<Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>> {
+        vec![
+            // RA virtualization sumcheck
+            Box::new(RASumcheck::<F, 1>::new(
+                todo!("Extract from state manager"), // input_claim
+                todo!("Extract from state manager"), // addresses
+                todo!("Extract from state manager"), // r_cycle
+                todo!("Extract from state manager"), // gamma
+                todo!("Extract from state manager"), // r_cycle_length
+            )),
+            // Hamming weight sumcheck
+            Box::new(HammingWeightSumcheck::new_prover(
+                todo!("Extract ra from state manager"),
+            )),
+            // Booleanity sumcheck
+            Box::new(BooleanitySumcheck {
+                K: todo!("Extract from state manager"),
+                T: todo!("Extract from state manager"),
+                prover_state: Some(BooleanityProverState {
+                    B: todo!("Extract from state manager"),
+                    F: todo!("Extract from state manager"),
+                    G: todo!("Extract from state manager"),
+                    D: todo!("Extract from state manager"),
+                    H: todo!("Extract from state manager"),
+                    eq_r_r: todo!("Extract from state manager"),
+                }),
+                verifier_state: None,
+                ra_claim: None,
+                current_round: 0,
+                trace: todo!("Extract from state manager"),
+                memory_layout: todo!("Extract from state manager"),
+            }),
+        ]
+    }
+
+    fn verifier_instances(
+        &self,
+        _state_manager: &SM,
+    ) -> Vec<Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>> {
+        vec![
+            // RA virtualization sumcheck (verifier)
+            Box::new(RASumcheck::<F, 1>::new_verifier(
+                todo!("Extract input_claim from state manager"),
+                todo!("Extract r_cycle from state manager"),
+                todo!("Extract gamma from state manager"),
+            )),
+            // Hamming weight sumcheck
+            Box::new(HammingWeightSumcheck::new_verifier(
+                todo!("Extract log_K from state manager"),
+                todo!("Extract ra_claim from state manager"),
+            )),
+            // Booleanity sumcheck
+            Box::new(BooleanitySumcheck {
+                K: todo!("Extract from state manager"),
+                T: todo!("Extract from state manager"),
+                prover_state: None,
+                verifier_state: Some(BooleanityVerifierState {
+                    K: todo!("Extract from state manager"),
+                    T: todo!("Extract from state manager"),
+                    r_address: todo!("Extract from state manager"),
+                    r_prime: todo!("Extract from state manager"),
+                }),
+                ra_claim: todo!("Extract from state manager"),
+                current_round: 0,
+                trace: None,
+                memory_layout: None,
+            }),
+        ]
+    }
 }
 
 #[cfg(test)]

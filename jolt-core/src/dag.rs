@@ -14,7 +14,16 @@ pub enum Stage {
 
 pub trait StageContributor<F: JoltField, ProofTranscript: Transcript, SM> {
     fn stage(&self) -> Stage;
-    fn instances(
+    
+    /// Create prover instances for this stage
+    fn prover_instances(
+        &self,
+        state_manager: &SM,
+    ) -> Vec<Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>>;
+    
+    /// Create verifier instances for this stage
+    /// The state manager holds all proofs and verification data
+    fn verifier_instances(
         &self,
         state_manager: &SM,
     ) -> Vec<Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>>;
@@ -36,11 +45,31 @@ pub trait StageContributor<F: JoltField, ProofTranscript: Transcript, SM> {
 /// // Get all stages in order
 /// let stages = registry.get_stages(); // Returns [Stage1, Stage2, ...]
 ///
-/// // Execute stages in order
+/// // Prover: Execute stages in order
 /// for stage in stages {
-///     // Get all sumcheck instances for this stage
-///     let instances = registry.get_stage_instances(stage, &state_manager);
-/// // prove...
+///     // Get all prover sumcheck instances for this stage
+///     let instances = registry.get_stage_prover_instances(stage, &state_manager);
+///     
+///     // Execute all instances in parallel
+///     let results = instances.par_iter_mut()
+///         .map(|instance| instance.prove_single(transcript))
+///         .collect();
+/// }
+/// 
+/// // Verifier: Verify stages in order
+/// for stage in stages {
+///     // Get all verifier sumcheck instances for this stage
+///     // State manager holds all proofs and verification data
+///     let verifier_instances = registry.get_stage_verifier_instances(stage, &state_manager);
+///     
+///     // Verify all instances - can be done in parallel
+///     let results: Result<Vec<_>, _> = verifier_instances.par_iter()
+///         .map(|instance| {
+///             // Extract the appropriate proof from state_manager
+///             let proof = state_manager.get_proof_for(instance);
+///             instance.verify_single(&proof, transcript)
+///         })
+///         .collect();
 /// }
 /// ```
 pub struct StageRegistry<F: JoltField, ProofTranscript: Transcript, SM> {
@@ -59,8 +88,8 @@ impl<F: JoltField, ProofTranscript: Transcript, SM> StageRegistry<F, ProofTransc
         self.contributors.push(contributor);
     }
 
-    /// Get all sumcheck instances for a specific stage
-    pub fn get_stage_instances(
+    /// Get all prover sumcheck instances for a specific stage
+    pub fn get_stage_prover_instances(
         &self,
         stage: Stage,
         state_manager: &SM,
@@ -68,7 +97,20 @@ impl<F: JoltField, ProofTranscript: Transcript, SM> StageRegistry<F, ProofTransc
         self.contributors
             .iter()
             .filter(|contributor| contributor.stage() == stage)
-            .flat_map(|contributor| contributor.instances(state_manager))
+            .flat_map(|contributor| contributor.prover_instances(state_manager))
+            .collect()
+    }
+
+    /// Get all verifier sumcheck instances for a specific stage
+    pub fn get_stage_verifier_instances(
+        &self,
+        stage: Stage,
+        state_manager: &SM,
+    ) -> Vec<Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>> {
+        self.contributors
+            .iter()
+            .filter(|contributor| contributor.stage() == stage)
+            .flat_map(|contributor| contributor.verifier_instances(state_manager))
             .collect()
     }
 

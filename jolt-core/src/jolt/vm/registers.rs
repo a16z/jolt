@@ -1,6 +1,8 @@
 use std::array::from_fn;
+use std::marker::PhantomData;
 
 use crate::{
+    dag::{Stage, StageContributor},
     field::{JoltField, OptimizedMul},
     jolt::{
         vm::{JoltCommitments, JoltProverPreprocessing},
@@ -1501,6 +1503,86 @@ pub fn prove_val_evaluation<
 
     (proof, r_cycle_prime)
 }
+
+
+/// Stage 2 contributor for registers - Read/Write checking
+/// Currently not implementing BatchableSumcheckInstance, so marked as todo
+pub struct RegistersStage2<F: JoltField, ProofTranscript: Transcript> {
+    _phantom: PhantomData<(F, ProofTranscript)>,
+}
+
+impl<F: JoltField, ProofTranscript: Transcript, SM> StageContributor<F, ProofTranscript, SM>
+    for RegistersStage2<F, ProofTranscript>
+{
+    fn stage(&self) -> Stage {
+        Stage::Stage2
+    }
+
+    fn prover_instances(
+        &self,
+        _state_manager: &SM,
+    ) -> Vec<Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>> {
+        // TODO: Implement when Read/Write checking implements BatchableSumcheckInstance
+        todo!("Read/Write checking does not yet implement BatchableSumcheckInstance")
+    }
+
+    fn verifier_instances(
+        &self,
+        _state_manager: &SM,
+    ) -> Vec<Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>> {
+        // TODO: Implement when Read/Write checking implements BatchableSumcheckInstance
+        todo!("Read/Write checking does not yet implement BatchableSumcheckInstance")
+    }
+}
+
+/// Stage 3 contributor for registers - Val evaluation sumcheck
+pub struct RegistersStage3<F: JoltField, ProofTranscript: Transcript> {
+    _phantom: PhantomData<(F, ProofTranscript)>,
+}
+
+impl<F: JoltField, ProofTranscript: Transcript, SM> StageContributor<F, ProofTranscript, SM>
+    for RegistersStage3<F, ProofTranscript>
+{
+    fn stage(&self) -> Stage {
+        Stage::Stage3
+    }
+
+    fn prover_instances(
+        &self,
+        _state_manager: &SM,
+    ) -> Vec<Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>> {
+        vec![Box::new(ValEvaluationSumcheck {
+            claimed_evaluation: todo!("Extract from state manager"),
+            prover_state: Some(ValEvaluationProverState {
+                inc: todo!("Extract from state manager"),
+                wa: todo!("Extract from state manager"),
+                lt: todo!("Extract from state manager"),
+            }),
+            verifier_state: None,
+            claims: None,
+        })]
+    }
+
+    fn verifier_instances(
+        &self,
+        _state_manager: &SM,
+    ) -> Vec<Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>> {
+        vec![Box::new(ValEvaluationSumcheck {
+            claimed_evaluation: todo!("Extract from state manager"),
+            prover_state: None,
+            verifier_state: Some(ValEvaluationVerifierState {
+                num_rounds: todo!("Extract from state manager"),
+                r_address: todo!("Extract from state manager"),
+                r_cycle: todo!("Extract from state manager"),
+            }),
+            claims: Some(ValEvaluationSumcheckClaims {
+                inc_claim: todo!("Extract from state manager"),
+                wa_claim: todo!("Extract from state manager"),
+            }),
+        })]
+    }
+}
+
 
 #[cfg(test)]
 mod tests {

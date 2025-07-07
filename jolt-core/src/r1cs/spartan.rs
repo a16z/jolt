@@ -853,11 +853,12 @@ impl<F: JoltField, ProofTranscript: Transcript> SpartanStage2<F, ProofTranscript
 impl<F: JoltField, ProofTranscript: Transcript, SM> StageContributor<F, ProofTranscript, SM>
     for SpartanStage2<F, ProofTranscript>
 {
+    
     fn stage(&self) -> Stage {
         Stage::Stage2
     }
 
-    fn instances(
+    fn prover_instances(
         &self,
         state_manager: &SM,
     ) -> Vec<Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>> {
@@ -885,6 +886,51 @@ impl<F: JoltField, ProofTranscript: Transcript, SM> StageContributor<F, ProofTra
             claimed_witness_evals,
             eq_plus_one_r_cycle,
             pc_sumcheck_r,
+        );
+
+        vec![
+            Box::new(inner_sumcheck) as Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>,
+            Box::new(pc_sumcheck) as Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>,
+        ]
+    }
+    
+    fn verifier_instances(
+        &self,
+        state_manager: &SM,
+    ) -> Vec<Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>> {
+        // Extract verifier data and proofs from state_manager
+        let claim_inner_joint: F = todo!("extract from state_manager");
+        let key: &UniformSpartanKey<F> = todo!("extract from state_manager");
+        let rx_var: Vec<F> = todo!("extract from state_manager");
+        let claimed_witness_evals: Vec<F> = todo!("extract from state_manager");
+        let inner_sumcheck_rlc: F = todo!("extract from state_manager");
+        
+        // For PC sumcheck
+        let shift_sumcheck_claim: F = todo!("extract from state_manager");
+        let r_cycle: Vec<F> = todo!("extract from state_manager");
+        let r: F = todo!("extract from state_manager");
+        let unexpanded_pc_eval_at_shift_r: F = todo!("extract from state_manager");
+        let pc_eval_at_shift_r: F = todo!("extract from state_manager");
+        
+        // Proofs are also stored in state_manager
+        // let inner_sumcheck_proof: &SumcheckInstanceProof<F, ProofTranscript> = todo!("extract from state_manager");
+        // let shift_sumcheck_proof: &SumcheckInstanceProof<F, ProofTranscript> = todo!("extract from state_manager");
+        
+        // Create verifier instances
+        let inner_sumcheck = InnerSumcheck::new_verifier(
+            claim_inner_joint,
+            key,
+            rx_var,
+            claimed_witness_evals,
+            inner_sumcheck_rlc,
+        );
+        
+        let pc_sumcheck = PCSumcheck::new_verifier(
+            shift_sumcheck_claim,
+            r_cycle,
+            r,
+            unexpanded_pc_eval_at_shift_r,
+            pc_eval_at_shift_r,
         );
 
         vec![

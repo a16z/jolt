@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::{
+    dag::{Stage, StageContributor},
     field::JoltField,
     jolt::{
         vm::{JoltCommitments, JoltProverPreprocessing},
@@ -1154,5 +1155,141 @@ impl<F: JoltField, ProofTranscript: Transcript> RafEvaluationProof<F, ProofTrans
         let r_raf_sumcheck = raf_sumcheck.verify_single(&self.sumcheck_proof, transcript)?;
 
         Ok(r_raf_sumcheck)
+    }
+}
+
+use std::marker::PhantomData;
+
+pub struct BytecodeStage4<F: JoltField, ProofTranscript: Transcript> {
+    _phantom: PhantomData<(F, ProofTranscript)>,
+}
+
+impl<F: JoltField, ProofTranscript: Transcript> BytecodeStage4<F, ProofTranscript> {
+    pub fn new() -> Self {
+        Self {
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<F: JoltField, ProofTranscript: Transcript, SM> StageContributor<F, ProofTranscript, SM>
+    for BytecodeStage4<F, ProofTranscript>
+{
+    fn stage(&self) -> Stage {
+        Stage::Stage4
+    }
+
+    fn prover_instances(
+        &self,
+        state_manager: &SM,
+    ) -> Vec<Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>> {
+        // Extract data from state_manager for prover
+        let K: usize = todo!("extract from state_manager");
+        let input_claim: F = todo!("extract from state_manager");
+        let ra_poly: MultilinearPolynomial<F> = todo!("extract from state_manager");
+        let val_poly: MultilinearPolynomial<F> = todo!("extract from state_manager");
+        let z: F = todo!("extract from state_manager");
+        
+        // For BooleanitySumcheck
+        let preprocessing: &BytecodePreprocessing = todo!("extract from state_manager");
+        let trace: &[RV32IMCycle] = todo!("extract from state_manager");
+        let r: &[F] = todo!("extract from state_manager");
+        let D: Vec<F> = todo!("extract from state_manager");
+        let G: Vec<F> = todo!("extract from state_manager");
+        let T: usize = todo!("extract from state_manager");
+        
+        // For RafBytecode
+        let raf_input_claim: F = todo!("extract from state_manager");
+        let ra_poly_shift: MultilinearPolynomial<F> = todo!("extract from state_manager");
+        let int_poly: IdentityPolynomial<F> = todo!("extract from state_manager");
+        let challenge: F = todo!("extract from state_manager");
+        
+        // Create CorePIOPHammingSumcheck
+        let piop_sumcheck = CorePIOPHammingSumcheck::new(
+            input_claim,
+            ra_poly.clone(),
+            val_poly,
+            z,
+            K,
+        );
+        
+        // Create BooleanitySumcheck
+        let booleanity_sumcheck = BooleanitySumcheck::new(
+            preprocessing,
+            trace,
+            r,
+            D,
+            G,
+            K,
+            T,
+        );
+        
+        // Create RafBytecode
+        let raf_sumcheck = RafBytecode::new(
+            raf_input_claim,
+            ra_poly,
+            ra_poly_shift,
+            int_poly,
+            challenge,
+            K,
+        );
+        
+        vec![
+            Box::new(piop_sumcheck) as Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>,
+            Box::new(booleanity_sumcheck) as Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>,
+            Box::new(raf_sumcheck) as Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>,
+        ]
+    }
+    
+    fn verifier_instances(
+        &self,
+        state_manager: &SM,
+    ) -> Vec<Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>> {
+        // Extract data from state_manager for verifier
+        // For CorePIOPHammingSumcheck verifier
+        let input_claim: F = todo!("extract from state_manager");
+        let z: F = todo!("extract from state_manager");
+        let K: usize = todo!("extract from state_manager");
+        let ra_claim: F = todo!("extract from state_manager");
+        let val_eval: F = todo!("extract from state_manager");
+        
+        // For BooleanitySumcheck verifier
+        let T: usize = todo!("extract from state_manager");
+        let r_address: Vec<F> = todo!("extract from state_manager");
+        let r_cycle: Vec<F> = todo!("extract from state_manager");
+        let ra_claim_prime: F = todo!("extract from state_manager");
+        
+        // For RafBytecode verifier
+        let raf_input_claim: F = todo!("extract from state_manager");
+        let challenge: F = todo!("extract from state_manager");
+        let raf_ra_claim: F = todo!("extract from state_manager");
+        let raf_ra_claim_shift: F = todo!("extract from state_manager");
+        
+        // Proofs are also in state_manager
+        // let piop_sumcheck_proof: &SumcheckInstanceProof<F, ProofTranscript> = todo!("extract from state_manager");
+        // let booleanity_sumcheck_proof: &SumcheckInstanceProof<F, ProofTranscript> = todo!("extract from state_manager");
+        // let raf_sumcheck_proof: &SumcheckInstanceProof<F, ProofTranscript> = todo!("extract from state_manager");
+        
+        // Create verifier instances
+        let mut piop_sumcheck = CorePIOPHammingSumcheck::new_verifier(input_claim, z, K);
+        piop_sumcheck.ra_claim = Some(ra_claim);
+        piop_sumcheck.val_eval = Some(val_eval);
+        
+        let booleanity_sumcheck = BooleanitySumcheck::new_verifier(
+            K,
+            T,
+            r_address,
+            r_cycle,
+            ra_claim_prime,
+        );
+        
+        let mut raf_sumcheck = RafBytecode::new_verifier(raf_input_claim, challenge, K);
+        raf_sumcheck.ra_claims = Some((raf_ra_claim, raf_ra_claim_shift));
+        
+        vec![
+            Box::new(piop_sumcheck) as Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>,
+            Box::new(booleanity_sumcheck) as Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>,
+            Box::new(raf_sumcheck) as Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>,
+        ]
     }
 }
