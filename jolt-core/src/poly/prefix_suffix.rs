@@ -393,8 +393,8 @@ pub mod tests {
 
         let indices = (0..(1 << NUM_VARS))
             .map(|i| LookupBits::new(i, NUM_VARS))
+            .enumerate()
             .collect::<Vec<_>>();
-        let enumerated_indices = indices.iter().enumerate().collect::<Vec<_>>();
 
         let mut rr = vec![];
         for phase in 0..(NUM_VARS / PREFIX_LEN) {
@@ -403,7 +403,7 @@ pub mod tests {
                 &(0..(1 << (NUM_VARS - PREFIX_LEN * phase)))
                     .map(|_| Fr::ONE)
                     .collect::<Vec<_>>(),
-                enumerated_indices.iter(),
+                indices.iter(),
             );
 
             for round in (0..PREFIX_LEN).rev() {

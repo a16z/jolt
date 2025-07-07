@@ -473,6 +473,7 @@ pub fn prove_sparse_dense_shout<
         .collect();
     let (lookup_indices_uninterleave, lookup_indices_identity): (Vec<_>, Vec<_>) = lookup_indices
         .par_iter()
+        .cloned()
         .enumerate()
         .zip(trace.par_iter())
         .partition_map(|((idx, item), cycle)| {
@@ -818,7 +819,8 @@ pub fn verify_sparse_dense_shout<
     let gamma_squared = gamma.square();
 
     // The first log(K) rounds' univariate polynomials are degree 2
-    let (sumcheck_claim, r_address_prime) = first_log_K_rounds.verify(rv_claim, log_K, 2, transcript)?;
+    let (sumcheck_claim, r_address_prime) =
+        first_log_K_rounds.verify(rv_claim, log_K, 2, transcript)?;
     // The last log(T) rounds' univariate polynomials are degree 6
     let (sumcheck_claim, r_cycle_prime) =
         last_log_T_rounds.verify(sumcheck_claim, log_T, 6, transcript)?;
@@ -834,8 +836,10 @@ pub fn verify_sparse_dense_shout<
         .map(|(flag, val)| *flag * val)
         .sum::<F>();
 
-    let right_operand_eval = OperandPolynomial::new(log_K, OperandSide::Left).evaluate(&r_address_prime);
-    let left_operand_eval = OperandPolynomial::new(log_K, OperandSide::Right).evaluate(&r_address_prime);
+    let right_operand_eval =
+        OperandPolynomial::new(log_K, OperandSide::Left).evaluate(&r_address_prime);
+    let left_operand_eval =
+        OperandPolynomial::new(log_K, OperandSide::Right).evaluate(&r_address_prime);
     let identity_poly_eval =
         IdentityPolynomial::new_with_endianness(log_K, Endianness::Big).evaluate(&r_address_prime);
 

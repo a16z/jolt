@@ -1,6 +1,9 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
-use std::marker::PhantomData;
+use std::{
+    marker::PhantomData,
+    sync::{Arc, Mutex},
+};
 use strum::{EnumCount, IntoEnumIterator};
 use tracer::instruction::RV32IMCycle;
 
@@ -15,7 +18,7 @@ use crate::{
             LookupTables,
         },
         vm::{
-            state_manager::{OpeningsKeys, StateManager},
+            state_manager::{Openings, OpeningsKeys, StateManager},
             JoltCommitments, JoltProverPreprocessing,
         },
         witness::CommittedPolynomials,
@@ -297,9 +300,7 @@ pub struct ReadRafSumcheck<'a, F: JoltField> {
     r_cycle: Vec<F>,
     rv_claim: F,
     raf_claim: F,
-    ra_claims: Option<[F; D]>,
-    raf_flag_claim: Option<F>,
-    flag_claims: Option<Vec<F>>,
+    openings: Arc<Mutex<Openings<F>>>,
     log_T: usize,
 }
 
@@ -400,10 +401,8 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
             rv_claim: sm.z(JoltR1CSInputs::LookupOutput),
             raf_claim: sm.z(JoltR1CSInputs::LeftLookupOperand)
                 + sm.challenges.instruction_read_raf * sm.z(JoltR1CSInputs::RightLookupOperand),
-            ra_claims: None,
-            raf_flag_claim: None,
-            flag_claims: None,
             log_T: sm.log_T,
+            openings: sm.openings.clone(),
         };
         s.init_phase(0);
         s
@@ -418,29 +417,8 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
             rv_claim: sm.z(JoltR1CSInputs::LookupOutput),
             raf_claim: sm.z(JoltR1CSInputs::LeftLookupOperand)
                 + sm.challenges.instruction_read_raf * sm.z(JoltR1CSInputs::RightLookupOperand),
-            ra_claims: Some(
-                (0..D)
-                    .into_iter()
-                    .map(|i| sm.openings(OpeningsKeys::InstructionRa(i)))
-                    .collect::<Vec<F>>()
-                    .try_into()
-                    .unwrap(),
-            ),
-            raf_flag_claim: Some(
-                sm.z(JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands))
-                    + sm.z(JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands))
-                    + sm.z(JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands))
-                    + sm.z(JoltR1CSInputs::OpFlags(CircuitFlags::Advice)),
-            ),
-            flag_claims: Some(
-                (0..LookupTables::<WORD_SIZE>::COUNT)
-                    .into_iter()
-                    .map(|i| sm.openings(OpeningsKeys::InstructionTypeFlag(i)))
-                    .collect::<Vec<F>>()
-                    .try_into()
-                    .unwrap(),
-            ),
             log_T: sm.log_T,
+            openings: sm.openings.clone(),
         }
     }
 }
@@ -564,29 +542,36 @@ impl<'a, F: JoltField, T: Transcript> BatchableSumcheckInstance<F, T> for ReadRa
         let ps = self.prover_state.as_mut().unwrap();
         let r_cycle_prime = &ps.r[ps.r.len() - self.log_T..];
         let eq_r_cycle_prime = EqPolynomial::evals(r_cycle_prime);
-        self.flag_claims = Some(
-            std::mem::take(&mut ps.lookup_indices_by_table)
-                .into_par_iter()
-                .map(|table_lookups| {
-                    table_lookups
-                        .into_iter()
-                        .map(|(j, _)| eq_r_cycle_prime[j])
-                        .sum::<F>()
-                })
-                .collect(),
-        );
-        self.raf_flag_claim = Some(
-            ps.lookup_indices_identity
-                .iter()
-                .map(|(j, _)| eq_r_cycle_prime[*j])
-                .sum::<F>(),
-        );
-        self.ra_claims = Some([
-            ps.ra[0].final_sumcheck_claim(),
-            ps.ra[1].final_sumcheck_claim(),
-            ps.ra[2].final_sumcheck_claim(),
-            ps.ra[3].final_sumcheck_claim(),
-        ]);
+
+        let flag_claims = std::mem::take(&mut ps.lookup_indices_by_table)
+            .into_par_iter()
+            .map(|table_lookups| {
+                table_lookups
+                    .into_iter()
+                    .map(|(j, _)| eq_r_cycle_prime[j])
+                    .sum::<F>()
+            })
+            .collect::<Vec<F>>();
+        let ra_claims = ps
+            .ra
+            .iter()
+            .map(|ra| ra.final_sumcheck_claim())
+            .collect::<Vec<F>>();
+
+        let mut openings = self.openings.lock().unwrap();
+        flag_claims.into_iter().enumerate().for_each(|(i, claim)| {
+            openings.insert(
+                OpeningsKeys::InstructionTypeFlag(i),
+                (r_cycle_prime.to_vec(), claim),
+            );
+        });
+        ra_claims.into_iter().enumerate().for_each(|(i, claim)| {
+            openings.insert(
+                OpeningsKeys::InstructionRa(i),
+                (r_cycle_prime.to_vec(), claim),
+            );
+        })
+        // raf flag claim should not need to be cached since its derived from the SpartanZ
     }
 
     fn expected_output_claim(&self, r: &[F]) -> F {
@@ -601,20 +586,27 @@ impl<'a, F: JoltField, T: Transcript> BatchableSumcheckInstance<F, T> for ReadRa
             .map(|table| table.evaluate_mle(&r_address_prime))
             .collect();
         let eq_eval_cycle = EqPolynomial::mle(&self.r_cycle, &r_cycle_prime);
-        let rv_val_claim = self
-            .flag_claims
-            .as_ref()
-            .unwrap()
-            .iter()
-            .zip(val_evals.iter())
-            .map(|(flag, val)| *flag * val)
-            .sum::<F>();
-        let val_eval = rv_val_claim
-            + (F::one() - self.raf_flag_claim.unwrap())
-                * (self.gamma * left_operand_eval + self.gamma_squared * right_operand_eval)
-            + self.raf_flag_claim.unwrap() * self.gamma_squared * identity_poly_eval;
 
-        eq_eval_cycle * self.ra_claims.unwrap().iter().product::<F>() * val_eval
+        let openings = self.openings.lock().unwrap();
+        let rv_val_claim = (0..LookupTables::<WORD_SIZE>::COUNT)
+            .map(|i| openings[&OpeningsKeys::InstructionTypeFlag(i)].1)
+            .zip(val_evals.iter())
+            .map(|(claim, val)| claim * val)
+            .sum::<F>();
+        let raf_flag_claim = openings[JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands)]
+            + openings[JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands)]
+            + openings[JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands)]
+            + openings[JoltR1CSInputs::OpFlags(CircuitFlags::Advice)];
+        let ra_claims = (0..D)
+            .map(|i| openings[&OpeningsKeys::InstructionRa(i)].1)
+            .product::<F>();
+        drop(openings);
+
+        let val_eval = rv_val_claim
+            + (F::one() - raf_flag_claim)
+                * (self.gamma * left_operand_eval + self.gamma_squared * right_operand_eval)
+            + raf_flag_claim * self.gamma_squared * identity_poly_eval;
+        eq_eval_cycle * ra_claims * val_eval
     }
 }
 
