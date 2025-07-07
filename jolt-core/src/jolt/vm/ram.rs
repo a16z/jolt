@@ -535,7 +535,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
     }
 
     /// Compute prover message for phase 2 (last log(T) rounds)
-    fn compute_phase2_message(&self, round: usize) -> Vec<F> {
+    fn compute_phase2_message(&self, _round: usize) -> Vec<F> {
         const DEGREE: usize = 3;
         let prover_state = self
             .prover_state
@@ -576,6 +576,112 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         ];
 
         univariate_poly_evals.to_vec()
+    }
+}
+
+/// Prover state for the Hamming Weight sumcheck
+struct HammingWeightProverState<F: JoltField> {
+    /// The ra polynomial
+    ra: MultilinearPolynomial<F>,
+}
+
+/// Verifier state for the Hamming Weight sumcheck
+struct HammingWeightVerifierState {
+    /// log K (number of rounds)
+    log_K: usize,
+}
+
+/// Sumcheck for proving the hamming weight of RAM addresses
+struct HammingWeightSumcheck<F: JoltField> {
+    /// The initial claim (F::one() for hamming weight)
+    input_claim: F,
+    /// Prover state (only present for prover)
+    prover_state: Option<HammingWeightProverState<F>>,
+    /// Verifier state (only present for verifier)
+    verifier_state: Option<HammingWeightVerifierState>,
+    /// Cached claim after sumcheck completion
+    cached_claim: Option<F>,
+}
+
+impl<F: JoltField> HammingWeightSumcheck<F> {
+    /// Create a new prover instance
+    fn new_prover(ra: MultilinearPolynomial<F>) -> Self {
+        Self {
+            input_claim: F::one(),
+            prover_state: Some(HammingWeightProverState { ra }),
+            verifier_state: None,
+            cached_claim: None,
+        }
+    }
+
+    /// Create a new verifier instance
+    fn new_verifier(log_K: usize, ra_claim: F) -> Self {
+        Self {
+            input_claim: F::one(),
+            prover_state: None,
+            verifier_state: Some(HammingWeightVerifierState { log_K }),
+            cached_claim: Some(ra_claim),
+        }
+    }
+}
+
+impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
+    for HammingWeightSumcheck<F>
+{
+    fn degree(&self) -> usize {
+        1
+    }
+
+    fn num_rounds(&self) -> usize {
+        if let Some(prover_state) = &self.prover_state {
+            prover_state.ra.get_num_vars()
+        } else if let Some(verifier_state) = &self.verifier_state {
+            verifier_state.log_K
+        } else {
+            panic!("Neither prover state nor verifier state is initialized")
+        }
+    }
+
+    fn input_claim(&self) -> F {
+        self.input_claim
+    }
+
+    fn compute_prover_message(&self, _round: usize) -> Vec<F> {
+        let prover_state = self
+            .prover_state
+            .as_ref()
+            .expect("Prover state not initialized");
+
+        let univariate_poly_eval: F = (0..prover_state.ra.len() / 2)
+            .into_par_iter()
+            .map(|i| prover_state.ra.get_bound_coeff(2 * i))
+            .sum();
+
+        vec![univariate_poly_eval]
+    }
+
+    fn bind(&mut self, r_j: F, _round: usize) {
+        if let Some(prover_state) = &mut self.prover_state {
+            prover_state
+                .ra
+                .bind_parallel(r_j, BindingOrder::LowToHigh);
+        }
+    }
+
+    fn cache_openings(&mut self) {
+        if let Some(prover_state) = &self.prover_state {
+            self.cached_claim = Some(prover_state.ra.final_sumcheck_claim());
+        }
+    }
+
+    fn expected_output_claim(&self, _r: &[F]) -> F {
+        // For hamming weight, the output claim is the same as the cached ra evaluation
+        // The verifier will have the ra_claim from the proof
+        if let Some(claim) = self.cached_claim {
+            claim
+        } else {
+            panic!("Expected output claim called before caching")
+        }
     }
 }
 
@@ -1094,15 +1200,12 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             transcript,
         );
 
-        let (sumcheck_claim, _r_hamming_weight) =
-            self.hamming_weight_proof
-                .sumcheck_proof
-                .verify(F::one(), log_K, 1, transcript)?;
-
-        assert_eq!(
-            self.hamming_weight_proof.ra_claim, sumcheck_claim,
-            "Hamming weight sumcheck failed"
-        );
+        // Create the sumcheck instance for verification
+        let sumcheck_instance = HammingWeightSumcheck::new_verifier(log_K, self.hamming_weight_proof.ra_claim);
+        
+        // Verify the sumcheck
+        let _r_hamming_weight = sumcheck_instance
+            .verify_single(&self.hamming_weight_proof.sumcheck_proof, transcript)?;
 
         // Verify RAF evaluation proof
         let _r_address_raf =
@@ -2182,12 +2285,9 @@ fn prove_ra_hamming_weight<F: JoltField, ProofTranscript: Transcript>(
     K: usize,
     transcript: &mut ProofTranscript,
 ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, F) {
-    let log_K: usize = K.log_2();
     let T = trace.len();
     let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
     let chunk_size = (T / num_chunks).max(1);
-    let num_rounds = log_K;
-    let mut r_address_double_prime: Vec<F> = Vec::with_capacity(num_rounds);
 
     let F: Vec<F> = trace
         .par_chunks(chunk_size)
@@ -2213,38 +2313,20 @@ fn prove_ra_hamming_weight<F: JoltField, ProofTranscript: Transcript>(
             },
         );
 
-    let mut ra = MultilinearPolynomial::from(F);
+    let ra = MultilinearPolynomial::from(F);
 
-    let mut previous_claim = F::one();
-
-    let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
-    for _ in 0..num_rounds {
-        let univariate_poly_eval: F = (0..ra.len() / 2)
-            .into_par_iter()
-            .map(|i| ra.get_bound_coeff(2 * i))
-            .sum();
-
-        let univariate_poly =
-            UniPoly::from_evals(&[univariate_poly_eval, previous_claim - univariate_poly_eval]);
-
-        let compressed_poly = univariate_poly.compress();
-        compressed_poly.append_to_transcript(transcript);
-        compressed_polys.push(compressed_poly);
-
-        let r_j = transcript.challenge_scalar::<F>();
-        r_address_double_prime.push(r_j);
-
-        previous_claim = univariate_poly.evaluate(&r_j);
-
-        ra.bind_parallel(r_j, BindingOrder::LowToHigh);
-    }
-
-    let ra_claim = ra.final_sumcheck_claim();
-    (
-        SumcheckInstanceProof::new(compressed_polys),
-        r_address_double_prime,
-        ra_claim,
-    )
+    // Create the sumcheck instance
+    let mut sumcheck_instance = HammingWeightSumcheck::new_prover(ra);
+    
+    // Prove the sumcheck
+    let (sumcheck_proof, r_address_double_prime) = sumcheck_instance.prove_single(transcript);
+    
+    // Get the cached ra_claim
+    let ra_claim = sumcheck_instance
+        .cached_claim
+        .expect("ra_claim should be cached after proving");
+    
+    (sumcheck_proof, r_address_double_prime, ra_claim)
 }
 
 #[cfg(test)]
