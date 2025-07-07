@@ -186,9 +186,13 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
 
     fn bind(&mut self, r_j: F, _round: usize) {
         if let Some(prover_state) = &mut self.prover_state {
-            [&mut prover_state.inc, &mut prover_state.wa, &mut prover_state.lt]
-                .par_iter_mut()
-                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
+            [
+                &mut prover_state.inc,
+                &mut prover_state.wa,
+                &mut prover_state.lt,
+            ]
+            .par_iter_mut()
+            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
         }
     }
 
@@ -297,12 +301,15 @@ impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTran
         };
 
         // Verify the sumcheck proof
-        let mut r_cycle_prime = <ValEvaluationSumcheck<F> as BatchableSumcheckInstance<F, ProofTranscript>>::verify_single(
+        let mut r_cycle_prime = <ValEvaluationSumcheck<F> as BatchableSumcheckInstance<
+            F,
+            ProofTranscript,
+        >>::verify_single(
             &sumcheck_instance,
             &self.val_evaluation_proof.sumcheck_proof,
             transcript,
         )?;
-        
+
         // Cycle variables are bound from low to high
         r_cycle_prime.reverse();
 
@@ -1471,13 +1478,14 @@ pub fn prove_val_evaluation<
     let _guard = span.enter();
 
     // Run the sumcheck protocol
-    let (sumcheck_proof, r_cycle_prime) = <ValEvaluationSumcheck<F> as BatchableSumcheckInstance<F, ProofTranscript>>::prove_single(&mut sumcheck_instance, transcript);
+    let (sumcheck_proof, r_cycle_prime) = <ValEvaluationSumcheck<F> as BatchableSumcheckInstance<
+        F,
+        ProofTranscript,
+    >>::prove_single(&mut sumcheck_instance, transcript);
 
     drop(_guard);
     drop(span);
 
-    // Cache the opening claims 
-    <ValEvaluationSumcheck<F> as BatchableSumcheckInstance<F, ProofTranscript>>::cache_openings(&mut sumcheck_instance);
     let claims = sumcheck_instance.claims.expect("Claims should be set");
 
     let proof = ValEvaluationProof {
@@ -1488,7 +1496,12 @@ pub fn prove_val_evaluation<
 
     // Clean up
     if let Some(prover_state) = sumcheck_instance.prover_state {
-        drop_in_background_thread((prover_state.inc, prover_state.wa, eq_r_address, prover_state.lt));
+        drop_in_background_thread((
+            prover_state.inc,
+            prover_state.wa,
+            eq_r_address,
+            prover_state.lt,
+        ));
     }
 
     (proof, r_cycle_prime)
