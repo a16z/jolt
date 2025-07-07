@@ -685,6 +685,146 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 }
 
+/// Prover state for the RAF evaluation sumcheck
+struct RafEvaluationProverState<F: JoltField> {
+    /// The ra polynomial (remapped addresses)
+    ra: MultilinearPolynomial<F>,
+    /// The unmap polynomial (maps remapped addresses back to original)
+    unmap: UnmapRamAddressPolynomial<F>,
+}
+
+/// Verifier state for the RAF evaluation sumcheck
+struct RafEvaluationVerifierState {
+    /// log K (number of rounds)
+    log_K: usize,
+    /// Start address for unmap polynomial
+    start_address: u64,
+}
+
+/// Sumcheck for proving RAF evaluation (original addresses from remapped)
+struct RafEvaluationSumcheck<F: JoltField> {
+    /// The initial claim (raf_claim)
+    input_claim: F,
+    /// Prover state (only present for prover)
+    prover_state: Option<RafEvaluationProverState<F>>,
+    /// Verifier state (only present for verifier)
+    verifier_state: Option<RafEvaluationVerifierState>,
+    /// Cached ra_claim after sumcheck completion
+    cached_claim: Option<F>,
+}
+
+impl<F: JoltField> RafEvaluationSumcheck<F> {
+    /// Create a new prover instance
+    fn new_prover(
+        ra: MultilinearPolynomial<F>,
+        unmap: UnmapRamAddressPolynomial<F>,
+        raf_claim: F,
+    ) -> Self {
+        Self {
+            input_claim: raf_claim,
+            prover_state: Some(RafEvaluationProverState { ra, unmap }),
+            verifier_state: None,
+            cached_claim: None,
+        }
+    }
+
+    /// Create a new verifier instance
+    fn new_verifier(raf_claim: F, log_K: usize, start_address: u64, ra_claim: F) -> Self {
+        Self {
+            input_claim: raf_claim,
+            prover_state: None,
+            verifier_state: Some(RafEvaluationVerifierState {
+                log_K,
+                start_address,
+            }),
+            cached_claim: Some(ra_claim),
+        }
+    }
+}
+
+impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
+    for RafEvaluationSumcheck<F>
+{
+    fn degree(&self) -> usize {
+        2
+    }
+
+    fn num_rounds(&self) -> usize {
+        if let Some(prover_state) = &self.prover_state {
+            prover_state.ra.get_num_vars()
+        } else if let Some(verifier_state) = &self.verifier_state {
+            verifier_state.log_K
+        } else {
+            panic!("Neither prover state nor verifier state is initialized")
+        }
+    }
+
+    fn input_claim(&self) -> F {
+        self.input_claim
+    }
+
+    fn compute_prover_message(&self, _round: usize) -> Vec<F> {
+        let prover_state = self
+            .prover_state
+            .as_ref()
+            .expect("Prover state not initialized");
+        const DEGREE: usize = 2;
+
+        let univariate_poly_evals: [F; 2] = (0..prover_state.ra.len() / 2)
+            .into_par_iter()
+            .map(|i| {
+                let ra_evals = prover_state
+                    .ra
+                    .sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
+                let unmap_evals = prover_state
+                    .unmap
+                    .sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
+
+                // Compute the product evaluations
+                [ra_evals[0] * unmap_evals[0], ra_evals[1] * unmap_evals[1]]
+            })
+            .reduce(
+                || [F::zero(); 2],
+                |running, new| [running[0] + new[0], running[1] + new[1]],
+            );
+
+        univariate_poly_evals.to_vec()
+    }
+
+    fn bind(&mut self, r_j: F, _round: usize) {
+        if let Some(prover_state) = &mut self.prover_state {
+            rayon::join(
+                || prover_state.ra.bind_parallel(r_j, BindingOrder::LowToHigh),
+                || prover_state.unmap.bind_parallel(r_j, BindingOrder::LowToHigh),
+            );
+        }
+    }
+
+    fn cache_openings(&mut self) {
+        if let Some(prover_state) = &self.prover_state {
+            self.cached_claim = Some(prover_state.ra.final_sumcheck_claim());
+        }
+    }
+
+    fn expected_output_claim(&self, r: &[F]) -> F {
+        let verifier_state = self
+            .verifier_state
+            .as_ref()
+            .expect("Verifier state not initialized");
+
+        // Compute unmap evaluation at r
+        let unmap_eval = UnmapRamAddressPolynomial::new(
+            verifier_state.log_K,
+            verifier_state.start_address,
+        )
+        .evaluate(r);
+
+        // Return unmap(r) * ra(r)
+        let ra_claim = self.cached_claim.expect("ra_claim not cached");
+        unmap_eval * ra_claim
+    }
+}
+
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct HammingWeightProof<F, ProofTranscript>
 where
@@ -745,11 +885,9 @@ impl<F: JoltField, ProofTranscript: Transcript> RafEvaluationProof<F, ProofTrans
                 },
             );
 
-        let mut ra_poly = MultilinearPolynomial::from(ra_evals);
-        let mut unmap_poly = UnmapRamAddressPolynomial::new(K.log_2(), memory_layout.input_start);
+        let ra_poly = MultilinearPolynomial::from(ra_evals);
+        let unmap_poly = UnmapRamAddressPolynomial::new(K.log_2(), memory_layout.input_start);
 
-        let num_rounds = K.log_2();
-        let mut r_address: Vec<F> = Vec::with_capacity(num_rounds);
         // TODO: Propagate raf claim from Spartan
         let raf_evals = trace
             .par_iter()
@@ -757,53 +895,20 @@ impl<F: JoltField, ProofTranscript: Transcript> RafEvaluationProof<F, ProofTrans
             .collect::<Vec<u64>>();
         let raf_poly = MultilinearPolynomial::from(raf_evals);
         let raf_claim = raf_poly.evaluate(&r_cycle);
-        let mut previous_claim = raf_claim;
 
-        const DEGREE: usize = 2;
-        let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
-
-        for _ in 0..num_rounds {
-            // Compute univariate polynomial evaluations for degree-2 sumcheck
-            let univariate_poly_evals: [F; 2] = (0..ra_poly.len() / 2)
-                .into_par_iter()
-                .map(|i| {
-                    let ra_evals = ra_poly.sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
-                    let unmap_evals = unmap_poly.sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
-
-                    // Compute the product evaluations
-                    [ra_evals[0] * unmap_evals[0], ra_evals[1] * unmap_evals[1]]
-                })
-                .reduce(
-                    || [F::zero(); 2],
-                    |running, new| [running[0] + new[0], running[1] + new[1]],
-                );
-
-            // Construct univariate polynomial from evaluations at 0, 1, 2
-            let univariate_poly = UniPoly::from_evals(&[
-                univariate_poly_evals[0],
-                previous_claim - univariate_poly_evals[0],
-                univariate_poly_evals[1],
-            ]);
-
-            let compressed_poly = univariate_poly.compress();
-            compressed_poly.append_to_transcript(transcript);
-            compressed_polys.push(compressed_poly);
-
-            let r_j = transcript.challenge_scalar::<F>();
-            r_address.push(r_j);
-
-            previous_claim = univariate_poly.evaluate(&r_j);
-
-            rayon::join(
-                || ra_poly.bind_parallel(r_j, BindingOrder::LowToHigh),
-                || unmap_poly.bind_parallel(r_j, BindingOrder::LowToHigh),
-            );
-        }
-
-        let ra_claim = ra_poly.final_sumcheck_claim();
+        // Create the sumcheck instance
+        let mut sumcheck_instance = RafEvaluationSumcheck::new_prover(ra_poly, unmap_poly, raf_claim);
+        
+        // Prove the sumcheck
+        let (sumcheck_proof, _r_address) = sumcheck_instance.prove_single(transcript);
+        
+        // Get the cached ra_claim
+        let ra_claim = sumcheck_instance
+            .cached_claim
+            .expect("ra_claim should be cached after proving");
 
         Self {
-            sumcheck_proof: SumcheckInstanceProof::new(compressed_polys),
+            sumcheck_proof,
             ra_claim,
             raf_claim,
         }
@@ -815,21 +920,17 @@ impl<F: JoltField, ProofTranscript: Transcript> RafEvaluationProof<F, ProofTrans
         transcript: &mut ProofTranscript,
         memory_layout: &MemoryLayout,
     ) -> Result<Vec<F>, ProofVerifyError> {
-        const DEGREE: usize = 2;
-
-        // Verify the sumcheck proof
-        let (sumcheck_claim, r_raf_sumcheck) =
-            self.sumcheck_proof
-                .verify(self.raf_claim, K.log_2(), DEGREE, transcript)?;
-
-        let unmap_eval = UnmapRamAddressPolynomial::new(K.log_2(), memory_layout.input_start)
-            .evaluate(&r_raf_sumcheck);
-
-        // Verify sumcheck_claim = unmap(r_raf_sumcheck) * ra(r_raf_sumcheck, r_cycle)
-        let expected_product = unmap_eval * self.ra_claim;
-        if expected_product != sumcheck_claim {
-            return Err(ProofVerifyError::InternalError);
-        }
+        // Create the sumcheck instance for verification
+        let sumcheck_instance = RafEvaluationSumcheck::new_verifier(
+            self.raf_claim,
+            K.log_2(),
+            memory_layout.input_start,
+            self.ra_claim,
+        );
+        
+        // Verify the sumcheck
+        let r_raf_sumcheck = sumcheck_instance
+            .verify_single(&self.sumcheck_proof, transcript)?;
 
         Ok(r_raf_sumcheck)
     }
