@@ -1002,7 +1002,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             preprocessing,
             trace,
             &initial_memory_state,
-            &program_io,
+            program_io,
             K,
             &r_prime,
             transcript,

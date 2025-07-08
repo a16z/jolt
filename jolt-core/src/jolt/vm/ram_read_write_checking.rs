@@ -813,7 +813,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                 .zip(I.into_par_iter())
                 .enumerate()
                 .for_each(|(chunk_index, (val_chunk, I_chunk))| {
-                    for (j, k, inc_lt, _inc) in I_chunk.into_iter() {
+                    for (j, k, inc_lt, _inc) in I_chunk.iter_mut() {
                         debug_assert_eq!(*j, chunk_index);
                         val_chunk[*k] += *inc_lt;
                     }
@@ -913,7 +913,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         r_cycle.extend(r[..*sumcheck_switch_index].iter().rev());
 
         // eq(r', r_cycle)
-        let eq_eval_cycle = EqPolynomial::mle(&r_prime, &r_cycle);
+        let eq_eval_cycle = EqPolynomial::mle(r_prime, &r_cycle);
 
         let claims = self.claims.as_ref().unwrap();
         eq_eval_cycle
