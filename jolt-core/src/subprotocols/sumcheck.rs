@@ -788,7 +788,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         degree: usize,
     ) -> (Self, Vec<F>, Vec<F>)
     where
-        Func: Fn(&[F]) -> F + Sync,
+        Func: Fn(&[F]) -> F + Sync + std::marker::Send,
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
     {
         let num_shards = (1 << num_rounds) / shard_length;
@@ -853,59 +853,26 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         for round in 0..split_at {
             let mask = (1 << round) - 1;
             let mut accumulator = vec![F::zero(); degree + 1];
+            let chunk_size = 1 << (round + 1);
             for shard_idx in 0..num_shards {
-                let base_poly_idx = shard_length * shard_idx;
                 (_, polys) = rayon::join(
                     || {
-                        let chunk_size = 1 << (round + 1);
-                        let no_of_chunks = shard_length / chunk_size;
-                        let acc = (0..no_of_chunks)
-                            .into_par_iter()
-                            .fold(
-                                || vec![F::zero(); degree + 1],
-                                |mut acc, chunk_iter| {
-                                    let base_chunk_idx = chunk_iter * chunk_size;
-                                    let witness_eval = (0..chunk_size).fold(
-                                        vec![vec![F::zero(); degree + 1]; num_polys],
-                                        |mut acc, idx_in_chunk| {
-                                            let idx_in_shard = base_chunk_idx + idx_in_chunk;
-                                            let idx_in_poly = base_poly_idx + idx_in_shard;
-                                            let bit = (idx_in_poly >> round) & 1;
-                                            let eval_1 = evals_1[idx_in_poly & mask];
-                                            for i in 0..num_polys {
-                                                for j in 0..=degree {
-                                                    acc[i][j] += polys[i].get_coeff(idx_in_shard)
-                                                        * eval_1.mul_01_optimized(
-                                                            eq_eval_idx_s_vec[j][bit],
-                                                        );
-                                                }
-                                            }
-                                            acc
-                                        },
-                                    );
-                                    acc.iter_mut().enumerate().for_each(|(deg_iter, acc)| {
-                                        *acc += comb_func(
-                                            &(0..num_polys)
-                                                .map(|poly_iter| witness_eval[poly_iter][deg_iter])
-                                                .collect::<Vec<F>>(),
-                                        )
-                                    });
-                                    acc
-                                },
-                            )
-                            .reduce(
-                                || vec![F::zero(); degree + 1],
-                                |mut acc, evals| {
-                                    acc.iter_mut()
-                                        .zip(evals.iter())
-                                        .for_each(|(acc, eval)| *acc += *eval);
-                                    acc
-                                },
-                            );
-                        accumulator
-                            .iter_mut()
-                            .zip(acc.iter())
-                            .for_each(|(acc, eval)| *acc += *eval);
+                        let acc = compute_acc_for_shard(
+                            shard_idx,
+                            shard_length,
+                            degree,
+                            round,
+                            mask,
+                            &polys,
+                            &evals_1,
+                            &eq_eval_idx_s_vec,
+                            &comb_func,
+                            chunk_size,
+                        );
+
+                        for (a, b) in accumulator.iter_mut().zip(acc.iter()) {
+                            *a += *b;
+                        }
                     },
                     || stream_poly.next_shard(),
                 );
@@ -1006,6 +973,96 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         )
     }
 }
+#[inline]
+fn compute_witness_eval<F: JoltField>(
+    base_poly_idx: usize,
+    base_chunk_idx: usize,
+    chunk_size: usize,
+    degree: usize,
+    polys: &[MultilinearPolynomial<F>],
+    evals_1: &[F],
+    eq_eval_idx_s_vec: &Vec<SmallVec<[F; 2]>>,
+    round: usize,
+    mask: usize,
+) -> Vec<Vec<F>> {
+    let num_polys = polys.len();
+    let mut result = vec![vec![F::zero(); degree + 1]; num_polys];
+
+    for idx_in_chunk in 0..chunk_size {
+        let idx_in_shard = base_chunk_idx + idx_in_chunk;
+        let idx_in_poly = base_poly_idx + idx_in_shard;
+        let bit = (idx_in_poly >> round) & 1;
+        let eval_1 = evals_1[idx_in_poly & mask];
+
+        for i in 0..num_polys {
+            for j in 0..=degree {
+                result[i][j] += polys[i].get_coeff(idx_in_shard)
+                    * eval_1.mul_01_optimized(eq_eval_idx_s_vec[j][bit]);
+            }
+        }
+    }
+
+    result
+}
+#[inline]
+fn compute_acc_for_shard<Func, F: JoltField>(
+    shard_idx: usize,
+    shard_length: usize,
+    degree: usize,
+    round: usize,
+    mask: usize,
+    polys: &[MultilinearPolynomial<F>],
+    evals_1: &[F],
+    eq_eval_idx_s_vec: &Vec<SmallVec<[F; 2]>>,
+    comb_func: Func,
+    chunk_size: usize,
+) -> Vec<F>
+where
+    Func: Fn(&[F]) -> F + Sync,
+{
+    let base_poly_idx = shard_length * shard_idx;
+    let no_of_chunks = shard_length / chunk_size;
+    let num_polys = polys.len();
+    (0..no_of_chunks)
+        .into_par_iter()
+        .fold(
+            || vec![F::zero(); degree + 1],
+            |mut acc, chunk_iter| {
+                let base_chunk_idx = chunk_iter * chunk_size;
+                let witness_eval = compute_witness_eval(
+                    base_poly_idx,
+                    base_chunk_idx,
+                    chunk_size,
+                    degree,
+                    // num_polys,
+                    polys,
+                    evals_1,
+                    eq_eval_idx_s_vec,
+                    round,
+                    mask,
+                );
+
+                for deg_iter in 0..=degree {
+                    let inputs = (0..num_polys)
+                        .map(|i| witness_eval[i][deg_iter])
+                        .collect::<Vec<_>>();
+                    acc[deg_iter] += comb_func(&inputs);
+                }
+
+                acc
+            },
+        )
+        .reduce(
+            || vec![F::zero(); degree + 1],
+            |mut acc, evals| {
+                for (a, b) in acc.iter_mut().zip(evals.iter()) {
+                    *a += *b;
+                }
+                acc
+            },
+        )
+}
+
 #[inline]
 pub fn eq_plus_one_shards<F: JoltField>(
     step_shard: usize,
