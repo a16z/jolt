@@ -1187,6 +1187,11 @@ mod tests {
     }
 
     #[test]
+    fn test_virtualrotli() {
+        test_sparse_dense_shout(Some(RV32IMCycle::VirtualROTLI(Default::default())));
+    }
+
+    #[test]
     fn test_virtualrotri() {
         test_sparse_dense_shout(Some(RV32IMCycle::VirtualROTRI(Default::default())));
     }
