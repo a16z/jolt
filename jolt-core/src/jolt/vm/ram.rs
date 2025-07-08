@@ -1085,7 +1085,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             .collect();
 
         println!("picked D:{:?}", d);
-        
+
         let ra_sumcheck_instance = RASumcheck::<F>::new(
             ra_claim,
             addresses,
@@ -1266,7 +1266,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         // Calculate D dynamically such that 2^8 = K^(1/D)
         // This gives us D = log₂(K) / 8
         let d = (log_K / 8).max(1);
-        
+
         let mut r_cycle_bound = RASumcheck::<F>::verify(
             self.booleanity_proof.ra_claim,
             self.ra_proof.ra_i_claims.clone(),

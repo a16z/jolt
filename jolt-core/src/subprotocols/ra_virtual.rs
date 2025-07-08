@@ -57,13 +57,19 @@ impl<F: JoltField> RASumcheck<F> {
     ) -> Self {
         let base_chunk_size = r_address.len() / d;
         let remainder = r_address.len() % d;
-        
+
         // First `remainder`` chunks get size base_chunk_size + 1,
         // remaining chunks get size base_chunk_size
         let chunk_sizes: Vec<usize> = (0..d)
-            .map(|i| if i < remainder { base_chunk_size + 1 } else { base_chunk_size })
+            .map(|i| {
+                if i < remainder {
+                    base_chunk_size + 1
+                } else {
+                    base_chunk_size
+                }
+            })
             .collect();
-        
+
         // Split r_address into d chunks of variable sizes
         let mut r_address_chunks: Vec<Vec<F>> = Vec::with_capacity(d);
         let mut offset = 0;
@@ -168,8 +174,8 @@ impl<F: JoltField> RASumcheck<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript>
-    BatchableSumcheckInstance<F, ProofTranscript> for RASumcheck<F>
+impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
+    for RASumcheck<F>
 {
     fn degree(&self) -> usize {
         self.d + 1
@@ -320,8 +326,14 @@ mod tests {
         eval_point.extend_from_slice(&r_address);
         let ra_claim = ra_poly.evaluate(&eval_point);
 
-        let prover_sumcheck =
-            RASumcheck::<Fr>::new(ra_claim, addresses, r_cycle.clone(), r_address.clone(), T, d);
+        let prover_sumcheck = RASumcheck::<Fr>::new(
+            ra_claim,
+            addresses,
+            r_cycle.clone(),
+            r_address.clone(),
+            T,
+            d,
+        );
 
         let mut prover_transcript = KeccakTranscript::new(b"test_one_cycle");
         let (proof, r_cycle_bound) = prover_sumcheck.prove(&mut prover_transcript);
@@ -380,8 +392,14 @@ mod tests {
         }
         assert_eq!(ra_poly.final_sumcheck_claim(), ra_claim);
 
-        let prover_sumcheck =
-            RASumcheck::<Fr>::new(ra_claim, addresses, r_cycle.clone(), r_address.clone(), T, d);
+        let prover_sumcheck = RASumcheck::<Fr>::new(
+            ra_claim,
+            addresses,
+            r_cycle.clone(),
+            r_address.clone(),
+            T,
+            d,
+        );
 
         let mut prover_transcript = KeccakTranscript::new(b"test_t_large");
         let (proof, r_cycle_bound) = prover_sumcheck.prove(&mut prover_transcript);
