@@ -29,7 +29,7 @@ pub struct R1CSProof<F: JoltField, ProofTranscript: Transcript> {
     pub _marker: PhantomData<ProofTranscript>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Hash, Eq)]
 pub enum JoltR1CSInputs {
     PC,           // Virtual (bytecode raf)
     UnexpandedPC, // Virtual (bytecode rv)

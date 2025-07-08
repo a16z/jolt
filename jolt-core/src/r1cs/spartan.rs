@@ -11,6 +11,7 @@ use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
+use crate::r1cs::builder::Constraint;
 use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::r1cs::inputs::ALL_R1CS_INPUTS;
 use crate::r1cs::inputs::COMMITTED_R1CS_INPUTS;
@@ -24,9 +25,9 @@ use ark_serialize::CanonicalSerialize;
 use thiserror::Error;
 
 use crate::{
-    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPlusOnePolynomial},
+    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPlusOnePolynomial, spartan_interleaved_poly::SpartanInterleavedPolynomial, split_eq_poly::GruenSplitEqPolynomial},
     subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof},
-    utils::small_value::NUM_SVO_ROUNDS,
+    utils::small_value::{NUM_SVO_ROUNDS, svo_helpers::process_svo_sumcheck_rounds},
 };
 
 use super::builder::CombinedUniformBuilder;
@@ -153,7 +154,7 @@ where
             .len()
             .next_power_of_two();
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
-            SumcheckInstanceProof::prove_spartan_small_value::<NUM_SVO_ROUNDS>(
+            Self::prove_outer_sumcheck(
                 num_rounds_x,
                 uniform_constraints_only_padded,
                 &constraint_builder.uniform_builder.constraints,
@@ -260,6 +261,25 @@ where
             shift_sumcheck_witness_eval,
             _marker: PhantomData,
         })
+    }
+
+    #[tracing::instrument(skip_all)]
+    fn prove_outer_sumcheck(
+        num_rounds_x: usize,
+        uniform_constraints_only_padded: usize,
+        uniform_constraints: &[Constraint],
+        input_polys: &[MultilinearPolynomial<F>],
+        tau: &[F],
+        transcript: &mut ProofTranscript,
+    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, [F; 3]) {
+        SumcheckInstanceProof::prove_spartan_small_value::<NUM_SVO_ROUNDS>(
+            num_rounds_x,
+            uniform_constraints_only_padded,
+            uniform_constraints,
+            input_polys,
+            tau,
+            transcript,
+        )
     }
 
     #[tracing::instrument(skip_all)]
