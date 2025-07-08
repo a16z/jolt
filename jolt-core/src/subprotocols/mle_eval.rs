@@ -3,7 +3,7 @@ use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterato
 use crate::{
     field::JoltField,
     poly::{
-        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialEvaluation},
+        multilinear_polynomial::{BindingOrder, MultilinearPolynomial},
         unipoly::UniPoly,
     },
     utils::math::Math,
@@ -22,9 +22,8 @@ pub fn mle_eval_diamond_optimized<
     F: JoltField,
     I: IntoParallelRefIterator<'a, Item = &'a MultilinearPolynomial<F>> + Sync,
 >(
-    polys: &'a mut I,
+    polys: &'a I,
     r_j: F,
-    prev_claim: F,
     binding_order: BindingOrder,
     length: usize,
     degree: usize,
@@ -33,14 +32,24 @@ pub fn mle_eval_diamond_optimized<
     assert!(degree.is_power_of_two(), "Degree must be a power of two");
     let c: usize = degree.log_2();
 
-    let mut evals = (0..length / 2)
+    let evals = (0..length / 2)
         .into_par_iter()
         .map(|j| {
             let mut table: Vec<Vec<F>> = polys
                 .par_iter()
                 .map(|poly| {
                     // TODO: clean this up.
-                    vec![poly.get_bound_coeff(2 * j), poly.get_bound_coeff(2 * j + 1)]
+                    match binding_order {
+                        BindingOrder::LowToHigh => {
+                            vec![poly.get_bound_coeff(2 * j), poly.get_bound_coeff(2 * j + 1)]
+                        }
+                        BindingOrder::HighToLow => {
+                            vec![
+                                poly.get_bound_coeff(j),
+                                poly.get_bound_coeff(j + length / 2),
+                            ]
+                        }
+                    }
                 })
                 .collect();
 
@@ -94,7 +103,6 @@ pub fn mle_eval_diamond_optimized<
     #[cfg(test)]
     {
         assert_eq!(evals.len(), degree + 1);
-        assert_eq!(evals[0] + evals[1], prev_claim);
     }
 
     let univariate_poly = UniPoly::from_evals(&evals);
@@ -134,7 +142,7 @@ mod tests {
         F: JoltField,
         I: IntoParallelRefIterator<'a, Item = &'a MultilinearPolynomial<F>> + Sync,
     >(
-        polys: &'a mut I,
+        polys: &'a I,
         r_j: F,
         prev_claim: F,
         binding_order: BindingOrder,
@@ -197,47 +205,46 @@ mod tests {
             })
             .collect();
 
-        let mut test_polys = test_data
-            .iter()
-            .map(|data| MultilinearPolynomial::<Fr>::from(data.clone()))
-            .collect::<Vec<_>>();
+        for binding_order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
+            let mut test_polys = test_data
+                .iter()
+                .map(|data| MultilinearPolynomial::<Fr>::from(data.clone()))
+                .collect::<Vec<_>>();
 
-        let mut prev_claim = (0..test_polys[0].len())
-            .into_par_iter()
-            .map(|i| {
-                test_polys
-                    .par_iter()
-                    .map(|poly| poly.get_coeff(i))
-                    .reduce(|| Fr::from_u32(1), |running, new| running * new)
-            })
-            .reduce(|| Fr::from_u32(0), |running, new| running + new);
+            let mut prev_claim = (0..test_polys[0].len())
+                .into_par_iter()
+                .map(|i| {
+                    test_polys
+                        .par_iter()
+                        .map(|poly| poly.get_coeff(i))
+                        .reduce(|| Fr::from_u32(1), |running, new| running * new)
+                })
+                .reduce(|| Fr::from_u32(0), |running, new| running + new);
 
-        let binding_order = BindingOrder::LowToHigh;
-        for _ in 0..num_vars {
-            let length = test_polys[0].len();
-            let r_j = Fr::from(rng.next_u32());
-            let result = mle_eval_naive(
-                &mut test_polys,
-                r_j,
-                prev_claim,
-                binding_order,
-                length,
-                num_polys,
-            );
-            let result_optimized = mle_eval_diamond_optimized(
-                &mut test_polys,
-                r_j,
-                prev_claim,
-                binding_order,
-                length,
-                num_polys,
-            );
-            assert_eq!(result, result_optimized);
+            for round in 0..num_vars {
+                let length = test_polys[0].len();
+                let r_j = Fr::from(rng.next_u32());
+                let result = mle_eval_naive(
+                    &test_polys,
+                    r_j,
+                    prev_claim,
+                    binding_order,
+                    length,
+                    num_polys,
+                );
+                let result_optimized =
+                    mle_eval_diamond_optimized(&test_polys, r_j, binding_order, length, num_polys);
+                assert_eq!(
+                    result, result_optimized,
+                    "Fails in round: {:?}, binding order: {:?}",
+                    round, binding_order
+                );
 
-            test_polys.par_iter_mut().for_each(|poly| {
-                poly.bind_parallel(r_j, binding_order);
-            });
-            prev_claim = result;
+                test_polys.par_iter_mut().for_each(|poly| {
+                    poly.bind_parallel(r_j, binding_order);
+                });
+                prev_claim = result;
+            }
         }
     }
 }
