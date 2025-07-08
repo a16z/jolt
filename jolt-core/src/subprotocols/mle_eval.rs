@@ -217,7 +217,6 @@ mod tests {
     /// Computes g_i(X) the univariate polynomial in the i-th round of a sumcheck protocol from product of input MLEs in the naive way.
     /// Arguments:
     /// - `polys`: Input polynomials.
-    /// - `r_j`: The value to evaluate the polynomials at.
     /// - `binding_order`: The binding order of the polynomials.
     /// - `length`: The length of each input polynomial.
     /// - `degree`: The degree of the result univariate polynomial to evaluate, which is the number of input polynomials.
