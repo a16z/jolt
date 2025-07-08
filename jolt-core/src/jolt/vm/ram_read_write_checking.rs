@@ -10,6 +10,7 @@ use crate::{
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
+        split_eq_poly::GruenSplitEqPolynomial,
     },
     r1cs::inputs::JoltR1CSInputs,
     subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof},
@@ -57,6 +58,7 @@ struct ReadWriteCheckingProverState<F: JoltField> {
     I: Vec<Vec<(usize, usize, F, F)>>,
     A: Vec<F>,
     eq_r_prime: MultilinearPolynomial<F>,
+    gruens_eq_r_prime: GruenSplitEqPolynomial<F>,
     inc_cycle: MultilinearPolynomial<F>,
     ra: Option<MultilinearPolynomial<F>>,
     val: Option<MultilinearPolynomial<F>>,
@@ -247,6 +249,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         drop(span);
 
         let eq_r_prime = MultilinearPolynomial::from(EqPolynomial::evals(r_prime));
+        let gruens_eq_r_prime = GruenSplitEqPolynomial::new(r_prime);
         let inc_cycle = CommittedPolynomials::RamInc.generate_witness(preprocessing, trace);
 
         let data_buffers: Vec<DataBuffers<F>> = (0..num_chunks)
@@ -267,6 +270,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
             I,
             A,
             eq_r_prime,
+            gruens_eq_r_prime,
             inc_cycle,
             ra: None,
             val: None,
@@ -711,6 +715,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             I,
             A,
             inc_cycle,
+            gruens_eq_r_prime,
             eq_r_prime,
             chunk_size,
             val_checkpoints,
@@ -758,6 +763,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         drop(_inner_guard);
         drop(inner_span);
 
+        gruens_eq_r_prime.bind(r_j); // TODO(hamlinb) Could this be parallelized?
         eq_r_prime.bind_parallel(r_j, BindingOrder::LowToHigh);
         inc_cycle.bind_parallel(r_j, BindingOrder::LowToHigh);
 
@@ -836,6 +842,8 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         let ra = ra.as_mut().unwrap();
         let val = val.as_mut().unwrap();
 
+        // Note that we only use `gruens_eq_r_prime` for phase 1, so there's no need to continue
+        // binding it here.
         [ra, val, inc_cycle, eq_r_prime]
             .into_par_iter()
             .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
