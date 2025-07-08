@@ -24,8 +24,6 @@ pub struct RAProverState<F: JoltField> {
     eq_poly: MultilinearPolynomial<F>,
     /// Length of the trace
     T: usize,
-    /// Number of decomposition parts
-    d: usize,
 }
 
 pub struct RAVerifierState<F: JoltField> {
@@ -33,8 +31,6 @@ pub struct RAVerifierState<F: JoltField> {
     r_cycle: Vec<F>,
     /// Length of the trace
     T: usize,
-    /// Number of decomposition parts
-    d: usize,
 }
 
 pub struct RASumcheck<F: JoltField> {
@@ -59,19 +55,22 @@ impl<F: JoltField> RASumcheck<F> {
         T: usize,
         d: usize,
     ) -> Self {
-        assert_eq!(
-            r_address.len() % d,
-            0,
-            "r_address length must be divisible by d"
-        );
-
-        let chunk_size = r_address.len() / d;
-        let k_one_over_d = 1 << chunk_size;
-
-        // Split r_address into d chunks
-        let r_address_chunks: Vec<Vec<F>> = (0..d)
-            .map(|i| r_address[i * chunk_size..(i + 1) * chunk_size].to_vec())
+        let base_chunk_size = r_address.len() / d;
+        let remainder = r_address.len() % d;
+        
+        // First `remainder`` chunks get size base_chunk_size + 1,
+        // remaining chunks get size base_chunk_size
+        let chunk_sizes: Vec<usize> = (0..d)
+            .map(|i| if i < remainder { base_chunk_size + 1 } else { base_chunk_size })
             .collect();
+        
+        // Split r_address into d chunks of variable sizes
+        let mut r_address_chunks: Vec<Vec<F>> = Vec::with_capacity(d);
+        let mut offset = 0;
+        for &size in &chunk_sizes {
+            r_address_chunks.push(r_address[offset..offset + size].to_vec());
+            offset += size;
+        }
 
         let eq_poly = MultilinearPolynomial::from(EqPolynomial::evals(&r_cycle));
 
@@ -91,8 +90,10 @@ impl<F: JoltField> RASumcheck<F> {
             // this is LSB to MSB!! (Doesn't work the other way)
             let mut remaining_address = address;
             for i in 0..d {
-                let chunk_value = remaining_address % k_one_over_d;
-                remaining_address /= k_one_over_d;
+                // Each chunk has its own modulo value based on its size
+                let chunk_modulo = 1 << chunk_sizes[d - 1 - i];
+                let chunk_value = remaining_address % chunk_modulo;
+                remaining_address /= chunk_modulo;
 
                 ra_i_vecs[d - 1 - i][cycle_idx] += eq_tables[d - 1 - i][chunk_value];
             }
@@ -110,7 +111,6 @@ impl<F: JoltField> RASumcheck<F> {
                 ra_i_polys,
                 eq_poly,
                 T,
-                d,
             }),
             verifier_state: None,
             ra_i_claims: None,
@@ -118,7 +118,7 @@ impl<F: JoltField> RASumcheck<F> {
     }
 
     pub fn new_verifier(ra_claim: F, r_cycle: Vec<F>, T: usize, d: usize) -> Self {
-        let verifier_state = RAVerifierState { r_cycle, T, d };
+        let verifier_state = RAVerifierState { r_cycle, T };
 
         Self {
             ra_claim,
@@ -350,9 +350,10 @@ mod tests {
     fn test_ra_sumcheck_large_t() {
         use rand::Rng;
         let mut rng = thread_rng();
+        // pick d = 3, k = 11 so that d doesn't divide r_address.len()
         let d = 3;
         let T = 1 << 10;
-        let k = 1 << 9;
+        let k = 1 << 11;
 
         let addresses: Vec<_> = (0..T).map(|_| rng.gen::<usize>() % k).collect();
         let mut ra_values = vec![Fr::zero(); k * T];
