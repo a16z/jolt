@@ -544,5 +544,6 @@ pub mod bytecode;
 pub mod instruction_lookups;
 pub mod output_check;
 pub mod ram;
+pub mod ram_read_write_checking;
 pub mod registers;
 pub mod rv32i_vm;

@@ -143,7 +143,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         self.claimed_evaluation
     }
 
-    fn compute_prover_message(&self, _round: usize) -> Vec<F> {
+    fn compute_prover_message(&mut self, _round: usize) -> Vec<F> {
         let prover_state = self
             .prover_state
             .as_ref()
