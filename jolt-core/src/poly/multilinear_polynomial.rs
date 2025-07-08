@@ -12,7 +12,6 @@ use super::{
     eq_poly::EqPolynomial,
 };
 use crate::poly::split_eq_poly::SplitEqPolynomial;
-use crate::utils::streaming::Oracle;
 use crate::{
     field::{JoltField, OptimizedMul},
     utils::thread::unsafe_allocate_zero_vec,
@@ -492,12 +491,10 @@ pub trait PolynomialEvaluation<F: JoltField> {
     /// where EQ table is EQ(x, r) for x \in {0, 1}^|r|. This is used for
     /// batched opening proofs (see opening_proof.rs)
     fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<F>, Vec<F>);
-    fn stream_batch_evaluate<O: Oracle<Shard = Vec<MultilinearPolynomial<F>>>>(
-        _: &mut O,
-        _: &[F],
-        _: usize,
-        _: usize,
-    ) -> Vec<F> {
+    fn stream_batch_evaluate<I>(_: &mut I, _: &[F], _: usize, _: usize) -> Vec<F>
+    where
+        I: Iterator<Item = Vec<MultilinearPolynomial<F>>> + Send,
+    {
         unimplemented!("stream batch evaluate not implemented")
     }
     /// Computes this polynomial's contribution to the computation of a prover
@@ -593,13 +590,16 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
         (evals, eq)
     }
 
-    fn stream_batch_evaluate<O: Oracle<Shard = Vec<MultilinearPolynomial<F>>>>(
-        oracle: &mut O,
+    fn stream_batch_evaluate<I>(
+        oracle: &mut I,
         r: &[F],
         num_shards: usize,
         shard_length: usize,
-    ) -> Vec<F> {
-        let mut polys = oracle.next_shard();
+    ) -> Vec<F>
+    where
+        I: Iterator<Item = Vec<MultilinearPolynomial<F>>> + Send,
+    {
+        let mut polys = oracle.next().unwrap();
         let num_polys = polys.len();
 
         let eq = SplitEqPolynomial::new(r);
@@ -689,7 +689,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
                 || {
                     let mut polys = Vec::new();
                     if shard_idx != num_shards - 1 {
-                        polys = oracle.next_shard()
+                        polys = oracle.next().unwrap();
                     }
                     polys
                 },

@@ -16,7 +16,6 @@ use super::key::UniformSpartanKey;
 use super::spartan::UniformSpartanProof;
 
 use crate::field::JoltField;
-use crate::utils::streaming::Oracle;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 use std::fmt::Debug;
@@ -574,14 +573,14 @@ where
     }
 }
 
-impl<'a, F: JoltField, PCS, ProofTranscript> Oracle
+impl<'a, F: JoltField, PCS, ProofTranscript> Iterator
     for R1CSInputsOracle<'a, F, PCS, ProofTranscript>
 where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
-    type Shard = Vec<MultilinearPolynomial<F>>;
-    fn next_shard(&mut self) -> Self::Shard {
+    type Item = Vec<MultilinearPolynomial<F>>;
+    fn next(&mut self) -> Option<Self::Item> {
         let shard = if self.step + self.shard_length < self.trace.len() {
             self.compute_shard(
                 &self.trace[self.step..self.step + self.shard_length],
@@ -591,15 +590,7 @@ where
             self.compute_shard(&self.trace[self.step..self.step + self.shard_length], None)
         };
         self.step = (self.step + self.shard_length) % self.trace.len();
-        shard
-    }
-
-    fn get_len(&self) -> usize {
-        self.trace.len()
-    }
-
-    fn get_step(&self) -> usize {
-        self.step
+        Some(shard)
     }
 }
 

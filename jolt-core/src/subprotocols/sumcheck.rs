@@ -19,7 +19,6 @@ use crate::utils::math::Math;
 use crate::utils::mul_0_optimized;
 
 use crate::utils::small_value::svo_helpers::process_svo_sumcheck_rounds;
-use crate::utils::streaming::Oracle;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 use crate::{into_optimal_iter, optimal_iter};
@@ -576,7 +575,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         let mut r_rev = r.clone();
         r_rev.reverse();
         let mut eq_r_evals = EqPolynomial::evals(&r_rev);
-        let num_shards = az_bz_poly_oracle.get_len() / shard_len;
+        let num_shards = az_bz_poly_oracle.input_polys_oracle.trace.len() / shard_len;
         az_bz_poly_oracle.streaming_rounds(
             num_shards,
             streaming_rounds_start,
@@ -795,7 +794,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
 
         let shift_sumcheck_claim: F = (0..num_shards)
             .map(|_| {
-                let shards = stream_poly.next_shard();
+                let shards = stream_poly.next().unwrap();
                 (0..shard_length)
                     .into_par_iter()
                     .fold(
@@ -848,7 +847,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             eq_eval_idx_s_vec[s][1] = val;
         }
 
-        let mut polys = stream_poly.next_shard();
+        let mut polys = stream_poly.next().unwrap();
         let num_polys = polys.len();
         for round in 0..split_at {
             let mask = (1 << round) - 1;
@@ -874,7 +873,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                             *a += *b;
                         }
                     },
-                    || stream_poly.next_shard(),
+                    || stream_poly.next().unwrap(),
                 );
             }
 
@@ -933,7 +932,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                 || {
                     let mut polys = Vec::with_capacity(num_polys);
                     if shard_idx != num_shards - 1 {
-                        polys = stream_poly.next_shard();
+                        polys = stream_poly.next().unwrap();
                     }
                     polys
                 },
@@ -981,7 +980,7 @@ fn compute_witness_eval<F: JoltField>(
     degree: usize,
     polys: &[MultilinearPolynomial<F>],
     evals_1: &[F],
-    eq_eval_idx_s_vec: &Vec<SmallVec<[F; 2]>>,
+    eq_eval_idx_s_vec: &[SmallVec<[F; 2]>],
     round: usize,
     mask: usize,
 ) -> Vec<Vec<F>> {
@@ -1013,7 +1012,7 @@ fn compute_acc_for_shard<Func, F: JoltField>(
     mask: usize,
     polys: &[MultilinearPolynomial<F>],
     evals_1: &[F],
-    eq_eval_idx_s_vec: &Vec<SmallVec<[F; 2]>>,
+    eq_eval_idx_s_vec: &[SmallVec<[F; 2]>],
     comb_func: Func,
     chunk_size: usize,
 ) -> Vec<F>

@@ -6,7 +6,6 @@ use super::{
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::r1cs::inputs::R1CSInputsOracle;
 use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
-use crate::utils::streaming::Oracle;
 use crate::{
     field::{JoltField, OptimizedMul, OptimizedMulI128},
     r1cs::builder::Constraint,
@@ -1116,8 +1115,8 @@ where
         ProofTranscript: Transcript,
     {
         let shard_length = self.input_polys_oracle.shard_length;
-        let shard_idx = self.input_polys_oracle.get_step() / shard_length;
-        let input_polys_shard = self.input_polys_oracle.next_shard();
+        let shard_idx = self.input_polys_oracle.step / shard_length;
+        let input_polys_shard = self.input_polys_oracle.next().unwrap();
 
         let num_uniform_constraints = self.uniform_constraints.len();
 
@@ -1168,8 +1167,9 @@ where
     ) -> ([F; NUM_ACCUMS_EVAL_ZERO], [F; NUM_ACCUMS_EVAL_INFTY]) {
         assert!(shard_length.is_power_of_two());
 
-        let total_num_vars = (self.get_len() * padded_num_constraints).ilog2() as usize;
-        let num_step_vars = self.get_len().ilog2() as usize;
+        let total_num_vars =
+            (self.input_polys_oracle.trace.len() * padded_num_constraints).ilog2() as usize;
+        let num_step_vars = self.input_polys_oracle.trace.len().ilog2() as usize;
         let num_constraint_vars = if padded_num_constraints > 0 {
             padded_num_constraints.log_2()
         } else {
@@ -1238,7 +1238,7 @@ where
             E_in_evals.len()
         );
 
-        let num_shards = self.get_len() / shard_length;
+        let num_shards = self.input_polys_oracle.trace.len() / shard_length;
         assert!(num_shards > 0);
         let num_shard_vars = (shard_length.ilog2() + padded_num_constraints.ilog2()) as usize;
         let mut svo_accums_zero = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
@@ -1255,7 +1255,7 @@ where
                 let mut current_x_out_svo_infty = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
 
                 for _ in 0..shards_per_x_out_val {
-                    let shard = self.next_shard();
+                    let shard = self.next().unwrap();
                     let tA_sum_for_current_shard = shard
                         .par_iter()
                         .map(|piece| {
@@ -1319,7 +1319,7 @@ where
             // There are multiple values of x_out_vars in the same shard. So we stream a shard and divide it into blocks
             // based on the value of x_out_vars.
             for _ in 0..num_shards {
-                let shard = self.next_shard();
+                let shard = self.next().unwrap();
 
                 let (current_shard_svo_zero, current_shard_svo_infty) = shard
                     .par_iter()
@@ -1428,9 +1428,9 @@ where
             let mut eval_at_zero = F::zero();
             let mut eval_at_infinity = F::zero();
 
-            assert_eq!(self.get_step(), 0);
+            assert_eq!(self.input_polys_oracle.step, 0);
             for _ in 0..num_shards {
-                let shard = self.next_shard();
+                let shard = self.next().unwrap();
 
                 let num_x_in_vars = eq_poly.E_in_current_len().log_2();
 
@@ -1653,14 +1653,14 @@ where
 
         // Block size larger than the size of a piece.
         for round in (split_index + 1)..=streaming_rounds_end {
-            assert_eq!(self.get_step(), 0);
+            assert_eq!(self.input_polys_oracle.step, 0);
             let block_size = 1 << (round + 1);
 
             let mut eval_at_zero = F::zero();
             let mut eval_at_infinity = F::zero();
 
             for _ in 0..num_shards {
-                let shard = self.next_shard();
+                let shard = self.next().unwrap();
 
                 let num_x_in_vars = eq_poly.E_in_current_len().log_2();
 
@@ -2288,23 +2288,15 @@ where
     }
 }
 
-impl<'a, F: JoltField, PCS, ProofTranscript> Oracle
+impl<'a, F: JoltField, PCS, ProofTranscript> Iterator
     for SpartanInterleavedPolynomialOracle<'a, NUM_SVO_ROUNDS, F, PCS, ProofTranscript>
 where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
-    type Shard = Vec<Vec<SparseCoefficient<i128>>>;
+    type Item = Vec<Vec<SparseCoefficient<i128>>>;
 
-    fn next_shard(&mut self) -> Self::Shard {
-        self.generate_shard()
-    }
-
-    fn get_len(&self) -> usize {
-        self.input_polys_oracle.get_len()
-    }
-
-    fn get_step(&self) -> usize {
-        self.input_polys_oracle.get_step()
+    fn next(&mut self) -> Option<Self::Item> {
+        Some(self.generate_shard())
     }
 }

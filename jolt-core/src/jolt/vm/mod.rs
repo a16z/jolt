@@ -357,7 +357,7 @@ where
                 padded_trace_length,
                 std::cmp::max(
                     1 << (padded_trace_length.log_2() - padded_trace_length.log_2() / 2),
-                    1 << 5,
+                    1 << 10,
                 ),
             );
             UniformSpartanProof::prove_streaming::<PCS>(

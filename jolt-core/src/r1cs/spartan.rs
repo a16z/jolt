@@ -13,7 +13,6 @@ use crate::r1cs::inputs::COMMITTED_R1CS_INPUTS;
 use crate::r1cs::inputs::{JoltR1CSInputs, R1CSInputsOracle, ALL_R1CS_INPUTS};
 use crate::r1cs::key::UniformSpartanKey;
 use crate::utils::math::Math;
-use crate::utils::streaming::Oracle;
 use crate::utils::thread::drop_in_background_thread;
 use std::marker::PhantomData;
 use tracer::instruction::RV32IMCycle;
@@ -419,7 +418,7 @@ where
         let num_x1_bits = eq_rx_step.E1_len.log_2();
         let x1_bitmask = (1 << (num_x1_bits)) - 1;
 
-        let mut shards = input_polys_oracle.next_shard();
+        let mut shards = input_polys_oracle.next().unwrap();
         let num_polys = shards.len();
 
         for shard_idx in 0..num_shards {
@@ -509,7 +508,7 @@ where
                 || {
                     let mut shard = Vec::with_capacity(num_polys);
                     if shard_idx != num_shards - 1 {
-                        shard = input_polys_oracle.next_shard()
+                        shard = input_polys_oracle.next().unwrap();
                     };
                     shard
                 },
@@ -856,20 +855,20 @@ impl<
     }
 }
 
-impl<'a, F: JoltField, PCS, ProofTranscript> Oracle
+impl<'a, F: JoltField, PCS, ProofTranscript> Iterator
     for ShiftSumCheckOracle<'a, F, PCS, ProofTranscript>
 where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
-    type Shard = Vec<MultilinearPolynomial<F>>;
+    type Item = Vec<MultilinearPolynomial<F>>;
 
-    fn next_shard(&mut self) -> Self::Shard {
+    fn next(&mut self) -> Option<Self::Item> {
         let mut shard = self.compute_evals(&self.trace[self.step..self.step + self.shard_length]);
         let num_x1_bits = self.eq_rx_step.E1_len.log_2();
         let x1_bitmask = (1 << num_x1_bits) - 1;
         shard.push(eq_plus_one_shards(
-            self.step % self.get_len(),
+            self.step % self.trace.len(),
             self.shard_length,
             &self.eq_rx_step,
             num_x1_bits,
@@ -881,7 +880,7 @@ where
         assert_eq!(self.shard_length, shard[0].len(), "Incorrect shard length");
 
         //Make sure that the shard length is more than equal to the square root of trace length.
-        let log2_trace_len = self.get_len().log_2();
+        let log2_trace_len = self.trace.len().log_2();
         let shard_length = 1 << (log2_trace_len - (log2_trace_len / 2));
         assert!(
             self.shard_length >= shard_length,
@@ -889,15 +888,7 @@ where
             self.shard_length,
             shard_length
         );
-        shard
-    }
-
-    fn get_len(&self) -> usize {
-        self.trace.len()
-    }
-
-    fn get_step(&self) -> usize {
-        self.step
+        Some(shard)
     }
 }
 // #[cfg(test)]
