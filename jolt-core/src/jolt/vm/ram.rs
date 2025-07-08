@@ -633,42 +633,60 @@ impl<F: JoltField> BooleanitySumcheck<F> {
 }
 
 struct HammingWeightProverState<F: JoltField> {
-    /// The ra polynomial
-    ra: MultilinearPolynomial<F>,
+    /// The ra polynomials - one for each decomposed part
+    ra: Vec<MultilinearPolynomial<F>>,
+    /// z powers for batching
+    z_powers: Vec<F>,
+    /// D parameter as in Twist and Shout paper
+    d: usize,
 }
 
-struct HammingWeightVerifierState {
+struct HammingWeightVerifierState<F: JoltField> {
     /// log K (number of rounds)
     log_K: usize,
+    /// D parameter as in Twist and Shout paper
+    d: usize,
+    /// z powers for verification
+    z_powers: Vec<F>,
 }
 
 struct HammingWeightSumcheck<F: JoltField> {
-    /// The initial claim (F::one() for hamming weight)
+    /// The initial claim (sum of z powers for hamming weight)
     input_claim: F,
     /// Prover state
     prover_state: Option<HammingWeightProverState<F>>,
     /// Verifier state
-    verifier_state: Option<HammingWeightVerifierState>,
-    /// Cached claim
-    cached_claim: Option<F>,
+    verifier_state: Option<HammingWeightVerifierState<F>>,
+    /// Cached claims for all d polynomials
+    cached_claims: Option<Vec<F>>,
+    /// D parameter
+    d: usize,
 }
 
 impl<F: JoltField> HammingWeightSumcheck<F> {
-    fn new_prover(ra: MultilinearPolynomial<F>) -> Self {
+    fn new_prover(ra: Vec<MultilinearPolynomial<F>>, z_powers: Vec<F>, d: usize) -> Self {
+        // Compute input claim as sum of z powers
+        let input_claim = z_powers.iter().sum();
+
         Self {
-            input_claim: F::one(),
-            prover_state: Some(HammingWeightProverState { ra }),
+            input_claim,
+            prover_state: Some(HammingWeightProverState { ra, z_powers, d }),
             verifier_state: None,
-            cached_claim: None,
+            cached_claims: None,
+            d,
         }
     }
 
-    fn new_verifier(log_K: usize, ra_claim: F) -> Self {
+    fn new_verifier(log_K: usize, ra_claims: Vec<F>, z_powers: Vec<F>, d: usize) -> Self {
+        // Compute input claim as sum of z powers
+        let input_claim = z_powers.iter().sum();
+
         Self {
-            input_claim: F::one(),
+            input_claim,
             prover_state: None,
-            verifier_state: Some(HammingWeightVerifierState { log_K }),
-            cached_claim: Some(ra_claim),
+            verifier_state: Some(HammingWeightVerifierState { log_K, d, z_powers }),
+            cached_claims: Some(ra_claims),
+            d,
         }
     }
 }
@@ -677,12 +695,12 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     for HammingWeightSumcheck<F>
 {
     fn degree(&self) -> usize {
-        1
+        self.d
     }
 
     fn num_rounds(&self) -> usize {
         if let Some(prover_state) = &self.prover_state {
-            prover_state.ra.get_num_vars()
+            prover_state.ra[0].get_num_vars()
         } else if let Some(verifier_state) = &self.verifier_state {
             verifier_state.log_K
         } else {
@@ -700,9 +718,17 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             .as_ref()
             .expect("Prover state not initialized");
 
-        let univariate_poly_eval: F = (0..prover_state.ra.len() / 2)
-            .into_par_iter()
-            .map(|i| prover_state.ra.get_bound_coeff(2 * i))
+        let univariate_poly_eval: F = prover_state
+            .ra
+            .par_iter()
+            .zip(prover_state.z_powers.par_iter())
+            .map(|(ra_poly, z_power)| {
+                let sum: F = (0..ra_poly.len() / 2)
+                    .into_par_iter()
+                    .map(|i| ra_poly.get_bound_coeff(2 * i))
+                    .sum();
+                sum * z_power
+            })
             .sum();
 
         vec![univariate_poly_eval]
@@ -710,22 +736,37 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
 
     fn bind(&mut self, r_j: F, _round: usize) {
         if let Some(prover_state) = &mut self.prover_state {
-            prover_state.ra.bind_parallel(r_j, BindingOrder::LowToHigh);
+            prover_state
+                .ra
+                .par_iter_mut()
+                .for_each(|ra_poly| ra_poly.bind_parallel(r_j, BindingOrder::LowToHigh));
         }
     }
 
     fn cache_openings(&mut self) {
         if let Some(prover_state) = &self.prover_state {
-            self.cached_claim = Some(prover_state.ra.final_sumcheck_claim());
+            let claims: Vec<F> = prover_state
+                .ra
+                .iter()
+                .map(|ra_poly| ra_poly.final_sumcheck_claim())
+                .collect();
+            self.cached_claims = Some(claims);
         }
     }
 
     fn expected_output_claim(&self, _r: &[F]) -> F {
-        if let Some(claim) = self.cached_claim {
-            claim
-        } else {
-            panic!("Expected output claim called before caching")
-        }
+        let verifier_state = self
+            .verifier_state
+            .as_ref()
+            .expect("Verifier state not initialized");
+        let ra_claims = self.cached_claims.as_ref().expect("RA claims not cached");
+
+        // Compute batched claim: sum_{i=0}^{d-1} z^i * ra_i
+        ra_claims
+            .iter()
+            .zip(verifier_state.z_powers.iter())
+            .map(|(ra_claim, z_power)| *ra_claim * z_power)
+            .sum()
     }
 }
 
@@ -876,7 +917,7 @@ where
     ProofTranscript: Transcript,
 {
     sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    ra_claim: F,
+    ra_claims: Vec<F>,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
@@ -1118,9 +1159,9 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         );
 
         // Calculate D dynamically such that 2^8 = K^(1/D)
-        let log_k = K.log_2();
-        let d = (log_k / 8).max(1);
-
+        // let log_k = K.log_2();
+        // let d = (log_k / 8).max(1);
+        let d = 1; // @TODO(markosg04) keeping d = 1 for legacy prove
         let (booleanity_sumcheck, r_address_prime, r_cycle_prime, ra_claims) = prove_ra_booleanity(
             trace,
             &program_io.memory_layout,
@@ -1150,7 +1191,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
 
         println!("picked D:{:?}", d);
 
-        let ra_claim = ra_claims.iter().product();
+        let ra_claim = ra_claims[0]; // d = 1
 
         let ra_sumcheck_instance = RASumcheck::<F>::new(
             ra_claim,
@@ -1173,11 +1214,17 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             ra_proof.ra_i_claims.clone(),
         );
 
-        let (hamming_weight_sumcheck, _, ra_claim) =
-            prove_ra_hamming_weight(trace, &program_io.memory_layout, eq_r_cycle, K, transcript);
+        let (hamming_weight_sumcheck, _, ra_claims) = prove_ra_hamming_weight(
+            trace,
+            &program_io.memory_layout,
+            eq_r_cycle,
+            K,
+            d,
+            transcript,
+        );
         let hamming_weight_proof = HammingWeightProof {
             sumcheck_proof: hamming_weight_sumcheck,
-            ra_claim,
+            ra_claims,
         };
 
         let raf_evaluation_proof =
@@ -1301,7 +1348,8 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         r_address = r_address.into_iter().rev().collect();
 
         // Calculate D dynamically
-        let d = (log_K / 8).max(1);
+        // let d = (log_K / 8).max(1);
+        let d = 1; // @TODO(markosg04) keeping d = 1 for legacy prove
 
         // Get z challenges for batching
         let z_challenges: Vec<F> = transcript.challenge_vector(d);
@@ -1344,7 +1392,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         let r_address_prime = r_address_prime.iter().copied().rev().collect::<Vec<_>>();
         let ra_commitment = &commitments.commitments[CommittedPolynomials::RamRa(0).to_index()];
 
-        let ra_claim = self.booleanity_proof.ra_claims.iter().product();
+        let ra_claim = self.booleanity_proof.ra_claims[0]; // d = 1
 
         let mut r_cycle_bound = RASumcheck::<F>::verify(
             ra_claim,
@@ -1366,8 +1414,19 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             transcript,
         );
 
-        let sumcheck_instance =
-            HammingWeightSumcheck::new_verifier(log_K, self.hamming_weight_proof.ra_claim);
+        // Get z challenges for hamming weight batching
+        let z_hw_challenges: Vec<F> = transcript.challenge_vector(d);
+        let mut z_hw_powers = vec![F::one(); d];
+        for i in 1..d {
+            z_hw_powers[i] = z_hw_powers[i - 1] * z_hw_challenges[0];
+        }
+
+        let sumcheck_instance = HammingWeightSumcheck::new_verifier(
+            log_K,
+            self.hamming_weight_proof.ra_claims.clone(),
+            z_hw_powers,
+            d,
+        );
 
         let _r_hamming_weight = sumcheck_instance
             .verify_single(&self.hamming_weight_proof.sumcheck_proof, transcript)?;
@@ -1639,50 +1698,105 @@ fn prove_ra_hamming_weight<F: JoltField, ProofTranscript: Transcript>(
     memory_layout: &MemoryLayout,
     eq_r_cycle: Vec<F>,
     K: usize,
+    d: usize,
     transcript: &mut ProofTranscript,
-) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, F) {
+) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, Vec<F>) {
     let T = trace.len();
     let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
     let chunk_size = (T / num_chunks).max(1);
 
-    let F: Vec<F> = trace
+    // Get z challenges for batching
+    let z_challenges: Vec<F> = transcript.challenge_vector(d);
+    let mut z_powers = vec![F::one(); d];
+    for i in 1..d {
+        z_powers[i] = z_powers[i - 1] * z_challenges[0];
+    }
+
+    // Calculate variable chunk sizes for address decomposition
+    let log_k = K.log_2();
+    let base_chunk_size = log_k / d;
+    let remainder = log_k % d;
+    let chunk_sizes: Vec<usize> = (0..d)
+        .map(|i| {
+            if i < remainder {
+                base_chunk_size + 1
+            } else {
+                base_chunk_size
+            }
+        })
+        .collect();
+
+    // Compute F arrays for each decomposed part
+    let mut F_arrays: Vec<Vec<F>> = vec![vec![F::zero(); K]; d];
+
+    trace
         .par_chunks(chunk_size)
         .enumerate()
         .map(|(chunk_index, trace_chunk)| {
-            let mut result = unsafe_allocate_zero_vec(K);
+            let mut local_arrays: Vec<Vec<F>> = vec![unsafe_allocate_zero_vec(K); d];
             let mut j = chunk_index * chunk_size;
             for cycle in trace_chunk {
-                let k = remap_address(cycle.ram_access().address() as u64, memory_layout) as usize;
-                result[k] += eq_r_cycle[j];
+                let address =
+                    remap_address(cycle.ram_access().address() as u64, memory_layout) as usize;
+
+                // For each address, add eq_r_cycle[j] to each corresponding chunk
+                // This maintains the property that sum of all ra values for an address equals 1
+                let mut remaining_address = address;
+                let mut chunk_values = Vec::with_capacity(d);
+
+                // Decompose address into chunks
+                for i in 0..d {
+                    let chunk_size = chunk_sizes[d - 1 - i];
+                    let chunk_modulo = 1 << chunk_size;
+                    let chunk_value = remaining_address % chunk_modulo;
+                    chunk_values.push(chunk_value);
+                    remaining_address /= chunk_modulo;
+                }
+
+                // Add eq_r_cycle contribution to each ra polynomial
+                for (i, &chunk_value) in chunk_values.iter().enumerate() {
+                    local_arrays[d - 1 - i][chunk_value] += eq_r_cycle[j];
+                }
                 j += 1;
             }
-            result
+            local_arrays
         })
         .reduce(
-            || unsafe_allocate_zero_vec(K),
+            || vec![unsafe_allocate_zero_vec(K); d],
             |mut running, new| {
-                running
-                    .par_iter_mut()
-                    .zip(new.into_par_iter())
-                    .for_each(|(x, y)| *x += y);
+                running.par_iter_mut().zip(new.into_par_iter()).for_each(
+                    |(running_arr, new_arr)| {
+                        running_arr
+                            .par_iter_mut()
+                            .zip(new_arr.into_par_iter())
+                            .for_each(|(x, y)| *x += y);
+                    },
+                );
                 running
             },
-        );
+        )
+        .into_iter()
+        .enumerate()
+        .for_each(|(i, arr)| F_arrays[i] = arr);
 
-    let ra = MultilinearPolynomial::from(F);
+    // Create MultilinearPolynomials from F arrays
+    let ra_polys: Vec<MultilinearPolynomial<F>> = F_arrays
+        .into_iter()
+        .map(MultilinearPolynomial::from)
+        .collect();
 
     // Create the sumcheck instance
-    let mut sumcheck_instance = HammingWeightSumcheck::new_prover(ra);
+    let mut sumcheck_instance = HammingWeightSumcheck::new_prover(ra_polys, z_powers, d);
 
     // Prove the sumcheck
     let (sumcheck_proof, r_address_double_prime) = sumcheck_instance.prove_single(transcript);
 
-    // Get the cached ra_claim
-    let ra_claim = sumcheck_instance
-        .cached_claim
-        .expect("ra_claim should be cached after proving");
+    // Get the cached ra_claims
+    let ra_claims = sumcheck_instance
+        .cached_claims
+        .expect("ra_claims should be cached after proving");
 
-    (sumcheck_proof, r_address_double_prime, ra_claim)
+    (sumcheck_proof, r_address_double_prime, ra_claims)
 }
 
 #[cfg(test)]
