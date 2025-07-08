@@ -1069,9 +1069,11 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         let r_address_prime = r_address_prime.iter().copied().rev().collect::<Vec<_>>();
         let r_cycle_prime = r_cycle_prime.iter().rev().copied().collect::<Vec<_>>();
 
-        // We prove `ra_claim` using the ra virtualization sumcheck.
-        // Right now we have D = 1, hence it mostly looks the same as before but we make use of the our new ra prover.
-        const D: usize = 1;
+        // Calculate D dynamically such that 2^8 = K^(1/D)
+        let log_k = K.log_2();
+        let d = (log_k / 8).max(1);
+
+        // Prepare common data
         let addresses: Vec<usize> = trace
             .par_iter()
             .map(|cycle| {
@@ -1082,12 +1084,15 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             })
             .collect();
 
-        let ra_sumcheck_instance = RASumcheck::<F, D>::new(
+        println!("picked D:{:?}", d);
+        
+        let ra_sumcheck_instance = RASumcheck::<F>::new(
             ra_claim,
             addresses,
             r_cycle_prime,
             r_address_prime.clone(),
             1 << log_T,
+            d,
         );
 
         let (ra_proof, mut r_cycle_bound) = ra_sumcheck_instance.prove(transcript);
@@ -1099,7 +1104,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             vec![unbound_ra_poly],
             r_address_prime.clone(),
             r_cycle_bound,
-            vec![ra_proof.ra_i_claims[0]],
+            ra_proof.ra_i_claims.clone(),
         );
 
         let (hamming_weight_sumcheck, _, ra_claim) =
@@ -1258,12 +1263,16 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         let ra_commitment = &commitments.commitments[CommittedPolynomials::RamRa(0).to_index()];
 
         // verify ra virtualization:
-        const D: usize = 1;
-        let mut r_cycle_bound = RASumcheck::<F, D>::verify(
+        // Calculate D dynamically such that 2^8 = K^(1/D)
+        // This gives us D = log₂(K) / 8
+        let d = (log_K / 8).max(1);
+        
+        let mut r_cycle_bound = RASumcheck::<F>::verify(
             self.booleanity_proof.ra_claim,
             self.ra_proof.ra_i_claims.clone(),
             r_cycle_prime,
             T,
+            d,
             &self.ra_proof.sumcheck_proof,
             transcript,
         )?;

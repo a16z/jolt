@@ -17,108 +17,112 @@ pub struct RAProof<F: JoltField, ProofTranscript: Transcript> {
     pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
 }
 
-pub struct RAProverState<F: JoltField, const D: usize> {
+pub struct RAProverState<F: JoltField> {
     /// `ra` polys to be constructed based addresses
-    ra_i_polys: [MultilinearPolynomial<F>; D],
+    ra_i_polys: Vec<MultilinearPolynomial<F>>,
     /// eq poly
     eq_poly: MultilinearPolynomial<F>,
     /// Length of the trace
     T: usize,
+    /// Number of decomposition parts
+    d: usize,
 }
 
-pub struct RAVerifierState<F: JoltField, const D: usize> {
+pub struct RAVerifierState<F: JoltField> {
     /// Random challenge r_cycle
     r_cycle: Vec<F>,
     /// Length of the trace
     T: usize,
+    /// Number of decomposition parts
+    d: usize,
 }
 
-pub struct RASumcheck<F: JoltField, const D: usize> {
+pub struct RASumcheck<F: JoltField> {
     /// ra(r_cycle, r_address)
     ra_claim: F,
+    /// Number of decomposition parts
+    d: usize,
     /// Prover state
-    prover_state: Option<RAProverState<F, D>>,
+    prover_state: Option<RAProverState<F>>,
     /// Verifier state
-    verifier_state: Option<RAVerifierState<F, D>>,
+    verifier_state: Option<RAVerifierState<F>>,
     /// ra_i_ claims to be later queried by verifier
-    ra_i_claims: Option<[F; D]>,
+    ra_i_claims: Option<Vec<F>>,
 }
 
-impl<F: JoltField, const D: usize> RASumcheck<F, D> {
+impl<F: JoltField> RASumcheck<F> {
     pub fn new(
         ra_claim: F,
         addresses: Vec<usize>,
         r_cycle: Vec<F>,
         r_address: Vec<F>,
         T: usize,
+        d: usize,
     ) -> Self {
         assert_eq!(
-            r_address.len() % D,
+            r_address.len() % d,
             0,
-            "r_address length must be divisible by D"
+            "r_address length must be divisible by d"
         );
 
-        let chunk_size = r_address.len() / D;
+        let chunk_size = r_address.len() / d;
         let k_one_over_d = 1 << chunk_size;
 
-        // Split r_address into D chunks
-        let r_address_chunks: [Vec<F>; D] = (0..D)
+        // Split r_address into d chunks
+        let r_address_chunks: Vec<Vec<F>> = (0..d)
             .map(|i| r_address[i * chunk_size..(i + 1) * chunk_size].to_vec())
-            .collect::<Vec<_>>()
-            .try_into()
-            .expect("Failed to convert Vec to array");
+            .collect();
 
         let eq_poly = MultilinearPolynomial::from(EqPolynomial::evals(&r_cycle));
 
         // Precompute EQ tables for each chunk
-        let eq_tables: [Vec<F>; D] = r_address_chunks
+        let eq_tables: Vec<Vec<F>> = r_address_chunks
             .iter()
             .map(|chunk| EqPolynomial::evals(chunk))
-            .collect::<Vec<_>>()
-            .try_into()
-            .expect("Failed to convert Vec to array for eq tables");
+            .collect();
 
         // We construct ra_i directly from a list of addresses.
         // This way we avoid |ra_i| = k^(1/d) * T size, but rather just |ra_i| = T.
 
-        let mut ra_i_vecs: Vec<Vec<F>> = (0..D).map(|_| vec![F::zero(); T]).collect();
+        let mut ra_i_vecs: Vec<Vec<F>> = (0..d).map(|_| vec![F::zero(); T]).collect();
 
         // For each address, decompose it and add the corresponding EQ evaluations
         for (cycle_idx, &address) in addresses.iter().enumerate() {
             // this is LSB to MSB!! (Doesn't work the other way)
             let mut remaining_address = address;
-            for i in 0..D {
+            for i in 0..d {
                 let chunk_value = remaining_address % k_one_over_d;
                 remaining_address /= k_one_over_d;
 
-                ra_i_vecs[D - 1 - i][cycle_idx] += eq_tables[D - 1 - i][chunk_value];
+                ra_i_vecs[d - 1 - i][cycle_idx] += eq_tables[d - 1 - i][chunk_value];
             }
         }
 
-        let ra_i_polys: [MultilinearPolynomial<F>; D] = ra_i_vecs
+        let ra_i_polys: Vec<MultilinearPolynomial<F>> = ra_i_vecs
             .into_iter()
             .map(MultilinearPolynomial::from)
-            .collect::<Vec<_>>()
-            .try_into()
-            .expect("Failed to convert Vec to array");
+            .collect();
 
         Self {
             ra_claim,
+            d,
             prover_state: Some(RAProverState {
                 ra_i_polys,
                 eq_poly,
                 T,
+                d,
             }),
             verifier_state: None,
             ra_i_claims: None,
         }
     }
 
-    pub fn new_verifier(ra_claim: F, r_cycle: Vec<F>, T: usize) -> Self {
-        let verifier_state = RAVerifierState { r_cycle, T };
+    pub fn new_verifier(ra_claim: F, r_cycle: Vec<F>, T: usize, d: usize) -> Self {
+        let verifier_state = RAVerifierState { r_cycle, T, d };
 
         Self {
             ra_claim,
+            d,
             prover_state: None,
             verifier_state: Some(verifier_state),
             ra_i_claims: None,
@@ -150,15 +154,13 @@ impl<F: JoltField, const D: usize> RASumcheck<F, D> {
         ra_i_claims: Vec<F>,
         r_cycle: Vec<F>,
         T: usize,
+        d: usize,
         sumcheck_proof: &SumcheckInstanceProof<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<Vec<F>, crate::utils::errors::ProofVerifyError> {
-        let mut verifier_sumcheck = Self::new_verifier(ra_claim, r_cycle, T);
+        let mut verifier_sumcheck = Self::new_verifier(ra_claim, r_cycle, T, d);
 
-        let ra_i_claims_array: [F; D] = ra_i_claims
-            .try_into()
-            .map_err(|_| crate::utils::errors::ProofVerifyError::InternalError)?;
-        verifier_sumcheck.ra_i_claims = Some(ra_i_claims_array);
+        verifier_sumcheck.ra_i_claims = Some(ra_i_claims);
 
         let r_cycle_bound = verifier_sumcheck.verify_single(sumcheck_proof, transcript)?;
 
@@ -166,11 +168,11 @@ impl<F: JoltField, const D: usize> RASumcheck<F, D> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript, const D: usize>
-    BatchableSumcheckInstance<F, ProofTranscript> for RASumcheck<F, D>
+impl<F: JoltField, ProofTranscript: Transcript>
+    BatchableSumcheckInstance<F, ProofTranscript> for RASumcheck<F>
 {
     fn degree(&self) -> usize {
-        D + 1
+        self.d + 1
     }
 
     fn num_rounds(&self) -> usize {
@@ -208,8 +210,8 @@ impl<F: JoltField, ProofTranscript: Transcript, const D: usize>
             .as_ref()
             .expect("Prover state not initialized");
 
-        let mut openings = [F::zero(); D];
-        for i in 0..D {
+        let mut openings = vec![F::zero(); self.d];
+        for i in 0..self.d {
             openings[i] = prover_state.ra_i_polys[i].final_sumcheck_claim();
         }
 
@@ -299,7 +301,7 @@ mod tests {
     fn test_ra_sumcheck_tensor_decomp() {
         use rand::Rng;
         let mut rng = thread_rng();
-        const D: usize = 4;
+        let d = 4;
         let T = 1;
         let k = 1 << 16;
 
@@ -319,18 +321,19 @@ mod tests {
         let ra_claim = ra_poly.evaluate(&eval_point);
 
         let prover_sumcheck =
-            RASumcheck::<Fr, D>::new(ra_claim, addresses, r_cycle.clone(), r_address.clone(), T);
+            RASumcheck::<Fr>::new(ra_claim, addresses, r_cycle.clone(), r_address.clone(), T, d);
 
         let mut prover_transcript = KeccakTranscript::new(b"test_one_cycle");
         let (proof, r_cycle_bound) = prover_sumcheck.prove(&mut prover_transcript);
 
         let mut verifier_transcript = KeccakTranscript::new(b"test_one_cycle");
 
-        let verify_result = RASumcheck::<Fr, D>::verify(
+        let verify_result = RASumcheck::<Fr>::verify(
             ra_claim,
             proof.ra_i_claims,
             r_cycle,
             T,
+            d,
             &proof.sumcheck_proof,
             &mut verifier_transcript,
         );
@@ -347,7 +350,7 @@ mod tests {
     fn test_ra_sumcheck_large_t() {
         use rand::Rng;
         let mut rng = thread_rng();
-        const D: usize = 3;
+        let d = 3;
         let T = 1 << 10;
         let k = 1 << 9;
 
@@ -377,7 +380,7 @@ mod tests {
         assert_eq!(ra_poly.final_sumcheck_claim(), ra_claim);
 
         let prover_sumcheck =
-            RASumcheck::<Fr, D>::new(ra_claim, addresses, r_cycle.clone(), r_address.clone(), T);
+            RASumcheck::<Fr>::new(ra_claim, addresses, r_cycle.clone(), r_address.clone(), T, d);
 
         let mut prover_transcript = KeccakTranscript::new(b"test_t_large");
         let (proof, r_cycle_bound) = prover_sumcheck.prove(&mut prover_transcript);
@@ -385,11 +388,12 @@ mod tests {
         let mut verifier_transcript = KeccakTranscript::new(b"test_t_large");
         verifier_transcript.compare_to(prover_transcript);
 
-        let verify_result = RASumcheck::<Fr, D>::verify(
+        let verify_result = RASumcheck::<Fr>::verify(
             ra_claim,
             proof.ra_i_claims,
             r_cycle,
             T,
+            d,
             &proof.sumcheck_proof,
             &mut verifier_transcript,
         );
