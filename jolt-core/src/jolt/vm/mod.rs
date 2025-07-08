@@ -541,6 +541,7 @@ where
 }
 
 pub mod bytecode;
+pub mod hamming_weight;
 pub mod instruction_lookups;
 pub mod output_check;
 pub mod ram;

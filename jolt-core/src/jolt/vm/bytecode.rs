@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::{
     field::JoltField,
     jolt::{
-        vm::{JoltCommitments, JoltProverPreprocessing},
+        vm::{hamming_weight::HammingWeightProof, JoltCommitments, JoltProverPreprocessing},
         witness::CommittedPolynomials,
     },
     poly::{
@@ -131,6 +131,7 @@ fn bytecode_to_val<F: JoltField>(bytecode: &[RV32IMInstruction], gamma: F) -> Ve
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct BytecodeShoutProof<F: JoltField, ProofTranscript: Transcript> {
+    hamming_weight: HammingWeightProof<F, ProofTranscript>,
     core_piop_hamming: CorePIOPHammingProof<F, ProofTranscript>,
     booleanity: BooleanityProof<F, ProofTranscript>,
     raf_sumcheck: RafEvaluationProof<F, ProofTranscript>,
@@ -210,6 +211,9 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
 
         //// End of state gen
 
+        let (hamming_weight_proof, _r_address) =
+            HammingWeightProof::prove(F.clone(), K, transcript);
+
         // Prove core PIOP and Hamming weight sumcheck (they're combined into one here)
         let (core_piop_hamming_proof, r_address, raf_ra) =
             CorePIOPHammingProof::prove(F.clone(), val, z, rv_claim, K, transcript);
@@ -258,6 +262,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
         );
 
         Self {
+            hamming_weight: hamming_weight_proof,
             core_piop_hamming: core_piop_hamming_proof,
             booleanity: booleanity_proof,
             raf_sumcheck,
@@ -282,6 +287,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
         // Used to combine the various fields in each instruction into a single
         // field element.
         let val: Vec<F> = bytecode_to_val(&preprocessing.bytecode, gamma);
+
+        let _r_address = self.hamming_weight.verify(K, transcript)?;
 
         // Verify core PIOP and Hamming weight sumcheck
         let r_address = self.core_piop_hamming.verify(&val, z, K, transcript)?;
