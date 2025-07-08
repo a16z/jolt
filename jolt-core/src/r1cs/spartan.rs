@@ -589,7 +589,6 @@ where
         };
 
         // The batched claim equals NextUnexpandedPC(r_cycle) + r * NextPC(r_cycle)
-
         let next_unexpanded_pc_index = JoltR1CSInputs::NextUnexpandedPC.to_index();
         let next_pc_index = JoltR1CSInputs::NextPC.to_index();
         let shift_sumcheck_claim = claimed_witness_evals[next_unexpanded_pc_index]
@@ -758,7 +757,7 @@ where
             )
             .map_err(|_| SpartanError::InvalidShiftSumcheckProof)?;
 
-        #[cfg(test)]
+        #[cfg(feature = "streaming")]
         let shift_sumcheck_r: Vec<F> = shift_sumcheck_r.iter().rev().copied().collect();
 
         let unexpanded_pc_eval_at_shift_r = self.shift_sumcheck_witness_eval[0];

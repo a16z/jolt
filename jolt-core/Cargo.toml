@@ -29,6 +29,7 @@ default = [
     "host",
     "rayon",
 ]
+streaming = []
 host = ["dep:reqwest", "dep:tokio"]
 icicle = [
     "default",

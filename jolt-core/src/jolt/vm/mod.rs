@@ -338,7 +338,7 @@ where
         );
         transcript.append_scalar(&spartan_key.vk_digest);
 
-        #[cfg(not(test))]
+        #[cfg(not(feature = "streaming"))]
         let r1cs_proof = UniformSpartanProof::prove::<PCS>(
             &preprocessing,
             &constraint_builder,
@@ -350,14 +350,14 @@ where
         .ok()
         .unwrap();
 
-        #[cfg(test)]
+        #[cfg(feature = "streaming")]
         let r1cs_proof = {
             use crate::utils::math::Math;
             let shard_len = std::cmp::min(
                 padded_trace_length,
                 std::cmp::max(
                     1 << (padded_trace_length.log_2() - padded_trace_length.log_2() / 2),
-                    1 << 10,
+                    1 << 5,
                 ),
             );
             UniformSpartanProof::prove_streaming::<PCS>(

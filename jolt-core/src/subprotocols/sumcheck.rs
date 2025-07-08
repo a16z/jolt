@@ -1034,7 +1034,6 @@ where
                     base_chunk_idx,
                     chunk_size,
                     degree,
-                    // num_polys,
                     polys,
                     evals_1,
                     eq_eval_idx_s_vec,
