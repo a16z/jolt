@@ -236,7 +236,7 @@ impl<F: JoltField, ProofTranscript: Transcript, const D: usize>
         eq_eval * product
     }
 
-    fn compute_prover_message(&self, _round: usize) -> Vec<F> {
+    fn compute_prover_message(&mut self, _round: usize) -> Vec<F> {
         let prover_state = self
             .prover_state
             .as_ref()

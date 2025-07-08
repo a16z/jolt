@@ -42,7 +42,6 @@ enum MemoryAccessType {
     Execute,
     Read,
     Write,
-    DontCare,
 }
 
 fn _get_addressing_mode_name(mode: &AddressingMode) -> &'static str {
@@ -990,7 +989,6 @@ impl Mmu {
                     return Err(());
                 }
             }
-            _ => {}
         };
 
         let offset = v_address & 0xfff; // [11:0]

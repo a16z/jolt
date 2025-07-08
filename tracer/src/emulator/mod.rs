@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 // @TODO: temporal
 const TEST_MEMORY_CAPACITY: u64 = 1024 * 512 * 100;
 const PROGRAM_MEMORY_CAPACITY: u64 = 1024 * 1024 * 128; // big enough to run Linux and xv6

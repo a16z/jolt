@@ -57,7 +57,7 @@ pub struct DensePolynomialProverOpening<F: JoltField> {
 }
 
 impl<F: JoltField> DensePolynomialProverOpening<F> {
-    fn compute_prover_message(&self, _: usize) -> Vec<F> {
+    fn compute_prover_message(&mut self, _: usize) -> Vec<F> {
         let shared_eq = self.eq_poly.borrow();
         let polynomial = &self.polynomial;
         let mle_half = polynomial.len() / 2;
@@ -206,9 +206,9 @@ where
         self.input_claim
     }
 
-    fn compute_prover_message(&self, round: usize) -> Vec<F> {
+    fn compute_prover_message(&mut self, round: usize) -> Vec<F> {
         debug_assert!(round < self.num_rounds());
-        let prover_state = self.prover_state.as_ref().unwrap();
+        let prover_state = self.prover_state.as_mut().unwrap();
         match prover_state {
             ProverOpening::Dense(opening) => opening.compute_prover_message(round),
             ProverOpening::OneHot(opening) => opening.compute_prover_message(round),

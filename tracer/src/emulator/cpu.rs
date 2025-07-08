@@ -1,4 +1,4 @@
-#![allow(clippy::useless_format, clippy::type_complexity)]
+#![allow(clippy::useless_format, clippy::type_complexity, dead_code)]
 
 #[cfg(feature = "std")]
 extern crate fnv;
