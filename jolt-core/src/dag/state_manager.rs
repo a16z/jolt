@@ -1,11 +1,15 @@
 use std::collections::HashMap;
+use std::marker::PhantomData;
 use std::ops::Index;
 use std::sync::{Arc, Mutex};
 
 use tracer::instruction::RV32IMCycle;
 
 use crate::field::JoltField;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+use crate::r1cs::builder::Constraint;
 use crate::r1cs::inputs::JoltR1CSInputs;
+use crate::r1cs::key::UniformSpartanKey;
 use crate::utils::transcript::Transcript;
 
 pub type Endianness = bool;
@@ -21,7 +25,7 @@ impl<const E: Endianness, F: JoltField> OpeningPoint<E, F> {
     pub fn new(r: Vec<F>) -> Self {
         Self { r }
     }
-    
+
     pub fn endianness(&self) -> &'static str {
         if E == BIG_ENDIAN {
             "big"
@@ -29,9 +33,11 @@ impl<const E: Endianness, F: JoltField> OpeningPoint<E, F> {
             "little"
         }
     }
-    
-    pub fn swap_endianness<const SWAPPED_E: Endianness>(&self) -> OpeningPoint<SWAPPED_E, F> 
-    where F: Clone {
+
+    pub fn match_endianness<const SWAPPED_E: Endianness>(&self) -> OpeningPoint<SWAPPED_E, F>
+    where
+        F: Clone,
+    {
         let mut reversed = self.r.clone();
         if E != SWAPPED_E {
             reversed.reverse();
@@ -62,14 +68,23 @@ impl<F: JoltField> Index<JoltR1CSInputs> for Openings<F> {
     }
 }
 
-pub struct StateManager<'a, F: JoltField, T: Transcript> {
+pub struct StateManager<'a, F: JoltField, ProofTranscript: Transcript> {
     pub T: usize,
     pub log_T: usize,
     pub challenges: Challenges<F>,
-    pub transcript: &'a mut T,
-    prover_state: Option<ProverState<'a, F>>,
-    verifier_state: Option<VerifierState<'a, F>>,
+    pub prover_state: Option<ProverState<'a, F>>,
+    pub verifier_state: Option<VerifierState<'a, F>>,
     pub openings: Arc<Mutex<Openings<F>>>,
+
+    // Fields for Spartan outer sumcheck
+    pub key: Option<&'a UniformSpartanKey<F>>,
+    pub uniform_constraints: Option<Vec<Constraint>>,
+    pub input_polys: Option<Vec<MultilinearPolynomial<F>>>,
+    pub tau: Option<Vec<F>>,
+    pub outer_sumcheck_claims: Option<(F, F, F)>, // (Az, Bz, Cz)
+    
+    // Phantom data to use the ProofTranscript type parameter
+    _phantom: std::marker::PhantomData<ProofTranscript>,
 }
 
 pub struct Challenges<F: JoltField> {
@@ -95,13 +110,34 @@ pub enum OpeningsKeys {
     InstructionRa(usize),
 }
 
-impl<'a, F: JoltField, T: Transcript> StateManager<'a, F, T> {
-    pub fn prove() {
-        todo!()
-    }
-
-    pub fn verify() {
-        todo!()
+impl<'a, F: JoltField, ProofTranscript: Transcript> StateManager<'a, F, ProofTranscript> {
+    pub fn new(
+        T: usize,
+        log_T: usize,
+        challenges: Challenges<F>,
+        prover_state: Option<ProverState<'a, F>>,
+        verifier_state: Option<VerifierState<'a, F>>,
+        openings: Arc<Mutex<Openings<F>>>,
+        key: Option<&'a UniformSpartanKey<F>>,
+        uniform_constraints: Option<Vec<Constraint>>,
+        input_polys: Option<Vec<MultilinearPolynomial<F>>>,
+        tau: Option<Vec<F>>,
+        outer_sumcheck_claims: Option<(F, F, F)>,
+    ) -> Self {
+        Self {
+            T,
+            log_T,
+            challenges,
+            prover_state,
+            verifier_state,
+            openings,
+            key,
+            uniform_constraints,
+            input_polys,
+            tau,
+            outer_sumcheck_claims,
+            _phantom: PhantomData,
+        }
     }
 
     pub fn prover_state(&self) -> &ProverState<F> {
@@ -117,7 +153,8 @@ impl<'a, F: JoltField, T: Transcript> StateManager<'a, F, T> {
     }
 
     pub fn r_cycle(&self) -> Vec<F> {
-        self.openings_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::Imm)).r
+        self.openings_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::Imm))
+            .r
     }
 
     pub fn r_address(&self) -> Vec<F> {
@@ -134,5 +171,31 @@ impl<'a, F: JoltField, T: Transcript> StateManager<'a, F, T> {
 
     pub fn trace(&self) -> &'a [RV32IMCycle] {
         self.prover_state.as_ref().unwrap().trace
+    }
+
+    // Getters for Spartan outer sumcheck
+    pub fn spartan_key(&self) -> &UniformSpartanKey<F> {
+        self.key.expect("Spartan key not set")
+    }
+
+    pub fn uniform_constraints(&self) -> &[Constraint] {
+        self.uniform_constraints
+            .as_ref()
+            .expect("Uniform constraints not set")
+    }
+
+    pub fn input_polys(&self) -> &[MultilinearPolynomial<F>] {
+        self.input_polys
+            .as_ref()
+            .expect("Input polynomials not set")
+    }
+
+    pub fn tau(&self) -> &[F] {
+        self.tau.as_ref().expect("Tau not set")
+    }
+
+    pub fn outer_sumcheck_claims(&self) -> (F, F, F) {
+        self.outer_sumcheck_claims
+            .expect("Outer sumcheck claims not set")
     }
 }

@@ -2,6 +2,8 @@ use std::marker::PhantomData;
 use tracer::instruction::RV32IMCycle;
 use tracing::{span, Level};
 
+use crate::dag::stage::SumcheckStages;
+use crate::dag::state_manager::StateManager;
 use crate::field::JoltField;
 use crate::jolt::vm::JoltCommitments;
 use crate::jolt::vm::JoltProverPreprocessing;
@@ -25,9 +27,9 @@ use ark_serialize::CanonicalSerialize;
 use thiserror::Error;
 
 use crate::{
-    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPlusOnePolynomial, spartan_interleaved_poly::SpartanInterleavedPolynomial, split_eq_poly::GruenSplitEqPolynomial},
+    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPlusOnePolynomial},
     subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof},
-    utils::small_value::{NUM_SVO_ROUNDS, svo_helpers::process_svo_sumcheck_rounds},
+    utils::{errors::ProofVerifyError, small_value::NUM_SVO_ROUNDS},
 };
 
 use super::builder::CombinedUniformBuilder;
@@ -854,5 +856,91 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             EqPlusOnePolynomial::new(verifier_state.r_cycle.clone()).evaluate(r);
 
         batched_eval_at_shift_r * eq_plus_one_shift_sumcheck
+    }
+}
+
+impl<F: JoltField, ProofTranscript: Transcript> Default for UniformSpartanProof<F, ProofTranscript> {
+    fn default() -> Self {
+        Self {
+            outer_sumcheck_proof: SumcheckInstanceProof::new(vec![]),
+            outer_sumcheck_claims: (F::zero(), F::zero(), F::zero()),
+            inner_sumcheck_proof: SumcheckInstanceProof::new(vec![]),
+            shift_sumcheck_proof: SumcheckInstanceProof::new(vec![]),
+            claimed_witness_evals: vec![],
+            shift_sumcheck_witness_eval: vec![],
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<F: JoltField, ProofTranscript: Transcript> SumcheckStages<F, ProofTranscript>
+    for UniformSpartanProof<F, ProofTranscript>
+{
+    fn stage1_prove(
+        &self,
+        state_manager: &mut StateManager<F, ProofTranscript>,
+        transcript: &mut ProofTranscript,
+    ) -> Vec<(SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, [F; 3])> {
+        let num_rounds_x = state_manager.spartan_key().num_rows_bits();
+        
+        // Generate tau from transcript and store in state manager
+        let tau: Vec<F> = transcript.challenge_vector(num_rounds_x);
+        state_manager.tau = Some(tau.clone());
+        
+        let uniform_constraints_only_padded = state_manager.uniform_constraints().len().next_power_of_two();
+        let uniform_constraints_vec: Vec<_> = state_manager.uniform_constraints().to_vec();
+        let input_polys_vec: Vec<_> = state_manager.input_polys().to_vec();
+
+        let result = Self::prove_outer_sumcheck(
+            num_rounds_x,
+            uniform_constraints_only_padded,
+            &uniform_constraints_vec,
+            &input_polys_vec,
+            &tau,
+            transcript,
+        );
+
+        vec![result]
+    }
+
+    fn stage1_verify(
+        &self,
+        proofs: &[(SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, [F; 3])],
+        state_manager: &mut StateManager<F, ProofTranscript>,
+        transcript: &mut ProofTranscript,
+    ) -> Result<Vec<(Vec<F>, (F, F, F))>, ProofVerifyError> {
+        if proofs.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let (proof, _, _) = &proofs[0];
+        let num_rounds_x = state_manager.spartan_key().num_rows_total().log_2();
+        
+        // Generate tau from transcript (verifier must derive same tau as prover)
+        let tau: Vec<F> = transcript.challenge_vector(num_rounds_x);
+        state_manager.tau = Some(tau.clone());
+        
+        let outer_sumcheck_claims = state_manager.outer_sumcheck_claims();
+
+        // Verify the outer sumcheck
+        let (claim_outer_final, outer_sumcheck_r) = proof
+            .verify(F::zero(), num_rounds_x, 3, transcript)
+            .map_err(|_| ProofVerifyError::InternalError)?;
+
+        // Outer sumcheck is bound from the top, reverse the challenge
+        let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
+
+        // Use the pre-extracted claims
+        let (claim_Az, claim_Bz, claim_Cz) = outer_sumcheck_claims;
+
+        // Verify the final claim
+        let taus_bound_rx = EqPolynomial::mle(&tau, &outer_sumcheck_r);
+        let claim_outer_final_expected = taus_bound_rx * (claim_Az * claim_Bz - claim_Cz);
+
+        if claim_outer_final != claim_outer_final_expected {
+            return Err(ProofVerifyError::InternalError);
+        }
+
+        Ok(vec![(outer_sumcheck_r, (claim_Az, claim_Bz, claim_Cz))])
     }
 }
