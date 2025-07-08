@@ -8,9 +8,13 @@ use crate::{
 
 use super::{
     add::ADD,
+    andi::ANDI,
     format::{format_i::FormatI, format_r::FormatR, InstructionFormat},
+    mul::MUL,
     mulhu::MULHU,
+    sltu::SLTU,
     virtual_movsign::VirtualMovsign,
+    xor::XOR,
     RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
 };
 
@@ -39,7 +43,7 @@ impl MULHSU {
 
 impl RISCVTrace for MULHSU {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence();
+        let virtual_sequence = self.virtual_sequence(cpu);
         let mut trace = trace;
         for instr in virtual_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
@@ -49,11 +53,15 @@ impl RISCVTrace for MULHSU {
 }
 
 impl VirtualInstructionSequence for MULHSU {
-    fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
+    fn virtual_sequence(&self, _: &Cpu) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_sx = virtual_register_index(0) as usize;
-        let v_1 = virtual_register_index(1) as usize;
-        let v_2 = virtual_register_index(2) as usize;
+        let v_sx_0 = virtual_register_index(1) as usize;
+        let v_rs1 = virtual_register_index(2) as usize;
+        let v_hi = virtual_register_index(3) as usize;
+        let v_lo = virtual_register_index(4) as usize;
+        let v_tmp = virtual_register_index(5) as usize;
+        let v_carry = virtual_register_index(6) as usize;
 
         let mut sequence = vec![];
 
@@ -64,42 +72,119 @@ impl VirtualInstructionSequence for MULHSU {
                 rs1: self.operands.rs1,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(3),
+            virtual_sequence_remaining: Some(10),
         };
         sequence.push(movsign.into());
+
+        let take_lsb = ANDI {
+            address: self.address,
+            operands: FormatI {
+                rd: v_sx_0,
+                rs1: v_sx,
+                imm: 1,
+            },
+            virtual_sequence_remaining: Some(9),
+        };
+        sequence.push(take_lsb.into());
+
+        let xor_0 = XOR {
+            address: self.address,
+            operands: FormatR {
+                rd: v_rs1,
+                rs1: self.operands.rs1,
+                rs2: v_sx,
+            },
+            virtual_sequence_remaining: Some(8),
+        };
+        sequence.push(xor_0.into());
+
+        let add_0 = ADD {
+            address: self.address,
+            operands: FormatR {
+                rd: v_rs1,
+                rs1: v_rs1,
+                rs2: v_sx_0,
+            },
+            virtual_sequence_remaining: Some(7),
+        };
+        sequence.push(add_0.into());
 
         let mulhu = MULHU {
             address: self.address,
             operands: FormatR {
-                rd: v_1,
-                rs1: self.operands.rs1,
+                rd: v_hi,
+                rs1: v_rs1,
                 rs2: self.operands.rs2,
             },
-            virtual_sequence_remaining: Some(2),
+            virtual_sequence_remaining: Some(6),
         };
         sequence.push(mulhu.into());
 
-        let mulu = MULHU {
+        let mul = MUL {
             address: self.address,
             operands: FormatR {
-                rd: v_2,
-                rs1: v_sx,
+                rd: v_lo,
+                rs1: v_rs1,
                 rs2: self.operands.rs2,
+            },
+            virtual_sequence_remaining: Some(5),
+        };
+        sequence.push(mul.into());
+
+        let xor_1 = XOR {
+            address: self.address,
+            operands: FormatR {
+                rd: v_hi,
+                rs1: v_hi,
+                rs2: v_sx,
+            },
+            virtual_sequence_remaining: Some(4),
+        };
+        sequence.push(xor_1.into());
+
+        let xor_2 = XOR {
+            address: self.address,
+            operands: FormatR {
+                rd: v_lo,
+                rs1: v_lo,
+                rs2: v_sx,
+            },
+            virtual_sequence_remaining: Some(3),
+        };
+        sequence.push(xor_2.into());
+
+        let add_1 = ADD {
+            address: self.address,
+            operands: FormatR {
+                rd: v_tmp,
+                rs1: v_lo,
+                rs2: v_sx_0,
+            },
+            virtual_sequence_remaining: Some(2),
+        };
+        sequence.push(add_1.into());
+
+        let sltu_0 = SLTU {
+            address: self.address,
+            operands: FormatR {
+                rd: v_carry,
+                rs1: v_tmp,
+                rs2: v_lo,
             },
             virtual_sequence_remaining: Some(1),
         };
-        sequence.push(mulu.into());
+        sequence.push(sltu_0.into());
 
-        let add = ADD {
+        let add_2 = ADD {
             address: self.address,
             operands: FormatR {
                 rd: self.operands.rd,
-                rs1: v_1,
-                rs2: v_2,
+                rs1: v_hi,
+                rs2: v_carry,
             },
             virtual_sequence_remaining: Some(0),
         };
-        sequence.push(add.into());
+        sequence.push(add_2.into());
 
         sequence
     }

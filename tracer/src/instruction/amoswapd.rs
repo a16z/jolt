@@ -1,10 +1,31 @@
 use serde::{Deserialize, Serialize};
 
+use super::addi::ADDI;
+use super::and::AND;
+use super::andi::ANDI;
+use super::format::format_i::FormatI;
+use super::format::format_load::FormatLoad;
+use super::format::format_s::FormatS;
+use super::format::format_virtual_halfword_alignment::HalfwordAlignFormat;
+use super::ld::LD;
+use super::lui::LUI;
+use super::sd::SD;
+use super::sll::SLL;
+use super::slli::SLLI;
+use super::virtual_assert_word_alignment::VirtualAssertWordAlignment;
+use super::virtual_move::VirtualMove;
+use super::virtual_sw::VirtualSW;
+use super::xor::XOR;
+use super::RAMWrite;
+use super::RV32IMInstruction;
+use super::VirtualInstructionSequence;
+use common::constants::virtual_register_index;
+
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{
     format::{format_r::FormatR, InstructionFormat},
-    RAMAtomic, RISCVInstruction, RISCVTrace,
+    RAMAtomic, RISCVInstruction, RISCVTrace, RV32IMCycle,
 };
 
 declare_riscv_instr!(
@@ -46,4 +67,54 @@ impl AMOSWAPD {
     }
 }
 
-impl RISCVTrace for AMOSWAPD {}
+impl RISCVTrace for AMOSWAPD {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+        let virtual_sequence = self.virtual_sequence(cpu);
+        let mut trace = trace;
+        for instr in virtual_sequence {
+            // In each iteration, create a new Option containing a re-borrowed reference
+            instr.trace(cpu, trace.as_deref_mut());
+        }
+    }
+}
+
+impl VirtualInstructionSequence for AMOSWAPD {
+    fn virtual_sequence(&self, cpu: &Cpu) -> Vec<RV32IMInstruction> {
+        let mut sequence = vec![];
+        let v_rd = virtual_register_index(6) as usize;
+
+        let ld = LD {
+            address: self.address,
+            operands: FormatI {
+                rd: v_rd,
+                rs1: self.operands.rs1,
+                imm: 0,
+            },
+            virtual_sequence_remaining: Some(2),
+        };
+        sequence.push(ld.into());
+
+        let sd = SD {
+            address: self.address,
+            operands: FormatS {
+                rs1: self.operands.rs1,
+                rs2: self.operands.rs2,
+                imm: 0,
+            },
+            virtual_sequence_remaining: Some(1),
+        };
+        sequence.push(sd.into());
+
+        let vmove = VirtualMove {
+            address: self.address,
+            operands: FormatI {
+                rd: self.operands.rd,
+                rs1: v_rd,
+                imm: 0,
+            },
+            virtual_sequence_remaining: Some(0),
+        };
+        sequence.push(vmove.into());
+        sequence
+    }
+}

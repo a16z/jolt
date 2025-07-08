@@ -2,9 +2,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
+use super::addi::ADDI;
+use super::virtual_sign_extend::VirtualSignExtend;
+use super::RV32IMInstruction;
+use super::VirtualInstructionSequence;
+
 use super::{
-    format::{format_i::FormatI, normalize_imm, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
+    format::{format_i::FormatI, InstructionFormat},
+    RISCVInstruction, RISCVTrace, RV32IMCycle,
 };
 
 declare_riscv_instr!(
@@ -23,8 +28,46 @@ impl ADDIW {
         // ADDIW rd, rs1, 0 writes the sign extension of the lower 32 bits of register rs1 into
         // register rd (assembler pseudoinstruction SEXT.W).
         cpu.x[self.operands.rd] =
-            cpu.x[self.operands.rs1].wrapping_add(normalize_imm(self.operands.imm)) as i32 as i64;
+            cpu.x[self.operands.rs1].wrapping_add(self.operands.imm as i64) as i32 as i64;
     }
 }
 
-impl RISCVTrace for ADDIW {}
+impl RISCVTrace for ADDIW {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+        let virtual_sequence = self.virtual_sequence(cpu);
+        let mut trace = trace;
+        for instr in virtual_sequence {
+            // In each iteration, create a new Option containing a re-borrowed reference
+            instr.trace(cpu, trace.as_deref_mut());
+        }
+    }
+}
+
+impl VirtualInstructionSequence for ADDIW {
+    fn virtual_sequence(&self, cpu: &Cpu) -> Vec<RV32IMInstruction> {
+        let mut sequence = vec![];
+        let addi = ADDI {
+            address: self.address,
+            operands: FormatI {
+                rd: self.operands.rd,
+                rs1: self.operands.rs1,
+                imm: self.operands.imm,
+            },
+            virtual_sequence_remaining: Some(1),
+        };
+        sequence.push(addi.into());
+
+        let signext = VirtualSignExtend {
+            address: self.address,
+            operands: FormatI {
+                rd: self.operands.rd,
+                rs1: self.operands.rd,
+                imm: 0,
+            },
+            virtual_sequence_remaining: Some(0),
+        };
+        sequence.push(signext.into());
+
+        sequence
+    }
+}

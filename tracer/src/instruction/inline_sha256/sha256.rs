@@ -57,7 +57,7 @@ impl SHA256 {
 
 impl RISCVTrace for SHA256 {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence();
+        let virtual_sequence = self.virtual_sequence(cpu);
 
         let mut trace = trace;
         for instr in virtual_sequence {
@@ -67,7 +67,7 @@ impl RISCVTrace for SHA256 {
 }
 
 impl VirtualInstructionSequence for SHA256 {
-    fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
+    fn virtual_sequence(&self, _: &Cpu) -> Vec<RV32IMInstruction> {
         // Virtual registers used as a scratch space
         let mut vr = [0; NEEDED_REGISTERS];
         (0..NEEDED_REGISTERS).for_each(|i| {

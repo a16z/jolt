@@ -1,10 +1,25 @@
 use serde::{Deserialize, Serialize};
 
+use super::add::ADD;
+use super::format::format_i::FormatI;
+use super::format::format_load::FormatLoad;
+use super::format::format_s::FormatS;
+use super::format::format_virtual_halfword_alignment::HalfwordAlignFormat;
+use super::ld::LD;
+use super::mul::MUL;
+use super::sd::SD;
+use super::sltu::SLTU;
+use super::virtual_move::VirtualMove;
+use super::xori::XORI;
+use super::RAMWrite;
+use super::RV32IMInstruction;
+use super::VirtualInstructionSequence;
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
+use common::constants::virtual_register_index;
 
 use super::{
     format::{format_r::FormatR, InstructionFormat},
-    RAMAtomic, RISCVInstruction, RISCVTrace,
+    RAMAtomic, RISCVInstruction, RISCVTrace, RV32IMCycle,
 };
 
 declare_riscv_instr!(
@@ -51,4 +66,114 @@ impl AMOMINUD {
     }
 }
 
-impl RISCVTrace for AMOMINUD {}
+impl RISCVTrace for AMOMINUD {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+        let virtual_sequence = self.virtual_sequence(cpu);
+        let mut trace = trace;
+        for instr in virtual_sequence {
+            // In each iteration, create a new Option containing a re-borrowed reference
+            instr.trace(cpu, trace.as_deref_mut());
+        }
+    }
+}
+
+impl VirtualInstructionSequence for AMOMINUD {
+    fn virtual_sequence(&self, cpu: &Cpu) -> Vec<RV32IMInstruction> {
+        let v_rs2 = virtual_register_index(6) as usize;
+        let v_rd = virtual_register_index(7) as usize;
+        let v_sel_rs2 = virtual_register_index(8) as usize;
+        let v_sel_rd = virtual_register_index(9) as usize;
+        let v_tmp = virtual_register_index(10) as usize;
+        let mut sequence = vec![];
+
+        let ld = LD {
+            address: self.address,
+            operands: FormatI {
+                rd: v_rd,
+                rs1: self.operands.rs1,
+                imm: 0,
+            },
+            virtual_sequence_remaining: Some(6),
+        };
+        sequence.push(ld.into());
+
+        let sltu = SLTU {
+            address: self.address,
+            operands: FormatR {
+                rd: v_sel_rs2,
+                rs1: self.operands.rs2,
+                rs2: v_rd,
+            },
+            virtual_sequence_remaining: Some(5),
+        };
+        sequence.push(sltu.into());
+
+        let xori = XORI {
+            address: self.address,
+            operands: FormatI {
+                rd: v_sel_rd,
+                rs1: v_sel_rs2,
+                imm: 1,
+            },
+            virtual_sequence_remaining: Some(4),
+        };
+        sequence.push(xori.into());
+
+        let mul = MUL {
+            address: self.address,
+            operands: FormatR {
+                rd: v_rs2,
+                rs1: v_sel_rs2,
+                rs2: self.operands.rs2,
+            },
+            virtual_sequence_remaining: Some(3),
+        };
+        sequence.push(mul.into());
+
+        let mul = MUL {
+            address: self.address,
+            operands: FormatR {
+                rd: v_tmp,
+                rs1: v_sel_rd,
+                rs2: v_rd,
+            },
+            virtual_sequence_remaining: Some(2),
+        };
+        sequence.push(mul.into());
+
+        let add = ADD {
+            address: self.address,
+            operands: FormatR {
+                rd: v_rs2,
+                rs1: v_tmp,
+                rs2: v_rs2,
+            },
+            virtual_sequence_remaining: Some(1),
+        };
+        sequence.push(add.into());
+
+        let sd = SD {
+            address: self.address,
+            operands: FormatS {
+                rs1: self.operands.rs1,
+                rs2: v_rs2,
+                imm: 0,
+            },
+            virtual_sequence_remaining: Some(1),
+        };
+        sequence.push(sd.into());
+
+        let vmove = VirtualMove {
+            address: self.address,
+            operands: FormatI {
+                rd: self.operands.rd,
+                rs1: v_rd,
+                imm: 0,
+            },
+            virtual_sequence_remaining: Some(0),
+        };
+        sequence.push(vmove.into());
+
+        sequence
+    }
+}

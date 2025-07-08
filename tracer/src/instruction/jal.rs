@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{
-    format::{format_j::FormatJ, normalize_imm, InstructionFormat},
+    format::{format_j::FormatJ, InstructionFormat},
     RISCVInstruction, RISCVTrace,
 };
 
@@ -20,7 +20,7 @@ impl JAL {
         if self.operands.rd != 0 {
             cpu.x[self.operands.rd] = cpu.sign_extend(cpu.pc as i64);
         }
-        cpu.pc = (self.address as i64 + normalize_imm(self.operands.imm)) as u64;
+        cpu.pc = (self.address as i64 + self.operands.imm as i64) as u64;
     }
 }
 

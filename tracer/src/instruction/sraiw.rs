@@ -1,9 +1,19 @@
+use serde::{Deserialize, Serialize};
+
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+    instruction::{
+        format::format_virtual_right_shift_i::FormatVirtualRightShiftI, virtual_srai::VirtualSRAI,
+    },
+};
+
+use super::virtual_sign_extend::VirtualSignExtend;
 use super::{
     format::{format_i::FormatI, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
+    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
 };
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
-use serde::{Deserialize, Serialize};
+use common::constants::virtual_register_index;
 
 declare_riscv_instr!(
     name   = SRAIW,
@@ -22,4 +32,62 @@ impl SRAIW {
         cpu.x[self.operands.rd] = ((cpu.x[self.operands.rs1] as i32) >> shamt) as i64;
     }
 }
-impl RISCVTrace for SRAIW {}
+
+impl RISCVTrace for SRAIW {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+        let virtual_sequence = self.virtual_sequence(cpu);
+        let mut trace = trace;
+        for instr in virtual_sequence {
+            // In each iteration, create a new Option containing a re-borrowed reference
+            instr.trace(cpu, trace.as_deref_mut());
+        }
+    }
+}
+
+impl VirtualInstructionSequence for SRAIW {
+    fn virtual_sequence(&self, cpu: &Cpu) -> Vec<RV32IMInstruction> {
+        let v_rs1 = virtual_register_index(0) as usize;
+        let mut sequence = vec![];
+
+        let signext = VirtualSignExtend {
+            address: self.address,
+            operands: FormatI {
+                rd: v_rs1,
+                rs1: self.operands.rs1,
+                imm: 0,
+            },
+            virtual_sequence_remaining: Some(2),
+        };
+        sequence.push(signext.into());
+
+        let (shift, len) = match cpu.xlen {
+            Xlen::Bit32 => panic!("SRAIW is invalid in 32b mode"),
+            Xlen::Bit64 => (self.operands.imm & 0x1f, 32),
+        };
+        let ones = (1u64 << (len - shift)) - 1;
+        let bitmask = ones << shift;
+
+        let sra = VirtualSRAI {
+            address: self.address,
+            operands: FormatVirtualRightShiftI {
+                rd: self.operands.rd,
+                rs1: v_rs1,
+                imm: bitmask,
+            },
+            virtual_sequence_remaining: Some(1),
+        };
+        sequence.push(sra.into());
+
+        let signext = VirtualSignExtend {
+            address: self.address,
+            operands: FormatI {
+                rd: self.operands.rd,
+                rs1: self.operands.rd,
+                imm: 0,
+            },
+            virtual_sequence_remaining: Some(0),
+        };
+        sequence.push(signext.into());
+        sequence
+    }
+}
