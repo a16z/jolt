@@ -1,3 +1,5 @@
+use std::ops::Deref;
+
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
 use crate::{
@@ -21,7 +23,8 @@ use crate::{
 fn mle_eval_diamond_optimized_single_index<
     'a,
     F: JoltField,
-    I: IntoParallelRefIterator<'a, Item = &'a MultilinearPolynomial<F>> + Sync + ?Sized,
+    I: IntoParallelRefIterator<'a, Item = It> + Sync + ?Sized,
+    It: Deref<Target = &'a MultilinearPolynomial<F>>,
 >(
     polys: &'a I,
     binding_order: BindingOrder,
@@ -104,7 +107,8 @@ fn mle_eval_diamond_optimized_single_index<
 pub fn mle_eval_diamond_optimized_pow2<
     'a,
     F: JoltField,
-    I: IntoParallelRefIterator<'a, Item = &'a MultilinearPolynomial<F>> + Sync,
+    I: IntoParallelRefIterator<'a, Item = It> + Sync,
+    It: Deref<Target = &'a MultilinearPolynomial<F>>,
 >(
     polys: &'a I,
     binding_order: BindingOrder,
@@ -131,7 +135,8 @@ pub fn mle_eval_diamond_optimized_pow2<
 pub fn mle_eval_diamond_optimized<
     'a,
     F: JoltField,
-    I: IntoParallelRefIterator<'a, Item = &'a MultilinearPolynomial<F>> + Sync + 'a + ?Sized,
+    I: IntoParallelRefIterator<'a, Item = It> + Sync + 'a + ?Sized,
+    It: Deref<Target = &'a MultilinearPolynomial<F>>,
     IterI: IntoParallelRefIterator<'a, Item = &'a (&'a I, usize)> + Sync + 'a + ?Sized,
 >(
     polys: &'a IterI,
@@ -311,8 +316,12 @@ mod tests {
                 let r_j = Fr::from(rng.next_u32());
                 let unipoly =
                     mle_eval_naive(&test_polys, prev_claim, binding_order, length, num_polys);
-                let unipoly_optimized =
-                    mle_eval_diamond_optimized_pow2(&test_polys, binding_order, length, num_polys);
+                let unipoly_optimized = mle_eval_diamond_optimized_pow2(
+                    &test_polys.iter().collect::<Vec<_>>(),
+                    binding_order,
+                    length,
+                    num_polys,
+                );
                 assert_eq!(
                     unipoly.evaluate(&r_j),
                     unipoly_optimized.evaluate(&r_j),
@@ -349,12 +358,14 @@ mod tests {
                 // println!("Naive time: {:?}", duration);
 
                 let (arr1, arr2) = test_polys.split_at(4);
+                let arr1 = arr1.iter().collect::<Vec<_>>();
+                let arr2 = arr2.iter().collect::<Vec<_>>();
                 assert_eq!(arr1.len(), 4);
                 assert_eq!(arr2.len(), num_polys - 4);
 
                 let now = Instant::now();
                 let unipoly_optimized = mle_eval_diamond_optimized(
-                    &[(arr1, arr1.len()), (arr2, arr2.len())],
+                    &[(&arr1, arr1.len()), (&arr2, arr2.len())],
                     binding_order,
                     length,
                     num_polys,

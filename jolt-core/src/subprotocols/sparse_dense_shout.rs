@@ -9,11 +9,10 @@ use crate::{
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
-        multilinear_polynomial::{
-            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-        },
+        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         unipoly::{CompressedUniPoly, UniPoly},
     },
+    subprotocols::mle_eval::mle_eval_diamond_optimized,
     utils::{
         errors::ProofVerifyError,
         math::Math,
@@ -514,49 +513,15 @@ pub fn prove_sparse_dense_shout<
         let span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
         let _guard = span.enter();
 
-        let univariate_poly_evals: [F; 6] = (0..eq_r_prime.len() / 2)
-            .into_par_iter()
-            .map(|i| {
-                let eq_evals = eq_r_prime.sumcheck_evals(i, 6, BindingOrder::HighToLow);
-                let ra_0_evals = ra[0].sumcheck_evals(i, 6, BindingOrder::HighToLow);
-                let ra_1_evals = ra[1].sumcheck_evals(i, 6, BindingOrder::HighToLow);
-                let ra_2_evals = ra[2].sumcheck_evals(i, 6, BindingOrder::HighToLow);
-                let ra_3_evals = ra[3].sumcheck_evals(i, 6, BindingOrder::HighToLow);
-                let val_evals =
-                    combined_instruction_val_poly.sumcheck_evals(i, 6, BindingOrder::HighToLow);
+        let arr1 = vec![&eq_r_prime, &ra[0], &ra[1], &ra[2]];
+        let arr2 = vec![&ra[3], &combined_instruction_val_poly];
 
-                std::array::from_fn(|i| {
-                    eq_evals[i]
-                        * ra_0_evals[i]
-                        * ra_1_evals[i]
-                        * ra_2_evals[i]
-                        * ra_3_evals[i]
-                        * val_evals[i]
-                })
-            })
-            .reduce(
-                || [F::zero(); 6],
-                |running, new| {
-                    [
-                        running[0] + new[0],
-                        running[1] + new[1],
-                        running[2] + new[2],
-                        running[3] + new[3],
-                        running[4] + new[4],
-                        running[5] + new[5],
-                    ]
-                },
-            );
-
-        let univariate_poly = UniPoly::from_evals(&[
-            univariate_poly_evals[0],
-            previous_claim - univariate_poly_evals[0],
-            univariate_poly_evals[1],
-            univariate_poly_evals[2],
-            univariate_poly_evals[3],
-            univariate_poly_evals[4],
-            univariate_poly_evals[5],
-        ]);
+        let univariate_poly: UniPoly<F> = mle_eval_diamond_optimized(
+            &[(&arr1, 4), (&arr2, 2)],
+            BindingOrder::HighToLow,
+            eq_r_prime.len(),
+            6,
+        );
 
         drop(_guard);
         drop(span);
@@ -567,8 +532,6 @@ pub fn prove_sparse_dense_shout<
 
         let r_j = transcript.challenge_scalar::<F>();
         r.push(r_j);
-
-        previous_claim = univariate_poly.evaluate(&r_j);
 
         let span = tracing::span!(tracing::Level::INFO, "Binding");
         let _guard = span.enter();
