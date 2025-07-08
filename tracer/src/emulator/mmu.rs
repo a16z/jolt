@@ -42,7 +42,6 @@ enum MemoryAccessType {
     Execute,
     Read,
     Write,
-    DontCare,
 }
 
 fn _get_addressing_mode_name(mode: &AddressingMode) -> &'static str {
@@ -344,12 +343,12 @@ impl Mmu {
     ///
     /// # Arguments
     /// * `v_address` Virtual address
-    pub fn load_doubleword(&mut self, v_address: u64) -> Result<u64, Trap> {
+    pub fn load_doubleword(&mut self, v_address: u64) -> Result<(u64, RAMRead), Trap> {
         let effective_address = self.get_effective_address(v_address);
         assert_eq!(effective_address % 8, 0, "Unaligned load_doubleword");
-        self.trace_load(effective_address);
+        let memory_read = self.trace_load(effective_address);
         match self.load_bytes(v_address, 8) {
-            Ok(data) => Ok(data),
+            Ok(data) => Ok((data, memory_read)),
             Err(e) => Err(e),
         }
     }
@@ -452,11 +451,12 @@ impl Mmu {
     /// # Arguments
     /// * `v_address` Virtual address
     /// * `value` data written
-    pub fn store_doubleword(&mut self, v_address: u64, value: u64) -> Result<(), Trap> {
+    pub fn store_doubleword(&mut self, v_address: u64, value: u64) -> Result<RAMWrite, Trap> {
         let effective_address = self.get_effective_address(v_address);
         assert_eq!(effective_address % 8, 0, "Unaligned store_doubleword");
-        self.trace_store(effective_address, value);
-        self.store_bytes(v_address, value, 8)
+        let memory_write = self.trace_store(effective_address, value);
+        self.store_bytes(v_address, value, 8)?;
+        Ok(memory_write)
     }
 
     /// Loads a byte from main memory or peripheral devices depending on
@@ -464,7 +464,7 @@ impl Mmu {
     ///
     /// # Arguments
     /// * `p_address` Physical address
-    fn load_raw(&mut self, p_address: u64) -> u8 {
+    pub fn load_raw(&mut self, p_address: u64) -> u8 {
         let effective_address = self.get_effective_address(p_address);
         self.assert_effective_load_address(effective_address);
         // @TODO: Mapping should be configurable with dtb
@@ -695,7 +695,7 @@ impl Mmu {
     ///
     /// # Arguments
     /// * `p_address` Physical address
-    fn load_doubleword_raw(&mut self, p_address: u64) -> u64 {
+    pub fn load_doubleword_raw(&mut self, p_address: u64) -> u64 {
         let effective_address = self.get_effective_address(p_address);
         match effective_address >= DRAM_BASE
             && effective_address.wrapping_add(7) > effective_address
@@ -989,7 +989,6 @@ impl Mmu {
                     return Err(());
                 }
             }
-            _ => {}
         };
 
         let offset = v_address & 0xfff; // [11:0]

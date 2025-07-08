@@ -1,5 +1,7 @@
+#![allow(dead_code)]
+
 // @TODO: temporal
-const TEST_MEMORY_CAPACITY: u64 = 1024 * 512;
+const TEST_MEMORY_CAPACITY: u64 = 1024 * 512 * 100;
 const PROGRAM_MEMORY_CAPACITY: u64 = 1024 * 1024 * 128; // big enough to run Linux and xv6
 
 extern crate fnv;
@@ -31,6 +33,8 @@ use self::cpu::{Cpu, Xlen};
 use self::elf_analyzer::ElfAnalyzer;
 use self::terminal::Terminal;
 
+use std::io::Write;
+
 /// RISC-V emulator. It emulates RISC-V CPU and peripheral devices.
 ///
 /// Sample code to run the emulator.
@@ -58,7 +62,16 @@ pub struct Emulator {
 
     /// [`riscv-tests`](https://github.com/riscv/riscv-tests) specific properties.
     /// The address where data will be sent to terminal
-    tohost_addr: u64,
+    pub tohost_addr: u64,
+
+    /// In RISC-V testing, signatures are memory-stored execution results. They're
+    /// used to compare a processor's behavior against a trusted reference model
+    /// (like SAIL or Spike) to ensure correct and compliant operation.
+    /// The address where the signature region begins
+    pub begin_signature_addr: u64,
+
+    /// The address where the signature region ends
+    pub end_signature_addr: u64,
 }
 
 // type alias EmulatorState to Emulator for now
@@ -84,6 +97,8 @@ impl Emulator {
             // These can be updated in setup_program()
             is_test: false,
             tohost_addr: 0, // assuming tohost_addr is non-zero if exists
+            begin_signature_addr: 0,
+            end_signature_addr: 0,
         }
     }
 
@@ -96,7 +111,7 @@ impl Emulator {
     /// * Disassembles every instruction and dumps to terminal
     /// * The emulator stops when the test finishes
     /// * Displays the result message (pass/fail) to terminal
-    pub fn run_test(&mut self) {
+    pub fn run_test(&mut self, trace: bool) {
         // @TODO: Send this message to terminal?
         #[cfg(feature = "std")]
         println!("This elf file seems like a riscv-tests elf file. Running in test mode.");
@@ -104,21 +119,32 @@ impl Emulator {
             let disas = self.cpu.disassemble_next_instruction();
             println!("{disas}");
 
-            self.tick(None);
+            let mut traces = if trace { Some(Vec::new()) } else { None };
+            self.tick(traces.as_mut());
 
-            // It seems in riscv-tests ends with end code
-            // written to a certain physical memory address
-            // (0x80001000 in more test cases) so checking
-            // the data in the address and terminating the test
-            // if non-zero data is written.
-            // End code 1 seems to mean pass.
-            let endcode = self.cpu.get_mut_mmu().load_word_raw(self.tohost_addr);
-            if endcode != 0 {
-                match endcode {
-                    1 => println!("Test Passed with {endcode:X}\n"),
-                    _ => println!("Test Failed with {endcode:X}\n"),
-                };
-                break;
+            // Check if tohost has been written to
+            let tohost_value = self.cpu.get_mut_mmu().load_doubleword_raw(self.tohost_addr);
+            if tohost_value != 0 {
+                // Extract device, cmd and payload from tohost value
+                // Format matches sail-riscv's htif_cmd bitfield:
+                // device  : 63 .. 56
+                // cmd     : 55 .. 48
+                // payload : 47 .. 0
+                let device = (tohost_value >> 56) & 0xFF;
+                let _cmd = (tohost_value >> 48) & 0xFF;
+                let payload = tohost_value & 0xFFFFFFFFFFFF;
+
+                // Check if this is a syscall-proxy command (device 0x00)
+                // and if the LSB of payload is set (indicating program done)
+                if device == 0x00 && (payload & 1) == 1 {
+                    // Extract exit code by shifting payload right by 1
+                    let endcode = payload >> 1;
+                    match endcode {
+                        0 => println!("Test Passed with {endcode:X}\n"),
+                        _ => println!("Test Failed with {endcode:X}\n"),
+                    };
+                    break;
+                }
             }
         }
     }
@@ -159,11 +185,6 @@ impl Emulator {
             };
         }
 
-        // Find program data section named .tohost to detect if the elf file is riscv-tests
-        self.tohost_addr = analyzer
-            .find_tohost_addr(&program_data_section_headers, &string_table_section_headers)
-            .unwrap_or(0);
-
         // AZ: It seems that string and symbol tables are not being used. I expected them to be loaded
         // in the CPU memory just like the program data sections.
 
@@ -178,6 +199,11 @@ impl Emulator {
                     .insert(key.to_string(), *map.get(key).unwrap());
             }
         }
+
+        // Find tohost, begin_signature, and end_signature addresses from symbol map since they are all global labels
+        self.tohost_addr = self.symbol_map.get("tohost").copied().unwrap_or(0);
+        self.begin_signature_addr = self.symbol_map.get("begin_signature").copied().unwrap_or(0);
+        self.end_signature_addr = self.symbol_map.get("end_signature").copied().unwrap_or(0);
 
         // Detected whether the elf file is riscv-tests.
         // Setting up CPU and Memory depending on it.
@@ -236,5 +262,43 @@ impl Emulator {
     /// * `s` Symbol strings
     pub fn get_address_of_symbol(&self, s: &String) -> Option<u64> {
         self.symbol_map.get(s).copied()
+    }
+
+    /// Writes the signature region to a writer with specified granularity.
+    /// Each word of the signature is written as a hexadecimal string representation.
+    ///
+    /// # Arguments
+    /// * `writer` - Any type that implements Write trait
+    /// * `granularity` - Number of bytes to write per line (must be a power of 2)
+    ///
+    /// # Returns
+    /// * `Result<(), std::io::Error>` - Ok if successful, Err if write operations fail
+    pub fn write_signature<W: Write>(
+        &mut self,
+        writer: &mut W,
+        granularity: usize,
+    ) -> std::io::Result<()> {
+        if self.begin_signature_addr == 0 || self.end_signature_addr == 0 {
+            return Ok(());
+        }
+
+        let sig_len = (self.end_signature_addr - self.begin_signature_addr) as usize;
+
+        for i in (0..sig_len).step_by(granularity) {
+            // Write bytes in big-endian order
+            for j in (0..granularity).rev() {
+                let byte = if i + j < sig_len {
+                    self.cpu
+                        .get_mut_mmu()
+                        .load_raw(self.begin_signature_addr + (i + j) as u64)
+                } else {
+                    0
+                };
+                write!(writer, "{byte:02x}")?;
+            }
+            writeln!(writer)?;
+        }
+
+        Ok(())
     }
 }

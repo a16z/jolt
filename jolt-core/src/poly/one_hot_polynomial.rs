@@ -137,7 +137,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
         skip_all,
         name = "OneHotPolynomialProverOpening::compute_prover_message"
     )]
-    pub fn compute_prover_message(&self, round: usize) -> Vec<F> {
+    pub fn compute_prover_message(&mut self, round: usize) -> Vec<F> {
         let shared_eq = self.eq_state.borrow();
 
         if round < self.polynomial.K.log_2() {
