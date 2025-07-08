@@ -9,6 +9,14 @@ use crate::{
     utils::math::Math,
 };
 
+/// Implement the MLE evaluation optimization described in https://hackmd.io/@benediamond/Sye_bB1wJl.
+/// Computes the summand of g_i(X) at a single index in the paper.
+/// Arguments:
+/// - `polys`: Input polynomials.
+/// - `binding_order`: The binding order of the polynomials.
+/// - `length`: The length of each input polynomial.
+/// - `degree`: The degree of the result univariate polynomial to evaluate, which is the number of input polynomials. The degree is a power of two.
+/// - `index`: The index of the unbound variables to evaluate the polynomials at.
 #[inline]
 fn mle_eval_diamond_optimized_single_index<
     'a,
@@ -93,14 +101,6 @@ fn mle_eval_diamond_optimized_single_index<
     evals
 }
 
-/// Implement the MLE evaluation optimization described in https://hackmd.io/@benediamond/Sye_bB1wJl.
-/// Computes g_i(X) in the paper.
-/// Arguments:
-/// - `polys`: Input polynomials.
-/// - `r_j`: The value to evaluate the polynomials at.
-/// - `binding_order`: The binding order of the polynomials.
-/// - `length`: The length of each input polynomial.
-/// - `degree`: The degree of the result univariate polynomial to evaluate, which is the number of input polynomials.
 pub fn mle_eval_diamond_optimized_pow2<
     'a,
     F: JoltField,
@@ -194,8 +194,7 @@ mod tests {
     use ark_std::test_rng;
     use rand_core::RngCore;
     use rayon::iter::{
-        IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
-        IntoParallelRefMutIterator, ParallelIterator,
+        IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator,
     };
 
     use crate::{
@@ -346,8 +345,8 @@ mod tests {
                 let now = Instant::now();
                 let unipoly =
                     mle_eval_naive(&test_polys, prev_claim, binding_order, length, num_polys);
-                let duration = now.elapsed();
-                println!("Naive time: {:?}", duration);
+                let _duration = now.elapsed();
+                // println!("Naive time: {:?}", duration);
 
                 let (arr1, arr2) = test_polys.split_at(4);
                 assert_eq!(arr1.len(), 4);
@@ -360,8 +359,8 @@ mod tests {
                     length,
                     num_polys,
                 );
-                let duration = now.elapsed();
-                println!("Optimized time: {:?}", duration);
+                let _duration = now.elapsed();
+                // println!("Optimized time: {:?}", duration);
 
                 assert_eq!(
                     unipoly.evaluate(&r_j),
