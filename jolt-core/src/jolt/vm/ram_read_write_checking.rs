@@ -452,7 +452,151 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         }
     }
 
-    fn phase1_compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
+    #[cfg(test)]
+    fn phase1_compute_prover_message_cubic(&mut self, round: usize) -> Vec<F> {
+        const DEGREE: usize = 3;
+        let ReadWriteCheckingProverState {
+            trace,
+            I,
+            data_buffers,
+            A,
+            val_checkpoints,
+            inc_cycle,
+            eq_r_prime,
+            ..
+        } = self.prover_state.as_mut().unwrap();
+
+        let test_univariate_poly_evals: [F; DEGREE] = I
+            .par_iter()
+            .zip(data_buffers.par_iter_mut())
+            .zip(val_checkpoints.par_chunks(self.K))
+            .map(|((I_chunk, buffers), checkpoint)| {
+                let mut evals = [F::zero(), F::zero(), F::zero()];
+
+                let DataBuffers {
+                    val_j_0,
+                    val_j_r,
+                    ra,
+                    dirty_indices,
+                } = buffers;
+                *val_j_0 = checkpoint.to_vec();
+
+                // Iterate over I_chunk, two rows at a time.
+                I_chunk
+                    .chunk_by(|a, b| a.0 / 2 == b.0 / 2)
+                    .for_each(|inc_chunk| {
+                        let j_prime = inc_chunk[0].0; // row index
+
+                        for j in j_prime << round..(j_prime + 1) << round {
+                            let j_bound = j % (1 << round);
+                            let k = remap_address(
+                                trace[j].ram_access().address() as u64,
+                                &self.memory_layout,
+                            ) as usize;
+                            if ra[0][k].is_zero() {
+                                dirty_indices.push(k);
+                            }
+                            ra[0][k] += A[j_bound];
+                        }
+
+                        for j in (j_prime + 1) << round..(j_prime + 2) << round {
+                            let j_bound = j % (1 << round);
+                            let k = remap_address(
+                                trace[j].ram_access().address() as u64,
+                                &self.memory_layout,
+                            ) as usize;
+                            if ra[0][k].is_zero() && ra[1][k].is_zero() {
+                                dirty_indices.push(k);
+                            }
+                            ra[1][k] += A[j_bound];
+                        }
+
+                        for &k in dirty_indices.iter() {
+                            val_j_r[0][k] = val_j_0[k];
+                        }
+                        let mut inc_iter = inc_chunk.iter().peekable();
+
+                        // First of the two rows
+                        loop {
+                            let (row, col, inc_lt, inc) = inc_iter.next().unwrap();
+                            debug_assert_eq!(*row, j_prime);
+                            val_j_r[0][*col] += *inc_lt;
+                            val_j_0[*col] += *inc;
+                            if inc_iter.peek().unwrap().0 != j_prime {
+                                break;
+                            }
+                        }
+                        for &k in dirty_indices.iter() {
+                            val_j_r[1][k] = val_j_0[k];
+                        }
+
+                        // Second of the two rows
+                        for inc in inc_iter {
+                            let (row, col, inc_lt, inc) = *inc;
+                            debug_assert_eq!(row, j_prime + 1);
+                            val_j_r[1][col] += inc_lt;
+                            val_j_0[col] += inc;
+                        }
+
+                        let eq_r_prime_evals =
+                            eq_r_prime.sumcheck_evals(j_prime / 2, DEGREE, BindingOrder::LowToHigh);
+                        let inc_cycle_evals =
+                            inc_cycle.sumcheck_evals(j_prime / 2, DEGREE, BindingOrder::LowToHigh);
+
+                        let mut inner_sum_evals = [F::zero(); DEGREE];
+                        for k in dirty_indices.drain(..) {
+                            if !ra[0][k].is_zero() || !ra[1][k].is_zero() {
+                                // let kj = k * (T >> (round - 1)) + j_prime / 2;
+                                let m_ra = ra[1][k] - ra[0][k];
+                                let ra_eval_2 = ra[1][k] + m_ra;
+                                let ra_eval_3 = ra_eval_2 + m_ra;
+
+                                let m_val = val_j_r[1][k] - val_j_r[0][k];
+                                let val_eval_2 = val_j_r[1][k] + m_val;
+                                let val_eval_3 = val_eval_2 + m_val;
+
+                                inner_sum_evals[0] += ra[0][k].mul_0_optimized(
+                                    val_j_r[0][k] + self.z * (inc_cycle_evals[0] + val_j_r[0][k]),
+                                );
+                                inner_sum_evals[1] += ra_eval_2
+                                    * (val_eval_2 + self.z * (inc_cycle_evals[1] + val_eval_2));
+                                inner_sum_evals[2] += ra_eval_3
+                                    * (val_eval_3 + self.z * (inc_cycle_evals[2] + val_eval_3));
+
+                                ra[0][k] = F::zero();
+                                ra[1][k] = F::zero();
+                            }
+
+                            val_j_r[0][k] = F::zero();
+                            val_j_r[1][k] = F::zero();
+                        }
+
+                        evals[0] += eq_r_prime_evals[0] * inner_sum_evals[0];
+                        evals[1] += eq_r_prime_evals[1] * inner_sum_evals[1];
+                        evals[2] += eq_r_prime_evals[2] * inner_sum_evals[2];
+                    });
+
+                evals
+            })
+            .reduce(
+                || [F::zero(); DEGREE],
+                |running, new| {
+                    [
+                        running[0] + new[0],
+                        running[1] + new[1],
+                        running[2] + new[2],
+                    ]
+                },
+            );
+
+        test_univariate_poly_evals.into()
+    }
+
+    fn phase1_compute_prover_message_quadratic(
+        &mut self,
+        round: usize,
+        previous_claim: F,
+    ) -> Vec<F> {
         const DEGREE: usize = 3;
         let ReadWriteCheckingProverState {
             trace,
@@ -462,12 +606,11 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             val_checkpoints,
             inc_cycle,
             gruens_eq_r_prime,
-            eq_r_prime,
             ..
         } = self.prover_state.as_mut().unwrap();
 
-        let univariate_poly_evals: [F; DEGREE] = if gruens_eq_r_prime.E_in_current_len() == 1 {
-            let quadratic_coeffs = I.par_iter()
+        let quadratic_coeffs: [F; DEGREE - 1] = if gruens_eq_r_prime.E_in_current_len() == 1 {
+            I.par_iter()
                 .zip(data_buffers.par_iter_mut())
                 .zip(val_checkpoints.par_chunks(self.K))
                 .map(|((I_chunk, buffers), checkpoint)| {
@@ -550,20 +693,16 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                             for k in dirty_indices.drain(..) {
                                 if !ra[0][k].is_zero() || !ra[1][k].is_zero() {
                                     // let kj = k * (T >> (round - 1)) + j_prime / 2;
-                                    let ra_evals = [
-                                        ra[0][k],
-                                        ra[1][k] - ra[0][k],
-                                    ];
+                                    let ra_evals = [ra[0][k], ra[1][k] - ra[0][k]];
 
-                                    let val_evals = [
-                                        val_j_r[0][k],
-                                        val_j_r[1][k] - val_j_r[0][k],
-                                    ];
+                                    let val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
 
-                                    inner_sum_evals[0] += ra_evals[0]
-                                        .mul_0_optimized(val_evals[0] + self.z * (inc_cycle_evals[0] + val_evals[0]));
+                                    inner_sum_evals[0] += ra_evals[0].mul_0_optimized(
+                                        val_evals[0] + self.z * (inc_cycle_evals[0] + val_evals[0]),
+                                    );
                                     inner_sum_evals[1] += ra_evals[1]
-                                        * (val_evals[1] + self.z * (inc_cycle_evals[1] + val_evals[1]));
+                                        * (val_evals[1]
+                                            + self.z * (inc_cycle_evals[1] + val_evals[1]));
 
                                     ra[0][k] = F::zero();
                                     ra[1][k] = F::zero();
@@ -581,59 +720,13 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                 })
                 .reduce(
                     || [F::zero(); DEGREE - 1],
-                    |running, new| {
-                        [
-                            running[0] + new[0],
-                            running[1] + new[1],
-                        ]
-                    },
-                );
-
-            // We want to compute the evaluations of the cubic polynomial s(X) = l(X) * q(X), where
-            // l is linear, and q is quadratic, at the points {0, 2, 3}.
-            //
-            // At this point, we have
-            // - the linear polynomial, l(X) = a + bX
-            // - the quadratic polynomial, q(X) = c + dX + eX^2
-            // - the previous round's claim s(0) + s(1) = a * c + (a + b) * (c + d + e)
-            //
-            // Both l and q are represented by their evaluations at 0 and infinity. I.e., we have a, b, c,
-            // and e, but not d. We compute s by first computing l and t at points 2 and 3.
-
-            // Evaluations of the linear polynomial linear polynomial
-            let eq_eval_1 = gruens_eq_r_prime.current_scalar
-                * gruens_eq_r_prime.w[gruens_eq_r_prime.current_index - 1];
-            let eq_eval_0 = gruens_eq_r_prime.current_scalar - eq_eval_1;
-            let eq_m = eq_eval_1 - eq_eval_0;
-            let eq_eval_2 = eq_eval_1 + eq_m;
-            let eq_eval_3 = eq_eval_2 + eq_m;
-
-            // Evaluations of the quadratic polynomial
-            let quadratic_eval_0 = quadratic_coeffs[0];
-            let cubic_eval_0 = eq_eval_0 * quadratic_eval_0;
-            let cubic_eval_1 = previous_claim - cubic_eval_0;
-            // q(1) = c + d + e
-            let quadratic_eval_1 = cubic_eval_1 / eq_eval_1;
-            // q(2) = c + 2d + 4e = q(1) + q(1) - q(0) + 2e
-            let e_times_2 = quadratic_coeffs[1] + quadratic_coeffs[1];
-            let quadratic_eval_2 = quadratic_eval_1
-                + quadratic_eval_1 - quadratic_eval_0
-                + e_times_2;
-            // q(3) = c + 3d + 9e = q(2) + q(1) - q(0) + 4e
-            let quadratic_eval_3 = quadratic_eval_2
-                + quadratic_eval_1 - quadratic_eval_0
-                + e_times_2 + e_times_2;
-
-            [
-                cubic_eval_0,
-                eq_eval_2 * quadratic_eval_2,
-                eq_eval_3 * quadratic_eval_3,
-            ]
+                    |running, new| [running[0] + new[0], running[1] + new[1]],
+                )
         } else {
             let num_x_in_bits = gruens_eq_r_prime.E_in_current_len().log_2();
             let x_bitmask = (1 << num_x_in_bits) - 1;
 
-            let quadratic_coeffs = I.par_iter()
+            I.par_iter()
                 .zip(data_buffers.par_iter_mut())
                 .zip(val_checkpoints.par_chunks(self.K))
                 .map(|((I_chunk, buffers), checkpoint)| {
@@ -720,20 +813,16 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                             for k in dirty_indices.drain(..) {
                                 if !ra[0][k].is_zero() || !ra[1][k].is_zero() {
                                     // let kj = k * (T >> (round - 1)) + j_prime / 2;
-                                    let ra_evals = [
-                                        ra[0][k],
-                                        ra[1][k] - ra[0][k],
-                                    ];
+                                    let ra_evals = [ra[0][k], ra[1][k] - ra[0][k]];
 
-                                    let val_evals = [
-                                        val_j_r[0][k],
-                                        val_j_r[1][k] - val_j_r[0][k],
-                                    ];
+                                    let val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
 
-                                    inner_sum_evals[0] += ra_evals[0]
-                                        .mul_0_optimized(val_evals[0] + self.z * (inc_cycle_evals[0] + val_evals[0]));
+                                    inner_sum_evals[0] += ra_evals[0].mul_0_optimized(
+                                        val_evals[0] + self.z * (inc_cycle_evals[0] + val_evals[0]),
+                                    );
                                     inner_sum_evals[1] += ra_evals[1]
-                                        * (val_evals[1] + self.z * (inc_cycle_evals[1] + val_evals[1]));
+                                        * (val_evals[1]
+                                            + self.z * (inc_cycle_evals[1] + val_evals[1]));
 
                                     ra[0][k] = F::zero();
                                     ra[1][k] = F::zero();
@@ -752,185 +841,55 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                 })
                 .reduce(
                     || [F::zero(); DEGREE - 1],
-                    |running, new| {
-                        [
-                            running[0] + new[0],
-                            running[1] + new[1],
-                        ]
-                    },
-                );
-
-            // We want to compute the evaluations of the cubic polynomial s(X) = l(X) * q(X), where
-            // l is linear, and q is quadratic, at the points {0, 2, 3}.
-            //
-            // At this point, we have
-            // - the linear polynomial, l(X) = a + bX
-            // - the quadratic polynomial, q(X) = c + dX + eX^2
-            // - the previous round's claim s(0) + s(1) = a * c + (a + b) * (c + d + e)
-            //
-            // Both l and q are represented by their evaluations at 0 and infinity. I.e., we have a, b, c,
-            // and e, but not d. We compute s by first computing l and t at points 2 and 3.
-
-            // Evaluations of the linear polynomial linear polynomial
-            let eq_eval_1 = gruens_eq_r_prime.current_scalar
-                * gruens_eq_r_prime.w[gruens_eq_r_prime.current_index - 1];
-            let eq_eval_0 = gruens_eq_r_prime.current_scalar - eq_eval_1;
-            let eq_m = eq_eval_1 - eq_eval_0;
-            let eq_eval_2 = eq_eval_1 + eq_m;
-            let eq_eval_3 = eq_eval_2 + eq_m;
-
-            // Evaluations of the quadratic polynomial
-            let quadratic_eval_0 = quadratic_coeffs[0];
-            let cubic_eval_0 = eq_eval_0 * quadratic_eval_0;
-            let cubic_eval_1 = previous_claim - cubic_eval_0;
-            // q(1) = c + d + e
-            let quadratic_eval_1 = cubic_eval_1 / eq_eval_1;
-            // q(2) = c + 2d + 4e = q(1) + q(1) - q(0) + 2e
-            let e_times_2 = quadratic_coeffs[1] + quadratic_coeffs[1];
-            let quadratic_eval_2 = quadratic_eval_1
-                + quadratic_eval_1 - quadratic_eval_0
-                + e_times_2;
-            // q(3) = c + 3d + 9e = q(2) + q(1) - q(0) + 4e
-            let quadratic_eval_3 = quadratic_eval_2
-                + quadratic_eval_1 - quadratic_eval_0
-                + e_times_2 + e_times_2;
-
-            [
-                cubic_eval_0,
-                eq_eval_2 * quadratic_eval_2,
-                eq_eval_3 * quadratic_eval_3,
-            ]
+                    |running, new| [running[0] + new[0], running[1] + new[1]],
+                )
         };
+
+        // We want to compute the evaluations of the cubic polynomial s(X) = l(X) * q(X), where
+        // l is linear, and q is quadratic, at the points {0, 2, 3}.
+        //
+        // At this point, we have
+        // - the linear polynomial, l(X) = a + bX
+        // - the quadratic polynomial, q(X) = c + dX + eX^2
+        // - the previous round's claim s(0) + s(1) = a * c + (a + b) * (c + d + e)
+        //
+        // Both l and q are represented by their evaluations at 0 and infinity. I.e., we have a, b, c,
+        // and e, but not d. We compute s by first computing l and t at points 2 and 3.
+
+        // Evaluations of the linear polynomial linear polynomial
+        let eq_eval_1 = gruens_eq_r_prime.current_scalar
+            * gruens_eq_r_prime.w[gruens_eq_r_prime.current_index - 1];
+        let eq_eval_0 = gruens_eq_r_prime.current_scalar - eq_eval_1;
+        let eq_m = eq_eval_1 - eq_eval_0;
+        let eq_eval_2 = eq_eval_1 + eq_m;
+        let eq_eval_3 = eq_eval_2 + eq_m;
+
+        // Evaluations of the quadratic polynomial
+        let quadratic_eval_0 = quadratic_coeffs[0];
+        let cubic_eval_0 = eq_eval_0 * quadratic_eval_0;
+        let cubic_eval_1 = previous_claim - cubic_eval_0;
+        // q(1) = c + d + e
+        let quadratic_eval_1 = cubic_eval_1 / eq_eval_1;
+        // q(2) = c + 2d + 4e = q(1) + q(1) - q(0) + 2e
+        let e_times_2 = quadratic_coeffs[1] + quadratic_coeffs[1];
+        let quadratic_eval_2 = quadratic_eval_1 + quadratic_eval_1 - quadratic_eval_0 + e_times_2;
+        // q(3) = c + 3d + 9e = q(2) + q(1) - q(0) + 4e
+        let quadratic_eval_3 =
+            quadratic_eval_2 + quadratic_eval_1 - quadratic_eval_0 + e_times_2 + e_times_2;
+
+        let cubic_evals = [
+            cubic_eval_0,
+            eq_eval_2 * quadratic_eval_2,
+            eq_eval_3 * quadratic_eval_3,
+        ];
 
         #[cfg(test)]
         {
-            let test_univariate_poly_evals: [F; DEGREE] = I
-                .par_iter()
-                .zip(data_buffers.par_iter_mut())
-                .zip(val_checkpoints.par_chunks(self.K))
-                .map(|((I_chunk, buffers), checkpoint)| {
-                    let mut evals = [F::zero(), F::zero(), F::zero()];
-
-                    let DataBuffers {
-                        val_j_0,
-                        val_j_r,
-                        ra,
-                        dirty_indices,
-                    } = buffers;
-                    *val_j_0 = checkpoint.to_vec();
-
-                    // Iterate over I_chunk, two rows at a time.
-                    I_chunk
-                        .chunk_by(|a, b| a.0 / 2 == b.0 / 2)
-                        .for_each(|inc_chunk| {
-                            let j_prime = inc_chunk[0].0; // row index
-
-                            for j in j_prime << round..(j_prime + 1) << round {
-                                let j_bound = j % (1 << round);
-                                let k = remap_address(
-                                    trace[j].ram_access().address() as u64,
-                                    &self.memory_layout,
-                                ) as usize;
-                                if ra[0][k].is_zero() {
-                                    dirty_indices.push(k);
-                                }
-                                ra[0][k] += A[j_bound];
-                            }
-
-                            for j in (j_prime + 1) << round..(j_prime + 2) << round {
-                                let j_bound = j % (1 << round);
-                                let k = remap_address(
-                                    trace[j].ram_access().address() as u64,
-                                    &self.memory_layout,
-                                ) as usize;
-                                if ra[0][k].is_zero() && ra[1][k].is_zero() {
-                                    dirty_indices.push(k);
-                                }
-                                ra[1][k] += A[j_bound];
-                            }
-
-                            for &k in dirty_indices.iter() {
-                                val_j_r[0][k] = val_j_0[k];
-                            }
-                            let mut inc_iter = inc_chunk.iter().peekable();
-
-                            // First of the two rows
-                            loop {
-                                let (row, col, inc_lt, inc) = inc_iter.next().unwrap();
-                                debug_assert_eq!(*row, j_prime);
-                                val_j_r[0][*col] += *inc_lt;
-                                val_j_0[*col] += *inc;
-                                if inc_iter.peek().unwrap().0 != j_prime {
-                                    break;
-                                }
-                            }
-                            for &k in dirty_indices.iter() {
-                                val_j_r[1][k] = val_j_0[k];
-                            }
-
-                            // Second of the two rows
-                            for inc in inc_iter {
-                                let (row, col, inc_lt, inc) = *inc;
-                                debug_assert_eq!(row, j_prime + 1);
-                                val_j_r[1][col] += inc_lt;
-                                val_j_0[col] += inc;
-                            }
-
-                            let eq_r_prime_evals =
-                                eq_r_prime.sumcheck_evals(j_prime / 2, DEGREE, BindingOrder::LowToHigh);
-                            let inc_cycle_evals =
-                                inc_cycle.sumcheck_evals(j_prime / 2, DEGREE, BindingOrder::LowToHigh);
-
-                            let mut inner_sum_evals = [F::zero(); DEGREE];
-                            for k in dirty_indices.drain(..) {
-                                if !ra[0][k].is_zero() || !ra[1][k].is_zero() {
-                                    // let kj = k * (T >> (round - 1)) + j_prime / 2;
-                                    let m_ra = ra[1][k] - ra[0][k];
-                                    let ra_eval_2 = ra[1][k] + m_ra;
-                                    let ra_eval_3 = ra_eval_2 + m_ra;
-
-                                    let m_val = val_j_r[1][k] - val_j_r[0][k];
-                                    let val_eval_2 = val_j_r[1][k] + m_val;
-                                    let val_eval_3 = val_eval_2 + m_val;
-
-                                    inner_sum_evals[0] += ra[0][k].mul_0_optimized(
-                                        val_j_r[0][k] + self.z * (inc_cycle_evals[0] + val_j_r[0][k]),
-                                    );
-                                    inner_sum_evals[1] += ra_eval_2
-                                        * (val_eval_2 + self.z * (inc_cycle_evals[1] + val_eval_2));
-                                    inner_sum_evals[2] += ra_eval_3
-                                        * (val_eval_3 + self.z * (inc_cycle_evals[2] + val_eval_3));
-
-                                    ra[0][k] = F::zero();
-                                    ra[1][k] = F::zero();
-                                }
-
-                                val_j_r[0][k] = F::zero();
-                                val_j_r[1][k] = F::zero();
-                            }
-
-                            evals[0] += eq_r_prime_evals[0] * inner_sum_evals[0];
-                            evals[1] += eq_r_prime_evals[1] * inner_sum_evals[1];
-                            evals[2] += eq_r_prime_evals[2] * inner_sum_evals[2];
-                        });
-
-                    evals
-                })
-                .reduce(
-                    || [F::zero(); DEGREE],
-                    |running, new| {
-                        [
-                            running[0] + new[0],
-                            running[1] + new[1],
-                            running[2] + new[2],
-                        ]
-                    },
-                );
-
-            assert_eq!(univariate_poly_evals, test_univariate_poly_evals);
+            let test_cubic_evals = self.phase1_compute_prover_message_cubic(round);
+            assert_eq!(cubic_evals.to_vec(), test_cubic_evals);
         }
 
-        univariate_poly_evals.into()
+        cubic_evals.into()
     }
 
     fn phase2_compute_prover_message(&self) -> Vec<F> {
@@ -1222,7 +1181,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         let prover_state = self.prover_state.as_ref().unwrap();
         if round < prover_state.chunk_size.log_2() {
-            self.phase1_compute_prover_message(round, previous_claim)
+            self.phase1_compute_prover_message_quadratic(round, previous_claim)
         } else if round < self.T.log_2() {
             self.phase2_compute_prover_message()
         } else {
