@@ -30,20 +30,20 @@ impl<'a, F: JoltField, ProofTranscript: Transcript> JoltDAG<'a, F, ProofTranscri
             stage1_results.extend(impl_.stage1_prove(&mut self.state_manager, &mut self.transcript));
         }
 
-        // Stage 2 - Collect and prove
+        // Stage 2
         self.execute_stage(|impl_, sm| impl_.stage2_prover_instances(sm));
 
-        // Stage 3 - Collect and prove
+        // Stage 3
         self.execute_stage(|impl_, sm| impl_.stage3_prover_instances(sm));
 
-        // Stage 4 - Collect and prove
+        // Stage 4
         self.execute_stage(|impl_, sm| impl_.stage4_prover_instances(sm));
 
-        // Stage 5 - Collect and prove
+        // Stage 5
         self.execute_stage(|impl_, sm| impl_.stage5_prover_instances(sm));
     }
 
-    /// Helper function to execute a stage
+    /// Execute a single stage
     fn execute_stage<G>(&mut self, get_instances: G)
     where
         G: Fn(&dyn SumcheckStages<F, ProofTranscript>, &mut StateManager<F, ProofTranscript>) -> Vec<Box<dyn crate::subprotocols::sumcheck::BatchableSumcheckInstance<F, ProofTranscript>>>,
@@ -57,7 +57,6 @@ impl<'a, F: JoltField, ProofTranscript: Transcript> JoltDAG<'a, F, ProofTranscri
 
         // Process them if there are any
         if !all_instances.is_empty() {
-            // Create references manually to control lifetime
             let mut refs: Vec<&mut dyn crate::subprotocols::sumcheck::BatchableSumcheckInstance<F, ProofTranscript>> = Vec::new();
             for instance in &mut all_instances {
                 refs.push(instance.as_mut());
@@ -70,12 +69,39 @@ impl<'a, F: JoltField, ProofTranscript: Transcript> JoltDAG<'a, F, ProofTranscri
         }
     }
 
-    pub fn verify(&mut self) {
-        // Stage 1 verification
-        let stage1_proofs = vec![]; // TODO: Get from state manager
+    pub fn verify(&mut self) -> Result<(), crate::utils::errors::ProofVerifyError> {
+        // Stage 1 verification - Verify the outer Spartan proof
+
+        let stage1_proofs = {
+            let proofs_guard = self.state_manager.proofs.lock().unwrap();
+            if let Some(crate::dag::state_manager::ProofData::Spartan(spartan_proof)) = 
+                proofs_guard.get(&crate::dag::state_manager::ProofKeys::SpartanOuterSumcheck) {
+                // Extract the necessary data from the Spartan proof for verification
+                vec![(
+                    spartan_proof.outer_sumcheck_proof.clone(),
+                    vec![], // The opening point will be filled by stage1_verify
+                    [spartan_proof.outer_sumcheck_claims.0, 
+                     spartan_proof.outer_sumcheck_claims.1, 
+                     spartan_proof.outer_sumcheck_claims.2],
+                )]
+            } else {
+                return Err(crate::utils::errors::ProofVerifyError::InternalError);
+            }
+        }; // MutexGuard is dropped here
+        
+        // Now we can mutably borrow state_manager
         for impl_ in &self.registry {
-            let _results = impl_.stage1_verify(&stage1_proofs, &mut self.state_manager, &mut self.transcript);
+            let results = impl_.stage1_verify(&stage1_proofs, &mut self.state_manager, &mut self.transcript)?;
+            // Process results if needed
+            for (opening_point, claims) in results {
+                // Store the opening point and claims for subsequent stages
+                // This will be used in stages 2-5
+                println!("Stage 1 verified with opening point: {:?}, claims: {:?}", opening_point, claims);
+            }
         }
-        // TODO: Implement verification stages
+        
+        // TODO: Implement verification for stages 2-5
+        
+        Ok(())
     }
 }

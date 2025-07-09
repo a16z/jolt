@@ -23,7 +23,7 @@ mod tests {
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&9u32).unwrap();
         let (bytecode, init_memory_state) = program.decode();
-        let (mut trace, final_memory_state, mut io_device) = program.trace(&inputs);
+        let (mut trace, _final_memory_state, mut io_device) = program.trace(&inputs);
 
         // Preprocessing
         let preprocessing: JoltProverPreprocessing<Fr, MockCommitScheme<Fr, KeccakTranscript>, KeccakTranscript> = RV32IJoltVM::prover_preprocess(
@@ -70,7 +70,7 @@ mod tests {
         // Create transcript
         let transcript = KeccakTranscript::new(b"Jolt");
 
-        // Create input polynomials from the actual trace
+        // Create input polynomials from trace
         let mut input_polys = Vec::new();
         for i in 0..JoltR1CSInputs::num_inputs() {
             let input = JoltR1CSInputs::from_index(i);
@@ -109,6 +109,10 @@ mod tests {
 
         println!("DAG prove with fibonacci e2e setup completed successfully");
         
-        // TODO: Once we store the proof in state manager, we can verify it
+        // Now verify the proof
+        let verification_result = dag.verify();
+        assert!(verification_result.is_ok(), "Verification failed: {:?}", verification_result);
+        
+        println!("DAG verify with fibonacci e2e setup completed successfully");
     }
 }

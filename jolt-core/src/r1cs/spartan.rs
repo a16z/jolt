@@ -885,13 +885,13 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckStages<F, ProofTranscrip
         
         // Generate tau from transcript and store in state manager
         let tau: Vec<F> = transcript.challenge_vector(num_rounds_x);
-        state_manager.tau = Some(tau.clone());
+        state_manager.spartan_state.tau = Some(tau.clone());
         
         let uniform_constraints_only_padded = state_manager.uniform_constraints().len().next_power_of_two();
         let uniform_constraints_vec: Vec<_> = state_manager.uniform_constraints().to_vec();
         let input_polys_vec: Vec<_> = state_manager.input_polys().to_vec();
 
-        let result = Self::prove_outer_sumcheck(
+        let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) = Self::prove_outer_sumcheck(
             num_rounds_x,
             uniform_constraints_only_padded,
             &uniform_constraints_vec,
@@ -900,7 +900,42 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckStages<F, ProofTranscrip
             transcript,
         );
 
-        vec![result]
+        // Store the outer sumcheck claims in state manager's openings
+        state_manager.openings.lock().unwrap().insert(
+            crate::dag::state_manager::OpeningsKeys::OuterSumcheckClaims,
+            (
+                crate::dag::state_manager::OpeningPoint::new(vec![
+                    outer_sumcheck_claims[0],
+                    outer_sumcheck_claims[1],
+                    outer_sumcheck_claims[2],
+                ]),
+                outer_sumcheck_claims[0], // Store Az as the main value
+            ),
+        );
+
+        // For now, create a partial UniformSpartanProof with just the outer sumcheck
+        // The inner and shift sumchecks will be added in later stages
+        let spartan_proof = UniformSpartanProof {
+            outer_sumcheck_proof: outer_sumcheck_proof.clone(),
+            outer_sumcheck_claims: (
+                outer_sumcheck_claims[0],
+                outer_sumcheck_claims[1],
+                outer_sumcheck_claims[2],
+            ),
+            inner_sumcheck_proof: SumcheckInstanceProof::new(vec![]), // Will be filled later
+            shift_sumcheck_proof: SumcheckInstanceProof::new(vec![]), // Will be filled later
+            claimed_witness_evals: vec![], // Will be filled later
+            shift_sumcheck_witness_eval: vec![], // Will be filled later
+            _marker: PhantomData,
+        };
+
+        // Store the Spartan proof in the state manager
+        state_manager.proofs.lock().unwrap().insert(
+            crate::dag::state_manager::ProofKeys::SpartanOuterSumcheck,
+            crate::dag::state_manager::ProofData::Spartan(spartan_proof),
+        );
+
+        vec![(outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims)]
     }
 
     fn stage1_verify(
@@ -918,7 +953,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckStages<F, ProofTranscrip
         
         // Generate tau from transcript (verifier must derive same tau as prover)
         let tau: Vec<F> = transcript.challenge_vector(num_rounds_x);
-        state_manager.tau = Some(tau.clone());
+        state_manager.spartan_state.tau = Some(tau.clone());
         
         let outer_sumcheck_claims = state_manager.outer_sumcheck_claims();
 
