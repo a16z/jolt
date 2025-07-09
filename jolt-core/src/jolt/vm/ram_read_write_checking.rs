@@ -609,7 +609,18 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             ..
         } = self.prover_state.as_mut().unwrap();
 
+        // We use both Dao-Thaler and Gruen's optimizations here. See "Our optimization on top of
+        // Gruen's" from Sec. 3 of https://eprint.iacr.org/2024/1210.pdf.
+        //
+        // We compute the evaluations of the cubic polynomial s(X) = l(X) * q(X) at {0, 2, 3} by
+        // first computing the evaluations of the quadratic polynomial q(X) at 0 and infinity.
+        // Moreover, we split the evaluations of the eq polynomial into two groups, E_in and E_out.
+        // We use the GruenSplitEqPolynomial data structure to do this.
+        //
+        // Since E_in is bound first, we have two cases to handle: one where E_in is fully bound
+        // and one where it is not.
         let quadratic_coeffs: [F; DEGREE - 1] = if gruens_eq_r_prime.E_in_current_len() == 1 {
+            // Here E_in is fully bound, so we can ignore it and use the evaluations from E_out.
             I.par_iter()
                 .zip(data_buffers.par_iter_mut())
                 .zip(val_checkpoints.par_chunks(self.K))
@@ -723,6 +734,11 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 )
         } else {
+            // Here E_in is not fully bound, so our eq evaluation is E_in_eval * E_out_eval.
+            // However, we can factor out the multiplications by E_out_eval to decrease the total
+            // number of multiplications. Therefore, we keep a running sum evaluations multiplied
+            // by E_in_eval values and only multiply them by E_out_eval when the value of the
+            // latter changes.
             let num_x_in_bits = gruens_eq_r_prime.E_in_current_len().log_2();
             let x_bitmask = (1 << num_x_in_bits) - 1;
 
@@ -811,6 +827,8 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                                 [inc_cycle_0, inc_cycle_infty]
                             };
 
+                            // Multiply the running sum by the previous value of E_out_eval when
+                            // its value changes and add the result to the total.
                             match x_out_prev {
                                 None => {
                                     x_out_prev = Some(x_out);
@@ -854,6 +872,8 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                             evals_for_current_E_out[1] += E_in_eval * inner_sum_evals[1];
                         });
 
+                    // Multiply the final running sum by the final value of E_out_eval and add the
+                    // result to the total.
                     if let Some(x) = x_out_prev {
                         let E_out_eval = gruens_eq_r_prime.E_out_current()[x];
                         evals[0] += E_out_eval * evals_for_current_E_out[0];
