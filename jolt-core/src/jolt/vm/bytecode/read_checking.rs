@@ -1,13 +1,16 @@
 use crate::{
     field::JoltField,
-    jolt::instruction::{InstructionFlags, NUM_CIRCUIT_FLAGS},
+    jolt::{
+        instruction::{InstructionFlags, InstructionLookup, NUM_CIRCUIT_FLAGS},
+        lookup_table::{LookupTables, NUM_LOOKUP_TABLES},
+    },
     poly::{
         compact_polynomial::SmallScalar,
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
     },
-    subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof},
+    subprotocols::sumcheck::{BatchableSumcheckInstance, BatchedSumcheck, SumcheckInstanceProof},
     utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -171,13 +174,14 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
 pub struct ReadCheckingProof<F: JoltField, ProofTranscript: Transcript> {
     sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub ra_claim: F,
-    rv_claim: F,
+    rv_claims: [F; 2],
 }
 
 impl<F: JoltField, ProofTranscript: Transcript> ReadCheckingProof<F, ProofTranscript> {
     /// Returns a boxed closure that computes:
-    ///    Val(k) = unexpanded_pc(k) + gamma * imm(k) + gamma^2 * circuit_flags[0](k) + ...
-    /// This particular Val virtualizes claims output by the Spartan "outer" sumcheck
+    ///    Val(k) = unexpanded_pc(k) + gamma * imm(k)
+    ///             + gamma^2 * circuit_flags[0](k) + gamma^3 * circuit_flags[1](k) + ...
+    /// This particular Val virtualizes claims output by Spartan's "outer" sumcheck
     fn compute_val_1(gamma: F) -> Box<dyn Fn(&RV32IMInstruction) -> F + Sync> {
         let mut gamma_powers = vec![F::one()];
         for _ in 0..NUM_CIRCUIT_FLAGS + 1 {
@@ -209,6 +213,37 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadCheckingProof<F, ProofTransc
         Box::new(closure)
     }
 
+    /// Returns a boxed closure that computes:
+    ///    Val(k) = unexpanded_pc(k) + gamma * lookup_table_flags[0](k)
+    ///             + gamma^2 * lookup_table_flags[1](k)...
+    /// This particular Val virtualizes claims output by Spartan's "shift" sumcheck,
+    /// the instruction execution raf-evaluation sumcheck, the instruction execution
+    /// read checking sumcheck.
+    fn compute_val_2(gamma: F) -> Box<dyn Fn(&RV32IMInstruction) -> F + Sync> {
+        let mut gamma_powers = vec![F::one()];
+        for _ in 0..NUM_LOOKUP_TABLES {
+            gamma_powers.push(gamma * gamma_powers.last().unwrap());
+        }
+
+        let closure = move |instruction: &RV32IMInstruction| {
+            let NormalizedInstruction {
+                address: unexpanded_pc,
+                ..
+            } = instruction.normalize();
+
+            let mut linear_combination = F::zero();
+            linear_combination += (unexpanded_pc as u64).field_mul(gamma_powers[0]);
+
+            if let Some(table) = instruction.lookup_table() {
+                let table_index = LookupTables::enum_index(&table);
+                linear_combination += gamma_powers[1 + table_index];
+            }
+
+            linear_combination
+        };
+        Box::new(closure)
+    }
+
     #[tracing::instrument(skip_all, name = "ReadCheckingProof::prove")]
     pub fn prove(
         bytecode: &[RV32IMInstruction],
@@ -218,26 +253,34 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadCheckingProof<F, ProofTransc
     ) -> (Self, Vec<F>, MultilinearPolynomial<F>) {
         // Used to combine the various fields in each instruction into a single
         // field element.
-        let gamma: F = transcript.challenge_scalar();
-        let compute_val = Self::compute_val_1(gamma);
+        let gamma_1: F = transcript.challenge_scalar();
+        let compute_val_1 = Self::compute_val_1(gamma_1);
 
-        let raf_ra = MultilinearPolynomial::from(F.clone());
+        let gamma_2: F = transcript.challenge_scalar();
+        let compute_val_2 = Self::compute_val_2(gamma_2);
 
-        let (mut read_checking_sumcheck, rv_claim) =
-            ReadCheckingSumcheck::new_prover(bytecode, F, K, compute_val);
+        let (mut read_checking_sumcheck_1, rv_claim_1) =
+            ReadCheckingSumcheck::new_prover(bytecode, F.clone(), K, compute_val_1);
 
-        let (sumcheck_proof, r_address) = read_checking_sumcheck.prove_single(transcript);
+        let (mut read_checking_sumcheck_2, rv_claim_2) =
+            ReadCheckingSumcheck::new_prover(bytecode, F.clone(), K, compute_val_2);
 
-        let ra_claim = read_checking_sumcheck
+        let (sumcheck_proof, r_address) = BatchedSumcheck::prove(
+            vec![&mut read_checking_sumcheck_1, &mut read_checking_sumcheck_2],
+            transcript,
+        );
+
+        let ra_claim = read_checking_sumcheck_1
             .ra_claim
             .expect("ra_claim should be set after prove_single");
 
         let proof = Self {
             sumcheck_proof,
             ra_claim,
-            rv_claim,
+            rv_claims: [rv_claim_1, rv_claim_2],
         };
 
+        let raf_ra = MultilinearPolynomial::from(F);
         (proof, r_address, raf_ra)
     }
 
@@ -249,14 +292,26 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadCheckingProof<F, ProofTransc
     ) -> Result<Vec<F>, ProofVerifyError> {
         // Used to combine the various fields in each instruction into a single
         // field element.
-        let gamma: F = transcript.challenge_scalar();
-        let compute_val = Self::compute_val_1(gamma);
+        let gamma_1: F = transcript.challenge_scalar();
+        let compute_val_1 = Self::compute_val_1(gamma_1);
 
-        let mut core_piop_sumcheck =
-            ReadCheckingSumcheck::new_verifier(bytecode, self.rv_claim, K, compute_val);
-        core_piop_sumcheck.ra_claim = Some(self.ra_claim);
+        let gamma_2: F = transcript.challenge_scalar();
+        let compute_val_2 = Self::compute_val_2(gamma_2);
 
-        let r_address = core_piop_sumcheck.verify_single(&self.sumcheck_proof, transcript)?;
+        let mut read_checking_sumcheck_1 =
+            ReadCheckingSumcheck::new_verifier(bytecode, self.rv_claims[0], K, compute_val_1);
+
+        let mut read_checking_sumcheck_2 =
+            ReadCheckingSumcheck::new_verifier(bytecode, self.rv_claims[1], K, compute_val_2);
+
+        read_checking_sumcheck_1.ra_claim = Some(self.ra_claim);
+        read_checking_sumcheck_2.ra_claim = Some(self.ra_claim);
+
+        let r_address = BatchedSumcheck::verify(
+            &self.sumcheck_proof,
+            vec![&read_checking_sumcheck_1, &read_checking_sumcheck_2],
+            transcript,
+        )?;
 
         Ok(r_address)
     }
