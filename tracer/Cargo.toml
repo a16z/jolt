@@ -15,6 +15,10 @@ homepage = "https://github.com/a16z/jolt/README.md"
 repository = "https://github.com/a16z/jolt"
 edition = "2021"
 
+[[bin]]
+name = "jolt-emu"
+path = "src/main.rs"
+
 [features]
 default = ["std"]
 std = ["common/std", "fnv/std", "object/std", "tracing/std"]
@@ -37,5 +41,6 @@ strum = "0.26.3"
 rand = "0.7.3"
 paste = "1.0.15"
 itertools = "0.10.0"
-
+tracing-subscriber = "0.3"
+clap = { version = "4.4", features = ["derive"] }
 common = { path = "../common", default-features = false }

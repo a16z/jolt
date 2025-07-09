@@ -125,6 +125,7 @@ impl<F: JoltField, const D: usize> RASumcheck<F, D> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "ra virtualization")]
     pub fn prove<ProofTranscript: Transcript>(
         mut self,
         transcript: &mut ProofTranscript,

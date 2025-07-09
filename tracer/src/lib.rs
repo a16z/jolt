@@ -21,10 +21,12 @@ use emulator::{
 use instruction::{RV32IMCycle, RV32IMInstruction};
 use object::{Object, ObjectSection, SectionKind};
 
-mod emulator;
+pub mod emulator;
 pub mod instruction;
 
 pub use common::jolt_device::JoltDevice;
+
+use crate::emulator::memory::Memory;
 
 /// Executes a RISC-V program and generates its execution trace along with emulator state checkpoints.
 ///
@@ -69,11 +71,12 @@ pub fn trace(
     elf_contents: Vec<u8>,
     inputs: &[u8],
     memory_config: &MemoryConfig,
-) -> (Vec<RV32IMCycle>, JoltDevice) {
+) -> (Vec<RV32IMCycle>, Memory, JoltDevice) {
     let mut lazy_trace_iter =
         LazyTraceIterator::new(setup_emulator(elf_contents, inputs, memory_config));
     let trace: Vec<RV32IMCycle> = lazy_trace_iter.by_ref().collect();
-    (trace, lazy_trace_iter.get_jolt_device())
+    let final_memory_state = std::mem::take(lazy_trace_iter.final_memory_state.as_mut().unwrap());
+    (trace, final_memory_state, lazy_trace_iter.get_jolt_device())
 }
 
 #[tracing::instrument(skip_all)]
@@ -164,6 +167,7 @@ pub struct LazyTraceIterator {
     current_traces: Vec<RV32IMCycle>,
     count: usize, // number of cycles completed
     finished: bool,
+    pub(crate) final_memory_state: Option<Memory>,
 }
 
 impl LazyTraceIterator {
@@ -174,6 +178,7 @@ impl LazyTraceIterator {
             current_traces: vec![],
             count: 0,
             finished: false,
+            final_memory_state: None,
         }
     }
 
@@ -234,6 +239,8 @@ impl Iterator for LazyTraceIterator {
         );
         if self.current_traces.is_empty() {
             self.finished = true;
+            // TODO(moodlezoup): Can we take instead of clone?
+            self.final_memory_state = Some(self.emulator_state.get_cpu().mmu.memory.memory.clone());
             None
         } else {
             self.current_traces.reverse();
@@ -683,7 +690,8 @@ mod test {
 
         let expected_trace_length = 495;
         let n = 50;
-        let (execution_trace, _) = trace(ELF_CONTENTS.to_vec(), &INPUTS, &MemoryConfig::default());
+        let (execution_trace, _, _) =
+            trace(ELF_CONTENTS.to_vec(), &INPUTS, &MemoryConfig::default());
         let (checkpoints, _) =
             trace_checkpoints(ELF_CONTENTS.to_vec(), &INPUTS, &MemoryConfig::default(), n);
         assert_eq!(execution_trace.len(), expected_trace_length);
@@ -701,7 +709,8 @@ mod test {
 
     #[test]
     fn test_lazy_iterator() {
-        let (execution_trace, _) = trace(ELF_CONTENTS.to_vec(), &INPUTS, &MemoryConfig::default());
+        let (execution_trace, _, _) =
+            trace(ELF_CONTENTS.to_vec(), &INPUTS, &MemoryConfig::default());
 
         let mut emulator = setup_emulator(ELF_CONTENTS.to_vec(), &INPUTS, &MemoryConfig::default());
         let mut prev_pc: u64 = 0;

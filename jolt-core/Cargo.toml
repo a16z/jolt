@@ -37,6 +37,7 @@ icicle = [
     "dep:icicle-core",
     "dep:icicle-bn254",
 ]
+test_incremental = []
 
 [dependencies]
 ark-bn254 = "0.5.0"
@@ -134,6 +135,14 @@ harness = false
 [[bench]]
 name = "msm_adapter_batch"
 harness = false
+
+[[bench]]
+name = "poly_bench"
+harness= false
+
+[[bench]]
+name = "compact_poly_bench"
+harness= false
 
 [lib]
 name = "jolt_core"

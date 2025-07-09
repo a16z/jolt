@@ -391,19 +391,19 @@ impl MacroBuilder {
                 let mut input_bytes = vec![];
                 #(#set_program_args;)*
 
-                let (io_device, trace) = program.trace(&input_bytes);
+                let (trace, final_memory_state, io_device) = program.trace(&input_bytes);
                 #handle_return
 
-                let (jolt_proof, /*jolt_commitments,*/ output_io_device, _) = RV32IJoltVM::prove(
+                let (jolt_proof, output_io_device, _) = RV32IJoltVM::prove(
                     io_device,
                     trace,
+                    final_memory_state,
                     preprocessing,
                 );
 
 
                 let proof = jolt::JoltHyperKZGProof {
                     proof: jolt_proof,
-                    // commitments: jolt_commitments,
                 };
 
                 (ret_val, proof)

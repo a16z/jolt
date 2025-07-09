@@ -9,6 +9,12 @@ pub struct DefaultTerminal {
     output_data: Vec<u8>,
 }
 
+impl Default for DefaultTerminal {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DefaultTerminal {
     pub fn new() -> Self {
         DefaultTerminal {

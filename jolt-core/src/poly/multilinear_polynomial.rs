@@ -300,6 +300,22 @@ impl<F: JoltField> MultilinearPolynomial<F> {
         }
     }
 
+    pub fn optimised_evaluate(&self, r: &[F]) -> F {
+        match self {
+            MultilinearPolynomial::LargeScalars(poly) => poly.optimised_evaluate(r),
+            MultilinearPolynomial::U8Scalars(poly) => poly.optimised_evaluate(r),
+            MultilinearPolynomial::U16Scalars(poly) => poly.optimised_evaluate(r),
+            MultilinearPolynomial::U32Scalars(poly) => poly.optimised_evaluate(r),
+            MultilinearPolynomial::U64Scalars(poly) => poly.optimised_evaluate(r),
+            MultilinearPolynomial::I64Scalars(poly) => poly.optimised_evaluate(r),
+            MultilinearPolynomial::RLC(_) => F::zero(),
+            _ => {
+                let chis = EqPolynomial::evals(r);
+                self.dot_product(&chis)
+            }
+        }
+    }
+
     /// Computes the dot product of the polynomial's coefficients and a vector
     /// of field elements.
     pub fn dot_product(&self, other: &[F]) -> F {
@@ -490,13 +506,18 @@ pub trait PolynomialEvaluation<F: JoltField> {
     /// Returns: (evals, EQ table)
     /// where EQ table is EQ(x, r) for x \in {0, 1}^|r|. This is used for
     /// batched opening proofs (see opening_proof.rs)
-    fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<F>, Vec<F>);
+    fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<F>, Vec<F>)
+    where
+        Self: Sized;
+
     fn stream_batch_evaluate<I>(_: &mut I, _: &[F], _: usize, _: usize) -> Vec<F>
     where
+        Self: Sized,
         I: Iterator<Item = Vec<MultilinearPolynomial<F>>> + Send,
     {
         unimplemented!("stream batch evaluate not implemented")
     }
+
     /// Computes this polynomial's contribution to the computation of a prover
     /// sumcheck message (i.e. a univariate polynomial of the given `degree`).
     fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F>;

@@ -2,10 +2,10 @@
 use alloc::{vec, vec::Vec};
 
 /// Emulates main memory.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Memory {
     /// Memory content
-    data: Vec<u64>,
+    pub data: Vec<u64>,
 }
 
 impl Memory {

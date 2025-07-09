@@ -1,3 +1,5 @@
+use std::ops::{Index, IndexMut};
+
 use strum::EnumCount;
 use strum_macros::EnumCount as EnumCountMacro;
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
@@ -75,6 +77,32 @@ pub enum CircuitFlags {
 
 pub const NUM_CIRCUIT_FLAGS: usize = CircuitFlags::COUNT;
 
+pub trait InterleavedBitsMarker {
+    fn is_interleaved_operands(&self) -> bool;
+}
+
+impl InterleavedBitsMarker for [bool; NUM_CIRCUIT_FLAGS] {
+    fn is_interleaved_operands(&self) -> bool {
+        !self[CircuitFlags::AddOperands]
+            && !self[CircuitFlags::SubtractOperands]
+            && !self[CircuitFlags::MultiplyOperands]
+            && !self[CircuitFlags::Advice]
+    }
+}
+
+impl Index<CircuitFlags> for [bool; NUM_CIRCUIT_FLAGS] {
+    type Output = bool;
+    fn index(&self, index: CircuitFlags) -> &bool {
+        &self[index as usize]
+    }
+}
+
+impl IndexMut<CircuitFlags> for [bool; NUM_CIRCUIT_FLAGS] {
+    fn index_mut(&mut self, index: CircuitFlags) -> &mut bool {
+        &mut self[index as usize]
+    }
+}
+
 pub trait InstructionFlags {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS];
 }
@@ -127,6 +155,16 @@ macro_rules! define_rv32im_trait_impls {
                     RV32IMCycle::NoOp(_) => (0, 0),
                     $(
                         RV32IMCycle::$instr(cycle) => LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle),
+                    )*
+                    _ => panic!("Unexpected instruction: {:?}", self),
+                }
+            }
+
+            fn to_lookup_index(&self) -> u64 {
+                match self {
+                    RV32IMCycle::NoOp(_) => 0,
+                    $(
+                        RV32IMCycle::$instr(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_index(cycle),
                     )*
                     _ => panic!("Unexpected instruction: {:?}", self),
                 }
