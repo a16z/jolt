@@ -68,6 +68,9 @@ pub const MIP_SEIP: u64 = 0x200;
 const MIP_STIP: u64 = 0x020;
 const MIP_SSIP: u64 = 0x002;
 
+// Must be a power of 2.
+pub const TOTAL_REGISTERS: usize = 128;
+
 pub const JOLT_CYCLE_TRACK_ECALL_NUM: u32 = 0xC7C1E;
 pub const JOLT_CYCLE_MARKER_START: u32 = 1;
 pub const JOLT_CYCLE_MARKER_END: u32 = 2;
@@ -87,7 +90,7 @@ pub struct Cpu {
     wfi: bool,
     // using only lower 32bits of x, pc, and csr registers
     // for 32-bit mode
-    pub x: [i64; 64],
+    pub x: [i64; TOTAL_REGISTERS],
     f: [f64; 32],
     pub(crate) pc: u64,
     csr: [u64; CSR_CAPACITY],
@@ -251,7 +254,7 @@ impl Cpu {
             xlen: Xlen::Bit64,
             privilege_mode: PrivilegeMode::Machine,
             wfi: false,
-            x: [0; 64],
+            x: [0; TOTAL_REGISTERS],
             f: [0.0; 32],
             pc: 0,
             csr: [0; CSR_CAPACITY],
