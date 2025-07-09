@@ -4018,6 +4018,7 @@ dependencies = [
  "common",
  "derive_more 2.0.1",
  "fnv",
+ "hex-literal",
  "itertools 0.10.5",
  "object",
  "paste",
