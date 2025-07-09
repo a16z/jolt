@@ -630,11 +630,14 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                 eq_eval_3 * quadratic_eval_3,
             ]
         } else {
-            I.par_iter()
+            let num_x_in_bits = gruens_eq_r_prime.E_in_current_len().log_2();
+            let x_bitmask = (1 << num_x_in_bits) - 1;
+
+            let quadratic_coeffs = I.par_iter()
                 .zip(data_buffers.par_iter_mut())
                 .zip(val_checkpoints.par_chunks(self.K))
                 .map(|((I_chunk, buffers), checkpoint)| {
-                    let mut evals = [F::zero(), F::zero(), F::zero()];
+                    let mut evals = [F::zero(), F::zero()];
 
                     let DataBuffers {
                         val_j_0,
@@ -701,30 +704,36 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                                 val_j_0[col] += inc;
                             }
 
-                            let eq_r_prime_evals =
-                                eq_r_prime.sumcheck_evals(j_prime / 2, DEGREE, BindingOrder::LowToHigh);
-                            let inc_cycle_evals =
-                                inc_cycle.sumcheck_evals(j_prime / 2, DEGREE, BindingOrder::LowToHigh);
+                            let x_in = (j_prime / 2) & x_bitmask;
+                            let x_out = (j_prime / 2) >> num_x_in_bits;
+                            let E_in_eval = gruens_eq_r_prime.E_in_current()[x_in];
+                            let E_out_eval = gruens_eq_r_prime.E_out_current()[x_out];
 
-                            let mut inner_sum_evals = [F::zero(); DEGREE];
+                            let inc_cycle_evals = {
+                                let inc_cycle_0 = inc_cycle.get_bound_coeff(j_prime);
+                                let inc_cycle_1 = inc_cycle.get_bound_coeff(j_prime + 1);
+                                let inc_cycle_infty = inc_cycle_1 - inc_cycle_0;
+                                [inc_cycle_0, inc_cycle_infty]
+                            };
+
+                            let mut inner_sum_evals = [F::zero(); DEGREE - 1];
                             for k in dirty_indices.drain(..) {
                                 if !ra[0][k].is_zero() || !ra[1][k].is_zero() {
                                     // let kj = k * (T >> (round - 1)) + j_prime / 2;
-                                    let m_ra = ra[1][k] - ra[0][k];
-                                    let ra_eval_2 = ra[1][k] + m_ra;
-                                    let ra_eval_3 = ra_eval_2 + m_ra;
+                                    let ra_evals = [
+                                        ra[0][k],
+                                        ra[1][k] - ra[0][k],
+                                    ];
 
-                                    let m_val = val_j_r[1][k] - val_j_r[0][k];
-                                    let val_eval_2 = val_j_r[1][k] + m_val;
-                                    let val_eval_3 = val_eval_2 + m_val;
+                                    let val_evals = [
+                                        val_j_r[0][k],
+                                        val_j_r[1][k] - val_j_r[0][k],
+                                    ];
 
-                                    inner_sum_evals[0] += ra[0][k].mul_0_optimized(
-                                        val_j_r[0][k] + self.z * (inc_cycle_evals[0] + val_j_r[0][k]),
-                                    );
-                                    inner_sum_evals[1] += ra_eval_2
-                                        * (val_eval_2 + self.z * (inc_cycle_evals[1] + val_eval_2));
-                                    inner_sum_evals[2] += ra_eval_3
-                                        * (val_eval_3 + self.z * (inc_cycle_evals[2] + val_eval_3));
+                                    inner_sum_evals[0] += ra_evals[0]
+                                        .mul_0_optimized(val_evals[0] + self.z * (inc_cycle_evals[0] + val_evals[0]));
+                                    inner_sum_evals[1] += ra_evals[1]
+                                        * (val_evals[1] + self.z * (inc_cycle_evals[1] + val_evals[1]));
 
                                     ra[0][k] = F::zero();
                                     ra[1][k] = F::zero();
@@ -734,23 +743,63 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                                 val_j_r[1][k] = F::zero();
                             }
 
-                            evals[0] += eq_r_prime_evals[0] * inner_sum_evals[0];
-                            evals[1] += eq_r_prime_evals[1] * inner_sum_evals[1];
-                            evals[2] += eq_r_prime_evals[2] * inner_sum_evals[2];
+                            // TODO(hamlinb) Factor out multiplication by E_out_eval
+                            evals[0] += E_out_eval * E_in_eval * inner_sum_evals[0];
+                            evals[1] += E_out_eval * E_in_eval * inner_sum_evals[1];
                         });
 
                     evals
                 })
                 .reduce(
-                    || [F::zero(); DEGREE],
+                    || [F::zero(); DEGREE - 1],
                     |running, new| {
                         [
                             running[0] + new[0],
                             running[1] + new[1],
-                            running[2] + new[2],
                         ]
                     },
-                )
+                );
+
+            // We want to compute the evaluations of the cubic polynomial s(X) = l(X) * q(X), where
+            // l is linear, and q is quadratic, at the points {0, 2, 3}.
+            //
+            // At this point, we have
+            // - the linear polynomial, l(X) = a + bX
+            // - the quadratic polynomial, q(X) = c + dX + eX^2
+            // - the previous round's claim s(0) + s(1) = a * c + (a + b) * (c + d + e)
+            //
+            // Both l and q are represented by their evaluations at 0 and infinity. I.e., we have a, b, c,
+            // and e, but not d. We compute s by first computing l and t at points 2 and 3.
+
+            // Evaluations of the linear polynomial linear polynomial
+            let eq_eval_1 = gruens_eq_r_prime.current_scalar
+                * gruens_eq_r_prime.w[gruens_eq_r_prime.current_index - 1];
+            let eq_eval_0 = gruens_eq_r_prime.current_scalar - eq_eval_1;
+            let eq_m = eq_eval_1 - eq_eval_0;
+            let eq_eval_2 = eq_eval_1 + eq_m;
+            let eq_eval_3 = eq_eval_2 + eq_m;
+
+            // Evaluations of the quadratic polynomial
+            let quadratic_eval_0 = quadratic_coeffs[0];
+            let cubic_eval_0 = eq_eval_0 * quadratic_eval_0;
+            let cubic_eval_1 = previous_claim - cubic_eval_0;
+            // q(1) = c + d + e
+            let quadratic_eval_1 = cubic_eval_1 / eq_eval_1;
+            // q(2) = c + 2d + 4e = q(1) + q(1) - q(0) + 2e
+            let e_times_2 = quadratic_coeffs[1] + quadratic_coeffs[1];
+            let quadratic_eval_2 = quadratic_eval_1
+                + quadratic_eval_1 - quadratic_eval_0
+                + e_times_2;
+            // q(3) = c + 3d + 9e = q(2) + q(1) - q(0) + 4e
+            let quadratic_eval_3 = quadratic_eval_2
+                + quadratic_eval_1 - quadratic_eval_0
+                + e_times_2 + e_times_2;
+
+            [
+                cubic_eval_0,
+                eq_eval_2 * quadratic_eval_2,
+                eq_eval_3 * quadratic_eval_3,
+            ]
         };
 
         #[cfg(test)]
