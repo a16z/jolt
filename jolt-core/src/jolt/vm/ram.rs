@@ -469,11 +469,11 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             .as_ref()
             .expect("Prover state not initialized");
 
+        const DEGREE: usize = 3;
         let d = prover_state.d;
-        let degree = 3;
         let m = round + 1;
 
-        let mut univariate_poly_evals = vec![F::zero(); degree];
+        let mut univariate_poly_evals = [F::zero(); DEGREE];
 
         (0..prover_state.B.len() / 2)
             .into_par_iter()
@@ -481,9 +481,9 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                 let B_evals =
                     prover_state
                         .B
-                        .sumcheck_evals(k_prime, degree, BindingOrder::LowToHigh);
+                        .sumcheck_evals(k_prime, DEGREE, BindingOrder::LowToHigh);
 
-                let mut evals = vec![F::zero(); degree];
+                let mut evals = [F::zero(); DEGREE];
 
                 for i in 0..d {
                     let G_i = &prover_state.G[i];
@@ -497,7 +497,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                             let F_k = prover_state.F[k % (1 << (m - 1))];
                             let G_times_F = G_k * F_k;
 
-                            let mut local_evals = vec![F::zero(); degree];
+                            let mut local_evals = [F::zero(); DEGREE];
 
                             let eq_0 = if k_m == 0 { F::one() } else { F::zero() };
                             let eq_2 = if k_m == 0 {
@@ -518,9 +518,9 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                             local_evals
                         })
                         .reduce(
-                            || vec![F::zero(); degree],
+                            || [F::zero(); DEGREE],
                             |mut running, new| {
-                                for j in 0..degree {
+                                for j in 0..DEGREE {
                                     running[j] += new[j];
                                 }
                                 running
@@ -528,21 +528,21 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                         );
 
                     // Add contribution weighted by z^i
-                    for j in 0..degree {
+                    for j in 0..DEGREE {
                         evals[j] += prover_state.z_powers[i] * inner_sum[j];
                     }
                 }
 
                 // Multiply by B evaluations
-                for j in 0..degree {
+                for j in 0..DEGREE {
                     evals[j] *= B_evals[j];
                 }
                 evals
             })
             .reduce(
-                || vec![F::zero(); degree],
+                || [F::zero(); DEGREE],
                 |mut running, new| {
-                    for j in 0..degree {
+                    for j in 0..DEGREE {
                         running[j] += new[j];
                     }
                     running
@@ -552,7 +552,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             .enumerate()
             .for_each(|(i, val)| univariate_poly_evals[i] = val);
 
-        univariate_poly_evals
+        univariate_poly_evals.to_vec()
     }
 
     /// Compute prover message for phase 2 (last log(T) rounds)
@@ -565,26 +565,26 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             .H
             .as_ref()
             .expect("H polynomials not initialized");
+        const DEGREE: usize = 3;
         let d = prover_state.d;
-        let degree = 3;
 
-        let mut univariate_poly_evals = vec![F::zero(); degree];
+        let mut univariate_poly_evals = [F::zero(); DEGREE];
 
         (0..prover_state.D.len() / 2)
             .into_par_iter()
             .map(|i| {
                 let D_evals = prover_state
                     .D
-                    .sumcheck_evals(i, degree, BindingOrder::LowToHigh);
+                    .sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
 
-                let mut evals = vec![F::zero(); degree];
+                let mut evals = [F::zero(); DEGREE];
 
                 // For each polynomial in the batch
                 for j in 0..d {
-                    let H_j_evals = h_polys[j].sumcheck_evals(i, degree, BindingOrder::LowToHigh);
+                    let H_j_evals = h_polys[j].sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
 
                     // For each evaluation point
-                    for k in 0..degree {
+                    for k in 0..DEGREE {
                         // Add z^j * (H_j^2 - H_j) * D
                         evals[k] += prover_state.z_powers[j]
                             * D_evals[k]
@@ -595,9 +595,9 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                 evals
             })
             .reduce(
-                || vec![F::zero(); degree],
+                || [F::zero(); DEGREE],
                 |mut running, new| {
-                    for i in 0..degree {
+                    for i in 0..DEGREE {
                         running[i] += new[i];
                     }
                     running
@@ -607,7 +607,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             .enumerate()
             .for_each(|(i, val)| univariate_poly_evals[i] = prover_state.eq_r_r * val);
 
-        univariate_poly_evals
+        univariate_poly_evals.to_vec()
     }
 }
 
@@ -1331,10 +1331,10 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         let d = 1; // @TODO(markosg04) keeping d = 1 for legacy prove
 
         // Get z challenges for batching
-        let z_challenges: Vec<F> = transcript.challenge_vector(d);
+        let z: F = transcript.challenge_scalar();
         let mut z_powers = vec![F::one(); d];
         for i in 1..d {
-            z_powers[i] = z_powers[i - 1] * z_challenges[0];
+            z_powers[i] = z_powers[i - 1] * z;
         }
 
         let sumcheck_instance = BooleanitySumcheck {
@@ -1394,10 +1394,10 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         );
 
         // Get z challenges for hamming weight batching
-        let z_hw_challenges: Vec<F> = transcript.challenge_vector(d);
+        let z_hw_challenge: F = transcript.challenge_scalar();
         let mut z_hw_powers = vec![F::one(); d];
         for i in 1..d {
-            z_hw_powers[i] = z_hw_powers[i - 1] * z_hw_challenges[0];
+            z_hw_powers[i] = z_hw_powers[i - 1] * z_hw_challenge;
         }
 
         let sumcheck_instance = HammingWeightSumcheck::new_verifier(
@@ -1594,7 +1594,7 @@ fn prove_ra_booleanity<F: JoltField, ProofTranscript: Transcript>(
     let _guard = span.enter();
 
     // Compute G arrays for each decomposed part
-    let mut G_arrays: Vec<Vec<F>> = vec![vec![F::zero(); K]; d];
+    let mut G_arrays: Vec<Vec<F>> = vec![unsafe_allocate_zero_vec(K); d];
 
     for (cycle_idx, cycle) in trace.iter().enumerate() {
         let address = remap_address(cycle.ram_access().address() as u64, memory_layout) as usize;
@@ -1706,9 +1706,7 @@ fn prove_ra_hamming_weight<F: JoltField, ProofTranscript: Transcript>(
         .collect();
 
     // Compute F arrays for each decomposed part
-    let mut F_arrays: Vec<Vec<F>> = vec![vec![F::zero(); K]; d];
-
-    trace
+    let F_arrays: Vec<Vec<F>> = trace
         .par_chunks(chunk_size)
         .enumerate()
         .map(|(chunk_index, trace_chunk)| {
@@ -1753,10 +1751,7 @@ fn prove_ra_hamming_weight<F: JoltField, ProofTranscript: Transcript>(
                 );
                 running
             },
-        )
-        .into_iter()
-        .enumerate()
-        .for_each(|(i, arr)| F_arrays[i] = arr);
+        );
 
     // Create MultilinearPolynomials from F arrays
     let ra_polys: Vec<MultilinearPolynomial<F>> = F_arrays
