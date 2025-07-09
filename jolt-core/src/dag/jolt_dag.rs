@@ -33,7 +33,7 @@ impl<
         let spartan_proof = UniformSpartanProof::<F, ProofTranscript>::default();
         match spartan_proof.stage1_prove(&mut self.state_manager) {
             StageResult::Success => Ok(()),
-            StageResult::Failed(reason) => Err(format!("Stage 1 prove failed: {}", reason)),
+            StageResult::Failed(reason) => Err(format!("Stage 1 prove failed: {reason}")),
         }
     }
 
@@ -42,7 +42,7 @@ impl<
         let spartan_proof = UniformSpartanProof::<F, ProofTranscript>::default();
         match spartan_proof.stage1_verify(&mut self.state_manager) {
             StageResult::Success => Ok(()),
-            StageResult::Failed(reason) => Err(format!("Stage 1 verify failed: {}", reason)),
+            StageResult::Failed(reason) => Err(format!("Stage 1 verify failed: {reason}")),
         }
     }
 }

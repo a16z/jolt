@@ -1,8 +1,7 @@
 use crate::dag::state_manager::StateManager;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof};
-use crate::utils::errors::ProofVerifyError;
+use crate::subprotocols::sumcheck::BatchableSumcheckInstance;
 use crate::utils::transcript::Transcript;
 
 #[derive(Debug, Clone)]

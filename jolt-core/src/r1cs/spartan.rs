@@ -31,7 +31,7 @@ use thiserror::Error;
 use crate::{
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPlusOnePolynomial},
     subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof},
-    utils::{errors::ProofVerifyError, small_value::NUM_SVO_ROUNDS},
+    utils::small_value::NUM_SVO_ROUNDS,
 };
 
 use super::builder::CombinedUniformBuilder;
@@ -917,7 +917,7 @@ impl<
         let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
 
         ProofTranscript::append_scalars(
-            &mut *state_manager.prover_transcript.borrow_mut(),
+            *state_manager.prover_transcript.borrow_mut(),
             &outer_sumcheck_claims,
         );
 
@@ -991,7 +991,7 @@ impl<
         }
 
         ProofTranscript::append_scalars(
-            &mut *state_manager.verifier_transcript.borrow_mut(),
+            *state_manager.verifier_transcript.borrow_mut(),
             &outer_sumcheck_claims[..],
         );
 
