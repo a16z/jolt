@@ -78,30 +78,10 @@ mod tests {
         }
 
         // Create state manager
-        let state_manager = state_manager::StateManager::new(
-            padded_trace_length,
-            padded_trace_length.log_2(),
-            state_manager::Challenges {
-                instruction_booleanity: Fr::from(1),
-                instruction_hamming: Fr::from(2),
-                instruction_read_raf: Fr::from(3),
-            },
-            None, // prover_state
-            None, // verifier_state
-            Arc::new(Mutex::new(std::collections::HashMap::new())),
-            Some(&spartan_key),
-            Some(constraint_builder.uniform_builder.get_constraints()),
-            Some(input_polys),
-            None,  // tau - Will be populated by stage1_prove
-            None,  // outer_sumcheck_claims
-        );
+        let state_manager = todo!();
 
         // Create JoltDAG
-        let mut dag = jolt_dag::JoltDAG::new(state_manager, transcript);
-
-        // Register Spartan implementation
-        let spartan_proof = UniformSpartanProof::<Fr, KeccakTranscript>::default();
-        dag.register(Box::new(spartan_proof));
+        let mut dag = jolt_dag::JoltDAG::new(state_manager);
 
         // Run prove
         dag.prove();

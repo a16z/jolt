@@ -873,109 +873,21 @@ impl<F: JoltField, ProofTranscript: Transcript> Default for UniformSpartanProof<
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> SumcheckStages<F, ProofTranscript>
+impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>> 
+    SumcheckStages<F, ProofTranscript, PCS>
     for UniformSpartanProof<F, ProofTranscript>
 {
     fn stage1_prove(
         &self,
-        state_manager: &mut StateManager<F, ProofTranscript>,
-        transcript: &mut ProofTranscript,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<(SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, [F; 3])> {
-        let num_rounds_x = state_manager.spartan_key().num_rows_bits();
-        
-        // Generate tau from transcript and store in state manager
-        let tau: Vec<F> = transcript.challenge_vector(num_rounds_x);
-        state_manager.spartan_state.tau = Some(tau.clone());
-        
-        let uniform_constraints_only_padded = state_manager.uniform_constraints().len().next_power_of_two();
-        let uniform_constraints_vec: Vec<_> = state_manager.uniform_constraints().to_vec();
-        let input_polys_vec: Vec<_> = state_manager.input_polys().to_vec();
-
-        let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) = Self::prove_outer_sumcheck(
-            num_rounds_x,
-            uniform_constraints_only_padded,
-            &uniform_constraints_vec,
-            &input_polys_vec,
-            &tau,
-            transcript,
-        );
-
-        // Store the outer sumcheck claims in state manager's openings
-        state_manager.openings.lock().unwrap().insert(
-            crate::dag::state_manager::OpeningsKeys::OuterSumcheckClaims,
-            (
-                crate::dag::state_manager::OpeningPoint::new(vec![
-                    outer_sumcheck_claims[0],
-                    outer_sumcheck_claims[1],
-                    outer_sumcheck_claims[2],
-                ]),
-                outer_sumcheck_claims[0], // Store Az as the main value
-            ),
-        );
-
-        // For now, create a partial UniformSpartanProof with just the outer sumcheck
-        // The inner and shift sumchecks will be added in later stages
-        let spartan_proof = UniformSpartanProof {
-            outer_sumcheck_proof: outer_sumcheck_proof.clone(),
-            outer_sumcheck_claims: (
-                outer_sumcheck_claims[0],
-                outer_sumcheck_claims[1],
-                outer_sumcheck_claims[2],
-            ),
-            inner_sumcheck_proof: SumcheckInstanceProof::new(vec![]), // Will be filled later
-            shift_sumcheck_proof: SumcheckInstanceProof::new(vec![]), // Will be filled later
-            claimed_witness_evals: vec![], // Will be filled later
-            shift_sumcheck_witness_eval: vec![], // Will be filled later
-            _marker: PhantomData,
-        };
-
-        // Store the Spartan proof in the state manager
-        state_manager.proofs.lock().unwrap().insert(
-            crate::dag::state_manager::ProofKeys::SpartanOuterSumcheck,
-            crate::dag::state_manager::ProofData::Spartan(spartan_proof),
-        );
-
-        vec![(outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims)]
+       todo!()
     }
 
     fn stage1_verify(
         &self,
-        proofs: &[(SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, [F; 3])],
-        state_manager: &mut StateManager<F, ProofTranscript>,
-        transcript: &mut ProofTranscript,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Result<Vec<(Vec<F>, (F, F, F))>, ProofVerifyError> {
-        if proofs.is_empty() {
-            return Ok(vec![]);
-        }
-
-        let (proof, _, _) = &proofs[0];
-        let num_rounds_x = state_manager.spartan_key().num_rows_total().log_2();
-        
-        // Generate tau from transcript (verifier must derive same tau as prover)
-        let tau: Vec<F> = transcript.challenge_vector(num_rounds_x);
-        state_manager.spartan_state.tau = Some(tau.clone());
-        
-        let outer_sumcheck_claims = state_manager.outer_sumcheck_claims();
-
-        // Verify the outer sumcheck
-        let (claim_outer_final, outer_sumcheck_r) = proof
-            .verify(F::zero(), num_rounds_x, 3, transcript)
-            .map_err(|_| ProofVerifyError::InternalError)?;
-
-        // Outer sumcheck is bound from the top, reverse the challenge
-        let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
-
-        // Use the pre-extracted claims
-        let (claim_Az, claim_Bz, claim_Cz) = outer_sumcheck_claims;
-
-        // Verify the final claim
-        let taus_bound_rx = EqPolynomial::mle(&tau, &outer_sumcheck_r);
-        let claim_outer_final_expected = taus_bound_rx * (claim_Az * claim_Bz - claim_Cz);
-
-        if claim_outer_final != claim_outer_final_expected {
-            return Err(ProofVerifyError::InternalError);
-        }
-
-        Ok(vec![(outer_sumcheck_r, (claim_Az, claim_Bz, claim_Cz))])
+       todo!()
     }
 }
