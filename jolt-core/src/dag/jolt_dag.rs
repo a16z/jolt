@@ -17,6 +17,10 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofT
 
 
     pub fn prove(&mut self) {
+
+        // Stage 1: 
+
+        
         todo!()
     }
 

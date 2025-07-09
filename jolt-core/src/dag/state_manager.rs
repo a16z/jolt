@@ -1,11 +1,15 @@
 use std::collections::HashMap;
 use std::ops::Index;
 use std::sync::{Arc, Mutex};
+use std::cell::RefCell;
 
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::ProverOpeningAccumulator;
+use crate::r1cs::builder::CombinedUniformBuilder;
 use crate::r1cs::inputs::JoltR1CSInputs;
+use crate::r1cs::key::UniformSpartanKey;
 use crate::r1cs::spartan::UniformSpartanProof;
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::utils::transcript::Transcript;
@@ -71,8 +75,9 @@ pub struct StateManager<'a, F: JoltField, ProofTranscript: Transcript, PCS: Comm
     pub openings: Arc<Mutex<Openings<F>>>,
     pub prover_accumulator: ProverOpeningAccumulator<F, PCS, ProofTranscript>,
     pub verifier_accumulator: ProverOpeningAccumulator<F, PCS, ProofTranscript>,
-    pub transcript: &'a mut ProofTranscript,
-    pub proofs: Arc<Mutex<Proofs<F, ProofTranscript>>>
+    pub transcript: RefCell<&'a mut ProofTranscript>,
+    pub proofs: Arc<Mutex<Proofs<F, ProofTranscript>>>,
+    spartan_state: SpartanState<'a, F>,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
@@ -81,37 +86,6 @@ pub enum OpeningsKeys {
     InstructionTypeFlag(usize),
     InstructionRa(usize),
     OuterSumcheckClaims, // (Az, Bz, Cz)
-}
-
-impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>> StateManager<'a, F, ProofTranscript, PCS> {
-    pub fn new(
-        openings: Arc<Mutex<Openings<F>>>,
-        prover_accumulator: ProverOpeningAccumulator<F, PCS, ProofTranscript>,
-        verifier_accumulator: ProverOpeningAccumulator<F, PCS, ProofTranscript>,
-        transcript: &'a mut ProofTranscript,
-        proofs: Arc<Mutex<Proofs<F, ProofTranscript>>>,
-    ) -> Self {
-        Self {
-            openings,
-            prover_accumulator,
-            verifier_accumulator,
-            transcript,
-            proofs,
-        }
-    }
-
-    pub fn z(&self, idx: JoltR1CSInputs) -> F {
-        self.openings(OpeningsKeys::SpartanZ(idx))
-    }
-
-    pub fn openings(&self, idx: OpeningsKeys) -> F {
-        self.openings.lock().unwrap().get(&idx).unwrap().1
-    }
-
-    pub fn openings_point(&self, idx: OpeningsKeys) -> OpeningPoint<LITTLE_ENDIAN, F> {
-        self.openings.lock().unwrap().get(&idx).unwrap().0.clone()
-    }
-
 }
 
 #[derive(Hash, PartialEq, Eq, Clone, Debug)]
@@ -130,3 +104,60 @@ pub enum ProofData<F: JoltField, ProofTranscript: Transcript> {
 }
 
 pub type Proofs<F, ProofTranscript> = HashMap<ProofKeys, ProofData<F, ProofTranscript>>;
+
+pub struct SpartanState<'a, F: JoltField> {
+    pub spartan_key: Option<&'a UniformSpartanKey<F>>,
+    pub constraint_builder: Option<&'a CombinedUniformBuilder<F>>,
+    pub input_polys: Option<Vec<MultilinearPolynomial<F>>>,
+}
+
+impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>> StateManager<'a, F, ProofTranscript, PCS> {
+    pub fn new(
+        openings: Arc<Mutex<Openings<F>>>,
+        prover_accumulator: ProverOpeningAccumulator<F, PCS, ProofTranscript>,
+        verifier_accumulator: ProverOpeningAccumulator<F, PCS, ProofTranscript>,
+        transcript: &'a mut ProofTranscript,
+        proofs: Arc<Mutex<Proofs<F, ProofTranscript>>>,
+        spartan_state: SpartanState<'a, F>,
+    ) -> Self {
+        Self {
+            openings,
+            prover_accumulator,
+            verifier_accumulator,
+            transcript: RefCell::new(transcript),
+            proofs,
+            spartan_state
+        }
+    }
+
+    pub fn z(&self, idx: JoltR1CSInputs) -> F {
+        self.openings(OpeningsKeys::SpartanZ(idx))
+    }
+
+    pub fn openings(&self, idx: OpeningsKeys) -> F {
+        self.openings.lock().unwrap().get(&idx).unwrap().1
+    }
+
+    pub fn openings_point(&self, idx: OpeningsKeys) -> OpeningPoint<LITTLE_ENDIAN, F> {
+        self.openings.lock().unwrap().get(&idx).unwrap().0.clone()
+    }
+
+    pub fn set_spartan_data(
+        &mut self,
+        key: &'a UniformSpartanKey<F>,
+        constraint_builder: &'a CombinedUniformBuilder<F>,
+        input_polys: Vec<MultilinearPolynomial<F>>,
+    ) {
+        self.spartan_state.spartan_key = Some(key);
+        self.spartan_state.constraint_builder = Some(constraint_builder);
+        self.spartan_state.input_polys = Some(input_polys);
+    }
+
+    pub fn get_spartan_data(&self) -> (&'a UniformSpartanKey<F>, &'a CombinedUniformBuilder<F>, &Vec<MultilinearPolynomial<F>>) {
+        (
+            self.spartan_state.spartan_key.expect("Spartan key not set"),
+            self.spartan_state.constraint_builder.expect("Constraint builder not set"),
+            self.spartan_state.input_polys.as_ref().expect("Input polys not set"),
+        )
+    }
+}
