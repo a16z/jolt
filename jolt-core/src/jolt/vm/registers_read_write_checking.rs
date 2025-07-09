@@ -777,6 +777,9 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                 .map(|((I_chunk, buffers), checkpoint)| {
                     let mut evals = [F::zero(), F::zero()];
 
+                    let mut evals_for_current_E_out = [F::zero(), F::zero()];
+                    let mut x_out_prev: Option<usize> = None;
+
                     let DataBuffers {
                         val_j_0,
                         val_j_r,
@@ -868,7 +871,6 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                             let x_in = (j_prime / 2) & x_bitmask;
                             let x_out = (j_prime / 2) >> num_x_in_bits;
                             let E_in_eval = gruens_eq_r_prime.E_in_current()[x_in];
-                            let E_out_eval = gruens_eq_r_prime.E_out_current()[x_out];
 
                             let inc_cycle_evals = {
                                 let inc_cycle_0 = inc_cycle.get_bound_coeff(j_prime);
@@ -876,6 +878,22 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                                 let inc_cycle_infty = inc_cycle_1 - inc_cycle_0;
                                 [inc_cycle_0, inc_cycle_infty]
                             };
+
+                            match x_out_prev {
+                                None => {
+                                    x_out_prev = Some(x_out);
+                                }
+                                Some(x) if x_out != x => {
+                                    x_out_prev = Some(x_out);
+
+                                    let E_out_eval = gruens_eq_r_prime.E_out_current()[x];
+                                    evals[0] += E_out_eval * evals_for_current_E_out[0];
+                                    evals[1] += E_out_eval * evals_for_current_E_out[1];
+
+                                    evals_for_current_E_out = [F::zero(), F::zero()];
+                                }
+                                _ => (),
+                            }
 
                             let mut inner_sum_evals = [F::zero(); DEGREE - 1];
                             for k in dirty_indices.ones() {
@@ -938,11 +956,15 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                             }
                             dirty_indices.clear();
 
-                            // TODO(hamlinb) Factor out multiplication by E_out_eval
-                            evals[0] += E_out_eval * E_in_eval * inner_sum_evals[0];
-                            evals[1] += E_out_eval * E_in_eval * inner_sum_evals[1];
+                            evals_for_current_E_out[0] += E_in_eval * inner_sum_evals[0];
+                            evals_for_current_E_out[1] += E_in_eval * inner_sum_evals[1];
                         });
 
+                    if let Some(x) = x_out_prev {
+                        let E_out_eval = gruens_eq_r_prime.E_out_current()[x];
+                        evals[0] += E_out_eval * evals_for_current_E_out[0];
+                        evals[1] += E_out_eval * evals_for_current_E_out[1];
+                    }
                     evals
                 })
                 .reduce(
