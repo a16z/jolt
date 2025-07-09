@@ -23,6 +23,7 @@ pub struct StateManager<'a, F: JoltField, PCS: CommitmentScheme<T, Field = F>, T
     pub prover_accumulator: Option<Arc<Mutex<&'a mut ProverOpeningAccumulator<F, PCS, T>>>>,
     pub verifier_accumulator: Option<Arc<Mutex<&'a mut VerifierOpeningAccumulator<F, PCS, T>>>>,
     pub openings: Arc<Mutex<Openings<F>>>,
+    pub r_address: Vec<F>,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
@@ -52,7 +53,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<T, Field = F>, T: Transcript>
     }
 
     pub fn r_address(&self) -> Vec<F> {
-        todo!()
+        self.r_address.clone()
     }
 
     pub fn openings(&self, idx: OpeningsKeys) -> F {
@@ -60,6 +61,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<T, Field = F>, T: Transcript>
     }
 
     pub fn openings_point(&self, idx: OpeningsKeys) -> Vec<F> {
-        self.openings.lock().unwrap().get(&idx).unwrap().0.clone()
+        self.openings
+            .lock()
+            .unwrap()
+            .get(&idx)
+            .unwrap_or_else(|| panic!("No openings for {idx:?}"))
+            .0
+            .clone()
     }
 }

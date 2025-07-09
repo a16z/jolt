@@ -1,6 +1,7 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 use std::{
+    collections::HashMap,
     marker::PhantomData,
     sync::{Arc, Mutex},
 };
@@ -131,20 +132,47 @@ where
             flag_claims,
         };
 
-        // TODO(moodlezoup): Openings
-        let (booleanity_sumcheck, _, _, ra_claims) =
-            prove_ra_booleanity::<F, ProofTranscript>(trace, eq_r_cycle.clone(), transcript);
-        let booleanity_proof = BooleanityProof {
-            sumcheck_proof: booleanity_sumcheck,
-            ra_claims,
+        let r_address = transcript.challenge_vector(16);
+        let F = compute_ra_evals(trace, &eq_r_cycle);
+        let mut sm = StateManager {
+            transcript,
+            prover_accumulator: Some(Arc::new(Mutex::new(opening_accumulator))),
+            verifier_accumulator: None,
+            openings: Arc::new(Mutex::new(HashMap::new())),
+            r_address: r_address.clone(),
         };
+        sm.openings.lock().unwrap().insert(
+            OpeningsKeys::SpartanZ(JoltR1CSInputs::Imm),
+            (r_cycle.clone(), F::zero()),
+        );
+
+        let mut booleanity = BooleanitySumcheck::new(&mut sm, trace, &eq_r_cycle, F.clone());
+        let (booleanity_proof, _) = booleanity.prove_single(sm.transcript);
+        // let ra_claims = (0..4)
+        //     .map(|i| sm.openings(OpeningsKeys::InstructionRa(i)))
+        //     .collect::<Vec<F>>()
+        //     .try_into()
+        //     .unwrap();
 
         // TODO(moodlezoup): Openings
-        let (hamming_weight_sumcheck, r_address, ra_claims) =
-            prove_ra_hamming_weight::<F, ProofTranscript>(trace, eq_r_cycle, transcript);
+        let booleanity_proof = BooleanityProof {
+            sumcheck_proof: booleanity_proof,
+            ra_claims: booleanity.ra_claims.unwrap(),
+        };
+
+        let mut hamming_weight = HammingWeightSumcheck::new(&mut sm, F);
+        let (hamming_weight_sumcheck, r_hamming_weight) =
+            hamming_weight.prove_single(sm.transcript);
+        // let ra_claims = (0..4)
+        //     .map(|i| sm.openings(OpeningsKeys::InstructionRa(i)))
+        //     .collect::<Vec<F>>()
+        //     .try_into()
+        //     .unwrap();
+
+        // TODO(moodlezoup): Openings
         let hamming_weight_proof = HammingWeightProof {
             sumcheck_proof: hamming_weight_sumcheck,
-            ra_claims,
+            ra_claims: hamming_weight.ra_claims.unwrap(),
         };
 
         let unbound_ra_polys = vec![
@@ -154,13 +182,13 @@ where
             CommittedPolynomials::InstructionRa(3).generate_witness(preprocessing, trace),
         ];
 
-        let r_address_rev = r_address.iter().copied().rev().collect::<Vec<_>>();
+        let r_hamming_weight_rev = r_hamming_weight.iter().copied().rev().collect::<Vec<_>>();
 
         opening_accumulator.append_sparse(
             unbound_ra_polys,
-            r_address_rev,
+            r_hamming_weight_rev,
             r_cycle,
-            ra_claims.to_vec(),
+            hamming_weight.ra_claims.unwrap().to_vec(),
         );
 
         Self {
@@ -190,60 +218,39 @@ where
             transcript,
         )?;
 
-        let mut r_address: Vec<F> = transcript.challenge_vector(16);
-        let z_booleanity: F = transcript.challenge_scalar();
-        let z_booleanity_squared: F = z_booleanity.square();
-        let z_booleanity_cubed: F = z_booleanity_squared * z_booleanity;
-        let (sumcheck_claim, r_booleanity) = self.booleanity_proof.sumcheck_proof.verify(
-            F::zero(),
-            16 + self.log_T,
-            3,
+        let r_address: Vec<F> = transcript.challenge_vector(16);
+        let mut sm = StateManager {
             transcript,
-        )?;
-
-        let (r_address_prime, r_cycle_prime) = r_booleanity.split_at(16);
-
-        r_address = r_address.into_iter().rev().collect();
-        let eq_eval_address = EqPolynomial::mle(&r_address, r_address_prime);
-        let r_cycle_rev: Vec<_> = r_cycle.iter().copied().rev().collect();
-        let eq_eval_cycle = EqPolynomial::mle(&r_cycle_rev, r_cycle_prime);
-
-        assert_eq!(
-            eq_eval_address
-                * eq_eval_cycle
-                * ((self.booleanity_proof.ra_claims[0].square()
-                    - self.booleanity_proof.ra_claims[0])
-                    + z_booleanity
-                        * (self.booleanity_proof.ra_claims[1].square()
-                            - self.booleanity_proof.ra_claims[1])
-                    + z_booleanity_squared
-                        * (self.booleanity_proof.ra_claims[2].square()
-                            - self.booleanity_proof.ra_claims[2])
-                    + z_booleanity_cubed
-                        * (self.booleanity_proof.ra_claims[3].square()
-                            - self.booleanity_proof.ra_claims[3])),
-            sumcheck_claim,
-            "Booleanity sumcheck failed"
+            prover_accumulator: None,
+            verifier_accumulator: Some(Arc::new(Mutex::new(opening_accumulator))),
+            openings: Arc::new(Mutex::new(HashMap::new())),
+            r_address: r_address.clone(),
+        };
+        sm.openings.lock().unwrap().insert(
+            OpeningsKeys::SpartanZ(JoltR1CSInputs::Imm),
+            (r_cycle.clone(), F::zero()),
         );
+        for i in 0..4 {
+            sm.openings.lock().unwrap().insert(
+                OpeningsKeys::InstructionRa(i),
+                (Vec::new(), self.booleanity_proof.ra_claims[i]),
+            );
+        }
 
-        let z_hamming_weight: F = transcript.challenge_scalar();
-        let z_hamming_weight_squared: F = z_hamming_weight.square();
-        let z_hamming_weight_cubed: F = z_hamming_weight_squared * z_hamming_weight;
-        let (sumcheck_claim, r_hamming_weight) = self.hamming_weight_proof.sumcheck_proof.verify(
-            F::one() + z_hamming_weight + z_hamming_weight_squared + z_hamming_weight_cubed,
-            16,
-            1,
-            transcript,
-        )?;
+        let booleanity = BooleanitySumcheck::new_verifier(&mut sm);
+        let _r_booleanity =
+            booleanity.verify_single(&self.booleanity_proof.sumcheck_proof, sm.transcript)?;
 
-        assert_eq!(
-            self.hamming_weight_proof.ra_claims[0]
-                + z_hamming_weight * self.hamming_weight_proof.ra_claims[1]
-                + z_hamming_weight_squared * self.hamming_weight_proof.ra_claims[2]
-                + z_hamming_weight_cubed * self.hamming_weight_proof.ra_claims[3],
-            sumcheck_claim,
-            "Hamming weight sumcheck failed"
-        );
+        for i in 0..4 {
+            sm.openings.lock().unwrap().insert(
+                OpeningsKeys::InstructionRa(i),
+                (Vec::new(), self.hamming_weight_proof.ra_claims[i]),
+            );
+        }
+        let hamming_weight = HammingWeightSumcheck::new_verifier(&mut sm);
+        let r_hamming_weight = hamming_weight
+            .verify_single(&self.hamming_weight_proof.sumcheck_proof, sm.transcript)
+            .unwrap();
 
         let r_hamming_weight: Vec<_> = r_hamming_weight.iter().copied().rev().collect();
         for i in 0..4 {
@@ -591,9 +598,9 @@ impl<'a, F: JoltField, T: Transcript> BatchableSumcheckInstance<F, T> for ReadRa
         let identity_poly_eval = IdentityPolynomial::new_with_endianness(LOG_K, Endianness::Big)
             .evaluate(r_address_prime);
         let val_evals: Vec<_> = LookupTables::<WORD_SIZE>::iter()
-            .map(|table| table.evaluate_mle(&r_address_prime))
+            .map(|table| table.evaluate_mle(r_address_prime))
             .collect();
-        let eq_eval_cycle = EqPolynomial::mle(&self.r_cycle, &r_cycle_prime);
+        let eq_eval_cycle = EqPolynomial::mle(&self.r_cycle, r_cycle_prime);
 
         let openings = self.openings.lock().unwrap();
         let rv_val_claim = (0..LookupTables::<WORD_SIZE>::COUNT)
@@ -845,7 +852,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             log_T,
             ra_claims: Some(
                 (0..D)
-                    .into_iter()
                     .map(|i| sm.openings(OpeningsKeys::InstructionRa(i)))
                     .collect::<Vec<F>>()
                     .try_into()
@@ -881,18 +887,6 @@ impl<F: JoltField, T: Transcript> BatchableSumcheckInstance<F, T> for Booleanity
     fn bind(&mut self, r_j: F, round: usize) {
         let prover = self.prover_state.as_mut().unwrap();
 
-        // On the first round of log(T) rounds we need to compute H
-        if round == LOG_K_CHUNK {
-            prover.H = Some(std::array::from_fn(|i| {
-                let coeffs: Vec<F> = std::mem::take(&mut prover.H_indices[i])
-                    .into_par_iter()
-                    .map(|j| prover.F[j])
-                    .collect();
-                MultilinearPolynomial::from(coeffs)
-            }));
-            prover.eq_r_r = Some(prover.B.final_sumcheck_claim());
-        }
-
         if round < LOG_K_CHUNK {
             // Phase 1: Bind B and update F
             prover.B.bind_parallel(r_j, BindingOrder::LowToHigh);
@@ -905,6 +899,16 @@ impl<F: JoltField, T: Transcript> BatchableSumcheckInstance<F, T> for Booleanity
                     *y = *x * r_j;
                     *x -= *y;
                 });
+            if round == LOG_K_CHUNK - 1 {
+                prover.H = Some(std::array::from_fn(|i| {
+                    let coeffs: Vec<F> = std::mem::take(&mut prover.H_indices[i])
+                        .into_par_iter()
+                        .map(|j| prover.F[j])
+                        .collect();
+                    MultilinearPolynomial::from(coeffs)
+                }));
+                prover.eq_r_r = Some(prover.B.final_sumcheck_claim());
+            }
         } else {
             // Phase 2: Bind D and H
             prover
@@ -940,7 +944,8 @@ impl<F: JoltField, T: Transcript> BatchableSumcheckInstance<F, T> for Booleanity
                 .r_address
                 .iter()
                 .cloned()
-                .chain(self.r_cycle.iter().cloned())
+                .rev()
+                .chain(self.r_cycle.iter().cloned().rev())
                 .collect::<Vec<F>>(),
         ) * self
             .ra_claims
@@ -1085,14 +1090,14 @@ struct HammingProverState<F: JoltField> {
     ra: [MultilinearPolynomial<F>; D],
 }
 
-pub struct HammingSumcheck<F: JoltField> {
+pub struct HammingWeightSumcheck<F: JoltField> {
     /// Precomputed powers of gamma - batching chgallenge
     gamma: [F; D],
     prover_state: Option<HammingProverState<F>>,
     ra_claims: Option<[F; D]>,
 }
 
-impl<F: JoltField> HammingSumcheck<F> {
+impl<F: JoltField> HammingWeightSumcheck<F> {
     pub fn new<T: Transcript>(
         sm: &mut StateManager<F, impl CommitmentScheme<T, Field = F>, T>,
         F: [Vec<F>; D],
@@ -1137,9 +1142,9 @@ impl<F: JoltField> HammingSumcheck<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> BatchableSumcheckInstance<F, T> for HammingSumcheck<F> {
+impl<F: JoltField, T: Transcript> BatchableSumcheckInstance<F, T> for HammingWeightSumcheck<F> {
     fn degree(&self) -> usize {
-        D
+        1
     }
 
     fn num_rounds(&self) -> usize {
@@ -1221,7 +1226,7 @@ where
             &eq_r_cycle,
             ra_evals.clone(),
         ));
-        let hamming_weight = Box::new(HammingSumcheck::new(sm, ra_evals));
+        let hamming_weight = Box::new(HammingWeightSumcheck::new(sm, ra_evals));
 
         vec![read_raf, booleanity, hamming_weight]
     }
@@ -1231,7 +1236,7 @@ where
     ) -> Vec<Box<dyn BatchableSumcheckInstance<F, T>>> {
         let read_raf = Box::new(ReadRafSumcheck::new_verifier(state_manager));
         let booleanity = Box::new(BooleanitySumcheck::new_verifier(state_manager));
-        let hamming_weight = Box::new(HammingSumcheck::new_verifier(state_manager));
+        let hamming_weight = Box::new(HammingWeightSumcheck::new_verifier(state_manager));
 
         vec![read_raf, booleanity, hamming_weight]
     }
