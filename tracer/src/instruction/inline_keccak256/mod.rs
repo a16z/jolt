@@ -19,6 +19,7 @@ use crate::instruction::format::format_s::FormatS;
 use crate::instruction::format::format_virtual_right_shift_i::FormatVirtualRightShiftI;
 use crate::instruction::ld::LD;
 use crate::instruction::sd::SD;
+use crate::instruction::virtual_rotli::VirtualROTLI;
 use crate::instruction::virtual_rotri::VirtualROTRI;
 use crate::instruction::xor::XOR;
 use crate::instruction::xori::XORI;
@@ -230,7 +231,9 @@ impl Keccak256SequenceBuilder {
             for y in 0..5 {
                 // Get the source lane A[x,y] and its rotation offset.
                 let source_reg = self.lane(x, y);
-                let rotation_offset = ROTATION_OFFSETS[x][y];
+                // TODO: Clarify whether this should be [x][y] or [y][x]. It's clear in the native Rust that it's [x][y].
+                // ROTATION_OFFSETS is indexed as [y][x].
+                let rotation_offset = ROTATION_OFFSETS[y][x];
 
                 // Calculate the permuted destination coordinates in B.
                 let nx = y;
@@ -324,14 +327,37 @@ impl Keccak256SequenceBuilder {
     }
 
     /// Rotate a 64-bit number to the left.
+    ///
+    /// We emit the custom `VirtualROTLI` instruction which follows the same
+    /// immediate-bitmask convention as `VirtualROTRI`: the number of trailing
+    /// zeros of the immediate encodes the rotation amount. For a left rotation
+    /// by `amount` we therefore build an immediate where the lowest `amount`
+    /// bits are zero and the remaining higher bits are ones.
     fn rotl64(&mut self, rs1: Value, amount: u32, rd: usize) -> Value {
         if amount == 0 {
-            // This is a no-op, but if rd is different from rs1, we need to move the value.
-            // For simplicity, we assume we can overwrite rd or that caller handles it.
             return rs1;
         }
-        // ROTL(x, n) = ROTR(x, 64 - n)
-        self.rotri(rs1, 64 - amount as u64, rd)
+
+        match rs1 {
+            Reg(rs1) => {
+                // Construct bitmask: (64-amount) ones followed by `amount` zeros.
+                let ones = if amount == 64 {
+                    0
+                } else {
+                    (1u64 << (64 - amount)) - 1
+                };
+                let imm = ones << amount;
+
+                let rotli = VirtualROTLI {
+                    address: self.address,
+                    operands: FormatVirtualRightShiftI { rd, rs1, imm },
+                    virtual_sequence_remaining: Some(0),
+                };
+                self.sequence.push(rotli.into());
+                Reg(rd)
+            }
+            Imm(val) => Imm(val.rotate_left(amount)),
+        }
     }
 
     // --- RV64 Instruction Emitters ---

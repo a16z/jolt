@@ -70,8 +70,10 @@ use sw::SW;
 use xor::XOR;
 use xori::XORI;
 
+use inline_keccak256::keccak256::KECCAK256;
 use inline_sha256::sha256::SHA256;
 use inline_sha256::sha256init::SHA256INIT;
+
 use virtual_advice::VirtualAdvice;
 use virtual_assert_eq::VirtualAssertEQ;
 use virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment;
@@ -118,6 +120,7 @@ pub mod div;
 pub mod divu;
 pub mod ecall;
 pub mod fence;
+pub mod inline_keccak256;
 pub mod inline_sha256;
 pub mod jal;
 pub mod jalr;
@@ -446,6 +449,7 @@ define_rv32im_enums! {
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
         // Extension
         SHA256, SHA256INIT,
+        KECCAK256,
     ]
 }
 
@@ -673,18 +677,28 @@ impl RV32IMInstruction {
             // while funct3 should hold all necessary instructions for that operation.
             // funct7:
             // - 0x00: SHA256
+            // - 0x01: Keccak
             0b0001011 => {
                 // Custom-0 opcode: SHA256 compression instructions
                 let funct3 = (instr >> 12) & 0x7;
                 let funct7 = (instr >> 25) & 0x7f;
-                if funct7 == 0x00 {
-                    match funct3 {
-                        0x0 => Ok(SHA256::new(instr, address, true).into()),
-                        0x1 => Ok(SHA256INIT::new(instr, address, true).into()),
-                        _ => Err("Unknown funct3 for custom SHA256 instruction"),
+                match funct7 {
+                    0x00 => {
+                        // SHA256
+                        match funct3 {
+                            0x0 => Ok(SHA256::new(instr, address, true).into()),
+                            0x1 => Ok(SHA256INIT::new(instr, address, true).into()),
+                            _ => Err("Unknown funct3 for custom SHA256 instruction"),
+                        }
                     }
-                } else {
-                    Err("Unknown funct7 for custom-0 opcode")
+                    0x01 => {
+                        // Keccak
+                        match funct3 {
+                            0x0 => Ok(KECCAK256::new(instr, address, true).into()),
+                            _ => Err("Unknown funct3 for custom Keccak instruction"),
+                        }
+                    }
+                    _ => Err("Unknown funct7 for custom-0 opcode"),
                 }
             }
             _ => Err("Unknown opcode"),
