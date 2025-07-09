@@ -12,8 +12,8 @@ mod tests {
     use crate::r1cs::inputs::JoltR1CSInputs;
     use crate::r1cs::spartan::UniformSpartanProof;
     use crate::utils::transcript::{KeccakTranscript, Transcript};
-    use crate::utils::math::Math;
     use ark_bn254::Fr;
+    use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
     use tracer;
 
@@ -25,7 +25,11 @@ mod tests {
         let (mut trace, _final_memory_state, mut io_device) = program.trace(&inputs);
 
         // Preprocessing
-        let preprocessing: JoltProverPreprocessing<Fr, MockCommitScheme<Fr, KeccakTranscript>, KeccakTranscript> = RV32IJoltVM::prover_preprocess(
+        let preprocessing: JoltProverPreprocessing<
+            Fr,
+            MockCommitScheme<Fr, KeccakTranscript>,
+            KeccakTranscript,
+        > = RV32IJoltVM::prover_preprocess(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
@@ -38,13 +42,21 @@ mod tests {
         let trace_length = trace.len();
         let padded_trace_length = trace_length.next_power_of_two();
         let padding = padded_trace_length - trace_length;
-        
+
         let last_address = trace.last().unwrap().instruction().normalize().address;
         if padding != 0 {
-            trace.extend((0..padding - 1).map(|i| tracer::instruction::RV32IMCycle::NoOp(last_address + 4 * i)));
-            trace.push(tracer::instruction::RV32IMCycle::last_jalr(last_address + 4 * (padding - 1)));
+            trace.extend(
+                (0..padding - 1)
+                    .map(|i| tracer::instruction::RV32IMCycle::NoOp(last_address + 4 * i)),
+            );
+            trace.push(tracer::instruction::RV32IMCycle::last_jalr(
+                last_address + 4 * (padding - 1),
+            ));
         } else {
-            assert!(matches!(trace.last().unwrap(), tracer::instruction::RV32IMCycle::JAL(_)));
+            assert!(matches!(
+                trace.last().unwrap(),
+                tracer::instruction::RV32IMCycle::JAL(_)
+            ));
             *trace.last_mut().unwrap() = tracer::instruction::RV32IMCycle::last_jalr(last_address);
         }
 
@@ -57,17 +69,13 @@ mod tests {
                 .map_or(0, |pos| pos + 1),
         );
 
-        // Create constraint builder
+        // Spartan stuff
         let constraint_builder = JoltRV32IMConstraints::construct_constraints(padded_trace_length);
-        
-        // Create Spartan key
+
         let spartan_key = UniformSpartanProof::<Fr, KeccakTranscript>::setup(
             &constraint_builder,
             padded_trace_length,
         );
-
-        // Create transcript
-        let transcript = KeccakTranscript::new(b"Jolt");
 
         // Create input polynomials from trace
         let mut input_polys = Vec::new();
@@ -77,21 +85,53 @@ mod tests {
             input_polys.push(poly);
         }
 
-        // Create state manager
-        let state_manager = todo!();
+        // State manager components
+        let openings = Arc::new(Mutex::new(HashMap::new()));
+        let mut prover_accumulator = crate::poly::opening_proof::ProverOpeningAccumulator::<
+            Fr,
+            MockCommitScheme<Fr, KeccakTranscript>,
+            KeccakTranscript,
+        >::new();
+        let mut verifier_accumulator = crate::poly::opening_proof::VerifierOpeningAccumulator::<
+            Fr,
+            MockCommitScheme<Fr, KeccakTranscript>,
+            KeccakTranscript,
+        >::new();
+        let mut prover_transcript = KeccakTranscript::new(b"Jolt");
+        let mut verifier_transcript = KeccakTranscript::new(b"Jolt");
+        let proofs = Arc::new(Mutex::new(HashMap::new()));
 
-        // Create JoltDAG
-        let mut dag = jolt_dag::JoltDAG::new(state_manager);
+        let spartan_state = state_manager::SpartanState {
+            spartan_key: None,
+            constraint_builder: None,
+            input_polys: None,
+        };
+
+        // Create state manager
+        let mut state_manager = state_manager::StateManager::new(
+            openings,
+            &mut prover_accumulator,
+            &mut verifier_accumulator,
+            &mut prover_transcript,
+            &mut verifier_transcript,
+            proofs,
+            spartan_state,
+        );
+        state_manager.set_spartan_data(&spartan_key, &constraint_builder, input_polys);
+
+        // JoltDAG
+        let mut dag = jolt_dag::JoltDAG::new(state_manager, KeccakTranscript::new(b"Jolt"));
 
         // Run prove
-        dag.prove();
+        if let Err(e) = dag.prove() {
+            panic!("DAG prove failed: {}", e);
+        }
 
-        println!("DAG prove with fibonacci e2e setup completed successfully");
-        
         // Now verify the proof
-        let verification_result = dag.verify();
-        assert!(verification_result.is_ok(), "Verification failed: {:?}", verification_result);
-        
-        println!("DAG verify with fibonacci e2e setup completed successfully");
+        if let Err(e) = dag.verify() {
+            panic!("DAG verify failed: {}", e);
+        }
+
+        println!("DAG fib_e2e OK!");
     }
 }

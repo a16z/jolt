@@ -1,12 +1,12 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::Index;
 use std::sync::{Arc, Mutex};
-use std::cell::RefCell;
 
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-use crate::poly::opening_proof::ProverOpeningAccumulator;
+use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::r1cs::builder::CombinedUniformBuilder;
 use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::r1cs::key::UniformSpartanKey;
@@ -60,24 +60,12 @@ impl<F: JoltField> From<Vec<F>> for OpeningPoint<BIG_ENDIAN, F> {
     }
 }
 
-pub type Openings<F> = HashMap<OpeningsKeys, (OpeningPoint<LITTLE_ENDIAN, F>, F)>;
-
 impl<F: JoltField> Index<JoltR1CSInputs> for Openings<F> {
-    type Output = F;
+    type Output = Option<F>;
 
     fn index(&self, index: JoltR1CSInputs) -> &Self::Output {
         &self[&OpeningsKeys::SpartanZ(index)].1
     }
-}
-
-
-pub struct StateManager<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>> {
-    pub openings: Arc<Mutex<Openings<F>>>,
-    pub prover_accumulator: ProverOpeningAccumulator<F, PCS, ProofTranscript>,
-    pub verifier_accumulator: ProverOpeningAccumulator<F, PCS, ProofTranscript>,
-    pub transcript: RefCell<&'a mut ProofTranscript>,
-    pub proofs: Arc<Mutex<Proofs<F, ProofTranscript>>>,
-    spartan_state: SpartanState<'a, F>,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
@@ -86,7 +74,11 @@ pub enum OpeningsKeys {
     InstructionTypeFlag(usize),
     InstructionRa(usize),
     OuterSumcheckClaims, // (Az, Bz, Cz)
+    OuterSumcheckR,      // r_cycle from outer sumcheck
+    OuterSumcheckRxVar,  // rx_var from outer sumcheck
 }
+
+pub type Openings<F> = HashMap<OpeningsKeys, (OpeningPoint<LITTLE_ENDIAN, F>, Option<F>)>;
 
 #[derive(Hash, PartialEq, Eq, Clone, Debug)]
 pub enum ProofKeys {
@@ -100,7 +92,7 @@ pub enum ProofKeys {
 
 pub enum ProofData<F: JoltField, ProofTranscript: Transcript> {
     Spartan(UniformSpartanProof<F, ProofTranscript>),
-    Sumcheck(SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, [F; 3]),
+    SpartanSumcheck(SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, [F; 3]),
 }
 
 pub type Proofs<F, ProofTranscript> = HashMap<ProofKeys, ProofData<F, ProofTranscript>>;
@@ -111,12 +103,34 @@ pub struct SpartanState<'a, F: JoltField> {
     pub input_polys: Option<Vec<MultilinearPolynomial<F>>>,
 }
 
-impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>> StateManager<'a, F, ProofTranscript, PCS> {
+pub struct StateManager<
+    'a,
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+> {
+    pub openings: Arc<Mutex<Openings<F>>>,
+    pub prover_accumulator: &'a mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
+    pub verifier_accumulator: &'a mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
+    pub prover_transcript: RefCell<&'a mut ProofTranscript>,
+    pub verifier_transcript: RefCell<&'a mut ProofTranscript>,
+    pub proofs: Arc<Mutex<Proofs<F, ProofTranscript>>>,
+    spartan_state: SpartanState<'a, F>,
+}
+
+impl<
+        'a,
+        F: JoltField,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    > StateManager<'a, F, ProofTranscript, PCS>
+{
     pub fn new(
         openings: Arc<Mutex<Openings<F>>>,
-        prover_accumulator: ProverOpeningAccumulator<F, PCS, ProofTranscript>,
-        verifier_accumulator: ProverOpeningAccumulator<F, PCS, ProofTranscript>,
-        transcript: &'a mut ProofTranscript,
+        prover_accumulator: &'a mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
+        verifier_accumulator: &'a mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
+        prover_transcript: &'a mut ProofTranscript,
+        verifier_transcript: &'a mut ProofTranscript,
         proofs: Arc<Mutex<Proofs<F, ProofTranscript>>>,
         spartan_state: SpartanState<'a, F>,
     ) -> Self {
@@ -124,18 +138,25 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofT
             openings,
             prover_accumulator,
             verifier_accumulator,
-            transcript: RefCell::new(transcript),
+            prover_transcript: RefCell::new(prover_transcript),
+            verifier_transcript: RefCell::new(verifier_transcript),
             proofs,
-            spartan_state
+            spartan_state,
         }
     }
 
     pub fn z(&self, idx: JoltR1CSInputs) -> F {
-        self.openings(OpeningsKeys::SpartanZ(idx))
+        self.openings.lock().unwrap()[idx].expect("Opening value to be obtained via PCS")
     }
 
     pub fn openings(&self, idx: OpeningsKeys) -> F {
-        self.openings.lock().unwrap().get(&idx).unwrap().1
+        self.openings
+            .lock()
+            .unwrap()
+            .get(&idx)
+            .unwrap()
+            .1
+            .expect("Opening to be obtained via PCS")
     }
 
     pub fn openings_point(&self, idx: OpeningsKeys) -> OpeningPoint<LITTLE_ENDIAN, F> {
@@ -153,11 +174,22 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofT
         self.spartan_state.input_polys = Some(input_polys);
     }
 
-    pub fn get_spartan_data(&self) -> (&'a UniformSpartanKey<F>, &'a CombinedUniformBuilder<F>, &Vec<MultilinearPolynomial<F>>) {
+    pub fn get_spartan_data(
+        &self,
+    ) -> (
+        &'a UniformSpartanKey<F>,
+        &'a CombinedUniformBuilder<F>,
+        &Vec<MultilinearPolynomial<F>>,
+    ) {
         (
             self.spartan_state.spartan_key.expect("Spartan key not set"),
-            self.spartan_state.constraint_builder.expect("Constraint builder not set"),
-            self.spartan_state.input_polys.as_ref().expect("Input polys not set"),
+            self.spartan_state
+                .constraint_builder
+                .expect("Constraint builder not set"),
+            self.spartan_state
+                .input_polys
+                .as_ref()
+                .expect("Input polys not set"),
         )
     }
 }

@@ -2,8 +2,10 @@ use std::marker::PhantomData;
 use tracer::instruction::RV32IMCycle;
 use tracing::{span, Level};
 
-use crate::dag::stage::SumcheckStages;
-use crate::dag::state_manager::{StateManager, OpeningPoint, OpeningsKeys, ProofKeys, ProofData, LITTLE_ENDIAN};
+use crate::dag::stage::{StageResult, SumcheckStages};
+use crate::dag::state_manager::{
+    OpeningPoint, OpeningsKeys, ProofData, ProofKeys, StateManager, LITTLE_ENDIAN,
+};
 use crate::field::JoltField;
 use crate::jolt::vm::JoltCommitments;
 use crate::jolt::vm::JoltProverPreprocessing;
@@ -859,7 +861,9 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> Default for UniformSpartanProof<F, ProofTranscript> {
+impl<F: JoltField, ProofTranscript: Transcript> Default
+    for UniformSpartanProof<F, ProofTranscript>
+{
     fn default() -> Self {
         Self {
             outer_sumcheck_proof: SumcheckInstanceProof::new(vec![]),
@@ -873,29 +877,33 @@ impl<F: JoltField, ProofTranscript: Transcript> Default for UniformSpartanProof<
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>> 
-    SumcheckStages<F, ProofTranscript, PCS>
-    for UniformSpartanProof<F, ProofTranscript>
+impl<
+        F: JoltField,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    > SumcheckStages<F, ProofTranscript, PCS> for UniformSpartanProof<F, ProofTranscript>
 {
     fn stage1_prove(
         &self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<(SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, [F; 3])> {
-
+    ) -> StageResult {
         let (key, constraint_builder, input_polys) = state_manager.get_spartan_data();
 
         let num_rounds_x = key.num_cons_total.log_2();
-        
-        let tau: Vec<F> = state_manager.transcript.borrow_mut().challenge_vector(num_rounds_x);
-        
+
+        let tau: Vec<F> = state_manager
+            .prover_transcript
+            .borrow_mut()
+            .challenge_vector(num_rounds_x);
+
         let uniform_constraints_only_padded = constraint_builder
             .uniform_builder
             .constraints
             .len()
             .next_power_of_two();
-        
+
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) = {
-            let transcript = &mut *state_manager.transcript.borrow_mut();
+            let transcript = &mut *state_manager.prover_transcript.borrow_mut();
             Self::prove_outer_sumcheck(
                 num_rounds_x,
                 uniform_constraints_only_padded,
@@ -905,80 +913,88 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTrans
                 transcript,
             )
         };
-        
+
         let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
-        
-        ProofTranscript::append_scalars(&mut *state_manager.transcript.borrow_mut(), &outer_sumcheck_claims);
-        
+
+        ProofTranscript::append_scalars(
+            &mut *state_manager.prover_transcript.borrow_mut(),
+            &outer_sumcheck_claims,
+        );
+
         let opening_point = OpeningPoint::<LITTLE_ENDIAN, F>::new(outer_sumcheck_r.clone());
         state_manager.openings.lock().unwrap().insert(
             OpeningsKeys::OuterSumcheckClaims,
-            (opening_point, F::zero())
+            (opening_point, None), // to be proven using PCS
         );
-        
+
         state_manager.proofs.lock().unwrap().insert(
             ProofKeys::SpartanOuterSumcheck,
-            ProofData::Sumcheck(
-                outer_sumcheck_proof.clone(),
-                outer_sumcheck_r.clone(),
-                outer_sumcheck_claims
-            )
+            ProofData::SpartanSumcheck(
+                outer_sumcheck_proof,
+                outer_sumcheck_r,
+                outer_sumcheck_claims,
+            ),
         );
-        
-        vec![(outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims)]
+
+        StageResult::Success
     }
 
     fn stage1_verify(
         &self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Result<Vec<(Vec<F>, (F, F, F))>, ProofVerifyError> {
+    ) -> StageResult {
         let (key, _, _) = state_manager.get_spartan_data();
-        
+
         let num_rounds_x = key.num_cons_total.log_2();
-        
-        let tau: Vec<F> = state_manager.transcript.borrow_mut().challenge_vector(num_rounds_x);
-        
+
+        let tau: Vec<F> = state_manager
+            .verifier_transcript
+            .borrow_mut()
+            .challenge_vector(num_rounds_x);
+
         let proofs = state_manager.proofs.lock().unwrap();
         let proof_data = {
-            proofs.get(&ProofKeys::SpartanOuterSumcheck)
+            proofs
+                .get(&ProofKeys::SpartanOuterSumcheck)
                 .expect("Outer sumcheck proof not found")
         };
-            
-        let (outer_sumcheck_proof, _, outer_sumcheck_claims) = 
-            match proof_data {
-                ProofData::Sumcheck(proof, r, claims) => (proof, r, claims),
-                _ => panic!("Invalid proof data type")
-            };
-        
-        let (claim_outer_final, outer_sumcheck_r_original) = {
-            let transcript = &mut *state_manager.transcript.borrow_mut();
-            outer_sumcheck_proof.verify(
-                F::zero(),
-                num_rounds_x,
-                3,
-                transcript,
-            )?
+
+        let (outer_sumcheck_proof, _, outer_sumcheck_claims) = match proof_data {
+            ProofData::SpartanSumcheck(proof, r, claims) => (proof, r, claims),
+            _ => panic!("Invalid proof data type"),
         };
-        
+
+        let (claim_outer_final, outer_sumcheck_r_original) = {
+            let transcript = &mut *state_manager.verifier_transcript.borrow_mut();
+            match outer_sumcheck_proof.verify(F::zero(), num_rounds_x, 3, transcript) {
+                Ok(result) => result,
+                Err(_) => {
+                    return StageResult::Failed("Outer sumcheck verification failed".to_string())
+                }
+            }
+        };
+
         // Outer sumcheck is bound from the top, reverse the challenge
-        let outer_sumcheck_r_reversed: Vec<F> = outer_sumcheck_r_original.into_iter().rev().collect();
-        
+        let outer_sumcheck_r_reversed: Vec<F> =
+            outer_sumcheck_r_original.into_iter().rev().collect();
+
         // Validate the outer sumcheck claim
         let (claim_Az, claim_Bz, claim_Cz) = (
             outer_sumcheck_claims[0],
             outer_sumcheck_claims[1],
-            outer_sumcheck_claims[2]
+            outer_sumcheck_claims[2],
         );
         let taus_bound_rx = EqPolynomial::mle(&tau, &outer_sumcheck_r_reversed);
         let claim_outer_final_expected = taus_bound_rx * (claim_Az * claim_Bz - claim_Cz);
         if claim_outer_final != claim_outer_final_expected {
-            return Err(ProofVerifyError::SpartanError("Invalid outer sumcheck claim".to_string()));
+            return StageResult::Failed("Invalid outer sumcheck claim".to_string());
         }
-        
-        ProofTranscript::append_scalars(&mut *state_manager.transcript.borrow_mut(), &outer_sumcheck_claims[..]);
-        
-        let claims_tuple = (claim_Az, claim_Bz, claim_Cz);
-        
-        Ok(vec![(outer_sumcheck_r_reversed, claims_tuple)])
+
+        ProofTranscript::append_scalars(
+            &mut *state_manager.verifier_transcript.borrow_mut(),
+            &outer_sumcheck_claims[..],
+        );
+
+        StageResult::Success
     }
 }

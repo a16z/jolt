@@ -5,22 +5,43 @@ use crate::subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceP
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::transcript::Transcript;
 
-pub trait SumcheckStages<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>>: Send + Sync {
-    // Stage 1 is special case
+#[derive(Debug, Clone)]
+pub enum StageResult {
+    Success,
+    Failed(String),
+}
+
+impl StageResult {
+    pub fn is_success(&self) -> bool {
+        matches!(self, StageResult::Success)
+    }
+
+    pub fn is_failed(&self) -> bool {
+        matches!(self, StageResult::Failed(_))
+    }
+}
+
+pub trait SumcheckStages<
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+>: Send + Sync
+{
+    // Stage 1 is special case of outer sumchec from spartan
     fn stage1_prove(
         &self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<(SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, [F; 3])> {
+    ) -> StageResult {
         let _ = state_manager;
-        vec![]
+        StageResult::Success
     }
 
     fn stage1_verify(
         &self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Result<Vec<(Vec<F>, (F, F, F))>, ProofVerifyError> {
+    ) -> StageResult {
         let _ = state_manager;
-        Ok(vec![])
+        StageResult::Success
     }
 
     // Stages 2-5 return sumcheck instances that will be batched together
