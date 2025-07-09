@@ -1,5 +1,6 @@
 use crate::{
     field::JoltField,
+    jolt::instruction::{InstructionFlags, NUM_CIRCUIT_FLAGS},
     poly::{
         compact_polynomial::SmallScalar,
         multilinear_polynomial::{
@@ -174,6 +175,40 @@ pub struct ReadCheckingProof<F: JoltField, ProofTranscript: Transcript> {
 }
 
 impl<F: JoltField, ProofTranscript: Transcript> ReadCheckingProof<F, ProofTranscript> {
+    /// Returns a boxed closure that computes:
+    ///    Val(k) = unexpanded_pc(k) + gamma * imm(k) + gamma^2 * circuit_flags[0](k) + ...
+    /// This particular Val virtualizes claims output by the Spartan "outer" sumcheck
+    fn compute_val_1(gamma: F) -> Box<dyn Fn(&RV32IMInstruction) -> F + Sync> {
+        let mut gamma_powers = vec![F::one()];
+        for _ in 0..NUM_CIRCUIT_FLAGS + 1 {
+            gamma_powers.push(gamma * gamma_powers.last().unwrap());
+        }
+
+        let closure = move |instruction: &RV32IMInstruction| {
+            let NormalizedInstruction {
+                address: unexpanded_pc,
+                operands,
+                ..
+            } = instruction.normalize();
+
+            let mut linear_combination = F::zero();
+            linear_combination += (unexpanded_pc as u64).field_mul(gamma_powers[0]);
+            linear_combination += operands.imm.field_mul(gamma_powers[1]);
+            for (flag, gamma_power) in instruction
+                .circuit_flags()
+                .iter()
+                .zip(gamma_powers[2..].iter())
+            {
+                if *flag {
+                    linear_combination += *gamma_power;
+                }
+            }
+
+            linear_combination
+        };
+        Box::new(closure)
+    }
+
     #[tracing::instrument(skip_all, name = "ReadCheckingProof::prove")]
     pub fn prove(
         bytecode: &[RV32IMInstruction],
@@ -184,29 +219,12 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadCheckingProof<F, ProofTransc
         // Used to combine the various fields in each instruction into a single
         // field element.
         let gamma: F = transcript.challenge_scalar();
-        let mut gamma_powers = vec![F::one()];
-        for _ in 0..5 {
-            gamma_powers.push(gamma * gamma_powers.last().unwrap());
-        }
-
-        let bytecode_to_val = move |instruction: &RV32IMInstruction| {
-            let NormalizedInstruction {
-                address, operands, ..
-            } = instruction.normalize();
-            let mut linear_combination = F::zero();
-            linear_combination += (address as u64).field_mul(gamma_powers[0]);
-            linear_combination += (operands.rd as u64).field_mul(gamma_powers[1]);
-            linear_combination += (operands.rs1 as u64).field_mul(gamma_powers[2]);
-            linear_combination += (operands.rs2 as u64).field_mul(gamma_powers[3]);
-            linear_combination += operands.imm.field_mul(gamma_powers[4]);
-            // TODO(moodlezoup): Circuit and lookup flags
-            linear_combination
-        };
+        let compute_val = Self::compute_val_1(gamma);
 
         let raf_ra = MultilinearPolynomial::from(F.clone());
 
         let (mut read_checking_sumcheck, rv_claim) =
-            ReadCheckingSumcheck::new_prover(bytecode, F, K, Box::new(bytecode_to_val));
+            ReadCheckingSumcheck::new_prover(bytecode, F, K, compute_val);
 
         let (sumcheck_proof, r_address) = read_checking_sumcheck.prove_single(transcript);
 
@@ -232,31 +250,10 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadCheckingProof<F, ProofTransc
         // Used to combine the various fields in each instruction into a single
         // field element.
         let gamma: F = transcript.challenge_scalar();
-        let mut gamma_powers = vec![F::one()];
-        for _ in 0..5 {
-            gamma_powers.push(gamma * gamma_powers.last().unwrap());
-        }
+        let compute_val = Self::compute_val_1(gamma);
 
-        let bytecode_to_val = move |instruction: &RV32IMInstruction| {
-            let NormalizedInstruction {
-                address, operands, ..
-            } = instruction.normalize();
-            let mut linear_combination = F::zero();
-            linear_combination += (address as u64).field_mul(gamma_powers[0]);
-            linear_combination += (operands.rd as u64).field_mul(gamma_powers[1]);
-            linear_combination += (operands.rs1 as u64).field_mul(gamma_powers[2]);
-            linear_combination += (operands.rs2 as u64).field_mul(gamma_powers[3]);
-            linear_combination += operands.imm.field_mul(gamma_powers[4]);
-            // TODO(moodlezoup): Circuit and lookup flags
-            linear_combination
-        };
-
-        let mut core_piop_sumcheck = ReadCheckingSumcheck::new_verifier(
-            bytecode,
-            self.rv_claim,
-            K,
-            Box::new(bytecode_to_val),
-        );
+        let mut core_piop_sumcheck =
+            ReadCheckingSumcheck::new_verifier(bytecode, self.rv_claim, K, compute_val);
         core_piop_sumcheck.ra_claim = Some(self.ra_claim);
 
         let r_address = core_piop_sumcheck.verify_single(&self.sumcheck_proof, transcript)?;
