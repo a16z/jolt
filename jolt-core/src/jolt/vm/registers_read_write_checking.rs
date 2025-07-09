@@ -929,7 +929,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         self.rd_wv_claim + self.z * self.rs1_rv_claim + self.z_squared * self.rs2_rv_claim
     }
 
-    fn compute_prover_message(&mut self, round: usize) -> Vec<F> {
+    fn compute_prover_message(&mut self, round: usize, _previous_claim: F) -> Vec<F> {
         let prover_state = self.prover_state.as_ref().unwrap();
         if round < prover_state.chunk_size.log_2() {
             self.phase1_compute_prover_message(round)

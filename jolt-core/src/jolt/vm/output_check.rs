@@ -249,7 +249,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 
     #[tracing::instrument(skip_all, name = "OutputSumcheck::compute_prover_message")]
-    fn compute_prover_message(&mut self, _: usize) -> Vec<F> {
+    fn compute_prover_message(&mut self, _: usize, _previous_claim: F) -> Vec<F> {
         const DEGREE: usize = 3;
         let OutputSumcheckProverState {
             eq_poly,
@@ -439,7 +439,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 
     #[tracing::instrument(skip_all, name = "ValFinalSumcheck::compute_prover_message")]
-    fn compute_prover_message(&mut self, _: usize) -> Vec<F> {
+    fn compute_prover_message(&mut self, _: usize, _previous_claim: F) -> Vec<F> {
         const DEGREE: usize = 2;
 
         let ValFinalSumcheckProverState { inc, wa, .. } = self.prover_state.as_ref().unwrap();
