@@ -75,12 +75,12 @@ impl<F: JoltField> Index<JoltR1CSInputs> for Openings<F> {
 }
 
 
-pub struct StateManager<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>> {
+pub struct StateManager<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>> {
     pub openings: Arc<Mutex<Openings<F>>>,
     pub prover_accumulator: ProverOpeningAccumulator<F, PCS, ProofTranscript>,
     pub verifier_accumulator: ProverOpeningAccumulator<F, PCS, ProofTranscript>,
-    pub transcript: ProofTranscript,
-    pub proofs: Proofs<F, ProofTranscript>
+    pub transcript: &'a mut ProofTranscript,
+    pub proofs: Arc<Mutex<Proofs<F, ProofTranscript>>>
 }
 
 /// State for Spartan-related data

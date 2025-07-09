@@ -19,7 +19,6 @@ mod tests {
 
     #[test]
     fn test_dag_fib_e2e() {
-        // Mimic the actual fib_e2e test setup
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&9u32).unwrap();
         let (bytecode, init_memory_state) = program.decode();
