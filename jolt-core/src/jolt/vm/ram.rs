@@ -327,7 +327,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     for BooleanitySumcheck<F>
 {
     fn degree(&self) -> usize {
-        self.d + 2
+        3
     }
 
     fn num_rounds(&self) -> usize {
@@ -385,24 +385,18 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
 
                 for i in 0..d {
                     let H_vec: Vec<F> = trace
-                        .iter()
+                        .par_iter()
                         .map(|cycle| {
                             let address =
                                 remap_address(cycle.ram_access().address() as u64, memory_layout)
                                     as usize;
 
                             // Decompose address to get the i-th chunk
-                            let mut remaining_address = address;
-                            for j in 0..d {
-                                let chunk_modulo = 1 << chunk_sizes[d - 1 - j];
-                                let chunk_value = remaining_address % chunk_modulo;
-                                remaining_address /= chunk_modulo;
-
-                                if j == i {
-                                    return prover_state.F[chunk_value];
-                                }
-                            }
-                            F::zero() // Should never reach here
+                            let (left, right) = chunk_sizes.split_at(d - i);
+                            let shift: usize = right.iter().sum();
+                            let chunk_size = left.last().unwrap();
+                            let address_chunk = (address >> shift) % (1 << chunk_size);
+                            prover_state.F[address_chunk]
                         })
                         .collect();
                     H_polys.push(MultilinearPolynomial::from(H_vec));
@@ -476,10 +470,9 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             .expect("Prover state not initialized");
 
         let d = prover_state.d;
-        let degree = 2 + d;
+        let degree = 3;
         let m = round + 1;
 
-        // For the batched computation, we need evaluations at 0, 2, 3, ..., degree
         let mut univariate_poly_evals = vec![F::zero(); degree];
 
         (0..prover_state.B.len() / 2)
@@ -506,35 +499,21 @@ impl<F: JoltField> BooleanitySumcheck<F> {
 
                             let mut local_evals = vec![F::zero(); degree];
 
-                            if degree >= 3 {
-                                // Standard evaluation points for degree 3
-                                let eq_0 = if k_m == 0 { F::one() } else { F::zero() };
-                                let eq_2 = if k_m == 0 {
-                                    F::from_i64(-1)
-                                } else {
-                                    F::from_u8(2)
-                                };
-                                let eq_3 = if k_m == 0 {
-                                    F::from_i64(-2)
-                                } else {
-                                    F::from_u8(3)
-                                };
+                            let eq_0 = if k_m == 0 { F::one() } else { F::zero() };
+                            let eq_2 = if k_m == 0 {
+                                F::from_i64(-1)
+                            } else {
+                                F::from_u8(2)
+                            };
+                            let eq_3 = if k_m == 0 {
+                                F::from_i64(-2)
+                            } else {
+                                F::from_u8(3)
+                            };
 
-                                local_evals[0] = G_times_F * (eq_0 * eq_0 * F_k - eq_0);
-                                local_evals[1] = G_times_F * (eq_2 * eq_2 * F_k - eq_2);
-                                local_evals[2] = G_times_F * (eq_3 * eq_3 * F_k - eq_3);
-                            }
-
-                            // Handle additional evaluation points if degree > 3
-                            for j in 3..degree {
-                                let eval_point = j + 1; // Maps to points 4, 5, 6, ...
-                                let eq_val = if k_m == 0 {
-                                    F::one() - F::from_u64(eval_point as u64)
-                                } else {
-                                    F::from_u64(eval_point as u64)
-                                };
-                                local_evals[j] = G_times_F * (eq_val * eq_val * F_k - eq_val);
-                            }
+                            local_evals[0] = G_times_F * (eq_0 * eq_0 * F_k - eq_0);
+                            local_evals[1] = G_times_F * (eq_2 * eq_2 * F_k - eq_2);
+                            local_evals[2] = G_times_F * (eq_3 * eq_3 * F_k - eq_3);
 
                             local_evals
                         })
@@ -587,7 +566,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             .as_ref()
             .expect("H polynomials not initialized");
         let d = prover_state.d;
-        let degree = 2 + d;
+        let degree = 3;
 
         let mut univariate_poly_evals = vec![F::zero(); degree];
 
@@ -609,7 +588,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                         // Add z^j * (H_j^2 - H_j) * D
                         evals[k] += prover_state.z_powers[j]
                             * D_evals[k]
-                            * (H_j_evals[k] * H_j_evals[k] - H_j_evals[k]);
+                            * (H_j_evals[k].square() - H_j_evals[k]);
                     }
                 }
 
@@ -695,7 +674,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     for HammingWeightSumcheck<F>
 {
     fn degree(&self) -> usize {
-        self.d
+        1
     }
 
     fn num_rounds(&self) -> usize {
