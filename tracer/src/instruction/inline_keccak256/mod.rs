@@ -64,13 +64,21 @@ enum Value {
 use Value::{Imm, Reg};
 
 // Numb
-/// Layout of the 96 virtual registers (`vr`):
+/// Layout of the 96 virtual registers (`vr`).
+///
+/// Jolt requires the total number of registers (physical + virtual) to be a power of two.
+/// With 32 physical registers, we need 96 virtual registers to reach 128.
+///
+/// While only 67 registers are actively used by this builder, we allocate 96
+/// to satisfy the system requirement.
+///
 /// - `vr[0..24]`: The 25 lanes of the Keccak state array `A`.
-/// - `vr[25..49]`: A temporary state array `B` used in `rho_and_pi` and `chi`.
-/// - `vr[50..54]`: The 5 lanes of the `C` array in `theta`.
-/// - `vr[55..59]`: The 5 lanes of the `D` array in `theta`.
-/// - `vr[60..64]`: The 5 lanes of the row buffer in `chi`.
-/// - `vr[65..95]`: Additional scratch registers for temporary values.
+/// - `vr[25..49]`: A temporary state array `B` used in `rho_and_pi`.
+/// - `vr[50..54]`: The 5 lanes of the `C` array (column parities) in `theta`.
+/// - `vr[55..59]`: The 5 lanes of the `D` array (theta effect) in `theta`.
+/// - `vr[60..64]`: A 5-lane temporary buffer for the current row in `chi`.
+/// - `vr[65..66]`: General-purpose scratch registers for intermediate values.
+/// - `vr[67..95]`: Unused, allocated for padding to meet the power-of-two requirement.
 pub const NEEDED_REGISTERS: usize = 96;
 struct Keccak256SequenceBuilder {
     address: u64,
@@ -79,7 +87,6 @@ struct Keccak256SequenceBuilder {
     vr: [usize; NEEDED_REGISTERS],
     operand_rs1: usize,
     operand_rs2: usize,
-    initial: bool,
 }
 
 /// `Keccak256SequenceBuilder` is a helper struct for constructing the virtual instruction
@@ -95,7 +102,6 @@ struct Keccak256SequenceBuilder {
 /// - `vr`: An array of virtual register indices used for state and temporary values.
 /// - `operand_rs1`: The source register index for the first operand (input state pointer).
 /// - `operand_rs2`: The source register index for the second operand (input length or auxiliary).
-/// - `initial`: Whether this is the initial invocation (affects state initialization).
 ///
 /// # Usage
 /// Typically, you construct a `Keccak256SequenceBuilder` with the required register mapping
@@ -126,7 +132,6 @@ impl Keccak256SequenceBuilder {
         vr: [usize; NEEDED_REGISTERS],
         operand_rs1: usize,
         operand_rs2: usize,
-        initial: bool,
     ) -> Self {
         Keccak256SequenceBuilder {
             address,
@@ -135,7 +140,6 @@ impl Keccak256SequenceBuilder {
             vr,
             operand_rs1,
             operand_rs2,
-            initial,
         }
     }
 
@@ -226,7 +230,7 @@ impl Keccak256SequenceBuilder {
             for y in 0..5 {
                 // Get the source lane A[x,y] and its rotation offset.
                 let source_reg = self.lane(x, y);
-                let rotation_offset = ROTATION_OFFSETS[y][x];
+                let rotation_offset = ROTATION_OFFSETS[x][y];
 
                 // Calculate the permuted destination coordinates in B.
                 let nx = y;
@@ -529,8 +533,7 @@ fn execute_rho_and_pi(state: &mut [u64; 25]) {
         for y in 0..5 {
             let nx = y;
             let ny = (2 * x + 3 * y) % 5;
-            // Note: ROTATION_OFFSETS[y][x] is correct.
-            b[nx + 5 * ny] = state[x + 5 * y].rotate_left(ROTATION_OFFSETS[y][x]);
+            b[nx + 5 * ny] = state[x + 5 * y].rotate_left(ROTATION_OFFSETS[x][y]);
         }
     }
     state.copy_from_slice(&b);
@@ -563,7 +566,8 @@ mod tests {
 
     #[test]
     fn test_execute_keccak256() {
-        let test_vectors: &[(&[u8], [u8; 32])] = &[
+        // Test vectors for the end-to-end Keccak-256 hash function.
+        let e2e_vectors: &[(&[u8], [u8; 32])] = &[
             (
                 b"",
                 hex!("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"),
@@ -574,9 +578,87 @@ mod tests {
             ),
         ];
 
-        for (input, expected_hash) in test_vectors {
+        for (input, expected_hash) in e2e_vectors {
             let hash = execute_keccak256(input);
-            assert_eq!(&hash, expected_hash);
+            assert_eq!(
+                &hash,
+                expected_hash,
+                "Failed on e2e test vector for input: {:?}",
+                std::str::from_utf8(input).unwrap_or("invalid utf-8")
+            );
         }
+
+        // Test vectors for the Keccak-f[1600] permutation from XKCP.
+        // https://github.com/XKCP/XKCP/blob/master/tests/TestVectors/KeccakF-1600-IntermediateValues.txt
+        let after_one_permutation = [
+            0xF1258F7940E1DDE7,
+            0x84D5CCF933C0478A,
+            0xD598261EA65AA9EE,
+            0xBD1547306F80494D,
+            0x8B284E056253D057,
+            0xFF97A42D7F8E6FD4,
+            0x90FEE5A0A44647C4,
+            0x8C5BDA0CD6192E76,
+            0xAD30A6F71B19059C,
+            0x30935AB7D08FFC64,
+            0xEB5AA93F2317D635,
+            0xA9A6E6260D712103,
+            0x81A57C16DBCF555F,
+            0x43B831CD0347C826,
+            0x01F22F1A11A5569F,
+            0x05E5635A21D9AE61,
+            0x64BEFEF28CC970F2,
+            0x613670957BC46611,
+            0xB87C5A554FD00ECB,
+            0x8C3EE88A1CCF32C8,
+            0x940C7922AE3A2614,
+            0x1841F924A2C509E4,
+            0x16F53526E70465C2,
+            0x75F644E97F30A13B,
+            0xEAF1FF7B5CECA249,
+        ];
+        let after_two_permutations = [
+            0x2D5C954DF96ECB3C,
+            0x6A332CD07057B56D,
+            0x093D8D1270D76B6C,
+            0x8A20D9B25569D094,
+            0x4F9C4F99E5E7F156,
+            0xF957B9A2DA65FB38,
+            0x85773DAE1275AF0D,
+            0xFAF4F247C3D810F7,
+            0x1F1B9EE6F79A8759,
+            0xE4FECC0FEE98B425,
+            0x68CE61B6B9CE68A1,
+            0xDEEA66C4BA8F974F,
+            0x33C43D836EAFB1F5,
+            0xE00654042719DBD9,
+            0x7CF8A9F009831265,
+            0xFD5449A6BF174743,
+            0x97DDAD33D8994B40,
+            0x48EAD5FC5D0BE774,
+            0xE3B8C8EE55B7B03C,
+            0x91A0226E649E42E9,
+            0x900E3129E7BADD7B,
+            0x202A9EC5FAA3CCE8,
+            0x5B3402464E1C3DB6,
+            0x609F4E62A44C1059,
+            0x20D06CD26A8FBF5C,
+        ];
+
+        let mut state = [0u64; 25]; // Initial state is all zeros.
+
+        // First permutation
+        execute_keccak_f(&mut state);
+        assert_eq!(
+            state, after_one_permutation,
+            "Failed on first permutation of Keccak-f"
+        );
+
+        // Second permutation
+        execute_keccak_f(&mut state);
+        assert_eq!(
+            state, after_two_permutations,
+            "Failed on second permutation of Keccak-f"
+        );
     }
 }
