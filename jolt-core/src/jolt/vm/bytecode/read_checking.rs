@@ -195,7 +195,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadCheckingProof<F, ProofTransc
                     } = instruction.normalize();
 
                     let mut linear_combination = F::zero();
-                    linear_combination += (unexpanded_pc as u64).field_mul(gamma_powers[0]);
+                    linear_combination += F::from_u64(unexpanded_pc as u64);
                     linear_combination += operands.imm.field_mul(gamma_powers[1]);
                     for (flag, gamma_power) in instruction
                         .circuit_flags()
@@ -215,14 +215,20 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadCheckingProof<F, ProofTransc
     }
 
     /// Returns a boxed closure that computes:
-    ///    Val(k) = unexpanded_pc(k) + gamma * lookup_table_flags[0](k)
-    ///             + gamma^2 * lookup_table_flags[1](k)...
+    ///    Val(k) = unexpanded_pc(k) + gamma * rd(k, r_register) + gamma^2 * rs1(k, r_register)
+    ///             + gamma^3 * rs2(k, r_register) + gamma^4 * lookup_table_flags[0](k)
+    ///             + gamma^5 * lookup_table_flags[1](k)...
+    /// where rd(k, k') = 1 if the k'th instruction in the bytecode has rd = k'
+    /// and analogously for rs1(k, k') and rs2(k, k').
     /// This particular Val virtualizes claims output by Spartan's "shift" sumcheck,
     /// the instruction execution raf-evaluation sumcheck, the instruction execution
-    /// read checking sumcheck.
-    fn compute_val_2(gamma: F) -> Box<dyn Fn(&[RV32IMInstruction]) -> Vec<F> + Sync> {
+    /// read checking sumcheck, and the registers read/write checking sumcheck.
+    fn compute_val_2(
+        gamma: F,
+        eq_r_register: Vec<F>,
+    ) -> Box<dyn Fn(&[RV32IMInstruction]) -> Vec<F> + Sync> {
         let mut gamma_powers = vec![F::one()];
-        for _ in 0..NUM_LOOKUP_TABLES {
+        for _ in 0..NUM_LOOKUP_TABLES + 3 {
             gamma_powers.push(gamma * gamma_powers.last().unwrap());
         }
 
@@ -230,17 +236,19 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadCheckingProof<F, ProofTransc
             bytecode
                 .par_iter()
                 .map(|instruction| {
-                    let NormalizedInstruction {
-                        address: unexpanded_pc,
-                        ..
-                    } = instruction.normalize();
+                    let instr = instruction.normalize();
+                    let unexpanded_pc = instr.address;
 
                     let mut linear_combination = F::zero();
-                    linear_combination += (unexpanded_pc as u64).field_mul(gamma_powers[0]);
+                    linear_combination += F::from_u64(unexpanded_pc as u64);
+
+                    linear_combination += eq_r_register[instr.operands.rd] * gamma_powers[1];
+                    linear_combination += eq_r_register[instr.operands.rs1] * gamma_powers[2];
+                    linear_combination += eq_r_register[instr.operands.rs2] * gamma_powers[3];
 
                     if let Some(table) = instruction.lookup_table() {
                         let table_index = LookupTables::enum_index(&table);
-                        linear_combination += gamma_powers[1 + table_index];
+                        linear_combination += gamma_powers[4 + table_index];
                     }
 
                     linear_combination
@@ -281,11 +289,14 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadCheckingProof<F, ProofTransc
         let gamma_1: F = transcript.challenge_scalar();
         let compute_val_1 = Self::compute_val_1(gamma_1);
 
-        let gamma_2: F = transcript.challenge_scalar();
-        let compute_val_2 = Self::compute_val_2(gamma_2);
-
+        // TODO: Get r_register from the registers read/write checking and/or
+        // Val-evaluation sumcheck
         let r_register: Vec<F> = transcript.challenge_vector((REGISTER_COUNT as usize).log_2());
         let eq_r_register = EqPolynomial::evals(&r_register);
+
+        let gamma_2: F = transcript.challenge_scalar();
+        let compute_val_2 = Self::compute_val_2(gamma_2, eq_r_register.clone());
+
         let compute_val_3 = Self::compute_val_3(eq_r_register);
 
         let (mut read_checking_sumcheck_1, rv_claim_1) =
@@ -331,11 +342,14 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadCheckingProof<F, ProofTransc
         let gamma_1: F = transcript.challenge_scalar();
         let compute_val_1 = Self::compute_val_1(gamma_1);
 
-        let gamma_2: F = transcript.challenge_scalar();
-        let compute_val_2 = Self::compute_val_2(gamma_2);
-
+        // TODO: Get r_register from the registers read/write checking and/or
+        // Val-evaluation sumcheck
         let r_register: Vec<F> = transcript.challenge_vector((REGISTER_COUNT as usize).log_2());
         let eq_r_register = EqPolynomial::evals(&r_register);
+
+        let gamma_2: F = transcript.challenge_scalar();
+        let compute_val_2 = Self::compute_val_2(gamma_2, eq_r_register.clone());
+
         let compute_val_3 = Self::compute_val_3(eq_r_register);
 
         let mut read_checking_sumcheck_1 =
