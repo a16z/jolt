@@ -66,8 +66,8 @@ impl Keccak256 {
     /// Reads hash digest and consumes the hasher.
     #[inline(always)]
     pub fn finalize(mut self) -> [u8; HASH_LEN] {
-        // Pad the message. SHA-3 uses the '10*1' padding scheme.
-        self.buffer[self.buffer_len] = 0x06;
+        // Pad the message. Keccak uses `0x01` padding.
+        self.buffer[self.buffer_len] = 0x01;
         self.buffer[RATE_IN_BYTES - 1] |= 0x80;
 
         self.absorb_buffer();
@@ -140,7 +140,11 @@ pub unsafe fn keccak_f(state: *mut u64) {
 pub unsafe fn keccak_f(state: *mut u64) {
     // On the host, we call our own reference implementation from the tracer crate.
     let state_slice = core::slice::from_raw_parts_mut(state, 25);
-    tracer::instruction::inline_keccak256::execute_keccak_f(state_slice);
+    tracer::instruction::inline_keccak256::execute_keccak_f(
+        state_slice
+            .try_into()
+            .expect("State slice was not 25 words"),
+    );
 }
 
 #[cfg(test)]

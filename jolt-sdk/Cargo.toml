@@ -13,6 +13,7 @@ repository = "https://github.com/a16z/jolt"
 edition = "2021"
 
 [features]
+default = ["sha256", "keccak256"]
 host = [
     "dep:tracer",
     "dep:common",
@@ -20,6 +21,7 @@ host = [
     "dep:ark-ec",
     "dep:ark-bn254",
     "postcard/use-std",
+    "dep:sha3",
 ]
 guest-std = ["postcard/use-std", "jolt-sdk-macros/guest-std"]
 icicle = ["host", "jolt-core?/icicle"]
@@ -30,6 +32,7 @@ keccak256 = []
 postcard = { version = "1.0.8", default-features = false }
 ark-ec = { version = "0.5.0", default-features = false, optional = true }
 ark-bn254 = { version = "0.5.0", default-features = false, optional = true }
+sha3 = { version = "0.10.8", optional = true }
 
 jolt-sdk-macros = { path = "./macros" }
 
@@ -37,3 +40,6 @@ jolt-sdk-macros = { path = "./macros" }
 common = { path = "../common", optional = true }
 jolt-core = { path = "../jolt-core", optional = true }
 tracer = { path = "../tracer", optional = true }
+
+[dev-dependencies]
+hex-literal = "0.4.1"
