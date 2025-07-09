@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::ops::Index;
 use std::sync::{Arc, Mutex};
 
-use tracer::instruction::RV32IMCycle;
-
 use crate::field::JoltField;
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::utils::transcript::Transcript;
 
@@ -18,24 +18,11 @@ impl<F> Index<JoltR1CSInputs> for Openings<F> {
     }
 }
 
-pub struct StateManager<'a, F: JoltField, T: Transcript> {
-    pub T: usize,
-    pub log_T: usize,
-    pub challenges: Challenges<F>,
+pub struct StateManager<'a, F: JoltField, PCS: CommitmentScheme<T, Field = F>, T: Transcript> {
     pub transcript: &'a mut T,
-    prover_state: Option<ProverState<'a, F>>,
+    pub prover_accumulator: Option<Arc<Mutex<&'a mut ProverOpeningAccumulator<F, PCS, T>>>>,
+    pub verifier_accumulator: Option<Arc<Mutex<&'a mut VerifierOpeningAccumulator<F, PCS, T>>>>,
     pub openings: Arc<Mutex<Openings<F>>>,
-}
-
-pub struct Challenges<F: JoltField> {
-    pub instruction_booleanity: F,
-    pub instruction_hamming: F,
-    pub instruction_read_raf: F,
-}
-
-pub struct ProverState<'a, F: JoltField> {
-    trace: &'a [RV32IMCycle],
-    pub eq_r_cycle: Vec<F>,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
@@ -45,17 +32,15 @@ pub enum OpeningsKeys {
     InstructionRa(usize),
 }
 
-impl<'a, F: JoltField, T: Transcript> StateManager<'a, F, T> {
+impl<'a, F: JoltField, PCS: CommitmentScheme<T, Field = F>, T: Transcript>
+    StateManager<'a, F, PCS, T>
+{
     pub fn prove() {
         todo!()
     }
 
     pub fn verify() {
         todo!()
-    }
-
-    pub fn prover_state(&self) -> &ProverState<F> {
-        self.prover_state.as_ref().unwrap()
     }
 
     pub fn z(&self, idx: JoltR1CSInputs) -> F {
@@ -76,9 +61,5 @@ impl<'a, F: JoltField, T: Transcript> StateManager<'a, F, T> {
 
     pub fn openings_point(&self, idx: OpeningsKeys) -> Vec<F> {
         self.openings.lock().unwrap().get(&idx).unwrap().0.clone()
-    }
-
-    pub fn trace(&self) -> &'a [RV32IMCycle] {
-        self.prover_state.as_ref().unwrap().trace
     }
 }

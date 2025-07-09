@@ -305,7 +305,12 @@ pub struct ReadRafSumcheck<'a, F: JoltField> {
 }
 
 impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
-    pub fn new(sm: &'a StateManager<F, impl Transcript>) -> Self {
+    pub fn new<T: Transcript>(
+        sm: &mut StateManager<F, impl CommitmentScheme<T, Field = F>, T>,
+        trace: &'a [RV32IMCycle],
+        eq_r_cycle: &[F],
+    ) -> Self {
+        let log_T = trace.len().log_2();
         let right_operand_poly = OperandPolynomial::new(LOG_K, OperandSide::Left);
         let left_operand_poly = OperandPolynomial::new(LOG_K, OperandSide::Right);
         let identity_poly = IdentityPolynomial::new_with_endianness(LOG_K, Endianness::Big);
@@ -316,8 +321,7 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
         let identity_ps = PrefixSuffixDecomposition::new(Box::new(identity_poly), LOG_M, LOG_K);
 
         // TODO: This was probably already calculated in Spartan, maybe we should just get it.
-        let lookup_indices: Vec<_> = sm
-            .trace()
+        let lookup_indices: Vec<_> = trace
             .par_iter()
             .map(|cycle| LookupBits::new(LookupQuery::<WORD_SIZE>::to_lookup_index(cycle), LOG_K))
             .collect();
@@ -325,8 +329,7 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
         let lookup_indices_by_table: Vec<_> = lookup_tables
             .par_iter()
             .map(|table| {
-                let table_lookups: Vec<_> = sm
-                    .trace()
+                let table_lookups: Vec<_> = trace
                     .iter()
                     .zip(lookup_indices.iter().cloned())
                     .enumerate()
@@ -351,7 +354,7 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
                 .par_iter()
                 .cloned()
                 .enumerate()
-                .zip(sm.trace().par_iter())
+                .zip(trace.par_iter())
                 .partition_map(|((idx, item), cycle)| {
                     if cycle
                         .instruction()
@@ -373,12 +376,13 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
                     .collect()
             })
             .collect();
+        let gamma: F = sm.transcript.challenge_scalar();
         let mut s = Self {
-            gamma: sm.challenges.instruction_read_raf,
-            gamma_squared: sm.challenges.instruction_read_raf * sm.challenges.instruction_read_raf,
+            gamma,
+            gamma_squared: gamma * gamma,
             prover_state: Some(ReadRafProverState {
-                trace: sm.trace(),
-                r: Vec::with_capacity(sm.log_T + LOG_K),
+                trace,
+                r: Vec::with_capacity(log_T + LOG_K),
                 ra: Vec::with_capacity(4),
                 lookup_tables,
                 lookup_indices,
@@ -388,9 +392,9 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
                 prefix_checkpoints: vec![None.into(); Prefixes::COUNT],
                 suffix_polys,
                 v: ExpandingTable::new(M),
-                u_evals: sm.prover_state().eq_r_cycle.clone(),
-                eq_r_cycle_evals: sm.prover_state().eq_r_cycle.clone(),
-                eq_r_cycle: MultilinearPolynomial::from(sm.prover_state().eq_r_cycle.clone()),
+                u_evals: eq_r_cycle.to_vec(),
+                eq_r_cycle_evals: eq_r_cycle.to_vec(),
+                eq_r_cycle: MultilinearPolynomial::from(eq_r_cycle.to_vec()),
                 prefix_registry: PrefixRegistry::new(),
                 right_operand_ps,
                 left_operand_ps,
@@ -400,24 +404,28 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
             r_cycle: sm.r_cycle(),
             rv_claim: sm.z(JoltR1CSInputs::LookupOutput),
             raf_claim: sm.z(JoltR1CSInputs::LeftLookupOperand)
-                + sm.challenges.instruction_read_raf * sm.z(JoltR1CSInputs::RightLookupOperand),
-            log_T: sm.log_T,
+                + gamma * sm.z(JoltR1CSInputs::RightLookupOperand),
+            log_T,
             openings: sm.openings.clone(),
         };
         s.init_phase(0);
         s
     }
 
-    pub fn new_verifier(sm: &mut StateManager<F, impl Transcript>) -> Self {
+    pub fn new_verifier<T: Transcript>(
+        sm: &mut StateManager<F, impl CommitmentScheme<T, Field = F>, T>,
+    ) -> Self {
+        let log_T = sm.r_cycle().len();
+        let gamma: F = sm.transcript.challenge_scalar();
         Self {
-            gamma: sm.challenges.instruction_read_raf,
-            gamma_squared: sm.challenges.instruction_read_raf * sm.challenges.instruction_read_raf,
+            gamma,
+            gamma_squared: gamma * gamma,
             prover_state: None,
             r_cycle: sm.r_cycle(),
             rv_claim: sm.z(JoltR1CSInputs::LookupOutput),
             raf_claim: sm.z(JoltR1CSInputs::LeftLookupOperand)
-                + sm.challenges.instruction_read_raf * sm.z(JoltR1CSInputs::RightLookupOperand),
-            log_T: sm.log_T,
+                + gamma * sm.z(JoltR1CSInputs::RightLookupOperand),
+            log_T,
             openings: sm.openings.clone(),
         }
     }
@@ -755,20 +763,25 @@ pub struct BooleanitySumcheck<F: JoltField> {
 }
 
 impl<F: JoltField> BooleanitySumcheck<F> {
-    pub fn new(state: &StateManager<F, impl Transcript>, G: [Vec<F>; D]) -> Self {
+    pub fn new<T: Transcript>(
+        sm: &mut StateManager<F, impl CommitmentScheme<T, Field = F>, T>,
+        trace: &[RV32IMCycle],
+        eq_r_cycle: &[F],
+        G: [Vec<F>; D],
+    ) -> Self {
         const DEGREE: usize = 3;
+        let gamma: F = sm.transcript.challenge_scalar();
         let mut gamma_powers = [F::one(); D];
         for i in 1..D {
-            gamma_powers[i] = gamma_powers[i - 1] * state.challenges.instruction_booleanity;
+            gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
 
-        let B = MultilinearPolynomial::from(EqPolynomial::evals(&state.r_address()));
+        let B = MultilinearPolynomial::from(EqPolynomial::evals(&sm.r_address()));
         let mut F: Vec<F> = unsafe_allocate_zero_vec(K_CHUNK);
         F[0] = F::one();
 
         let H_indices: [Vec<usize>; D] = std::array::from_fn(|i| {
-            state
-                .trace()
+            trace
                 .par_iter()
                 .map(|cycle| {
                     let lookup_index = LookupQuery::<32>::to_lookup_index(cycle);
@@ -799,7 +812,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             gamma: gamma_powers,
             prover_state: Some(BooleanityProverState {
                 B,
-                D: MultilinearPolynomial::from(state.prover_state().eq_r_cycle.to_vec()),
+                D: MultilinearPolynomial::from(eq_r_cycle.to_vec()),
                 G,
                 H_indices,
                 H: None,
@@ -808,24 +821,28 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                 eq_km_c,
                 eq_km_c_squared,
             }),
-            r_address: state.r_address(),
-            r_cycle: state.r_cycle(),
+            r_address: sm.r_address(),
+            r_cycle: sm.r_cycle(),
             ra_claims: None,
-            log_T: state.trace().len().log_2(),
+            log_T: trace.len().log_2(),
         }
     }
 
-    pub fn new_verifier(sm: &mut StateManager<F, impl Transcript>) -> Self {
+    pub fn new_verifier<T: Transcript>(
+        sm: &mut StateManager<F, impl CommitmentScheme<T, Field = F>, T>,
+    ) -> Self {
+        let log_T = sm.r_cycle().len();
+        let gamma: F = sm.transcript.challenge_scalar();
         let mut gamma_powers = [F::one(); D];
         for i in 1..D {
-            gamma_powers[i] = gamma_powers[i - 1] * sm.challenges.instruction_booleanity;
+            gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
         Self {
             gamma: gamma_powers,
             prover_state: None,
             r_address: sm.r_address(),
             r_cycle: sm.r_cycle(),
-            log_T: sm.log_T,
+            log_T,
             ra_claims: Some(
                 (0..D)
                     .into_iter()
@@ -1076,10 +1093,14 @@ pub struct HammingSumcheck<F: JoltField> {
 }
 
 impl<F: JoltField> HammingSumcheck<F> {
-    pub fn new(state: &StateManager<F, impl Transcript>, F: [Vec<F>; D]) -> Self {
+    pub fn new<T: Transcript>(
+        sm: &mut StateManager<F, impl CommitmentScheme<T, Field = F>, T>,
+        F: [Vec<F>; D],
+    ) -> Self {
+        let gamma: F = sm.transcript.challenge_scalar();
         let mut gamma_powers = [F::one(); D];
         for i in 1..D {
-            gamma_powers[i] = gamma_powers[i - 1] * state.challenges.instruction_hamming;
+            gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
         let ra = F
             .into_iter()
@@ -1094,10 +1115,13 @@ impl<F: JoltField> HammingSumcheck<F> {
         }
     }
 
-    pub fn new_verifier(sm: &mut StateManager<F, impl Transcript>) -> Self {
+    pub fn new_verifier<T: Transcript>(
+        sm: &mut StateManager<F, impl CommitmentScheme<T, Field = F>, T>,
+    ) -> Self {
+        let gamma: F = sm.transcript.challenge_scalar();
         let mut gamma_powers = [F::one(); D];
         for i in 1..D {
-            gamma_powers[i] = gamma_powers[i - 1] * sm.challenges.instruction_hamming;
+            gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
         Self {
             gamma: gamma_powers,
@@ -1184,20 +1208,26 @@ where
     T: Transcript,
 {
     pub fn prove_phase_2_sumchecks<'a>(
-        state_manager: &'a mut StateManager<F, T>,
+        sm: &mut StateManager<F, PCS, T>,
+        trace: &'a [RV32IMCycle],
     ) -> Vec<Box<dyn BatchableSumcheckInstance<F, T> + 'a>> {
-        let prover_state = state_manager.prover_state();
-        let ra_evals = compute_ra_evals(state_manager.trace(), &prover_state.eq_r_cycle);
+        let eq_r_cycle = EqPolynomial::evals(&sm.r_cycle());
+        let ra_evals = compute_ra_evals(trace, &eq_r_cycle);
 
-        let read_raf = Box::new(ReadRafSumcheck::new(state_manager));
-        let booleanity = Box::new(BooleanitySumcheck::new(state_manager, ra_evals.clone()));
-        let hamming_weight = Box::new(HammingSumcheck::new(state_manager, ra_evals));
+        let read_raf = Box::new(ReadRafSumcheck::new(sm, trace, &eq_r_cycle));
+        let booleanity = Box::new(BooleanitySumcheck::new(
+            sm,
+            trace,
+            &eq_r_cycle,
+            ra_evals.clone(),
+        ));
+        let hamming_weight = Box::new(HammingSumcheck::new(sm, ra_evals));
 
         vec![read_raf, booleanity, hamming_weight]
     }
 
     pub fn verify_phase_2_sumchecks(
-        state_manager: &mut StateManager<F, T>,
+        state_manager: &mut StateManager<F, impl CommitmentScheme<T, Field = F>, T>,
     ) -> Vec<Box<dyn BatchableSumcheckInstance<F, T>>> {
         let read_raf = Box::new(ReadRafSumcheck::new_verifier(state_manager));
         let booleanity = Box::new(BooleanitySumcheck::new_verifier(state_manager));
