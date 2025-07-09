@@ -50,7 +50,7 @@ members = [
     "examples/overflow",
     "examples/overflow/guest",
     "examples/memory-ops",
-    "examples/memory-ops/guest",
+    "examples/memory-ops/guest", "onnx-tracer",
 ]
 
 [features]
