@@ -317,7 +317,7 @@ const LOG_K: usize = WORD_SIZE * 2;
 const PHASES: usize = 4;
 const LOG_M: usize = LOG_K / PHASES;
 const M: usize = 1 << LOG_M;
-pub const D: usize = 4;
+pub const D: usize = 8;
 pub const LOG_K_CHUNK: usize = LOG_K / D;
 pub const K_CHUNK: usize = 1 << LOG_K_CHUNK;
 const RA_PER_LOG_M: usize = LOG_M / LOG_K_CHUNK;
@@ -1251,7 +1251,8 @@ impl<F: JoltField, T: Transcript> BatchableSumcheckInstance<F, T> for HammingWei
             .for_each(|(i, claim)| {
                 self.openings.lock().unwrap().insert(
                     OpeningsKeys::InstructionHammingRa(i),
-                    (self.gamma.to_vec(), claim),
+                    // TODO: fix this with actual point
+                    (vec![], claim),
                 );
             });
     }
