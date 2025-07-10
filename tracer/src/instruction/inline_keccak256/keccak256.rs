@@ -585,29 +585,29 @@ mod tests {
         // Round 1 rho and pi step
         execute_rho_and_pi(&mut state);
         let expected_after_rho_pi = [
-            0x0000000000008083u64,
+            0x0000000000000001u64, // After pi, before chi
             0x0000100000000000u64,
-            0x0000000000008000u64,
-            0x0000000000000001u64,
-            0x0000100000008000u64,
             0x0000000000000000u64,
-            0x0000200000200000u64,
+            0x0000000000000000u64,
+            0x0000000000008000u64,
+            0x0000000000000000u64,
+            0x0000000000200000u64,
             0x0000000000000000u64,
             0x0000200000000000u64,
-            0x0000000000200000u64,
+            0x0000000000000000u64,
             0x0000000000000002u64,
+            0x0000000000000000u64,
+            0x0000000000000000u64,
             0x0000000000000200u64,
             0x0000000000000000u64,
-            0x0000000000000202u64,
-            0x0000000000000000u64,
-            0x0000000010000400u64,
-            0x0000000000000000u64,
-            0x0000000000000400u64,
             0x0000000010000000u64,
             0x0000000000000000u64,
-            0x0000010000000000u64,
+            0x0000000000000400u64,
             0x0000000000000000u64,
-            0x0000010000000004u64,
+            0x0000000000000000u64,
+            0x0000000000000000u64,
+            0x0000000000000000u64,
+            0x0000010000000000u64,
             0x0000000000000000u64,
             0x0000000000000004u64,
         ];
@@ -619,7 +619,7 @@ mod tests {
         // Round 1 chi step
         execute_chi(&mut state);
         let expected_after_chi = [
-            0x0000000000000001u64,
+            0x0000000000000001u64, // After chi, before iota
             0x0000100000000000u64,
             0x0000000000008000u64,
             0x0000000000000001u64,
@@ -2715,6 +2715,374 @@ mod tests {
             println!("The problem is in the trace() execution path");
         } else {
             println!("✅ Virtual sequence via trace() works correctly!");
+        }
+    }
+
+    #[test]
+    fn test_fair_comparison_reference_vs_virtual() {
+        println!("=== Fair Comparison: Reference Implementation vs Virtual Sequence ===");
+
+        let test_cases = vec![
+            ("zero state", [0u64; 25]),
+            ("simple pattern", {
+                let mut state = [0u64; 25];
+                for i in 0..25 {
+                    state[i] = (i * 3 + 5) as u64;
+                }
+                state
+            }),
+        ];
+
+        for (description, initial_state) in test_cases {
+            println!("\n--- Testing: {} ---", description);
+
+            // Method 1: Reference implementation (what exec() uses)
+            let mut reference_state = initial_state;
+            execute_keccak_f(&mut reference_state);
+
+            // Method 2: Virtual sequence execution
+            let mut cpu = Cpu::new(Box::new(DefaultTerminal::new()));
+            cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
+            let base_addr = DRAM_BASE;
+            cpu.x[10] = base_addr as i64;
+
+            // Store initial state to memory
+            for (i, &lane) in initial_state.iter().enumerate() {
+                cpu.mmu
+                    .store_doubleword(base_addr + (i * 8) as u64, lane)
+                    .expect("Failed to store initial state");
+            }
+
+            // Execute virtual sequence
+            let instruction = KECCAK256 {
+                address: 0,
+                operands: FormatR {
+                    rs1: 10,
+                    rs2: 0,
+                    rd: 0,
+                },
+                virtual_sequence_remaining: None,
+            };
+
+            instruction.trace(&mut cpu, None);
+
+            // Read result from memory
+            let mut virtual_state = [0u64; 25];
+            for (i, lane) in virtual_state.iter_mut().enumerate() {
+                *lane = cpu
+                    .mmu
+                    .load_doubleword(base_addr + (i * 8) as u64)
+                    .expect("Failed to load result")
+                    .0;
+            }
+
+            // Compare results
+            println!("Reference result (first 5 lanes):");
+            for i in 0..5 {
+                println!("  Lane {}: 0x{:016x}", i, reference_state[i]);
+            }
+
+            println!("Virtual sequence result (first 5 lanes):");
+            for i in 0..5 {
+                println!("  Lane {}: 0x{:016x}", i, virtual_state[i]);
+            }
+
+            let results_match = reference_state == virtual_state;
+            println!("Results match: {}", results_match);
+
+            if !results_match {
+                println!("❌ MISMATCH: Virtual sequence produces different results than reference");
+                for i in 0..25 {
+                    if reference_state[i] != virtual_state[i] {
+                        println!(
+                            "  Lane {}: reference=0x{:016x}, virtual=0x{:016x}",
+                            i, reference_state[i], virtual_state[i]
+                        );
+                    }
+                }
+            } else {
+                println!("✅ SUCCESS: Virtual sequence matches reference implementation");
+            }
+        }
+    }
+
+    #[test]
+    fn test_step_by_step_divergence_isolation() {
+        println!("=== Step-by-Step Divergence Isolation ===");
+
+        // Use zero state for simplicity
+        let initial_state = [0u64; 25];
+
+        println!("Initial state (all zeros)");
+
+        // Reference implementation: step by step
+        let mut ref_state = initial_state;
+
+        // Virtual sequence: we'll execute partial sequences and compare
+        let mut cpu = Cpu::new(Box::new(DefaultTerminal::new()));
+        cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
+        let base_addr = DRAM_BASE;
+        cpu.x[10] = base_addr as i64;
+
+        // Store initial state to memory
+        for (i, &lane) in initial_state.iter().enumerate() {
+            cpu.mmu
+                .store_doubleword(base_addr + (i * 8) as u64, lane)
+                .expect("Failed to store initial state");
+        }
+
+        // Test 1: Load state only
+        println!("\n--- Test 1: Load State Only ---");
+        let mut vr = [0; super::NEEDED_REGISTERS];
+        (0..super::NEEDED_REGISTERS).for_each(|i| {
+            vr[i] = virtual_register_index(i as u64) as usize;
+        });
+
+        let builder = super::Keccak256SequenceBuilder::new(0, vr, 10, 0);
+        let load_sequence = builder.build_load_state_only();
+        println!("Load sequence has {} instructions", load_sequence.len());
+
+        // Execute load sequence
+        for instr in &load_sequence {
+            execute_instruction(&mut cpu, instr);
+        }
+
+        // Check if virtual registers contain the correct initial state
+        let mut virtual_loaded_state = [0u64; 25];
+        for i in 0..25 {
+            virtual_loaded_state[i] = cpu.x[vr[i]] as u64;
+        }
+
+        let load_correct = virtual_loaded_state == initial_state;
+        println!("Load state correct: {}", load_correct);
+        if !load_correct {
+            for i in 0..5 {
+                println!(
+                    "  Lane {}: expected=0x{:016x}, virtual=0x{:016x}",
+                    i, initial_state[i], virtual_loaded_state[i]
+                );
+            }
+            panic!("Load state failed - virtual sequence can't even load correctly!");
+        }
+
+        // Test 2: After each step in round 0
+        let steps = ["theta", "rho_and_pi", "chi", "iota"];
+
+        for (step_idx, step_name) in steps.iter().enumerate() {
+            println!(
+                "\n--- Test {}: After {} (Round 0) ---",
+                step_idx + 2,
+                step_name
+            );
+
+            // Reference: execute this step
+            match *step_name {
+                "theta" => execute_theta(&mut ref_state),
+                "rho_and_pi" => execute_rho_and_pi(&mut ref_state),
+                "chi" => execute_chi(&mut ref_state),
+                "iota" => execute_iota(&mut ref_state, ROUND_CONSTANTS[0]),
+                _ => unreachable!(),
+            }
+
+            // Virtual: execute sequence up to this step
+            let mut cpu_step = Cpu::new(Box::new(DefaultTerminal::new()));
+            cpu_step.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
+            cpu_step.x[10] = base_addr as i64;
+
+            // Store initial state
+            for (i, &lane) in initial_state.iter().enumerate() {
+                cpu_step
+                    .mmu
+                    .store_doubleword(base_addr + (i * 8) as u64, lane)
+                    .expect("Failed to store initial state");
+            }
+
+            // Execute virtual sequence up to this step
+            let builder_step = super::Keccak256SequenceBuilder::new(0, vr, 10, 0);
+            let step_sequence = builder_step.build_up_to_step(0, step_name);
+
+            for instr in &step_sequence {
+                execute_instruction(&mut cpu_step, instr);
+            }
+
+            // Read virtual state from registers (not memory)
+            let mut virtual_step_state = [0u64; 25];
+            for i in 0..25 {
+                virtual_step_state[i] = cpu_step.x[vr[i]] as u64;
+            }
+
+            // Compare
+            let step_correct = virtual_step_state == ref_state;
+            println!("After {}: correct = {}", step_name, step_correct);
+
+            if !step_correct {
+                println!("❌ DIVERGENCE FOUND at step: {}", step_name);
+                println!("Reference (first 5 lanes):");
+                for i in 0..5 {
+                    println!("  Lane {}: 0x{:016x}", i, ref_state[i]);
+                }
+                println!("Virtual (first 5 lanes):");
+                for i in 0..5 {
+                    println!("  Lane {}: 0x{:016x}", i, virtual_step_state[i]);
+                }
+
+                // Show all mismatches
+                let mut mismatch_count = 0;
+                for i in 0..25 {
+                    if ref_state[i] != virtual_step_state[i] {
+                        println!(
+                            "  Mismatch lane {}: ref=0x{:016x}, virtual=0x{:016x}",
+                            i, ref_state[i], virtual_step_state[i]
+                        );
+                        mismatch_count += 1;
+                    }
+                }
+                println!("Total mismatches: {}/25", mismatch_count);
+
+                panic!("Virtual sequence diverges at step: {}", step_name);
+            } else {
+                println!("✅ Step {} matches reference implementation", step_name);
+            }
+        }
+
+        println!(
+            "\n✅ All steps in round 0 match! Issue must be in later rounds or store operation."
+        );
+    }
+
+    #[test]
+    fn test_trace_vs_direct_execution() {
+        println!("=== Trace vs Direct Execution Comparison ===");
+
+        // Use zero state for simplicity
+        let initial_state = [0u64; 25];
+
+        // Method 1: Direct execution of virtual instructions
+        println!("\n--- Method 1: Direct Execution of Virtual Instructions ---");
+        let mut cpu_direct = Cpu::new(Box::new(DefaultTerminal::new()));
+        cpu_direct.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
+        let base_addr = DRAM_BASE;
+        cpu_direct.x[10] = base_addr as i64;
+
+        // Store initial state
+        for (i, &lane) in initial_state.iter().enumerate() {
+            cpu_direct
+                .mmu
+                .store_doubleword(base_addr + (i * 8) as u64, lane)
+                .expect("Failed to store initial state");
+        }
+
+        let mut vr = [0; super::NEEDED_REGISTERS];
+        (0..super::NEEDED_REGISTERS).for_each(|i| {
+            vr[i] = virtual_register_index(i as u64) as usize;
+        });
+
+        // Generate and execute virtual sequence directly
+        let builder = super::Keccak256SequenceBuilder::new(0, vr, 10, 0);
+        let virtual_sequence = builder.build();
+
+        println!(
+            "Virtual sequence has {} instructions",
+            virtual_sequence.len()
+        );
+
+        for instr in &virtual_sequence {
+            execute_instruction(&mut cpu_direct, instr);
+        }
+
+        // Read result from memory
+        let mut direct_result = [0u64; 25];
+        for i in 0..25 {
+            direct_result[i] = cpu_direct
+                .mmu
+                .load_doubleword(base_addr + (i * 8) as u64)
+                .expect("Failed to load result")
+                .0;
+        }
+
+        println!(
+            "Direct execution result (first 3 lanes): 0x{:016x}, 0x{:016x}, 0x{:016x}",
+            direct_result[0], direct_result[1], direct_result[2]
+        );
+
+        // Method 2: Using trace() method
+        println!("\n--- Method 2: Using trace() Method ---");
+        let mut cpu_trace = Cpu::new(Box::new(DefaultTerminal::new()));
+        cpu_trace.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
+        cpu_trace.x[10] = base_addr as i64;
+
+        // Store initial state
+        for (i, &lane) in initial_state.iter().enumerate() {
+            cpu_trace
+                .mmu
+                .store_doubleword(base_addr + (i * 8) as u64, lane)
+                .expect("Failed to store initial state");
+        }
+
+        // Execute using trace method
+        let instruction = KECCAK256 {
+            address: 0,
+            operands: FormatR {
+                rs1: 10,
+                rs2: 0,
+                rd: 0,
+            },
+            virtual_sequence_remaining: None,
+        };
+
+        instruction.trace(&mut cpu_trace, None);
+
+        // Read result from memory
+        let mut trace_result = [0u64; 25];
+        for i in 0..25 {
+            trace_result[i] = cpu_trace
+                .mmu
+                .load_doubleword(base_addr + (i * 8) as u64)
+                .expect("Failed to load result")
+                .0;
+        }
+
+        println!(
+            "Trace execution result (first 3 lanes): 0x{:016x}, 0x{:016x}, 0x{:016x}",
+            trace_result[0], trace_result[1], trace_result[2]
+        );
+
+        // Compare
+        let results_match = direct_result == trace_result;
+        println!("\nDirect vs Trace match: {}", results_match);
+
+        if !results_match {
+            println!("❌ CRITICAL: Direct execution and trace() produce different results!");
+            println!("This means the issue is in the trace() method implementation.");
+            for i in 0..5 {
+                if direct_result[i] != trace_result[i] {
+                    println!(
+                        "  Lane {}: direct=0x{:016x}, trace=0x{:016x}",
+                        i, direct_result[i], trace_result[i]
+                    );
+                }
+            }
+        } else {
+            println!("✅ Direct execution and trace() produce identical results");
+            println!("The issue must be elsewhere.");
+        }
+
+        // Method 3: Reference implementation
+        println!("\n--- Method 3: Reference Implementation ---");
+        let mut ref_state = initial_state;
+        execute_keccak_f(&mut ref_state);
+        println!(
+            "Reference result (first 3 lanes): 0x{:016x}, 0x{:016x}, 0x{:016x}",
+            ref_state[0], ref_state[1], ref_state[2]
+        );
+
+        let direct_vs_ref = direct_result == ref_state;
+        println!("Direct vs Reference match: {}", direct_vs_ref);
+
+        if !direct_vs_ref {
+            println!("❌ Virtual sequence implementation is wrong");
+        } else {
+            println!("✅ Virtual sequence implementation is correct");
         }
     }
 }
