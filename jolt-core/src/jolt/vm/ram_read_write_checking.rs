@@ -896,9 +896,9 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         // - the previous round's claim s(0) + s(1) = a * c + (a + b) * (c + d + e)
         //
         // Both l and q are represented by their evaluations at 0 and infinity. I.e., we have a, b, c,
-        // and e, but not d. We compute s by first computing l and t at points 2 and 3.
+        // and e, but not d. We compute s by first computing l and q at points 2 and 3.
 
-        // Evaluations of the linear polynomial linear polynomial
+        // Evaluations of the linear polynomial
         let eq_eval_1 = gruens_eq_r_prime.current_scalar
             * gruens_eq_r_prime.w[gruens_eq_r_prime.current_index - 1];
         let eq_eval_0 = gruens_eq_r_prime.current_scalar - eq_eval_1;
@@ -1106,7 +1106,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         drop(_inner_guard);
         drop(inner_span);
 
-        gruens_eq_r_prime.bind(r_j); // TODO(hamlinb) Could this be parallelized?
+        gruens_eq_r_prime.bind(r_j);
         eq_r_prime.bind_parallel(r_j, BindingOrder::LowToHigh);
         inc_cycle.bind_parallel(r_j, BindingOrder::LowToHigh);
 

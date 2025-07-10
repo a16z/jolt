@@ -707,7 +707,8 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
 
                             let mut inner_sum_evals = [F::zero(); DEGREE - 1];
                             for k in dirty_indices.ones() {
-                                let mut val_eval_infty: Option<F> = None;
+                                let val_eval_0 = val_j_r[0][k];
+                                let val_eval_infty = val_j_r[1][k] - val_j_r[0][k];
 
                                 // rs1 read-checking sumcheck
                                 if !rs1_ra[0][k].is_zero() || !rs1_ra[1][k].is_zero() {
@@ -715,12 +716,9 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                                     let ra_eval_1 = rs1_ra[1][k];
                                     let ra_eval_infty = ra_eval_1 - ra_eval_0;
 
-                                    val_eval_infty = Some(val_j_r[1][k] - val_j_r[0][k]);
-
                                     inner_sum_evals[0] +=
-                                        self.z * ra_eval_0.mul_0_optimized(val_j_r[0][k]);
-                                    inner_sum_evals[1] +=
-                                        self.z * ra_eval_infty * val_eval_infty.unwrap();
+                                        self.z * ra_eval_0.mul_0_optimized(val_eval_0);
+                                    inner_sum_evals[1] += self.z * ra_eval_infty * val_eval_infty;
 
                                     rs1_ra[0][k] = F::zero();
                                     rs1_ra[1][k] = F::zero();
@@ -732,13 +730,10 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                                     let ra_eval_1 = rs2_ra[1][k];
                                     let ra_eval_infty = ra_eval_1 - ra_eval_0;
 
-                                    val_eval_infty =
-                                        val_eval_infty.or(Some(val_j_r[1][k] - val_j_r[0][k]));
-
                                     inner_sum_evals[0] +=
-                                        self.z_squared * ra_eval_0.mul_0_optimized(val_j_r[0][k]);
+                                        self.z_squared * ra_eval_0.mul_0_optimized(val_eval_0);
                                     inner_sum_evals[1] +=
-                                        self.z_squared * ra_eval_infty * val_eval_infty.unwrap();
+                                        self.z_squared * ra_eval_infty * val_eval_infty;
 
                                     rs2_ra[0][k] = F::zero();
                                     rs2_ra[1][k] = F::zero();
@@ -750,12 +745,8 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                                     let wa_eval_1 = rd_wa[1][k];
                                     let wa_eval_infty = wa_eval_1 - wa_eval_0;
 
-                                    // TODO: can move val evals outside if statements.
-                                    let val_eval_infty =
-                                        val_eval_infty.unwrap_or(val_j_r[1][k] - val_j_r[0][k]);
-
-                                    inner_sum_evals[0] += wa_eval_0
-                                        .mul_0_optimized(inc_cycle_evals[0] + val_j_r[0][k]);
+                                    inner_sum_evals[0] +=
+                                        wa_eval_0.mul_0_optimized(inc_cycle_evals[0] + val_eval_0);
                                     inner_sum_evals[1] +=
                                         wa_eval_infty * (inc_cycle_evals[1] + val_eval_infty);
 
@@ -915,19 +906,18 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
 
                             let mut inner_sum_evals = [F::zero(); DEGREE - 1];
                             for k in dirty_indices.ones() {
-                                let mut val_eval_infty: Option<F> = None;
+                                let val_eval_0 = val_j_r[0][k];
+                                let val_eval_infty = val_j_r[1][k] - val_j_r[0][k];
 
                                 // rs1 read-checking sumcheck
                                 if !rs1_ra[0][k].is_zero() || !rs1_ra[1][k].is_zero() {
-                                    // Preemptively multiply by `z` to save a mult
-                                    let ra_eval_0 = self.z * rs1_ra[0][k];
-                                    let ra_eval_1 = self.z * rs1_ra[1][k];
+                                    let ra_eval_0 = rs1_ra[0][k];
+                                    let ra_eval_1 = rs1_ra[1][k];
                                     let ra_eval_infty = ra_eval_1 - ra_eval_0;
 
-                                    val_eval_infty = Some(val_j_r[1][k] - val_j_r[0][k]);
-
-                                    inner_sum_evals[0] += ra_eval_0.mul_0_optimized(val_j_r[0][k]);
-                                    inner_sum_evals[1] += ra_eval_infty * val_eval_infty.unwrap();
+                                    inner_sum_evals[0] +=
+                                        self.z * ra_eval_0.mul_0_optimized(val_eval_0);
+                                    inner_sum_evals[1] += self.z * ra_eval_infty * val_eval_infty;
 
                                     rs1_ra[0][k] = F::zero();
                                     rs1_ra[1][k] = F::zero();
@@ -935,16 +925,14 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
 
                                 // rs2 read-checking sumcheck
                                 if !rs2_ra[0][k].is_zero() || !rs2_ra[1][k].is_zero() {
-                                    // Preemptively multiply by `z_squared` to save a mult
-                                    let ra_eval_0 = self.z_squared * rs2_ra[0][k];
-                                    let ra_eval_1 = self.z_squared * rs2_ra[1][k];
+                                    let ra_eval_0 = rs2_ra[0][k];
+                                    let ra_eval_1 = rs2_ra[1][k];
                                     let ra_eval_infty = ra_eval_1 - ra_eval_0;
 
-                                    val_eval_infty =
-                                        val_eval_infty.or(Some(val_j_r[1][k] - val_j_r[0][k]));
-
-                                    inner_sum_evals[0] += ra_eval_0.mul_0_optimized(val_j_r[0][k]);
-                                    inner_sum_evals[1] += ra_eval_infty * val_eval_infty.unwrap();
+                                    inner_sum_evals[0] +=
+                                        self.z_squared * ra_eval_0.mul_0_optimized(val_eval_0);
+                                    inner_sum_evals[1] +=
+                                        self.z_squared * ra_eval_infty * val_eval_infty;
 
                                     rs2_ra[0][k] = F::zero();
                                     rs2_ra[1][k] = F::zero();
@@ -956,12 +944,8 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                                     let wa_eval_1 = rd_wa[1][k];
                                     let wa_eval_infty = wa_eval_1 - wa_eval_0;
 
-                                    // TODO: can move val evals outside if statements.
-                                    let val_eval_infty =
-                                        val_eval_infty.unwrap_or(val_j_r[1][k] - val_j_r[0][k]);
-
-                                    inner_sum_evals[0] += wa_eval_0
-                                        .mul_0_optimized(inc_cycle_evals[0] + val_j_r[0][k]);
+                                    inner_sum_evals[0] +=
+                                        wa_eval_0.mul_0_optimized(inc_cycle_evals[0] + val_eval_0);
                                     inner_sum_evals[1] +=
                                         wa_eval_infty * (inc_cycle_evals[1] + val_eval_infty);
 
@@ -1002,9 +986,9 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
         // - the previous round's claim s(0) + s(1) = a * c + (a + b) * (c + d + e)
         //
         // Both l and q are represented by their evaluations at 0 and infinity. I.e., we have a, b, c,
-        // and e, but not d. We compute s by first computing l and t at points 2 and 3.
+        // and e, but not d. We compute s by first computing l and q at points 2 and 3.
 
-        // Evaluations of the linear polynomial linear polynomial
+        // Evaluations of the linear polynomial
         let eq_eval_1 = gruens_eq_r_prime.current_scalar
             * gruens_eq_r_prime.w[gruens_eq_r_prime.current_index - 1];
         let eq_eval_0 = gruens_eq_r_prime.current_scalar - eq_eval_1;
@@ -1234,7 +1218,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
         drop(_inner_guard);
         drop(inner_span);
 
-        gruens_eq_r_prime.bind(r_j); // TODO(hamlinb) Could this be parallelized?
+        gruens_eq_r_prime.bind(r_j);
         eq_r_prime.bind_parallel(r_j, BindingOrder::LowToHigh);
         inc_cycle.bind_parallel(r_j, BindingOrder::LowToHigh);
 
