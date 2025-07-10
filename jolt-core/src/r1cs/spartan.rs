@@ -6,6 +6,7 @@ use crate::dag::stage::SumcheckStages;
 use crate::dag::state_manager::{
     OpeningPoint, OpeningsKeys, ProofData, ProofKeys, StateManager, LITTLE_ENDIAN,
 };
+use crate::dag::state_manager::OpeningsKeys::{OuterSumcheckAz, OuterSumcheckBz, OuterSumcheckCz};
 use crate::field::JoltField;
 use crate::jolt::vm::JoltCommitments;
 use crate::jolt::vm::JoltProverPreprocessing;
@@ -1019,50 +1020,73 @@ impl<
 
     fn stage2_prover_instances(
         &self,
-        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>> {
-        todo!() // TODO(markosg04) scaffolding stage 2 for spartan
-                /* Sumcheck 2: Inner sumcheck
-                   Proves: claim_Az + r * claim_Bz + r^2 * claim_Cz =
-                           \sum_y (A_small(rx, y) + r * B_small(rx, y) + r^2 * C_small(rx, y)) * z(y)
+        /* Sumcheck 2: Inner sumcheck
+            Proves: claim_Az + r * claim_Bz + r^2 * claim_Cz =
+                    \sum_y (A_small(rx, y) + r * B_small(rx, y) + r^2 * C_small(rx, y)) * z(y)
 
-                   Evaluates the uniform constraint matrices A_small, B_small, C_small at the point
-                   determined by the outer sumcheck.
-                */
-        // let (key, constraint_builder, input_polys) = state_manager.get_spartan_data();
+            Evaluates the uniform constraint matrices A_small, B_small, C_small at the point
+            determined by the outer sumcheck.
+        */
+        let (key, _, input_polys) = state_manager.get_spartan_data();
 
-        // let num_cycles = key.num_steps;
-        // let num_cycles_bits = num_cycles.ilog2() as usize;
+        let num_cycles = key.num_steps;
+        let num_cycles_bits = num_cycles.ilog2() as usize;
 
-        // let inner_sumcheck_RLC: F = state_manager.prover_transcript.borrow_mut().challenge_scalar();
+        let inner_sumcheck_RLC: F = state_manager.prover_transcript.borrow_mut().challenge_scalar();
 
-        // // we get this claim from state manager
-        // let (r_cycle, rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
+        // we get this opening_point from state manager.
+        // we use Az here but Bz, Cz are same.
+        let outer_sumcheck_r = state_manager.openings_point(OuterSumcheckAz);
+        let (r_cycle, rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
-        // let claims = OuterSumcheckClaims {
-        //     az: claim_Az,
-        //     bz: claim_Bz,
-        //     cz: claim_Cz,
-        // };
-        // let params = InnerSumcheckParams {
-        //     r_cycle: r_cycle.to_vec(),
-        //     rx_var: rx_var.to_vec(),
-        // };
-        // let (inner_sumcheck_proof, _inner_sumcheck_r) = Self::prove_inner_sumcheck(
-        //     key,
-        //     &input_polys,
-        //     &claims,
-        //     &params,
-        //     inner_sumcheck_RLC,
-        //     transcript,
-        // );
+        // Retrieve Az, Bz, Cz
+        let claim_Az = state_manager.openings(OuterSumcheckAz);
+        let claim_Bz = state_manager.openings(OuterSumcheckBz);
+        let claim_Cz = state_manager.openings(OuterSumcheckCz);
 
-        // // Evaluate all witness polynomials P_i at r_cycle for the verifier
-        // // Verifier computes: z(r_inner, r_cycle) = Σ_i eq(r_inner, i) * P_i(r_cycle)
-        // let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
-        // let (claimed_witness_evals, chis) =
-        //     MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
+         let claims = OuterClaims {
+            az: claim_Az,
+            bz: claim_Bz,
+            cz: claim_Cz,
+        };
+        let params = InnerSumcheckParams {
+            r_cycle: r_cycle.to_vec(),
+            rx_var: rx_var.to_vec(),
+        };
 
-        // let (_, eq_plus_one_r_cycle) = EqPlusOnePolynomial::evals(r_cycle, None);
+        let inner_sumcheck =
+            InnerSumcheck::new_prover(key, input_polys, &claims, &params, inner_sumcheck_RLC);
+
+        // Evaluate all witness polynomials P_i at r_cycle for the verifier
+        // Verifier computes: z(r_inner, r_cycle) = Σ_i eq(r_inner, i) * P_i(r_cycle)
+        let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
+        let (claimed_witness_evals, chis) =
+            MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
+
+        let (_, eq_plus_one_r_cycle) = EqPlusOnePolynomial::evals(r_cycle, None);
+
+        /*  Sumcheck 3: Batched sumcheck for NextUnexpandedPC and NextPC verification
+            Proves: NextUnexpandedPC(r_cycle) + r * NextPC(r_cycle) =
+                    \sum_t (UnexpandedPC(t) + r * PC(t)) * eq_plus_one(r_cycle, t)
+
+            This batched sumcheck simultaneously proves:
+            1. NextUnexpandedPC(r_cycle) = \sum_t UnexpandedPC(t) * eq_plus_one(r_cycle, t)
+            2. NextPC(r_cycle) = \sum_t PC(t) * eq_plus_one(r_cycle, t)
+        */
+
+        let r: F = state_manager.prover_transcript.borrow_mut().challenge_scalar();
+
+        let pc_sumcheck =
+            PCSumcheck::new_prover(input_polys, &claimed_witness_evals, eq_plus_one_r_cycle, r);
+
+        // let cached_claims = pc_sumcheck.cached_claims.expect("Claims not cached");
+        // let unexpanded_pc_eval_at_shift_r = cached_claims.0;
+        // let pc_eval_at_shift_r = cached_claims.1;
+        // let shift_sumcheck_witness_eval = vec![unexpanded_pc_eval_at_shift_r, pc_eval_at_shift_r];
+
+        vec![Box::new(inner_sumcheck), Box::new(pc_sumcheck)]
+
     }
 }

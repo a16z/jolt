@@ -41,6 +41,12 @@ impl<const E: Endianness, F: JoltField> Index<RangeFull> for OpeningPoint<E, F> 
 }
 
 impl<const E: Endianness, F: JoltField> OpeningPoint<E, F> {
+    pub fn split_at(&self, mid: usize) -> (&[F], &[F]) {
+        self.r.split_at(mid)
+    }
+}
+
+impl<const E: Endianness, F: JoltField> OpeningPoint<E, F> {
     pub fn new(r: Vec<F>) -> Self {
         Self { r }
     }
@@ -86,6 +92,8 @@ pub enum OpeningsKeys {
     OuterSumcheckBz,    // Bz claim from outer sumcheck
     OuterSumcheckCz,    // Cz claim from outer sumcheck
     OuterSumcheckRxVar, // rx_var from outer sumcheck -- TODO(markosg04)where is this used ?
+    PCSumcheckUnexpandedPC, // UnexpandedPC evaluation from PC sumcheck
+    PCSumcheckPC,           // PC evaluation from PC sumcheck
 }
 
 pub type Openings<F> = HashMap<OpeningsKeys, (OpeningPoint<LITTLE_ENDIAN, F>, F)>;
