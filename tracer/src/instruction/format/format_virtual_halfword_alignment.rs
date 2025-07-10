@@ -17,7 +17,7 @@ pub struct HalfwordAlignFormat {
     pub imm: i64,
 }
 
-#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HalfwordAlignRegisterState {
     pub rs1: u64,
 }

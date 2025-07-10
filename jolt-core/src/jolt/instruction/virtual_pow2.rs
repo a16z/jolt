@@ -27,7 +27,13 @@ impl InstructionFlags for VirtualPow2 {
 
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualPow2> {
     fn to_instruction_inputs(&self) -> (u64, i64) {
-        (self.register_state.rs1, 0)
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => (self.register_state.rs1 as u8 as u64, 0),
+            32 => (self.register_state.rs1 as u32 as u64, 0),
+            64 => (self.register_state.rs1, 0),
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+        }
     }
 
     fn to_lookup_operands(&self) -> (u64, u64) {
@@ -43,7 +49,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualPow2> 
         let y = LookupQuery::<WORD_SIZE>::to_lookup_index(self);
         match WORD_SIZE {
             #[cfg(test)]
-            8 => (1u64 << (y % 8)) as u64,
+            8 => 1u64 << (y % 8),
             32 => 1u64 << (y % 32),
             64 => 1u64 << (y % 64),
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),

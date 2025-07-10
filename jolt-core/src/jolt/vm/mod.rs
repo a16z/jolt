@@ -2,25 +2,33 @@
 #![allow(dead_code)]
 
 use crate::field::JoltField;
+use crate::jolt::vm::ram::remap_address;
 use crate::jolt::vm::rv32i_vm::Serializable;
+use crate::jolt::witness::ALL_COMMITTED_POLYNOMIALS;
 use crate::msm::icicle;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
+use crate::poly::commitment::dory::DoryGlobals;
+use crate::poly::opening_proof::{
+    ProverOpeningAccumulator, ReducedOpeningProof, VerifierOpeningAccumulator,
+};
 use crate::r1cs::constraints::R1CSConstraints;
 use crate::r1cs::spartan::UniformSpartanProof;
 use crate::utils::errors::ProofVerifyError;
+use crate::utils::math::Math;
 use crate::utils::transcript::Transcript;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use bytecode::{BytecodePreprocessing, BytecodeShoutProof};
 use common::jolt_device::MemoryLayout;
 use instruction_lookups::LookupsProof;
 use ram::{RAMPreprocessing, RAMTwistProof};
+use rayon::prelude::*;
 use registers::RegistersTwistProof;
 use std::{
     fs::File,
     io::{Read, Write},
     path::Path,
 };
+use tracer::emulator::memory::Memory;
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
 use tracer::JoltDevice;
 
@@ -141,7 +149,7 @@ where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
 {
     pub(crate) transcript: ProofTranscript,
-    pub(crate) opening_accumulator: ProverOpeningAccumulator<F, ProofTranscript>,
+    pub(crate) opening_accumulator: ProverOpeningAccumulator<F, PCS, ProofTranscript>,
     pub(crate) prover_setup: PCS::ProverSetup,
 }
 
@@ -158,37 +166,19 @@ where
     pub ram: RAMTwistProof<F, ProofTranscript>,
     pub registers: RegistersTwistProof<F, ProofTranscript>,
     pub r1cs: UniformSpartanProof<F, ProofTranscript>,
-    // pub opening_proof: ReducedOpeningProof<F, PCS, ProofTranscript>,
+    pub opening_proof: ReducedOpeningProof<F, PCS, ProofTranscript>,
+    pub commitments: JoltCommitments<F, PCS, ProofTranscript>,
 }
 
-// impl<F: JoltField> JoltPolynomials<F> {
-//     #[tracing::instrument(skip_all, name = "JoltPolynomials::commit")]
-//     pub fn commit<const C: usize, PCS, ProofTranscript>(
-//         &self,
-//         preprocessing: &JoltPreprocessing<C, F, PCS, ProofTranscript>,
-//     ) -> JoltCommitments<PCS, ProofTranscript>
-//     where
-//         PCS: CommitmentScheme<ProofTranscript, Field = F>,
-//         ProofTranscript: Transcript,
-//     {
-//         let span = tracing::span!(tracing::Level::INFO, "commit::initialize");
-//         let _guard = span.enter();
-//         let mut commitments = JoltCommitments::<PCS, ProofTranscript>::initialize(preprocessing);
-//         drop(_guard);
-//         drop(span);
-
-//         let trace_polys = self.read_write_values();
-//         let trace_commitments = PCS::batch_commit(&trace_polys, &preprocessing.generators);
-
-//         commitments
-//             .read_write_values_mut()
-//             .into_iter()
-//             .zip(trace_commitments.into_iter())
-//             .for_each(|(dest, src)| *dest = src);
-
-//         commitments
-//     }
-// }
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
+pub struct JoltCommitments<F, PCS, ProofTranscript>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
+    pub commitments: Vec<PCS::Commitment>,
+}
 
 pub trait Jolt<const WORD_SIZE: usize, F, PCS, ProofTranscript>
 where
@@ -206,7 +196,6 @@ where
     ) -> JoltSharedPreprocessing {
         icicle::icicle_init();
 
-        // let read_write_memory_preprocessing = ReadWriteMemoryPreprocessing::preprocess(memory_init);
         let bytecode_preprocessing = BytecodePreprocessing::preprocess(bytecode);
         let ram_preprocessing = RAMPreprocessing::preprocess(memory_init);
 
@@ -222,7 +211,7 @@ where
         bytecode: Vec<RV32IMInstruction>,
         memory_layout: MemoryLayout,
         memory_init: Vec<(u64, u8)>,
-        max_bytecode_size: usize,
+        _max_bytecode_size: usize,
         max_memory_size: usize,
         max_trace_length: usize,
     ) -> JoltProverPreprocessing<F, PCS, ProofTranscript> {
@@ -231,15 +220,20 @@ where
 
         let shared = Self::shared_preprocess(bytecode, memory_layout, memory_init);
 
-        let max_poly_len: usize = [
-            (max_bytecode_size + 1).next_power_of_two(), // Account for no-op prepended to bytecode
-            max_trace_length.next_power_of_two(),
+        let max_K = [
+            shared.bytecode.code_size.next_power_of_two(),
             max_memory_size.next_power_of_two(),
+            1 << 16, // instruction lookups Shout
         ]
         .into_iter()
         .max()
         .unwrap();
-        let generators = PCS::setup_prover(max_poly_len);
+        let max_T = max_trace_length.next_power_of_two();
+
+        println!("setup...");
+        // TODO(moodlezoup): Change setup parameter to # variables everywhere
+        let generators = PCS::setup_prover(max_K.log_2() + max_T.log_2());
+        println!("setup done");
 
         JoltProverPreprocessing {
             generators,
@@ -250,18 +244,27 @@ where
 
     #[tracing::instrument(skip_all, name = "Jolt::prove")]
     fn prove(
-        program_io: JoltDevice,
+        mut program_io: JoltDevice,
         mut trace: Vec<RV32IMCycle>,
+        final_memory_state: Memory,
         mut preprocessing: JoltProverPreprocessing<F, PCS, ProofTranscript>,
     ) -> (
         JoltProof<WORD_SIZE, F, PCS, ProofTranscript>,
-        // JoltCommitments<PCS, ProofTranscript>,
         JoltDevice,
         Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
     ) {
         icicle::icicle_init();
         let trace_length = trace.len();
         println!("Trace length: {trace_length}");
+
+        // truncate trailing zeros on device outputs
+        program_io.outputs.truncate(
+            program_io
+                .outputs
+                .iter()
+                .rposition(|&b| b != 0)
+                .map_or(0, |pos| pos + 1),
+        );
 
         F::initialize_lookup_tables(std::mem::take(&mut preprocessing.field));
 
@@ -282,8 +285,31 @@ where
             *trace.last_mut().unwrap() = RV32IMCycle::last_jalr(last_address);
         }
 
+        let ram_addresses: Vec<usize> = trace
+            .par_iter()
+            .map(|cycle| {
+                remap_address(
+                    cycle.ram_access().address() as u64,
+                    &preprocessing.shared.memory_layout,
+                ) as usize
+            })
+            .collect();
+        let ram_K = ram_addresses.par_iter().max().unwrap().next_power_of_two();
+
+        let K = [
+            preprocessing.shared.bytecode.code_size,
+            ram_K,
+            1 << 16, // K for instruction lookups Shout
+        ]
+        .into_iter()
+        .max()
+        .unwrap();
+        println!("T = {padded_trace_length}, K = {K}");
+
+        let _guard = DoryGlobals::initialize(K, padded_trace_length);
+
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
-        let mut opening_accumulator: ProverOpeningAccumulator<F, ProofTranscript> =
+        let mut opening_accumulator: ProverOpeningAccumulator<F, PCS, ProofTranscript> =
             ProverOpeningAccumulator::new();
 
         Self::fiat_shamir_preamble(
@@ -291,16 +317,20 @@ where
             &program_io,
             &program_io.memory_layout,
             trace_length,
+            ram_K,
         );
 
-        // jolt_commitments
-        //     .read_write_values()
-        //     .iter()
-        //     .for_each(|value| value.append_to_transcript(&mut transcript));
-        // jolt_commitments
-        //     .init_final_values()
-        //     .iter()
-        //     .for_each(|value| value.append_to_transcript(&mut transcript));
+        let committed_polys: Vec<_> = ALL_COMMITTED_POLYNOMIALS
+            .par_iter()
+            .map(|poly| poly.generate_witness(&preprocessing, &trace))
+            .collect();
+        let commitments: Vec<_> = committed_polys
+            .par_iter()
+            .map(|poly| PCS::commit(poly, &preprocessing.generators))
+            .collect();
+        for commitment in commitments.iter() {
+            transcript.append_serializable(commitment);
+        }
 
         let constraint_builder = Self::Constraints::construct_constraints(padded_trace_length);
         let spartan_key = UniformSpartanProof::<F, ProofTranscript>::setup(
@@ -320,27 +350,40 @@ where
         .ok()
         .unwrap();
 
-        let instruction_proof =
-            LookupsProof::prove(&trace, &mut opening_accumulator, &mut transcript);
-
-        let registers_proof =
-            RegistersTwistProof::prove(&trace, &mut opening_accumulator, &mut transcript);
-
-        let ram_proof = RAMTwistProof::prove(
-            &preprocessing.shared.ram,
+        let instruction_proof = LookupsProof::prove(
+            &preprocessing,
             &trace,
-            &program_io,
-            1 << 16, // TODO(moodlezoup)
             &mut opening_accumulator,
             &mut transcript,
         );
 
-        let bytecode_proof =
-            BytecodeShoutProof::prove(&preprocessing.shared.bytecode, &trace, &mut transcript);
+        let registers_proof = RegistersTwistProof::prove(
+            &preprocessing,
+            &trace,
+            &mut opening_accumulator,
+            &mut transcript,
+        );
+
+        let ram_proof = RAMTwistProof::prove(
+            &preprocessing,
+            &trace,
+            final_memory_state,
+            &program_io,
+            ram_K,
+            &mut opening_accumulator,
+            &mut transcript,
+        );
+
+        let bytecode_proof = BytecodeShoutProof::prove(
+            &preprocessing,
+            &trace,
+            &mut opening_accumulator,
+            &mut transcript,
+        );
 
         // Batch-prove all openings
-        // let opening_proof =
-        //     opening_accumulator.reduce_and_prove::<PCS>(&preprocessing.generators, &mut transcript);
+        let opening_proof =
+            opening_accumulator.reduce_and_prove(&preprocessing.generators, &mut transcript);
 
         let jolt_proof = JoltProof {
             trace_length,
@@ -349,7 +392,8 @@ where
             ram: ram_proof,
             registers: registers_proof,
             r1cs: r1cs_proof,
-            // opening_proof,
+            opening_proof,
+            commitments: JoltCommitments { commitments },
         };
 
         #[cfg(test)]
@@ -360,6 +404,7 @@ where
         });
         #[cfg(not(test))]
         let debug_info = None;
+
         (jolt_proof, program_io, debug_info)
     }
 
@@ -367,27 +412,58 @@ where
     fn verify(
         preprocessing: JoltVerifierPreprocessing<F, PCS, ProofTranscript>,
         proof: JoltProof<WORD_SIZE, F, PCS, ProofTranscript>,
-        // commitments: JoltCommitments<PCS, ProofTranscript>,
-        program_io: JoltDevice,
+        mut program_io: JoltDevice,
         _debug_info: Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
     ) -> Result<(), ProofVerifyError> {
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
         let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS, ProofTranscript> =
             VerifierOpeningAccumulator::new();
 
+        // truncate trailing zeros on device outputs
+        program_io.outputs.truncate(
+            program_io
+                .outputs
+                .iter()
+                .rposition(|&b| b != 0)
+                .map_or(0, |pos| pos + 1),
+        );
+
         #[cfg(test)]
-        if let Some(debug_info) = _debug_info {
-            transcript.compare_to(debug_info.transcript);
-            opening_accumulator
-                .compare_to(debug_info.opening_accumulator, &debug_info.prover_setup);
+        {
+            if let Some(debug_info) = _debug_info {
+                transcript.compare_to(debug_info.transcript);
+                opening_accumulator
+                    .compare_to(debug_info.opening_accumulator, &debug_info.prover_setup);
+            }
         }
+
+        #[cfg(test)]
+        let K = [
+            preprocessing.shared.bytecode.code_size,
+            proof.ram.K,
+            1 << 16, // K for instruction lookups Shout
+        ]
+        .into_iter()
+        .max()
+        .unwrap();
+        #[cfg(test)]
+        let T = proof.trace_length.next_power_of_two();
+        // Need to initialize globals because the verifier computes commitments
+        // in `VerifierOpeningAccumulator::append` inside of a `#[cfg(test)]` block
+        #[cfg(test)]
+        let _guard = DoryGlobals::initialize(K, T);
 
         Self::fiat_shamir_preamble(
             &mut transcript,
             &program_io,
             &preprocessing.shared.memory_layout,
             proof.trace_length,
+            proof.ram.K,
         );
+
+        for commitment in proof.commitments.commitments.iter() {
+            transcript.append_serializable(commitment);
+        }
 
         // Regenerate the uniform Spartan key
         let padded_trace_length = proof.trace_length.next_power_of_two();
@@ -398,33 +474,50 @@ where
 
         proof
             .r1cs
-            .verify(&spartan_key, &mut opening_accumulator, &mut transcript)
+            .verify(
+                &spartan_key,
+                &proof.commitments,
+                &mut opening_accumulator,
+                &mut transcript,
+            )
             .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))?;
-        proof
-            .instruction_lookups
-            .verify(&mut opening_accumulator, &mut transcript)?;
-        proof
-            .registers
-            .verify(padded_trace_length, &mut transcript)?;
-        proof.ram.verify(
-            1 << 16,
-            padded_trace_length,
-            &preprocessing.shared.ram,
-            &program_io,
-            &mut transcript,
-        )?;
-        proof.bytecode.verify(
-            &preprocessing.shared.bytecode,
-            padded_trace_length,
+
+        proof.instruction_lookups.verify(
+            &proof.commitments,
+            &mut opening_accumulator,
             &mut transcript,
         )?;
 
+        proof.registers.verify(
+            &proof.commitments,
+            padded_trace_length,
+            &mut opening_accumulator,
+            &mut transcript,
+        )?;
+
+        proof.ram.verify(
+            padded_trace_length,
+            &preprocessing.shared.ram,
+            &proof.commitments,
+            &program_io,
+            &mut transcript,
+            &mut opening_accumulator,
+        )?;
+
+        proof.bytecode.verify(
+            &preprocessing.shared.bytecode,
+            &proof.commitments,
+            padded_trace_length,
+            &mut transcript,
+            &mut opening_accumulator,
+        )?;
+
         // Batch-verify all openings
-        // opening_accumulator.reduce_and_verify(
-        //     &preprocessing.generators,
-        //     &proof.opening_proof,
-        //     &mut transcript,
-        // )?;
+        opening_accumulator.reduce_and_verify(
+            &preprocessing.generators,
+            &proof.opening_proof,
+            &mut transcript,
+        )?;
 
         Ok(())
     }
@@ -434,10 +527,11 @@ where
         program_io: &JoltDevice,
         memory_layout: &MemoryLayout,
         trace_length: usize,
+        ram_K: usize,
     ) {
         transcript.append_u64(trace_length as u64);
+        transcript.append_u64(ram_K as u64);
         transcript.append_u64(WORD_SIZE as u64);
-        // transcript.append_u64(Self::InstructionSet::COUNT as u64);
         transcript.append_u64(memory_layout.max_input_size);
         transcript.append_u64(memory_layout.max_output_size);
         transcript.append_bytes(&program_io.inputs);
@@ -448,6 +542,9 @@ where
 
 pub mod bytecode;
 pub mod instruction_lookups;
+pub mod output_check;
 pub mod ram;
+pub mod ram_read_write_checking;
 pub mod registers;
+pub mod registers_read_write_checking;
 pub mod rv32i_vm;

@@ -15,7 +15,10 @@ use common::{
     jolt_device::{JoltDevice, MemoryConfig},
 };
 use rayon::prelude::*;
-use tracer::instruction::{RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence};
+use tracer::{
+    emulator::memory::Memory,
+    instruction::{RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence},
+};
 
 use crate::field::JoltField;
 
@@ -193,7 +196,7 @@ impl Program {
 
     // TODO(moodlezoup): Make this generic over InstructionSet
     #[tracing::instrument(skip_all, name = "Program::trace")]
-    pub fn trace(&mut self, inputs: &[u8]) -> (JoltDevice, Vec<RV32IMCycle>) {
+    pub fn trace(&mut self, inputs: &[u8]) -> (Vec<RV32IMCycle>, Memory, JoltDevice) {
         self.build(DEFAULT_TARGET_DIR);
         let elf = self.elf.as_ref().unwrap();
         let mut elf_file =
@@ -206,18 +209,17 @@ impl Program {
             max_input_size: self.max_input_size,
             max_output_size: self.max_output_size,
         };
-        let (trace, io_device) = tracer::trace(elf_contents, inputs, &memory_config);
-        (io_device, trace)
+        tracer::trace(elf_contents, inputs, &memory_config)
     }
 
     pub fn trace_analyze<F: JoltField>(mut self, inputs: &[u8]) -> ProgramSummary {
-        let (bytecode, memory_init) = self.decode();
-        let (io_device, trace) = self.trace(inputs);
+        let (bytecode, init_memory_state) = self.decode();
+        let (trace, _, io_device) = self.trace(inputs);
 
         ProgramSummary {
             trace,
             bytecode,
-            memory_init,
+            memory_init: init_memory_state,
             io_device,
         }
     }

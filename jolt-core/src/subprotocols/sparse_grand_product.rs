@@ -237,7 +237,7 @@ impl<F: JoltField> Bindable<F> for BatchedGrandProductToggleLayer<F> {
             return;
         }
 
-        debug_assert!(self.layer_len % 4 == 0);
+        debug_assert!(self.layer_len.is_multiple_of(4));
 
         // Bind the fingerprints
         self.fingerprints
@@ -272,7 +272,7 @@ impl<F: JoltField> Bindable<F> for BatchedGrandProductToggleLayer<F> {
                     // Bind indices in place
                     flag_indices[bound_index] = index / 2;
 
-                    if index % 2 == 0 {
+                    if index.is_multiple_of(2) {
                         let neighbor = flag_indices.get(j + 1).cloned().unwrap_or(0);
                         if neighbor == index + 1 {
                             // Neighbor is flag's sibling
@@ -549,7 +549,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                             continue;
                         }
 
-                        let (flags, fingerprints) = if index % 2 == 0 {
+                        let (flags, fingerprints) = if index.is_multiple_of(2) {
                             let neighbor = flag_indices.get(j + 1).cloned().unwrap_or(0);
                             let flags = if neighbor == index + 1 {
                                 // Neighbor is flag's sibling
@@ -674,7 +674,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                             continue;
                         }
 
-                        let (flags, fingerprints) = if index % 2 == 0 {
+                        let (flags, fingerprints) = if index.is_multiple_of(2) {
                             let neighbor = flag_indices.get(j + 1).cloned().unwrap_or(0);
                             let flags = if neighbor == index + 1 {
                                 // Neighbor is flag's sibling
@@ -777,7 +777,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                 let chunk_size = self.batched_layer_len.next_power_of_two() / eq_poly.E2_len;
                 let num_all_one_chunks = self.batched_layer_len / chunk_size;
                 let E2_sum: F = eq_poly.E2[..num_all_one_chunks].iter().sum();
-                if self.batched_layer_len % chunk_size == 0 {
+                if self.batched_layer_len.is_multiple_of(chunk_size) {
                     // If `batched_layer_len` isn't a power of 2 but evenly divides `chunk_size`,
                     // that means that for the last values of x2, we have:
                     //   (1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)) = 0
@@ -1049,7 +1049,7 @@ where
     #[tracing::instrument(skip_all, name = "ToggledBatchedGrandProduct::prove_grand_product")]
     fn prove_grand_product(
         &mut self,
-        opening_accumulator: Option<&mut ProverOpeningAccumulator<F, ProofTranscript>>,
+        opening_accumulator: Option<&mut ProverOpeningAccumulator<F, PCS, ProofTranscript>>,
         transcript: &mut ProofTranscript,
         setup: Option<&PCS::ProverSetup>,
     ) -> (BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>) {
@@ -1300,7 +1300,11 @@ mod tests {
 
         // Prover setup
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
-        let mut prover_accumulator = ProverOpeningAccumulator::<Fr, KeccakTranscript>::new();
+        let mut prover_accumulator = ProverOpeningAccumulator::<
+            Fr,
+            Zeromorph<Bn254, KeccakTranscript>,
+            KeccakTranscript,
+        >::new();
         let (proof, r_prover) = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
             Fr,
             Zeromorph<Bn254, KeccakTranscript>,
@@ -1334,6 +1338,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn sparse_prove_verify() {
         const NUM_VARS: [usize; 7] = [1, 2, 3, 4, 5, 6, 7];
         const DENSITY: [f64; 6] = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0];

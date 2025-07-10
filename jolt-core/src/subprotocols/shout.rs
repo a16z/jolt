@@ -163,7 +163,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 
     #[tracing::instrument(skip_all)]
-    fn compute_prover_message(&self, _: usize) -> Vec<F> {
+    fn compute_prover_message(&mut self, _: usize) -> Vec<F> {
         let ShoutProverState { ra, val, z, .. } = self.prover_state.as_ref().unwrap();
 
         let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript>>::degree(self);
@@ -444,8 +444,8 @@ impl<F: JoltField> BooleanityProverState<F> {
 }
 
 struct BooleanityVerifierState<F: JoltField> {
-    eq_r_address: EqPolynomial<F>,
-    eq_r_cycle: EqPolynomial<F>,
+    r_address: Vec<F>,
+    r_cycle: Vec<F>,
 }
 
 impl<F: JoltField> BooleanityVerifierState<F> {
@@ -461,10 +461,7 @@ impl<F: JoltField> BooleanityVerifierState<F> {
             .rev()
             .collect();
 
-        Self {
-            eq_r_cycle: EqPolynomial::new(r_cycle),
-            eq_r_address: EqPolynomial::new(r_address),
-        }
+        Self { r_cycle, r_address }
     }
 }
 
@@ -486,13 +483,9 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             let BooleanityProverState { K, T, .. } = self.prover_state.as_ref().unwrap();
             K.log_2() + T.log_2()
         } else if self.verifier_state.is_some() {
-            let BooleanityVerifierState {
-                eq_r_cycle,
-                eq_r_address,
-            } = self.verifier_state.as_ref().unwrap();
-            let K = eq_r_address.len();
-            let T = eq_r_cycle.len();
-            K.log_2() + T.log_2()
+            let BooleanityVerifierState { r_cycle, r_address } =
+                self.verifier_state.as_ref().unwrap();
+            r_address.len() + r_cycle.len()
         } else {
             panic!("Neither prover state nor verifier state is initialized");
         }
@@ -502,7 +495,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         F::zero()
     }
 
-    fn compute_prover_message(&self, round: usize) -> Vec<F> {
+    fn compute_prover_message(&mut self, round: usize) -> Vec<F> {
         const DEGREE: usize = 3;
         let BooleanityProverState {
             K,
@@ -666,16 +659,12 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 
     fn expected_output_claim(&self, r: &[F]) -> F {
-        let BooleanityVerifierState {
-            eq_r_address,
-            eq_r_cycle,
-        } = self.verifier_state.as_ref().unwrap();
-        let K = eq_r_address.len();
-        let (r_address_prime, r_cycle_prime) = r.split_at(K.log_2());
+        let BooleanityVerifierState { r_address, r_cycle } = self.verifier_state.as_ref().unwrap();
+        let (r_address_prime, r_cycle_prime) = r.split_at(r_address.len());
         let ra_claim = self.ra_claim.unwrap();
 
-        eq_r_address.evaluate(r_address_prime)
-            * eq_r_cycle.evaluate(r_cycle_prime)
+        EqPolynomial::mle(r_address, r_address_prime)
+            * EqPolynomial::mle(r_cycle, r_cycle_prime)
             * (ra_claim.square() - ra_claim)
     }
 }

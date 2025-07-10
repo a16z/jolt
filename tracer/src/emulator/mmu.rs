@@ -14,6 +14,7 @@ use super::terminal::Terminal;
 /// It also manages virtual-physical address translation and memory protection.
 /// It may also be said Bus.
 /// @TODO: Memory protection is not implemented yet. We should support.
+#[derive(Clone)]
 pub struct Mmu {
     clock: u64,
     xlen: Xlen,
@@ -29,6 +30,7 @@ pub struct Mmu {
     mstatus: u64,
 }
 
+#[derive(Clone)]
 pub enum AddressingMode {
     None,
     SV32,
@@ -40,7 +42,6 @@ enum MemoryAccessType {
     Execute,
     Read,
     Write,
-    DontCare,
 }
 
 fn _get_addressing_mode_name(mode: &AddressingMode) -> &'static str {
@@ -311,7 +312,10 @@ impl Mmu {
     /// * `v_address` Virtual address
     pub fn load_halfword(&mut self, v_address: u64) -> Result<(u16, RAMRead), Trap> {
         let effective_address = self.get_effective_address(v_address);
-        assert!(effective_address % 2 == 0, "Unaligned load_halfword");
+        assert!(
+            effective_address.is_multiple_of(2),
+            "Unaligned load_halfword"
+        );
         let memory_read = self.trace_load(effective_address);
         match self.load_bytes(v_address, 2) {
             Ok(data) => Ok((data as u16, memory_read)),
@@ -339,12 +343,12 @@ impl Mmu {
     ///
     /// # Arguments
     /// * `v_address` Virtual address
-    pub fn load_doubleword(&mut self, v_address: u64) -> Result<u64, Trap> {
+    pub fn load_doubleword(&mut self, v_address: u64) -> Result<(u64, RAMRead), Trap> {
         let effective_address = self.get_effective_address(v_address);
         assert_eq!(effective_address % 8, 0, "Unaligned load_doubleword");
-        self.trace_load(effective_address);
+        let memory_read = self.trace_load(effective_address);
         match self.load_bytes(v_address, 8) {
-            Ok(data) => Ok(data),
+            Ok(data) => Ok((data, memory_read)),
             Err(e) => Err(e),
         }
     }
@@ -447,11 +451,12 @@ impl Mmu {
     /// # Arguments
     /// * `v_address` Virtual address
     /// * `value` data written
-    pub fn store_doubleword(&mut self, v_address: u64, value: u64) -> Result<(), Trap> {
+    pub fn store_doubleword(&mut self, v_address: u64, value: u64) -> Result<RAMWrite, Trap> {
         let effective_address = self.get_effective_address(v_address);
         assert_eq!(effective_address % 8, 0, "Unaligned store_doubleword");
-        self.trace_store(effective_address, value);
-        self.store_bytes(v_address, value, 8)
+        let memory_write = self.trace_store(effective_address, value);
+        self.store_bytes(v_address, value, 8)?;
+        Ok(memory_write)
     }
 
     /// Loads a byte from main memory or peripheral devices depending on
@@ -459,7 +464,7 @@ impl Mmu {
     ///
     /// # Arguments
     /// * `p_address` Physical address
-    fn load_raw(&mut self, p_address: u64) -> u8 {
+    pub fn load_raw(&mut self, p_address: u64) -> u8 {
         let effective_address = self.get_effective_address(p_address);
         self.assert_effective_load_address(effective_address);
         // @TODO: Mapping should be configurable with dtb
@@ -587,7 +592,7 @@ impl Mmu {
         // Mask the value into the word
         let post_value = if effective_address % 4 == 2 {
             (value << 16) | (pre_value & 0xffff)
-        } else if effective_address % 4 == 0 {
+        } else if effective_address.is_multiple_of(4) {
             value | (pre_value & 0xffff0000)
         } else {
             panic!("Unaligned store {effective_address:x}");
@@ -690,7 +695,7 @@ impl Mmu {
     ///
     /// # Arguments
     /// * `p_address` Physical address
-    fn load_doubleword_raw(&mut self, p_address: u64) -> u64 {
+    pub fn load_doubleword_raw(&mut self, p_address: u64) -> u64 {
         let effective_address = self.get_effective_address(p_address);
         match effective_address >= DRAM_BASE
             && effective_address.wrapping_add(7) > effective_address
@@ -816,32 +821,6 @@ impl Mmu {
                 }
             }
         }
-    }
-
-    /// Checks if passed virtual address is valid (pointing a certain device) or not.
-    /// This method can return page fault trap.
-    ///
-    /// # Arguments
-    /// * `v_address` Virtual address
-    pub fn validate_address(&mut self, v_address: u64) -> Result<bool, ()> {
-        // @TODO: Support other access types?
-        let p_address = match self.translate_address(v_address, &MemoryAccessType::DontCare) {
-            Ok(address) => address,
-            Err(()) => return Err(()),
-        };
-        let effective_address = self.get_effective_address(p_address);
-        let valid = match effective_address >= DRAM_BASE {
-            true => self.memory.validate_address(effective_address),
-            false => matches!(
-                effective_address,
-                0x00001020..=0x00001fff |
-                0x02000000..=0x0200ffff |
-                0x0C000000..=0x0fffffff |
-                0x10000000..=0x100000ff |
-                0x10001000..=0x10001FFF
-            ),
-        };
-        Ok(valid)
     }
 
     fn translate_address(
@@ -1010,7 +989,6 @@ impl Mmu {
                     return Err(());
                 }
             }
-            _ => {}
         };
 
         let offset = v_address & 0xfff; // [11:0]
@@ -1051,8 +1029,9 @@ impl Mmu {
 
 /// [`Memory`](../memory/struct.Memory.html) wrapper. Converts physical address to the one in memory
 /// using [`DRAM_BASE`](constant.DRAM_BASE.html) and accesses [`Memory`](../memory/struct.Memory.html).
+#[derive(Clone)]
 pub struct MemoryWrapper {
-    memory: Memory,
+    pub memory: Memory,
 }
 
 impl MemoryWrapper {
