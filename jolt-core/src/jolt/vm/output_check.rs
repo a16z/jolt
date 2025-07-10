@@ -233,7 +233,7 @@ impl<F: JoltField> OutputSumcheck<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
+impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>> BatchableSumcheckInstance<F, ProofTranscript, PCS>
     for OutputSumcheck<F>
 {
     fn degree(&self) -> usize {
@@ -307,7 +307,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         eq_table.update(r_j);
     }
 
-    fn cache_openings(&mut self) {
+    fn cache_openings(&mut self, _openings: , None) {
         debug_assert!(self.val_final_claim.is_none());
         let OutputSumcheckProverState { val_final, .. } = self.prover_state.as_ref().unwrap();
         self.val_final_claim = Some(val_final.final_sumcheck_claim());
@@ -423,7 +423,7 @@ pub struct ValFinalSumcheck<F: JoltField> {
     output_claims: Option<ValFinalSumcheckClaims<F>>,
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
+impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>> BatchableSumcheckInstance<F, ProofTranscript, PCS>
     for ValFinalSumcheck<F>
 {
     fn degree(&self) -> usize {

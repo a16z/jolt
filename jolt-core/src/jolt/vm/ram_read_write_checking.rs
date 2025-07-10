@@ -854,7 +854,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
+impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>> BatchableSumcheckInstance<F, ProofTranscript, PCS>
     for RamReadWriteChecking<F>
 {
     fn degree(&self) -> usize {

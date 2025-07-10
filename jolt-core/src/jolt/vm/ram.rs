@@ -153,7 +153,7 @@ struct ValEvaluationSumcheck<F: JoltField> {
     claims: Option<ValEvaluationSumcheckClaims<F>>,
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
+impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>> BatchableSumcheckInstance<F, ProofTranscript, PCS>
     for ValEvaluationSumcheck<F>
 {
     fn degree(&self) -> usize {
@@ -323,7 +323,7 @@ struct BooleanitySumcheck<F: JoltField> {
     memory_layout: Option<MemoryLayout>,
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
+impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>> BatchableSumcheckInstance<F, ProofTranscript, PCS>
     for BooleanitySumcheck<F>
 {
     fn degree(&self) -> usize {
@@ -670,7 +670,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
+impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>> BatchableSumcheckInstance<F, ProofTranscript, PCS>
     for HammingWeightSumcheck<F>
 {
     fn degree(&self) -> usize {
@@ -803,7 +803,7 @@ impl<F: JoltField> RafEvaluationSumcheck<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
+impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>> BatchableSumcheckInstance<F, ProofTranscript, PCS>
     for RafEvaluationSumcheck<F>
 {
     fn degree(&self) -> usize {
@@ -1141,7 +1141,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         // let log_k = K.log_2();
         // let d = (log_k / 8).max(1);
         let d = 1; // @TODO(markosg04) keeping d = 1 for legacy prove
-        let (booleanity_sumcheck, r_address_prime, r_cycle_prime, ra_claims) = prove_ra_booleanity(
+        let (booleanity_sumcheck, r_address_prime, r_cycle_prime, ra_claims) = prove_ra_booleanity::<F, ProofTranscript, PCS>(
             trace,
             &program_io.memory_layout,
             &eq_r_cycle,
@@ -1304,6 +1304,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         let mut r_cycle_prime = <ValEvaluationSumcheck<F> as BatchableSumcheckInstance<
             F,
             ProofTranscript,
+            PCS
         >>::verify_single(
             &sumcheck_instance,
             &self.val_evaluation_proof.sumcheck_proof,
@@ -1359,6 +1360,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         let r_booleanity = <BooleanitySumcheck<F> as BatchableSumcheckInstance<
             F,
             ProofTranscript,
+            PCS
         >>::verify_single(
             &sumcheck_instance,
             &self.booleanity_proof.sumcheck_proof,
@@ -1512,6 +1514,7 @@ pub fn prove_val_evaluation<
     let (sumcheck_proof, r_cycle_prime) = <ValEvaluationSumcheck<F> as BatchableSumcheckInstance<
         F,
         ProofTranscript,
+        PCS
     >>::prove_single(&mut sumcheck_instance, transcript);
 
     drop(_guard);
@@ -1550,7 +1553,7 @@ pub fn remap_address(address: u64, memory_layout: &MemoryLayout) -> u64 {
 }
 
 #[tracing::instrument(skip_all)]
-fn prove_ra_booleanity<F: JoltField, ProofTranscript: Transcript>(
+fn prove_ra_booleanity<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>>(
     trace: &[RV32IMCycle],
     memory_layout: &MemoryLayout,
     eq_r_cycle: &[F],
@@ -1650,6 +1653,7 @@ fn prove_ra_booleanity<F: JoltField, ProofTranscript: Transcript>(
     let (sumcheck_proof, r) = <BooleanitySumcheck<F> as BatchableSumcheckInstance<
         F,
         ProofTranscript,
+        PCS,
     >>::prove_single(&mut sumcheck_instance, transcript);
 
     drop(_guard);

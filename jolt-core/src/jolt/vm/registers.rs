@@ -88,7 +88,7 @@ struct ValEvaluationSumcheck<F: JoltField> {
     claims: Option<ValEvaluationSumcheckClaims<F>>,
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
+impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>> BatchableSumcheckInstance<F, ProofTranscript, PCS>
     for ValEvaluationSumcheck<F>
 {
     fn degree(&self) -> usize {
@@ -266,6 +266,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTran
         let mut r_cycle_prime = <ValEvaluationSumcheck<F> as BatchableSumcheckInstance<
             F,
             ProofTranscript,
+            PCS,
         >>::verify_single(
             &sumcheck_instance,
             &self.val_evaluation_proof.sumcheck_proof,
@@ -361,6 +362,7 @@ pub fn prove_val_evaluation<
     let (sumcheck_proof, r_cycle_prime) = <ValEvaluationSumcheck<F> as BatchableSumcheckInstance<
         F,
         ProofTranscript,
+        PCS,
     >>::prove_single(&mut sumcheck_instance, transcript);
 
     drop(_guard);

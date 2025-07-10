@@ -1,27 +1,25 @@
+use std::{cell::RefCell, marker::PhantomData, rc::Rc};
+
 use super::sumcheck::{BatchableSumcheckInstance, BatchedSumcheck, SumcheckInstanceProof};
 use crate::{
-    field::JoltField,
-    poly::{
-        eq_poly::EqPolynomial,
-        identity_poly::IdentityPolynomial,
-        multilinear_polynomial::{
+    dag::state_manager::Openings, field::JoltField, poly::{
+        commitment::commitment_scheme::CommitmentScheme, eq_poly::EqPolynomial, identity_poly::IdentityPolynomial, multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-        },
-        unipoly::{CompressedUniPoly, UniPoly},
-    },
-    utils::{
+        }, opening_proof::ProverOpeningAccumulator, unipoly::{CompressedUniPoly, UniPoly}
+    }, utils::{
         errors::ProofVerifyError,
         math::Math,
         thread::unsafe_allocate_zero_vec,
         transcript::{AppendToTranscript, Transcript},
-    },
+    }
 };
 use rayon::prelude::*;
 
-pub struct ShoutProof<F: JoltField, ProofTranscript: Transcript> {
+pub struct ShoutProof<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>> {
     sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     core_piop_claims: ShoutSumcheckClaims<F>,
     ra_claim_prime: F,
+    _marker: PhantomData<PCS>,
 }
 
 struct ShoutProverState<F: JoltField> {
@@ -129,7 +127,7 @@ struct ShoutSumcheck<F: JoltField> {
     claims: Option<ShoutSumcheckClaims<F>>,
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
+impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>> BatchableSumcheckInstance<F, ProofTranscript, PCS>
     for ShoutSumcheck<F>
 {
     #[inline(always)]
@@ -166,7 +164,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     fn compute_prover_message(&mut self, _: usize) -> Vec<F> {
         let ShoutProverState { ra, val, z, .. } = self.prover_state.as_ref().unwrap();
 
-        let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript>>::degree(self);
+        let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript, PCS>>::degree(self);
 
         let univariate_poly_evals: [F; 2] = (0..ra.len() / 2)
             .into_par_iter()
@@ -195,7 +193,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         );
     }
 
-    fn cache_openings(&mut self) {
+    fn cache_openings(&mut self, openings: Option<Rc<RefCell<Openings<F>>>>,
+        accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,) {
         debug_assert!(self.claims.is_none());
         let ShoutProverState { rv_claim, ra, .. } = self.prover_state.as_ref().unwrap();
         self.claims = Some(ShoutSumcheckClaims {
@@ -213,7 +212,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> ShoutProof<F, ProofTranscript> {
+impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>> ShoutProof<F, ProofTranscript, PCS> {
     #[tracing::instrument(skip_all, name = "ShoutProof::prove")]
     pub fn prove(
         lookup_table: Vec<F>,
@@ -238,9 +237,11 @@ impl<F: JoltField, ProofTranscript: Transcript> ShoutProof<F, ProofTranscript> {
             ra_claim: None,
         };
 
-        let (sumcheck_proof, _r_sumcheck) = BatchedSumcheck::prove(
+        let (sumcheck_proof, _r_sumcheck) = BatchedSumcheck::prove::<F, ProofTranscript, PCS>(
             vec![&mut core_piop_sumcheck, &mut booleanity_sumcheck],
             transcript,
+            None,
+            None,
         );
 
         let core_piop_claims = core_piop_sumcheck.claims.unwrap();
@@ -252,6 +253,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ShoutProof<F, ProofTranscript> {
             sumcheck_proof,
             core_piop_claims,
             ra_claim_prime: booleanity_sumcheck.ra_claim.unwrap(),
+            _marker: PhantomData,
         }
     }
 
@@ -278,7 +280,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ShoutProof<F, ProofTranscript> {
             ra_claim: Some(self.ra_claim_prime),
         };
 
-        let _r_sumcheck = BatchedSumcheck::verify(
+        let _r_sumcheck = BatchedSumcheck::verify::<F, ProofTranscript, PCS>(
             &self.sumcheck_proof,
             vec![&core_piop_sumcheck, &booleanity_sumcheck],
             transcript,
@@ -471,7 +473,7 @@ struct BooleanitySumcheck<F: JoltField> {
     ra_claim: Option<F>,
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
+impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>> BatchableSumcheckInstance<F, ProofTranscript, PCS>
     for BooleanitySumcheck<F>
 {
     fn degree(&self) -> usize {
@@ -651,7 +653,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         }
     }
 
-    fn cache_openings(&mut self) {
+    fn cache_openings(&mut self, openings: Option<Rc<RefCell<Openings<F>>>>,
+        accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,) {
         debug_assert!(self.ra_claim.is_none());
         let BooleanityProverState { H, .. } = self.prover_state.as_ref().unwrap();
         let ra_claim = H.as_ref().unwrap().final_sumcheck_claim();
@@ -1056,7 +1059,7 @@ pub fn prove_raf_evaluation<F: JoltField, ProofTranscript: Transcript>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::transcript::KeccakTranscript;
+    use crate::{poly::commitment::mock::MockCommitScheme, utils::transcript::KeccakTranscript};
     use ark_bn254::Fr;
     use ark_ff::{One, Zero};
     use ark_std::test_rng;
@@ -1076,7 +1079,7 @@ mod tests {
 
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(NUM_LOOKUPS.log_2());
-        let proof = ShoutProof::prove(
+        let proof: ShoutProof<_, _, MockCommitScheme<Fr, KeccakTranscript>> = ShoutProof::prove(
             lookup_table.clone(),
             read_addresses,
             &r_cycle,

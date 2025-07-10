@@ -187,7 +187,7 @@ where
     }
 }
 
-impl<F, PCS, ProofTranscript> BatchableSumcheckInstance<F, ProofTranscript>
+impl<F, PCS, ProofTranscript> BatchableSumcheckInstance<F, ProofTranscript, PCS>
     for OpeningProofReductionSumcheck<F, PCS, ProofTranscript>
 where
     F: JoltField,
@@ -536,15 +536,15 @@ where
         &mut self,
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, Vec<F>) {
-        let instances: Vec<&mut dyn BatchableSumcheckInstance<F, ProofTranscript>> = self
+        let instances: Vec<&mut dyn BatchableSumcheckInstance<F, ProofTranscript, PCS>> = self
             .openings
             .iter_mut()
             .map(|opening| {
-                let instance: &mut dyn BatchableSumcheckInstance<F, ProofTranscript> = opening;
+                let instance: &mut dyn BatchableSumcheckInstance<F, ProofTranscript, PCS> = opening;
                 instance
             })
             .collect();
-        let (sumcheck_proof, r_sumcheck) = BatchedSumcheck::prove(instances, transcript);
+        let (sumcheck_proof, r_sumcheck) = BatchedSumcheck::prove(instances, transcript, None, None);
 
         let claims: Vec<_> = self
             .openings
@@ -758,11 +758,11 @@ where
         sumcheck_proof: &SumcheckInstanceProof<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<Vec<F>, ProofVerifyError> {
-        let instances: Vec<&dyn BatchableSumcheckInstance<F, ProofTranscript>> = self
+        let instances: Vec<&dyn BatchableSumcheckInstance<F, ProofTranscript, PCS>> = self
             .openings
             .iter()
             .map(|opening| {
-                let instance: &dyn BatchableSumcheckInstance<F, ProofTranscript> = opening;
+                let instance: &dyn BatchableSumcheckInstance<F, ProofTranscript, PCS> = opening;
                 instance
             })
             .collect();

@@ -1,4 +1,10 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use crate::dag::state_manager::Openings;
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
+use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::{
     field::JoltField,
     poly::{
@@ -174,7 +180,7 @@ impl<F: JoltField> RASumcheck<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
+impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>> BatchableSumcheckInstance<F, ProofTranscript, PCS>
     for RASumcheck<F>
 {
     fn degree(&self) -> usize {
@@ -209,7 +215,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         self.ra_claim
     }
 
-    fn cache_openings(&mut self) {
+    fn cache_openings(&mut self, openings: Option<Rc<RefCell<Openings<F>>>>,
+        accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,) {
         debug_assert!(self.ra_i_claims.is_none());
         let prover_state = self
             .prover_state
@@ -249,7 +256,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
-        let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript>>::degree(self);
+        let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript, PCS>>::degree(self);
         let ra_i_polys = &prover_state.ra_i_polys;
         let eq_poly = &prover_state.eq_poly;
 

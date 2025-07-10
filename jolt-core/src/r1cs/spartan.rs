@@ -543,7 +543,7 @@ impl<'a, F: JoltField> InnerSumcheck<'a, F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
+impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>> BatchableSumcheckInstance<F, ProofTranscript, PCS>
     for InnerSumcheck<'_, F>
 {
     fn degree(&self) -> usize {
@@ -569,7 +569,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
-        let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript>>::degree(self);
+        let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript, PCS>>::degree(self);
 
         let univariate_poly_evals: Vec<F> = (0..prover_state.poly_abc_small.len() / 2)
             .into_par_iter()
@@ -740,7 +740,7 @@ impl<F: JoltField> PCSumcheck<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
+impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>> BatchableSumcheckInstance<F, ProofTranscript, PCS>
     for PCSumcheck<F>
 {
     fn degree(&self) -> usize {
@@ -766,7 +766,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
-        let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript>>::degree(self);
+        let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript, PCS>>::degree(self);
 
         let univariate_poly_evals: Vec<F> = (0..prover_state.unexpanded_pc_poly.len() / 2)
             .into_par_iter()
@@ -1038,7 +1038,7 @@ impl<
     fn stage2_prover_instances(
         &self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>> {
+    ) -> Vec<Box<dyn BatchableSumcheckInstance<F, ProofTranscript, PCS>>> {
         /* Sumcheck 2: Inner sumcheck
             Proves: claim_Az + r * claim_Bz + r^2 * claim_Cz =
                     \sum_y (A_small(rx, y) + r * B_small(rx, y) + r^2 * C_small(rx, y)) * z(y)

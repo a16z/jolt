@@ -5,11 +5,9 @@ use crate::{
         lookup_table::{LookupTables, NUM_LOOKUP_TABLES},
     },
     poly::{
-        compact_polynomial::SmallScalar,
-        eq_poly::EqPolynomial,
-        multilinear_polynomial::{
+        commitment::commitment_scheme::CommitmentScheme, compact_polynomial::SmallScalar, eq_poly::EqPolynomial, multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-        },
+        }
     },
     subprotocols::sumcheck::{BatchableSumcheckInstance, BatchedSumcheck, SumcheckInstanceProof},
     utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
@@ -82,7 +80,7 @@ impl<F: JoltField> ReadCheckingSumcheck<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
+impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>> BatchableSumcheckInstance<F, ProofTranscript, PCS>
     for ReadCheckingSumcheck<F>
 {
     fn degree(&self) -> usize {
@@ -102,7 +100,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
-        let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript>>::degree(self);
+        let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript, PCS>>::degree(self);
 
         let univariate_poly_evals: [F; 2] = (0..prover_state.ra_poly.len() / 2)
             .into_par_iter()

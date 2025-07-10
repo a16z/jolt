@@ -914,7 +914,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
+impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>> BatchableSumcheckInstance<F, ProofTranscript, PCS>
     for RegistersReadWriteChecking<F>
 {
     fn degree(&self) -> usize {
