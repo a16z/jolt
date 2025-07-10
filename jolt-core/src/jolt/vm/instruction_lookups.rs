@@ -70,7 +70,7 @@ where
     rv_claim: F,
     right_operand_claim: F,
     left_operand_claim: F,
-    ra_claims: [F; 4],
+    ra_claims: [F; D],
     flag_claims: Vec<F>,
     raf_flag_claim: F,
 }
@@ -131,7 +131,7 @@ where
     ProofTranscript: Transcript,
 {
     sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    ra_claims: [F; 4],
+    ra_claims: [F; D],
 }
 
 impl<F: JoltField, T: Transcript> BooleanityProof<F, T> {
@@ -161,7 +161,7 @@ where
     ProofTranscript: Transcript,
 {
     sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    ra_claims: [F; 4],
+    ra_claims: [F; D],
 }
 
 impl<F: JoltField, T: Transcript> HammingWeightProof<F, T> {
@@ -203,7 +203,7 @@ where
         let log_T = trace.len().log_2();
         let r_cycle: Vec<F> = transcript.challenge_vector(log_T);
         let eq_r_cycle: Vec<F> = EqPolynomial::evals(&r_cycle);
-        let r_address = transcript.challenge_vector(16);
+        let r_address = transcript.challenge_vector(LOG_K_CHUNK);
         let F = compute_ra_evals(trace, &eq_r_cycle);
         let mut sm = StateManager {
             transcript,
@@ -234,12 +234,9 @@ where
         let hamming_weight_proof =
             HammingWeightProof::new(hamming_weight_sumcheck, &sm.openings.lock().unwrap());
 
-        let unbound_ra_polys = vec![
-            CommittedPolynomials::InstructionRa(0).generate_witness(preprocessing, trace),
-            CommittedPolynomials::InstructionRa(1).generate_witness(preprocessing, trace),
-            CommittedPolynomials::InstructionRa(2).generate_witness(preprocessing, trace),
-            CommittedPolynomials::InstructionRa(3).generate_witness(preprocessing, trace),
-        ];
+        let unbound_ra_polys = (0..D)
+            .map(|i| CommittedPolynomials::InstructionRa(i).generate_witness(preprocessing, trace))
+            .collect::<Vec<_>>();
 
         let r_hamming_weight_rev = r_hamming_weight.iter().copied().rev().collect::<Vec<_>>();
 
@@ -267,7 +264,7 @@ where
     ) -> Result<(), ProofVerifyError> {
         let r_cycle: Vec<F> = transcript.challenge_vector(self.log_T);
 
-        let r_address: Vec<F> = transcript.challenge_vector(16);
+        let r_address: Vec<F> = transcript.challenge_vector(LOG_K_CHUNK);
         let mut sm = StateManager {
             transcript,
             prover_accumulator: None,
@@ -290,11 +287,10 @@ where
             .populate_openings(&mut sm.openings.lock().unwrap());
 
         let read_checking = ReadRafSumcheck::new_verifier(&mut sm);
-        let _r_read_checking = read_checking
-            .verify_single(&self.read_checking_proof.sumcheck_proof, sm.transcript)
-            .unwrap();
+        let _r_read_checking =
+            read_checking.verify_single(&self.read_checking_proof.sumcheck_proof, sm.transcript)?;
 
-        for i in 0..4 {
+        for i in 0..D {
             sm.openings.lock().unwrap().insert(
                 OpeningsKeys::InstructionRa(i),
                 (Vec::new(), self.booleanity_proof.ra_claims[i]),
@@ -305,7 +301,7 @@ where
         let _r_booleanity =
             booleanity.verify_single(&self.booleanity_proof.sumcheck_proof, sm.transcript)?;
 
-        for i in 0..4 {
+        for i in 0..D {
             sm.openings.lock().unwrap().insert(
                 OpeningsKeys::InstructionRa(i),
                 (Vec::new(), self.hamming_weight_proof.ra_claims[i]),
@@ -317,7 +313,7 @@ where
             .unwrap();
 
         let r_hamming_weight: Vec<_> = r_hamming_weight.iter().copied().rev().collect();
-        for i in 0..4 {
+        for i in 0..D {
             opening_accumulator.append(
                 &[&commitments.commitments[CommittedPolynomials::InstructionRa(i).to_index()]],
                 [r_hamming_weight.as_slice(), r_cycle.as_slice()].concat(),
@@ -334,9 +330,10 @@ const LOG_K: usize = WORD_SIZE * 2;
 const PHASES: usize = 4;
 const LOG_M: usize = LOG_K / PHASES;
 const M: usize = 1 << LOG_M;
-const D: usize = 4;
-const LOG_K_CHUNK: usize = LOG_K / D;
-const K_CHUNK: usize = 1 << LOG_K_CHUNK;
+pub const D: usize = 4;
+pub const LOG_K_CHUNK: usize = LOG_K / D;
+pub const K_CHUNK: usize = 1 << LOG_K_CHUNK;
+const RA_PER_LOG_M: usize = LOG_M / LOG_K_CHUNK;
 
 struct ReadRafProverState<'a, F: JoltField> {
     trace: &'a [RV32IMCycle],
@@ -351,7 +348,7 @@ struct ReadRafProverState<'a, F: JoltField> {
 
     prefix_checkpoints: Vec<PrefixCheckpoint<F>>,
     suffix_polys: Vec<Vec<DensePolynomial<F>>>,
-    v: ExpandingTable<F>,
+    v: [ExpandingTable<F>; RA_PER_LOG_M],
     u_evals: Vec<F>,
     eq_r_cycle_evals: Vec<F>,
     eq_r_cycle: MultilinearPolynomial<F>,
@@ -454,7 +451,7 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
             prover_state: Some(ReadRafProverState {
                 trace,
                 r: Vec::with_capacity(log_T + LOG_K),
-                ra: Vec::with_capacity(4),
+                ra: Vec::with_capacity(D),
                 lookup_tables,
                 lookup_indices,
                 lookup_indices_by_table,
@@ -462,7 +459,7 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
                 lookup_indices_identity,
                 prefix_checkpoints: vec![None.into(); Prefixes::COUNT],
                 suffix_polys,
-                v: ExpandingTable::new(M),
+                v: std::array::from_fn(|_| ExpandingTable::new(K_CHUNK)),
                 u_evals: eq_r_cycle.to_vec(),
                 eq_r_cycle_evals: eq_r_cycle.to_vec(),
                 eq_r_cycle: MultilinearPolynomial::from(eq_r_cycle.to_vec()),
@@ -531,40 +528,38 @@ impl<'a, F: JoltField, T: Transcript> BatchableSumcheckInstance<F, T> for ReadRa
             )
             .to_vec()
         } else {
+            const DEGREE: usize = D + 2;
             (0..ps.eq_r_cycle.len() / 2)
                 .into_par_iter()
                 .map(|i| {
-                    let eq_evals = ps.eq_r_cycle.sumcheck_evals(i, 6, BindingOrder::HighToLow);
-                    let ra_0_evals = ps.ra[0].sumcheck_evals(i, 6, BindingOrder::HighToLow);
-                    let ra_1_evals = ps.ra[1].sumcheck_evals(i, 6, BindingOrder::HighToLow);
-                    let ra_2_evals = ps.ra[2].sumcheck_evals(i, 6, BindingOrder::HighToLow);
-                    let ra_3_evals = ps.ra[3].sumcheck_evals(i, 6, BindingOrder::HighToLow);
+                    let eq_evals = ps
+                        .eq_r_cycle
+                        .sumcheck_evals(i, DEGREE, BindingOrder::HighToLow);
+                    let ra_evals = ps
+                        .ra
+                        .iter()
+                        .map(|ra| ra.sumcheck_evals(i, DEGREE, BindingOrder::HighToLow))
+                        .fold([F::one(); DEGREE], |mut running, new| {
+                            for j in 0..DEGREE {
+                                running[j] *= new[j];
+                            }
+                            running
+                        });
                     let val_evals = ps.combined_val_polynomial.as_ref().unwrap().sumcheck_evals(
                         i,
-                        6,
+                        DEGREE,
                         BindingOrder::HighToLow,
                     );
 
-                    std::array::from_fn(|i| {
-                        eq_evals[i]
-                            * ra_0_evals[i]
-                            * ra_1_evals[i]
-                            * ra_2_evals[i]
-                            * ra_3_evals[i]
-                            * val_evals[i]
-                    })
+                    std::array::from_fn(|i| eq_evals[i] * ra_evals[i] * val_evals[i])
                 })
                 .reduce(
-                    || [F::zero(); 6],
-                    |running, new| {
-                        [
-                            running[0] + new[0],
-                            running[1] + new[1],
-                            running[2] + new[2],
-                            running[3] + new[3],
-                            running[4] + new[4],
-                            running[5] + new[5],
-                        ]
+                    || [F::zero(); DEGREE],
+                    |mut running, new| {
+                        for j in 0..DEGREE {
+                            running[j] += new[j];
+                        }
+                        running
                     },
                 )
                 .to_vec()
@@ -586,7 +581,7 @@ impl<'a, F: JoltField, T: Transcript> BatchableSumcheckInstance<F, T> for ReadRa
                 s.spawn(|_| ps.identity_ps.bind(r_j));
                 s.spawn(|_| ps.right_operand_ps.bind(r_j));
                 s.spawn(|_| ps.left_operand_ps.bind(r_j));
-                s.spawn(|_| ps.v.update(r_j));
+                s.spawn(|_| ps.v[(round % LOG_M) / LOG_K_CHUNK].update(r_j));
             });
             {
                 if ps.r.len().is_multiple_of(2) {
@@ -712,9 +707,15 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
                 .par_iter()
                 .zip(ps.u_evals.par_iter_mut())
                 .for_each(|(k, u)| {
-                    let (prefix, _) = k.split((4 - phase) * LOG_M);
+                    let (prefix, _) = k.split((PHASES - phase) * LOG_M);
                     let k_bound: usize = prefix % M;
-                    *u *= ps.v[k_bound];
+
+                    *u *= (0..RA_PER_LOG_M)
+                        .rev()
+                        .map(|i| (k_bound >> (LOG_K_CHUNK * i)) % K_CHUNK)
+                        .enumerate()
+                        .map(|(i, idx)| ps.v[i][idx])
+                        .product();
                 });
         }
 
@@ -738,7 +739,8 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
                                 }
 
                                 for (j, k) in lookup_indices.iter() {
-                                    let (prefix_bits, suffix_bits) = k.split((3 - phase) * LOG_M);
+                                    let (prefix_bits, suffix_bits) =
+                                        k.split((PHASES - 1 - phase) * LOG_M);
                                     let t = suffix.suffix_mle::<WORD_SIZE>(suffix_bits);
                                     if t != 0 {
                                         let u = ps.u_evals[*j];
@@ -765,22 +767,32 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
         ps.right_operand_ps.init_P(&mut ps.prefix_registry);
         ps.left_operand_ps.init_P(&mut ps.prefix_registry);
 
-        ps.v.reset(F::one());
+        ps.v.par_iter_mut().for_each(|v| v.reset(F::one()));
     }
 
     /// To be called at the end of each phase, after binding is done
     fn cache_phase(&mut self, phase: usize) {
         let ps = self.prover_state.as_mut().unwrap();
-        let ra_i: Vec<F> = ps
-            .lookup_indices
-            .par_iter()
-            .map(|k| {
-                let (prefix, _) = k.split((3 - phase) * LOG_M);
-                let k_bound: usize = prefix % M;
-                ps.v[k_bound]
+        ps.v.par_iter()
+            .enumerate()
+            .map(|(i, v)| {
+                let ra_i: Vec<F> = ps
+                    .lookup_indices
+                    .par_iter()
+                    .map(|k| {
+                        let (prefix, _) = k.split((PHASES - 1 - phase) * LOG_M);
+                        let k_bound: usize =
+                            ((prefix % M) >> (LOG_K_CHUNK * (RA_PER_LOG_M - 1 - i))) % K_CHUNK;
+                        v[k_bound]
+                    })
+                    .collect();
+                MultilinearPolynomial::from(ra_i)
             })
-            .collect();
-        ps.ra.push(MultilinearPolynomial::from(ra_i));
+            .collect::<Vec<_>>()
+            .into_iter()
+            .for_each(|ra| {
+                ps.ra.push(ra);
+            });
         ps.prefix_registry.update_checkpoints();
     }
 
@@ -867,7 +879,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                 .par_iter()
                 .map(|cycle| {
                     let lookup_index = LookupQuery::<32>::to_lookup_index(cycle);
-                    ((lookup_index >> (LOG_K_CHUNK * (3 - i))) % K_CHUNK as u64) as usize
+                    ((lookup_index >> (LOG_K_CHUNK * (D - 1 - i))) % K_CHUNK as u64) as usize
                 })
                 .collect()
         });
@@ -1104,12 +1116,10 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             .map(|i| {
                 let D_evals = p.D.sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
                 let H = p.H.as_ref().unwrap();
-                let H_evals = [
-                    H[0].sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh),
-                    H[1].sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh),
-                    H[2].sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh),
-                    H[3].sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh),
-                ];
+                let H_evals = H
+                    .iter()
+                    .map(|h| h.sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh))
+                    .collect::<Vec<_>>();
 
                 let mut evals = [
                     H_evals[0][0].square() - H_evals[0][0],
@@ -1269,7 +1279,7 @@ impl<F: JoltField, T: Transcript> BatchableSumcheckInstance<F, T> for HammingWei
 }
 
 #[inline(always)]
-fn compute_ra_evals<F: JoltField>(trace: &[RV32IMCycle], eq_r_cycle: &[F]) -> [Vec<F>; 4] {
+fn compute_ra_evals<F: JoltField>(trace: &[RV32IMCycle], eq_r_cycle: &[F]) -> [Vec<F>; D] {
     let T = trace.len();
     let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
     let chunk_size = (T / num_chunks).max(1);
@@ -1278,42 +1288,22 @@ fn compute_ra_evals<F: JoltField>(trace: &[RV32IMCycle], eq_r_cycle: &[F]) -> [V
         .par_chunks(chunk_size)
         .enumerate()
         .map(|(chunk_index, trace_chunk)| {
-            let mut result = [
-                unsafe_allocate_zero_vec(K_CHUNK),
-                unsafe_allocate_zero_vec(K_CHUNK),
-                unsafe_allocate_zero_vec(K_CHUNK),
-                unsafe_allocate_zero_vec(K_CHUNK),
-            ];
+            let mut result: [Vec<F>; D] =
+                std::array::from_fn(|_| unsafe_allocate_zero_vec(K_CHUNK));
             let mut j = chunk_index * chunk_size;
             for cycle in trace_chunk {
-                let mut lookup_index = LookupQuery::<32>::to_lookup_index(cycle);
-                let k = lookup_index % K_CHUNK as u64;
-                result[3][k as usize] += eq_r_cycle[j];
-
-                lookup_index >>= LOG_K_CHUNK;
-                let k = lookup_index % K_CHUNK as u64;
-                result[2][k as usize] += eq_r_cycle[j];
-
-                lookup_index >>= LOG_K_CHUNK;
-                let k = lookup_index % K_CHUNK as u64;
-                result[1][k as usize] += eq_r_cycle[j];
-
-                lookup_index >>= LOG_K_CHUNK;
-                let k = lookup_index % K_CHUNK as u64;
-                result[0][k as usize] += eq_r_cycle[j];
+                let mut lookup_index = LookupQuery::<WORD_SIZE>::to_lookup_index(cycle);
+                for i in (0..D).rev() {
+                    let k = lookup_index % K_CHUNK as u64;
+                    result[i][k as usize] += eq_r_cycle[j];
+                    lookup_index >>= LOG_K_CHUNK;
+                }
                 j += 1;
             }
             result
         })
         .reduce(
-            || {
-                [
-                    unsafe_allocate_zero_vec(K_CHUNK),
-                    unsafe_allocate_zero_vec(K_CHUNK),
-                    unsafe_allocate_zero_vec(K_CHUNK),
-                    unsafe_allocate_zero_vec(K_CHUNK),
-                ]
-            },
+            || std::array::from_fn(|_| unsafe_allocate_zero_vec(K_CHUNK)),
             |mut running, new| {
                 running
                     .par_iter_mut()

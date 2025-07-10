@@ -4,7 +4,7 @@ use tracer::instruction::RV32IMCycle;
 
 use crate::{
     field::JoltField,
-    jolt::vm::{ram::remap_address, JoltProverPreprocessing},
+    jolt::vm::{instruction_lookups, ram::remap_address, JoltProverPreprocessing},
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         multilinear_polynomial::MultilinearPolynomial, one_hot_polynomial::OneHotPolynomial,
@@ -205,18 +205,24 @@ impl CommittedPolynomials {
                 coeffs.into()
             }
             CommittedPolynomials::InstructionRa(i) => {
-                if *i > 3 {
+                if *i > instruction_lookups::D {
                     panic!("Unexpected i: {i}");
                 }
                 let addresses: Vec<usize> = trace
                     .par_iter()
                     .map(|cycle| {
                         let lookup_index = LookupQuery::<32>::to_lookup_index(cycle);
-                        let k = (lookup_index >> (16 * (3 - i))) % (1 << 16);
+                        let k = (lookup_index
+                            >> (instruction_lookups::LOG_K_CHUNK
+                                * (instruction_lookups::D - 1 - i)))
+                            % instruction_lookups::K_CHUNK as u64;
                         k as usize
                     })
                     .collect();
-                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(addresses, 1 << 16))
+                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
+                    addresses,
+                    instruction_lookups::K_CHUNK,
+                ))
             }
         }
     }
