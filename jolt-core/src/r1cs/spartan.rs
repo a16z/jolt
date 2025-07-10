@@ -861,19 +861,11 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> Default
-    for UniformSpartanProof<F, ProofTranscript>
-{
-    fn default() -> Self {
-        Self {
-            outer_sumcheck_proof: SumcheckInstanceProof::new(vec![]),
-            outer_sumcheck_claims: (F::zero(), F::zero(), F::zero()),
-            inner_sumcheck_proof: SumcheckInstanceProof::new(vec![]),
-            shift_sumcheck_proof: SumcheckInstanceProof::new(vec![]),
-            claimed_witness_evals: vec![],
-            shift_sumcheck_witness_eval: vec![],
-            _marker: PhantomData,
-        }
+pub struct SpartanDag {}
+
+impl SpartanDag {
+    pub fn new() -> Self {
+        SpartanDag {}
     }
 }
 
@@ -881,14 +873,14 @@ impl<
         F: JoltField,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    > SumcheckStages<F, ProofTranscript, PCS> for UniformSpartanProof<F, ProofTranscript>
+    > SumcheckStages<F, ProofTranscript, PCS> for SpartanDag
 {
     fn stage1_prove(
         &self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {
         /* Sumcheck 1: Outer sumcheck
-           Proves: \sum_x eq(gamma, x) * (Az(x) * Bz(x) - Cz(x)) = 0
+           Proves: \sum_x eq(tau, x) * (Az(x) * Bz(x) - Cz(x)) = 0
 
            The matrices A, B, C have a block-diagonal structure with repeated blocks
            A_small, B_small, C_small corresponding to the uniform constraints.
@@ -897,7 +889,7 @@ impl<
 
         let num_rounds_x = key.num_cons_total.log_2();
 
-        let gamma: Vec<F> = state_manager
+        let tau: Vec<F> = state_manager
             .prover_transcript
             .borrow_mut()
             .challenge_vector(num_rounds_x);
@@ -910,12 +902,12 @@ impl<
 
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) = {
             let transcript = &mut *state_manager.prover_transcript.borrow_mut();
-            Self::prove_outer_sumcheck(
+            UniformSpartanProof::<F, ProofTranscript>::prove_outer_sumcheck(
                 num_rounds_x,
                 uniform_constraints_only_padded,
                 &constraint_builder.uniform_builder.constraints,
                 input_polys,
-                &gamma,
+                &tau,
                 transcript,
             )
         };
@@ -966,7 +958,7 @@ impl<
 
         let num_rounds_x = key.num_cons_total.log_2();
 
-        let gamma: Vec<F> = state_manager
+        let tau: Vec<F> = state_manager
             .verifier_transcript
             .borrow_mut()
             .challenge_vector(num_rounds_x);
@@ -1003,8 +995,8 @@ impl<
         let outer_sumcheck_r_reversed: Vec<F> =
             outer_sumcheck_r_original.into_iter().rev().collect();
 
-        let gamma_bound_rx = EqPolynomial::mle(&gamma, &outer_sumcheck_r_reversed);
-        let claim_outer_final_expected = gamma_bound_rx * (claim_Az * claim_Bz - claim_Cz);
+        let tau_bound_rx = EqPolynomial::mle(&tau, &outer_sumcheck_r_reversed);
+        let claim_outer_final_expected = tau_bound_rx * (claim_Az * claim_Bz - claim_Cz);
         if claim_outer_final != claim_outer_final_expected {
             return Err(anyhow::anyhow!("Invalid outer sumcheck claim"));
         }

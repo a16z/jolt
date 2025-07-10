@@ -2,9 +2,8 @@ use crate::dag::stage::SumcheckStages;
 use crate::dag::state_manager::StateManager;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::r1cs::spartan::UniformSpartanProof;
 use crate::utils::transcript::Transcript;
-
+use crate::r1cs::spartan::SpartanDag;
 pub struct JoltDAG<
     'a,
     F: JoltField,
@@ -26,16 +25,14 @@ impl<
     }
 
     pub fn prove(&mut self) -> Result<(), anyhow::Error> {
-        // Stage 1: Run Spartan's outer sumcheck proof
-        let spartan_proof = UniformSpartanProof::<F, ProofTranscript>::default();
-        spartan_proof.stage1_prove(&mut self.state_manager)?;
+        let spartan_dag = SpartanDag::new();
+        spartan_dag.stage1_prove(&mut self.state_manager)?;
         Ok(())
     }
 
     pub fn verify(&mut self) -> Result<(), anyhow::Error> {
-        // Stage 1: Verify Spartan's outer sumcheck proof
-        let spartan_proof = UniformSpartanProof::<F, ProofTranscript>::default();
-        spartan_proof.stage1_verify(&mut self.state_manager)?;
+        let spartan_dag = SpartanDag::new();
+        spartan_dag.stage1_verify(&mut self.state_manager)?;
         Ok(())
     }
 }
