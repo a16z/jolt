@@ -9,9 +9,8 @@ use crate::{
     tensor::{Tensor, TensorError, TensorType},
 };
 use halo2curves::{bn256::Fr as Fp, ff::PrimeField};
-use std::{error::Error, sync::Arc};
-
 use log::{debug, warn};
+use std::{error::Error, sync::Arc};
 use tract_onnx::tract_core::ops::{
     array::{Gather, GatherElements, MultiBroadcastTo, OneHot, ScatterElements, Slice, Topk},
     change_axes::AxisOp,
