@@ -636,7 +636,7 @@ mod tests {
             eval_point.reverse();
 
             // Use uninterleave_bits to match the polynomial's implementation
-            let (right, left) = uninterleave_bits(i as u64);
+            let (left, right) = uninterleave_bits(i as u64);
             let expected_r = Fr::from_u32(right);
             let expected_l = Fr::from_u32(left);
 
