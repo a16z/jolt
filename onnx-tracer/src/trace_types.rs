@@ -6,18 +6,27 @@
 /// The ONNX model is converted into a sequence of [`ONNXInstr`]s, forming the program code.
 /// During runtime, the program counter (PC) is used to fetch the next instruction from this sequence.
 pub struct ONNXInstr {
-    address: usize,
-    opcode: ONNXOpcode,
-    /// Analogous to rs1 & rs2 except it maps addresses to tensors instead of registers
-    ts1: usize,
-    ts2: usize,
+    /// The program counter (PC) address of this instruction in the bytecode.
+    pub address: usize,
+    /// The operation code (opcode) that defines the instruction's function.
+    pub opcode: ONNXOpcode,
+    /// The first tensor source operand, analogous to rs1 in RISC-V.
+    pub ts1: usize,
+    /// The second tensor source operand, analogous to rs2 in RISC-V.
+    pub ts2: usize,
 }
+
+// TODO: Expand the instruction set architecture (ISA):
+//       For phase 1, we focus on supporting text-classification models.
+//       This reduced ISA currently includes only the opcodes commonly used in such models.
+//       Future phases should extend this set to support a broader range of ONNX operations.
 
 /// Operation code uniquely identifying each ONNX instruction's function
 pub enum ONNXOpcode {
     Add,
     Sub,
     Mul,
+    Div,
     Pow,
     Relu,
     MatMult,

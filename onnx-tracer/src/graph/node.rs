@@ -1,4 +1,5 @@
 use crate::graph::{model::NodeType, vars::VarScales};
+use crate::trace_types::{ONNXInstr, ONNXOpcode};
 use crate::{
     circuit::ops::{
         hybrid::HybridOp, lookup::LookupOp, poly::PolyOp, Constant, ForwardResult, Input, Op,
@@ -59,7 +60,7 @@ impl Node {
         idx: usize,
         symbol_values: &SymbolValues,
     ) -> Self {
-        trace!("Create {:?}", node);
+        trace!("Create {node:?}",);
         trace!("Create op {:?}", node.op);
 
         let num_uses = std::cmp::max(
@@ -140,7 +141,7 @@ impl Node {
                     in_scales[input] = out_scale;
                 }
             } else {
-                warn!("input {} not found for rescaling, skipping ...", input);
+                warn!("input {input} not found for rescaling, skipping ...",);
             }
         }
 
@@ -174,9 +175,48 @@ impl Node {
 
 fn display_vector<T: fmt::Debug>(v: &Vec<T>) -> String {
     if !v.is_empty() {
-        format!("{:?}", v)
+        format!("{v:?}",)
     } else {
         String::new()
+    }
+}
+
+impl Node {
+    /// Decodes the current [Node] into an [ONNXInstr] at the specified `address`.
+    ///
+    /// This method is typically used during preprocessing to transform the ONNX binary into the zkVM program code.
+    ///
+    /// # Arguments
+    ///
+    /// * `address` - The memory address or program counter where the decoded instruction will be placed.
+    ///
+    /// # Returns
+    ///
+    /// An [ONNXInstr] representing the decoded instruction for this node.
+    ///
+    /// # Panics
+    ///
+    /// This method will panic if there is an unsupported operator
+    pub fn decode(&self, address: usize) -> ONNXInstr {
+        match &self.opkind {
+            SupportedOp::Linear(poly_op) => self.decode_with_opcode(poly_op, address),
+            SupportedOp::Nonlinear(lookup_op) => self.decode_with_opcode(lookup_op, address),
+            _ => panic!("Opkind not supported"),
+        }
+    }
+
+    fn decode_with_opcode<T>(&self, op: &T, address: usize) -> ONNXInstr
+    where
+        for<'a> &'a T: Into<ONNXOpcode>,
+    {
+        // FIXME: It is not guaranteed that there will be two operands and secondly need to understand Vec<Outlet> to see if this is even correct for two operands
+        let (ts1, ts2) = self.inputs.first().expect("No inputs found for op");
+        ONNXInstr {
+            address,
+            opcode: op.into(),
+            ts1: *ts1,
+            ts2: *ts2,
+        }
     }
 }
 

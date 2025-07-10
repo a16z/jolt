@@ -5,6 +5,7 @@ use crate::{
     fieldutils::{felt_to_i128, i128_to_felt},
     graph::utilities::{multiplier_to_scale, scale_to_multiplier},
     tensor::{self, Tensor, TensorError, TensorType},
+    trace_types::ONNXOpcode,
 };
 use halo2curves::ff::PrimeField;
 use serde::{Deserialize, Serialize};
@@ -13,7 +14,7 @@ use std::error::Error;
 #[allow(missing_docs)]
 /// An enum representing the operations that can be used to express more complex
 /// operations via accumulation
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
 pub enum LookupOp {
     Abs,
     Div { denom: utils::F32 },
@@ -52,6 +53,19 @@ pub enum LookupOp {
     Sign,
     KroneckerDelta,
     Pow { scale: utils::F32, a: utils::F32 },
+}
+
+impl From<&LookupOp> for ONNXOpcode {
+    fn from(value: &LookupOp) -> Self {
+        match value {
+            LookupOp::ReLU => ONNXOpcode::Relu,
+            LookupOp::Sigmoid { .. } => ONNXOpcode::Sigmoid,
+            LookupOp::Sqrt { .. } => ONNXOpcode::Sqrt,
+            _ => {
+                panic!("LookupOp {value:?} cannot be converted to ONNXOpcode",);
+            }
+        }
+    }
 }
 
 impl LookupOp {

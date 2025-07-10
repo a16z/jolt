@@ -11,7 +11,13 @@ use std::{fs::File, path::PathBuf};
 use clap::Args;
 use serde::{Deserialize, Serialize};
 
-use crate::{graph::model::Model, trace_types::ONNXInstr};
+use crate::{
+    graph::{
+        model::{Model, NodeType},
+        node::Node,
+    },
+    trace_types::ONNXInstr,
+};
 
 /// Methods for configuring tensor operations and assigning values to them in a Halo2
 /// circuit.
@@ -32,13 +38,37 @@ pub type Scale = i32;
 
 /// Given a file path decode the binary into [ONNXInstr] format
 /// (i.e., the program code we will be reading into, in the zkVM)
+///
+/// # Returns
+/// A vector of [`ONNXInstr`] representing the program code.
 pub fn decode(model_path: &PathBuf) -> Vec<ONNXInstr> {
+    model(model_path)
+        .graph
+        .nodes
+        .iter()
+        .map(decode_node)
+        .collect()
+}
+
+/// Given a file path, load the ONNX model and return a [`Model`].
+/// This function is used to initialize the model for further processing.
+fn model(model_path: &PathBuf) -> Model {
     let mut file = File::open(model_path).expect("Failed to open ONNX model");
     // Default RunArgs (batch_size=1 by default)
     let run_args = RunArgs::default();
     // Load the model
-    let model = Model::new(&mut file, &run_args);
-    todo!()
+    Model::new(&mut file, &run_args)
+}
+
+/// Converts a [`NodeType`] and its program counter into an [`ONNXInstr`].
+/// This helper keeps the [decode] function concise and focused.
+fn decode_node((pc, node): (&usize, &NodeType)) -> ONNXInstr {
+    match node {
+        NodeType::Node(node) => node.decode(*pc),
+        NodeType::SubGraph { .. } => {
+            todo!()
+        }
+    }
 }
 
 /// Parameters specific to a proving run
