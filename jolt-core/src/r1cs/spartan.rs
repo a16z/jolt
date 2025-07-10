@@ -17,6 +17,7 @@ use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, P
 use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::r1cs::builder::Constraint;
+use crate::r1cs::constraints::R1CSConstraints;
 use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::r1cs::inputs::ALL_R1CS_INPUTS;
 use crate::r1cs::inputs::COMMITTED_R1CS_INPUTS;
@@ -862,44 +863,49 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> Default
-    for UniformSpartanProof<F, ProofTranscript>
-{
-    fn default() -> Self {
-        Self {
-            outer_sumcheck_proof: SumcheckInstanceProof::new(vec![]),
-            outer_sumcheck_claims: (F::zero(), F::zero(), F::zero()),
-            inner_sumcheck_proof: SumcheckInstanceProof::new(vec![]),
-            shift_sumcheck_proof: SumcheckInstanceProof::new(vec![]),
-            claimed_witness_evals: vec![],
-            shift_sumcheck_witness_eval: vec![],
-            _marker: PhantomData,
-        }
-    }
-}
+#[derive(Default)]
+pub struct SpartanDag {}
 
 impl<
         F: JoltField,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    > SumcheckStages<F, ProofTranscript, PCS> for UniformSpartanProof<F, ProofTranscript>
+    > SumcheckStages<F, ProofTranscript, PCS> for SpartanDag
 {
     fn stage1_prove(
         &self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {
         /* Sumcheck 1: Outer sumcheck
-           Proves: \sum_x eq(gamma, x) * (Az(x) * Bz(x) - Cz(x)) = 0
+           Proves: \sum_x eq(tau, x) * (Az(x) * Bz(x) - Cz(x)) = 0
 
            The matrices A, B, C have a block-diagonal structure with repeated blocks
            A_small, B_small, C_small corresponding to the uniform constraints.
         */
-        let (key, constraint_builder, input_polys) = state_manager.get_spartan_data();
+        let (preprocessing, trace, _program_io, _final_memory_state) =
+            state_manager.get_program_data();
 
-        let num_rounds_x = key.num_cons_total.log_2();
+        // Setup Spartan-specific data
+        let padded_trace_length = trace.len().next_power_of_two();
+        let constraint_builder =
+            crate::r1cs::constraints::JoltRV32IMConstraints::construct_constraints(
+                padded_trace_length,
+            );
+        let key = UniformSpartanProof::<F, ProofTranscript>::setup(
+            &constraint_builder,
+            padded_trace_length,
+        );
 
-        let gamma: Vec<F> = state_manager
-            .prover_transcript
+        // Create input polynomials from trace
+        let input_polys: Vec<MultilinearPolynomial<F>> = crate::r1cs::inputs::ALL_R1CS_INPUTS
+            .par_iter()
+            .map(|var| var.generate_witness(trace, preprocessing))
+            .collect();
+
+        let num_rounds_x = key.num_rows_bits();
+
+        let tau: Vec<F> = state_manager
+            .transcript
             .borrow_mut()
             .challenge_vector(num_rounds_x);
 
@@ -910,21 +916,21 @@ impl<
             .next_power_of_two();
 
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) = {
-            let transcript = &mut *state_manager.prover_transcript.borrow_mut();
-            Self::prove_outer_sumcheck(
+            let mut transcript = state_manager.transcript.borrow_mut();
+            UniformSpartanProof::<F, ProofTranscript>::prove_outer_sumcheck(
                 num_rounds_x,
                 uniform_constraints_only_padded,
                 &constraint_builder.uniform_builder.constraints,
-                input_polys,
-                &gamma,
-                transcript,
+                &input_polys,
+                &tau,
+                &mut transcript,
             )
         };
 
         let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
 
         ProofTranscript::append_scalars(
-            *state_manager.prover_transcript.borrow_mut(),
+            *state_manager.transcript.borrow_mut(),
             &outer_sumcheck_claims,
         );
 
@@ -962,13 +968,25 @@ impl<
         &self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {
-        // Get the spartan-related data:
-        let (key, _, _) = state_manager.get_spartan_data();
+        // Get the program data
+        let (_preprocessing, trace, _program_io, _final_memory_state) =
+            state_manager.get_program_data();
 
-        let num_rounds_x = key.num_cons_total.log_2();
+        // Setup Spartan-specific data
+        let padded_trace_length = trace.len().next_power_of_two();
+        let constraint_builder =
+            crate::r1cs::constraints::JoltRV32IMConstraints::construct_constraints(
+                padded_trace_length,
+            );
+        let key = UniformSpartanProof::<F, ProofTranscript>::setup(
+            &constraint_builder,
+            padded_trace_length,
+        );
 
-        let gamma: Vec<F> = state_manager
-            .verifier_transcript
+        let num_rounds_x = key.num_rows_bits();
+
+        let tau: Vec<F> = state_manager
+            .transcript
             .borrow_mut()
             .challenge_vector(num_rounds_x);
 
@@ -993,7 +1011,7 @@ impl<
 
         // Run the main sumcheck verifier:
         let (claim_outer_final, outer_sumcheck_r_original) = {
-            let transcript = &mut *state_manager.verifier_transcript.borrow_mut();
+            let transcript = &mut state_manager.transcript.borrow_mut();
             match outer_sumcheck_proof.verify(F::zero(), num_rounds_x, 3, transcript) {
                 Ok(result) => result,
                 Err(_) => return Err(anyhow::anyhow!("Outer sumcheck verification failed")),
@@ -1004,14 +1022,14 @@ impl<
         let outer_sumcheck_r_reversed: Vec<F> =
             outer_sumcheck_r_original.into_iter().rev().collect();
 
-        let gamma_bound_rx = EqPolynomial::mle(&gamma, &outer_sumcheck_r_reversed);
-        let claim_outer_final_expected = gamma_bound_rx * (claim_Az * claim_Bz - claim_Cz);
+        let tau_bound_rx = EqPolynomial::mle(&tau, &outer_sumcheck_r_reversed);
+        let claim_outer_final_expected = tau_bound_rx * (claim_Az * claim_Bz - claim_Cz);
         if claim_outer_final != claim_outer_final_expected {
             return Err(anyhow::anyhow!("Invalid outer sumcheck claim"));
         }
 
         ProofTranscript::append_scalars(
-            *state_manager.verifier_transcript.borrow_mut(),
+            &mut state_manager.transcript.borrow_mut(),
             &outer_sumcheck_claims[..],
         );
 

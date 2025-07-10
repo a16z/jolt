@@ -8,9 +8,6 @@ mod tests {
     use crate::host;
     use crate::jolt::vm::{rv32i_vm::RV32IJoltVM, Jolt, JoltProverPreprocessing};
     use crate::poly::commitment::mock::MockCommitScheme;
-    use crate::r1cs::constraints::{JoltRV32IMConstraints, R1CSConstraints};
-    use crate::r1cs::inputs::JoltR1CSInputs;
-    use crate::r1cs::spartan::UniformSpartanProof;
     use crate::utils::transcript::{KeccakTranscript, Transcript};
     use ark_bn254::Fr;
     use std::collections::HashMap;
@@ -22,7 +19,7 @@ mod tests {
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&9u32).unwrap();
         let (bytecode, init_memory_state) = program.decode();
-        let (mut trace, _final_memory_state, mut io_device) = program.trace(&inputs);
+        let (mut trace, final_memory_state, mut io_device) = program.trace(&inputs);
 
         // Preprocessing
         let preprocessing: JoltProverPreprocessing<
@@ -69,22 +66,6 @@ mod tests {
                 .map_or(0, |pos| pos + 1),
         );
 
-        // Spartan stuff
-        let constraint_builder = JoltRV32IMConstraints::construct_constraints(padded_trace_length);
-
-        let spartan_key = UniformSpartanProof::<Fr, KeccakTranscript>::setup(
-            &constraint_builder,
-            padded_trace_length,
-        );
-
-        // Create input polynomials from trace
-        let mut input_polys = Vec::new();
-        for i in 0..JoltR1CSInputs::num_inputs() {
-            let input = JoltR1CSInputs::from_index(i);
-            let poly = input.generate_witness(&trace, &preprocessing);
-            input_polys.push(poly);
-        }
-
         // State manager components
         let openings = Arc::new(Mutex::new(HashMap::new()));
         let prover_accumulator_pre_wrap = crate::poly::opening_proof::ProverOpeningAccumulator::<
@@ -104,26 +85,52 @@ mod tests {
         let mut verifier_transcript = KeccakTranscript::new(b"Jolt");
         let proofs = Arc::new(Mutex::new(HashMap::new()));
 
-        let spartan_state = state_manager::SpartanState {
-            spartan_key: None,
-            constraint_builder: None,
-            input_polys: None,
+        // Create prover state manager
+        let prover_general_state = state_manager::ProgramState {
+            preprocessing: None,
+            trace: None,
+            program_io: None,
+            final_memory_state: None,
         };
-
-        // Create state manager
-        let mut state_manager = state_manager::StateManager::new(
-            openings,
-            prover_accumulator,
-            verifier_accumulator,
+        let mut prover_state_manager = state_manager::StateManager::new(
+            openings.clone(),
+            Some(prover_accumulator),
+            None,
             &mut prover_transcript,
+            proofs.clone(),
+            prover_general_state,
+        );
+        prover_state_manager.set_program_data(
+            &preprocessing,
+            trace.clone(),
+            io_device.clone(),
+            final_memory_state.clone(),
+        );
+
+        // Create verifier state manager
+        let verifier_general_state = state_manager::ProgramState {
+            preprocessing: None,
+            trace: None,
+            program_io: None,
+            final_memory_state: None,
+        };
+        let mut verifier_state_manager = state_manager::StateManager::new(
+            openings,
+            None,
+            Some(verifier_accumulator),
             &mut verifier_transcript,
             proofs,
-            spartan_state,
+            verifier_general_state,
         );
-        state_manager.set_spartan_data(&spartan_key, &constraint_builder, input_polys);
+        verifier_state_manager.set_program_data(
+            &preprocessing,
+            trace,
+            io_device,
+            final_memory_state,
+        );
 
         // JoltDAG
-        let mut dag = jolt_dag::JoltDAG::new(state_manager);
+        let mut dag = jolt_dag::JoltDAG::new(prover_state_manager, verifier_state_manager);
 
         // Run prove
         if let Err(e) = dag.prove() {

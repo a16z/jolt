@@ -5,15 +5,16 @@ use std::ops::{Index, RangeFull};
 use std::sync::{Arc, Mutex};
 
 use crate::field::JoltField;
+use crate::jolt::vm::JoltProverPreprocessing;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
-use crate::r1cs::builder::CombinedUniformBuilder;
 use crate::r1cs::inputs::JoltR1CSInputs;
-use crate::r1cs::key::UniformSpartanKey;
 use crate::r1cs::spartan::UniformSpartanProof;
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::utils::transcript::Transcript;
+use tracer::emulator::memory::Memory;
+use tracer::instruction::RV32IMCycle;
+use tracer::JoltDevice;
 
 pub type Endianness = bool;
 pub const BIG_ENDIAN: Endianness = false;
@@ -124,10 +125,15 @@ pub enum ProofData<F: JoltField, ProofTranscript: Transcript> {
 
 pub type Proofs<F, ProofTranscript> = HashMap<ProofKeys, ProofData<F, ProofTranscript>>;
 
-pub struct SpartanState<'a, F: JoltField> {
-    pub spartan_key: Option<&'a UniformSpartanKey<F>>,
-    pub constraint_builder: Option<&'a CombinedUniformBuilder<F>>,
-    pub input_polys: Option<Vec<MultilinearPolynomial<F>>>,
+pub struct ProgramState<'a, F: JoltField, PCS, ProofTranscript>
+where
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
+    pub preprocessing: Option<&'a JoltProverPreprocessing<F, PCS, ProofTranscript>>,
+    pub trace: Option<Vec<RV32IMCycle>>,
+    pub program_io: Option<JoltDevice>,
+    pub final_memory_state: Option<Memory>,
 }
 
 pub struct StateManager<
@@ -137,12 +143,12 @@ pub struct StateManager<
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
 > {
     pub openings: Arc<Mutex<Openings<F>>>,
-    pub prover_accumulator: Arc<Mutex<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>,
-    pub verifier_accumulator: Arc<Mutex<VerifierOpeningAccumulator<F, PCS, ProofTranscript>>>,
-    pub prover_transcript: RefCell<&'a mut ProofTranscript>,
-    pub verifier_transcript: RefCell<&'a mut ProofTranscript>,
+    pub prover_accumulator: Option<Arc<Mutex<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    pub verifier_accumulator:
+        Option<Arc<Mutex<VerifierOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    pub transcript: RefCell<&'a mut ProofTranscript>,
     pub proofs: Arc<Mutex<Proofs<F, ProofTranscript>>>,
-    spartan_state: SpartanState<'a, F>,
+    program_state: ProgramState<'a, F, PCS, ProofTranscript>,
 }
 
 impl<
@@ -154,21 +160,21 @@ impl<
 {
     pub fn new(
         openings: Arc<Mutex<Openings<F>>>,
-        prover_accumulator: Arc<Mutex<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>,
-        verifier_accumulator: Arc<Mutex<VerifierOpeningAccumulator<F, PCS, ProofTranscript>>>,
-        prover_transcript: &'a mut ProofTranscript,
-        verifier_transcript: &'a mut ProofTranscript,
+        prover_accumulator: Option<Arc<Mutex<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+        verifier_accumulator: Option<
+            Arc<Mutex<VerifierOpeningAccumulator<F, PCS, ProofTranscript>>>,
+        >,
+        transcript: &'a mut ProofTranscript,
         proofs: Arc<Mutex<Proofs<F, ProofTranscript>>>,
-        spartan_state: SpartanState<'a, F>,
+        program_state: ProgramState<'a, F, PCS, ProofTranscript>,
     ) -> Self {
         Self {
             openings,
             prover_accumulator,
             verifier_accumulator,
-            prover_transcript: RefCell::new(prover_transcript),
-            verifier_transcript: RefCell::new(verifier_transcript),
+            transcript: RefCell::new(transcript),
             proofs,
-            spartan_state,
+            program_state,
         }
     }
 
@@ -185,33 +191,40 @@ impl<
         self.openings.lock().unwrap().get(&idx).unwrap().0.clone()
     }
 
-    pub fn set_spartan_data(
+    pub fn set_program_data(
         &mut self,
-        key: &'a UniformSpartanKey<F>,
-        constraint_builder: &'a CombinedUniformBuilder<F>,
-        input_polys: Vec<MultilinearPolynomial<F>>,
+        preprocessing: &'a JoltProverPreprocessing<F, PCS, ProofTranscript>,
+        trace: Vec<RV32IMCycle>,
+        program_io: JoltDevice,
+        final_memory_state: Memory,
     ) {
-        self.spartan_state.spartan_key = Some(key);
-        self.spartan_state.constraint_builder = Some(constraint_builder);
-        self.spartan_state.input_polys = Some(input_polys);
+        self.program_state.preprocessing = Some(preprocessing);
+        self.program_state.trace = Some(trace);
+        self.program_state.program_io = Some(program_io);
+        self.program_state.final_memory_state = Some(final_memory_state);
     }
 
-    pub fn get_spartan_data(
+    pub fn get_program_data(
         &self,
     ) -> (
-        &'a UniformSpartanKey<F>,
-        &'a CombinedUniformBuilder<F>,
-        &Vec<MultilinearPolynomial<F>>,
+        &'a JoltProverPreprocessing<F, PCS, ProofTranscript>,
+        &Vec<RV32IMCycle>,
+        &JoltDevice,
+        &Memory,
     ) {
         (
-            self.spartan_state.spartan_key.expect("Spartan key not set"),
-            self.spartan_state
-                .constraint_builder
-                .expect("Constraint builder not set"),
-            self.spartan_state
-                .input_polys
+            self.program_state
+                .preprocessing
+                .expect("Preprocessing not set"),
+            self.program_state.trace.as_ref().expect("Trace not set"),
+            self.program_state
+                .program_io
                 .as_ref()
-                .expect("Input polys not set"),
+                .expect("Program IO not set"),
+            self.program_state
+                .final_memory_state
+                .as_ref()
+                .expect("Final memory state not set"),
         )
     }
 }
