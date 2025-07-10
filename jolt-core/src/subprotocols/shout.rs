@@ -471,31 +471,9 @@ struct BooleanitySumcheck<F: JoltField> {
     ra_claim: Option<F>,
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
-    for BooleanitySumcheck<F>
-{
-    fn degree(&self) -> usize {
-        3
-    }
-
-    fn num_rounds(&self) -> usize {
-        if self.prover_state.is_some() {
-            let BooleanityProverState { K, T, .. } = self.prover_state.as_ref().unwrap();
-            K.log_2() + T.log_2()
-        } else if self.verifier_state.is_some() {
-            let BooleanityVerifierState { r_cycle, r_address } =
-                self.verifier_state.as_ref().unwrap();
-            r_address.len() + r_cycle.len()
-        } else {
-            panic!("Neither prover state nor verifier state is initialized");
-        }
-    }
-
-    fn input_claim(&self) -> F {
-        F::zero()
-    }
-
-    fn compute_prover_message(&mut self, round: usize, _previous_claim: F) -> Vec<F> {
+#[cfg(test)]
+impl<F: JoltField> BooleanitySumcheck<F> {
+    fn compute_prover_message_cubic(&self, round: usize) -> Vec<F> {
         const DEGREE: usize = 3;
         let BooleanityProverState {
             K,
@@ -603,6 +581,149 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
 
             univariate_poly_evals.to_vec()
         }
+    }
+}
+
+impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
+    for BooleanitySumcheck<F>
+{
+    fn degree(&self) -> usize {
+        3
+    }
+
+    fn num_rounds(&self) -> usize {
+        if self.prover_state.is_some() {
+            let BooleanityProverState { K, T, .. } = self.prover_state.as_ref().unwrap();
+            K.log_2() + T.log_2()
+        } else if self.verifier_state.is_some() {
+            let BooleanityVerifierState { r_cycle, r_address } =
+                self.verifier_state.as_ref().unwrap();
+            r_address.len() + r_cycle.len()
+        } else {
+            panic!("Neither prover state nor verifier state is initialized");
+        }
+    }
+
+    fn input_claim(&self) -> F {
+        F::zero()
+    }
+
+    fn compute_prover_message(&mut self, round: usize, _previous_claim: F) -> Vec<F> {
+        const DEGREE: usize = 3;
+        let BooleanityProverState {
+            K,
+            B,
+            F,
+            G,
+            D,
+            H,
+            eq_km_c,
+            eq_km_c_squared,
+            ..
+        } = self.prover_state.as_ref().unwrap();
+
+        let evals = if round < K.log_2() {
+            // First log(K) rounds of sumcheck
+            let m = round + 1;
+
+            let univariate_poly_evals: [F; DEGREE] = (0..B.len() / 2)
+                .into_par_iter()
+                .map(|k_prime| {
+                    let B_evals = B.sumcheck_evals(k_prime, DEGREE, BindingOrder::LowToHigh);
+                    let inner_sum = G[k_prime << m..(k_prime + 1) << m]
+                        .par_iter()
+                        .enumerate()
+                        .map(|(k, &G_k)| {
+                            // Since we're binding variables from low to high, k_m is the high bit
+                            let k_m = k >> (m - 1);
+                            // We then index into F using (k_{m-1}, ..., k_1)
+                            let F_k = F[k % (1 << (m - 1))];
+                            // G_times_F := G[k] * F[k_1, ...., k_{m-1}]
+                            let G_times_F = G_k * F_k;
+                            // For c \in {0, 2, 3} compute:
+                            //    G[k] * (F[k_1, ...., k_{m-1}, c]^2 - F[k_1, ...., k_{m-1}, c])
+                            //    = G_times_F * (eq(k_m, c)^2 * F[k_1, ...., k_{m-1}] - eq(k_m, c))
+                            [
+                                G_times_F * (eq_km_c_squared[k_m][0] * F_k - eq_km_c[k_m][0]),
+                                G_times_F * (eq_km_c_squared[k_m][1] * F_k - eq_km_c[k_m][1]),
+                                G_times_F * (eq_km_c_squared[k_m][2] * F_k - eq_km_c[k_m][2]),
+                            ]
+                        })
+                        .reduce(
+                            || [F::zero(); DEGREE],
+                            |running, new| {
+                                [
+                                    running[0] + new[0],
+                                    running[1] + new[1],
+                                    running[2] + new[2],
+                                ]
+                            },
+                        );
+
+                    [
+                        B_evals[0] * inner_sum[0],
+                        B_evals[1] * inner_sum[1],
+                        B_evals[2] * inner_sum[2],
+                    ]
+                })
+                .reduce(
+                    || [F::zero(); DEGREE],
+                    |running, new| {
+                        [
+                            running[0] + new[0],
+                            running[1] + new[1],
+                            running[2] + new[2],
+                        ]
+                    },
+                );
+
+            univariate_poly_evals.to_vec()
+        } else {
+            // Last log(T) rounds of sumcheck
+
+            let mut univariate_poly_evals: [F; 3] = (0..D.len() / 2)
+                .into_par_iter()
+                .map(|i| {
+                    let D_evals = D.sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
+                    let H_evals =
+                        H.as_ref()
+                            .unwrap()
+                            .sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
+
+                    [
+                        D_evals[0] * (H_evals[0] * H_evals[0] - H_evals[0]),
+                        D_evals[1] * (H_evals[1] * H_evals[1] - H_evals[1]),
+                        D_evals[2] * (H_evals[2] * H_evals[2] - H_evals[2]),
+                    ]
+                })
+                .reduce(
+                    || [F::zero(); 3],
+                    |running, new| {
+                        [
+                            running[0] + new[0],
+                            running[1] + new[1],
+                            running[2] + new[2],
+                        ]
+                    },
+                );
+
+            let eq_r_r = B.final_sumcheck_claim();
+            univariate_poly_evals = [
+                eq_r_r * univariate_poly_evals[0],
+                eq_r_r * univariate_poly_evals[1],
+                eq_r_r * univariate_poly_evals[2],
+            ];
+
+            univariate_poly_evals.to_vec()
+        };
+
+        #[cfg(test)]
+        {
+            let test_evals = self.compute_prover_message_cubic(round);
+            assert_eq!(evals, test_evals);
+        }
+
+        evals
     }
 
     fn bind(&mut self, r_j: F, round: usize) {
