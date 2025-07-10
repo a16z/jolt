@@ -668,8 +668,8 @@ pub fn prove_sparse_dense_shout<
             }
 
             if step.instruction().circuit_flags().is_interleaved_operands() {
-                *val += gamma * prefix_registry.checkpoints[Prefix::RightOperand].unwrap()
-                    + gamma_squared * prefix_registry.checkpoints[Prefix::LeftOperand].unwrap();
+                *val += gamma * prefix_registry.checkpoints[Prefix::LeftOperand].unwrap()
+                    + gamma_squared * prefix_registry.checkpoints[Prefix::RightOperand].unwrap();
             } else {
                 *val += gamma_squared * prefix_registry.checkpoints[Prefix::Identity].unwrap();
             }
@@ -837,15 +837,15 @@ pub fn verify_sparse_dense_shout<
         .sum::<F>();
 
     let right_operand_eval =
-        OperandPolynomial::new(log_K, OperandSide::Left).evaluate(&r_address_prime);
-    let left_operand_eval =
         OperandPolynomial::new(log_K, OperandSide::Right).evaluate(&r_address_prime);
+    let left_operand_eval =
+        OperandPolynomial::new(log_K, OperandSide::Left).evaluate(&r_address_prime);
     let identity_poly_eval =
         IdentityPolynomial::new_with_endianness(log_K, Endianness::Big).evaluate(&r_address_prime);
 
     let val_claim = rv_val_claim
         + (F::one() - is_add_mul_sub_flag_claim)
-            * (gamma * right_operand_eval + gamma_squared * left_operand_eval)
+            * (gamma * left_operand_eval + gamma_squared * right_operand_eval)
         + gamma_squared * is_add_mul_sub_flag_claim * identity_poly_eval;
 
     assert_eq!(

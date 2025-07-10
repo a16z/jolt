@@ -735,9 +735,9 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
 
                 if step.instruction().circuit_flags().is_interleaved_operands() {
                     *val += self.gamma
-                        * ps.prefix_registry.checkpoints[Prefix::RightOperand].unwrap()
+                        * ps.prefix_registry.checkpoints[Prefix::LeftOperand].unwrap()
                         + self.gamma_squared
-                            * ps.prefix_registry.checkpoints[Prefix::LeftOperand].unwrap();
+                            * ps.prefix_registry.checkpoints[Prefix::RightOperand].unwrap();
                 } else {
                     *val += self.gamma_squared
                         * ps.prefix_registry.checkpoints[Prefix::Identity].unwrap();
