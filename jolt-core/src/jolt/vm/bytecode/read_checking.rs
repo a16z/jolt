@@ -1,17 +1,24 @@
+use std::{cell::RefCell, rc::Rc};
+
 use crate::{
+    dag::state_manager::Openings,
     field::JoltField,
     jolt::{
         instruction::{InstructionFlags, InstructionLookup, NUM_CIRCUIT_FLAGS},
         lookup_table::{LookupTables, NUM_LOOKUP_TABLES},
     },
     poly::{
+        commitment::commitment_scheme::CommitmentScheme,
         compact_polynomial::SmallScalar,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
+        opening_proof::ProverOpeningAccumulator,
     },
-    subprotocols::sumcheck::{BatchableSumcheckInstance, BatchedSumcheck, SumcheckInstanceProof},
+    subprotocols::sumcheck::{
+        BatchableSumcheckInstance, BatchedSumcheck, CacheSumcheckOpenings, SumcheckInstanceProof,
+    },
     utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -147,7 +154,27 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         );
     }
 
-    fn cache_openings(&mut self) {
+    fn expected_output_claim(&self, r: &[F]) -> F {
+        let ra_claim = self.ra_claim.as_ref().expect("ra_claim not set");
+        let r: Vec<_> = r.iter().rev().copied().collect();
+
+        // Verify sumcheck_claim = ra_claim * val_eval
+        *ra_claim * self.val_poly.evaluate(&r)
+    }
+}
+
+impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS>
+    for ReadCheckingSumcheck<F>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+{
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
         debug_assert!(self.ra_claim.is_none());
         let prover_state = self
             .prover_state
@@ -155,14 +182,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             .expect("Prover state not initialized");
 
         self.ra_claim = Some(prover_state.ra_poly.final_sumcheck_claim());
-    }
-
-    fn expected_output_claim(&self, r: &[F]) -> F {
-        let ra_claim = self.ra_claim.as_ref().expect("ra_claim not set");
-        let r: Vec<_> = r.iter().rev().copied().collect();
-
-        // Verify sumcheck_claim = ra_claim * val_eval
-        *ra_claim * self.val_poly.evaluate(&r)
     }
 }
 
@@ -316,6 +335,15 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadCheckingProof<F, ProofTransc
             ],
             transcript,
         );
+        // BatchedSumcheck::cache_openings(
+        //     vec![
+        //         &mut read_checking_sumcheck_1,
+        //         &mut read_checking_sumcheck_2,
+        //         &mut read_checking_sumcheck_3,
+        //     ],
+        //     openings,
+        //     accumulator,
+        // );
 
         let ra_claim = read_checking_sumcheck_1
             .ra_claim

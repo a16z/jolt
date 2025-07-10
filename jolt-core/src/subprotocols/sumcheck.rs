@@ -1,11 +1,14 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
+use crate::dag::state_manager::Openings;
 use crate::field::JoltField;
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
+use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::poly::spartan_interleaved_poly::SpartanInterleavedPolynomial;
 use crate::poly::split_eq_poly::{GruenSplitEqPolynomial, SplitEqPolynomial};
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
@@ -17,7 +20,9 @@ use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 use ark_serialize::*;
 use rayon::prelude::*;
+use std::cell::RefCell;
 use std::marker::PhantomData;
+use std::rc::Rc;
 
 pub trait Bindable<F: JoltField>: Sync {
     fn bind(&mut self, r: F);
@@ -105,10 +110,6 @@ pub trait BatchableSumcheckInstance<F: JoltField, ProofTranscript: Transcript> {
     /// This updates the internal state to prepare for the next round.
     fn bind(&mut self, r_j: F, round: usize);
 
-    /// Caches polynomial opening claims needed after the sumcheck protocol completes.
-    /// These openings will later be proven using either an opening proof or another sumcheck.
-    fn cache_openings(&mut self);
-
     /// Computes the expected output claim given the verifier's challenges.
     /// This is used to verify the final result of the sumcheck protocol.
     fn expected_output_claim(&self, r: &[F]) -> F;
@@ -135,6 +136,21 @@ pub trait BatchableSumcheckInstance<F: JoltField, ProofTranscript: Transcript> {
     {
         BatchedSumcheck::verify(proof, vec![self], transcript)
     }
+}
+
+pub trait CacheSumcheckOpenings<
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+>
+{
+    /// Caches polynomial opening claims needed after the sumcheck protocol completes.
+    /// These openings will later be proven using either an opening proof or another sumcheck.
+    fn cache_openings(
+        &mut self,
+        openings: Option<Rc<RefCell<Openings<F>>>>,
+        accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    );
 }
 
 /// Implements the standard technique for batching parallel sumchecks to reduce
@@ -262,13 +278,23 @@ impl BatchedSumcheck {
             compressed_polys.push(compressed_poly);
         }
 
+        (SumcheckInstanceProof::new(compressed_polys), r)
+    }
+
+    pub fn cache_openings<
+        F: JoltField,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    >(
+        mut sumcheck_instances: Vec<&mut dyn CacheSumcheckOpenings<F, ProofTranscript, PCS>>,
+        openings: Option<Rc<RefCell<Openings<F>>>>,
+        accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
         for sumcheck in sumcheck_instances.iter_mut() {
             // Cache polynomial opening claims, to be proven using either an
             // opening proof or sumcheck (in the case of virtual polynomials).
-            sumcheck.cache_openings();
+            sumcheck.cache_openings(openings.clone(), accumulator.clone());
         }
-
-        (SumcheckInstanceProof::new(compressed_polys), r)
     }
 
     pub fn verify<F: JoltField, ProofTranscript: Transcript>(

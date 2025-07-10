@@ -1,4 +1,11 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use crate::dag::state_manager::Openings;
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
+use crate::poly::opening_proof::ProverOpeningAccumulator;
+use crate::subprotocols::sumcheck::CacheSumcheckOpenings;
 use crate::{
     field::JoltField,
     poly::{
@@ -209,21 +216,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         self.ra_claim
     }
 
-    fn cache_openings(&mut self) {
-        debug_assert!(self.ra_i_claims.is_none());
-        let prover_state = self
-            .prover_state
-            .as_ref()
-            .expect("Prover state not initialized");
-
-        let mut openings = vec![F::zero(); self.d];
-        for i in 0..self.d {
-            openings[i] = prover_state.ra_i_polys[i].final_sumcheck_claim();
-        }
-
-        self.ra_i_claims = Some(openings);
-    }
-
     fn expected_output_claim(&self, r: &[F]) -> F {
         let verifier_state = self
             .verifier_state
@@ -291,6 +283,32 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             );
 
         univariate_poly_evals
+    }
+}
+
+impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS> for RASumcheck<F>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+{
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
+        debug_assert!(self.ra_i_claims.is_none());
+        let prover_state = self
+            .prover_state
+            .as_ref()
+            .expect("Prover state not initialized");
+
+        let mut openings = vec![F::zero(); self.d];
+        for i in 0..self.d {
+            openings[i] = prover_state.ra_i_polys[i].final_sumcheck_claim();
+        }
+
+        self.ra_i_claims = Some(openings);
     }
 }
 

@@ -14,6 +14,7 @@ use super::{
     multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
 };
 use crate::{
+    dag::state_manager::Openings,
     field::JoltField,
     poly::{
         dense_mlpoly::DensePolynomial,
@@ -21,7 +22,9 @@ use crate::{
             OneHotPolynomial, OneHotPolynomialProverOpening, OneHotSumcheckState,
         },
     },
-    subprotocols::sumcheck::{BatchableSumcheckInstance, BatchedSumcheck, SumcheckInstanceProof},
+    subprotocols::sumcheck::{
+        BatchableSumcheckInstance, BatchedSumcheck, CacheSumcheckOpenings, SumcheckInstanceProof,
+    },
     utils::{errors::ProofVerifyError, transcript::Transcript},
 };
 
@@ -225,8 +228,29 @@ where
         }
     }
 
-    fn cache_openings(&mut self) {
-        let prover_state = self.prover_state.as_ref().unwrap();
+    fn expected_output_claim(&self, r: &[F]) -> F {
+        let eq_eval = EqPolynomial::mle(&self.opening_point, r);
+        eq_eval * self.sumcheck_claim.unwrap()
+    }
+}
+
+impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS>
+    for OpeningProofReductionSumcheck<F, PCS, ProofTranscript>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+{
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
+        debug_assert!(self.sumcheck_claim.is_none());
+        let prover_state = self
+            .prover_state
+            .as_ref()
+            .expect("Prover state not initialized");
         match prover_state {
             ProverOpening::Dense(opening) => {
                 self.sumcheck_claim = Some(opening.final_sumcheck_claim())
@@ -235,11 +259,6 @@ where
                 self.sumcheck_claim = Some(opening.final_sumcheck_claim())
             }
         };
-    }
-
-    fn expected_output_claim(&self, r: &[F]) -> F {
-        let eq_eval = EqPolynomial::mle(&self.opening_point, r);
-        eq_eval * self.sumcheck_claim.unwrap()
     }
 }
 

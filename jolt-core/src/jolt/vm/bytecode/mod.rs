@@ -1,6 +1,9 @@
-use std::collections::BTreeMap;
+use std::cell::RefCell;
 use std::sync::Arc;
+use std::{collections::BTreeMap, rc::Rc};
 
+use crate::dag::state_manager::Openings;
+use crate::subprotocols::sumcheck::CacheSumcheckOpenings;
 use crate::{
     field::JoltField,
     jolt::{
@@ -483,16 +486,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         self.current_round += 1;
     }
 
-    fn cache_openings(&mut self) {
-        debug_assert!(self.ra_claim_prime.is_none());
-        let prover_state = self
-            .prover_state
-            .as_ref()
-            .expect("Prover state not initialized");
-
-        self.ra_claim_prime = Some(prover_state.H.final_sumcheck_claim());
-    }
-
     fn expected_output_claim(&self, r: &[F]) -> F {
         let ra_claim_prime = self.ra_claim_prime.expect("ra_claim_prime not set");
         let verifier_state = self
@@ -513,6 +506,28 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         let eq_eval_cycle = EqPolynomial::mle(r_cycle, r_cycle_prime);
 
         eq_eval_address * eq_eval_cycle * (ra_claim_prime.square() - ra_claim_prime)
+    }
+}
+
+impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS>
+    for BooleanitySumcheck<F>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+{
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
+        debug_assert!(self.ra_claim_prime.is_none());
+        let prover_state = self
+            .prover_state
+            .as_ref()
+            .expect("Prover state not initialized");
+
+        self.ra_claim_prime = Some(prover_state.H.final_sumcheck_claim());
     }
 }
 
@@ -823,7 +838,27 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         );
     }
 
-    fn cache_openings(&mut self) {
+    fn expected_output_claim(&self, r: &[F]) -> F {
+        let (ra_claim, ra_claim_shift) = self.ra_claims.as_ref().expect("ra_claims not set");
+
+        let int_eval = IdentityPolynomial::new(self.K.log_2()).evaluate(r);
+
+        // Verify sumcheck_claim = int(r) * (ra_claim + challenge * ra_claim_shift)
+        int_eval * (*ra_claim + self.challenge * *ra_claim_shift)
+    }
+}
+
+impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS> for RafBytecode<F>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+{
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
         debug_assert!(self.ra_claims.is_none());
         let prover_state = self
             .prover_state
@@ -834,15 +869,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         let ra_claim_shift = prover_state.ra_poly_shift.final_sumcheck_claim();
 
         self.ra_claims = Some((ra_claim, ra_claim_shift));
-    }
-
-    fn expected_output_claim(&self, r: &[F]) -> F {
-        let (ra_claim, ra_claim_shift) = self.ra_claims.as_ref().expect("ra_claims not set");
-
-        let int_eval = IdentityPolynomial::new(self.K.log_2()).evaluate(r);
-
-        // Verify sumcheck_claim = int(r) * (ra_claim + challenge * ra_claim_shift)
-        int_eval * (*ra_claim + self.challenge * *ra_claim_shift)
     }
 }
 

@@ -1,4 +1,7 @@
+use std::{cell::RefCell, rc::Rc};
+
 use crate::{
+    dag::state_manager::Openings,
     field::{JoltField, OptimizedMul},
     jolt::{
         vm::{ram::remap_address, JoltProverPreprocessing},
@@ -10,9 +13,12 @@ use crate::{
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
+        opening_proof::ProverOpeningAccumulator,
     },
     r1cs::inputs::JoltR1CSInputs,
-    subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof},
+    subprotocols::sumcheck::{
+        BatchableSumcheckInstance, CacheSumcheckOpenings, SumcheckInstanceProof,
+    },
     utils::{
         errors::ProofVerifyError, math::Math, thread::unsafe_allocate_zero_vec,
         transcript::Transcript,
@@ -891,15 +897,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         }
     }
 
-    fn cache_openings(&mut self) {
-        let prover_state = self.prover_state.as_ref().unwrap();
-        self.claims = Some(ReadWriteSumcheckClaims {
-            val_claim: prover_state.val.as_ref().unwrap().final_sumcheck_claim(),
-            ra_claim: prover_state.ra.as_ref().unwrap().final_sumcheck_claim(),
-            inc_claim: prover_state.inc_cycle.final_sumcheck_claim(),
-        });
-    }
-
     fn expected_output_claim(&self, r: &[F]) -> F {
         let ReadWriteCheckingVerifierState {
             sumcheck_switch_index,
@@ -919,5 +916,30 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         eq_eval_cycle
             * claims.ra_claim
             * (claims.val_claim + self.z * (claims.val_claim + claims.inc_claim))
+    }
+}
+
+impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS>
+    for RamReadWriteChecking<F>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+{
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
+        debug_assert!(self.claims.is_none());
+        let prover_state = self
+            .prover_state
+            .as_ref()
+            .expect("Prover state not initialized");
+        self.claims = Some(ReadWriteSumcheckClaims {
+            val_claim: prover_state.val.as_ref().unwrap().final_sumcheck_claim(),
+            ra_claim: prover_state.ra.as_ref().unwrap().final_sumcheck_claim(),
+            inc_claim: prover_state.inc_cycle.final_sumcheck_claim(),
+        });
     }
 }

@@ -1,8 +1,9 @@
 #![allow(clippy::too_many_arguments)]
 
-use std::vec;
+use std::{cell::RefCell, rc::Rc, vec};
 
 use crate::{
+    dag::state_manager::Openings,
     field::JoltField,
     jolt::{
         vm::{
@@ -23,7 +24,7 @@ use crate::{
     },
     subprotocols::{
         ra_virtual::{RAProof, RASumcheck},
-        sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof},
+        sumcheck::{BatchableSumcheckInstance, CacheSumcheckOpenings, SumcheckInstanceProof},
     },
     utils::{
         errors::ProofVerifyError,
@@ -226,15 +227,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         }
     }
 
-    fn cache_openings(&mut self) {
-        if let Some(prover_state) = &self.prover_state {
-            self.claims = Some(ValEvaluationSumcheckClaims {
-                inc_claim: prover_state.inc.final_sumcheck_claim(),
-                wa_claim: prover_state.wa.final_sumcheck_claim(),
-            });
-        }
-    }
-
     fn expected_output_claim(&self, r: &[F]) -> F {
         let verifier_state = self
             .verifier_state
@@ -255,6 +247,27 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
 
         // Return inc_claim * wa_claim * lt_eval
         claims.inc_claim * claims.wa_claim * lt_eval
+    }
+}
+
+impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS>
+    for ValEvaluationSumcheck<F>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+{
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
+        if let Some(prover_state) = &self.prover_state {
+            self.claims = Some(ValEvaluationSumcheckClaims {
+                inc_claim: prover_state.inc.final_sumcheck_claim(),
+                wa_claim: prover_state.wa.final_sumcheck_claim(),
+            });
+        }
     }
 }
 
@@ -425,18 +438,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         self.current_round += 1;
     }
 
-    fn cache_openings(&mut self) {
-        if let Some(prover_state) = &self.prover_state {
-            if let Some(h_polys) = &prover_state.H {
-                let claims: Vec<F> = h_polys
-                    .iter()
-                    .map(|h_poly| h_poly.final_sumcheck_claim())
-                    .collect();
-                self.ra_claims = Some(claims);
-            }
-        }
-    }
-
     fn expected_output_claim(&self, r: &[F]) -> F {
         let verifier_state = self
             .verifier_state
@@ -458,6 +459,33 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         }
 
         eq_eval_address * eq_eval_cycle * result
+    }
+}
+
+impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS>
+    for BooleanitySumcheck<F>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+{
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
+        debug_assert!(self.ra_claims.is_none());
+        let prover_state = self
+            .prover_state
+            .as_ref()
+            .expect("Prover state not initialized");
+
+        let h_polys = prover_state.H.as_ref().expect("H polys not initialized");
+        let claims: Vec<F> = h_polys
+            .iter()
+            .map(|h_poly| h_poly.final_sumcheck_claim())
+            .collect();
+        self.ra_claims = Some(claims);
     }
 }
 
@@ -722,17 +750,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         }
     }
 
-    fn cache_openings(&mut self) {
-        if let Some(prover_state) = &self.prover_state {
-            let claims: Vec<F> = prover_state
-                .ra
-                .iter()
-                .map(|ra_poly| ra_poly.final_sumcheck_claim())
-                .collect();
-            self.cached_claims = Some(claims);
-        }
-    }
-
     fn expected_output_claim(&self, _r: &[F]) -> F {
         let verifier_state = self
             .verifier_state
@@ -746,6 +763,33 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             .zip(verifier_state.z_powers.iter())
             .map(|(ra_claim, z_power)| *ra_claim * z_power)
             .sum()
+    }
+}
+
+impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS>
+    for HammingWeightSumcheck<F>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+{
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
+        debug_assert!(self.cached_claims.is_none());
+        let prover_state = self
+            .prover_state
+            .as_ref()
+            .expect("Prover state not initialized");
+
+        let claims: Vec<F> = prover_state
+            .ra
+            .iter()
+            .map(|ra_poly| ra_poly.final_sumcheck_claim())
+            .collect();
+        self.cached_claims = Some(claims);
     }
 }
 
@@ -866,12 +910,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         }
     }
 
-    fn cache_openings(&mut self) {
-        if let Some(prover_state) = &self.prover_state {
-            self.cached_claim = Some(prover_state.ra.final_sumcheck_claim());
-        }
-    }
-
     fn expected_output_claim(&self, r: &[F]) -> F {
         let verifier_state = self
             .verifier_state
@@ -886,6 +924,27 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         // Return unmap(r) * ra(r)
         let ra_claim = self.cached_claim.expect("ra_claim not cached");
         unmap_eval * ra_claim
+    }
+}
+
+impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS>
+    for RafEvaluationSumcheck<F>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+{
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
+        debug_assert!(self.cached_claim.is_none());
+        let prover_state = self
+            .prover_state
+            .as_ref()
+            .expect("Prover state not initialized");
+        self.cached_claim = Some(prover_state.ra.final_sumcheck_claim());
     }
 }
 

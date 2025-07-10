@@ -1,4 +1,7 @@
+use std::{cell::RefCell, rc::Rc};
+
 use crate::{
+    dag::state_manager::Openings,
     field::JoltField,
     jolt::{
         vm::{ram::remap_address, JoltProverPreprocessing},
@@ -10,12 +13,13 @@ use crate::{
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
+        opening_proof::ProverOpeningAccumulator,
         program_io_polynomial::ProgramIOPolynomial,
         range_mask_polynomial::RangeMaskPolynomial,
     },
     subprotocols::{
         sparse_dense_shout::ExpandingTable,
-        sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof},
+        sumcheck::{BatchableSumcheckInstance, CacheSumcheckOpenings, SumcheckInstanceProof},
     },
     utils::{
         errors::ProofVerifyError, math::Math, thread::drop_in_background_thread,
@@ -307,12 +311,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         eq_table.update(r_j);
     }
 
-    fn cache_openings(&mut self) {
-        debug_assert!(self.val_final_claim.is_none());
-        let OutputSumcheckProverState { val_final, .. } = self.prover_state.as_ref().unwrap();
-        self.val_final_claim = Some(val_final.final_sumcheck_claim());
-    }
-
     fn expected_output_claim(&self, r: &[F]) -> F {
         let OutputSumcheckVerifierState {
             r_address,
@@ -338,6 +336,23 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         // Recall that the sumcheck expression is:
         //   0 = \sum_k eq(r_address, k) * io_range(k) * (Val_final(k) - Val_io(k))
         eq_eval * io_mask_eval * (*val_final_claim - val_io_eval)
+    }
+}
+
+impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS> for OutputSumcheck<F>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+{
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
+        debug_assert!(self.val_final_claim.is_none());
+        let OutputSumcheckProverState { val_final, .. } = self.prover_state.as_ref().unwrap();
+        self.val_final_claim = Some(val_final.final_sumcheck_claim());
     }
 }
 
@@ -468,20 +483,31 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         );
     }
 
-    fn cache_openings(&mut self) {
-        debug_assert!(self.output_claims.is_none());
-        let ValFinalSumcheckProverState { inc, wa, .. } = self.prover_state.as_mut().unwrap();
-        self.output_claims = Some(ValFinalSumcheckClaims {
-            inc_claim: inc.final_sumcheck_claim(),
-            wa_claim: wa.final_sumcheck_claim(),
-        });
-    }
-
     fn expected_output_claim(&self, _: &[F]) -> F {
         let ValFinalSumcheckClaims {
             inc_claim,
             wa_claim,
         } = self.output_claims.as_ref().unwrap();
         *inc_claim * wa_claim
+    }
+}
+
+impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS> for ValFinalSumcheck<F>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+{
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
+        debug_assert!(self.output_claims.is_none());
+        let ValFinalSumcheckProverState { inc, wa, .. } = self.prover_state.as_mut().unwrap();
+        self.output_claims = Some(ValFinalSumcheckClaims {
+            inc_claim: inc.final_sumcheck_claim(),
+            wa_claim: wa.final_sumcheck_claim(),
+        });
     }
 }

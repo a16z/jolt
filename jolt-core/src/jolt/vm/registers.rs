@@ -1,4 +1,7 @@
+use std::{cell::RefCell, rc::Rc};
+
 use crate::{
+    dag::state_manager::Openings,
     field::JoltField,
     jolt::{
         vm::{
@@ -17,7 +20,9 @@ use crate::{
         },
         opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
     },
-    subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof},
+    subprotocols::sumcheck::{
+        BatchableSumcheckInstance, CacheSumcheckOpenings, SumcheckInstanceProof,
+    },
     utils::{
         errors::ProofVerifyError,
         math::Math,
@@ -161,15 +166,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         }
     }
 
-    fn cache_openings(&mut self) {
-        if let Some(prover_state) = &self.prover_state {
-            self.claims = Some(ValEvaluationSumcheckClaims {
-                inc_claim: prover_state.inc.final_sumcheck_claim(),
-                wa_claim: prover_state.wa.final_sumcheck_claim(),
-            });
-        }
-    }
-
     fn expected_output_claim(&self, r: &[F]) -> F {
         let verifier_state = self
             .verifier_state
@@ -190,6 +186,30 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
 
         // Return inc_claim * wa_claim * lt_eval
         claims.inc_claim * claims.wa_claim * lt_eval
+    }
+}
+
+impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS>
+    for ValEvaluationSumcheck<F>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+{
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
+        debug_assert!(self.claims.is_none());
+        let prover_state = self
+            .prover_state
+            .as_ref()
+            .expect("Prover state not initialized");
+        self.claims = Some(ValEvaluationSumcheckClaims {
+            inc_claim: prover_state.inc.final_sumcheck_claim(),
+            wa_claim: prover_state.wa.final_sumcheck_claim(),
+        });
     }
 }
 

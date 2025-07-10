@@ -1,11 +1,13 @@
+use std::cell::RefCell;
 use std::marker::PhantomData;
+use std::rc::Rc;
 use tracer::instruction::RV32IMCycle;
 use tracing::{span, Level};
 
 use crate::dag::stage::SumcheckStages;
 use crate::dag::state_manager::OpeningsKeys::{OuterSumcheckAz, OuterSumcheckBz, OuterSumcheckCz};
 use crate::dag::state_manager::{
-    OpeningPoint, OpeningsKeys, ProofData, ProofKeys, StateManager, LITTLE_ENDIAN,
+    OpeningPoint, Openings, OpeningsKeys, ProofData, ProofKeys, StateManager, LITTLE_ENDIAN,
 };
 use crate::field::JoltField;
 use crate::jolt::vm::JoltCommitments;
@@ -22,6 +24,7 @@ use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::r1cs::inputs::ALL_R1CS_INPUTS;
 use crate::r1cs::inputs::COMMITTED_R1CS_INPUTS;
 use crate::r1cs::key::UniformSpartanKey;
+use crate::subprotocols::sumcheck::CacheSumcheckOpenings;
 use crate::utils::math::Math;
 
 use crate::utils::transcript::Transcript;
@@ -622,18 +625,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         );
     }
 
-    fn cache_openings(&mut self) {
-        let prover_state = self
-            .prover_state
-            .as_ref()
-            .expect("Prover state not initialized");
-
-        let final_poly_abc = prover_state.poly_abc_small.final_sumcheck_claim();
-        let final_poly_z = prover_state.poly_z.final_sumcheck_claim();
-
-        self.cached_claims = Some((final_poly_abc, final_poly_z));
-    }
-
     fn expected_output_claim(&self, r: &[F]) -> F {
         let verifier_state = self
             .verifier_state
@@ -666,6 +657,31 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         );
 
         left_expected * eval_z
+    }
+}
+
+impl<'a, F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS>
+    for InnerSumcheck<'a, F>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+{
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
+        debug_assert!(self.cached_claims.is_none());
+        let prover_state = self
+            .prover_state
+            .as_ref()
+            .expect("Prover state not initialized");
+
+        let final_poly_abc = prover_state.poly_abc_small.final_sumcheck_claim();
+        let final_poly_z = prover_state.poly_z.final_sumcheck_claim();
+
+        self.cached_claims = Some((final_poly_abc, final_poly_z));
     }
 }
 
@@ -833,18 +849,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         );
     }
 
-    fn cache_openings(&mut self) {
-        let prover_state = self
-            .prover_state
-            .as_ref()
-            .expect("Prover state not initialized");
-
-        let unexpanded_pc_eval = prover_state.unexpanded_pc_poly.final_sumcheck_claim();
-        let pc_eval = prover_state.pc_poly.final_sumcheck_claim();
-
-        self.cached_claims = Some((unexpanded_pc_eval, pc_eval));
-    }
-
     fn expected_output_claim(&self, r: &[F]) -> F {
         let verifier_state = self
             .verifier_state
@@ -860,6 +864,30 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             EqPlusOnePolynomial::new(verifier_state.r_cycle.clone()).evaluate(r);
 
         batched_eval_at_shift_r * eq_plus_one_shift_sumcheck
+    }
+}
+
+impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS> for PCSumcheck<F>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+{
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
+        debug_assert!(self.cached_claims.is_none());
+        let prover_state = self
+            .prover_state
+            .as_ref()
+            .expect("Prover state not initialized");
+
+        let unexpanded_pc_eval = prover_state.unexpanded_pc_poly.final_sumcheck_claim();
+        let pc_eval = prover_state.pc_poly.final_sumcheck_claim();
+
+        self.cached_claims = Some((unexpanded_pc_eval, pc_eval));
     }
 }
 
