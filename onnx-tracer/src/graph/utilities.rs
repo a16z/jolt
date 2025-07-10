@@ -1,5 +1,4 @@
 use crate::{
-    //   circuit::{lookup::LookupOp, poly::PolyOp, Op},
     circuit::ops::{hybrid::HybridOp, lookup::LookupOp, poly::PolyOp, InputType, Op},
     graph::{
         model::NodeType,
@@ -16,7 +15,6 @@ use log::{debug, warn};
 use tract_onnx::tract_core::ops::{
     array::{Gather, GatherElements, MultiBroadcastTo, OneHot, ScatterElements, Slice, Topk},
     change_axes::AxisOp,
-    // cnn::DeconvUnary,
     einsum::EinSum,
     element_wise::ElementWiseOp,
     nn::{LeakyRelu, Reduce, Softmax},
@@ -101,8 +99,6 @@ pub fn node_output_shapes(
     }
     Ok(shapes)
 }
-
-// use tract_onnx::prelude::SymbolValues;
 
 /// Extracts the raw values from a tensor.
 pub fn extract_tensor_value(
@@ -1500,38 +1496,3 @@ pub fn homogenize_input_scales(
         Ok(op)
     }
 }
-
-// #[cfg(test)]
-// pub mod tests {
-
-//   use super::*;
-
-//   #[test]
-//   fn test_flatten_valtensors() {
-//     let tensor1: Tensor<Fp> = (0..10).map(|x| x.into()).into();
-//     let tensor2: Tensor<Fp> = (10..20).map(|x| x.into()).into();
-//     let tensor3: Tensor<Fp> = (20..30).map(|x| x.into()).into();
-
-//     let mut tensor = Tensor::new(Some(&[tensor1, tensor2, tensor3]), &[3])
-//       .unwrap()
-//       .combine()
-//       .unwrap();
-
-//     tensor.set_visibility(&Visibility::Public);
-
-//     let flattened: ValTensor<Fp> = tensor.try_into().unwrap();
-
-//     assert_eq!(flattened.len(), 30);
-
-//     let split = split_valtensor(&flattened, vec![vec![2, 5], vec![10], vec![5,
-// 2]]).unwrap();
-
-//     assert_eq!(split.len(), 3);
-//     assert_eq!(split[0].len(), 10);
-//     assert_eq!(split[0].dims(), vec![2, 5]);
-//     assert_eq!(split[1].len(), 10);
-//     assert_eq!(split[1].dims(), vec![10]);
-//     assert_eq!(split[2].dims(), vec![5, 2]);
-//     assert_eq!(split[2].len(), 10);
-//   }
-// }
