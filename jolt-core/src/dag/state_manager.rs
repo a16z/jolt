@@ -124,52 +124,46 @@ pub enum ProofData<F: JoltField, ProofTranscript: Transcript> {
 
 pub type Proofs<F, ProofTranscript> = HashMap<ProofKeys, ProofData<F, ProofTranscript>>;
 
-pub struct ProverState<'a, F: JoltField, PCS, ProofTranscript>
+pub struct ProverState<'a, F: JoltField, PCS>
 where
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
 {
-    pub preprocessing: Option<&'a JoltProverPreprocessing<F, PCS, ProofTranscript>>,
+    pub preprocessing: Option<&'a JoltProverPreprocessing<F, PCS>>,
     pub trace: Option<Vec<RV32IMCycle>>,
     pub program_io: Option<JoltDevice>,
     pub final_memory_state: Option<Memory>,
-    pub accumulator: Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>,
+    pub accumulator: Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>,
 }
 
-pub struct VerifierState<'a, F: JoltField, PCS, ProofTranscript>
+pub struct VerifierState<'a, F: JoltField, PCS>
 where
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
 {
-    pub preprocessing: Option<&'a JoltVerifierPreprocessing<F, PCS, ProofTranscript>>,
+    pub preprocessing: Option<&'a JoltVerifierPreprocessing<F, PCS>>,
     pub program_io: Option<JoltDevice>,
     pub trace_length: Option<usize>,
-    pub accumulator: Rc<RefCell<VerifierOpeningAccumulator<F, PCS, ProofTranscript>>>,
+    pub accumulator: Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>,
 }
 
 pub struct StateManager<
     'a,
     F: JoltField,
     ProofTranscript: Transcript,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 > {
     pub openings: Rc<RefCell<Openings<F>>>,
     pub transcript: RefCell<&'a mut ProofTranscript>,
     pub proofs: Rc<RefCell<Proofs<F, ProofTranscript>>>,
-    prover_state: Option<ProverState<'a, F, PCS, ProofTranscript>>,
-    verifier_state: Option<VerifierState<'a, F, PCS, ProofTranscript>>,
+    prover_state: Option<ProverState<'a, F, PCS>>,
+    verifier_state: Option<VerifierState<'a, F, PCS>>,
 }
 
-impl<
-        'a,
-        F: JoltField,
-        ProofTranscript: Transcript,
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    > StateManager<'a, F, ProofTranscript, PCS>
+impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
+    StateManager<'a, F, ProofTranscript, PCS>
 {
     pub fn new_prover(
         openings: Rc<RefCell<Openings<F>>>,
-        prover_accumulator: Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>,
+        prover_accumulator: Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>,
         transcript: &'a mut ProofTranscript,
         proofs: Rc<RefCell<Proofs<F, ProofTranscript>>>,
     ) -> Self {
@@ -190,7 +184,7 @@ impl<
 
     pub fn new_verifier(
         openings: Rc<RefCell<Openings<F>>>,
-        verifier_accumulator: Rc<RefCell<VerifierOpeningAccumulator<F, PCS, ProofTranscript>>>,
+        verifier_accumulator: Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>,
         transcript: &'a mut ProofTranscript,
         proofs: Rc<RefCell<Proofs<F, ProofTranscript>>>,
     ) -> Self {
@@ -223,7 +217,7 @@ impl<
 
     pub fn set_prover_data(
         &mut self,
-        preprocessing: &'a JoltProverPreprocessing<F, PCS, ProofTranscript>,
+        preprocessing: &'a JoltProverPreprocessing<F, PCS>,
         trace: Vec<RV32IMCycle>,
         program_io: JoltDevice,
         final_memory_state: Memory,
@@ -240,7 +234,7 @@ impl<
 
     pub fn set_verifier_data(
         &mut self,
-        preprocessing: &'a JoltVerifierPreprocessing<F, PCS, ProofTranscript>,
+        preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
         program_io: JoltDevice,
         trace_length: usize,
     ) {
@@ -256,7 +250,7 @@ impl<
     pub fn get_prover_data(
         &self,
     ) -> (
-        &'a JoltProverPreprocessing<F, PCS, ProofTranscript>,
+        &'a JoltProverPreprocessing<F, PCS>,
         &Vec<RV32IMCycle>,
         &JoltDevice,
         &Memory,
@@ -279,13 +273,7 @@ impl<
         }
     }
 
-    pub fn get_verifier_data(
-        &self,
-    ) -> (
-        &'a JoltVerifierPreprocessing<F, PCS, ProofTranscript>,
-        &JoltDevice,
-        usize,
-    ) {
+    pub fn get_verifier_data(&self) -> (&'a JoltVerifierPreprocessing<F, PCS>, &JoltDevice, usize) {
         if let Some(ref verifier_state) = self.verifier_state {
             (
                 verifier_state.preprocessing.expect("Preprocessing not set"),
@@ -300,9 +288,7 @@ impl<
         }
     }
 
-    pub fn get_prover_accumulator(
-        &self,
-    ) -> Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>> {
+    pub fn get_prover_accumulator(&self) -> Rc<RefCell<ProverOpeningAccumulator<F, PCS>>> {
         if let Some(ref prover_state) = self.prover_state {
             prover_state.accumulator.clone()
         } else {
@@ -310,9 +296,7 @@ impl<
         }
     }
 
-    pub fn get_verifier_accumulator(
-        &self,
-    ) -> Rc<RefCell<VerifierOpeningAccumulator<F, PCS, ProofTranscript>>> {
+    pub fn get_verifier_accumulator(&self) -> Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>> {
         if let Some(ref verifier_state) = self.verifier_state {
             verifier_state.accumulator.clone()
         } else {

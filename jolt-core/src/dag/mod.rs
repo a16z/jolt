@@ -23,18 +23,15 @@ mod tests {
         let (mut trace, final_memory_state, mut io_device) = program.trace(&inputs);
 
         // Preprocessing
-        let preprocessing: JoltProverPreprocessing<
-            Fr,
-            MockCommitScheme<Fr, KeccakTranscript>,
-            KeccakTranscript,
-        > = RV32IJoltVM::prover_preprocess(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
-            init_memory_state,
-            1 << 16,
-            1 << 16,
-            1 << 16,
-        );
+        let preprocessing: JoltProverPreprocessing<Fr, MockCommitScheme<Fr>> =
+            RV32IJoltVM::prover_preprocess(
+                bytecode.clone(),
+                io_device.memory_layout.clone(),
+                init_memory_state,
+                1 << 16,
+                1 << 16,
+                1 << 16,
+            );
 
         // Setup trace length and padding
         let trace_length = trace.len();
@@ -69,15 +66,11 @@ mod tests {
 
         // State manager components
         let openings = Rc::new(RefCell::new(HashMap::new()));
-        let prover_accumulator_pre_wrap = crate::poly::opening_proof::ProverOpeningAccumulator::<
-            Fr,
-            MockCommitScheme<Fr, KeccakTranscript>,
-            KeccakTranscript,
-        >::new();
+        let prover_accumulator_pre_wrap =
+            crate::poly::opening_proof::ProverOpeningAccumulator::<Fr, MockCommitScheme<Fr>>::new();
         let verifier_accumulator_pre_wrap = crate::poly::opening_proof::VerifierOpeningAccumulator::<
             Fr,
-            MockCommitScheme<Fr, KeccakTranscript>,
-            KeccakTranscript,
+            MockCommitScheme<Fr>,
         >::new();
 
         let prover_accumulator = Rc::new(RefCell::new(prover_accumulator_pre_wrap));

@@ -102,9 +102,8 @@ fn polynomial_coefficients_from_transcript<F: Field>(transcript: &[F], r_shift: 
 ///
 /// In the MIPPk protocol a prover demonstrates knowledge of [A] ∈ [G1] such
 /// that A commits to pairing commitment T under *v* and U = A^b for a public vector [b] ∈ [F].
-pub struct MippK<P, Transcript> {
+pub struct MippK<P> {
     _pair: PhantomData<P>,
-    _transcript: PhantomData<Transcript>,
 }
 
 /// Proof of [`MippK`]
@@ -119,16 +118,15 @@ where
     final_ck_proof: P::G2,
 }
 
-impl<P, ProofTranscript> MippK<P, ProofTranscript>
+impl<P> MippK<P>
 where
     P: Pairing,
     P::G1: Icicle,
     P::G2: Icicle,
     P::ScalarField: JoltField,
-    ProofTranscript: Transcript,
 {
     #[tracing::instrument(name = "MippK::prove", skip_all)]
-    pub fn prove(
+    pub fn prove<ProofTranscript: Transcript>(
         p_srs: &KZGProverKey<P>,
         values: (Vec<P::G1>, Vec<P::ScalarField>),
         transcript: &mut ProofTranscript,
@@ -181,7 +179,7 @@ where
         })
     }
 
-    pub fn verify(
+    pub fn verify<ProofTranscript: Transcript>(
         v_srs: &KZGVerifierKey<P>,
         com: (PairingOutput<P>, P::G1),
         scalar_b: P::ScalarField,
@@ -265,7 +263,7 @@ mod tests {
 
     #[test]
     fn tipa_ssm_multiexponentiation_inner_product_test() {
-        type MultiExpTipa = MippK<Bn254, KeccakTranscript>;
+        type MultiExpTipa = MippK<Bn254>;
 
         let mut rng = StdRng::seed_from_u64(0u64);
         let srs = SRS::setup(&mut rng, 2 * (TEST_SIZE - 1), 2 * (TEST_SIZE - 1));

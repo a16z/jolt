@@ -248,16 +248,15 @@ where
 }
 
 #[derive(Clone)]
-pub struct Zeromorph<P: Pairing, ProofTranscript: Transcript> {
-    _phantom: PhantomData<(P, ProofTranscript)>,
+pub struct Zeromorph<P: Pairing> {
+    _phantom: PhantomData<P>,
 }
 
-impl<P, ProofTranscript> Zeromorph<P, ProofTranscript>
+impl<P> Zeromorph<P>
 where
     <P as Pairing>::ScalarField: JoltField,
     <P as Pairing>::G1: Icicle,
     P: Pairing,
-    ProofTranscript: Transcript,
 {
     pub fn protocol_name() -> &'static [u8] {
         b"Zeromorph"
@@ -279,7 +278,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "Zeromorph::open")]
-    pub fn open(
+    pub fn open<ProofTranscript: Transcript>(
         pp: &ZeromorphProverKey<P>,
         poly: &MultilinearPolynomial<P::ScalarField>,
         point: &[P::ScalarField],
@@ -362,7 +361,7 @@ where
         })
     }
 
-    pub fn verify(
+    pub fn verify<ProofTranscript: Transcript>(
         vk: &ZeromorphVerifierKey<P>,
         comm: &ZeromorphCommitment<P>,
         point: &[P::ScalarField],
@@ -432,8 +431,7 @@ where
     }
 }
 
-impl<P: Pairing, ProofTranscript: Transcript> CommitmentScheme<ProofTranscript>
-    for Zeromorph<P, ProofTranscript>
+impl<P: Pairing> CommitmentScheme for Zeromorph<P>
 where
     <P as Pairing>::ScalarField: JoltField,
     <P as Pairing>::G1: Icicle,
@@ -503,18 +501,17 @@ where
         ZeromorphCommitment(combined_commitment.into_affine())
     }
 
-    fn prove(
+    fn prove<ProofTranscript: Transcript>(
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         let eval = poly.evaluate(opening_point);
-        Zeromorph::<P, ProofTranscript>::open(setup, poly, opening_point, &eval, transcript)
-            .unwrap()
+        Zeromorph::<P>::open(setup, poly, opening_point, &eval, transcript).unwrap()
     }
 
-    fn verify(
+    fn verify<ProofTranscript: Transcript>(
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
         transcript: &mut ProofTranscript,
@@ -522,14 +519,7 @@ where
         opening: &Self::Field,         // evaluation \widetilde{Z}(r)
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
-        Zeromorph::<P, ProofTranscript>::verify(
-            setup,
-            commitment,
-            opening_point,
-            opening,
-            proof,
-            transcript,
-        )
+        Zeromorph::<P>::verify(setup, commitment, opening_point, opening, proof, transcript)
     }
 
     fn protocol_name() -> &'static [u8] {
@@ -802,23 +792,17 @@ mod test {
 
             let srs = ZeromorphSRS::<Bn254>::setup(&mut rng, 1 << num_vars);
             let (pk, vk) = srs.trim(1 << num_vars);
-            let commitment = Zeromorph::<Bn254, KeccakTranscript>::commit(&pk, &poly).unwrap();
+            let commitment = Zeromorph::<Bn254>::commit(&pk, &poly).unwrap();
 
             let mut prover_transcript = KeccakTranscript::new(b"TestEval");
-            let proof = Zeromorph::<Bn254, KeccakTranscript>::open(
-                &pk,
-                &poly,
-                &point,
-                &eval,
-                &mut prover_transcript,
-            )
-            .unwrap();
+            let proof = Zeromorph::<Bn254>::open(&pk, &poly, &point, &eval, &mut prover_transcript)
+                .unwrap();
             let p_transcript_squeeze: <Bn254 as Pairing>::ScalarField =
                 prover_transcript.challenge_scalar();
 
             // Verify proof.
             let mut verifier_transcript = KeccakTranscript::new(b"TestEval");
-            Zeromorph::<Bn254, KeccakTranscript>::verify(
+            Zeromorph::<Bn254>::verify(
                 &vk,
                 &commitment,
                 &point,
@@ -839,7 +823,7 @@ mod test {
                 .collect::<Vec<_>>();
             let altered_verifier_eval = poly.evaluate(&altered_verifier_point);
             let mut verifier_transcript = KeccakTranscript::new(b"TestEval");
-            assert!(Zeromorph::<Bn254, KeccakTranscript>::verify(
+            assert!(Zeromorph::<Bn254>::verify(
                 &vk,
                 &commitment,
                 &altered_verifier_point,

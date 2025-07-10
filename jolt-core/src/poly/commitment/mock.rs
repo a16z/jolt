@@ -15,8 +15,8 @@ use crate::{
 use super::commitment_scheme::CommitmentScheme;
 
 #[derive(Clone)]
-pub struct MockCommitScheme<F: JoltField, ProofTranscript: Transcript> {
-    _marker: PhantomData<(F, ProofTranscript)>,
+pub struct MockCommitScheme<F: JoltField> {
+    _marker: PhantomData<F>,
 }
 
 #[derive(Default, Debug, PartialEq, Clone, CanonicalDeserialize, CanonicalSerialize)]
@@ -35,10 +35,9 @@ pub struct MockProof<F: JoltField> {
     opening_point: Vec<F>,
 }
 
-impl<F, ProofTranscript> CommitmentScheme<ProofTranscript> for MockCommitScheme<F, ProofTranscript>
+impl<F> CommitmentScheme for MockCommitScheme<F>
 where
     F: JoltField,
-    ProofTranscript: Transcript,
 {
     type Field = F;
     type ProverSetup = ();
@@ -78,7 +77,7 @@ where
         MockCommitment::default()
     }
 
-    fn prove(
+    fn prove<ProofTranscript: Transcript>(
         _setup: &Self::ProverSetup,
         _poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[Self::Field],
@@ -89,7 +88,7 @@ where
         }
     }
 
-    fn verify(
+    fn verify<ProofTranscript: Transcript>(
         proof: &Self::Proof,
         _setup: &Self::VerifierSetup,
         _transcript: &mut ProofTranscript,

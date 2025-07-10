@@ -128,15 +128,14 @@ impl JoltR1CSInputs {
         }
     }
 
-    pub fn generate_witness<F, PCS, ProofTranscript>(
+    pub fn generate_witness<F, PCS>(
         &self,
         trace: &[RV32IMCycle],
-        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
+        preprocessing: &JoltProverPreprocessing<F, PCS>,
     ) -> MultilinearPolynomial<F>
     where
         F: JoltField,
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
-        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
     {
         match self {
             JoltR1CSInputs::PC => {

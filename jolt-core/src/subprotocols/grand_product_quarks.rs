@@ -20,10 +20,7 @@ use std::marker::PhantomData;
 use thiserror::Error;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct QuarkGrandProductProof<
-    PCS: CommitmentScheme<ProofTranscript>,
-    ProofTranscript: Transcript,
-> {
+pub struct QuarkGrandProductProof<PCS: CommitmentScheme, ProofTranscript: Transcript> {
     sumcheck_proof: SumcheckInstanceProof<PCS::Field, ProofTranscript>,
     g_commitment: PCS::Commitment,
     g_r_sumcheck: PCS::Field,
@@ -48,7 +45,7 @@ impl<F, PCS, ProofTranscript> BatchedGrandProduct<F, PCS, ProofTranscript>
     for QuarkGrandProduct<F, ProofTranscript>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 {
     /// The bottom/input layer of the grand products
@@ -151,7 +148,7 @@ where
     #[tracing::instrument(skip_all, name = "BatchedGrandProduct::prove_grand_product")]
     fn prove_grand_product(
         &mut self,
-        opening_accumulator: Option<&mut ProverOpeningAccumulator<F, PCS, ProofTranscript>>,
+        opening_accumulator: Option<&mut ProverOpeningAccumulator<F, PCS>>,
         transcript: &mut ProofTranscript,
         setup: Option<&PCS::ProverSetup>,
     ) -> (BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>) {
@@ -167,7 +164,7 @@ where
     fn verify_grand_product(
         proof: &BatchedGrandProductProof<PCS, ProofTranscript>,
         claimed_outputs: &[F],
-        _opening_accumulator: Option<&mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>>,
+        _opening_accumulator: Option<&mut VerifierOpeningAccumulator<F, PCS>>,
         transcript: &mut ProofTranscript,
     ) -> (F, Vec<F>) {
         QuarkGrandProductBase::verify_quark_grand_product::<Self, PCS>(
@@ -190,9 +187,9 @@ where
 {
     /// Computes a batched grand product proof, layer by layer.
     #[tracing::instrument(skip_all, name = "QuarkGrandProduct::prove_grand_product")]
-    pub fn prove_quark_grand_product<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
+    pub fn prove_quark_grand_product<PCS: CommitmentScheme<Field = F>>(
         grand_product: &mut impl BatchedGrandProduct<F, PCS, ProofTranscript>,
-        opening_accumulator: Option<&mut ProverOpeningAccumulator<F, PCS, ProofTranscript>>,
+        opening_accumulator: Option<&mut ProverOpeningAccumulator<F, PCS>>,
         transcript: &mut ProofTranscript,
         setup: Option<&PCS::ProverSetup>,
     ) -> (BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>) {
@@ -241,11 +238,11 @@ where
     pub fn verify_quark_grand_product<G, PCS>(
         proof: &BatchedGrandProductProof<PCS, ProofTranscript>,
         claimed_outputs: &[F],
-        opening_accumulator: Option<&mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>>,
+        opening_accumulator: Option<&mut VerifierOpeningAccumulator<F, PCS>>,
         transcript: &mut ProofTranscript,
     ) -> (F, Vec<F>)
     where
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+        PCS: CommitmentScheme<Field = F>,
         G: BatchedGrandProduct<F, PCS, ProofTranscript>,
     {
         transcript.append_scalars(claimed_outputs);
@@ -296,7 +293,7 @@ pub enum QuarkError {
 
 impl<PCS, ProofTranscript> QuarkGrandProductProof<PCS, ProofTranscript>
 where
-    PCS: CommitmentScheme<ProofTranscript>,
+    PCS: CommitmentScheme,
     ProofTranscript: Transcript,
 {
     /// Computes a grand product proof using the Section 5 technique from Quarks Paper
@@ -308,7 +305,7 @@ where
         v: &[PCS::Field],
         r_outputs: Vec<PCS::Field>,
         claim: PCS::Field,
-        opening_accumulator: &mut ProverOpeningAccumulator<PCS::Field, PCS, ProofTranscript>,
+        opening_accumulator: &mut ProverOpeningAccumulator<PCS::Field, PCS>,
         transcript: &mut ProofTranscript,
         setup: &PCS::ProverSetup,
     ) -> (Self, Vec<PCS::Field>, PCS::Field) {
@@ -477,7 +474,7 @@ where
         &self,
         r_outputs: Vec<PCS::Field>,
         claim: PCS::Field,
-        opening_accumulator: &mut VerifierOpeningAccumulator<PCS::Field, PCS, ProofTranscript>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<PCS::Field, PCS>,
         transcript: &mut ProofTranscript,
         n_rounds: usize,
     ) -> Result<(PCS::Field, Vec<PCS::Field>), QuarkError> {
@@ -685,15 +682,12 @@ mod quark_grand_product_tests {
         let mut hybrid_grand_product =
             <QuarkGrandProduct<Fr, KeccakTranscript> as BatchedGrandProduct<
                 Fr,
-                Zeromorph<Bn254, KeccakTranscript>,
+                Zeromorph<Bn254>,
                 KeccakTranscript,
             >>::construct_with_config((v, 2), config);
-        let mut prover_accumulator: ProverOpeningAccumulator<
-            Fr,
-            Zeromorph<Bn254, KeccakTranscript>,
-            KeccakTranscript,
-        > = ProverOpeningAccumulator::new();
-        let proof: BatchedGrandProductProof<Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript> =
+        let mut prover_accumulator: ProverOpeningAccumulator<Fr, Zeromorph<Bn254>> =
+            ProverOpeningAccumulator::new();
+        let proof: BatchedGrandProductProof<Zeromorph<Bn254>, KeccakTranscript> =
             hybrid_grand_product
                 .prove_grand_product(
                     Some(&mut prover_accumulator),
@@ -706,11 +700,8 @@ mod quark_grand_product_tests {
         // Note resetting the transcript is important
         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
         verifier_transcript.compare_to(prover_transcript);
-        let mut verifier_accumulator: VerifierOpeningAccumulator<
-            Fr,
-            Zeromorph<Bn254, KeccakTranscript>,
-            KeccakTranscript,
-        > = VerifierOpeningAccumulator::new();
+        let mut verifier_accumulator: VerifierOpeningAccumulator<Fr, Zeromorph<Bn254>> =
+            VerifierOpeningAccumulator::new();
         verifier_accumulator.compare_to(prover_accumulator, &setup.0);
 
         let _ = QuarkGrandProduct::verify_grand_product(

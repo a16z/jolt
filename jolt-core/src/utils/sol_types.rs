@@ -191,7 +191,7 @@ impl<F: JoltField, ProofTranscript: Transcript> Into<GKRLayer>
 }
 
 impl<ProofTranscript: Transcript> Into<GrandProductProof>
-    for BatchedGrandProductProof<HyperKZG<Bn254, ProofTranscript>, ProofTranscript>
+    for BatchedGrandProductProof<HyperKZG<Bn254>, ProofTranscript>
 {
     fn into(self) -> GrandProductProof {
         let layers: Vec<GKRLayer> = self.gkr_layers.into_iter().map(|i| i.into()).collect();

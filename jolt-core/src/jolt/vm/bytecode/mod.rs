@@ -120,10 +120,10 @@ pub struct BytecodeShoutProof<F: JoltField, ProofTranscript: Transcript> {
 
 impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTranscript> {
     #[tracing::instrument(skip_all, name = "BytecodeShoutProof::prove")]
-    pub fn prove<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
-        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
+    pub fn prove<PCS: CommitmentScheme<Field = F>>(
+        preprocessing: &JoltProverPreprocessing<F, PCS>,
         trace: &[RV32IMCycle],
-        opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Self {
         //// start of state gen (to be handled by state manager)
@@ -236,13 +236,13 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
         }
     }
 
-    pub fn verify<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
+    pub fn verify<PCS: CommitmentScheme<Field = F>>(
         &self,
         preprocessing: &BytecodePreprocessing,
-        commitments: &JoltCommitments<F, PCS, ProofTranscript>,
+        commitments: &JoltCommitments<F, PCS>,
         T: usize,
         transcript: &mut ProofTranscript,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
     ) -> Result<(), ProofVerifyError> {
         let K = preprocessing.bytecode.len();
         // TODO: this should come from Spartan
@@ -414,9 +414,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
-    for BooleanitySumcheck<F>
-{
+impl<F: JoltField> BatchableSumcheckInstance<F> for BooleanitySumcheck<F> {
     fn degree(&self) -> usize {
         3
     }
@@ -509,17 +507,15 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 }
 
-impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS>
-    for BooleanitySumcheck<F>
+impl<F, PCS> CacheSumcheckOpenings<F, PCS> for BooleanitySumcheck<F>
 where
     F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
     fn cache_openings(
         &mut self,
         _openings: Option<Rc<RefCell<Openings<F>>>>,
-        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         debug_assert!(self.ra_claim_prime.is_none());
         let prover_state = self
@@ -753,9 +749,7 @@ impl<F: JoltField> RafBytecode<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
-    for RafBytecode<F>
-{
+impl<F: JoltField> BatchableSumcheckInstance<F> for RafBytecode<F> {
     fn degree(&self) -> usize {
         2
     }
@@ -773,7 +767,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
-        let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript>>::degree(self);
+        let degree = <Self as BatchableSumcheckInstance<F>>::degree(self);
 
         let univariate_poly_evals: [F; 2] = (0..prover_state.ra_poly.len() / 2)
             .into_par_iter()
@@ -848,16 +842,15 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 }
 
-impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS> for RafBytecode<F>
+impl<F, PCS> CacheSumcheckOpenings<F, PCS> for RafBytecode<F>
 where
     F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
     fn cache_openings(
         &mut self,
         _openings: Option<Rc<RefCell<Openings<F>>>>,
-        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         debug_assert!(self.ra_claims.is_none());
         let prover_state = self

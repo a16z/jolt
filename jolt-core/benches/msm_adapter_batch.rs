@@ -31,7 +31,7 @@ fn setup_bench<PCS, F, ProofTranscript>(
 )
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 {
     let mut rng = ChaCha20Rng::seed_from_u64(SRS_SIZE as u64);
@@ -124,7 +124,7 @@ fn benchmark_msm_batch<PCS, F, ProofTranscript>(
     max_num_bits: Vec<usize>,
 ) where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 {
     let (bases, gpu_bases, polys) = setup_bench::<PCS, F, ProofTranscript>(max_num_bits);
@@ -188,42 +188,42 @@ fn main() {
         .warm_up_time(std::time::Duration::from_secs(10));
 
     let max_num_bits = vec![256; 1000];
-    benchmark_msm_batch::<HyperKZG<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
+    benchmark_msm_batch::<HyperKZG<Bn254>, Fr, KeccakTranscript>(
         &mut criterion,
         "VariableBaseMSM::msm_adapter_batch(1000 256bit scalars)",
         max_num_bits,
     );
 
     let max_num_bits = vec![64; 1000];
-    benchmark_msm_batch::<HyperKZG<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
+    benchmark_msm_batch::<HyperKZG<Bn254>, Fr, KeccakTranscript>(
         &mut criterion,
         "VariableBaseMSM::msm_adapter_batch(1000 64bit scalars)",
         max_num_bits,
     );
 
     let max_num_bits = vec![32; 1000];
-    benchmark_msm_batch::<HyperKZG<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
+    benchmark_msm_batch::<HyperKZG<Bn254>, Fr, KeccakTranscript>(
         &mut criterion,
         "VariableBaseMSM::msm_adapter_batch(1000 32bit scalars)",
         max_num_bits,
     );
 
     let max_num_bits = vec![16; 1000];
-    benchmark_msm_batch::<HyperKZG<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
+    benchmark_msm_batch::<HyperKZG<Bn254>, Fr, KeccakTranscript>(
         &mut criterion,
         "VariableBaseMSM::msm_adapter_batch(1000 16bit scalars)",
         max_num_bits,
     );
 
     let max_num_bits = vec![8; 1000];
-    benchmark_msm_batch::<HyperKZG<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
+    benchmark_msm_batch::<HyperKZG<Bn254>, Fr, KeccakTranscript>(
         &mut criterion,
         "VariableBaseMSM::msm_adapter_batch(1000 8bit scalars)",
         max_num_bits,
     );
 
     let max_num_bits = [vec![8; 450], vec![32; 450], vec![256; 100]].concat();
-    benchmark_msm_batch::<HyperKZG<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
+    benchmark_msm_batch::<HyperKZG<Bn254>, Fr, KeccakTranscript>(
         &mut criterion,
         "VariableBaseMSM::msm_adapter_batch(Mixed scalars, max 256 bits)",
         max_num_bits,

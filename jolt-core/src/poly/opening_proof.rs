@@ -115,14 +115,13 @@ impl<F: JoltField> ProverOpening<F> {
     }
 }
 
-pub struct OpeningProofReductionSumcheck<F, PCS, ProofTranscript>
+pub struct OpeningProofReductionSumcheck<F, PCS>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
 {
     prover_state: Option<ProverOpening<F>>,
-    verifier_state: Option<VerifierOpening<F, PCS, ProofTranscript>>,
+    verifier_state: Option<VerifierOpening<F, PCS>>,
     opening_point: Vec<F>,
     input_claim: F,
     sumcheck_claim: Option<F>,
@@ -132,11 +131,10 @@ where
     batch: Vec<MultilinearPolynomial<F>>,
 }
 
-impl<F, PCS, ProofTranscript> OpeningProofReductionSumcheck<F, PCS, ProofTranscript>
+impl<F, PCS> OpeningProofReductionSumcheck<F, PCS>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
 {
     fn new_prover_instance_dense(
         polynomial: MultilinearPolynomial<F>,
@@ -190,12 +188,10 @@ where
     }
 }
 
-impl<F, PCS, ProofTranscript> BatchableSumcheckInstance<F, ProofTranscript>
-    for OpeningProofReductionSumcheck<F, PCS, ProofTranscript>
+impl<F, PCS> BatchableSumcheckInstance<F> for OpeningProofReductionSumcheck<F, PCS>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
 {
     fn degree(&self) -> usize {
         2
@@ -234,17 +230,15 @@ where
     }
 }
 
-impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS>
-    for OpeningProofReductionSumcheck<F, PCS, ProofTranscript>
+impl<F, PCS> CacheSumcheckOpenings<F, PCS> for OpeningProofReductionSumcheck<F, PCS>
 where
     F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
     fn cache_openings(
         &mut self,
         _openings: Option<Rc<RefCell<Openings<F>>>>,
-        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         debug_assert!(self.sumcheck_claim.is_none());
         let prover_state = self
@@ -269,11 +263,10 @@ where
 /// at the (same) point.
 /// Multiple `VerifierOpening`s can be accumulated and further
 /// batched/reduced using a `VerifierOpeningAccumulator`.
-pub struct VerifierOpening<F, PCS, ProofTranscript>
+pub struct VerifierOpening<F, PCS>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
 {
     /// The commitments to the opened polynomial. May be a random linear combination
     /// of multiple (additively homomorphic) polynomials, all being opened at the
@@ -283,30 +276,28 @@ where
 
 /// Accumulates openings computed by the prover over the course of Jolt,
 /// so that they can all be reduced to a single opening proof using sumcheck.
-pub struct ProverOpeningAccumulator<F, PCS, ProofTranscript>
+pub struct ProverOpeningAccumulator<F, PCS>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
 {
-    openings: Vec<OpeningProofReductionSumcheck<F, PCS, ProofTranscript>>,
+    openings: Vec<OpeningProofReductionSumcheck<F, PCS>>,
     #[cfg(test)]
     joint_commitment: Option<PCS::Commitment>,
 }
 
 /// Accumulates openings encountered by the verifier over the course of Jolt,
 /// so that they can all be reduced to a single opening proof verification using sumcheck.
-pub struct VerifierOpeningAccumulator<F, PCS, ProofTranscript>
+pub struct VerifierOpeningAccumulator<F, PCS>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
 {
-    openings: Vec<OpeningProofReductionSumcheck<F, PCS, ProofTranscript>>,
+    openings: Vec<OpeningProofReductionSumcheck<F, PCS>>,
     #[cfg(test)]
     /// In testing, the Jolt verifier may be provided the prover's openings so that we
     /// can detect any places where the openings don't match up.
-    prover_openings: Option<ProverOpeningAccumulator<F, PCS, ProofTranscript>>,
+    prover_openings: Option<ProverOpeningAccumulator<F, PCS>>,
     #[cfg(test)]
     pcs_setup: Option<PCS::ProverSetup>,
 }
@@ -314,7 +305,7 @@ where
 #[derive(CanonicalSerialize, CanonicalDeserialize, Clone, Debug)]
 pub struct ReducedOpeningProof<
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 > {
     sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
@@ -322,22 +313,20 @@ pub struct ReducedOpeningProof<
     joint_opening_proof: PCS::Proof,
 }
 
-impl<F, PCS, ProofTranscript> Default for ProverOpeningAccumulator<F, PCS, ProofTranscript>
+impl<F, PCS> Default for ProverOpeningAccumulator<F, PCS>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<F, PCS, ProofTranscript> ProverOpeningAccumulator<F, PCS, ProofTranscript>
+impl<F, PCS> ProverOpeningAccumulator<F, PCS>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
 {
     pub fn new() -> Self {
         Self {
@@ -358,7 +347,7 @@ where
     /// a single point can be batched into a single polynomial opened at the same
     /// point. This function performs this batching before appending to `self.openings`.
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::append_dense")]
-    pub fn append_dense(
+    pub fn append_dense<ProofTranscript: Transcript>(
         &mut self,
         polynomials: &[&MultilinearPolynomial<F>],
         eq_evals: Vec<F>,
@@ -498,7 +487,7 @@ where
     /// Reduces the multiple openings accumulated into a single opening proof,
     /// using a single sumcheck.
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::reduce_and_prove")]
-    pub fn reduce_and_prove(
+    pub fn reduce_and_prove<ProofTranscript: Transcript>(
         &mut self,
         pcs_setup: &PCS::ProverSetup,
         transcript: &mut ProofTranscript,
@@ -551,15 +540,15 @@ where
 
     /// Proves the sumcheck used to prove the reduction of many openings into one.
     #[tracing::instrument(skip_all)]
-    pub fn prove_batch_opening_reduction(
+    pub fn prove_batch_opening_reduction<ProofTranscript: Transcript>(
         &mut self,
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, Vec<F>) {
-        let instances: Vec<&mut dyn BatchableSumcheckInstance<F, ProofTranscript>> = self
+        let instances: Vec<&mut dyn BatchableSumcheckInstance<F>> = self
             .openings
             .iter_mut()
             .map(|opening| {
-                let instance: &mut dyn BatchableSumcheckInstance<F, ProofTranscript> = opening;
+                let instance: &mut dyn BatchableSumcheckInstance<F> = opening;
                 instance
             })
             .collect();
@@ -575,22 +564,20 @@ where
     }
 }
 
-impl<F, PCS, ProofTranscript> Default for VerifierOpeningAccumulator<F, PCS, ProofTranscript>
+impl<F, PCS> Default for VerifierOpeningAccumulator<F, PCS>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<F, PCS, ProofTranscript> VerifierOpeningAccumulator<F, PCS, ProofTranscript>
+impl<F, PCS> VerifierOpeningAccumulator<F, PCS>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
 {
     pub fn new() -> Self {
         Self {
@@ -607,7 +594,7 @@ where
     #[cfg(test)]
     pub fn compare_to(
         &mut self,
-        prover_openings: ProverOpeningAccumulator<F, PCS, ProofTranscript>,
+        prover_openings: ProverOpeningAccumulator<F, PCS>,
         pcs_setup: &PCS::ProverSetup,
     ) {
         self.prover_openings = Some(prover_openings);
@@ -625,7 +612,7 @@ where
     /// polynomial opened at the same point. This function performs the verifier side
     /// of this batching by homomorphically combining the commitments before appending
     /// to `self.openings`.
-    pub fn append(
+    pub fn append<ProofTranscript: Transcript>(
         &mut self,
         commitments: &[&PCS::Commitment],
         opening_point: Vec<F>,
@@ -697,7 +684,7 @@ where
 
     /// Verifies that the given `reduced_opening_proof` (consisting of a sumcheck proof
     /// and a single opening proof) indeed proves the openings accumulated.
-    pub fn reduce_and_verify(
+    pub fn reduce_and_verify<ProofTranscript: Transcript>(
         &mut self,
         pcs_setup: &PCS::VerifierSetup,
         reduced_opening_proof: &ReducedOpeningProof<F, PCS, ProofTranscript>,
@@ -772,16 +759,16 @@ where
     }
 
     /// Verifies the sumcheck proven in `ProverOpeningAccumulator::prove_batch_opening_reduction`.
-    fn verify_batch_opening_reduction(
+    fn verify_batch_opening_reduction<ProofTranscript: Transcript>(
         &self,
         sumcheck_proof: &SumcheckInstanceProof<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<Vec<F>, ProofVerifyError> {
-        let instances: Vec<&dyn BatchableSumcheckInstance<F, ProofTranscript>> = self
+        let instances: Vec<&dyn BatchableSumcheckInstance<F>> = self
             .openings
             .iter()
             .map(|opening| {
-                let instance: &dyn BatchableSumcheckInstance<F, ProofTranscript> = opening;
+                let instance: &dyn BatchableSumcheckInstance<F> = opening;
                 instance
             })
             .collect();

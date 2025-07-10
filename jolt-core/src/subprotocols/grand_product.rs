@@ -37,7 +37,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedGrandProductLayerProof<F,
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct BatchedGrandProductProof<PCS, ProofTranscript>
 where
-    PCS: CommitmentScheme<ProofTranscript>,
+    PCS: CommitmentScheme,
     ProofTranscript: Transcript,
 {
     pub gkr_layers: Vec<BatchedGrandProductLayerProof<PCS::Field, ProofTranscript>>,
@@ -47,7 +47,7 @@ where
 pub trait BatchedGrandProduct<F, PCS, ProofTranscript>: Sized
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 {
     /// The bottom/input layer of the grand products
@@ -75,7 +75,7 @@ where
     #[tracing::instrument(skip_all, name = "BatchedGrandProduct::prove_grand_product")]
     fn prove_grand_product(
         &mut self,
-        _opening_accumulator: Option<&mut ProverOpeningAccumulator<F, PCS, ProofTranscript>>,
+        _opening_accumulator: Option<&mut ProverOpeningAccumulator<F, PCS>>,
         transcript: &mut ProofTranscript,
         _setup: Option<&PCS::ProverSetup>,
     ) -> (BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>) {
@@ -173,7 +173,7 @@ where
     fn verify_grand_product(
         proof: &BatchedGrandProductProof<PCS, ProofTranscript>,
         claimed_outputs: &[F],
-        _opening_accumulator: Option<&mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>>,
+        _opening_accumulator: Option<&mut VerifierOpeningAccumulator<F, PCS>>,
         transcript: &mut ProofTranscript,
     ) -> (F, Vec<F>) {
         // Evaluate the MLE of the output layer at a random point to reduce the outputs to
@@ -251,7 +251,7 @@ impl<F, PCS, ProofTranscript> BatchedGrandProduct<F, PCS, ProofTranscript>
     for BatchedDenseGrandProduct<F>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 {
     // (leaf values, batch size)
@@ -345,7 +345,7 @@ mod tests {
 
             let batched_circuit = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
                 Fr,
-                Zeromorph<Bn254, KeccakTranscript>,
+                Zeromorph<Bn254>,
                 KeccakTranscript,
             >>::construct((leaves.concat(), batch_size));
 
@@ -355,7 +355,7 @@ mod tests {
 
             let claimed_outputs: Vec<Fr> = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
                 Fr,
-                Zeromorph<Bn254, KeccakTranscript>,
+                Zeromorph<Bn254>,
                 KeccakTranscript,
             >>::claimed_outputs(&batched_circuit);
             let expected_outputs: Vec<Fr> =
@@ -415,7 +415,7 @@ mod tests {
 
             let mut batched_circuit = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
                 Fr,
-                Zeromorph<Bn254, KeccakTranscript>,
+                Zeromorph<Bn254>,
                 KeccakTranscript,
             >>::construct((leaves.concat(), batch_size));
             let mut prover_transcript: KeccakTranscript = KeccakTranscript::new(b"test_transcript");
@@ -423,12 +423,12 @@ mod tests {
             // I love the rust type system
             let claims = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
                 Fr,
-                Zeromorph<Bn254, KeccakTranscript>,
+                Zeromorph<Bn254>,
                 KeccakTranscript,
             >>::claimed_outputs(&batched_circuit);
             let (proof, r_prover) = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
                 Fr,
-                Zeromorph<Bn254, KeccakTranscript>,
+                Zeromorph<Bn254>,
                 KeccakTranscript,
             >>::prove_grand_product(
                 &mut batched_circuit, None, &mut prover_transcript, None

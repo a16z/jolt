@@ -90,7 +90,7 @@ where
 ///
 /// This trait defines the interface needed to participate in the `BatchedSumcheck` protocol,
 /// which reduces verifier cost and proof size by batching multiple sumcheck protocols.
-pub trait BatchableSumcheckInstance<F: JoltField, ProofTranscript: Transcript> {
+pub trait BatchableSumcheckInstance<F: JoltField> {
     /// Returns the maximum degree of the sumcheck polynomial.
     fn degree(&self) -> usize;
 
@@ -115,7 +115,7 @@ pub trait BatchableSumcheckInstance<F: JoltField, ProofTranscript: Transcript> {
     fn expected_output_claim(&self, r: &[F]) -> F;
 
     /// Proves a single sumcheck instance.
-    fn prove_single(
+    fn prove_single<ProofTranscript: Transcript>(
         &mut self,
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>)
@@ -126,7 +126,7 @@ pub trait BatchableSumcheckInstance<F: JoltField, ProofTranscript: Transcript> {
     }
 
     /// Verifies a single sumcheck instance.
-    fn verify_single(
+    fn verify_single<ProofTranscript: Transcript>(
         &self,
         proof: &SumcheckInstanceProof<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
@@ -138,18 +138,13 @@ pub trait BatchableSumcheckInstance<F: JoltField, ProofTranscript: Transcript> {
     }
 }
 
-pub trait CacheSumcheckOpenings<
-    F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
->
-{
+pub trait CacheSumcheckOpenings<F: JoltField, PCS: CommitmentScheme<Field = F>> {
     /// Caches polynomial opening claims needed after the sumcheck protocol completes.
     /// These openings will later be proven using either an opening proof or another sumcheck.
     fn cache_openings(
         &mut self,
         openings: Option<Rc<RefCell<Openings<F>>>>,
-        accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+        accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     );
 }
 
@@ -161,7 +156,7 @@ pub trait CacheSumcheckOpenings<
 pub enum BatchedSumcheck {}
 impl BatchedSumcheck {
     pub fn prove<F: JoltField, ProofTranscript: Transcript>(
-        mut sumcheck_instances: Vec<&mut dyn BatchableSumcheckInstance<F, ProofTranscript>>,
+        mut sumcheck_instances: Vec<&mut dyn BatchableSumcheckInstance<F>>,
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>) {
         let max_num_rounds = sumcheck_instances
@@ -284,11 +279,11 @@ impl BatchedSumcheck {
     pub fn cache_openings<
         F: JoltField,
         ProofTranscript: Transcript,
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+        PCS: CommitmentScheme<Field = F>,
     >(
-        mut sumcheck_instances: Vec<&mut dyn CacheSumcheckOpenings<F, ProofTranscript, PCS>>,
+        mut sumcheck_instances: Vec<&mut dyn CacheSumcheckOpenings<F, PCS>>,
         openings: Option<Rc<RefCell<Openings<F>>>>,
-        accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+        accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         for sumcheck in sumcheck_instances.iter_mut() {
             // Cache polynomial opening claims, to be proven using either an
@@ -299,7 +294,7 @@ impl BatchedSumcheck {
 
     pub fn verify<F: JoltField, ProofTranscript: Transcript>(
         proof: &SumcheckInstanceProof<F, ProofTranscript>,
-        sumcheck_instances: Vec<&dyn BatchableSumcheckInstance<F, ProofTranscript>>,
+        sumcheck_instances: Vec<&dyn BatchableSumcheckInstance<F>>,
         transcript: &mut ProofTranscript,
     ) -> Result<Vec<F>, ProofVerifyError> {
         let max_degree = sumcheck_instances

@@ -268,11 +268,11 @@ where
 }
 
 #[derive(Clone)]
-pub struct HyperKZG<P: Pairing, ProofTranscript: Transcript> {
-    _phantom: PhantomData<(P, ProofTranscript)>,
+pub struct HyperKZG<P: Pairing> {
+    _phantom: PhantomData<P>,
 }
 
-impl<P: Pairing, ProofTranscript: Transcript> HyperKZG<P, ProofTranscript>
+impl<P: Pairing> HyperKZG<P>
 where
     <P as Pairing>::ScalarField: JoltField,
     <P as Pairing>::G1: Icicle,
@@ -297,7 +297,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "HyperKZG::open")]
-    pub fn open(
+    pub fn open<ProofTranscript: Transcript>(
         pk: &HyperKZGProverKey<P>,
         poly: &MultilinearPolynomial<P::ScalarField>,
         point: &[P::ScalarField],
@@ -345,7 +345,7 @@ where
     }
 
     /// A method to verify purported evaluations of a batch of polynomials
-    pub fn verify(
+    pub fn verify<ProofTranscript: Transcript>(
         vk: &HyperKZGVerifierKey<P>,
         C: &HyperKZGCommitment<P>,
         point: &[P::ScalarField],
@@ -406,8 +406,7 @@ where
     }
 }
 
-impl<P: Pairing, ProofTranscript: Transcript> CommitmentScheme<ProofTranscript>
-    for HyperKZG<P, ProofTranscript>
+impl<P: Pairing> CommitmentScheme for HyperKZG<P>
 where
     <P as Pairing>::ScalarField: JoltField,
     <P as Pairing>::G1: Icicle,
@@ -478,17 +477,17 @@ where
         HyperKZGCommitment(combined_commitment.into_affine())
     }
 
-    fn prove(
+    fn prove<ProofTranscript: Transcript>(
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         let eval = poly.evaluate(opening_point);
-        HyperKZG::<P, ProofTranscript>::open(setup, poly, opening_point, &eval, transcript).unwrap()
+        HyperKZG::<P>::open(setup, poly, opening_point, &eval, transcript).unwrap()
     }
 
-    fn verify(
+    fn verify<ProofTranscript: Transcript>(
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
         transcript: &mut ProofTranscript,
@@ -496,14 +495,7 @@ where
         opening: &Self::Field,         // evaluation \widetilde{Z}(r)
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
-        HyperKZG::<P, ProofTranscript>::verify(
-            setup,
-            commitment,
-            opening_point,
-            opening,
-            proof,
-            transcript,
-        )
+        HyperKZG::<P>::verify(setup, commitment, opening_point, opening, proof, transcript)
     }
 
     fn protocol_name() -> &'static [u8] {
@@ -524,8 +516,7 @@ where
 
 const CHUNK_SIZE: usize = 256;
 
-impl<P: Pairing, ProofTranscript: Transcript> StreamingCommitmentScheme<ProofTranscript>
-    for HyperKZG<P, ProofTranscript>
+impl<P: Pairing> StreamingCommitmentScheme for HyperKZG<P>
 where
     <P as Pairing>::ScalarField: JoltField,
     <P as Pairing>::G1: Icicle,
@@ -596,7 +587,7 @@ mod tests {
         let poly =
             MultilinearPolynomial::from(vec![Fr::from(1), Fr::from(2), Fr::from(2), Fr::from(4)]);
 
-        let C = HyperKZG::<_, KeccakTranscript>::commit(&pk, &poly).unwrap();
+        let C = HyperKZG::commit(&pk, &poly).unwrap();
 
         let test_inner = |point: Vec<Fr>, eval: Fr| -> Result<(), ProofVerifyError> {
             let mut tr = KeccakTranscript::new(b"TestEval");
@@ -655,7 +646,7 @@ mod tests {
         let (pk, vk): (HyperKZGProverKey<Bn254>, HyperKZGVerifierKey<Bn254>) = srs.trim(3);
 
         // make a commitment
-        let C = HyperKZG::<_, KeccakTranscript>::commit(&pk, &poly).unwrap();
+        let C = HyperKZG::commit(&pk, &poly).unwrap();
 
         // prove an evaluation
         let mut tr = KeccakTranscript::new(b"TestEval");
@@ -713,7 +704,7 @@ mod tests {
             let (pk, vk): (HyperKZGProverKey<Bn254>, HyperKZGVerifierKey<Bn254>) = srs.trim(n);
 
             // make a commitment
-            let C = HyperKZG::<_, KeccakTranscript>::commit(&pk, &poly).unwrap();
+            let C = HyperKZG::commit(&pk, &poly).unwrap();
 
             // prove an evaluation
             let mut prover_transcript = KeccakTranscript::new(b"TestEval");
@@ -734,11 +725,11 @@ mod tests {
             );
 
             // Test the streaming implementation
-            let mut state = HyperKZG::<_, KeccakTranscript>::initialize(n, &pk);
+            let mut state = HyperKZG::initialize(n, &pk);
             for p in poly_raw {
-                state = HyperKZG::<_, KeccakTranscript>::process(state, p);
+                state = HyperKZG::process(state, p);
             }
-            let C2 = HyperKZG::<_, KeccakTranscript>::finalize(state);
+            let C2 = HyperKZG::finalize(state);
             assert_eq!(
                 C, C2,
                 "Streaming commitment did not match non-streaming commitment"

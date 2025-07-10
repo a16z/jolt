@@ -9,7 +9,6 @@ use crate::{
         commitment::commitment_scheme::CommitmentScheme,
         multilinear_polynomial::MultilinearPolynomial, one_hot_polynomial::OneHotPolynomial,
     },
-    utils::transcript::Transcript,
 };
 
 use super::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
@@ -84,15 +83,14 @@ impl CommittedPolynomials {
             .0
     }
 
-    pub fn generate_witness<F, PCS, ProofTranscript>(
+    pub fn generate_witness<F, PCS>(
         &self,
-        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
+        preprocessing: &JoltProverPreprocessing<F, PCS>,
         trace: &[RV32IMCycle],
     ) -> MultilinearPolynomial<F>
     where
         F: JoltField,
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
-        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
     {
         match self {
             CommittedPolynomials::LeftInstructionInput => {

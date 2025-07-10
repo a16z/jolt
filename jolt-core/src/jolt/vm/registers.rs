@@ -93,9 +93,7 @@ struct ValEvaluationSumcheck<F: JoltField> {
     claims: Option<ValEvaluationSumcheckClaims<F>>,
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
-    for ValEvaluationSumcheck<F>
-{
+impl<F: JoltField> BatchableSumcheckInstance<F> for ValEvaluationSumcheck<F> {
     fn degree(&self) -> usize {
         3
     }
@@ -189,17 +187,15 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 }
 
-impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS>
-    for ValEvaluationSumcheck<F>
+impl<F, PCS> CacheSumcheckOpenings<F, PCS> for ValEvaluationSumcheck<F>
 where
     F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
     fn cache_openings(
         &mut self,
         _openings: Option<Rc<RefCell<Openings<F>>>>,
-        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         debug_assert!(self.claims.is_none());
         let prover_state = self
@@ -215,10 +211,10 @@ where
 
 impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTranscript> {
     #[tracing::instrument(skip_all, name = "RegistersTwistProof::prove")]
-    pub fn prove<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
-        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
+    pub fn prove<PCS: CommitmentScheme<Field = F>>(
+        preprocessing: &JoltProverPreprocessing<F, PCS>,
         trace: &[RV32IMCycle],
-        opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> RegistersTwistProof<F, ProofTranscript> {
         let log_T = trace.len().log_2();
@@ -253,11 +249,11 @@ impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTran
         }
     }
 
-    pub fn verify<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
+    pub fn verify<PCS: CommitmentScheme<Field = F>>(
         &self,
-        commitments: &JoltCommitments<F, PCS, ProofTranscript>,
+        commitments: &JoltCommitments<F, PCS>,
         T: usize,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let log_T = T.log_2();
@@ -283,14 +279,12 @@ impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTran
             }),
         };
 
-        let mut r_cycle_prime = <ValEvaluationSumcheck<F> as BatchableSumcheckInstance<
-            F,
-            ProofTranscript,
-        >>::verify_single(
-            &sumcheck_instance,
-            &self.val_evaluation_proof.sumcheck_proof,
-            transcript,
-        )?;
+        let mut r_cycle_prime =
+            <ValEvaluationSumcheck<F> as BatchableSumcheckInstance<F>>::verify_single(
+                &sumcheck_instance,
+                &self.val_evaluation_proof.sumcheck_proof,
+                transcript,
+            )?;
 
         // Cycle variables are bound from low to high
         r_cycle_prime.reverse();
@@ -316,9 +310,9 @@ impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTran
 pub fn prove_val_evaluation<
     F: JoltField,
     ProofTranscript: Transcript,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 >(
-    preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
+    preprocessing: &JoltProverPreprocessing<F, PCS>,
     trace: &[RV32IMCycle],
     r_address: Vec<F>,
     r_cycle: Vec<F>,
@@ -380,7 +374,6 @@ pub fn prove_val_evaluation<
 
     let (sumcheck_proof, r_cycle_prime) = <ValEvaluationSumcheck<F> as BatchableSumcheckInstance<
         F,
-        ProofTranscript,
     >>::prove_single(&mut sumcheck_instance, transcript);
 
     drop(_guard);

@@ -957,7 +957,7 @@ impl<F, PCS, ProofTranscript> BatchedGrandProduct<F, PCS, ProofTranscript>
     for ToggledBatchedGrandProduct<F>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 {
     type Leaves = (Vec<Vec<usize>>, Vec<Vec<F>>); // (flags, fingerprints)
@@ -1049,7 +1049,7 @@ where
     #[tracing::instrument(skip_all, name = "ToggledBatchedGrandProduct::prove_grand_product")]
     fn prove_grand_product(
         &mut self,
-        opening_accumulator: Option<&mut ProverOpeningAccumulator<F, PCS, ProofTranscript>>,
+        opening_accumulator: Option<&mut ProverOpeningAccumulator<F, PCS>>,
         transcript: &mut ProofTranscript,
         setup: Option<&PCS::ProverSetup>,
     ) -> (BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>) {
@@ -1066,7 +1066,7 @@ where
     fn verify_grand_product(
         proof: &BatchedGrandProductProof<PCS, ProofTranscript>,
         claimed_outputs: &[F],
-        _opening_accumulator: Option<&mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>>,
+        _opening_accumulator: Option<&mut VerifierOpeningAccumulator<F, PCS>>,
         transcript: &mut ProofTranscript,
     ) -> (F, Vec<F>) {
         QuarkGrandProductBase::verify_quark_grand_product::<Self, PCS>(
@@ -1288,26 +1288,22 @@ mod tests {
         // Construct circuit with configuration
         let mut circuit = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
             Fr,
-            Zeromorph<Bn254, KeccakTranscript>,
+            Zeromorph<Bn254>,
             KeccakTranscript,
         >>::construct_with_config((flags, fingerprints), config);
 
         let claims = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
             Fr,
-            Zeromorph<Bn254, KeccakTranscript>,
+            Zeromorph<Bn254>,
             KeccakTranscript,
         >>::claimed_outputs(&circuit);
 
         // Prover setup
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
-        let mut prover_accumulator = ProverOpeningAccumulator::<
-            Fr,
-            Zeromorph<Bn254, KeccakTranscript>,
-            KeccakTranscript,
-        >::new();
+        let mut prover_accumulator = ProverOpeningAccumulator::<Fr, Zeromorph<Bn254>>::new();
         let (proof, r_prover) = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
             Fr,
-            Zeromorph<Bn254, KeccakTranscript>,
+            Zeromorph<Bn254>,
             KeccakTranscript,
         >>::prove_grand_product(
             &mut circuit,
@@ -1318,11 +1314,7 @@ mod tests {
 
         // Verifier setup
         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
-        let mut verifier_accumulator = VerifierOpeningAccumulator::<
-            Fr,
-            Zeromorph<Bn254, KeccakTranscript>,
-            KeccakTranscript,
-        >::new();
+        let mut verifier_accumulator = VerifierOpeningAccumulator::<Fr, Zeromorph<Bn254>>::new();
         verifier_transcript.compare_to(prover_transcript);
         let (_, r_verifier) = ToggledBatchedGrandProduct::verify_grand_product(
             &proof,
@@ -1425,7 +1417,7 @@ mod tests {
 
             let circuit = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
                 Fr,
-                Zeromorph<Bn254, KeccakTranscript>,
+                Zeromorph<Bn254>,
                 KeccakTranscript,
             >>::construct((flag_indices, fingerprints));
 
@@ -1443,7 +1435,7 @@ mod tests {
             let claimed_outputs: Vec<Fr> =
                 <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
                     Fr,
-                    Zeromorph<Bn254, KeccakTranscript>,
+                    Zeromorph<Bn254>,
                     KeccakTranscript,
                 >>::claimed_outputs(&circuit);
 
@@ -1475,7 +1467,7 @@ mod tests {
             // Call construct_with_config with current config
             let result = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
                 Fr,
-                Zeromorph<Bn254, KeccakTranscript>,
+                Zeromorph<Bn254>,
                 KeccakTranscript,
             >>::construct_with_config(leaves, config);
 

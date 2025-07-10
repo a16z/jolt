@@ -9,7 +9,7 @@ use crate::{
     utils::{errors::ProofVerifyError, transcript::AppendToTranscript},
 };
 
-pub trait CommitmentScheme<ProofTranscript: Transcript>: Clone + Sync + Send + 'static {
+pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     type Field: JoltField + Sized;
     type ProverSetup: Clone + Sync + Send + Debug + CanonicalSerialize + CanonicalDeserialize;
     type VerifierSetup: Clone + Sync + Send + Debug + CanonicalSerialize + CanonicalDeserialize;
@@ -45,14 +45,14 @@ pub trait CommitmentScheme<ProofTranscript: Transcript>: Clone + Sync + Send + '
         todo!("`combine_commitments` should be on a separate `AdditivelyHomomorphic` trait")
     }
 
-    fn prove(
+    fn prove<ProofTranscript: Transcript>(
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
         transcript: &mut ProofTranscript,
     ) -> Self::Proof;
 
-    fn verify(
+    fn verify<ProofTranscript: Transcript>(
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
         transcript: &mut ProofTranscript,
@@ -64,9 +64,7 @@ pub trait CommitmentScheme<ProofTranscript: Transcript>: Clone + Sync + Send + '
     fn protocol_name() -> &'static [u8];
 }
 
-pub trait StreamingCommitmentScheme<ProofTranscript: Transcript>:
-    CommitmentScheme<ProofTranscript>
-{
+pub trait StreamingCommitmentScheme: CommitmentScheme {
     type State<'a>; // : Clone + Debug;
 
     fn initialize<'a>(size: usize, setup: &'a Self::ProverSetup) -> Self::State<'a>;
