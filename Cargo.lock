@@ -5739,6 +5739,10 @@ dependencies = [
  "syn 2.0.101",
 ]
 
+[[package]]
+name = "zkml-jolt-core"
+version = "0.1.0"
+
 [[patch.unused]]
 name = "ark-bn254"
 version = "0.5.0-alpha.0"
