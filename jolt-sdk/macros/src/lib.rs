@@ -110,7 +110,7 @@ impl MacroBuilder {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #build_prover_fn_name(
                 program: jolt::host::Program,
-                preprocessing: jolt::JoltProverPreprocessing<jolt::F, jolt::PCS, jolt::ProofTranscript>,
+                preprocessing: jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>,
             ) -> impl Fn(#(#input_types),*) -> #prove_output_ty + Sync + Send
             {
                 #imports
@@ -149,7 +149,7 @@ impl MacroBuilder {
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #build_verifier_fn_name(
-                preprocessing: jolt::JoltVerifierPreprocessing<jolt::F, jolt::PCS, jolt::ProofTranscript>,
+                preprocessing: jolt::JoltVerifierPreprocessing<jolt::F, jolt::PCS>,
             ) -> impl Fn(#(#input_types ,)* #output_type, jolt::JoltHyperKZGProof) -> bool + Sync + Send
             {
                 #imports
@@ -264,7 +264,7 @@ impl MacroBuilder {
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_prover_fn_name(program: &mut jolt::host::Program)
-                -> jolt::JoltProverPreprocessing<jolt::F, jolt::PCS, jolt::ProofTranscript>
+                -> jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>
             {
                 #imports
 
@@ -278,7 +278,7 @@ impl MacroBuilder {
                 let memory_layout = MemoryLayout::new(&memory_config);
 
                 // TODO(moodlezoup): Feed in size parameters via macro
-                let preprocessing: JoltProverPreprocessing<jolt::F, jolt::PCS, jolt::ProofTranscript> =
+                let preprocessing: JoltProverPreprocessing<jolt::F, jolt::PCS> =
                     RV32IJoltVM::prover_preprocess(
                         bytecode,
                         memory_layout,
@@ -307,7 +307,7 @@ impl MacroBuilder {
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_verifier_fn_name(program: &mut jolt::host::Program)
-                -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::PCS, jolt::ProofTranscript>
+                -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::PCS>
             {
                 #imports
 
@@ -321,7 +321,7 @@ impl MacroBuilder {
                 let memory_layout = MemoryLayout::new(&memory_config);
 
                 // TODO(moodlezoup): Feed in size parameters via macro
-                let prover_preprocessing: JoltProverPreprocessing<jolt::F, jolt::PCS, jolt::ProofTranscript> =
+                let prover_preprocessing: JoltProverPreprocessing<jolt::F, jolt::PCS> =
                     RV32IJoltVM::prover_preprocess(
                         bytecode,
                         memory_layout,
@@ -346,8 +346,8 @@ impl MacroBuilder {
         );
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub fn #preprocess_verifier_fn_name(prover_preprocessing: &jolt::JoltProverPreprocessing<jolt::F, jolt::PCS, jolt::ProofTranscript>)
-                -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::PCS, jolt::ProofTranscript>
+            pub fn #preprocess_verifier_fn_name(prover_preprocessing: &jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>)
+                -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::PCS>
             {
                 #imports
                 let preprocessing = JoltVerifierPreprocessing::from(prover_preprocessing);
@@ -383,7 +383,7 @@ impl MacroBuilder {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #prove_fn_name(
                 mut program: jolt::host::Program,
-                preprocessing: jolt::JoltProverPreprocessing<jolt::F, jolt::PCS, jolt::ProofTranscript>,
+                preprocessing: jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>,
                 #inputs
             ) -> #prove_output_ty {
                 #imports
