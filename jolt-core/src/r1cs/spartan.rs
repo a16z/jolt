@@ -6,6 +6,7 @@ use crate::dag::stage::{StageResult, SumcheckStages};
 use crate::dag::state_manager::{
     OpeningPoint, OpeningsKeys, ProofData, ProofKeys, StateManager, LITTLE_ENDIAN,
 };
+use crate::r1cs::spartan::OpeningsKeys::OuterSumcheckClaims;
 use crate::field::JoltField;
 use crate::jolt::vm::JoltCommitments;
 use crate::jolt::vm::JoltProverPreprocessing;
@@ -39,7 +40,7 @@ use super::builder::CombinedUniformBuilder;
 use rayon::prelude::*;
 
 #[derive(Clone, Debug)]
-pub struct OuterSumcheckClaims<F: JoltField> {
+pub struct OuterClaims<F: JoltField> {
     az: F,
     bz: F,
     cz: F,
@@ -190,7 +191,7 @@ where
 
         let (r_cycle, rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
-        let claims = OuterSumcheckClaims {
+        let claims = OuterClaims {
             az: claim_Az,
             bz: claim_Bz,
             cz: claim_Cz,
@@ -290,7 +291,7 @@ where
     fn prove_inner_sumcheck(
         key: &UniformSpartanKey<F>,
         input_polys: &[MultilinearPolynomial<F>],
-        claims: &OuterSumcheckClaims<F>,
+        claims: &OuterClaims<F>,
         params: &InnerSumcheckParams<F>,
         inner_sumcheck_RLC: F,
         transcript: &mut ProofTranscript,
@@ -470,7 +471,7 @@ impl<'a, F: JoltField> InnerSumcheck<'a, F> {
     pub fn new_prover(
         key: &UniformSpartanKey<F>,
         input_polys: &[MultilinearPolynomial<F>],
-        claims: &OuterSumcheckClaims<F>,
+        claims: &OuterClaims<F>,
         params: &InnerSumcheckParams<F>,
         inner_sumcheck_RLC: F,
     ) -> Self {
@@ -887,6 +888,13 @@ impl<
         &self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> StageResult {
+
+        /* Sumcheck 1: Outer sumcheck
+           Proves: \sum_x eq(tau, x) * (Az(x) * Bz(x) - Cz(x)) = 0
+
+           The matrices A, B, C have a block-diagonal structure with repeated blocks
+           A_small, B_small, C_small corresponding to the uniform constraints.
+        */
         let (key, constraint_builder, input_polys) = state_manager.get_spartan_data();
 
         let num_rounds_x = key.num_cons_total.log_2();
@@ -921,18 +929,26 @@ impl<
             &outer_sumcheck_claims,
         );
 
-        let opening_point = OpeningPoint::<LITTLE_ENDIAN, F>::new(outer_sumcheck_r.clone());
+        // we need the following claims for stage 2:
+        let outer_sumcheck_r_point = OpeningPoint::<LITTLE_ENDIAN, F>::new(outer_sumcheck_r.clone());
+
+        let az_bz_cz = OpeningPoint::<LITTLE_ENDIAN, F>::new(outer_sumcheck_claims.to_vec());
+       
         state_manager.openings.lock().unwrap().insert(
-            OpeningsKeys::OuterSumcheckClaims,
-            (opening_point, None), // to be proven using PCS
+            OpeningsKeys::OuterSumcheckR,
+            (outer_sumcheck_r_point, None),
         );
 
+        state_manager.openings.lock().unwrap().insert(
+            OpeningsKeys::OuterSumcheckClaims,
+            (az_bz_cz, None),
+        );
+
+        // Append the outer sumcheck proof to the state manager
         state_manager.proofs.lock().unwrap().insert(
             ProofKeys::SpartanOuterSumcheck,
             ProofData::SpartanSumcheck(
                 outer_sumcheck_proof,
-                outer_sumcheck_r,
-                outer_sumcheck_claims,
             ),
         );
 
@@ -943,6 +959,8 @@ impl<
         &self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> StageResult {
+
+        // Get the spartan-related data:
         let (key, _, _) = state_manager.get_spartan_data();
 
         let num_rounds_x = key.num_cons_total.log_2();
@@ -952,6 +970,7 @@ impl<
             .borrow_mut()
             .challenge_vector(num_rounds_x);
 
+        // Get the outer sumcheck proof
         let proofs = state_manager.proofs.lock().unwrap();
         let proof_data = {
             proofs
@@ -959,11 +978,15 @@ impl<
                 .expect("Outer sumcheck proof not found")
         };
 
-        let (outer_sumcheck_proof, _, outer_sumcheck_claims) = match proof_data {
-            ProofData::SpartanSumcheck(proof, r, claims) => (proof, r, claims),
+        let outer_sumcheck_proof = match proof_data {
+            ProofData::SpartanSumcheck(proof) => proof,
             _ => panic!("Invalid proof data type"),
         };
 
+        // Get the claims:
+        let outer_sumcheck_claims = state_manager.openings_point(OuterSumcheckClaims);
+
+        // Run the main sumcheck verifier:
         let (claim_outer_final, outer_sumcheck_r_original) = {
             let transcript = &mut *state_manager.verifier_transcript.borrow_mut();
             match outer_sumcheck_proof.verify(F::zero(), num_rounds_x, 3, transcript) {
@@ -996,5 +1019,55 @@ impl<
         );
 
         StageResult::Success
+    }
+
+    fn stage2_prover_instances(
+        &self,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Vec<Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>> {
+        todo!()
+         /* Sumcheck 2: Inner sumcheck
+           Proves: claim_Az + r * claim_Bz + r^2 * claim_Cz =
+                   \sum_y (A_small(rx, y) + r * B_small(rx, y) + r^2 * C_small(rx, y)) * z(y)
+
+           Evaluates the uniform constraint matrices A_small, B_small, C_small at the point
+           determined by the outer sumcheck.
+        */
+        // let (key, constraint_builder, input_polys) = state_manager.get_spartan_data();
+
+        // let num_cycles = key.num_steps;
+        // let num_cycles_bits = num_cycles.ilog2() as usize;
+
+        // let inner_sumcheck_RLC: F = state_manager.prover_transcript.borrow_mut().challenge_scalar();
+
+        // // we get this claim from state manager
+        // let (r_cycle, rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
+
+        // let claims = OuterSumcheckClaims {
+        //     az: claim_Az,
+        //     bz: claim_Bz,
+        //     cz: claim_Cz,
+        // };
+        // let params = InnerSumcheckParams {
+        //     r_cycle: r_cycle.to_vec(),
+        //     rx_var: rx_var.to_vec(),
+        // };
+        // let (inner_sumcheck_proof, _inner_sumcheck_r) = Self::prove_inner_sumcheck(
+        //     key,
+        //     &input_polys,
+        //     &claims,
+        //     &params,
+        //     inner_sumcheck_RLC,
+        //     transcript,
+        // );
+
+        // // Evaluate all witness polynomials P_i at r_cycle for the verifier
+        // // Verifier computes: z(r_inner, r_cycle) = Σ_i eq(r_inner, i) * P_i(r_cycle)
+        // let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
+        // let (claimed_witness_evals, chis) =
+        //     MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
+
+        // let (_, eq_plus_one_r_cycle) = EqPlusOnePolynomial::evals(r_cycle, None);
+
     }
 }

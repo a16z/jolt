@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::ops::Index;
+use std::ops::{RangeFull, Index};
+
 use std::sync::{Arc, Mutex};
 
 use crate::field::JoltField;
@@ -21,6 +22,22 @@ pub const LITTLE_ENDIAN: Endianness = true;
 #[derive(Clone, Debug)]
 pub struct OpeningPoint<const E: Endianness, F: JoltField> {
     pub r: Vec<F>,
+}
+
+impl<const E: Endianness, F: JoltField> Index<usize> for OpeningPoint<E, F> {
+    type Output = F;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.r[index]
+    }
+}
+
+impl<const E: Endianness, F: JoltField> Index<RangeFull> for OpeningPoint<E, F> {
+    type Output = [F];
+
+    fn index(&self, _index: RangeFull) -> &Self::Output {
+        &self.r[..]
+    }
 }
 
 impl<const E: Endianness, F: JoltField> OpeningPoint<E, F> {
@@ -92,7 +109,7 @@ pub enum ProofKeys {
 
 pub enum ProofData<F: JoltField, ProofTranscript: Transcript> {
     Spartan(UniformSpartanProof<F, ProofTranscript>),
-    SpartanSumcheck(SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, [F; 3]),
+    SpartanSumcheck(SumcheckInstanceProof<F, ProofTranscript>),
 }
 
 pub type Proofs<F, ProofTranscript> = HashMap<ProofKeys, ProofData<F, ProofTranscript>>;
