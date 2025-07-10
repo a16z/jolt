@@ -1,19 +1,15 @@
+use std::{cell::RefCell, rc::Rc};
 use crate::{
-    field::{JoltField, OptimizedMul},
-    jolt::{vm::JoltProverPreprocessing, witness::CommittedPolynomials},
-    poly::{
+    dag::state_manager::Openings, field::{JoltField, OptimizedMul}, jolt::{vm::JoltProverPreprocessing, witness::CommittedPolynomials}, poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-        },
-    },
-    r1cs::inputs::JoltR1CSInputs,
-    subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof},
-    utils::{
+        }, opening_proof::ProverOpeningAccumulator,
+    }, r1cs::inputs::JoltR1CSInputs, subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof}, utils::{
         errors::ProofVerifyError, math::Math, thread::unsafe_allocate_zero_vec,
         transcript::Transcript,
-    },
+    }
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::REGISTER_COUNT;
@@ -951,7 +947,11 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTrans
         }
     }
 
-    fn cache_openings(&mut self) {
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
         let prover_state = self.prover_state.as_ref().unwrap();
         self.claims = Some(ReadWriteSumcheckClaims {
             val_claim: prover_state.val.as_ref().unwrap().final_sumcheck_claim(),

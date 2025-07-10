@@ -1,10 +1,8 @@
+use std::{cell::RefCell, rc::Rc};
 use crate::{
-    field::JoltField,
-    poly::{commitment::commitment_scheme::CommitmentScheme, multilinear_polynomial::{
+    dag::state_manager::Openings, field::JoltField, poly::{commitment::commitment_scheme::CommitmentScheme, multilinear_polynomial::{
         BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-    }},
-    subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof},
-    utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
+    }, opening_proof::ProverOpeningAccumulator}, subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof}, utils::{errors::ProofVerifyError, math::Math, transcript::Transcript}
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
@@ -87,7 +85,11 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTrans
             .bind_parallel(r_j, BindingOrder::LowToHigh)
     }
 
-    fn cache_openings(&mut self) {
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
         debug_assert!(self.ra_claim.is_none());
         let prover_state = self
             .prover_state
@@ -110,11 +112,11 @@ pub struct HammingWeightProof<F: JoltField, ProofTranscript: Transcript> {
 
 impl<F: JoltField, ProofTranscript: Transcript> HammingWeightProof<F, ProofTranscript> {
     #[tracing::instrument(skip_all, name = "HammingWeightProof::prove")]
-    pub fn prove(F: Vec<F>, K: usize, transcript: &mut ProofTranscript) -> (Self, Vec<F>) {
+    pub fn prove<PCS: CommitmentScheme<ProofTranscript, Field = F>>(F: Vec<F>, K: usize, transcript: &mut ProofTranscript) -> (Self, Vec<F>) {
         let ra_poly = MultilinearPolynomial::from(F);
         let mut core_piop_sumcheck = HammingWeightSumcheck::new(ra_poly, K);
 
-        let (sumcheck_proof, r_address) = core_piop_sumcheck.prove_single(transcript);
+        let (sumcheck_proof, r_address) = <HammingWeightSumcheck<F> as BatchableSumcheckInstance<F, ProofTranscript, PCS>>::prove_single(&mut core_piop_sumcheck, transcript);
 
         let ra_claim = core_piop_sumcheck
             .ra_claim
@@ -128,7 +130,7 @@ impl<F: JoltField, ProofTranscript: Transcript> HammingWeightProof<F, ProofTrans
         (proof, r_address)
     }
 
-    pub fn verify(
+    pub fn verify<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
         &self,
         K: usize,
         transcript: &mut ProofTranscript,
@@ -136,7 +138,7 @@ impl<F: JoltField, ProofTranscript: Transcript> HammingWeightProof<F, ProofTrans
         let mut core_piop_sumcheck = HammingWeightSumcheck::new_verifier(K);
         core_piop_sumcheck.ra_claim = Some(self.ra_claim);
 
-        let r_address = core_piop_sumcheck.verify_single(&self.sumcheck_proof, transcript)?;
+        let r_address = <HammingWeightSumcheck<F> as BatchableSumcheckInstance<F, ProofTranscript, PCS>>::verify_single(&core_piop_sumcheck, &self.sumcheck_proof, transcript)?;
 
         Ok(r_address)
     }

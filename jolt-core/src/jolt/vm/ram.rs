@@ -1,5 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 
+use std::{cell::RefCell, rc::Rc};
+
 use std::vec;
 
 use crate::{
@@ -226,7 +228,11 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTrans
         }
     }
 
-    fn cache_openings(&mut self) {
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
         if let Some(prover_state) = &self.prover_state {
             self.claims = Some(ValEvaluationSumcheckClaims {
                 inc_claim: prover_state.inc.final_sumcheck_claim(),
@@ -425,7 +431,11 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTrans
         self.current_round += 1;
     }
 
-    fn cache_openings(&mut self) {
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
         if let Some(prover_state) = &self.prover_state {
             if let Some(h_polys) = &prover_state.H {
                 let claims: Vec<F> = h_polys
@@ -722,7 +732,11 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTrans
         }
     }
 
-    fn cache_openings(&mut self) {
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
         if let Some(prover_state) = &self.prover_state {
             let claims: Vec<F> = prover_state
                 .ra
@@ -866,7 +880,11 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTrans
         }
     }
 
-    fn cache_openings(&mut self) {
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
         if let Some(prover_state) = &self.prover_state {
             self.cached_claim = Some(prover_state.ra.final_sumcheck_claim());
         }

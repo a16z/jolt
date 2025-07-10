@@ -1,6 +1,8 @@
+use std::{cell::RefCell, rc::Rc};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use crate::dag::state_manager::Openings;
 use crate::{
     field::JoltField,
     jolt::{
@@ -483,7 +485,11 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTrans
         self.current_round += 1;
     }
 
-    fn cache_openings(&mut self) {
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
         debug_assert!(self.ra_claim_prime.is_none());
         let prover_state = self
             .prover_state
@@ -648,7 +654,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BooleanityProof<F, ProofTranscri
 
         let mut booleanity_sumcheck = BooleanitySumcheck::new(preprocessing, trace, r, D, G, K, T);
 
-        let (sumcheck_proof, r_combined) = booleanity_sumcheck.prove_single(transcript);
+        let (sumcheck_proof, r_combined) = <BooleanitySumcheck<F> as BatchableSumcheckInstance<F, ProofTranscript, PCS>>::prove_single(&mut booleanity_sumcheck, transcript);
 
         let (r_address_prime, r_cycle_prime) = r_combined.split_at(K.log_2());
 
@@ -680,7 +686,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BooleanityProof<F, ProofTranscri
             self.ra_claim_prime,
         );
 
-        let r_combined = booleanity_sumcheck.verify_single(&self.sumcheck_proof, transcript)?;
+        let r_combined = <BooleanitySumcheck<F> as BatchableSumcheckInstance<F, ProofTranscript, PCS>>::verify_single(&booleanity_sumcheck, &self.sumcheck_proof, transcript)?;
 
         Ok((r_combined, self.ra_claim_prime))
     }
@@ -823,7 +829,11 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTrans
         );
     }
 
-    fn cache_openings(&mut self) {
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
         debug_assert!(self.ra_claims.is_none());
         let prover_state = self
             .prover_state

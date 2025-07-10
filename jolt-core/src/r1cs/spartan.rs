@@ -1,11 +1,11 @@
-use std::marker::PhantomData;
+use std::{cell::RefCell, marker::PhantomData, rc::Rc};
 use tracer::instruction::RV32IMCycle;
 use tracing::{span, Level};
 
 use crate::dag::stage::SumcheckStages;
 use crate::dag::state_manager::OpeningsKeys::{OuterSumcheckAz, OuterSumcheckBz, OuterSumcheckCz};
 use crate::dag::state_manager::{
-    OpeningPoint, OpeningsKeys, ProofData, ProofKeys, StateManager, LITTLE_ENDIAN,
+    OpeningPoint, Openings, OpeningsKeys, ProofData, ProofKeys, StateManager, LITTLE_ENDIAN,
 };
 use crate::field::JoltField;
 use crate::jolt::vm::JoltCommitments;
@@ -622,7 +622,11 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTrans
         );
     }
 
-    fn cache_openings(&mut self) {
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
         let prover_state = self
             .prover_state
             .as_ref()
@@ -833,7 +837,11 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTrans
         );
     }
 
-    fn cache_openings(&mut self) {
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
         let prover_state = self
             .prover_state
             .as_ref()

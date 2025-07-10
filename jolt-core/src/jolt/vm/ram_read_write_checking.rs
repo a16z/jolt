@@ -1,3 +1,4 @@
+use std::{cell::RefCell, rc::Rc};
 use crate::{
     field::{JoltField, OptimizedMul},
     jolt::{
@@ -891,7 +892,11 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTrans
         }
     }
 
-    fn cache_openings(&mut self) {
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
         let prover_state = self.prover_state.as_ref().unwrap();
         self.claims = Some(ReadWriteSumcheckClaims {
             val_claim: prover_state.val.as_ref().unwrap().final_sumcheck_claim(),

@@ -1,4 +1,5 @@
 use crate::{
+    dag::state_manager::Openings,
     field::JoltField,
     jolt::{
         instruction::{InstructionFlags, InstructionLookup, NUM_CIRCUIT_FLAGS},
@@ -7,7 +8,7 @@ use crate::{
     poly::{
         commitment::commitment_scheme::CommitmentScheme, compact_polynomial::SmallScalar, eq_poly::EqPolynomial, multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-        }
+        }, opening_proof::ProverOpeningAccumulator
     },
     subprotocols::sumcheck::{BatchableSumcheckInstance, BatchedSumcheck, SumcheckInstanceProof},
     utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
@@ -15,6 +16,7 @@ use crate::{
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::REGISTER_COUNT;
 use rayon::prelude::*;
+use std::{cell::RefCell, rc::Rc};
 use tracer::instruction::{NormalizedInstruction, RV32IMInstruction};
 
 struct ReadCheckingProverState<F: JoltField> {
@@ -145,7 +147,11 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTrans
         );
     }
 
-    fn cache_openings(&mut self) {
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
         debug_assert!(self.ra_claim.is_none());
         let prover_state = self
             .prover_state
@@ -171,7 +177,7 @@ pub struct ReadCheckingProof<F: JoltField, ProofTranscript: Transcript> {
     rv_claims: [F; 3],
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> ReadCheckingProof<F, ProofTranscript> {
+impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>> ReadCheckingProof<F, ProofTranscript, PCS> {
     /// Returns a boxed closure that computes:
     ///    Val(k) = unexpanded_pc(k) + gamma * imm(k)
     ///             + gamma^2 * circuit_flags[0](k) + gamma^3 * circuit_flags[1](k) + ...
@@ -306,13 +312,15 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadCheckingProof<F, ProofTransc
         let (mut read_checking_sumcheck_3, rv_claim_3) =
             ReadCheckingSumcheck::new_prover(bytecode, F.clone(), K, compute_val_3);
 
-        let (sumcheck_proof, r_address) = BatchedSumcheck::prove(
+        let (sumcheck_proof, r_address) = BatchedSumcheck::prove::<F, ProofTranscript, PCS>(
             vec![
                 &mut read_checking_sumcheck_1,
                 &mut read_checking_sumcheck_2,
                 &mut read_checking_sumcheck_3,
             ],
             transcript,
+            None,
+            None,
         );
 
         let ra_claim = read_checking_sumcheck_1
@@ -363,7 +371,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadCheckingProof<F, ProofTransc
         read_checking_sumcheck_2.ra_claim = Some(self.ra_claim);
         read_checking_sumcheck_3.ra_claim = Some(self.ra_claim);
 
-        let r_address = BatchedSumcheck::verify(
+        let r_address = BatchedSumcheck::verify::<F, ProofTranscript, PCS>(
             &self.sumcheck_proof,
             vec![
                 &read_checking_sumcheck_1,

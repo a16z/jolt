@@ -14,15 +14,12 @@ use super::{
     multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
 };
 use crate::{
-    field::JoltField,
-    poly::{
+    dag::state_manager::Openings, field::JoltField, poly::{
         dense_mlpoly::DensePolynomial,
         one_hot_polynomial::{
             OneHotPolynomial, OneHotPolynomialProverOpening, OneHotSumcheckState,
         },
-    },
-    subprotocols::sumcheck::{BatchableSumcheckInstance, BatchedSumcheck, SumcheckInstanceProof},
-    utils::{errors::ProofVerifyError, transcript::Transcript},
+    }, subprotocols::sumcheck::{BatchableSumcheckInstance, BatchedSumcheck, SumcheckInstanceProof}, utils::{errors::ProofVerifyError, transcript::Transcript}
 };
 
 pub struct SharedEqPolynomial<F: JoltField> {
@@ -225,7 +222,11 @@ where
         }
     }
 
-    fn cache_openings(&mut self) {
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
         let prover_state = self.prover_state.as_ref().unwrap();
         match prover_state {
             ProverOpening::Dense(opening) => {
@@ -544,7 +545,7 @@ where
                 instance
             })
             .collect();
-        let (sumcheck_proof, r_sumcheck) = BatchedSumcheck::prove(instances, transcript, None, None);
+        let (sumcheck_proof, r_sumcheck) = BatchedSumcheck::prove::<F, ProofTranscript, PCS>(instances, transcript, None, None);
 
         let claims: Vec<_> = self
             .openings
@@ -766,6 +767,6 @@ where
                 instance
             })
             .collect();
-        BatchedSumcheck::verify(sumcheck_proof, instances, transcript)
+        BatchedSumcheck::verify::<F, ProofTranscript, PCS>(sumcheck_proof, instances, transcript)
     }
 }

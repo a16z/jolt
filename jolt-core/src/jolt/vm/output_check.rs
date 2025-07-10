@@ -1,4 +1,5 @@
 use crate::{
+    dag::state_manager::Openings,
     field::JoltField,
     jolt::{
         vm::{ram::remap_address, JoltProverPreprocessing},
@@ -10,6 +11,7 @@ use crate::{
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
+        opening_proof::ProverOpeningAccumulator,
         program_io_polynomial::ProgramIOPolynomial,
         range_mask_polynomial::RangeMaskPolynomial,
     },
@@ -25,6 +27,7 @@ use crate::{
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::RAM_START_ADDRESS;
 use rayon::prelude::*;
+use std::{cell::RefCell, rc::Rc};
 use tracer::{instruction::RV32IMCycle, JoltDevice};
 
 struct OutputSumcheckProverState<F: JoltField> {
@@ -307,7 +310,11 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTrans
         eq_table.update(r_j);
     }
 
-    fn cache_openings(&mut self, _openings: , None) {
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
         debug_assert!(self.val_final_claim.is_none());
         let OutputSumcheckProverState { val_final, .. } = self.prover_state.as_ref().unwrap();
         self.val_final_claim = Some(val_final.final_sumcheck_claim());
@@ -468,7 +475,11 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTrans
         );
     }
 
-    fn cache_openings(&mut self) {
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
         debug_assert!(self.output_claims.is_none());
         let ValFinalSumcheckProverState { inc, wa, .. } = self.prover_state.as_mut().unwrap();
         self.output_claims = Some(ValFinalSumcheckClaims {

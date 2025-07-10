@@ -142,11 +142,11 @@ impl<F: JoltField> RASumcheck<F> {
     }
 
     #[tracing::instrument(skip_all, name = "ra virtualization")]
-    pub fn prove<ProofTranscript: Transcript>(
+    pub fn prove<ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>>(
         mut self,
         transcript: &mut ProofTranscript,
     ) -> (RAProof<F, ProofTranscript>, Vec<F>) {
-        let (sumcheck_proof, r_cycle_bound) = self.prove_single(transcript);
+        let (sumcheck_proof, r_cycle_bound) = <Self as BatchableSumcheckInstance<F, ProofTranscript, PCS>>::prove_single(&mut self, transcript);
 
         let ra_i_claims = self
             .ra_i_claims
@@ -161,7 +161,7 @@ impl<F: JoltField> RASumcheck<F> {
         (proof, r_cycle_bound)
     }
 
-    pub fn verify<ProofTranscript: Transcript>(
+    pub fn verify<ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>>(
         ra_claim: F,
         ra_i_claims: Vec<F>,
         r_cycle: Vec<F>,
@@ -174,7 +174,7 @@ impl<F: JoltField> RASumcheck<F> {
 
         verifier_sumcheck.ra_i_claims = Some(ra_i_claims);
 
-        let r_cycle_bound = verifier_sumcheck.verify_single(sumcheck_proof, transcript)?;
+        let r_cycle_bound = <Self as BatchableSumcheckInstance<F, ProofTranscript, PCS>>::verify_single(&verifier_sumcheck, sumcheck_proof, transcript)?;
 
         Ok(r_cycle_bound)
     }
@@ -343,11 +343,11 @@ mod tests {
         );
 
         let mut prover_transcript = KeccakTranscript::new(b"test_one_cycle");
-        let (proof, r_cycle_bound) = prover_sumcheck.prove(&mut prover_transcript);
+        let (proof, r_cycle_bound) = prover_sumcheck.prove::<_, crate::poly::commitment::mock::MockCommitScheme<Fr, KeccakTranscript>>(&mut prover_transcript);
 
         let mut verifier_transcript = KeccakTranscript::new(b"test_one_cycle");
 
-        let verify_result = RASumcheck::<Fr>::verify(
+        let verify_result = RASumcheck::<Fr>::verify::<_, crate::poly::commitment::mock::MockCommitScheme<Fr, KeccakTranscript>>(
             ra_claim,
             proof.ra_i_claims,
             r_cycle,
@@ -409,12 +409,12 @@ mod tests {
         );
 
         let mut prover_transcript = KeccakTranscript::new(b"test_t_large");
-        let (proof, r_cycle_bound) = prover_sumcheck.prove(&mut prover_transcript);
+        let (proof, r_cycle_bound) = prover_sumcheck.prove::<_, crate::poly::commitment::mock::MockCommitScheme<Fr, KeccakTranscript>>(&mut prover_transcript);
 
         let mut verifier_transcript = KeccakTranscript::new(b"test_t_large");
         verifier_transcript.compare_to(prover_transcript);
 
-        let verify_result = RASumcheck::<Fr>::verify(
+        let verify_result = RASumcheck::<Fr>::verify::<_, crate::poly::commitment::mock::MockCommitScheme<Fr, KeccakTranscript>>(
             ra_claim,
             proof.ra_i_claims,
             r_cycle,
