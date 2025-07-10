@@ -5,7 +5,7 @@ use std::ops::{Index, RangeFull};
 use std::sync::{Arc, Mutex};
 
 use crate::field::JoltField;
-use crate::jolt::vm::JoltProverPreprocessing;
+use crate::jolt::vm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::r1cs::inputs::JoltR1CSInputs;
@@ -125,7 +125,7 @@ pub enum ProofData<F: JoltField, ProofTranscript: Transcript> {
 
 pub type Proofs<F, ProofTranscript> = HashMap<ProofKeys, ProofData<F, ProofTranscript>>;
 
-pub struct ProgramState<'a, F: JoltField, PCS, ProofTranscript>
+pub struct ProverState<'a, F: JoltField, PCS, ProofTranscript>
 where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
@@ -134,6 +134,17 @@ where
     pub trace: Option<Vec<RV32IMCycle>>,
     pub program_io: Option<JoltDevice>,
     pub final_memory_state: Option<Memory>,
+    pub accumulator: Arc<Mutex<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>,
+}
+
+pub struct VerifierState<'a, F: JoltField, PCS, ProofTranscript>
+where
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
+    pub preprocessing: Option<&'a JoltVerifierPreprocessing<F, PCS, ProofTranscript>>,
+    pub program_io: Option<JoltDevice>,
+    pub accumulator: Arc<Mutex<VerifierOpeningAccumulator<F, PCS, ProofTranscript>>>,
 }
 
 pub struct StateManager<
@@ -143,12 +154,10 @@ pub struct StateManager<
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
 > {
     pub openings: Arc<Mutex<Openings<F>>>,
-    pub prover_accumulator: Option<Arc<Mutex<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
-    pub verifier_accumulator:
-        Option<Arc<Mutex<VerifierOpeningAccumulator<F, PCS, ProofTranscript>>>>,
     pub transcript: RefCell<&'a mut ProofTranscript>,
     pub proofs: Arc<Mutex<Proofs<F, ProofTranscript>>>,
-    program_state: ProgramState<'a, F, PCS, ProofTranscript>,
+    prover_state: Option<ProverState<'a, F, PCS, ProofTranscript>>,
+    verifier_state: Option<VerifierState<'a, F, PCS, ProofTranscript>>,
 }
 
 impl<
@@ -158,23 +167,43 @@ impl<
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
     > StateManager<'a, F, ProofTranscript, PCS>
 {
-    pub fn new(
+    pub fn new_prover(
         openings: Arc<Mutex<Openings<F>>>,
-        prover_accumulator: Option<Arc<Mutex<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
-        verifier_accumulator: Option<
-            Arc<Mutex<VerifierOpeningAccumulator<F, PCS, ProofTranscript>>>,
-        >,
+        prover_accumulator: Arc<Mutex<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>,
         transcript: &'a mut ProofTranscript,
         proofs: Arc<Mutex<Proofs<F, ProofTranscript>>>,
-        program_state: ProgramState<'a, F, PCS, ProofTranscript>,
     ) -> Self {
         Self {
             openings,
-            prover_accumulator,
-            verifier_accumulator,
             transcript: RefCell::new(transcript),
             proofs,
-            program_state,
+            prover_state: Some(ProverState {
+                preprocessing: None,
+                trace: None,
+                program_io: None,
+                final_memory_state: None,
+                accumulator: prover_accumulator,
+            }),
+            verifier_state: None,
+        }
+    }
+
+    pub fn new_verifier(
+        openings: Arc<Mutex<Openings<F>>>,
+        verifier_accumulator: Arc<Mutex<VerifierOpeningAccumulator<F, PCS, ProofTranscript>>>,
+        transcript: &'a mut ProofTranscript,
+        proofs: Arc<Mutex<Proofs<F, ProofTranscript>>>,
+    ) -> Self {
+        Self {
+            openings,
+            transcript: RefCell::new(transcript),
+            proofs,
+            prover_state: None,
+            verifier_state: Some(VerifierState {
+                preprocessing: None,
+                program_io: None,
+                accumulator: verifier_accumulator,
+            }),
         }
     }
 
@@ -191,20 +220,37 @@ impl<
         self.openings.lock().unwrap().get(&idx).unwrap().0.clone()
     }
 
-    pub fn set_program_data(
+    pub fn set_prover_data(
         &mut self,
         preprocessing: &'a JoltProverPreprocessing<F, PCS, ProofTranscript>,
         trace: Vec<RV32IMCycle>,
         program_io: JoltDevice,
         final_memory_state: Memory,
     ) {
-        self.program_state.preprocessing = Some(preprocessing);
-        self.program_state.trace = Some(trace);
-        self.program_state.program_io = Some(program_io);
-        self.program_state.final_memory_state = Some(final_memory_state);
+        if let Some(ref mut prover_state) = self.prover_state {
+            prover_state.preprocessing = Some(preprocessing);
+            prover_state.trace = Some(trace);
+            prover_state.program_io = Some(program_io);
+            prover_state.final_memory_state = Some(final_memory_state);
+        } else {
+            panic!("Prover state not initialized");
+        }
     }
 
-    pub fn get_program_data(
+    pub fn set_verifier_data(
+        &mut self,
+        preprocessing: &'a JoltVerifierPreprocessing<F, PCS, ProofTranscript>,
+        program_io: JoltDevice,
+    ) {
+        if let Some(ref mut verifier_state) = self.verifier_state {
+            verifier_state.preprocessing = Some(preprocessing);
+            verifier_state.program_io = Some(program_io);
+        } else {
+            panic!("Verifier state not initialized");
+        }
+    }
+
+    pub fn get_prover_data(
         &self,
     ) -> (
         &'a JoltProverPreprocessing<F, PCS, ProofTranscript>,
@@ -212,19 +258,40 @@ impl<
         &JoltDevice,
         &Memory,
     ) {
-        (
-            self.program_state
-                .preprocessing
-                .expect("Preprocessing not set"),
-            self.program_state.trace.as_ref().expect("Trace not set"),
-            self.program_state
-                .program_io
-                .as_ref()
-                .expect("Program IO not set"),
-            self.program_state
-                .final_memory_state
-                .as_ref()
-                .expect("Final memory state not set"),
-        )
+        if let Some(ref prover_state) = self.prover_state {
+            (
+                prover_state.preprocessing.expect("Preprocessing not set"),
+                prover_state.trace.as_ref().expect("Trace not set"),
+                prover_state
+                    .program_io
+                    .as_ref()
+                    .expect("Program IO not set"),
+                prover_state
+                    .final_memory_state
+                    .as_ref()
+                    .expect("Final memory state not set"),
+            )
+        } else {
+            panic!("Prover state not initialized");
+        }
+    }
+
+    pub fn get_verifier_data(
+        &self,
+    ) -> (
+        &'a JoltVerifierPreprocessing<F, PCS, ProofTranscript>,
+        &JoltDevice,
+    ) {
+        if let Some(ref verifier_state) = self.verifier_state {
+            (
+                verifier_state.preprocessing.expect("Preprocessing not set"),
+                verifier_state
+                    .program_io
+                    .as_ref()
+                    .expect("Program IO not set"),
+            )
+        } else {
+            panic!("Verifier state not initialized");
+        }
     }
 }

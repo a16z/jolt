@@ -86,21 +86,13 @@ mod tests {
         let proofs = Arc::new(Mutex::new(HashMap::new()));
 
         // Create prover state manager
-        let prover_general_state = state_manager::ProgramState {
-            preprocessing: None,
-            trace: None,
-            program_io: None,
-            final_memory_state: None,
-        };
-        let mut prover_state_manager = state_manager::StateManager::new(
+        let mut prover_state_manager = state_manager::StateManager::new_prover(
             openings.clone(),
-            Some(prover_accumulator),
-            None,
+            prover_accumulator,
             &mut prover_transcript,
             proofs.clone(),
-            prover_general_state,
         );
-        prover_state_manager.set_program_data(
+        prover_state_manager.set_prover_data(
             &preprocessing,
             trace.clone(),
             io_device.clone(),
@@ -108,26 +100,16 @@ mod tests {
         );
 
         // Create verifier state manager
-        let verifier_general_state = state_manager::ProgramState {
-            preprocessing: None,
-            trace: None,
-            program_io: None,
-            final_memory_state: None,
-        };
-        let mut verifier_state_manager = state_manager::StateManager::new(
+        let mut verifier_state_manager = state_manager::StateManager::new_verifier(
             openings,
-            None,
-            Some(verifier_accumulator),
+            verifier_accumulator,
             &mut verifier_transcript,
             proofs,
-            verifier_general_state,
         );
-        verifier_state_manager.set_program_data(
-            &preprocessing,
-            trace,
-            io_device,
-            final_memory_state,
-        );
+
+        let verifier_preprocessing =
+            crate::jolt::vm::JoltVerifierPreprocessing::from(&preprocessing);
+        verifier_state_manager.set_verifier_data(&verifier_preprocessing, io_device);
 
         // JoltDAG
         let mut dag = jolt_dag::JoltDAG::new(prover_state_manager, verifier_state_manager);

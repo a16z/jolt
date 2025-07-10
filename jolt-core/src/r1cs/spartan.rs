@@ -883,7 +883,7 @@ impl<
            A_small, B_small, C_small corresponding to the uniform constraints.
         */
         let (preprocessing, trace, _program_io, _final_memory_state) =
-            state_manager.get_program_data();
+            state_manager.get_prover_data();
 
         // Setup Spartan-specific data
         let padded_trace_length = trace.len().next_power_of_two();
@@ -968,12 +968,20 @@ impl<
         &self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {
-        // Get the program data
-        let (_preprocessing, trace, _program_io, _final_memory_state) =
-            state_manager.get_program_data();
+        // For the verifier, we need to reconstruct trace length from proofs
+        // In a real scenario, this would come from the proof or be public input
+        // For now, we'll assume the verifier has access to trace length
+        let proofs = state_manager.proofs.lock().unwrap();
+        let _proof_data = proofs
+            .get(&ProofKeys::SpartanOuterSumcheck)
+            .expect("Outer sumcheck proof not found");
+        drop(proofs);
+
+        // TODO: Get padded trace length from proof or public parameters
+        // For now, we'll use a placeholder
+        let padded_trace_length = 1 << 16; // This should come from proof/public params
 
         // Setup Spartan-specific data
-        let padded_trace_length = trace.len().next_power_of_two();
         let constraint_builder =
             crate::r1cs::constraints::JoltRV32IMConstraints::construct_constraints(
                 padded_trace_length,
@@ -1047,15 +1055,30 @@ impl<
             Evaluates the uniform constraint matrices A_small, B_small, C_small at the point
             determined by the outer sumcheck.
         */
-        let (key, _, input_polys) = state_manager.get_spartan_data();
+
+        // Get the prover data
+        let (preprocessing, trace, _program_io, _final_memory_state) =
+            state_manager.get_prover_data();
+
+        let padded_trace_length = trace.len().next_power_of_two();
+        let constraint_builder =
+            crate::r1cs::constraints::JoltRV32IMConstraints::construct_constraints(
+                padded_trace_length,
+            );
+        let key = UniformSpartanProof::<F, ProofTranscript>::setup(
+            &constraint_builder,
+            padded_trace_length,
+        );
+
+        let input_polys: Vec<MultilinearPolynomial<F>> = crate::r1cs::inputs::ALL_R1CS_INPUTS
+            .par_iter()
+            .map(|var| var.generate_witness(trace, preprocessing))
+            .collect();
 
         let num_cycles = key.num_steps;
         let num_cycles_bits = num_cycles.ilog2() as usize;
 
-        let inner_sumcheck_RLC: F = state_manager
-            .prover_transcript
-            .borrow_mut()
-            .challenge_scalar();
+        let inner_sumcheck_RLC: F = state_manager.transcript.borrow_mut().challenge_scalar();
 
         // we get this opening_point from state manager.
         // we use Az here but Bz, Cz are same.
@@ -1078,12 +1101,12 @@ impl<
         };
 
         let inner_sumcheck =
-            InnerSumcheck::new_prover(key, input_polys, &claims, &params, inner_sumcheck_RLC);
+            InnerSumcheck::new_prover(&key, &input_polys, &claims, &params, inner_sumcheck_RLC);
 
         // Evaluate all witness polynomials P_i at r_cycle for the verifier
         // Verifier computes: z(r_inner, r_cycle) = Σ_i eq(r_inner, i) * P_i(r_cycle)
         let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
-        let (claimed_witness_evals, chis) =
+        let (claimed_witness_evals, _chis) =
             MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
 
         let (_, eq_plus_one_r_cycle) = EqPlusOnePolynomial::evals(r_cycle, None);
@@ -1097,13 +1120,10 @@ impl<
             2. NextPC(r_cycle) = \sum_t PC(t) * eq_plus_one(r_cycle, t)
         */
 
-        let r: F = state_manager
-            .prover_transcript
-            .borrow_mut()
-            .challenge_scalar();
+        let r: F = state_manager.transcript.borrow_mut().challenge_scalar();
 
         let pc_sumcheck =
-            PCSumcheck::new_prover(input_polys, &claimed_witness_evals, eq_plus_one_r_cycle, r);
+            PCSumcheck::new_prover(&input_polys, &claimed_witness_evals, eq_plus_one_r_cycle, r);
 
         // let cached_claims = pc_sumcheck.cached_claims.expect("Claims not cached");
         // let unexpanded_pc_eval_at_shift_r = cached_claims.0;
