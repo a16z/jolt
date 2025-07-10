@@ -1,0 +1,1 @@
+This code was taken at a commit from the [ezkl repo](https://github.com/zkonduit/ezkl/tree/22689cfdb6c9e571f5a208d164ddd18c638d24f8) under the [Apache License 2.0.](https://github.com/zkonduit/ezkl/blob/22689cfdb6c9e571f5a208d164ddd18c638d24f8/LICENSE)
