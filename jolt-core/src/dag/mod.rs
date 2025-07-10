@@ -10,7 +10,9 @@ mod tests {
     use crate::poly::commitment::mock::MockCommitScheme;
     use crate::utils::transcript::{KeccakTranscript, Transcript};
     use ark_bn254::Fr;
+    use std::cell::RefCell;
     use std::collections::HashMap;
+    use std::rc::Rc;
     use std::sync::{Arc, Mutex};
     use tracer;
 
@@ -67,7 +69,7 @@ mod tests {
         );
 
         // State manager components
-        let openings = Arc::new(Mutex::new(HashMap::new()));
+        let openings = Rc::new(RefCell::new(HashMap::new()));
         let prover_accumulator_pre_wrap = crate::poly::opening_proof::ProverOpeningAccumulator::<
             Fr,
             MockCommitScheme<Fr, KeccakTranscript>,
@@ -79,7 +81,7 @@ mod tests {
             KeccakTranscript,
         >::new();
 
-        let prover_accumulator = Arc::new(Mutex::new(prover_accumulator_pre_wrap));
+        let prover_accumulator = Rc::new(RefCell::new(prover_accumulator_pre_wrap));
         let verifier_accumulator = Arc::new(Mutex::new(verifier_accumulator_pre_wrap));
         let mut prover_transcript = KeccakTranscript::new(b"Jolt");
         let mut verifier_transcript = KeccakTranscript::new(b"Jolt");

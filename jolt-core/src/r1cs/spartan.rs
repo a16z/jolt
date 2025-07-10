@@ -937,7 +937,7 @@ impl<
         let outer_sumcheck_r_point =
             OpeningPoint::<LITTLE_ENDIAN, F>::new(outer_sumcheck_r.clone());
 
-        let mut openings = state_manager.openings.lock().unwrap();
+        let mut openings = state_manager.openings.borrow_mut();
 
         // Store Az, Bz, Cz claims with the outer sumcheck point -> (outer_r, Az) etc.
         openings.insert(

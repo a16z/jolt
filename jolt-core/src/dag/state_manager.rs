@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::{Index, RangeFull};
 
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use crate::field::JoltField;
@@ -134,7 +135,7 @@ where
     pub trace: Option<Vec<RV32IMCycle>>,
     pub program_io: Option<JoltDevice>,
     pub final_memory_state: Option<Memory>,
-    pub accumulator: Arc<Mutex<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>,
+    pub accumulator: Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>,
 }
 
 pub struct VerifierState<'a, F: JoltField, PCS, ProofTranscript>
@@ -154,7 +155,7 @@ pub struct StateManager<
     ProofTranscript: Transcript,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
 > {
-    pub openings: Arc<Mutex<Openings<F>>>,
+    pub openings: Rc<RefCell<Openings<F>>>,
     pub transcript: RefCell<&'a mut ProofTranscript>,
     pub proofs: Arc<Mutex<Proofs<F, ProofTranscript>>>,
     prover_state: Option<ProverState<'a, F, PCS, ProofTranscript>>,
@@ -169,8 +170,8 @@ impl<
     > StateManager<'a, F, ProofTranscript, PCS>
 {
     pub fn new_prover(
-        openings: Arc<Mutex<Openings<F>>>,
-        prover_accumulator: Arc<Mutex<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>,
+        openings: Rc<RefCell<Openings<F>>>,
+        prover_accumulator: Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>,
         transcript: &'a mut ProofTranscript,
         proofs: Arc<Mutex<Proofs<F, ProofTranscript>>>,
     ) -> Self {
@@ -190,7 +191,7 @@ impl<
     }
 
     pub fn new_verifier(
-        openings: Arc<Mutex<Openings<F>>>,
+        openings: Rc<RefCell<Openings<F>>>,
         verifier_accumulator: Arc<Mutex<VerifierOpeningAccumulator<F, PCS, ProofTranscript>>>,
         transcript: &'a mut ProofTranscript,
         proofs: Arc<Mutex<Proofs<F, ProofTranscript>>>,
@@ -211,15 +212,15 @@ impl<
 
     pub fn z(&self, idx: JoltR1CSInputs) -> F {
         use OpeningsExt;
-        self.openings.lock().unwrap().get_spartan_z(idx)
+        self.openings.borrow().get_spartan_z(idx)
     }
 
     pub fn openings(&self, idx: OpeningsKeys) -> F {
-        self.openings.lock().unwrap().get(&idx).unwrap().1
+        self.openings.borrow().get(&idx).unwrap().1
     }
 
     pub fn openings_point(&self, idx: OpeningsKeys) -> OpeningPoint<LITTLE_ENDIAN, F> {
-        self.openings.lock().unwrap().get(&idx).unwrap().0.clone()
+        self.openings.borrow().get(&idx).unwrap().0.clone()
     }
 
     pub fn set_prover_data(
@@ -303,7 +304,7 @@ impl<
 
     pub fn get_prover_accumulator(
         &self,
-    ) -> Arc<Mutex<ProverOpeningAccumulator<F, PCS, ProofTranscript>>> {
+    ) -> Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>> {
         if let Some(ref prover_state) = self.prover_state {
             prover_state.accumulator.clone()
         } else {
@@ -321,7 +322,7 @@ impl<
         }
     }
 
-    pub fn get_openings(&self) -> Arc<Mutex<Openings<F>>> {
+    pub fn get_openings(&self) -> Rc<RefCell<Openings<F>>> {
         self.openings.clone()
     }
 }
