@@ -290,23 +290,10 @@ where
         let _r_read_checking =
             read_checking.verify_single(&self.read_checking_proof.sumcheck_proof, sm.transcript)?;
 
-        for i in 0..D {
-            sm.openings.lock().unwrap().insert(
-                OpeningsKeys::InstructionRa(i),
-                (Vec::new(), self.booleanity_proof.ra_claims[i]),
-            );
-        }
-
         let booleanity = BooleanitySumcheck::new_verifier(&mut sm);
         let _r_booleanity =
             booleanity.verify_single(&self.booleanity_proof.sumcheck_proof, sm.transcript)?;
 
-        for i in 0..D {
-            sm.openings.lock().unwrap().insert(
-                OpeningsKeys::InstructionRa(i),
-                (Vec::new(), self.hamming_weight_proof.ra_claims[i]),
-            );
-        }
         let hamming_weight = HammingWeightSumcheck::new_verifier(&mut sm);
         let r_hamming_weight = hamming_weight
             .verify_single(&self.hamming_weight_proof.sumcheck_proof, sm.transcript)
@@ -512,7 +499,7 @@ impl<'a, F: JoltField, T: Transcript> BatchableSumcheckInstance<F, T> for ReadRa
         self.rv_claim + self.gamma * self.raf_claim
     }
 
-    fn compute_prover_message(&mut self, round: usize) -> Vec<F> {
+    fn compute_prover_message(&mut self, round: usize, _: F) -> Vec<F> {
         let ps = self.prover_state.as_ref().unwrap();
         if round < LOG_K {
             // Phase 1: First log(K) rounds
@@ -955,7 +942,7 @@ impl<F: JoltField, T: Transcript> BatchableSumcheckInstance<F, T> for Booleanity
         F::zero()
     }
 
-    fn compute_prover_message(&mut self, round: usize) -> Vec<F> {
+    fn compute_prover_message(&mut self, round: usize, _: F) -> Vec<F> {
         if round < LOG_K_CHUNK {
             // Phase 1: First log(K_CHUNK) rounds
             self.compute_phase1_message(round)
@@ -1228,7 +1215,7 @@ impl<F: JoltField, T: Transcript> BatchableSumcheckInstance<F, T> for HammingWei
         self.gamma.iter().sum()
     }
 
-    fn compute_prover_message(&mut self, _round: usize) -> Vec<F> {
+    fn compute_prover_message(&mut self, _round: usize, _: F) -> Vec<F> {
         let prover_state = self.prover_state.as_ref().unwrap();
         vec![prover_state
             .ra
