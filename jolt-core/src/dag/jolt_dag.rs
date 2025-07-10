@@ -1,4 +1,4 @@
-use crate::dag::stage::{StageResult, SumcheckStages};
+use crate::dag::stage::SumcheckStages;
 use crate::dag::state_manager::StateManager;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
@@ -23,26 +23,21 @@ impl<
 {
     pub fn new(
         state_manager: StateManager<'a, F, ProofTranscript, PCS>,
-        _transcript: ProofTranscript,
     ) -> Self {
         Self { state_manager }
     }
 
-    pub fn prove(&mut self) -> Result<(), String> {
+    pub fn prove(&mut self) -> anyhow::Result<()> {
         // Stage 1: Run Spartan's outer sumcheck proof
         let spartan_proof = UniformSpartanProof::<F, ProofTranscript>::default();
-        match spartan_proof.stage1_prove(&mut self.state_manager) {
-            StageResult::Success => Ok(()),
-            StageResult::Failed(reason) => Err(format!("Stage 1 prove failed: {reason}")),
-        }
+        spartan_proof.stage1_prove(&mut self.state_manager)?;
+        Ok(())
     }
 
-    pub fn verify(&mut self) -> Result<(), String> {
+    pub fn verify(&mut self) -> anyhow::Result<()> {
         // Stage 1: Verify Spartan's outer sumcheck proof
         let spartan_proof = UniformSpartanProof::<F, ProofTranscript>::default();
-        match spartan_proof.stage1_verify(&mut self.state_manager) {
-            StageResult::Success => Ok(()),
-            StageResult::Failed(reason) => Err(format!("Stage 1 verify failed: {reason}")),
-        }
+        spartan_proof.stage1_verify(&mut self.state_manager)?;
+        Ok(())
     }
 }

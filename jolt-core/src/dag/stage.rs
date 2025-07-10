@@ -4,22 +4,6 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::subprotocols::sumcheck::BatchableSumcheckInstance;
 use crate::utils::transcript::Transcript;
 
-#[derive(Debug, Clone)]
-pub enum StageResult {
-    Success,
-    Failed(String),
-}
-
-impl StageResult {
-    pub fn is_success(&self) -> bool {
-        matches!(self, StageResult::Success)
-    }
-
-    pub fn is_failed(&self) -> bool {
-        matches!(self, StageResult::Failed(_))
-    }
-}
-
 pub trait SumcheckStages<
     F: JoltField,
     ProofTranscript: Transcript,
@@ -30,17 +14,17 @@ pub trait SumcheckStages<
     fn stage1_prove(
         &self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> StageResult {
+    ) -> anyhow::Result<()> {
         let _ = state_manager;
-        StageResult::Success
+        Ok(())
     }
 
     fn stage1_verify(
         &self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> StageResult {
+    ) -> anyhow::Result<()> {
         let _ = state_manager;
-        StageResult::Success
+        Ok(())
     }
 
     // Stages 2-5 return sumcheck instances that will be batched together

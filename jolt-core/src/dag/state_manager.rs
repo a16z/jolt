@@ -127,8 +127,8 @@ pub struct StateManager<
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
 > {
     pub openings: Arc<Mutex<Openings<F>>>,
-    pub prover_accumulator: &'a mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
-    pub verifier_accumulator: &'a mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
+    pub prover_accumulator: Arc<Mutex<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>,
+    pub verifier_accumulator: Arc<Mutex<VerifierOpeningAccumulator<F, PCS, ProofTranscript>>>,
     pub prover_transcript: RefCell<&'a mut ProofTranscript>,
     pub verifier_transcript: RefCell<&'a mut ProofTranscript>,
     pub proofs: Arc<Mutex<Proofs<F, ProofTranscript>>>,
@@ -144,8 +144,8 @@ impl<
 {
     pub fn new(
         openings: Arc<Mutex<Openings<F>>>,
-        prover_accumulator: &'a mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
-        verifier_accumulator: &'a mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
+        prover_accumulator: Arc<Mutex<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>,
+        verifier_accumulator: Arc<Mutex<VerifierOpeningAccumulator<F, PCS, ProofTranscript>>>,
         prover_transcript: &'a mut ProofTranscript,
         verifier_transcript: &'a mut ProofTranscript,
         proofs: Arc<Mutex<Proofs<F, ProofTranscript>>>,

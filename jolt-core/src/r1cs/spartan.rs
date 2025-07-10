@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 use tracer::instruction::RV32IMCycle;
 use tracing::{span, Level};
 
-use crate::dag::stage::{StageResult, SumcheckStages};
+use crate::dag::stage::SumcheckStages;
 use crate::dag::state_manager::{
     OpeningPoint, OpeningsKeys, ProofData, ProofKeys, StateManager, LITTLE_ENDIAN,
 };
@@ -887,7 +887,7 @@ impl<
     fn stage1_prove(
         &self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> StageResult {
+    ) -> anyhow::Result<()> {
 
         /* Sumcheck 1: Outer sumcheck
            Proves: \sum_x eq(tau, x) * (Az(x) * Bz(x) - Cz(x)) = 0
@@ -952,13 +952,13 @@ impl<
             ),
         );
 
-        StageResult::Success
+        Ok(())
     }
 
     fn stage1_verify(
         &self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> StageResult {
+    ) -> anyhow::Result<()> {
 
         // Get the spartan-related data:
         let (key, _, _) = state_manager.get_spartan_data();
@@ -992,7 +992,7 @@ impl<
             match outer_sumcheck_proof.verify(F::zero(), num_rounds_x, 3, transcript) {
                 Ok(result) => result,
                 Err(_) => {
-                    return StageResult::Failed("Outer sumcheck verification failed".to_string())
+                    return Err(anyhow::anyhow!("Outer sumcheck verification failed"))
                 }
             }
         };
@@ -1010,7 +1010,7 @@ impl<
         let taus_bound_rx = EqPolynomial::mle(&tau, &outer_sumcheck_r_reversed);
         let claim_outer_final_expected = taus_bound_rx * (claim_Az * claim_Bz - claim_Cz);
         if claim_outer_final != claim_outer_final_expected {
-            return StageResult::Failed("Invalid outer sumcheck claim".to_string());
+            return Err(anyhow::anyhow!("Invalid outer sumcheck claim"));
         }
 
         ProofTranscript::append_scalars(
@@ -1018,7 +1018,7 @@ impl<
             &outer_sumcheck_claims[..],
         );
 
-        StageResult::Success
+        Ok(())
     }
 
     fn stage2_prover_instances(

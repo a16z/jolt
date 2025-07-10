@@ -87,16 +87,19 @@ mod tests {
 
         // State manager components
         let openings = Arc::new(Mutex::new(HashMap::new()));
-        let mut prover_accumulator = crate::poly::opening_proof::ProverOpeningAccumulator::<
+        let prover_accumulator_pre_wrap = crate::poly::opening_proof::ProverOpeningAccumulator::<
             Fr,
             MockCommitScheme<Fr, KeccakTranscript>,
             KeccakTranscript,
         >::new();
-        let mut verifier_accumulator = crate::poly::opening_proof::VerifierOpeningAccumulator::<
+        let verifier_accumulator_pre_wrap = crate::poly::opening_proof::VerifierOpeningAccumulator::<
             Fr,
             MockCommitScheme<Fr, KeccakTranscript>,
             KeccakTranscript,
         >::new();
+
+        let prover_accumulator = Arc::new(Mutex::new(prover_accumulator_pre_wrap));
+        let verifier_accumulator = Arc::new(Mutex::new(verifier_accumulator_pre_wrap));
         let mut prover_transcript = KeccakTranscript::new(b"Jolt");
         let mut verifier_transcript = KeccakTranscript::new(b"Jolt");
         let proofs = Arc::new(Mutex::new(HashMap::new()));
@@ -110,8 +113,8 @@ mod tests {
         // Create state manager
         let mut state_manager = state_manager::StateManager::new(
             openings,
-            &mut prover_accumulator,
-            &mut verifier_accumulator,
+            prover_accumulator,
+            verifier_accumulator,
             &mut prover_transcript,
             &mut verifier_transcript,
             proofs,
@@ -120,7 +123,7 @@ mod tests {
         state_manager.set_spartan_data(&spartan_key, &constraint_builder, input_polys);
 
         // JoltDAG
-        let mut dag = jolt_dag::JoltDAG::new(state_manager, KeccakTranscript::new(b"Jolt"));
+        let mut dag = jolt_dag::JoltDAG::new(state_manager);
 
         // Run prove
         if let Err(e) = dag.prove() {
