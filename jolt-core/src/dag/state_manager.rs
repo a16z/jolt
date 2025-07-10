@@ -144,6 +144,7 @@ where
 {
     pub preprocessing: Option<&'a JoltVerifierPreprocessing<F, PCS, ProofTranscript>>,
     pub program_io: Option<JoltDevice>,
+    pub trace_length: Option<usize>,
     pub accumulator: Arc<Mutex<VerifierOpeningAccumulator<F, PCS, ProofTranscript>>>,
 }
 
@@ -202,6 +203,7 @@ impl<
             verifier_state: Some(VerifierState {
                 preprocessing: None,
                 program_io: None,
+                trace_length: None,
                 accumulator: verifier_accumulator,
             }),
         }
@@ -241,10 +243,12 @@ impl<
         &mut self,
         preprocessing: &'a JoltVerifierPreprocessing<F, PCS, ProofTranscript>,
         program_io: JoltDevice,
+        trace_length: usize,
     ) {
         if let Some(ref mut verifier_state) = self.verifier_state {
             verifier_state.preprocessing = Some(preprocessing);
             verifier_state.program_io = Some(program_io);
+            verifier_state.trace_length = Some(trace_length);
         } else {
             panic!("Verifier state not initialized");
         }
@@ -281,6 +285,7 @@ impl<
     ) -> (
         &'a JoltVerifierPreprocessing<F, PCS, ProofTranscript>,
         &JoltDevice,
+        usize,
     ) {
         if let Some(ref verifier_state) = self.verifier_state {
             (
@@ -289,9 +294,34 @@ impl<
                     .program_io
                     .as_ref()
                     .expect("Program IO not set"),
+                verifier_state.trace_length.expect("Trace length not set"),
             )
         } else {
             panic!("Verifier state not initialized");
         }
+    }
+
+    pub fn get_prover_accumulator(
+        &self,
+    ) -> Arc<Mutex<ProverOpeningAccumulator<F, PCS, ProofTranscript>>> {
+        if let Some(ref prover_state) = self.prover_state {
+            prover_state.accumulator.clone()
+        } else {
+            panic!("Prover state not initialized");
+        }
+    }
+
+    pub fn get_verifier_accumulator(
+        &self,
+    ) -> Arc<Mutex<VerifierOpeningAccumulator<F, PCS, ProofTranscript>>> {
+        if let Some(ref verifier_state) = self.verifier_state {
+            verifier_state.accumulator.clone()
+        } else {
+            panic!("Verifier state not initialized");
+        }
+    }
+
+    pub fn get_openings(&self) -> Arc<Mutex<Openings<F>>> {
+        self.openings.clone()
     }
 }

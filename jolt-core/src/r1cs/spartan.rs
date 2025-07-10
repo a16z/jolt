@@ -968,18 +968,9 @@ impl<
         &self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {
-        // For the verifier, we need to reconstruct trace length from proofs
-        // In a real scenario, this would come from the proof or be public input
-        // For now, we'll assume the verifier has access to trace length
-        let proofs = state_manager.proofs.lock().unwrap();
-        let _proof_data = proofs
-            .get(&ProofKeys::SpartanOuterSumcheck)
-            .expect("Outer sumcheck proof not found");
-        drop(proofs);
-
-        // TODO: Get padded trace length from proof or public parameters
-        // For now, we'll use a placeholder
-        let padded_trace_length = 1 << 16; // This should come from proof/public params
+        // Get the verifier data including trace length
+        let (_preprocessing, _program_io, trace_length) = state_manager.get_verifier_data();
+        let padded_trace_length = trace_length.next_power_of_two();
 
         // Setup Spartan-specific data
         let constraint_builder =

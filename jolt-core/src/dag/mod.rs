@@ -109,7 +109,7 @@ mod tests {
 
         let verifier_preprocessing =
             crate::jolt::vm::JoltVerifierPreprocessing::from(&preprocessing);
-        verifier_state_manager.set_verifier_data(&verifier_preprocessing, io_device);
+        verifier_state_manager.set_verifier_data(&verifier_preprocessing, io_device, trace.len());
 
         // JoltDAG
         let mut dag = jolt_dag::JoltDAG::new(prover_state_manager, verifier_state_manager);
