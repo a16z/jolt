@@ -3,131 +3,355 @@ use halo2curves::bn256::Fr as Fp;
 use serde::{ser::SerializeStruct, Deserialize, Deserializer, Serialize, Serializer};
 use std::{io::Read, panic::UnwindSafe};
 use tract_onnx::tract_core::{
-  tract_data::{prelude::Tensor as TractTensor, TVec},
-  value::TValue,
+    tract_data::{prelude::Tensor as TractTensor, TVec},
+    value::TValue,
 };
 
 ///
 #[derive(Clone, Debug, PartialOrd, PartialEq)]
 pub enum FileSourceInner {
-  /// Inner elements of float inputs coming from a file
-  Float(f64),
-  /// Inner elements of bool inputs coming from a file
-  Bool(bool),
-  /// Inner elements of inputs coming from a witness
-  Field(Fp),
+    /// Inner elements of float inputs coming from a file
+    Float(f64),
+    /// Inner elements of bool inputs coming from a file
+    Bool(bool),
+    /// Inner elements of inputs coming from a witness
+    Field(Fp),
 }
 
 impl FileSourceInner {
-  ///
-  pub fn is_float(&self) -> bool {
-    matches!(self, FileSourceInner::Float(_))
-  }
-  ///
-  pub fn is_bool(&self) -> bool {
-    matches!(self, FileSourceInner::Bool(_))
-  }
-  ///
-  pub fn is_field(&self) -> bool {
-    matches!(self, FileSourceInner::Field(_))
-  }
+    ///
+    pub fn is_float(&self) -> bool {
+        matches!(self, FileSourceInner::Float(_))
+    }
+    ///
+    pub fn is_bool(&self) -> bool {
+        matches!(self, FileSourceInner::Bool(_))
+    }
+    ///
+    pub fn is_field(&self) -> bool {
+        matches!(self, FileSourceInner::Field(_))
+    }
 }
 
 impl Serialize for FileSourceInner {
-  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-  where
-    S: Serializer,
-  {
-    match self {
-      FileSourceInner::Field(data) => data.serialize(serializer),
-      FileSourceInner::Bool(data) => data.serialize(serializer),
-      FileSourceInner::Float(data) => data.serialize(serializer),
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            FileSourceInner::Field(data) => data.serialize(serializer),
+            FileSourceInner::Bool(data) => data.serialize(serializer),
+            FileSourceInner::Float(data) => data.serialize(serializer),
+        }
     }
-  }
 }
 
 // !!! ALWAYS USE JSON SERIALIZATION FOR GRAPH INPUT
 // UNTAGGED ENUMS WONT WORK :( as highlighted here:
 impl<'de> Deserialize<'de> for FileSourceInner {
-  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-  where
-    D: Deserializer<'de>,
-  {
-    let this_json: Box<serde_json::value::RawValue> = Deserialize::deserialize(deserializer)?;
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let this_json: Box<serde_json::value::RawValue> = Deserialize::deserialize(deserializer)?;
 
-    let bool_try: Result<bool, _> = serde_json::from_str(this_json.get());
-    if let Ok(t) = bool_try {
-      return Ok(FileSourceInner::Bool(t));
-    }
-    let float_try: Result<f64, _> = serde_json::from_str(this_json.get());
-    if let Ok(t) = float_try {
-      return Ok(FileSourceInner::Float(t));
-    }
-    let field_try: Result<Fp, _> = serde_json::from_str(this_json.get());
-    if let Ok(t) = field_try {
-      return Ok(FileSourceInner::Field(t));
-    }
+        let bool_try: Result<bool, _> = serde_json::from_str(this_json.get());
+        if let Ok(t) = bool_try {
+            return Ok(FileSourceInner::Bool(t));
+        }
+        let float_try: Result<f64, _> = serde_json::from_str(this_json.get());
+        if let Ok(t) = float_try {
+            return Ok(FileSourceInner::Float(t));
+        }
+        let field_try: Result<Fp, _> = serde_json::from_str(this_json.get());
+        if let Ok(t) = field_try {
+            return Ok(FileSourceInner::Field(t));
+        }
 
-    Err(serde::de::Error::custom(
-      "failed to deserialize FileSourceInner",
-    ))
-  }
+        Err(serde::de::Error::custom(
+            "failed to deserialize FileSourceInner",
+        ))
+    }
 }
 
 /// Elements of inputs coming from a file
 pub type FileSource = Vec<Vec<FileSourceInner>>;
 
 impl FileSourceInner {
-  /// Create a new FileSourceInner
-  pub fn new_float(f: f64) -> Self {
-    FileSourceInner::Float(f)
-  }
-  /// Create a new FileSourceInner
-  pub fn new_field(f: Fp) -> Self {
-    FileSourceInner::Field(f)
-  }
-  /// Create a new FileSourceInner
-  pub fn new_bool(f: bool) -> Self {
-    FileSourceInner::Bool(f)
-  }
+    /// Create a new FileSourceInner
+    pub fn new_float(f: f64) -> Self {
+        FileSourceInner::Float(f)
+    }
+    /// Create a new FileSourceInner
+    pub fn new_field(f: Fp) -> Self {
+        FileSourceInner::Field(f)
+    }
+    /// Create a new FileSourceInner
+    pub fn new_bool(f: bool) -> Self {
+        FileSourceInner::Bool(f)
+    }
 
-  ///
-  pub fn as_type(&mut self, input_type: &InputType) {
-    match self {
-      FileSourceInner::Float(f) => input_type.roundtrip(f),
-      FileSourceInner::Bool(_) => assert!(matches!(input_type, InputType::Bool)),
-      FileSourceInner::Field(_) => {}
+    ///
+    pub fn as_type(&mut self, input_type: &InputType) {
+        match self {
+            FileSourceInner::Float(f) => input_type.roundtrip(f),
+            FileSourceInner::Bool(_) => assert!(matches!(input_type, InputType::Bool)),
+            FileSourceInner::Field(_) => {}
+        }
     }
-  }
 
-  /// Convert to a field element
-  pub fn to_field(&self, scale: crate::Scale) -> Fp {
-    match self {
-      FileSourceInner::Float(f) => i128_to_felt(quantize_float(f, 0.0, scale).unwrap()),
-      FileSourceInner::Bool(f) => {
-        if *f {
-          Fp::one()
-        } else {
-          Fp::zero()
+    /// Convert to a field element
+    pub fn to_field(&self, scale: crate::Scale) -> Fp {
+        match self {
+            FileSourceInner::Float(f) => i128_to_felt(quantize_float(f, 0.0, scale).unwrap()),
+            FileSourceInner::Bool(f) => {
+                if *f {
+                    Fp::one()
+                } else {
+                    Fp::zero()
+                }
+            }
+            FileSourceInner::Field(f) => *f,
         }
-      }
-      FileSourceInner::Field(f) => *f,
     }
-  }
-  /// Convert to a float
-  pub fn to_float(&self) -> f64 {
-    match self {
-      FileSourceInner::Float(f) => *f,
-      FileSourceInner::Bool(f) => {
-        if *f {
-          1.0
-        } else {
-          0.0
+    /// Convert to a float
+    pub fn to_float(&self) -> f64 {
+        match self {
+            FileSourceInner::Float(f) => *f,
+            FileSourceInner::Bool(f) => {
+                if *f {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            FileSourceInner::Field(f) => crate::fieldutils::felt_to_i128(*f) as f64,
         }
-      }
-      FileSourceInner::Field(f) => crate::fieldutils::felt_to_i128(*f) as f64,
     }
-  }
+}
+
+/// Enum that defines source of the inputs/outputs to the EZKL model
+#[derive(Clone, Debug, Serialize, PartialOrd, PartialEq)]
+#[serde(untagged)]
+pub enum DataSource {
+    /// .json File data source.
+    File(FileSource),
+    // /// On-chain data source. The first element is the calls to the account, andthe second is the
+    // RPC url. OnChain(OnChainSource),
+    // /// Postgres DB
+    // #[cfg(not(target_arch = "wasm32"))]
+    // DB(PostgresSource),
+}
+
+impl Default for DataSource {
+    fn default() -> Self {
+        DataSource::File(vec![vec![]])
+    }
+}
+
+impl From<FileSource> for DataSource {
+    fn from(data: FileSource) -> Self {
+        DataSource::File(data)
+    }
+}
+
+impl From<Vec<Vec<Fp>>> for DataSource {
+    fn from(data: Vec<Vec<Fp>>) -> Self {
+        DataSource::File(
+            data.iter()
+                .map(|e| e.iter().map(|e| FileSourceInner::Field(*e)).collect())
+                .collect(),
+        )
+    }
+}
+
+impl From<Vec<Vec<f64>>> for DataSource {
+    fn from(data: Vec<Vec<f64>>) -> Self {
+        DataSource::File(
+            data.iter()
+                .map(|e| e.iter().map(|e| FileSourceInner::Float(*e)).collect())
+                .collect(),
+        )
+    }
+}
+
+// impl From<OnChainSource> for DataSource {
+//     fn from(data: OnChainSource) -> Self {
+//         DataSource::OnChain(data)
+//     }
+// }
+
+// !!! ALWAYS USE JSON SERIALIZATION FOR GRAPH INPUT
+// UNTAGGED ENUMS WONT WORK :( as highlighted here:
+impl<'de> Deserialize<'de> for DataSource {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let this_json: Box<serde_json::value::RawValue> = Deserialize::deserialize(deserializer)?;
+
+        let first_try: Result<FileSource, _> = serde_json::from_str(this_json.get());
+
+        if let Ok(t) = first_try {
+            return Ok(DataSource::File(t));
+        }
+
+        Err(serde::de::Error::custom("failed to deserialize DataSource"))
+    }
+}
+
+/// Input to graph as a datasource
+/// Always use JSON serialization for GraphData. Seriously.
+#[derive(Clone, Debug, Deserialize, Default, PartialEq)]
+pub struct GraphData {
+    /// Inputs to the model / computational graph (can be empty vectors if inputs are
+    /// coming from on-chain).
+    pub input_data: DataSource,
+    /// Outputs of the model / computational graph (can be empty vectors if outputs are
+    /// coming from on-chain).
+    pub output_data: Option<DataSource>,
+}
+
+impl UnwindSafe for GraphData {}
+
+impl GraphData {
+    // not wasm
+    #[cfg(not(target_arch = "wasm32"))]
+    /// Convert the input data to tract data
+    pub fn to_tract_data(
+        &self,
+        shapes: &[Vec<usize>],
+        datum_types: &[tract_onnx::prelude::DatumType],
+    ) -> Result<TVec<TValue>, Box<dyn std::error::Error>> {
+        let mut inputs = TVec::new();
+        match &self.input_data {
+            DataSource::File(data) => {
+                for (i, input) in data.iter().enumerate() {
+                    if !input.is_empty() {
+                        let dt = datum_types[i];
+                        let input = input.iter().map(|e| e.to_float()).collect::<Vec<f64>>();
+                        let tt = TractTensor::from_shape(&shapes[i], &input)?;
+                        let tt = tt.cast_to_dt(dt)?;
+                        inputs.push(tt.into_owned().into());
+                    }
+                }
+            }
+        }
+        Ok(inputs)
+    }
+
+    ///
+    pub fn new(input_data: DataSource) -> Self {
+        GraphData {
+            input_data,
+            output_data: None,
+        }
+    }
+
+    /// Load the model input from a file
+    pub fn from_path(path: std::path::PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
+        let mut file = std::fs::File::open(path.clone())
+            .map_err(|_| format!("failed to open input at {}", path.display()))?;
+        let mut data = String::new();
+        file.read_to_string(&mut data)?;
+        serde_json::from_str(&data).map_err(|e| e.into())
+    }
+
+    /// Save the model input to a file
+    pub fn save(&self, path: std::path::PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+        serde_json::to_writer(std::fs::File::create(path)?, &self).map_err(|e| e.into())
+    }
+
+    //   ///
+    //   pub fn split_into_batches(
+    //     &self,
+    //     input_shapes: Vec<Vec<usize>>,
+    //   ) -> Result<Vec<Self>, Box<dyn std::error::Error>> {
+    //     // split input data into batches
+    //     let mut batched_inputs = vec![];
+
+    //     let iterable = match self {
+    //       GraphData {
+    //         input_data: DataSource::File(data),
+    //         output_data: _,
+    //       } => data.clone(),
+    //       GraphData {
+    //         input_data: DataSource::OnChain(_),
+    //         output_data: _,
+    //       } => {
+    //         return Err(Box::new(GraphError::InvalidDims(
+    //           0,
+    //           "on-chain data cannot be split into batches".to_string(),
+    //         )))
+    //       }
+    //       GraphData {
+    //         input_data: DataSource::DB(data),
+    //         output_data: _,
+    //       } => data.fetch_and_format_as_file()?,
+    //     };
+
+    //     for (i, shape) in input_shapes.iter().enumerate() {
+    //       // ensure the input is evenly divisible by batch_size
+    //       let input_size = shape.clone().iter().product::<usize>();
+    //       let input = &iterable[i];
+    //       if input.len() % input_size != 0 {
+    //         return Err(Box::new(GraphError::InvalidDims(
+    //           0,
+    //           "calibration data length must be evenly divisible by the original
+    // input_size".to_string(),         )));
+    //       }
+    //       let mut batches = vec![];
+    //       for batch in input.chunks(input_size) {
+    //         batches.push(batch.to_vec());
+    //       }
+    //       batched_inputs.push(batches);
+    //     }
+
+    //     // now merge all the batches for each input into a vector of batches
+    //     // first assert each input has the same number of batches
+    //     let num_batches = if batched_inputs.is_empty() {
+    //       0
+    //     } else {
+    //       let num_batches = batched_inputs[0].len();
+    //       for input in batched_inputs.iter() {
+    //         assert_eq!(input.len(), num_batches);
+    //       }
+    //       num_batches
+    //     };
+    //     // now merge the batches
+    //     let mut input_batches = vec![];
+    //     for i in 0..num_batches {
+    //       let mut batch = vec![];
+    //       for input in batched_inputs.iter() {
+    //         batch.push(input[i].clone());
+    //       }
+    //       input_batches.push(DataSource::File(batch));
+    //     }
+
+    //     if input_batches.is_empty() {
+    //       input_batches.push(DataSource::File(vec![vec![]]));
+    //     }
+
+    //     // create a new GraphWitness for each batch
+    //     let batches = input_batches
+    //       .into_iter()
+    //       .map(GraphData::new)
+    //       .collect::<Vec<GraphData>>();
+
+    //     Ok(batches)
+    //   }
+}
+
+impl Serialize for GraphData {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("GraphData", 4)?;
+        state.serialize_field("input_data", &self.input_data)?;
+        state.serialize_field("output_data", &self.output_data)?;
+        state.end()
+    }
 }
 
 // /// Inner elements of inputs/outputs coming from on-chain
@@ -331,219 +555,6 @@ impl FileSourceInner {
 //     /// Address of the contract to read the data from.
 //     pub address: String,
 // }
-/// Enum that defines source of the inputs/outputs to the EZKL model
-#[derive(Clone, Debug, Serialize, PartialOrd, PartialEq)]
-#[serde(untagged)]
-pub enum DataSource {
-  /// .json File data source.
-  File(FileSource),
-  // /// On-chain data source. The first element is the calls to the account, andthe second is the
-  // RPC url. OnChain(OnChainSource),
-  // /// Postgres DB
-  // #[cfg(not(target_arch = "wasm32"))]
-  // DB(PostgresSource),
-}
-
-impl Default for DataSource {
-  fn default() -> Self {
-    DataSource::File(vec![vec![]])
-  }
-}
-
-impl From<FileSource> for DataSource {
-  fn from(data: FileSource) -> Self {
-    DataSource::File(data)
-  }
-}
-
-impl From<Vec<Vec<Fp>>> for DataSource {
-  fn from(data: Vec<Vec<Fp>>) -> Self {
-    DataSource::File(
-      data
-        .iter()
-        .map(|e| e.iter().map(|e| FileSourceInner::Field(*e)).collect())
-        .collect(),
-    )
-  }
-}
-
-impl From<Vec<Vec<f64>>> for DataSource {
-  fn from(data: Vec<Vec<f64>>) -> Self {
-    DataSource::File(
-      data
-        .iter()
-        .map(|e| e.iter().map(|e| FileSourceInner::Float(*e)).collect())
-        .collect(),
-    )
-  }
-}
-
-// impl From<OnChainSource> for DataSource {
-//     fn from(data: OnChainSource) -> Self {
-//         DataSource::OnChain(data)
-//     }
-// }
-
-// !!! ALWAYS USE JSON SERIALIZATION FOR GRAPH INPUT
-// UNTAGGED ENUMS WONT WORK :( as highlighted here:
-impl<'de> Deserialize<'de> for DataSource {
-  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-  where
-    D: Deserializer<'de>,
-  {
-    let this_json: Box<serde_json::value::RawValue> = Deserialize::deserialize(deserializer)?;
-
-    let first_try: Result<FileSource, _> = serde_json::from_str(this_json.get());
-
-    if let Ok(t) = first_try {
-      return Ok(DataSource::File(t));
-    }
-
-    Err(serde::de::Error::custom("failed to deserialize DataSource"))
-  }
-}
-
-/// Input to graph as a datasource
-/// Always use JSON serialization for GraphData. Seriously.
-#[derive(Clone, Debug, Deserialize, Default, PartialEq)]
-pub struct GraphData {
-  /// Inputs to the model / computational graph (can be empty vectors if inputs are
-  /// coming from on-chain).
-  pub input_data: DataSource,
-  /// Outputs of the model / computational graph (can be empty vectors if outputs are
-  /// coming from on-chain).
-  pub output_data: Option<DataSource>,
-}
-
-impl UnwindSafe for GraphData {}
-
-impl GraphData {
-  // not wasm
-  #[cfg(not(target_arch = "wasm32"))]
-  /// Convert the input data to tract data
-  pub fn to_tract_data(
-    &self,
-    shapes: &[Vec<usize>],
-    datum_types: &[tract_onnx::prelude::DatumType],
-  ) -> Result<TVec<TValue>, Box<dyn std::error::Error>> {
-    let mut inputs = TVec::new();
-    match &self.input_data {
-      DataSource::File(data) => {
-        for (i, input) in data.iter().enumerate() {
-          if !input.is_empty() {
-            let dt = datum_types[i];
-            let input = input.iter().map(|e| e.to_float()).collect::<Vec<f64>>();
-            let tt = TractTensor::from_shape(&shapes[i], &input)?;
-            let tt = tt.cast_to_dt(dt)?;
-            inputs.push(tt.into_owned().into());
-          }
-        }
-      }
-    }
-    Ok(inputs)
-  }
-
-  ///
-  pub fn new(input_data: DataSource) -> Self {
-    GraphData {
-      input_data,
-      output_data: None,
-    }
-  }
-
-  /// Load the model input from a file
-  pub fn from_path(path: std::path::PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
-    let mut file = std::fs::File::open(path.clone())
-      .map_err(|_| format!("failed to open input at {}", path.display()))?;
-    let mut data = String::new();
-    file.read_to_string(&mut data)?;
-    serde_json::from_str(&data).map_err(|e| e.into())
-  }
-
-  /// Save the model input to a file
-  pub fn save(&self, path: std::path::PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    serde_json::to_writer(std::fs::File::create(path)?, &self).map_err(|e| e.into())
-  }
-
-  //   ///
-  //   pub fn split_into_batches(
-  //     &self,
-  //     input_shapes: Vec<Vec<usize>>,
-  //   ) -> Result<Vec<Self>, Box<dyn std::error::Error>> {
-  //     // split input data into batches
-  //     let mut batched_inputs = vec![];
-
-  //     let iterable = match self {
-  //       GraphData {
-  //         input_data: DataSource::File(data),
-  //         output_data: _,
-  //       } => data.clone(),
-  //       GraphData {
-  //         input_data: DataSource::OnChain(_),
-  //         output_data: _,
-  //       } => {
-  //         return Err(Box::new(GraphError::InvalidDims(
-  //           0,
-  //           "on-chain data cannot be split into batches".to_string(),
-  //         )))
-  //       }
-  //       GraphData {
-  //         input_data: DataSource::DB(data),
-  //         output_data: _,
-  //       } => data.fetch_and_format_as_file()?,
-  //     };
-
-  //     for (i, shape) in input_shapes.iter().enumerate() {
-  //       // ensure the input is evenly divisible by batch_size
-  //       let input_size = shape.clone().iter().product::<usize>();
-  //       let input = &iterable[i];
-  //       if input.len() % input_size != 0 {
-  //         return Err(Box::new(GraphError::InvalidDims(
-  //           0,
-  //           "calibration data length must be evenly divisible by the original
-  // input_size".to_string(),         )));
-  //       }
-  //       let mut batches = vec![];
-  //       for batch in input.chunks(input_size) {
-  //         batches.push(batch.to_vec());
-  //       }
-  //       batched_inputs.push(batches);
-  //     }
-
-  //     // now merge all the batches for each input into a vector of batches
-  //     // first assert each input has the same number of batches
-  //     let num_batches = if batched_inputs.is_empty() {
-  //       0
-  //     } else {
-  //       let num_batches = batched_inputs[0].len();
-  //       for input in batched_inputs.iter() {
-  //         assert_eq!(input.len(), num_batches);
-  //       }
-  //       num_batches
-  //     };
-  //     // now merge the batches
-  //     let mut input_batches = vec![];
-  //     for i in 0..num_batches {
-  //       let mut batch = vec![];
-  //       for input in batched_inputs.iter() {
-  //         batch.push(input[i].clone());
-  //       }
-  //       input_batches.push(DataSource::File(batch));
-  //     }
-
-  //     if input_batches.is_empty() {
-  //       input_batches.push(DataSource::File(vec![vec![]]));
-  //     }
-
-  //     // create a new GraphWitness for each batch
-  //     let batches = input_batches
-  //       .into_iter()
-  //       .map(GraphData::new)
-  //       .collect::<Vec<GraphData>>();
-
-  //     Ok(batches)
-  //   }
-}
 
 // #[cfg(feature = "python-bindings")]
 // impl ToPyObject for CallsToAccount {
@@ -590,18 +601,6 @@ impl GraphData {
 // FileSourceInner::Float(data) => data.to_object(py),         }
 //     }
 // }
-
-impl Serialize for GraphData {
-  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-  where
-    S: Serializer,
-  {
-    let mut state = serializer.serialize_struct("GraphData", 4)?;
-    state.serialize_field("input_data", &self.input_data)?;
-    state.serialize_field("output_data", &self.output_data)?;
-    state.end()
-  }
-}
 
 // #[cfg(test)]
 // mod tests {
