@@ -7,6 +7,7 @@ use crate::{
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
+        split_eq_poly::GruenSplitEqPolynomial,
         unipoly::{CompressedUniPoly, UniPoly},
     },
     utils::{
@@ -380,6 +381,7 @@ struct BooleanityProverState<F: JoltField> {
     K: usize,
     T: usize,
     B: MultilinearPolynomial<F>,
+    gruens_B: GruenSplitEqPolynomial<F>,
     F: Vec<F>,
     G: Vec<F>,
     D: MultilinearPolynomial<F>,
@@ -406,6 +408,7 @@ impl<F: JoltField> BooleanityProverState<F> {
 
         let D = MultilinearPolynomial::from(D);
         let B = MultilinearPolynomial::from(EqPolynomial::evals(&r)); // (53)
+        let gruens_B = GruenSplitEqPolynomial::new(&r);
         let mut F: Vec<F> = unsafe_allocate_zero_vec(K);
         F[0] = F::one();
 
@@ -433,6 +436,7 @@ impl<F: JoltField> BooleanityProverState<F> {
             K,
             T,
             B,
+            gruens_B,
             F,
             G,
             D,
@@ -613,6 +617,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         let BooleanityProverState {
             K,
             B,
+            gruens_B,
             F,
             G,
             D,
@@ -730,6 +735,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         let BooleanityProverState {
             K,
             B,
+            gruens_B,
             F,
             D,
             H,
@@ -739,6 +745,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         if round < K.log_2() {
             // First log(K) rounds of sumcheck
             B.bind_parallel(r_j, BindingOrder::LowToHigh);
+            gruens_B.bind(r_j);
 
             let inner_span = tracing::span!(tracing::Level::INFO, "Update F");
             let _inner_guard = inner_span.enter();
