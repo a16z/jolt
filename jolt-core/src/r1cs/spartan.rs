@@ -4,7 +4,7 @@ use std::rc::Rc;
 use tracer::instruction::RV32IMCycle;
 use tracing::{span, Level};
 
-use crate::dag::stage::SumcheckStages;
+use crate::dag::stage::{StagedSumcheck, SumcheckStages};
 use crate::dag::state_manager::OpeningsKeys::{OuterSumcheckAz, OuterSumcheckBz, OuterSumcheckCz};
 use crate::dag::state_manager::{
     OpeningPoint, Openings, OpeningsKeys, ProofData, ProofKeys, StateManager, LITTLE_ENDIAN,
@@ -895,6 +895,23 @@ where
 pub struct SpartanDag {}
 
 impl<
+        'a,
+        F: JoltField,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    > StagedSumcheck<F, ProofTranscript, PCS> for InnerSumcheck<'a, F>
+{
+}
+
+impl<
+        F: JoltField,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    > StagedSumcheck<F, ProofTranscript, PCS> for PCSumcheck<F>
+{
+}
+
+impl<
         F: JoltField,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
@@ -1066,7 +1083,7 @@ impl<
     fn stage2_prover_instances(
         &self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>> {
+    ) -> Vec<Box<dyn StagedSumcheck<F, ProofTranscript, PCS>>> {
         /* Sumcheck 2: Inner sumcheck
             Proves: claim_Az + r * claim_Bz + r^2 * claim_Cz =
                     \sum_y (A_small(rx, y) + r * B_small(rx, y) + r^2 * C_small(rx, y)) * z(y)
