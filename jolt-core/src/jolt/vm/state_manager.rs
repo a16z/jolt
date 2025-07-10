@@ -33,6 +33,8 @@ pub enum OpeningsKeys {
     SpartanZ(JoltR1CSInputs),
     InstructionTypeFlag(usize),
     InstructionRa(usize),
+    InstructionBooleanityRa(usize),
+    InstructionHammingRa(usize),
     // the claim of AddOperand + MultiplyOperands + SubtractOperands + Advice at r_cycle_prime
     InstructionRafFlag,
 }
