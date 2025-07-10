@@ -136,11 +136,6 @@ impl FileSourceInner {
 pub enum DataSource {
     /// .json File data source.
     File(FileSource),
-    // /// On-chain data source. The first element is the calls to the account, andthe second is the
-    // RPC url. OnChain(OnChainSource),
-    // /// Postgres DB
-    // #[cfg(not(target_arch = "wasm32"))]
-    // DB(PostgresSource),
 }
 
 impl Default for DataSource {
@@ -174,12 +169,6 @@ impl From<Vec<Vec<f64>>> for DataSource {
         )
     }
 }
-
-// impl From<OnChainSource> for DataSource {
-//     fn from(data: OnChainSource) -> Self {
-//         DataSource::OnChain(data)
-//     }
-// }
 
 // !!! ALWAYS USE JSON SERIALIZATION FOR GRAPH INPUT
 // UNTAGGED ENUMS WONT WORK :( as highlighted here:
