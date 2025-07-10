@@ -39,11 +39,11 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<JAL> {
         match WORD_SIZE {
             #[cfg(test)]
             8 => (
-                self.instruction.address,
+                self.instruction.address as u8 as u64,
                 self.instruction.operands.imm as u8 as u64 as i64,
             ),
             32 => (
-                self.instruction.address,
+                self.instruction.address as u32 as u64,
                 self.instruction.operands.imm as u32 as u64 as i64,
             ),
             64 => (

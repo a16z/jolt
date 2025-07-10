@@ -18,7 +18,7 @@ use super::{
     virtual_assert_valid_div0::VirtualAssertValidDiv0,
     virtual_assert_valid_signed_remainder::VirtualAssertValidSignedRemainder,
     virtual_move::VirtualMove,
-    RISCVInstruction, RISCVTrace, RV32IMInstruction, VirtualInstructionSequence,
+    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
 };
 
 declare_riscv_instr!(
@@ -44,7 +44,7 @@ impl DIV {
 }
 
 impl RISCVTrace for DIV {
-    fn trace(&self, cpu: &mut Cpu) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
         // DIV operands
         let x = cpu.x[self.operands.rs1];
         let y = cpu.x[self.operands.rs2];
@@ -52,7 +52,9 @@ impl RISCVTrace for DIV {
         let (quotient, remainder) = match cpu.xlen {
             Xlen::Bit32 => {
                 if y == 0 {
-                    (u32::MAX as u64, x as u64)
+                    (u32::MAX as u64, x as u32 as u64)
+                } else if x == cpu.most_negative() && y == -1 {
+                    (x as u32 as u64, 0)
                 } else {
                     let mut quotient = x as i32 / y as i32;
                     let mut remainder = x as i32 % y as i32;
@@ -66,6 +68,8 @@ impl RISCVTrace for DIV {
             Xlen::Bit64 => {
                 if y == 0 {
                     (u64::MAX, x as u64)
+                } else if x == cpu.most_negative() && y == -1 {
+                    (x as u64, 0)
                 } else {
                     let mut quotient = x / y;
                     let mut remainder = x % y;
@@ -90,8 +94,10 @@ impl RISCVTrace for DIV {
             panic!("Expected Advice instruction");
         }
 
+        let mut trace = trace;
         for instr in virtual_sequence {
-            instr.trace(cpu);
+            // In each iteration, create a new Option containing a re-borrowed reference
+            instr.trace(cpu, trace.as_deref_mut());
         }
     }
 }

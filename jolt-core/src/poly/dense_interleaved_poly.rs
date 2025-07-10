@@ -48,7 +48,7 @@ impl<F: JoltField> PartialEq for DenseInterleavedPolynomial<F> {
 
 impl<F: JoltField> DenseInterleavedPolynomial<F> {
     pub fn new(coeffs: Vec<F>) -> Self {
-        assert!(coeffs.len() % 2 == 0);
+        assert!(coeffs.len().is_multiple_of(2));
         let len = coeffs.len();
         Self {
             coeffs,

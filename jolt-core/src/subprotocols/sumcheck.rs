@@ -99,7 +99,7 @@ pub trait BatchableSumcheckInstance<F: JoltField, ProofTranscript: Transcript> {
     /// Computes the prover's message for a specific round of the sumcheck protocol.
     /// Returns the evaluations of the sumcheck polynomial at 0, 2, 3, ..., degree.
     /// The point evaluation at 1 can be interpolated using the previous round's claim.
-    fn compute_prover_message(&self, round: usize) -> Vec<F>;
+    fn compute_prover_message(&mut self, round: usize) -> Vec<F>;
 
     /// Binds this sumcheck instance to the verifier's challenge from a specific round.
     /// This updates the internal state to prepare for the next round.
@@ -112,6 +112,29 @@ pub trait BatchableSumcheckInstance<F: JoltField, ProofTranscript: Transcript> {
     /// Computes the expected output claim given the verifier's challenges.
     /// This is used to verify the final result of the sumcheck protocol.
     fn expected_output_claim(&self, r: &[F]) -> F;
+
+    /// Proves a single sumcheck instance.
+    fn prove_single(
+        &mut self,
+        transcript: &mut ProofTranscript,
+    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>)
+    where
+        Self: Sized,
+    {
+        BatchedSumcheck::prove(vec![self], transcript)
+    }
+
+    /// Verifies a single sumcheck instance.
+    fn verify_single(
+        &self,
+        proof: &SumcheckInstanceProof<F, ProofTranscript>,
+        transcript: &mut ProofTranscript,
+    ) -> Result<Vec<F>, ProofVerifyError>
+    where
+        Self: Sized,
+    {
+        BatchedSumcheck::verify(proof, vec![self], transcript)
+    }
 }
 
 /// Implements the standard technique for batching parallel sumchecks to reduce
@@ -166,7 +189,7 @@ impl BatchedSumcheck {
             let remaining_rounds = max_num_rounds - round;
 
             let univariate_polys: Vec<UniPoly<F>> = sumcheck_instances
-                .iter()
+                .iter_mut()
                 .zip(individual_claims.iter())
                 .map(|(sumcheck, previous_claim)| {
                     let num_rounds = sumcheck.num_rounds();
@@ -221,11 +244,7 @@ impl BatchedSumcheck {
                 assert_eq!(
                     h0 + h1,
                     batched_claim,
-                    "round {}: H(0) + H(1) = {} + {} != {}",
-                    round,
-                    h0,
-                    h1,
-                    batched_claim
+                    "round {round}: H(0) + H(1) = {h0} + {h1} != {batched_claim}"
                 );
                 batched_claim = batched_univariate_poly.evaluate(&r_j);
             }
@@ -309,7 +328,7 @@ impl BatchedSumcheck {
             .sum();
 
         if output_claim != expected_output_claim {
-            return Err(ProofVerifyError::InternalError);
+            return Err(ProofVerifyError::BatchedSumcheckError);
         }
 
         Ok(r_sumcheck)

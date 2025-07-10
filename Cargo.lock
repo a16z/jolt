@@ -253,7 +253,7 @@ dependencies = [
 [[package]]
 name = "ark-ec"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#4ae5018533f1e757bb321e21927c8bbbf8c27ffc"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#efc56e0d2f1129257a35c078b13dd017aeceff91"
 dependencies = [
  "ahash",
  "ark-ff 0.5.0",
@@ -312,7 +312,7 @@ dependencies = [
 [[package]]
 name = "ark-ff"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#4ae5018533f1e757bb321e21927c8bbbf8c27ffc"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#efc56e0d2f1129257a35c078b13dd017aeceff91"
 dependencies = [
  "ark-ff-asm 0.5.0",
  "ark-ff-macros 0.5.0",
@@ -352,7 +352,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-asm"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#4ae5018533f1e757bb321e21927c8bbbf8c27ffc"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#efc56e0d2f1129257a35c078b13dd017aeceff91"
 dependencies = [
  "quote",
  "syn 2.0.101",
@@ -386,7 +386,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-macros"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#4ae5018533f1e757bb321e21927c8bbbf8c27ffc"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#efc56e0d2f1129257a35c078b13dd017aeceff91"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -398,7 +398,7 @@ dependencies = [
 [[package]]
 name = "ark-poly"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#4ae5018533f1e757bb321e21927c8bbbf8c27ffc"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#efc56e0d2f1129257a35c078b13dd017aeceff91"
 dependencies = [
  "ahash",
  "ark-ff 0.5.0",
@@ -433,9 +433,9 @@ dependencies = [
 [[package]]
 name = "ark-serialize"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#4ae5018533f1e757bb321e21927c8bbbf8c27ffc"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#efc56e0d2f1129257a35c078b13dd017aeceff91"
 dependencies = [
- "ark-serialize-derive 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-serialize-derive 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-std 0.5.0",
  "arrayvec",
  "digest 0.10.7",
@@ -457,7 +457,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize-derive"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#4ae5018533f1e757bb321e21927c8bbbf8c27ffc"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#efc56e0d2f1129257a35c078b13dd017aeceff91"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -641,6 +641,15 @@ dependencies = [
  "radium",
  "tap",
  "wyz",
+]
+
+[[package]]
+name = "blake2"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "46502ad458c9a52b69d4d4d32775c788b7a1b85e8bc9d482d92250fc0e3f8efe"
+dependencies = [
+ "digest 0.10.7",
 ]
 
 [[package]]
@@ -1211,6 +1220,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "dory"
+version = "1.0.0"
+source = "git+https://github.com/spaceandtimefdn/sxt-dory?branch=dev%2Ftwist-shout#97e92ae94dc6a4fa3a1a98f39a80520cc3c58bc7"
+dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.5.0",
+ "ark-serialize 0.5.0",
+ "ark-std 0.5.0",
+ "bincode",
+ "blake2",
+ "digest 0.10.7",
+ "jolt-optimizations",
+ "rand_chacha 0.3.1",
+ "rayon",
+ "serde",
+ "thiserror 2.0.12",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "downcast-rs"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1520,6 +1551,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
 
 [[package]]
+name = "futures"
+version = "0.3.31"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65bc07b1a8bc7c85c5f2e110c476c7389b4554ba72af57d8445ea63a576b0876"
+dependencies = [
+ "futures-channel",
+ "futures-core",
+ "futures-executor",
+ "futures-io",
+ "futures-sink",
+ "futures-task",
+ "futures-util",
+]
+
+[[package]]
 name = "futures-channel"
 version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1534,6 +1580,17 @@ name = "futures-core"
 version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05f29059c0c2090612e8d742178b0580d2dc940c837851ad723096f87af6663e"
+
+[[package]]
+name = "futures-executor"
+version = "0.3.31"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e28d1d997f585e54aebc3f97d39e72338912123a67330d723fdbb564d646c9f"
+dependencies = [
+ "futures-core",
+ "futures-task",
+ "futures-util",
+]
 
 [[package]]
 name = "futures-io"
@@ -1559,6 +1616,7 @@ version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9fa08315bb612088cc391249efdc3bc77536f16c91f6cf495e6fbe85b20a4a81"
 dependencies = [
+ "futures-channel",
  "futures-core",
  "futures-io",
  "futures-sink",
@@ -2297,6 +2355,7 @@ dependencies = [
  "criterion",
  "derive_more 2.0.1",
  "dirs",
+ "dory",
  "enum_dispatch",
  "eyre",
  "fixedbitset",
@@ -2307,6 +2366,7 @@ dependencies = [
  "icicle-runtime",
  "indicatif",
  "itertools 0.10.5",
+ "jolt-optimizations",
  "lazy_static",
  "memory-stats",
  "num",
@@ -2323,6 +2383,7 @@ dependencies = [
  "rayon",
  "reqwest",
  "serde",
+ "serial_test",
  "sha3 0.10.8",
  "strum",
  "strum_macros",
@@ -2334,6 +2395,23 @@ dependencies = [
  "tracing",
  "tracing-chrome",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "jolt-optimizations"
+version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#efc56e0d2f1129257a35c078b13dd017aeceff91"
+dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.5.0",
+ "ark-serialize 0.5.0",
+ "ark-std 0.5.0",
+ "num-bigint",
+ "num-integer",
+ "num-rational",
+ "num-traits",
+ "rayon",
 ]
 
 [[package]]
@@ -3828,6 +3906,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "scc"
+version = "2.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22b2d775fb28f245817589471dd49c5edf64237f4a19d10ce9a92ff4651a27f4"
+dependencies = [
+ "sdd",
+]
+
+[[package]]
 name = "schannel"
 version = "0.1.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3841,6 +3928,12 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
+name = "sdd"
+version = "3.0.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62f5557d2bbddd5afd236ba7856b0e494f5acc7ce805bb0774cc5674b20a06b4"
 
 [[package]]
 name = "sec1"
@@ -3954,6 +4047,31 @@ dependencies = [
  "itoa",
  "ryu",
  "serde",
+]
+
+[[package]]
+name = "serial_test"
+version = "3.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b258109f244e1d6891bf1053a55d63a5cd4f8f4c30cf9a1280989f80e7a1fa9"
+dependencies = [
+ "futures",
+ "log",
+ "once_cell",
+ "parking_lot",
+ "scc",
+ "serial_test_derive",
+]
+
+[[package]]
+name = "serial_test_derive"
+version = "3.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d69265a08751de7844521fd15003ae0a888e035773ba05695c5c759a6f89eef"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.101",
 ]
 
 [[package]]
@@ -4622,9 +4740,11 @@ name = "tracer"
 version = "0.2.0"
 dependencies = [
  "ark-serialize 0.5.0",
+ "clap",
  "common",
  "derive_more 2.0.1",
  "fnv",
+ "itertools 0.10.5",
  "object",
  "paste",
  "rand 0.7.3",
@@ -4633,6 +4753,7 @@ dependencies = [
  "strum",
  "strum_macros",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -5617,3 +5738,8 @@ dependencies = [
  "quote",
  "syn 2.0.101",
 ]
+
+[[patch.unused]]
+name = "ark-bn254"
+version = "0.5.0-alpha.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#efc56e0d2f1129257a35c078b13dd017aeceff91"

@@ -1,5 +1,26 @@
+#![allow(clippy::upper_case_acronyms)]
 use add::ADD;
 use addi::ADDI;
+use addiw::ADDIW;
+use addw::ADDW;
+use amoaddd::AMOADDD;
+use amoaddw::AMOADDW;
+use amoandd::AMOANDD;
+use amoandw::AMOANDW;
+use amomaxd::AMOMAXD;
+use amomaxud::AMOMAXUD;
+use amomaxuw::AMOMAXUW;
+use amomaxw::AMOMAXW;
+use amomind::AMOMIND;
+use amominud::AMOMINUD;
+use amominuw::AMOMINUW;
+use amominw::AMOMINW;
+use amoord::AMOORD;
+use amoorw::AMOORW;
+use amoswapd::AMOSWAPD;
+use amoswapw::AMOSWAPW;
+use amoxord::AMOXORD;
+use amoxorw::AMOXORW;
 use and::AND;
 use andi::ANDI;
 use ark_serialize::{
@@ -14,40 +35,59 @@ use bltu::BLTU;
 use bne::BNE;
 use div::DIV;
 use divu::DIVU;
+use divuw::DIVUW;
+use divw::DIVW;
 use ecall::ECALL;
 use fence::FENCE;
 use jal::JAL;
 use jalr::JALR;
 use lb::LB;
 use lbu::LBU;
+use ld::LD;
 use lh::LH;
 use lhu::LHU;
+use lrd::LRD;
+use lrw::LRW;
 use lui::LUI;
 use lw::LW;
+use lwu::LWU;
 use mul::MUL;
 use mulh::MULH;
 use mulhsu::MULHSU;
 use mulhu::MULHU;
+use mulw::MULW;
 use or::OR;
 use ori::ORI;
 use rand::{rngs::StdRng, RngCore};
 use rem::REM;
 use remu::REMU;
+use remuw::REMUW;
+use remw::REMW;
 use sb::SB;
+use scd::SCD;
+use scw::SCW;
+use sd::SD;
 use serde::{Deserialize, Serialize};
 use sh::SH;
 use sll::SLL;
 use slli::SLLI;
+use slliw::SLLIW;
+use sllw::SLLW;
 use slt::SLT;
 use slti::SLTI;
 use sltiu::SLTIU;
 use sltu::SLTU;
 use sra::SRA;
 use srai::SRAI;
+use sraiw::SRAIW;
+use sraw::SRAW;
 use srl::SRL;
 use srli::SRLI;
+use srliw::SRLIW;
+use srlw::SRLW;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter, IntoStaticStr};
 use sub::SUB;
+use subw::SUBW;
 use sw::SW;
 use xor::XOR;
 use xori::XORI;
@@ -84,6 +124,26 @@ pub mod instruction_macros;
 
 pub mod add;
 pub mod addi;
+pub mod addiw;
+pub mod addw;
+pub mod amoaddd;
+pub mod amoaddw;
+pub mod amoandd;
+pub mod amoandw;
+pub mod amomaxd;
+pub mod amomaxud;
+pub mod amomaxuw;
+pub mod amomaxw;
+pub mod amomind;
+pub mod amominud;
+pub mod amominuw;
+pub mod amominw;
+pub mod amoord;
+pub mod amoorw;
+pub mod amoswapd;
+pub mod amoswapw;
+pub mod amoxord;
+pub mod amoxorw;
 pub mod and;
 pub mod andi;
 pub mod auipc;
@@ -102,10 +162,14 @@ pub mod jal;
 pub mod jalr;
 pub mod lb;
 pub mod lbu;
+pub mod ld;
 pub mod lh;
 pub mod lhu;
+pub mod lrd;
+pub mod lrw;
 pub mod lui;
 pub mod lw;
+pub mod lwu;
 pub mod mul;
 pub mod mulh;
 pub mod mulhsu;
@@ -115,18 +179,28 @@ pub mod ori;
 pub mod rem;
 pub mod remu;
 pub mod sb;
+pub mod scd;
+pub mod scw;
+pub mod sd;
 pub mod sh;
 pub mod sll;
 pub mod slli;
+pub mod slliw;
+pub mod sllw;
 pub mod slt;
 pub mod slti;
 pub mod sltiu;
 pub mod sltu;
 pub mod sra;
 pub mod srai;
+pub mod sraiw;
+pub mod sraw;
 pub mod srl;
 pub mod srli;
+pub mod srliw;
+pub mod srlw;
 pub mod sub;
+pub mod subw;
 pub mod sw;
 pub mod virtual_advice;
 pub mod virtual_assert_eq;
@@ -150,25 +224,38 @@ pub mod virtual_srli;
 pub mod xor;
 pub mod xori;
 
+pub mod divuw;
+pub mod divw;
+pub mod mulw;
+pub mod remuw;
+pub mod remw;
+
 #[cfg(test)]
 pub mod test;
 
-#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RAMRead {
     pub address: u64,
     pub value: u64,
 }
 
-#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RAMWrite {
     pub address: u64,
     pub pre_value: u64,
     pub post_value: u64,
 }
 
+#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RAMAtomic {
+    pub read: RAMRead,
+    pub write: RAMWrite,
+}
+
 pub enum RAMAccess {
     Read(RAMRead),
     Write(RAMWrite),
+    Atomic(RAMAtomic),
     NoOp,
 }
 
@@ -178,6 +265,7 @@ impl RAMAccess {
             RAMAccess::Read(read) => read.address as usize,
             RAMAccess::Write(write) => write.address as usize,
             RAMAccess::NoOp => 0,
+            RAMAccess::Atomic(atomic) => atomic.read.address as usize,
         }
     }
 }
@@ -197,6 +285,12 @@ impl From<RAMWrite> for RAMAccess {
 impl From<()> for RAMAccess {
     fn from(_: ()) -> Self {
         Self::NoOp
+    }
+}
+
+impl From<RAMAtomic> for RAMAccess {
+    fn from(atomic: RAMAtomic) -> Self {
+        Self::Atomic(atomic)
     }
 }
 
@@ -227,7 +321,7 @@ pub trait RISCVTrace: RISCVInstruction
 where
     RISCVCycle<Self>: Into<RV32IMCycle>,
 {
-    fn trace(&self, cpu: &mut Cpu) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
         let mut cycle: RISCVCycle<Self> = RISCVCycle {
             instruction: *self,
             register_state: Default::default(),
@@ -238,7 +332,9 @@ where
         self.execute(cpu, &mut cycle.ram_access);
         self.operands()
             .capture_post_execution_state(&mut cycle.register_state, cpu);
-        cpu.trace.push(cycle.into());
+        if let Some(trace_vec) = trace {
+            trace_vec.push(cycle.into());
+        }
     }
 }
 
@@ -261,7 +357,7 @@ macro_rules! define_rv32im_enums {
         }
 
         #[derive(
-            From, Debug, Copy, Clone, Serialize, Deserialize, IntoStaticStr, EnumIter, EnumCountMacro,
+            From, Debug, Copy, Clone, Serialize, Deserialize, IntoStaticStr, EnumIter, EnumCountMacro, PartialEq
         )]
         pub enum RV32IMCycle {
             /// No-operation cycle (address)
@@ -329,12 +425,29 @@ macro_rules! define_rv32im_enums {
         }
 
         impl RV32IMInstruction {
-            pub fn trace(&self, cpu: &mut Cpu) {
+            pub fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
                 match self {
                     RV32IMInstruction::NoOp(_) => panic!("Unsupported instruction: {:?}", self),
                     RV32IMInstruction::UNIMPL => panic!("Unsupported instruction: {:?}", self),
                     $(
-                        RV32IMInstruction::$instr(instr) => instr.trace(cpu),
+                        RV32IMInstruction::$instr(instr) => instr.trace(cpu, trace),
+                    )*
+                }
+            }
+
+            pub fn execute(&self, cpu: &mut Cpu) {
+                match self {
+                    RV32IMInstruction::NoOp(_) => panic!("Unsupported instruction: {:?}", self),
+                    RV32IMInstruction::UNIMPL => panic!("Unsupported instruction: {:?}", self),
+                    $(
+                        RV32IMInstruction::$instr(instr) => {
+                            let mut cycle: RISCVCycle<$instr> = RISCVCycle {
+                                instruction: *instr,
+                                register_state: Default::default(),
+                                ram_access: Default::default(),
+                            };
+                            instr.execute(cpu, &mut cycle.ram_access);
+                        }
                     )*
                 }
             }
@@ -374,9 +487,17 @@ macro_rules! define_rv32im_enums {
 define_rv32im_enums! {
     instructions: [
         ADD, ADDI, AND, ANDI, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE, DIV, DIVU,
-        ECALL, FENCE, JAL, JALR, LB, LBU, LH, LHU, LUI, LW, MUL, MULH, MULHSU,
-        MULHU, OR, ORI, REM, REMU, SB, SH, SLL, SLLI, SLT, SLTI, SLTIU, SLTU,
+        ECALL, FENCE, JAL, JALR, LB, LBU, LD, LH, LHU, LUI, LW, MUL, MULH, MULHSU,
+        MULHU, OR, ORI, REM, REMU, SB, SD, SH, SLL, SLLI, SLT, SLTI, SLTIU, SLTU,
         SRA, SRAI, SRL, SRLI, SUB, SW, XOR, XORI,
+        // RV64I
+        ADDIW, SLLIW, SRLIW, SRAIW, ADDW, SUBW, SLLW, SRLW, SRAW, LWU,
+        // RV64M
+        DIVUW, DIVW, MULW, REMUW, REMW,
+        // RV32A (Atomic Memory Operations)
+        LRW, SCW, AMOSWAPW, AMOADDW, AMOANDW, AMOORW, AMOXORW, AMOMINW, AMOMAXW, AMOMINUW, AMOMAXUW,
+        // RV64A (Atomic Memory Operations)
+        LRD, SCD, AMOSWAPD, AMOADDD, AMOANDD, AMOORD, AMOXORD, AMOMIND, AMOMAXD, AMOMINUD, AMOMAXUD,
         // Virtual
         VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertLTE,
         VirtualAssertValidDiv0, VirtualAssertValidSignedRemainder, VirtualAssertValidUnsignedRemainder,
@@ -395,7 +516,7 @@ impl CanonicalSerialize for RV32IMInstruction {
         _compress: Compress,
     ) -> Result<(), SerializationError> {
         let bytes = serde_json::to_vec(self).map_err(|_| SerializationError::InvalidData)?;
-        let len = bytes.len() as u64;
+        let len: u64 = bytes.len() as u64;
         len.serialize_with_mode(&mut writer, _compress)?;
         writer
             .write_all(&bytes)
@@ -442,7 +563,7 @@ impl RV32IMInstruction {
 
         match self.normalize().virtual_sequence_remaining {
             None => true,     // ordinary instruction
-            Some(0) => true,  // “anchor” of a virtual sequence
+            Some(0) => true,  // "anchor" of a virtual sequence
             Some(_) => false, // helper within the sequence
         }
     }
@@ -483,13 +604,15 @@ impl RV32IMInstruction {
                 }
             }
             0b0000011 => {
-                // Load instructions (I-type): LB, LH, LW, LBU, LHU.
+                // Load instructions (I-type): LB, LH, LW, LBU, LHU, LD, LWU.
                 match (instr >> 12) & 0x7 {
                     0b000 => Ok(LB::new(instr, address, true).into()),
                     0b001 => Ok(LH::new(instr, address, true).into()),
                     0b010 => Ok(LW::new(instr, address, true).into()),
+                    0b011 => Ok(LD::new(instr, address, true).into()),
                     0b100 => Ok(LBU::new(instr, address, true).into()),
                     0b101 => Ok(LHU::new(instr, address, true).into()),
+                    0b110 => Ok(LWU::new(instr, address, true).into()),
                     _ => Err("Invalid load funct3"),
                 }
             }
@@ -499,6 +622,7 @@ impl RV32IMInstruction {
                     0b000 => Ok(SB::new(instr, address, true).into()),
                     0b001 => Ok(SH::new(instr, address, true).into()),
                     0b010 => Ok(SW::new(instr, address, true).into()),
+                    0b011 => Ok(SD::new(instr, address, true).into()),
                     _ => Err("Invalid store funct3"),
                 }
             }
@@ -506,18 +630,18 @@ impl RV32IMInstruction {
                 // I-type arithmetic instructions: ADDI, SLTI, SLTIU, XORI, ORI, ANDI,
                 // and also shift-immediate instructions SLLI, SRLI, SRAI.
                 let funct3 = (instr >> 12) & 0x7;
-                let funct7 = (instr >> 25) & 0x7f;
+                let funct6 = (instr >> 26) & 0x3f;
                 if funct3 == 0b001 {
-                    // SLLI uses shamt and expects funct7 == 0.
-                    if funct7 == 0 {
+                    // SLLI uses shamt and expects funct6 == 0.
+                    if funct6 == 0 {
                         Ok(SLLI::new(instr, address, true).into())
                     } else {
                         Err("Invalid funct7 for SLLI")
                     }
                 } else if funct3 == 0b101 {
-                    if funct7 == 0b0000000 {
+                    if funct6 == 0b000000 {
                         Ok(SRLI::new(instr, address, true).into())
-                    } else if funct7 == 0b0100000 {
+                    } else if funct6 == 0b010000 {
                         Ok(SRAI::new(instr, address, true).into())
                     } else {
                         Err("Invalid ALU shift funct7")
@@ -532,6 +656,18 @@ impl RV32IMInstruction {
                         0b111 => Ok(ANDI::new(instr, address, true).into()),
                         _ => Err("Invalid I-type ALU funct3"),
                     }
+                }
+            }
+            0b0011011 => {
+                // RV64I I-type arithmetic instructions.
+                let funct3 = (instr >> 12) & 0x7;
+                let funct7 = (instr >> 25) & 0x7f;
+                match (funct3, funct7) {
+                    (0b000, _) => Ok(ADDIW::new(instr, address, true).into()),
+                    (0b001, 0b0000000) => Ok(SLLIW::new(instr, address, true).into()),
+                    (0b101, 0b0000000) => Ok(SRLIW::new(instr, address, true).into()),
+                    (0b101, 0b0100000) => Ok(SRAIW::new(instr, address, true).into()),
+                    _ => Err("Invalid RV64I I-type arithmetic instruction"),
                 }
             }
             0b0110011 => {
@@ -561,9 +697,85 @@ impl RV32IMInstruction {
                     _ => Err("Invalid R-type arithmetic instruction"),
                 }
             }
+            0b0111011 => {
+                // RV64I R-type arithmetic instructions.
+                let funct3 = (instr >> 12) & 0x7;
+                let funct7 = (instr >> 25) & 0x7f;
+                match (funct3, funct7) {
+                    (0b000, 0b0000000) => Ok(ADDW::new(instr, address, true).into()),
+                    (0b000, 0b0100000) => Ok(SUBW::new(instr, address, true).into()),
+                    (0b001, 0b0000000) => Ok(SLLW::new(instr, address, true).into()),
+                    (0b100, 0b0000001) => Ok(DIVW::new(instr, address, true).into()),
+                    (0b101, 0b0000000) => Ok(SRLW::new(instr, address, true).into()),
+                    (0b101, 0b0100000) => Ok(SRAW::new(instr, address, true).into()),
+                    (0b000, 0b0000001) => Ok(MULW::new(instr, address, true).into()),
+                    (0b101, 0b0000001) => Ok(DIVUW::new(instr, address, true).into()),
+                    (0b110, 0b0000001) => Ok(REMW::new(instr, address, true).into()),
+                    (0b111, 0b0000001) => Ok(REMUW::new(instr, address, true).into()),
+                    _ => Err("Invalid RV64I R-type arithmetic instruction"),
+                }
+            }
             0b0001111 => {
                 // FENCE: I-type; the immediate encodes "pred" and "succ" flags.
                 Ok(FENCE::new(instr, address, true).into())
+            }
+            0b0101111 => {
+                // Atomic Memory Operations (A-extension): LR, SC, AMOSWAP, AMOADD, etc.
+                // Only check funct3 (width) and funct5 (operation type)
+                // bits [26:25] are aq/rl flags which can vary
+                let funct3 = (instr >> 12) & 0x7;
+                let funct5 = (instr >> 27) & 0x1f;
+
+                match (funct3, funct5) {
+                    // LR (Load Reserved)
+                    (0b010, 0b00010) => Ok(LRW::new(instr, address, true).into()),
+                    (0b011, 0b00010) => Ok(LRD::new(instr, address, true).into()),
+
+                    // SC (Store Conditional)
+                    (0b010, 0b00011) => Ok(SCW::new(instr, address, true).into()),
+                    (0b011, 0b00011) => Ok(SCD::new(instr, address, true).into()),
+
+                    // AMOSWAP
+                    (0b010, 0b00001) => Ok(AMOSWAPW::new(instr, address, true).into()),
+                    (0b011, 0b00001) => Ok(AMOSWAPD::new(instr, address, true).into()),
+
+                    // AMOADD
+                    (0b010, 0b00000) => Ok(AMOADDW::new(instr, address, true).into()),
+                    (0b011, 0b00000) => Ok(AMOADDD::new(instr, address, true).into()),
+
+                    // AMOAND
+                    (0b010, 0b01100) => Ok(AMOANDW::new(instr, address, true).into()),
+                    (0b011, 0b01100) => Ok(AMOANDD::new(instr, address, true).into()),
+
+                    // AMOOR
+                    (0b010, 0b01000) => Ok(AMOORW::new(instr, address, true).into()),
+                    (0b011, 0b01000) => Ok(AMOORD::new(instr, address, true).into()),
+
+                    // AMOXOR
+                    (0b010, 0b00100) => Ok(AMOXORW::new(instr, address, true).into()),
+                    (0b011, 0b00100) => Ok(AMOXORD::new(instr, address, true).into()),
+
+                    // AMOMIN
+                    (0b010, 0b10000) => Ok(AMOMINW::new(instr, address, true).into()),
+                    (0b011, 0b10000) => Ok(AMOMIND::new(instr, address, true).into()),
+
+                    // AMOMAX
+                    (0b010, 0b10100) => Ok(AMOMAXW::new(instr, address, true).into()),
+                    (0b011, 0b10100) => Ok(AMOMAXD::new(instr, address, true).into()),
+
+                    // AMOMINU
+                    (0b010, 0b11000) => Ok(AMOMINUW::new(instr, address, true).into()),
+                    (0b011, 0b11000) => Ok(AMOMINUD::new(instr, address, true).into()),
+
+                    // AMOMAXU
+                    (0b010, 0b11100) => Ok(AMOMAXUW::new(instr, address, true).into()),
+                    (0b011, 0b11100) => Ok(AMOMAXUD::new(instr, address, true).into()),
+
+                    _ => {
+                        eprintln!("Invalid atomic memory operation: instr=0x{instr:08x} funct3={funct3:03b} funct5={funct5:05b}");
+                        Err("Invalid atomic memory operation")
+                    }
+                }
             }
             0b1110011 => {
                 // For now this only (potentially) maps to ECALL.
@@ -598,7 +810,7 @@ impl RV32IMInstruction {
     }
 }
 
-#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RISCVCycle<T: RISCVInstruction> {
     pub instruction: T,
     pub register_state: <T::Format as InstructionFormat>::RegisterState,

@@ -22,12 +22,14 @@ impl<const WORD_SIZE: usize> JoltLookupTable for ShiftRightBitmaskTable<WORD_SIZ
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
         debug_assert_eq!(r.len(), 2 * WORD_SIZE);
-        let eq = EqPolynomial::new(r[r.len() - WORD_SIZE.log_2()..].to_vec());
         let mut result = F::zero();
         for shift in 0..WORD_SIZE {
             let bitmask = ((1 << (WORD_SIZE - shift)) - 1) << shift;
             result += F::from_u64(bitmask)
-                * eq.evaluate(&index_to_field_bitvector(shift as u64, WORD_SIZE.log_2()))
+                * EqPolynomial::mle(
+                    &r[r.len() - WORD_SIZE.log_2()..],
+                    &index_to_field_bitvector(shift as u64, WORD_SIZE.log_2()),
+                );
         }
         result
     }

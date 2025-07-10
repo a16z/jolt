@@ -1,9 +1,3 @@
-use rand::{rngs::StdRng, RngCore, SeedableRng};
-
-use crate::emulator::cpu::{Cpu, Xlen};
-
-use super::{RAMAccess, RISCVInstruction, RISCVTrace, VirtualInstructionSequence};
-
 // /// Tests the consistency and correctness of a virtual instruction sequence.
 // /// In detail:
 // /// 1. Sets the registers to given values for rs1 and rs2.

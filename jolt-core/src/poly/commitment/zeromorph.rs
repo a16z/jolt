@@ -89,7 +89,7 @@ where
     }
 }
 
-#[derive(Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize, Clone)]
 pub struct ZeromorphCommitment<P: Pairing>(P::G1Affine);
 
 impl<P: Pairing> Default for ZeromorphCommitment<P> {

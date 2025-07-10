@@ -13,7 +13,7 @@ pub struct HalfwordAlignmentTable<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for HalfwordAlignmentTable<WORD_SIZE> {
     fn materialize_entry(&self, index: u64) -> u64 {
-        (index % 2 == 0).into()
+        index.is_multiple_of(2).into()
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
