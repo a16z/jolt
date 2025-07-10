@@ -17,6 +17,10 @@ declare_riscv_instr!(
 
 impl LRD {
     fn exec(&self, cpu: &mut Cpu, ram_access: &mut <LRD as RISCVInstruction>::RAMAccess) {
+        if cpu.is_reservation_set() {
+            println!("LRD: Reservation is already set");
+        }
+
         let address = cpu.x[self.operands.rs1] as u64;
 
         // Load the doubleword from memory

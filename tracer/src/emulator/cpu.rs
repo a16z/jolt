@@ -329,6 +329,10 @@ impl Cpu {
         self.is_reservation_set && self.reservation == address
     }
 
+    pub fn is_reservation_set(&self) -> bool {
+        self.is_reservation_set
+    }
+
     /// Runs program one cycle. Fetch, decode, and execution are completed in a cycle so far.
     pub fn tick(&mut self, trace: Option<&mut Vec<RV32IMCycle>>) {
         let instruction_address = self.pc;
