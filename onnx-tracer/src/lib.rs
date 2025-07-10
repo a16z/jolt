@@ -20,6 +20,7 @@ pub mod graph;
 // /// An implementation of multi-dimensional tensors.
 pub mod logger;
 pub mod tensor;
+pub mod trace_types;
 
 /// The denominator in the fixed point representation used when quantizing inputs
 pub type Scale = i32;
