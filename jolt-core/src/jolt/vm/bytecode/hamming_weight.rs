@@ -1,9 +1,18 @@
+use std::{cell::RefCell, rc::Rc};
+
 use crate::{
+    dag::state_manager::Openings,
     field::JoltField,
-    poly::multilinear_polynomial::{
-        BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
+    poly::{
+        commitment::commitment_scheme::CommitmentScheme,
+        multilinear_polynomial::{
+            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
+        },
+        opening_proof::ProverOpeningAccumulator,
     },
-    subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof},
+    subprotocols::sumcheck::{
+        BatchableSumcheckInstance, CacheSumcheckOpenings, SumcheckInstanceProof,
+    },
     utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -87,7 +96,23 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             .bind_parallel(r_j, BindingOrder::LowToHigh)
     }
 
-    fn cache_openings(&mut self) {
+    fn expected_output_claim(&self, _: &[F]) -> F {
+        self.ra_claim.expect("ra_claim not set")
+    }
+}
+
+impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS>
+    for HammingWeightSumcheck<F>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+{
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
         debug_assert!(self.ra_claim.is_none());
         let prover_state = self
             .prover_state
@@ -95,10 +120,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             .expect("Prover state not initialized");
 
         self.ra_claim = Some(prover_state.ra_poly.final_sumcheck_claim());
-    }
-
-    fn expected_output_claim(&self, _: &[F]) -> F {
-        self.ra_claim.expect("ra_claim not set")
     }
 }
 
@@ -115,6 +136,7 @@ impl<F: JoltField, ProofTranscript: Transcript> HammingWeightProof<F, ProofTrans
         let mut core_piop_sumcheck = HammingWeightSumcheck::new(ra_poly, K);
 
         let (sumcheck_proof, r_address) = core_piop_sumcheck.prove_single(transcript);
+        // BatchedSumcheck::cache_openings(vec![&mut core_piop_sumcheck], openings, accumulator);
 
         let ra_claim = core_piop_sumcheck
             .ra_claim

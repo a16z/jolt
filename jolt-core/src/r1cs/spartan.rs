@@ -1,11 +1,13 @@
+use std::cell::RefCell;
 use std::marker::PhantomData;
+use std::rc::Rc;
 use tracer::instruction::RV32IMCycle;
 use tracing::{span, Level};
 
-use crate::dag::stage::SumcheckStages;
+use crate::dag::stage::{StagedSumcheck, SumcheckStages};
 use crate::dag::state_manager::OpeningsKeys::{OuterSumcheckAz, OuterSumcheckBz, OuterSumcheckCz};
 use crate::dag::state_manager::{
-    OpeningPoint, OpeningsKeys, ProofData, ProofKeys, StateManager, LITTLE_ENDIAN,
+    OpeningPoint, Openings, OpeningsKeys, ProofData, ProofKeys, StateManager, LITTLE_ENDIAN,
 };
 use crate::field::JoltField;
 use crate::jolt::vm::JoltCommitments;
@@ -22,6 +24,7 @@ use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::r1cs::inputs::ALL_R1CS_INPUTS;
 use crate::r1cs::inputs::COMMITTED_R1CS_INPUTS;
 use crate::r1cs::key::UniformSpartanKey;
+use crate::subprotocols::sumcheck::CacheSumcheckOpenings;
 use crate::utils::math::Math;
 
 use crate::utils::transcript::Transcript;
@@ -622,18 +625,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         );
     }
 
-    fn cache_openings(&mut self) {
-        let prover_state = self
-            .prover_state
-            .as_ref()
-            .expect("Prover state not initialized");
-
-        let final_poly_abc = prover_state.poly_abc_small.final_sumcheck_claim();
-        let final_poly_z = prover_state.poly_z.final_sumcheck_claim();
-
-        self.cached_claims = Some((final_poly_abc, final_poly_z));
-    }
-
     fn expected_output_claim(&self, r: &[F]) -> F {
         let verifier_state = self
             .verifier_state
@@ -666,6 +657,31 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         );
 
         left_expected * eval_z
+    }
+}
+
+impl<'a, F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS>
+    for InnerSumcheck<'a, F>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+{
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
+        debug_assert!(self.cached_claims.is_none());
+        let prover_state = self
+            .prover_state
+            .as_ref()
+            .expect("Prover state not initialized");
+
+        let final_poly_abc = prover_state.poly_abc_small.final_sumcheck_claim();
+        let final_poly_z = prover_state.poly_z.final_sumcheck_claim();
+
+        self.cached_claims = Some((final_poly_abc, final_poly_z));
     }
 }
 
@@ -833,18 +849,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         );
     }
 
-    fn cache_openings(&mut self) {
-        let prover_state = self
-            .prover_state
-            .as_ref()
-            .expect("Prover state not initialized");
-
-        let unexpanded_pc_eval = prover_state.unexpanded_pc_poly.final_sumcheck_claim();
-        let pc_eval = prover_state.pc_poly.final_sumcheck_claim();
-
-        self.cached_claims = Some((unexpanded_pc_eval, pc_eval));
-    }
-
     fn expected_output_claim(&self, r: &[F]) -> F {
         let verifier_state = self
             .verifier_state
@@ -863,8 +867,49 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 }
 
+impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS> for PCSumcheck<F>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+{
+    fn cache_openings(
+        &mut self,
+        _openings: Option<Rc<RefCell<Openings<F>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+    ) {
+        debug_assert!(self.cached_claims.is_none());
+        let prover_state = self
+            .prover_state
+            .as_ref()
+            .expect("Prover state not initialized");
+
+        let unexpanded_pc_eval = prover_state.unexpanded_pc_poly.final_sumcheck_claim();
+        let pc_eval = prover_state.pc_poly.final_sumcheck_claim();
+
+        self.cached_claims = Some((unexpanded_pc_eval, pc_eval));
+    }
+}
+
 #[derive(Default)]
 pub struct SpartanDag {}
+
+impl<
+        'a,
+        F: JoltField,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    > StagedSumcheck<F, ProofTranscript, PCS> for InnerSumcheck<'a, F>
+{
+}
+
+impl<
+        F: JoltField,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    > StagedSumcheck<F, ProofTranscript, PCS> for PCSumcheck<F>
+{
+}
 
 impl<
         F: JoltField,
@@ -937,7 +982,7 @@ impl<
         let outer_sumcheck_r_point =
             OpeningPoint::<LITTLE_ENDIAN, F>::new(outer_sumcheck_r.clone());
 
-        let mut openings = state_manager.openings.lock().unwrap();
+        let mut openings = state_manager.openings.borrow_mut();
 
         // Store Az, Bz, Cz claims with the outer sumcheck point -> (outer_r, Az) etc.
         openings.insert(
@@ -956,7 +1001,7 @@ impl<
         drop(openings);
 
         // Append the outer sumcheck proof to the state manager
-        state_manager.proofs.lock().unwrap().insert(
+        state_manager.proofs.borrow_mut().insert(
             ProofKeys::SpartanOuterSumcheck,
             ProofData::SpartanSumcheck(outer_sumcheck_proof),
         );
@@ -990,7 +1035,7 @@ impl<
             .challenge_vector(num_rounds_x);
 
         // Get the outer sumcheck proof
-        let proofs = state_manager.proofs.lock().unwrap();
+        let proofs = state_manager.proofs.borrow();
         let proof_data = {
             proofs
                 .get(&ProofKeys::SpartanOuterSumcheck)
@@ -1038,7 +1083,7 @@ impl<
     fn stage2_prover_instances(
         &self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>> {
+    ) -> Vec<Box<dyn StagedSumcheck<F, ProofTranscript, PCS>>> {
         /* Sumcheck 2: Inner sumcheck
             Proves: claim_Az + r * claim_Bz + r^2 * claim_Cz =
                     \sum_y (A_small(rx, y) + r * B_small(rx, y) + r^2 * C_small(rx, y)) * z(y)
