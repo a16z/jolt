@@ -99,7 +99,7 @@ pub trait BatchableSumcheckInstance<F: JoltField, ProofTranscript: Transcript> {
     /// Computes the prover's message for a specific round of the sumcheck protocol.
     /// Returns the evaluations of the sumcheck polynomial at 0, 2, 3, ..., degree.
     /// The point evaluation at 1 can be interpolated using the previous round's claim.
-    fn compute_prover_message(&mut self, round: usize) -> Vec<F>;
+    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F>;
 
     /// Binds this sumcheck instance to the verifier's challenge from a specific round.
     /// This updates the internal state to prepare for the next round.
@@ -206,7 +206,7 @@ impl BatchedSumcheck {
                     } else {
                         let offset = max_num_rounds - sumcheck.num_rounds();
                         let mut univariate_poly_evals =
-                            sumcheck.compute_prover_message(round - offset);
+                            sumcheck.compute_prover_message(round - offset, *previous_claim);
                         univariate_poly_evals.insert(1, *previous_claim - univariate_poly_evals[0]);
                         UniPoly::from_evals(&univariate_poly_evals)
                     }

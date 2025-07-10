@@ -174,7 +174,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         self.claimed_evaluation - self.init_eval
     }
 
-    fn compute_prover_message(&mut self, _round: usize) -> Vec<F> {
+    fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
         let prover_state = self
             .prover_state
             .as_ref()
@@ -338,7 +338,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         F::zero() // Always zero for booleanity
     }
 
-    fn compute_prover_message(&mut self, round: usize) -> Vec<F> {
+    fn compute_prover_message(&mut self, round: usize, _previous_claim: F) -> Vec<F> {
         let K_log = self.K.log_2();
 
         if round < K_log {
@@ -691,7 +691,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         self.input_claim
     }
 
-    fn compute_prover_message(&mut self, _round: usize) -> Vec<F> {
+    fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
         let prover_state = self
             .prover_state
             .as_ref()
@@ -824,7 +824,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         self.input_claim
     }
 
-    fn compute_prover_message(&mut self, _round: usize) -> Vec<F> {
+    fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
         let prover_state = self
             .prover_state
             .as_ref()

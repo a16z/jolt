@@ -163,7 +163,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 
     #[tracing::instrument(skip_all)]
-    fn compute_prover_message(&mut self, _: usize) -> Vec<F> {
+    fn compute_prover_message(&mut self, _: usize, _previous_claim: F) -> Vec<F> {
         let ShoutProverState { ra, val, z, .. } = self.prover_state.as_ref().unwrap();
 
         let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript>>::degree(self);
@@ -495,7 +495,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         F::zero()
     }
 
-    fn compute_prover_message(&mut self, round: usize) -> Vec<F> {
+    fn compute_prover_message(&mut self, round: usize, _previous_claim: F) -> Vec<F> {
         const DEGREE: usize = 3;
         let BooleanityProverState {
             K,
