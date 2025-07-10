@@ -454,13 +454,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
     fn compute_prover_message_cubic(&self, round: usize) -> Vec<F> {
         const DEGREE: usize = 3;
         let BooleanityProverState {
-            K,
-            B,
-            F,
-            G,
-            D,
-            H,
-            ..
+            K, B, F, G, D, H, ..
         } = self.prover_state.as_ref().unwrap();
 
         // EQ(k_m, c) for k_m \in {0, 1} and c \in {0, 2, 3}
@@ -619,10 +613,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         // EQ(k_m, 0) for k_m \in {0, 1}
         let eq_km_c = [F::one(), F::zero()];
         // EQ(k_m, c)^2 for k_m \in {0, 1} and c \in {0, infty}
-        let eq_km_c_squared: [[F; DEGREE - 1]; 2] = [
-            [F::one(), F::one()],
-            [F::zero(), F::one()],
-        ];
+        let eq_km_c_squared: [[F; DEGREE - 1]; 2] = [[F::one(), F::one()], [F::zero(), F::one()]];
 
         // EQ(k_m, c) for k_m \in {0, 1} and c \in {0, 2, 3}
         // TODO(hamlinb): Delete me!
@@ -669,7 +660,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                                 //    = G_times_F * (eq(k_m, c)^2 * F[k_1, ...., k_{m-1}] - eq(k_m, c))
                                 //
                                 // TODO(hamlinb) we can get rid of the eq evals here, because...
-                                // We want the values 
+                                // We want the values
                                 //   - s(0) = G_times_F * (eq(k_m, 0)^2 * F_k - eq(k_m, 0))
                                 //   - s(infty) = G_times_F * eq(k_m, infty)^2 * F_k
                                 // But note that for k_m \in {0, 1},
@@ -685,27 +676,14 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                             })
                             .reduce(
                                 || [F::zero(); DEGREE - 1],
-                                |running, new| {
-                                    [
-                                        running[0] + new[0],
-                                        running[1] + new[1],
-                                    ]
-                                },
+                                |running, new| [running[0] + new[0], running[1] + new[1]],
                             );
 
-                        [
-                            B_eval * inner_sum[0],
-                            B_eval * inner_sum[1],
-                        ]
+                        [B_eval * inner_sum[0], B_eval * inner_sum[1]]
                     })
                     .reduce(
                         || [F::zero(); DEGREE - 1],
-                        |running, new| {
-                            [
-                                running[0] + new[0],
-                                running[1] + new[1],
-                            ]
-                        },
+                        |running, new| [running[0] + new[0], running[1] + new[1]],
                     );
 
                 // We want to compute the evaluations of the cubic polynomial s(X) = l(X) * q(X), where
@@ -720,8 +698,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                 // and e, but not d. We compute s by first computing l and q at points 2 and 3.
 
                 // Evaluations of the linear polynomial
-                let eq_eval_1 = gruens_B.current_scalar
-                    * gruens_B.w[gruens_B.current_index - 1];
+                let eq_eval_1 = gruens_B.current_scalar * gruens_B.w[gruens_B.current_index - 1];
                 let eq_eval_0 = gruens_B.current_scalar - eq_eval_1;
                 let eq_m = eq_eval_1 - eq_eval_0;
                 let eq_eval_2 = eq_eval_1 + eq_m;
@@ -735,7 +712,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                 let quadratic_eval_1 = cubic_eval_1 / eq_eval_1;
                 // q(2) = c + 2d + 4e = q(1) + q(1) - q(0) + 2e
                 let e_times_2 = quadratic_coeffs[1] + quadratic_coeffs[1];
-                let quadratic_eval_2 = quadratic_eval_1 + quadratic_eval_1 - quadratic_eval_0 + e_times_2;
+                let quadratic_eval_2 =
+                    quadratic_eval_1 + quadratic_eval_1 - quadratic_eval_0 + e_times_2;
                 // q(3) = c + 3d + 9e = q(2) + q(1) - q(0) + 4e
                 let quadratic_eval_3 =
                     quadratic_eval_2 + quadratic_eval_1 - quadratic_eval_0 + e_times_2 + e_times_2;
@@ -747,55 +725,58 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                 ]
             } else {
                 (0..B.len() / 2)
-                .into_par_iter()
-                .map(|k_prime| {
-                    let B_evals = B.sumcheck_evals(k_prime, DEGREE, BindingOrder::LowToHigh);
-                    let inner_sum = G[k_prime << m..(k_prime + 1) << m]
-                        .par_iter()
-                        .enumerate()
-                        .map(|(k, &G_k)| {
-                            // Since we're binding variables from low to high, k_m is the high bit
-                            let k_m = k >> (m - 1);
-                            // We then index into F using (k_{m-1}, ..., k_1)
-                            let F_k = F[k % (1 << (m - 1))];
-                            // G_times_F := G[k] * F[k_1, ...., k_{m-1}]
-                            let G_times_F = G_k * F_k;
-                            // For c \in {0, 2, 3} compute:
-                            //    G[k] * (F[k_1, ...., k_{m-1}, c]^2 - F[k_1, ...., k_{m-1}, c])
-                            //    = G_times_F * (eq(k_m, c)^2 * F[k_1, ...., k_{m-1}] - eq(k_m, c))
-                            [
-                                G_times_F * (old_eq_km_c_squared[k_m][0] * F_k - old_eq_km_c[k_m][0]),
-                                G_times_F * (old_eq_km_c_squared[k_m][1] * F_k - old_eq_km_c[k_m][1]),
-                                G_times_F * (old_eq_km_c_squared[k_m][2] * F_k - old_eq_km_c[k_m][2]),
-                            ]
-                        })
-                        .reduce(
-                            || [F::zero(); DEGREE],
-                            |running, new| {
+                    .into_par_iter()
+                    .map(|k_prime| {
+                        let B_evals = B.sumcheck_evals(k_prime, DEGREE, BindingOrder::LowToHigh);
+                        let inner_sum = G[k_prime << m..(k_prime + 1) << m]
+                            .par_iter()
+                            .enumerate()
+                            .map(|(k, &G_k)| {
+                                // Since we're binding variables from low to high, k_m is the high bit
+                                let k_m = k >> (m - 1);
+                                // We then index into F using (k_{m-1}, ..., k_1)
+                                let F_k = F[k % (1 << (m - 1))];
+                                // G_times_F := G[k] * F[k_1, ...., k_{m-1}]
+                                let G_times_F = G_k * F_k;
+                                // For c \in {0, 2, 3} compute:
+                                //    G[k] * (F[k_1, ...., k_{m-1}, c]^2 - F[k_1, ...., k_{m-1}, c])
+                                //    = G_times_F * (eq(k_m, c)^2 * F[k_1, ...., k_{m-1}] - eq(k_m, c))
                                 [
-                                    running[0] + new[0],
-                                    running[1] + new[1],
-                                    running[2] + new[2],
+                                    G_times_F
+                                        * (old_eq_km_c_squared[k_m][0] * F_k - old_eq_km_c[k_m][0]),
+                                    G_times_F
+                                        * (old_eq_km_c_squared[k_m][1] * F_k - old_eq_km_c[k_m][1]),
+                                    G_times_F
+                                        * (old_eq_km_c_squared[k_m][2] * F_k - old_eq_km_c[k_m][2]),
                                 ]
-                            },
-                        );
+                            })
+                            .reduce(
+                                || [F::zero(); DEGREE],
+                                |running, new| {
+                                    [
+                                        running[0] + new[0],
+                                        running[1] + new[1],
+                                        running[2] + new[2],
+                                    ]
+                                },
+                            );
 
-                    [
-                        B_evals[0] * inner_sum[0],
-                        B_evals[1] * inner_sum[1],
-                        B_evals[2] * inner_sum[2],
-                    ]
-                })
-                .reduce(
-                    || [F::zero(); DEGREE],
-                    |running, new| {
                         [
-                            running[0] + new[0],
-                            running[1] + new[1],
-                            running[2] + new[2],
+                            B_evals[0] * inner_sum[0],
+                            B_evals[1] * inner_sum[1],
+                            B_evals[2] * inner_sum[2],
                         ]
-                    },
-                )
+                    })
+                    .reduce(
+                        || [F::zero(); DEGREE],
+                        |running, new| {
+                            [
+                                running[0] + new[0],
+                                running[1] + new[1],
+                                running[2] + new[2],
+                            ]
+                        },
+                    )
             };
 
             cubic_poly_evals.to_vec()
