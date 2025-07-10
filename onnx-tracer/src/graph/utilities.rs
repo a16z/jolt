@@ -1428,23 +1428,6 @@ pub fn quantize_tensor<F: PrimeField + TensorType + PartialOrd>(
     Ok(value)
 }
 
-// /// Split a [ValTensor] into a vector of [ValTensor]s.
-// pub(crate) fn split_valtensor(
-//   values: &ValTensor<Fp>,
-//   shapes: Vec<Vec<usize>>,
-// ) -> Result<Vec<ValTensor<Fp>>, Box<dyn std::error::Error>> {
-//   let mut tensors: Vec<ValTensor<Fp>> = Vec::new();
-//   let mut start = 0;
-//   for shape in shapes {
-//     let end = start + shape.iter().product::<usize>();
-//     let mut tensor = values.get_slice(&[start..end])?;
-//     tensor.reshape(&shape)?;
-//     tensors.push(tensor);
-//     start = end;
-//   }
-//   Ok(tensors)
-// }
-
 ///
 pub fn homogenize_input_scales(
     op: Box<dyn Op<Fp>>,
