@@ -24,7 +24,7 @@ fn setup_bench<PCS, F, ProofTranscript>(
 )
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 {
     let mut rng = ChaCha20Rng::seed_from_u64(SRS_SIZE as u64);
@@ -77,7 +77,7 @@ where
 fn benchmark_msm<PCS, F, ProofTranscript>(name: &str, max_num_bits: usize)
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 {
     let (bases, gpu_bases, poly) = setup_bench::<PCS, F, ProofTranscript>(max_num_bits);
@@ -104,27 +104,27 @@ fn main() {
     let small_value_lookup_tables = <Fr as JoltField>::compute_lookup_tables();
     <Fr as JoltField>::initialize_lookup_tables(small_value_lookup_tables);
 
-    benchmark_msm::<Zeromorph<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
+    benchmark_msm::<Zeromorph<Bn254>, Fr, KeccakTranscript>(
         "VariableBaseMSM::msm(256 bit scalars)",
         256,
     );
-    //benchmark_msm::<Zeromorph<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
+    //benchmark_msm::<Zeromorph<Bn254>, Fr, KeccakTranscript>(
     //    "VariableBaseMSM::msm(64 bit scalars)",
     //    64,
     //);
-    benchmark_msm::<Zeromorph<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
+    benchmark_msm::<Zeromorph<Bn254>, Fr, KeccakTranscript>(
         "VariableBaseMSM::msm(32 bit scalars)",
         32,
     );
-    benchmark_msm::<Zeromorph<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
+    benchmark_msm::<Zeromorph<Bn254>, Fr, KeccakTranscript>(
         "VariableBaseMSM::msm(16 bit scalars)",
         16,
     );
-    benchmark_msm::<Zeromorph<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
+    benchmark_msm::<Zeromorph<Bn254>, Fr, KeccakTranscript>(
         "VariableBaseMSM::msm(8 bit scalars)",
         8,
     );
-    benchmark_msm::<Zeromorph<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
+    benchmark_msm::<Zeromorph<Bn254>, Fr, KeccakTranscript>(
         "VariableBaseMSM::msm(1 bit scalars)",
         1,
     );

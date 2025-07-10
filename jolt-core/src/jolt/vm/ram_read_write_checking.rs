@@ -69,11 +69,8 @@ struct ReadWriteCheckingProverState<F: JoltField> {
 }
 
 impl<F: JoltField> ReadWriteCheckingProverState<F> {
-    fn initialize<
-        ProofTranscript: Transcript,
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    >(
-        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
+    fn initialize<PCS: CommitmentScheme<Field = F>>(
+        preprocessing: &JoltProverPreprocessing<F, PCS>,
         trace: &[RV32IMCycle],
         initial_memory_state: &[u32],
         program_io: &JoltDevice,
@@ -316,8 +313,8 @@ pub struct RamReadWriteCheckingProof<F: JoltField, ProofTranscript: Transcript> 
 }
 
 impl<F: JoltField> RamReadWriteChecking<F> {
-    pub fn prove<ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>>(
-        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
+    pub fn prove<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+        preprocessing: &JoltProverPreprocessing<F, PCS>,
         trace: &[RV32IMCycle],
         initial_memory_state: &[u32],
         program_io: &JoltDevice,
@@ -384,11 +381,8 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         Ok((r_address, r_cycle))
     }
 
-    fn new_prover<
-        ProofTranscript: Transcript,
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    >(
-        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
+    fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+        preprocessing: &JoltProverPreprocessing<F, PCS>,
         trace: &[RV32IMCycle],
         initial_memory_state: &[u32],
         program_io: &JoltDevice,
@@ -860,9 +854,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
-    for RamReadWriteChecking<F>
-{
+impl<F: JoltField> BatchableSumcheckInstance<F> for RamReadWriteChecking<F> {
     fn degree(&self) -> usize {
         3
     }
@@ -919,17 +911,15 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 }
 
-impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS>
-    for RamReadWriteChecking<F>
+impl<F, PCS> CacheSumcheckOpenings<F, PCS> for RamReadWriteChecking<F>
 where
     F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
     fn cache_openings(
         &mut self,
         _openings: Option<Rc<RefCell<Openings<F>>>>,
-        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         debug_assert!(self.claims.is_none());
         let prover_state = self

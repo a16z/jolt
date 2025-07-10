@@ -19,12 +19,12 @@ fn get_proof_data(batched_circuit: &mut BatchedDenseGrandProduct<Fr>) {
     let (proof, r_prover) =
         <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
             Fr,
-            HyperKZG<Bn254, KeccakTranscript>,
+            HyperKZG<Bn254>,
             KeccakTranscript,
         >>::prove_grand_product(batched_circuit, None, &mut transcript, None);
     let claims = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
         Fr,
-        HyperKZG<Bn254, KeccakTranscript>,
+        HyperKZG<Bn254>,
         KeccakTranscript,
     >>::claimed_outputs(batched_circuit);
 
@@ -75,7 +75,7 @@ fn main() {
 
     let mut batched_circuit = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
         Fr,
-        HyperKZG<Bn254, KeccakTranscript>,
+        HyperKZG<Bn254>,
         KeccakTranscript,
     >>::construct((leaves.concat(), BATCH_SIZE));
 

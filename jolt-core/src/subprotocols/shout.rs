@@ -135,9 +135,7 @@ struct ShoutSumcheck<F: JoltField> {
     claims: Option<ShoutSumcheckClaims<F>>,
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
-    for ShoutSumcheck<F>
-{
+impl<F: JoltField> BatchableSumcheckInstance<F> for ShoutSumcheck<F> {
     #[inline(always)]
     fn degree(&self) -> usize {
         2
@@ -172,7 +170,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     fn compute_prover_message(&mut self, _: usize) -> Vec<F> {
         let ShoutProverState { ra, val, z, .. } = self.prover_state.as_ref().unwrap();
 
-        let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript>>::degree(self);
+        let degree = <Self as BatchableSumcheckInstance<F>>::degree(self);
 
         let univariate_poly_evals: [F; 2] = (0..ra.len() / 2)
             .into_par_iter()
@@ -210,16 +208,15 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 }
 
-impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS> for ShoutSumcheck<F>
+impl<F, PCS> CacheSumcheckOpenings<F, PCS> for ShoutSumcheck<F>
 where
     F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
     fn cache_openings(
         &mut self,
         _openings: Option<Rc<RefCell<Openings<F>>>>,
-        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         debug_assert!(self.claims.is_none());
         let prover_state = self
@@ -492,9 +489,7 @@ struct BooleanitySumcheck<F: JoltField> {
     ra_claim: Option<F>,
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
-    for BooleanitySumcheck<F>
-{
+impl<F: JoltField> BatchableSumcheckInstance<F> for BooleanitySumcheck<F> {
     fn degree(&self) -> usize {
         3
     }
@@ -683,17 +678,15 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 }
 
-impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS>
-    for BooleanitySumcheck<F>
+impl<F, PCS> CacheSumcheckOpenings<F, PCS> for BooleanitySumcheck<F>
 where
     F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
     fn cache_openings(
         &mut self,
         _openings: Option<Rc<RefCell<Openings<F>>>>,
-        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         debug_assert!(self.ra_claim.is_none());
         let prover_state = self

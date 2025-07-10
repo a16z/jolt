@@ -144,8 +144,8 @@ pub struct OutputSumcheck<F: JoltField> {
 
 impl<F: JoltField> OutputSumcheck<F> {
     #[tracing::instrument(skip_all, name = "OutputSumcheck")]
-    pub fn prove<ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>>(
-        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
+    pub fn prove<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+        preprocessing: &JoltProverPreprocessing<F, PCS>,
         trace: &[RV32IMCycle],
         initial_ram_state: Vec<u32>,
         final_ram_state: Vec<u32>,
@@ -237,9 +237,7 @@ impl<F: JoltField> OutputSumcheck<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
-    for OutputSumcheck<F>
-{
+impl<F: JoltField> BatchableSumcheckInstance<F> for OutputSumcheck<F> {
     fn degree(&self) -> usize {
         3
     }
@@ -339,16 +337,15 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 }
 
-impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS> for OutputSumcheck<F>
+impl<F, PCS> CacheSumcheckOpenings<F, PCS> for OutputSumcheck<F>
 where
     F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
     fn cache_openings(
         &mut self,
         _openings: Option<Rc<RefCell<Openings<F>>>>,
-        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         debug_assert!(self.val_final_claim.is_none());
         let OutputSumcheckProverState { val_final, .. } = self.prover_state.as_ref().unwrap();
@@ -368,11 +365,8 @@ struct ValFinalSumcheckProverState<F: JoltField> {
 }
 
 impl<F: JoltField> ValFinalSumcheckProverState<F> {
-    fn initialize<
-        ProofTranscript: Transcript,
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    >(
-        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
+    fn initialize<PCS: CommitmentScheme<Field = F>>(
+        preprocessing: &JoltProverPreprocessing<F, PCS>,
         trace: &[RV32IMCycle],
         output_sumcheck_prover_state: &OutputSumcheckProverState<F>,
     ) -> Self {
@@ -438,9 +432,7 @@ pub struct ValFinalSumcheck<F: JoltField> {
     output_claims: Option<ValFinalSumcheckClaims<F>>,
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
-    for ValFinalSumcheck<F>
-{
+impl<F: JoltField> BatchableSumcheckInstance<F> for ValFinalSumcheck<F> {
     fn degree(&self) -> usize {
         2
     }
@@ -492,16 +484,15 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 }
 
-impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS> for ValFinalSumcheck<F>
+impl<F, PCS> CacheSumcheckOpenings<F, PCS> for ValFinalSumcheck<F>
 where
     F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
     fn cache_openings(
         &mut self,
         _openings: Option<Rc<RefCell<Openings<F>>>>,
-        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         debug_assert!(self.output_claims.is_none());
         let ValFinalSumcheckProverState { inc, wa, .. } = self.prover_state.as_mut().unwrap();

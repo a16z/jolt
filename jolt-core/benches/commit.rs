@@ -25,7 +25,7 @@ fn setup_bench<PCS, F, ProofTranscript>(
     Vec<F>,
 )
 where
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     F: JoltField,
     ProofTranscript: Transcript,
 {
@@ -68,8 +68,8 @@ fn benchmark_commit<PCS, F, ProofTranscript>(
     layer_size: usize,
     threshold: u32,
 ) where
-    PCS: CommitmentScheme<ProofTranscript, Field = F>, // Generic over PCS implementing CommitmentScheme for field F
-    F: JoltField,                                      // Generic over a field F
+    PCS: CommitmentScheme<Field = F>, // Generic over PCS implementing CommitmentScheme for field F
+    F: JoltField,                     // Generic over a field F
     ProofTranscript: Transcript,
 {
     let (leaves, setup, _) =
@@ -92,14 +92,14 @@ fn main() {
     let num_layers = 50;
     let layer_size = 1 << 10;
     // Zeromorph
-    benchmark_commit::<Zeromorph<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
+    benchmark_commit::<Zeromorph<Bn254>, Fr, KeccakTranscript>(
         &mut criterion,
         "Zeromorph",
         num_layers,
         layer_size,
         90,
     );
-    benchmark_commit::<HyperKZG<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
+    benchmark_commit::<HyperKZG<Bn254>, Fr, KeccakTranscript>(
         &mut criterion,
         "HyperKZG",
         num_layers,

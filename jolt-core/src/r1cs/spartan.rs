@@ -132,15 +132,15 @@ where
 
     #[tracing::instrument(skip_all, name = "Spartan::prove")]
     pub fn prove<PCS>(
-        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
+        preprocessing: &JoltProverPreprocessing<F, PCS>,
         constraint_builder: &CombinedUniformBuilder<F>,
         key: &UniformSpartanKey<F>,
         trace: &[RV32IMCycle],
-        opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<Self, SpartanError>
     where
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+        PCS: CommitmentScheme<Field = F>,
     {
         let input_polys: Vec<MultilinearPolynomial<F>> = ALL_R1CS_INPUTS
             .par_iter()
@@ -339,12 +339,12 @@ where
     pub fn verify<PCS>(
         &self,
         key: &UniformSpartanKey<F>,
-        commitments: &JoltCommitments<F, PCS, ProofTranscript>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
+        commitments: &JoltCommitments<F, PCS>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError>
     where
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+        PCS: CommitmentScheme<Field = F>,
         ProofTranscript: Transcript,
     {
         let num_rounds_x = key.num_rows_total().log_2();
@@ -546,9 +546,7 @@ impl<'a, F: JoltField> InnerSumcheck<'a, F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
-    for InnerSumcheck<'_, F>
-{
+impl<F: JoltField> BatchableSumcheckInstance<F> for InnerSumcheck<'_, F> {
     fn degree(&self) -> usize {
         2
     }
@@ -572,7 +570,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
-        let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript>>::degree(self);
+        let degree = <Self as BatchableSumcheckInstance<F>>::degree(self);
 
         let univariate_poly_evals: Vec<F> = (0..prover_state.poly_abc_small.len() / 2)
             .into_par_iter()
@@ -660,17 +658,15 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 }
 
-impl<'a, F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS>
-    for InnerSumcheck<'a, F>
+impl<'a, F, PCS> CacheSumcheckOpenings<F, PCS> for InnerSumcheck<'a, F>
 where
     F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
     fn cache_openings(
         &mut self,
         _openings: Option<Rc<RefCell<Openings<F>>>>,
-        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         debug_assert!(self.cached_claims.is_none());
         let prover_state = self
@@ -756,9 +752,7 @@ impl<F: JoltField> PCSumcheck<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
-    for PCSumcheck<F>
-{
+impl<F: JoltField> BatchableSumcheckInstance<F> for PCSumcheck<F> {
     fn degree(&self) -> usize {
         2
     }
@@ -782,7 +776,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
-        let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript>>::degree(self);
+        let degree = <Self as BatchableSumcheckInstance<F>>::degree(self);
 
         let univariate_poly_evals: Vec<F> = (0..prover_state.unexpanded_pc_poly.len() / 2)
             .into_par_iter()
@@ -867,16 +861,15 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 }
 
-impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS> for PCSumcheck<F>
+impl<F, PCS> CacheSumcheckOpenings<F, PCS> for PCSumcheck<F>
 where
     F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
     fn cache_openings(
         &mut self,
         _openings: Option<Rc<RefCell<Openings<F>>>>,
-        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         debug_assert!(self.cached_claims.is_none());
         let prover_state = self
@@ -894,28 +887,15 @@ where
 #[derive(Default)]
 pub struct SpartanDag {}
 
-impl<
-        'a,
-        F: JoltField,
-        ProofTranscript: Transcript,
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    > StagedSumcheck<F, ProofTranscript, PCS> for InnerSumcheck<'a, F>
+impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS>
+    for InnerSumcheck<'a, F>
 {
 }
 
-impl<
-        F: JoltField,
-        ProofTranscript: Transcript,
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    > StagedSumcheck<F, ProofTranscript, PCS> for PCSumcheck<F>
-{
-}
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS> for PCSumcheck<F> {}
 
-impl<
-        F: JoltField,
-        ProofTranscript: Transcript,
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    > SumcheckStages<F, ProofTranscript, PCS> for SpartanDag
+impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
+    SumcheckStages<F, ProofTranscript, PCS> for SpartanDag
 {
     fn stage1_prove(
         &self,
@@ -1083,7 +1063,7 @@ impl<
     fn stage2_prover_instances(
         &self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn StagedSumcheck<F, ProofTranscript, PCS>>> {
+    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
         /* Sumcheck 2: Inner sumcheck
             Proves: claim_Az + r * claim_Bz + r^2 * claim_Cz =
                     \sum_y (A_small(rx, y) + r * B_small(rx, y) + r^2 * C_small(rx, y)) * z(y)

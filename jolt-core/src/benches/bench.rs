@@ -42,24 +42,20 @@ pub fn benchmarks(
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     match pcs_type {
         PCSType::Dory => match bench_type {
-            BenchType::Sha2 => sha2::<Fr, Dory<KeccakTranscript>, KeccakTranscript>(),
-            BenchType::Sha3 => sha3::<Fr, Dory<KeccakTranscript>, KeccakTranscript>(),
-            BenchType::Sha2Chain => sha2chain::<Fr, Dory<KeccakTranscript>, KeccakTranscript>(),
-            BenchType::Fibonacci => fibonacci::<Fr, Dory<KeccakTranscript>, KeccakTranscript>(),
+            BenchType::Sha2 => sha2::<Fr, Dory, KeccakTranscript>(),
+            BenchType::Sha3 => sha3::<Fr, Dory, KeccakTranscript>(),
+            BenchType::Sha2Chain => sha2chain::<Fr, Dory, KeccakTranscript>(),
+            BenchType::Fibonacci => fibonacci::<Fr, Dory, KeccakTranscript>(),
             BenchType::Shout => shout::<Fr, KeccakTranscript>(),
             BenchType::Twist => twist::<Fr, KeccakTranscript>(),
             BenchType::SparseDenseShout => sparse_dense_shout::<Fr, KeccakTranscript>(),
             _ => panic!("BenchType does not have a mapping"),
         },
         PCSType::HyperKZG => match bench_type {
-            BenchType::Sha2 => sha2::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>(),
-            BenchType::Sha3 => sha3::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>(),
-            BenchType::Sha2Chain => {
-                sha2chain::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>()
-            }
-            BenchType::Fibonacci => {
-                fibonacci::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>()
-            }
+            BenchType::Sha2 => sha2::<Fr, HyperKZG<Bn254>, KeccakTranscript>(),
+            BenchType::Sha3 => sha3::<Fr, HyperKZG<Bn254>, KeccakTranscript>(),
+            BenchType::Sha2Chain => sha2chain::<Fr, HyperKZG<Bn254>, KeccakTranscript>(),
+            BenchType::Fibonacci => fibonacci::<Fr, HyperKZG<Bn254>, KeccakTranscript>(),
             BenchType::Shout => shout::<Fr, KeccakTranscript>(),
             BenchType::Twist => twist::<Fr, KeccakTranscript>(),
             BenchType::SparseDenseShout => sparse_dense_shout::<Fr, KeccakTranscript>(),
@@ -239,7 +235,7 @@ where
 fn fibonacci<F, PCS, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 {
     prove_example::<u32, PCS, F, ProofTranscript>("fibonacci-guest", &400000u32)
@@ -248,7 +244,7 @@ where
 fn sha2<F, PCS, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 {
     prove_example::<Vec<u8>, PCS, F, ProofTranscript>("sha2-guest", &vec![5u8; 2048])
@@ -257,7 +253,7 @@ where
 fn sha3<F, PCS, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 {
     prove_example::<Vec<u8>, PCS, F, ProofTranscript>("sha3-guest", &vec![5u8; 2048])
@@ -280,7 +276,7 @@ fn prove_example<T: Serialize, PCS, F, ProofTranscript>(
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 {
     let mut tasks = Vec::new();
@@ -291,25 +287,23 @@ where
         let (trace, final_memory_state, io_device) = program.trace(&inputs);
         let (bytecode, init_memory_state) = program.decode();
 
-        let preprocessing: JoltProverPreprocessing<F, PCS, ProofTranscript> =
-            RV32IJoltVM::prover_preprocess(
-                bytecode.clone(),
-                io_device.memory_layout.clone(),
-                init_memory_state,
-                1 << 18,
-                1 << 18,
-                1 << 20,
-            );
+        let preprocessing: JoltProverPreprocessing<F, PCS> = RV32IJoltVM::prover_preprocess(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            init_memory_state,
+            1 << 18,
+            1 << 18,
+            1 << 20,
+        );
 
-        let (jolt_proof, program_io, _) = <RV32IJoltVM as Jolt<32, _, PCS, ProofTranscript>>::prove(
+        let (jolt_proof, program_io, _) = <RV32IJoltVM as Jolt<32, _, PCS, _>>::prove(
             io_device,
             trace,
             final_memory_state,
             preprocessing.clone(),
         );
 
-        let verifier_preprocessing =
-            JoltVerifierPreprocessing::<F, PCS, ProofTranscript>::from(&preprocessing);
+        let verifier_preprocessing = JoltVerifierPreprocessing::<F, PCS>::from(&preprocessing);
 
         println!("Proof sizing:");
         serialize_and_print_size("jolt_proof", &jolt_proof);
@@ -344,7 +338,7 @@ where
 fn sha2chain<F, PCS, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 {
     let mut tasks = Vec::new();
@@ -358,25 +352,23 @@ where
         let (trace, final_memory_state, io_device) = program.trace(&inputs);
         let (bytecode, init_memory_state) = program.decode();
 
-        let preprocessing: JoltProverPreprocessing<F, PCS, ProofTranscript> =
-            RV32IJoltVM::prover_preprocess(
-                bytecode.clone(),
-                io_device.memory_layout.clone(),
-                init_memory_state,
-                1 << 20,
-                1 << 20,
-                1 << 24,
-            );
+        let preprocessing: JoltProverPreprocessing<F, PCS> = RV32IJoltVM::prover_preprocess(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            init_memory_state,
+            1 << 20,
+            1 << 20,
+            1 << 24,
+        );
 
-        let (jolt_proof, program_io, _) = <RV32IJoltVM as Jolt<32, _, PCS, ProofTranscript>>::prove(
+        let (jolt_proof, program_io, _) = <RV32IJoltVM as Jolt<32, _, PCS, _>>::prove(
             io_device,
             trace,
             final_memory_state,
             preprocessing.clone(),
         );
 
-        let verifier_preprocessing =
-            JoltVerifierPreprocessing::<F, PCS, ProofTranscript>::from(&preprocessing);
+        let verifier_preprocessing = JoltVerifierPreprocessing::<F, PCS>::from(&preprocessing);
 
         let verification_result =
             RV32IJoltVM::verify(verifier_preprocessing, jolt_proof, program_io, None);

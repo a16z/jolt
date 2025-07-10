@@ -36,7 +36,7 @@ use crate::{
 pub struct LookupsProof<const WORD_SIZE: usize, F, PCS, ProofTranscript>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 {
     read_checking_proof: ReadCheckingProof<F, ProofTranscript>,
@@ -83,16 +83,16 @@ impl<const WORD_SIZE: usize, F, PCS, ProofTranscript>
     LookupsProof<WORD_SIZE, F, PCS, ProofTranscript>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 {
     pub fn generate_witness(_preprocessing: (), _lookups: &[LookupTables<WORD_SIZE>]) {}
 
     #[tracing::instrument(skip_all, name = "LookupsProof::prove")]
     pub fn prove(
-        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
+        preprocessing: &JoltProverPreprocessing<F, PCS>,
         trace: &[RV32IMCycle],
-        opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Self {
         let log_T = trace.len().log_2();
@@ -158,8 +158,8 @@ where
 
     pub fn verify(
         &self,
-        commitments: &JoltCommitments<F, PCS, ProofTranscript>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
+        commitments: &JoltCommitments<F, PCS>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let r_cycle: Vec<F> = transcript.challenge_vector(self.log_T);

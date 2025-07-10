@@ -4,22 +4,14 @@ use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::r1cs::spartan::SpartanDag;
 use crate::utils::transcript::Transcript;
-pub struct JoltDAG<
-    'a,
-    F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-> {
+pub struct JoltDAG<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
+{
     prover_state_manager: StateManager<'a, F, ProofTranscript, PCS>,
     verifier_state_manager: StateManager<'a, F, ProofTranscript, PCS>,
 }
 
-impl<
-        'a,
-        F: JoltField,
-        ProofTranscript: Transcript,
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    > JoltDAG<'a, F, ProofTranscript, PCS>
+impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
+    JoltDAG<'a, F, ProofTranscript, PCS>
 {
     pub fn new(
         prover_state_manager: StateManager<'a, F, ProofTranscript, PCS>,

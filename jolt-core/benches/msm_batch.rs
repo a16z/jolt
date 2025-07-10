@@ -27,7 +27,7 @@ fn setup_bench<PCS, F, ProofTranscript>(
 )
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 {
     let mut rng = ChaCha20Rng::seed_from_u64(SRS_SIZE as u64);
@@ -118,7 +118,7 @@ fn benchmark_msm_batch<PCS, F, ProofTranscript>(
     max_num_bits: Vec<usize>,
 ) where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 {
     let (bases, gpu_bases, polys) = setup_bench::<PCS, F, ProofTranscript>(max_num_bits);
@@ -150,21 +150,21 @@ fn main() {
         .warm_up_time(std::time::Duration::from_secs(10));
 
     let max_num_bits = [vec![8; 100], vec![32; 100], vec![256; 300]].concat();
-    benchmark_msm_batch::<Zeromorph<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
+    benchmark_msm_batch::<Zeromorph<Bn254>, Fr, KeccakTranscript>(
         &mut criterion,
         "VariableBaseMSM::msm_batch(bias: Large)",
         max_num_bits,
     );
 
     let max_num_bits = [vec![8; 100], vec![32; 300], vec![256; 100]].concat();
-    benchmark_msm_batch::<Zeromorph<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
+    benchmark_msm_batch::<Zeromorph<Bn254>, Fr, KeccakTranscript>(
         &mut criterion,
         "VariableBaseMSM::msm_batch(bias: Medium)",
         max_num_bits,
     );
 
     let max_num_bits = [vec![8; 300], vec![32; 100], vec![256; 100]].concat();
-    benchmark_msm_batch::<Zeromorph<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
+    benchmark_msm_batch::<Zeromorph<Bn254>, Fr, KeccakTranscript>(
         &mut criterion,
         "VariableBaseMSM::msm_batch(bias: Small)",
         max_num_bits,

@@ -40,29 +40,26 @@ pub struct JoltSharedPreprocessing {
 }
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct JoltVerifierPreprocessing<F, PCS, ProofTranscript>
+pub struct JoltVerifierPreprocessing<F, PCS>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
 {
     pub generators: PCS::VerifierSetup,
     pub shared: JoltSharedPreprocessing,
 }
 
-impl<F, PCS, ProofTranscript> Serializable for JoltVerifierPreprocessing<F, PCS, ProofTranscript>
+impl<F, PCS> Serializable for JoltVerifierPreprocessing<F, PCS>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
 {
 }
 
-impl<F, PCS, ProofTranscript> JoltVerifierPreprocessing<F, PCS, ProofTranscript>
+impl<F, PCS> JoltVerifierPreprocessing<F, PCS>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
 {
     pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {
         let filename = Path::new(target_dir).join("jolt_verifier_preprocessing.dat");
@@ -83,30 +80,27 @@ where
 }
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct JoltProverPreprocessing<F, PCS, ProofTranscript>
+pub struct JoltProverPreprocessing<F, PCS>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
 {
     pub generators: PCS::ProverSetup,
     pub shared: JoltSharedPreprocessing,
     field: F::SmallValueLookupTables,
 }
 
-impl<F, PCS, ProofTranscript> Serializable for JoltProverPreprocessing<F, PCS, ProofTranscript>
+impl<F, PCS> Serializable for JoltProverPreprocessing<F, PCS>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
 {
 }
 
-impl<F, PCS, ProofTranscript> JoltProverPreprocessing<F, PCS, ProofTranscript>
+impl<F, PCS> JoltProverPreprocessing<F, PCS>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
 {
     pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {
         let filename = Path::new(target_dir).join("jolt_prover_preprocessing.dat");
@@ -126,14 +120,12 @@ where
     }
 }
 
-impl<F, PCS, ProofTranscript> From<&JoltProverPreprocessing<F, PCS, ProofTranscript>>
-    for JoltVerifierPreprocessing<F, PCS, ProofTranscript>
+impl<F, PCS> From<&JoltProverPreprocessing<F, PCS>> for JoltVerifierPreprocessing<F, PCS>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
 {
-    fn from(preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>) -> Self {
+    fn from(preprocessing: &JoltProverPreprocessing<F, PCS>) -> Self {
         let generators = PCS::setup_verifier(&preprocessing.generators);
         JoltVerifierPreprocessing {
             generators,
@@ -146,10 +138,10 @@ pub struct ProverDebugInfo<F, ProofTranscript, PCS>
 where
     F: JoltField,
     ProofTranscript: Transcript,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
     pub(crate) transcript: ProofTranscript,
-    pub(crate) opening_accumulator: ProverOpeningAccumulator<F, PCS, ProofTranscript>,
+    pub(crate) opening_accumulator: ProverOpeningAccumulator<F, PCS>,
     pub(crate) prover_setup: PCS::ProverSetup,
 }
 
@@ -157,7 +149,7 @@ where
 pub struct JoltProof<const WORD_SIZE: usize, F, PCS, ProofTranscript>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 {
     pub trace_length: usize,
@@ -167,15 +159,14 @@ where
     pub registers: RegistersTwistProof<F, ProofTranscript>,
     pub r1cs: UniformSpartanProof<F, ProofTranscript>,
     pub opening_proof: ReducedOpeningProof<F, PCS, ProofTranscript>,
-    pub commitments: JoltCommitments<F, PCS, ProofTranscript>,
+    pub commitments: JoltCommitments<F, PCS>,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct JoltCommitments<F, PCS, ProofTranscript>
+pub struct JoltCommitments<F, PCS>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
 {
     pub commitments: Vec<PCS::Commitment>,
 }
@@ -183,7 +174,7 @@ where
 pub trait Jolt<const WORD_SIZE: usize, F, PCS, ProofTranscript>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 {
     type Constraints: R1CSConstraints<F>;
@@ -214,7 +205,7 @@ where
         _max_bytecode_size: usize,
         max_memory_size: usize,
         max_trace_length: usize,
-    ) -> JoltProverPreprocessing<F, PCS, ProofTranscript> {
+    ) -> JoltProverPreprocessing<F, PCS> {
         let small_value_lookup_tables = F::compute_lookup_tables();
         F::initialize_lookup_tables(small_value_lookup_tables.clone());
 
@@ -247,7 +238,7 @@ where
         mut program_io: JoltDevice,
         mut trace: Vec<RV32IMCycle>,
         final_memory_state: Memory,
-        mut preprocessing: JoltProverPreprocessing<F, PCS, ProofTranscript>,
+        mut preprocessing: JoltProverPreprocessing<F, PCS>,
     ) -> (
         JoltProof<WORD_SIZE, F, PCS, ProofTranscript>,
         JoltDevice,
@@ -309,7 +300,7 @@ where
         let _guard = DoryGlobals::initialize(K, padded_trace_length);
 
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
-        let mut opening_accumulator: ProverOpeningAccumulator<F, PCS, ProofTranscript> =
+        let mut opening_accumulator: ProverOpeningAccumulator<F, PCS> =
             ProverOpeningAccumulator::new();
 
         Self::fiat_shamir_preamble(
@@ -410,13 +401,13 @@ where
 
     #[tracing::instrument(skip_all)]
     fn verify(
-        preprocessing: JoltVerifierPreprocessing<F, PCS, ProofTranscript>,
+        preprocessing: JoltVerifierPreprocessing<F, PCS>,
         proof: JoltProof<WORD_SIZE, F, PCS, ProofTranscript>,
         mut program_io: JoltDevice,
         _debug_info: Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
     ) -> Result<(), ProofVerifyError> {
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
-        let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS, ProofTranscript> =
+        let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS> =
             VerifierOpeningAccumulator::new();
 
         // truncate trailing zeros on device outputs

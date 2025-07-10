@@ -49,9 +49,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
-    for HammingWeightSumcheck<F>
-{
+impl<F: JoltField> BatchableSumcheckInstance<F> for HammingWeightSumcheck<F> {
     fn degree(&self) -> usize {
         1
     }
@@ -69,7 +67,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
-        let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript>>::degree(self);
+        let degree = <Self as BatchableSumcheckInstance<F>>::degree(self);
 
         let univariate_poly_eval: F = (0..prover_state.ra_poly.len() / 2)
             .into_par_iter()
@@ -101,17 +99,15 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 }
 
-impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS>
-    for HammingWeightSumcheck<F>
+impl<F, PCS> CacheSumcheckOpenings<F, PCS> for HammingWeightSumcheck<F>
 where
     F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
     fn cache_openings(
         &mut self,
         _openings: Option<Rc<RefCell<Openings<F>>>>,
-        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         debug_assert!(self.ra_claim.is_none());
         let prover_state = self

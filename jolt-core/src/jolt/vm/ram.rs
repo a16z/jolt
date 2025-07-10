@@ -154,9 +154,7 @@ struct ValEvaluationSumcheck<F: JoltField> {
     claims: Option<ValEvaluationSumcheckClaims<F>>,
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
-    for ValEvaluationSumcheck<F>
-{
+impl<F: JoltField> BatchableSumcheckInstance<F> for ValEvaluationSumcheck<F> {
     fn degree(&self) -> usize {
         3
     }
@@ -250,17 +248,15 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 }
 
-impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS>
-    for ValEvaluationSumcheck<F>
+impl<F, PCS> CacheSumcheckOpenings<F, PCS> for ValEvaluationSumcheck<F>
 where
     F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
     fn cache_openings(
         &mut self,
         _openings: Option<Rc<RefCell<Openings<F>>>>,
-        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         if let Some(prover_state) = &self.prover_state {
             self.claims = Some(ValEvaluationSumcheckClaims {
@@ -336,9 +332,7 @@ struct BooleanitySumcheck<F: JoltField> {
     memory_layout: Option<MemoryLayout>,
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
-    for BooleanitySumcheck<F>
-{
+impl<F: JoltField> BatchableSumcheckInstance<F> for BooleanitySumcheck<F> {
     fn degree(&self) -> usize {
         3
     }
@@ -462,17 +456,15 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 }
 
-impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS>
-    for BooleanitySumcheck<F>
+impl<F, PCS> CacheSumcheckOpenings<F, PCS> for BooleanitySumcheck<F>
 where
     F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
     fn cache_openings(
         &mut self,
         _openings: Option<Rc<RefCell<Openings<F>>>>,
-        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         debug_assert!(self.ra_claims.is_none());
         let prover_state = self
@@ -698,9 +690,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
-    for HammingWeightSumcheck<F>
-{
+impl<F: JoltField> BatchableSumcheckInstance<F> for HammingWeightSumcheck<F> {
     fn degree(&self) -> usize {
         1
     }
@@ -766,17 +756,15 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 }
 
-impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS>
-    for HammingWeightSumcheck<F>
+impl<F, PCS> CacheSumcheckOpenings<F, PCS> for HammingWeightSumcheck<F>
 where
     F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
     fn cache_openings(
         &mut self,
         _openings: Option<Rc<RefCell<Openings<F>>>>,
-        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         debug_assert!(self.cached_claims.is_none());
         let prover_state = self
@@ -847,9 +835,7 @@ impl<F: JoltField> RafEvaluationSumcheck<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
-    for RafEvaluationSumcheck<F>
-{
+impl<F: JoltField> BatchableSumcheckInstance<F> for RafEvaluationSumcheck<F> {
     fn degree(&self) -> usize {
         2
     }
@@ -927,17 +913,15 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 }
 
-impl<F, ProofTranscript, PCS> CacheSumcheckOpenings<F, ProofTranscript, PCS>
-    for RafEvaluationSumcheck<F>
+impl<F, PCS> CacheSumcheckOpenings<F, PCS> for RafEvaluationSumcheck<F>
 where
     F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
     fn cache_openings(
         &mut self,
         _openings: Option<Rc<RefCell<Openings<F>>>>,
-        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS, ProofTranscript>>>>,
+        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         debug_assert!(self.cached_claim.is_none());
         let prover_state = self
@@ -1055,13 +1039,13 @@ impl<F: JoltField, ProofTranscript: Transcript> RafEvaluationProof<F, ProofTrans
 
 impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript> {
     #[tracing::instrument(skip_all, name = "RAMTwistProof::prove")]
-    pub fn prove<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
-        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
+    pub fn prove<PCS: CommitmentScheme<Field = F>>(
+        preprocessing: &JoltProverPreprocessing<F, PCS>,
         trace: &[RV32IMCycle],
         final_memory: Memory,
         program_io: &JoltDevice,
         K: usize,
-        opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> RAMTwistProof<F, ProofTranscript> {
         let ram_preprocessing = &preprocessing.shared.ram;
@@ -1292,14 +1276,14 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         }
     }
 
-    pub fn verify<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
+    pub fn verify<PCS: CommitmentScheme<Field = F>>(
         &self,
         T: usize,
         preprocessing: &RAMPreprocessing,
-        commitments: &JoltCommitments<F, PCS, ProofTranscript>,
+        commitments: &JoltCommitments<F, PCS>,
         program_io: &JoltDevice,
         transcript: &mut ProofTranscript,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
     ) -> Result<(), ProofVerifyError> {
         let log_K = self.K.log_2();
         let log_T = T.log_2();
@@ -1360,14 +1344,12 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             }),
         };
 
-        let mut r_cycle_prime = <ValEvaluationSumcheck<F> as BatchableSumcheckInstance<
-            F,
-            ProofTranscript,
-        >>::verify_single(
-            &sumcheck_instance,
-            &self.val_evaluation_proof.sumcheck_proof,
-            transcript,
-        )?;
+        let mut r_cycle_prime =
+            <ValEvaluationSumcheck<F> as BatchableSumcheckInstance<F>>::verify_single(
+                &sumcheck_instance,
+                &self.val_evaluation_proof.sumcheck_proof,
+                transcript,
+            )?;
 
         // Cycle variables are bound from low to high
         r_cycle_prime.reverse();
@@ -1415,10 +1397,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             memory_layout: None,
         };
 
-        let r_booleanity = <BooleanitySumcheck<F> as BatchableSumcheckInstance<
-            F,
-            ProofTranscript,
-        >>::verify_single(
+        let r_booleanity = <BooleanitySumcheck<F> as BatchableSumcheckInstance<F>>::verify_single(
             &sumcheck_instance,
             &self.booleanity_proof.sumcheck_proof,
             transcript,
@@ -1495,9 +1474,9 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
 pub fn prove_val_evaluation<
     F: JoltField,
     ProofTranscript: Transcript,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 >(
-    preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
+    preprocessing: &JoltProverPreprocessing<F, PCS>,
     trace: &[RV32IMCycle],
     memory_layout: &MemoryLayout,
     r_address: Vec<F>,
@@ -1570,7 +1549,6 @@ pub fn prove_val_evaluation<
     // Run the sumcheck protocol
     let (sumcheck_proof, r_cycle_prime) = <ValEvaluationSumcheck<F> as BatchableSumcheckInstance<
         F,
-        ProofTranscript,
     >>::prove_single(&mut sumcheck_instance, transcript);
 
     drop(_guard);
@@ -1706,10 +1684,10 @@ fn prove_ra_booleanity<F: JoltField, ProofTranscript: Transcript>(
     let _guard = span.enter();
 
     // Run the sumcheck protocol
-    let (sumcheck_proof, r) = <BooleanitySumcheck<F> as BatchableSumcheckInstance<
-        F,
-        ProofTranscript,
-    >>::prove_single(&mut sumcheck_instance, transcript);
+    let (sumcheck_proof, r) = <BooleanitySumcheck<F> as BatchableSumcheckInstance<F>>::prove_single(
+        &mut sumcheck_instance,
+        transcript,
+    );
 
     drop(_guard);
     drop(span);
