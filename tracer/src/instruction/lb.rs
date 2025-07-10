@@ -49,7 +49,7 @@ impl LB {
 
 impl RISCVTrace for LB {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu);
+        let virtual_sequence = self.virtual_sequence(cpu.xlen == Xlen::Bit32);
         let mut trace = trace;
         for instr in virtual_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
@@ -59,16 +59,17 @@ impl RISCVTrace for LB {
 }
 
 impl VirtualInstructionSequence for LB {
-    fn virtual_sequence(&self, cpu: &Cpu) -> Vec<RV32IMInstruction> {
-        match cpu.xlen {
-            Xlen::Bit32 => self.virtual_sequence_32(cpu),
-            Xlen::Bit64 => self.virtual_sequence_64(cpu),
+    fn virtual_sequence(&self, is_32: bool) -> Vec<RV32IMInstruction> {
+        if is_32 {
+            self.virtual_sequence_32()
+        } else {
+            self.virtual_sequence_64()
         }
     }
 }
 
 impl LB {
-    fn virtual_sequence_32(&self, cpu: &Cpu) -> Vec<RV32IMInstruction> {
+    fn virtual_sequence_32(&self) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_address = virtual_register_index(0) as usize;
         let v_word_address = virtual_register_index(1) as usize;
@@ -130,7 +131,7 @@ impl LB {
             },
             virtual_sequence_remaining: Some(3),
         };
-        sequence.extend(slli.virtual_sequence(cpu));
+        sequence.extend(slli.virtual_sequence(true));
 
         let sll = SLL {
             address: self.address,
@@ -141,7 +142,7 @@ impl LB {
             },
             virtual_sequence_remaining: Some(2),
         };
-        sequence.extend(sll.virtual_sequence(cpu));
+        sequence.extend(sll.virtual_sequence(true));
 
         let srai = SRAI {
             address: self.address,
@@ -152,12 +153,12 @@ impl LB {
             },
             virtual_sequence_remaining: Some(0),
         };
-        sequence.extend(srai.virtual_sequence(cpu));
+        sequence.extend(srai.virtual_sequence(true));
 
         sequence
     }
 
-    fn virtual_sequence_64(&self, cpu: &Cpu) -> Vec<RV32IMInstruction> {
+    fn virtual_sequence_64(&self) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_address = virtual_register_index(6) as usize;
         let v_dword_address = virtual_register_index(7) as usize;
@@ -219,7 +220,7 @@ impl LB {
             },
             virtual_sequence_remaining: Some(3),
         };
-        sequence.extend(slli.virtual_sequence(cpu));
+        sequence.extend(slli.virtual_sequence(false));
 
         let sll = SLL {
             address: self.address,
@@ -230,7 +231,7 @@ impl LB {
             },
             virtual_sequence_remaining: Some(2),
         };
-        sequence.extend(sll.virtual_sequence(cpu));
+        sequence.extend(sll.virtual_sequence(false));
 
         let srai = SRAI {
             address: self.address,
@@ -241,7 +242,7 @@ impl LB {
             },
             virtual_sequence_remaining: Some(0),
         };
-        sequence.extend(srai.virtual_sequence(cpu));
+        sequence.extend(srai.virtual_sequence(false));
 
         sequence
     }

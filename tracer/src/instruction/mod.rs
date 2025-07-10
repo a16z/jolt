@@ -357,7 +357,7 @@ where
 }
 
 pub trait VirtualInstructionSequence: RISCVInstruction {
-    fn virtual_sequence(&self, cpu: &Cpu) -> Vec<RV32IMInstruction>;
+    fn virtual_sequence(&self, is_32: bool) -> Vec<RV32IMInstruction>;
 }
 
 macro_rules! define_rv32im_enums {

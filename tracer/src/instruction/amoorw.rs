@@ -4,7 +4,10 @@ use super::amoswapw::{amo_post, amo_pre};
 use super::or::OR;
 use super::RV32IMInstruction;
 use super::VirtualInstructionSequence;
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+};
 use common::constants::virtual_register_index;
 
 use super::{
@@ -54,7 +57,7 @@ impl AMOORW {
 
 impl RISCVTrace for AMOORW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu);
+        let virtual_sequence = self.virtual_sequence(cpu.xlen == Xlen::Bit32);
         let mut trace = trace;
         for instr in virtual_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
@@ -64,7 +67,7 @@ impl RISCVTrace for AMOORW {
 }
 
 impl VirtualInstructionSequence for AMOORW {
-    fn virtual_sequence(&self, cpu: &Cpu) -> Vec<RV32IMInstruction> {
+    fn virtual_sequence(&self, is_32: bool) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_mask = virtual_register_index(10) as usize;
         let v_dword_address = virtual_register_index(11) as usize;
@@ -77,7 +80,6 @@ impl VirtualInstructionSequence for AMOORW {
         let mut sequence = vec![];
         let mut remaining = 16;
         remaining = amo_pre(
-            cpu,
             &mut sequence,
             self.address,
             self.operands.rs1,
@@ -99,7 +101,6 @@ impl VirtualInstructionSequence for AMOORW {
         sequence.push(or.into());
         remaining -= 1;
         amo_post(
-            cpu,
             &mut sequence,
             self.address,
             v_rs2,

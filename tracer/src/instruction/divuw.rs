@@ -67,7 +67,7 @@ impl RISCVTrace for DIVUW {
             }
         };
 
-        let mut virtual_sequence = self.virtual_sequence(cpu);
+        let mut virtual_sequence = self.virtual_sequence(cpu.xlen == Xlen::Bit32);
         if let RV32IMInstruction::VirtualAdvice(instr) = &mut virtual_sequence[0] {
             instr.advice = quotient;
         } else {
@@ -88,7 +88,7 @@ impl RISCVTrace for DIVUW {
 }
 
 impl VirtualInstructionSequence for DIVUW {
-    fn virtual_sequence(&self, _: &Cpu) -> Vec<RV32IMInstruction> {
+    fn virtual_sequence(&self, _: bool) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_0 = virtual_register_index(0) as usize;
         let v_q = virtual_register_index(1) as usize;

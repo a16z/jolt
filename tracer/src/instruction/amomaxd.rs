@@ -14,7 +14,10 @@ use super::xori::XORI;
 use super::RAMWrite;
 use super::RV32IMInstruction;
 use super::VirtualInstructionSequence;
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+};
 use common::constants::virtual_register_index;
 
 use super::{
@@ -68,7 +71,7 @@ impl AMOMAXD {
 
 impl RISCVTrace for AMOMAXD {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu);
+        let virtual_sequence = self.virtual_sequence(cpu.xlen == Xlen::Bit32);
         let mut trace = trace;
         for instr in virtual_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
@@ -78,7 +81,7 @@ impl RISCVTrace for AMOMAXD {
 }
 
 impl VirtualInstructionSequence for AMOMAXD {
-    fn virtual_sequence(&self, cpu: &Cpu) -> Vec<RV32IMInstruction> {
+    fn virtual_sequence(&self, is_32: bool) -> Vec<RV32IMInstruction> {
         let v_rs2 = virtual_register_index(6) as usize;
         let v_rd = virtual_register_index(7) as usize;
         let v_sel_rs2 = virtual_register_index(8) as usize;

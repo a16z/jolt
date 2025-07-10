@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+};
 
 use super::add::ADD;
 use super::virtual_sign_extend::VirtualSignExtend;
@@ -33,7 +36,7 @@ impl ADDW {
 
 impl RISCVTrace for ADDW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu);
+        let virtual_sequence = self.virtual_sequence(cpu.xlen == Xlen::Bit32);
         let mut trace = trace;
         for instr in virtual_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
@@ -43,7 +46,7 @@ impl RISCVTrace for ADDW {
 }
 
 impl VirtualInstructionSequence for ADDW {
-    fn virtual_sequence(&self, cpu: &Cpu) -> Vec<RV32IMInstruction> {
+    fn virtual_sequence(&self, is_32: bool) -> Vec<RV32IMInstruction> {
         let mut sequence = vec![];
         let add = ADD {
             address: self.address,

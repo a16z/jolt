@@ -42,7 +42,7 @@ impl REMU {
 
 impl RISCVTrace for REMU {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let mut virtual_sequence = self.virtual_sequence(cpu);
+        let mut virtual_sequence = self.virtual_sequence(cpu.xlen == Xlen::Bit32);
         if let RV32IMInstruction::VirtualAdvice(instr) = &mut virtual_sequence[0] {
             instr.advice = if cpu.unsigned_data(cpu.x[self.operands.rs2]) == 0 {
                 match cpu.xlen {
@@ -78,7 +78,7 @@ impl RISCVTrace for REMU {
 }
 
 impl VirtualInstructionSequence for REMU {
-    fn virtual_sequence(&self, _: &Cpu) -> Vec<RV32IMInstruction> {
+    fn virtual_sequence(&self, _: bool) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_0 = virtual_register_index(0) as usize;
         let v_q = virtual_register_index(1) as usize;

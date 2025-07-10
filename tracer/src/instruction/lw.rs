@@ -49,7 +49,7 @@ impl LW {
 
 impl RISCVTrace for LW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu);
+        let virtual_sequence = self.virtual_sequence(cpu.xlen == Xlen::Bit32);
         let mut trace = trace;
         for instr in virtual_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
@@ -59,16 +59,17 @@ impl RISCVTrace for LW {
 }
 
 impl VirtualInstructionSequence for LW {
-    fn virtual_sequence(&self, cpu: &Cpu) -> Vec<RV32IMInstruction> {
-        match cpu.xlen {
-            Xlen::Bit32 => self.virtual_sequence_32(cpu),
-            Xlen::Bit64 => self.virtual_sequence_64(cpu),
+    fn virtual_sequence(&self, is_32: bool) -> Vec<RV32IMInstruction> {
+        if is_32 {
+            self.virtual_sequence_32()
+        } else {
+            self.virtual_sequence_64()
         }
     }
 }
 
 impl LW {
-    fn virtual_sequence_32(&self, cpu: &Cpu) -> Vec<RV32IMInstruction> {
+    fn virtual_sequence_32(&self) -> Vec<RV32IMInstruction> {
         let mut sequence = vec![];
         let lw = VirtualLW {
             address: self.address,
@@ -84,7 +85,7 @@ impl LW {
         sequence
     }
 
-    fn virtual_sequence_64(&self, cpu: &Cpu) -> Vec<RV32IMInstruction> {
+    fn virtual_sequence_64(&self) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_address = virtual_register_index(6) as usize;
         let v_dword_address = virtual_register_index(7) as usize;
@@ -145,7 +146,7 @@ impl LW {
             },
             virtual_sequence_remaining: Some(3),
         };
-        sequence.extend(slli.virtual_sequence(cpu));
+        sequence.extend(slli.virtual_sequence(false));
 
         let srl = SRL {
             address: self.address,
@@ -156,7 +157,7 @@ impl LW {
             },
             virtual_sequence_remaining: Some(2),
         };
-        sequence.extend(srl.virtual_sequence(cpu));
+        sequence.extend(srl.virtual_sequence(false));
 
         let signext = VirtualSignExtend {
             address: self.address,

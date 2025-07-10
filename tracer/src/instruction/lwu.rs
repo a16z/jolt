@@ -50,7 +50,7 @@ impl LWU {
 
 impl RISCVTrace for LWU {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu);
+        let virtual_sequence = self.virtual_sequence(cpu.xlen == Xlen::Bit32);
         let mut trace = trace;
         for instr in virtual_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
@@ -60,16 +60,17 @@ impl RISCVTrace for LWU {
 }
 
 impl VirtualInstructionSequence for LWU {
-    fn virtual_sequence(&self, cpu: &Cpu) -> Vec<RV32IMInstruction> {
-        match cpu.xlen {
-            Xlen::Bit32 => panic!("LWU is invalid in 32b mode"),
-            Xlen::Bit64 => self.virtual_sequence_64(cpu),
+    fn virtual_sequence(&self, is_32: bool) -> Vec<RV32IMInstruction> {
+        if is_32 {
+            panic!("LWU is invalid in 32b mode")
+        } else {
+            self.virtual_sequence_64(is_32)
         }
     }
 }
 
 impl LWU {
-    fn virtual_sequence_64(&self, cpu: &Cpu) -> Vec<RV32IMInstruction> {
+    fn virtual_sequence_64(&self, is_32: bool) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_address = virtual_register_index(6) as usize;
         let v_dword_address = virtual_register_index(7) as usize;
@@ -141,7 +142,7 @@ impl LWU {
             },
             virtual_sequence_remaining: Some(3),
         };
-        sequence.extend(slli.virtual_sequence(cpu));
+        sequence.extend(slli.virtual_sequence(is_32));
 
         let sll = SLL {
             address: self.address,
@@ -152,7 +153,7 @@ impl LWU {
             },
             virtual_sequence_remaining: Some(2),
         };
-        sequence.extend(sll.virtual_sequence(cpu));
+        sequence.extend(sll.virtual_sequence(is_32));
 
         let srli = SRLI {
             address: self.address,

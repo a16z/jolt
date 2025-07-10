@@ -24,7 +24,10 @@ use super::RV32IMInstruction;
 use super::VirtualInstructionSequence;
 use common::constants::virtual_register_index;
 
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+};
 
 use super::{
     format::{format_r::FormatR, InstructionFormat},
@@ -72,7 +75,7 @@ impl AMOSWAPW {
 
 impl RISCVTrace for AMOSWAPW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu);
+        let virtual_sequence = self.virtual_sequence(cpu.xlen == Xlen::Bit32);
         let mut trace = trace;
         for instr in virtual_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
@@ -82,7 +85,7 @@ impl RISCVTrace for AMOSWAPW {
 }
 
 impl VirtualInstructionSequence for AMOSWAPW {
-    fn virtual_sequence(&self, cpu: &Cpu) -> Vec<RV32IMInstruction> {
+    fn virtual_sequence(&self, _: bool) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_mask = virtual_register_index(10) as usize;
         let v_dword_address = virtual_register_index(11) as usize;
@@ -94,7 +97,6 @@ impl VirtualInstructionSequence for AMOSWAPW {
         let mut sequence = vec![];
         let mut remaining = 15;
         remaining = amo_pre(
-            cpu,
             &mut sequence,
             self.address,
             self.operands.rs1,
@@ -105,7 +107,6 @@ impl VirtualInstructionSequence for AMOSWAPW {
             remaining,
         );
         amo_post(
-            cpu,
             &mut sequence,
             self.address,
             self.operands.rs2,
@@ -124,7 +125,6 @@ impl VirtualInstructionSequence for AMOSWAPW {
 }
 
 pub fn amo_pre(
-    cpu: &Cpu,
     sequence: &mut Vec<RV32IMInstruction>,
     address: u64,
     rs1: usize,
@@ -175,7 +175,7 @@ pub fn amo_pre(
         },
         virtual_sequence_remaining: Some(remaining),
     };
-    sequence.extend(slli.virtual_sequence(cpu));
+    sequence.extend(slli.virtual_sequence(false));
     remaining -= 1;
 
     let srl = SRL {
@@ -187,14 +187,13 @@ pub fn amo_pre(
         },
         virtual_sequence_remaining: Some(remaining),
     };
-    sequence.extend(srl.virtual_sequence(cpu));
+    sequence.extend(srl.virtual_sequence(false));
     remaining -= 2;
 
     remaining
 }
 
 pub fn amo_post(
-    cpu: &Cpu,
     sequence: &mut Vec<RV32IMInstruction>,
     address: u64,
     rs2: usize,
@@ -227,7 +226,7 @@ pub fn amo_post(
         },
         virtual_sequence_remaining: Some(remaining),
     };
-    sequence.extend(sll_mask.virtual_sequence(cpu));
+    sequence.extend(sll_mask.virtual_sequence(false));
     remaining -= 2;
 
     let sll_value = SLL {
@@ -239,7 +238,7 @@ pub fn amo_post(
         },
         virtual_sequence_remaining: Some(remaining),
     };
-    sequence.extend(sll_value.virtual_sequence(cpu));
+    sequence.extend(sll_value.virtual_sequence(false));
     remaining -= 2;
 
     let xor = XOR {
