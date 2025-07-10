@@ -937,7 +937,7 @@ impl<
         let outer_sumcheck_r_point =
             OpeningPoint::<LITTLE_ENDIAN, F>::new(outer_sumcheck_r.clone());
 
-        let mut openings = state_manager.openings.lock().unwrap();
+        let mut openings = state_manager.openings.borrow_mut();
 
         // Store Az, Bz, Cz claims with the outer sumcheck point -> (outer_r, Az) etc.
         openings.insert(
@@ -956,7 +956,7 @@ impl<
         drop(openings);
 
         // Append the outer sumcheck proof to the state manager
-        state_manager.proofs.lock().unwrap().insert(
+        state_manager.proofs.borrow_mut().insert(
             ProofKeys::SpartanOuterSumcheck,
             ProofData::SpartanSumcheck(outer_sumcheck_proof),
         );
@@ -990,7 +990,7 @@ impl<
             .challenge_vector(num_rounds_x);
 
         // Get the outer sumcheck proof
-        let proofs = state_manager.proofs.lock().unwrap();
+        let proofs = state_manager.proofs.borrow();
         let proof_data = {
             proofs
                 .get(&ProofKeys::SpartanOuterSumcheck)
