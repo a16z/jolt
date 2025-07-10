@@ -586,6 +586,5 @@ fn rescale_const_with_single_use(
             constant.quantized_values = quantize_tensor(raw_values, *scale_max)?;
         }
     }
-
     Ok(())
 }
