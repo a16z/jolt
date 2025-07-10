@@ -21,20 +21,18 @@ impl<
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
     > JoltDAG<'a, F, ProofTranscript, PCS>
 {
-    pub fn new(
-        state_manager: StateManager<'a, F, ProofTranscript, PCS>,
-    ) -> Self {
+    pub fn new(state_manager: StateManager<'a, F, ProofTranscript, PCS>) -> Self {
         Self { state_manager }
     }
 
-    pub fn prove(&mut self) -> anyhow::Result<()> {
+    pub fn prove(&mut self) -> Result<(), anyhow::Error> {
         // Stage 1: Run Spartan's outer sumcheck proof
         let spartan_proof = UniformSpartanProof::<F, ProofTranscript>::default();
         spartan_proof.stage1_prove(&mut self.state_manager)?;
         Ok(())
     }
 
-    pub fn verify(&mut self) -> anyhow::Result<()> {
+    pub fn verify(&mut self) -> Result<(), anyhow::Error> {
         // Stage 1: Verify Spartan's outer sumcheck proof
         let spartan_proof = UniformSpartanProof::<F, ProofTranscript>::default();
         spartan_proof.stage1_verify(&mut self.state_manager)?;

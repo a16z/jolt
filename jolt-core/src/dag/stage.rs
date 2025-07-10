@@ -14,7 +14,7 @@ pub trait SumcheckStages<
     fn stage1_prove(
         &self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), anyhow::Error> {
         let _ = state_manager;
         Ok(())
     }
@@ -22,7 +22,7 @@ pub trait SumcheckStages<
     fn stage1_verify(
         &self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), anyhow::Error> {
         let _ = state_manager;
         Ok(())
     }

@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::ops::{RangeFull, Index};
+use std::ops::{Index, RangeFull};
 
 use std::sync::{Arc, Mutex};
 

@@ -6,7 +6,6 @@ use crate::dag::stage::SumcheckStages;
 use crate::dag::state_manager::{
     OpeningPoint, OpeningsKeys, ProofData, ProofKeys, StateManager, LITTLE_ENDIAN,
 };
-use crate::r1cs::spartan::OpeningsKeys::OuterSumcheckClaims;
 use crate::field::JoltField;
 use crate::jolt::vm::JoltCommitments;
 use crate::jolt::vm::JoltProverPreprocessing;
@@ -21,6 +20,7 @@ use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::r1cs::inputs::ALL_R1CS_INPUTS;
 use crate::r1cs::inputs::COMMITTED_R1CS_INPUTS;
 use crate::r1cs::key::UniformSpartanKey;
+use crate::r1cs::spartan::OpeningsKeys::OuterSumcheckClaims;
 use crate::utils::math::Math;
 
 use crate::utils::transcript::Transcript;
@@ -887,8 +887,7 @@ impl<
     fn stage1_prove(
         &self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> anyhow::Result<()> {
-
+    ) -> Result<(), anyhow::Error> {
         /* Sumcheck 1: Outer sumcheck
            Proves: \sum_x eq(tau, x) * (Az(x) * Bz(x) - Cz(x)) = 0
 
@@ -930,26 +929,27 @@ impl<
         );
 
         // we need the following claims for stage 2:
-        let outer_sumcheck_r_point = OpeningPoint::<LITTLE_ENDIAN, F>::new(outer_sumcheck_r.clone());
+        let outer_sumcheck_r_point =
+            OpeningPoint::<LITTLE_ENDIAN, F>::new(outer_sumcheck_r.clone());
 
         let az_bz_cz = OpeningPoint::<LITTLE_ENDIAN, F>::new(outer_sumcheck_claims.to_vec());
-       
-        state_manager.openings.lock().unwrap().insert(
-            OpeningsKeys::OuterSumcheckR,
-            (outer_sumcheck_r_point, None),
-        );
 
-        state_manager.openings.lock().unwrap().insert(
-            OpeningsKeys::OuterSumcheckClaims,
-            (az_bz_cz, None),
-        );
+        state_manager
+            .openings
+            .lock()
+            .unwrap()
+            .insert(OpeningsKeys::OuterSumcheckR, (outer_sumcheck_r_point, None));
+
+        state_manager
+            .openings
+            .lock()
+            .unwrap()
+            .insert(OpeningsKeys::OuterSumcheckClaims, (az_bz_cz, None));
 
         // Append the outer sumcheck proof to the state manager
         state_manager.proofs.lock().unwrap().insert(
             ProofKeys::SpartanOuterSumcheck,
-            ProofData::SpartanSumcheck(
-                outer_sumcheck_proof,
-            ),
+            ProofData::SpartanSumcheck(outer_sumcheck_proof),
         );
 
         Ok(())
@@ -958,8 +958,7 @@ impl<
     fn stage1_verify(
         &self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> anyhow::Result<()> {
-
+    ) -> Result<(), anyhow::Error> {
         // Get the spartan-related data:
         let (key, _, _) = state_manager.get_spartan_data();
 
@@ -991,9 +990,7 @@ impl<
             let transcript = &mut *state_manager.verifier_transcript.borrow_mut();
             match outer_sumcheck_proof.verify(F::zero(), num_rounds_x, 3, transcript) {
                 Ok(result) => result,
-                Err(_) => {
-                    return Err(anyhow::anyhow!("Outer sumcheck verification failed"))
-                }
+                Err(_) => return Err(anyhow::anyhow!("Outer sumcheck verification failed")),
             }
         };
 
@@ -1026,7 +1023,7 @@ impl<
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>> {
         todo!()
-         /* Sumcheck 2: Inner sumcheck
+        /* Sumcheck 2: Inner sumcheck
            Proves: claim_Az + r * claim_Bz + r^2 * claim_Cz =
                    \sum_y (A_small(rx, y) + r * B_small(rx, y) + r^2 * C_small(rx, y)) * z(y)
 
@@ -1068,6 +1065,5 @@ impl<
         //     MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
 
         // let (_, eq_plus_one_r_cycle) = EqPlusOnePolynomial::evals(r_cycle, None);
-
     }
 }
