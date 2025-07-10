@@ -3,8 +3,6 @@
 //! This module provides an API similar to the `sha3` crate.
 //! On the host
 
-use core::mem::MaybeUninit;
-
 const RATE_IN_BYTES: usize = 136;
 const RATE_IN_U64: usize = RATE_IN_BYTES / 8;
 const HASH_LEN: usize = 32;
