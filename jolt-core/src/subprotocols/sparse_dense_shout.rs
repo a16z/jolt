@@ -276,7 +276,7 @@ fn prover_msg_raf<F: JoltField>(
             let (i0, i2) = identity_ps.sumcheck_evals(b);
             let (r0, r2) = right_operand_ps.sumcheck_evals(b);
             let (l0, l2) = left_operand_ps.sumcheck_evals(b);
-            (i0 + l0, i2 + l2, r0, r2)
+            (l0, l2, i0 + r0, i2 + r2)
         })
         .reduce(
             || (F::zero(), F::zero(), F::zero(), F::zero()),
@@ -290,8 +290,8 @@ fn prover_msg_raf<F: JoltField>(
             },
         );
     [
-        gamma * right_0 + gamma_squared * left_0,
-        gamma * right_2 + gamma_squared * left_2,
+        gamma * left_0 + gamma_squared * right_0,
+        gamma * left_2 + gamma_squared * right_2,
     ]
 }
 
@@ -435,8 +435,8 @@ pub fn prove_sparse_dense_shout<
 
     let mut prefix_registry = PrefixRegistry::new();
 
-    let right_operand_poly = OperandPolynomial::new(log_K, OperandSide::Left);
-    let left_operand_poly = OperandPolynomial::new(log_K, OperandSide::Right);
+    let right_operand_poly = OperandPolynomial::new(log_K, OperandSide::Right);
+    let left_operand_poly = OperandPolynomial::new(log_K, OperandSide::Left);
     let identity_poly: IdentityPolynomial<F> =
         IdentityPolynomial::new_with_endianness(log_K, Endianness::Big);
     let mut right_operand_ps =
