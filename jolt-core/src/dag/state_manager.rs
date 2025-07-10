@@ -77,34 +77,36 @@ impl<F: JoltField> From<Vec<F>> for OpeningPoint<BIG_ENDIAN, F> {
     }
 }
 
-impl<F: JoltField> Index<JoltR1CSInputs> for Openings<F> {
-    type Output = Option<F>;
-
-    fn index(&self, index: JoltR1CSInputs) -> &Self::Output {
-        &self[&OpeningsKeys::SpartanZ(index)].1
-    }
-}
-
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
 pub enum OpeningsKeys {
     SpartanZ(JoltR1CSInputs),
     InstructionTypeFlag(usize),
     InstructionRa(usize),
-    OuterSumcheckClaims, // (Az, Bz, Cz)
-    OuterSumcheckR,      // r_cycle from outer sumcheck
-    OuterSumcheckRxVar,  // rx_var from outer sumcheck
+    OuterSumcheckAz,    // Az claim from outer sumcheck
+    OuterSumcheckBz,    // Bz claim from outer sumcheck
+    OuterSumcheckCz,    // Cz claim from outer sumcheck
+    OuterSumcheckRxVar, // rx_var from outer sumcheck -- TODO(markosg04)where is this used ?
 }
 
-pub type Openings<F> = HashMap<OpeningsKeys, (OpeningPoint<LITTLE_ENDIAN, F>, Option<F>)>;
+pub type Openings<F> = HashMap<OpeningsKeys, (OpeningPoint<LITTLE_ENDIAN, F>, F)>;
+
+pub trait OpeningsExt<F: JoltField> {
+    fn get_spartan_z(&self, index: JoltR1CSInputs) -> F;
+}
+
+impl<F: JoltField> OpeningsExt<F> for Openings<F> {
+    fn get_spartan_z(&self, index: JoltR1CSInputs) -> F {
+        self.get(&OpeningsKeys::SpartanZ(index))
+            .map(|(_, value)| *value)
+            .unwrap_or(F::zero())
+    }
+}
 
 #[derive(Hash, PartialEq, Eq, Clone, Debug)]
 pub enum ProofKeys {
     SpartanOuterSumcheck,
     SpartanInnerSumcheck,
     SpartanShiftSumcheck,
-    RegistersReadWrite(usize),
-    RamReadWrite(usize),
-    InstructionLookups(usize),
 }
 
 pub enum ProofData<F: JoltField, ProofTranscript: Transcript> {
@@ -163,17 +165,12 @@ impl<
     }
 
     pub fn z(&self, idx: JoltR1CSInputs) -> F {
-        self.openings.lock().unwrap()[idx].expect("Opening value to be obtained via PCS")
+        use OpeningsExt;
+        self.openings.lock().unwrap().get_spartan_z(idx)
     }
 
     pub fn openings(&self, idx: OpeningsKeys) -> F {
-        self.openings
-            .lock()
-            .unwrap()
-            .get(&idx)
-            .unwrap()
-            .1
-            .expect("Opening to be obtained via PCS")
+        self.openings.lock().unwrap().get(&idx).unwrap().1
     }
 
     pub fn openings_point(&self, idx: OpeningsKeys) -> OpeningPoint<LITTLE_ENDIAN, F> {

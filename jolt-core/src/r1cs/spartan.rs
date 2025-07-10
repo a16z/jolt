@@ -20,7 +20,6 @@ use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::r1cs::inputs::ALL_R1CS_INPUTS;
 use crate::r1cs::inputs::COMMITTED_R1CS_INPUTS;
 use crate::r1cs::key::UniformSpartanKey;
-use crate::r1cs::spartan::OpeningsKeys::OuterSumcheckClaims;
 use crate::utils::math::Math;
 
 use crate::utils::transcript::Transcript;
@@ -889,7 +888,7 @@ impl<
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {
         /* Sumcheck 1: Outer sumcheck
-           Proves: \sum_x eq(tau, x) * (Az(x) * Bz(x) - Cz(x)) = 0
+           Proves: \sum_x eq(gamma, x) * (Az(x) * Bz(x) - Cz(x)) = 0
 
            The matrices A, B, C have a block-diagonal structure with repeated blocks
            A_small, B_small, C_small corresponding to the uniform constraints.
@@ -898,7 +897,7 @@ impl<
 
         let num_rounds_x = key.num_cons_total.log_2();
 
-        let tau: Vec<F> = state_manager
+        let gamma: Vec<F> = state_manager
             .prover_transcript
             .borrow_mut()
             .challenge_vector(num_rounds_x);
@@ -916,7 +915,7 @@ impl<
                 uniform_constraints_only_padded,
                 &constraint_builder.uniform_builder.constraints,
                 input_polys,
-                &tau,
+                &gamma,
                 transcript,
             )
         };
@@ -928,23 +927,26 @@ impl<
             &outer_sumcheck_claims,
         );
 
-        // we need the following claims for stage 2:
         let outer_sumcheck_r_point =
             OpeningPoint::<LITTLE_ENDIAN, F>::new(outer_sumcheck_r.clone());
 
-        let az_bz_cz = OpeningPoint::<LITTLE_ENDIAN, F>::new(outer_sumcheck_claims.to_vec());
+        let mut openings = state_manager.openings.lock().unwrap();
 
-        state_manager
-            .openings
-            .lock()
-            .unwrap()
-            .insert(OpeningsKeys::OuterSumcheckR, (outer_sumcheck_r_point, None));
+        // Store Az, Bz, Cz claims with the outer sumcheck point -> (outer_r, Az) etc.
+        openings.insert(
+            OpeningsKeys::OuterSumcheckAz,
+            (outer_sumcheck_r_point.clone(), outer_sumcheck_claims[0]),
+        );
+        openings.insert(
+            OpeningsKeys::OuterSumcheckBz,
+            (outer_sumcheck_r_point.clone(), outer_sumcheck_claims[1]),
+        );
+        openings.insert(
+            OpeningsKeys::OuterSumcheckCz,
+            (outer_sumcheck_r_point.clone(), outer_sumcheck_claims[2]),
+        );
 
-        state_manager
-            .openings
-            .lock()
-            .unwrap()
-            .insert(OpeningsKeys::OuterSumcheckClaims, (az_bz_cz, None));
+        drop(openings);
 
         // Append the outer sumcheck proof to the state manager
         state_manager.proofs.lock().unwrap().insert(
@@ -964,7 +966,7 @@ impl<
 
         let num_rounds_x = key.num_cons_total.log_2();
 
-        let tau: Vec<F> = state_manager
+        let gamma: Vec<F> = state_manager
             .verifier_transcript
             .borrow_mut()
             .challenge_vector(num_rounds_x);
@@ -983,7 +985,10 @@ impl<
         };
 
         // Get the claims:
-        let outer_sumcheck_claims = state_manager.openings_point(OuterSumcheckClaims);
+        let claim_Az = state_manager.openings(OpeningsKeys::OuterSumcheckAz);
+        let claim_Bz = state_manager.openings(OpeningsKeys::OuterSumcheckBz);
+        let claim_Cz = state_manager.openings(OpeningsKeys::OuterSumcheckCz);
+        let outer_sumcheck_claims = [claim_Az, claim_Bz, claim_Cz];
 
         // Run the main sumcheck verifier:
         let (claim_outer_final, outer_sumcheck_r_original) = {
@@ -994,18 +999,12 @@ impl<
             }
         };
 
-        // Outer sumcheck is bound from the top, reverse the challenge
+        // Outer sumcheck is bound from the top, reverse the challenge TODO(markosg04 make use of Endianness here ?)
         let outer_sumcheck_r_reversed: Vec<F> =
             outer_sumcheck_r_original.into_iter().rev().collect();
 
-        // Validate the outer sumcheck claim
-        let (claim_Az, claim_Bz, claim_Cz) = (
-            outer_sumcheck_claims[0],
-            outer_sumcheck_claims[1],
-            outer_sumcheck_claims[2],
-        );
-        let taus_bound_rx = EqPolynomial::mle(&tau, &outer_sumcheck_r_reversed);
-        let claim_outer_final_expected = taus_bound_rx * (claim_Az * claim_Bz - claim_Cz);
+        let gamma_bound_rx = EqPolynomial::mle(&gamma, &outer_sumcheck_r_reversed);
+        let claim_outer_final_expected = gamma_bound_rx * (claim_Az * claim_Bz - claim_Cz);
         if claim_outer_final != claim_outer_final_expected {
             return Err(anyhow::anyhow!("Invalid outer sumcheck claim"));
         }
@@ -1020,16 +1019,16 @@ impl<
 
     fn stage2_prover_instances(
         &self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn BatchableSumcheckInstance<F, ProofTranscript>>> {
-        todo!()
-        /* Sumcheck 2: Inner sumcheck
-           Proves: claim_Az + r * claim_Bz + r^2 * claim_Cz =
-                   \sum_y (A_small(rx, y) + r * B_small(rx, y) + r^2 * C_small(rx, y)) * z(y)
+        todo!() // TODO(markosg04) scaffolding stage 2 for spartan
+                /* Sumcheck 2: Inner sumcheck
+                   Proves: claim_Az + r * claim_Bz + r^2 * claim_Cz =
+                           \sum_y (A_small(rx, y) + r * B_small(rx, y) + r^2 * C_small(rx, y)) * z(y)
 
-           Evaluates the uniform constraint matrices A_small, B_small, C_small at the point
-           determined by the outer sumcheck.
-        */
+                   Evaluates the uniform constraint matrices A_small, B_small, C_small at the point
+                   determined by the outer sumcheck.
+                */
         // let (key, constraint_builder, input_polys) = state_manager.get_spartan_data();
 
         // let num_cycles = key.num_steps;
