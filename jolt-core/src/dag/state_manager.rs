@@ -88,10 +88,10 @@ pub enum OpeningsKeys {
     SpartanZ(JoltR1CSInputs),
     InstructionTypeFlag(usize),
     InstructionRa(usize),
-    OuterSumcheckAz,    // Az claim from outer sumcheck
-    OuterSumcheckBz,    // Bz claim from outer sumcheck
-    OuterSumcheckCz,    // Cz claim from outer sumcheck
-    OuterSumcheckRxVar, // rx_var from outer sumcheck -- TODO(markosg04)where is this used ?
+    OuterSumcheckAz,        // Az claim from outer sumcheck
+    OuterSumcheckBz,        // Bz claim from outer sumcheck
+    OuterSumcheckCz,        // Cz claim from outer sumcheck
+    OuterSumcheckRxVar,     // rx_var from outer sumcheck -- TODO(markosg04)where is this used ?
     PCSumcheckUnexpandedPC, // UnexpandedPC evaluation from PC sumcheck
     PCSumcheckPC,           // PC evaluation from PC sumcheck
 }

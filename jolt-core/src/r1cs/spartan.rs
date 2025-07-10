@@ -3,10 +3,10 @@ use tracer::instruction::RV32IMCycle;
 use tracing::{span, Level};
 
 use crate::dag::stage::SumcheckStages;
+use crate::dag::state_manager::OpeningsKeys::{OuterSumcheckAz, OuterSumcheckBz, OuterSumcheckCz};
 use crate::dag::state_manager::{
     OpeningPoint, OpeningsKeys, ProofData, ProofKeys, StateManager, LITTLE_ENDIAN,
 };
-use crate::dag::state_manager::OpeningsKeys::{OuterSumcheckAz, OuterSumcheckBz, OuterSumcheckCz};
 use crate::field::JoltField;
 use crate::jolt::vm::JoltCommitments;
 use crate::jolt::vm::JoltProverPreprocessing;
@@ -1034,7 +1034,10 @@ impl<
         let num_cycles = key.num_steps;
         let num_cycles_bits = num_cycles.ilog2() as usize;
 
-        let inner_sumcheck_RLC: F = state_manager.prover_transcript.borrow_mut().challenge_scalar();
+        let inner_sumcheck_RLC: F = state_manager
+            .prover_transcript
+            .borrow_mut()
+            .challenge_scalar();
 
         // we get this opening_point from state manager.
         // we use Az here but Bz, Cz are same.
@@ -1046,7 +1049,7 @@ impl<
         let claim_Bz = state_manager.openings(OuterSumcheckBz);
         let claim_Cz = state_manager.openings(OuterSumcheckCz);
 
-         let claims = OuterClaims {
+        let claims = OuterClaims {
             az: claim_Az,
             bz: claim_Bz,
             cz: claim_Cz,
@@ -1076,7 +1079,10 @@ impl<
             2. NextPC(r_cycle) = \sum_t PC(t) * eq_plus_one(r_cycle, t)
         */
 
-        let r: F = state_manager.prover_transcript.borrow_mut().challenge_scalar();
+        let r: F = state_manager
+            .prover_transcript
+            .borrow_mut()
+            .challenge_scalar();
 
         let pc_sumcheck =
             PCSumcheck::new_prover(input_polys, &claimed_witness_evals, eq_plus_one_r_cycle, r);
@@ -1087,6 +1093,5 @@ impl<
         // let shift_sumcheck_witness_eval = vec![unexpanded_pc_eval_at_shift_r, pc_eval_at_shift_r];
 
         vec![Box::new(inner_sumcheck), Box::new(pc_sumcheck)]
-
     }
 }
