@@ -13,6 +13,7 @@ use shift_right_bitmask::ShiftRightBitmaskTable;
 use signed_greater_than_equal::SignedGreaterThanEqualTable;
 use signed_less_than::SignedLessThanTable;
 use std::marker::Sync;
+use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 use suffixes::{SuffixEval, Suffixes};
 use unsigned_greater_than_equal::UnsignedGreaterThanEqualTable;
@@ -84,6 +85,8 @@ pub mod xor;
 
 #[cfg(test)]
 pub mod test;
+
+pub const NUM_LOOKUP_TABLES: usize = LookupTables::<32>::COUNT;
 
 #[derive(Copy, Clone, Debug, From, Serialize, Deserialize, EnumIter, EnumCountMacro)]
 #[repr(u8)]
