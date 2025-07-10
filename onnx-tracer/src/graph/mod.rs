@@ -1,13 +1,10 @@
 /// Representations of a computational graph's inputs.
 pub mod input;
-// /// Crate for defining a computational graph and building a ZK-circuit from it.
+/// Crate for defining a computational graph and building a ZK-circuit from it.
 pub mod model;
+/// Inner elements of a computational graph that represent a single operation constraints.
 pub mod node;
-// /// Representations of a computational graph's modules.
-// pub mod modules;
-// /// Inner elements of a computational graph that represent a single operation /
-// constraints. pub mod node;
-// /// Helper functions
+/// Helper functions
 pub mod utilities;
 /// Representations of a computational graph's variables.
 pub mod vars;
