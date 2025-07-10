@@ -387,10 +387,6 @@ struct BooleanityProverState<F: JoltField> {
     D: MultilinearPolynomial<F>,
     /// Initialized after first log(K) rounds of sumcheck
     H: Option<MultilinearPolynomial<F>>,
-    /// EQ(k_m, c) for k_m \in {0, 1} and c \in {0, 2, 3}
-    eq_km_c: [[F; 3]; 2],
-    /// EQ(k_m, c)^2 for k_m \in {0, 1} and c \in {0, 2, 3}
-    eq_km_c_squared: [[F; 3]; 2],
 }
 
 impl<F: JoltField> BooleanityProverState<F> {
@@ -403,7 +399,6 @@ impl<F: JoltField> BooleanityProverState<F> {
     ) -> Self {
         let K = G.len();
         let r: Vec<F> = transcript.challenge_vector(K.log_2());
-        const DEGREE: usize = 3;
         let T = read_addresses.len();
 
         let D = MultilinearPolynomial::from(D);
@@ -411,25 +406,6 @@ impl<F: JoltField> BooleanityProverState<F> {
         let gruens_B = GruenSplitEqPolynomial::new(&r);
         let mut F: Vec<F> = unsafe_allocate_zero_vec(K);
         F[0] = F::one();
-
-        // EQ(k_m, c) for k_m \in {0, 1} and c \in {0, 2, 3}
-        let eq_km_c: [[F; DEGREE]; 2] = [
-            [
-                F::one(),        // eq(0, 0) = 0 * 0 + (1 - 0) * (1 - 0)
-                F::from_i64(-1), // eq(0, 2) = 0 * 2 + (1 - 0) * (1 - 2)
-                F::from_i64(-2), // eq(0, 3) = 0 * 3 + (1 - 0) * (1 - 3)
-            ],
-            [
-                F::zero(),     // eq(1, 0) = 1 * 0 + (1 - 1) * (1 - 0)
-                F::from_u8(2), // eq(1, 2) = 1 * 2 + (1 - 1) * (1 - 2)
-                F::from_u8(3), // eq(1, 3) = 1 * 3 + (1 - 1) * (1 - 3)
-            ],
-        ];
-        // EQ(k_m, c)^2 for k_m \in {0, 1} and c \in {0, 2, 3}
-        let eq_km_c_squared: [[F; DEGREE]; 2] = [
-            [F::one(), F::one(), F::from_u8(4)],
-            [F::zero(), F::from_u8(4), F::from_u8(9)],
-        ];
 
         Self {
             read_addresses,
@@ -441,8 +417,6 @@ impl<F: JoltField> BooleanityProverState<F> {
             G,
             D,
             H: None,
-            eq_km_c,
-            eq_km_c_squared,
         }
     }
 }
@@ -486,10 +460,27 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             G,
             D,
             H,
-            eq_km_c,
-            eq_km_c_squared,
             ..
         } = self.prover_state.as_ref().unwrap();
+
+        // EQ(k_m, c) for k_m \in {0, 1} and c \in {0, 2, 3}
+        let eq_km_c: [[F; DEGREE]; 2] = [
+            [
+                F::one(),        // eq(0, 0) = 0 * 0 + (1 - 0) * (1 - 0)
+                F::from_i64(-1), // eq(0, 2) = 0 * 2 + (1 - 0) * (1 - 2)
+                F::from_i64(-2), // eq(0, 3) = 0 * 3 + (1 - 0) * (1 - 3)
+            ],
+            [
+                F::zero(),     // eq(1, 0) = 1 * 0 + (1 - 1) * (1 - 0)
+                F::from_u8(2), // eq(1, 2) = 1 * 2 + (1 - 1) * (1 - 2)
+                F::from_u8(3), // eq(1, 3) = 1 * 3 + (1 - 1) * (1 - 3)
+            ],
+        ];
+        // EQ(k_m, c)^2 for k_m \in {0, 1} and c \in {0, 2, 3}
+        let eq_km_c_squared: [[F; DEGREE]; 2] = [
+            [F::one(), F::one(), F::from_u8(4)],
+            [F::zero(), F::from_u8(4), F::from_u8(9)],
+        ];
 
         if round < K.log_2() {
             // First log(K) rounds of sumcheck
@@ -612,7 +603,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         F::zero()
     }
 
-    fn compute_prover_message(&mut self, round: usize, _previous_claim: F) -> Vec<F> {
+    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         const DEGREE: usize = 3;
         let BooleanityProverState {
             K,
@@ -622,16 +613,140 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             G,
             D,
             H,
-            eq_km_c,
-            eq_km_c_squared,
             ..
         } = self.prover_state.as_ref().unwrap();
+
+        // EQ(k_m, 0) for k_m \in {0, 1}
+        let eq_km_c = [F::one(), F::zero()];
+        // EQ(k_m, c)^2 for k_m \in {0, 1} and c \in {0, infty}
+        let eq_km_c_squared: [[F; DEGREE - 1]; 2] = [
+            [F::one(), F::one()],
+            [F::zero(), F::one()],
+        ];
+
+        // EQ(k_m, c) for k_m \in {0, 1} and c \in {0, 2, 3}
+        // TODO(hamlinb): Delete me!
+        let old_eq_km_c: [[F; DEGREE]; 2] = [
+            [
+                F::one(),        // eq(0, 0) = 0 * 0 + (1 - 0) * (1 - 0)
+                F::from_i64(-1), // eq(0, 2) = 0 * 2 + (1 - 0) * (1 - 2)
+                F::from_i64(-2), // eq(0, 3) = 0 * 3 + (1 - 0) * (1 - 3)
+            ],
+            [
+                F::zero(),     // eq(1, 0) = 1 * 0 + (1 - 1) * (1 - 0)
+                F::from_u8(2), // eq(1, 2) = 1 * 2 + (1 - 1) * (1 - 2)
+                F::from_u8(3), // eq(1, 3) = 1 * 3 + (1 - 1) * (1 - 3)
+            ],
+        ];
+        // EQ(k_m, c)^2 for k_m \in {0, 1} and c \in {0, 2, 3}
+        // TODO(hamlinb): Delete me!
+        let old_eq_km_c_squared: [[F; DEGREE]; 2] = [
+            [F::one(), F::one(), F::from_u8(4)],
+            [F::zero(), F::from_u8(4), F::from_u8(9)],
+        ];
 
         let evals = if round < K.log_2() {
             // First log(K) rounds of sumcheck
             let m = round + 1;
 
-            let univariate_poly_evals: [F; DEGREE] = (0..B.len() / 2)
+            let cubic_poly_evals: [F; DEGREE] = if gruens_B.E_in_current_len() == 1 {
+                let quadratic_coeffs = (0..B.len() / 2)
+                    .into_par_iter()
+                    .map(|k_prime| {
+                        let B_eval = gruens_B.E_out_current()[k_prime];
+                        let inner_sum = G[k_prime << m..(k_prime + 1) << m]
+                            .par_iter()
+                            .enumerate()
+                            .map(|(k, &G_k)| {
+                                // Since we're binding variables from low to high, k_m is the high bit
+                                let k_m = k >> (m - 1);
+                                // We then index into F using (k_{m-1}, ..., k_1)
+                                let F_k = F[k % (1 << (m - 1))];
+                                // G_times_F := G[k] * F[k_1, ...., k_{m-1}]
+                                let G_times_F = G_k * F_k;
+                                // For c \in {0, infty} compute:
+                                //    G[k] * (F[k_1, ...., k_{m-1}, c]^2 - F[k_1, ...., k_{m-1}, c])
+                                //    = G_times_F * (eq(k_m, c)^2 * F[k_1, ...., k_{m-1}] - eq(k_m, c))
+                                //
+                                // TODO(hamlinb) we can get rid of the eq evals here, because...
+                                // We want the values 
+                                //   - s(0) = G_times_F * (eq(k_m, 0)^2 * F_k - eq(k_m, 0))
+                                //   - s(infty) = G_times_F * eq(k_m, infty)^2 * F_k
+                                // But note that for k_m \in {0, 1},
+                                //   - eq(k_m, 0) = eq(k_m, 0)^2 = [1, 0]
+                                //   - eq(k_m, infty)^2 = (eq(k_m, 1) - eq(k_m, 0))^2 = [1, 1]
+                                // So we can instead compute
+                                //   - s(0) = k_m == 0 ? G_times_F * (F_k - 1) : G_times_F
+                                //   - s(1) = G_times_F * F_k
+                                [
+                                    G_times_F * (eq_km_c_squared[k_m][0] * F_k - eq_km_c[k_m]),
+                                    G_times_F * eq_km_c_squared[k_m][1] * F_k,
+                                ]
+                            })
+                            .reduce(
+                                || [F::zero(); DEGREE - 1],
+                                |running, new| {
+                                    [
+                                        running[0] + new[0],
+                                        running[1] + new[1],
+                                    ]
+                                },
+                            );
+
+                        [
+                            B_eval * inner_sum[0],
+                            B_eval * inner_sum[1],
+                        ]
+                    })
+                    .reduce(
+                        || [F::zero(); DEGREE - 1],
+                        |running, new| {
+                            [
+                                running[0] + new[0],
+                                running[1] + new[1],
+                            ]
+                        },
+                    );
+
+                // We want to compute the evaluations of the cubic polynomial s(X) = l(X) * q(X), where
+                // l is linear, and q is quadratic, at the points {0, 2, 3}.
+                //
+                // At this point, we have
+                // - the linear polynomial, l(X) = a + bX
+                // - the quadratic polynomial, q(X) = c + dX + eX^2
+                // - the previous round's claim s(0) + s(1) = a * c + (a + b) * (c + d + e)
+                //
+                // Both l and q are represented by their evaluations at 0 and infinity. I.e., we have a, b, c,
+                // and e, but not d. We compute s by first computing l and q at points 2 and 3.
+
+                // Evaluations of the linear polynomial
+                let eq_eval_1 = gruens_B.current_scalar
+                    * gruens_B.w[gruens_B.current_index - 1];
+                let eq_eval_0 = gruens_B.current_scalar - eq_eval_1;
+                let eq_m = eq_eval_1 - eq_eval_0;
+                let eq_eval_2 = eq_eval_1 + eq_m;
+                let eq_eval_3 = eq_eval_2 + eq_m;
+
+                // Evaluations of the quadratic polynomial
+                let quadratic_eval_0 = quadratic_coeffs[0];
+                let cubic_eval_0 = eq_eval_0 * quadratic_eval_0;
+                let cubic_eval_1 = previous_claim - cubic_eval_0;
+                // q(1) = c + d + e
+                let quadratic_eval_1 = cubic_eval_1 / eq_eval_1;
+                // q(2) = c + 2d + 4e = q(1) + q(1) - q(0) + 2e
+                let e_times_2 = quadratic_coeffs[1] + quadratic_coeffs[1];
+                let quadratic_eval_2 = quadratic_eval_1 + quadratic_eval_1 - quadratic_eval_0 + e_times_2;
+                // q(3) = c + 3d + 9e = q(2) + q(1) - q(0) + 4e
+                let quadratic_eval_3 =
+                    quadratic_eval_2 + quadratic_eval_1 - quadratic_eval_0 + e_times_2 + e_times_2;
+
+                [
+                    cubic_eval_0,
+                    eq_eval_2 * quadratic_eval_2,
+                    eq_eval_3 * quadratic_eval_3,
+                ]
+            } else {
+                (0..B.len() / 2)
                 .into_par_iter()
                 .map(|k_prime| {
                     let B_evals = B.sumcheck_evals(k_prime, DEGREE, BindingOrder::LowToHigh);
@@ -649,9 +764,9 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                             //    G[k] * (F[k_1, ...., k_{m-1}, c]^2 - F[k_1, ...., k_{m-1}, c])
                             //    = G_times_F * (eq(k_m, c)^2 * F[k_1, ...., k_{m-1}] - eq(k_m, c))
                             [
-                                G_times_F * (eq_km_c_squared[k_m][0] * F_k - eq_km_c[k_m][0]),
-                                G_times_F * (eq_km_c_squared[k_m][1] * F_k - eq_km_c[k_m][1]),
-                                G_times_F * (eq_km_c_squared[k_m][2] * F_k - eq_km_c[k_m][2]),
+                                G_times_F * (old_eq_km_c_squared[k_m][0] * F_k - old_eq_km_c[k_m][0]),
+                                G_times_F * (old_eq_km_c_squared[k_m][1] * F_k - old_eq_km_c[k_m][1]),
+                                G_times_F * (old_eq_km_c_squared[k_m][2] * F_k - old_eq_km_c[k_m][2]),
                             ]
                         })
                         .reduce(
@@ -680,9 +795,10 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                             running[2] + new[2],
                         ]
                     },
-                );
+                )
+            };
 
-            univariate_poly_evals.to_vec()
+            cubic_poly_evals.to_vec()
         } else {
             // Last log(T) rounds of sumcheck
 
