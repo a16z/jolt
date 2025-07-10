@@ -16,7 +16,7 @@ use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, P
 use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::r1cs::builder::Constraint;
-use crate::r1cs::constraints::{JoltRV32IMConstraints, R1CSConstraints};
+use crate::r1cs::constraints::R1CSConstraints;
 use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::r1cs::inputs::ALL_R1CS_INPUTS;
 use crate::r1cs::inputs::COMMITTED_R1CS_INPUTS;
@@ -862,13 +862,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 }
 
+#[derive(Default)]
 pub struct SpartanDag {}
-
-impl SpartanDag {
-    pub fn new() -> Self {
-        SpartanDag {}
-    }
-}
 
 impl<
         F: JoltField,
@@ -920,21 +915,21 @@ impl<
             .next_power_of_two();
 
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) = {
-            let transcript = &mut *state_manager.transcript.borrow_mut();
+            let mut transcript = state_manager.transcript.borrow_mut();
             UniformSpartanProof::<F, ProofTranscript>::prove_outer_sumcheck(
                 num_rounds_x,
                 uniform_constraints_only_padded,
                 &constraint_builder.uniform_builder.constraints,
                 &input_polys,
                 &tau,
-                transcript,
+                &mut transcript,
             )
         };
 
         let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
 
         ProofTranscript::append_scalars(
-            &mut *state_manager.transcript.borrow_mut(),
+            *state_manager.transcript.borrow_mut(),
             &outer_sumcheck_claims,
         );
 

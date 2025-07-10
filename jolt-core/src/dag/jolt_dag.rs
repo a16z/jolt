@@ -32,13 +32,13 @@ impl<
     }
 
     pub fn prove(&mut self) -> Result<(), anyhow::Error> {
-        let spartan_dag = SpartanDag::new();
+        let spartan_dag = SpartanDag::default();
         spartan_dag.stage1_prove(&mut self.prover_state_manager)?;
         Ok(())
     }
 
     pub fn verify(&mut self) -> Result<(), anyhow::Error> {
-        let spartan_dag = SpartanDag::new();
+        let spartan_dag = SpartanDag::default();
         spartan_dag.stage1_verify(&mut self.verifier_state_manager)?;
         Ok(())
     }
