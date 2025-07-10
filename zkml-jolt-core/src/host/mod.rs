@@ -3,20 +3,22 @@
 //! This module enables loading ONNX models, managing their inputs, and preparing them for use in
 //! the zkVM.
 
-use onnx_tracer::tensor::Tensor;
+use onnx_tracer::{tensor::Tensor, trace_types::ONNXInstr};
 use std::path::PathBuf;
 
 /// Represents an ONNX program with tracing capabilities.
 /// The model binary is specified by a `PathBuf`, and model inputs are stored for inference.
 pub struct ONNXProgram {
-    path: PathBuf,
+    model_path: PathBuf,
     inputs: Tensor<i128>, // We quantize inputs to i28 bits
 }
 
 impl ONNXProgram {
     /// Get the [`ONNXProgram`] bytecode in a format accessible to the constraint system.
     /// Called during pre-processsing time.
-    pub fn decode() {}
+    pub fn decode(&self) -> Vec<ONNXInstr> {
+        onnx_tracer::decode(&self.model_path)
+    }
 
     /// Get the execution trace for the [`ONNXProgram`].
     /// Called during proving time.

@@ -1,0 +1,9 @@
+/// Offset constant for calculating the [ONNXInstr] address.
+/// The zkVM prepends a no-op instruction to the program code,
+/// so all instruction addresses must account for this offset.
+pub const BYTECODE_PREPEND_NOOP: usize = 1;
+
+/// The maximum number of elements allowed in a tensor within the constraint system.
+/// This constant is used to determine the upper bound on tensor reads and writes
+/// performed by the constraint system.
+pub const MAX_TENSOR_SIZE: usize = 1024;
