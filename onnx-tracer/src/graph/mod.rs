@@ -12,48 +12,7 @@ pub mod utilities;
 /// Representations of a computational graph's variables.
 pub mod vars;
 
-// use colored_json::ToColoredJson;
-// use halo2_proofs::plonk::VerifyingKey;
-// use halo2_proofs::poly::kzg::commitment::ParamsKZG;
-// pub use input::DataSource;
-// use itertools::Itertools;
-
-// use self::input::OnChainSource;
-// use self::input::{FileSource, GraphData};
-// use self::modules::{GraphModules, ModuleConfigs, ModuleForwardResult,
-// ModuleSizes}; use crate::circuit::lookup::LookupOp;
-// use crate::circuit::modules::ModulePlanner;
-// use crate::circuit::table::{Table, RESERVED_BLINDING_ROWS_PAD};
-// use crate::circuit::{CheckMode, InputType};
-// use crate::fieldutils::felt_to_f64;
-// use crate::pfsys::PrettyElements;
-// use crate::tensor::{Tensor, ValTensor};
-// use crate::RunArgs;
-// use halo2_proofs::{
-//     circuit::Layouter,
-//     plonk::{Circuit, ConstraintSystem, Error as PlonkError},
-// };
-// use halo2curves::bn256::{self, Bn256, Fr as Fp, G1Affine};
-// use halo2curves::ff::PrimeField;
-// use log::{debug, error, info, trace, warn};
-// use maybe_rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
-// pub use model::*;
-// pub use node::*;
-// #[cfg(feature = "python-bindings")]
-// use pyo3::prelude::*;
-// #[cfg(feature = "python-bindings")]
-// use pyo3::types::PyDict;
-// #[cfg(feature = "python-bindings")]
-// use pyo3::ToPyObject;
-// use serde::{Deserialize, Serialize};
-// use std::io::{Read, Write};
-// use std::ops::Deref;
 use thiserror::Error;
-// pub use utilities::*;
-// pub use vars::*;
-
-// #[cfg(feature = "python-bindings")]
-// use crate::pfsys::field_to_vecu64_montgomery;
 
 // /// The safety factor for the range of the lookup table.
 // pub const RANGE_MULTIPLIER: i128 = 2;
@@ -64,57 +23,57 @@ use thiserror::Error;
 /// circuit related errors.
 #[derive(Debug, Error)]
 pub enum GraphError {
-  /// The wrong inputs were passed to a lookup node
-  #[error("invalid inputs for a lookup node")]
-  InvalidLookupInputs,
-  /// Shape mismatch in circuit construction
-  #[error("invalid dimensions used for node {0} ({1})")]
-  InvalidDims(usize, String),
-  /// Wrong method was called to configure an op
-  #[error("wrong method was called to configure node {0} ({1})")]
-  WrongMethod(usize, String),
-  /// A requested node is missing in the graph
-  #[error("a requested node is missing in the graph: {0}")]
-  MissingNode(usize),
-  /// The wrong method was called on an operation
-  #[error("an unsupported method was called on node {0} ({1})")]
-  OpMismatch(usize, String),
-  /// This operation is unsupported
-  #[error("unsupported operation in graph")]
-  UnsupportedOp,
-  /// This operation is unsupported
-  #[error("unsupported datatype in graph")]
-  UnsupportedDataType,
-  /// A node has missing parameters
-  #[error("a node is missing required params: {0}")]
-  MissingParams(String),
-  /// A node has missing parameters
-  #[error("a node is has misformed params: {0}")]
-  MisformedParams(String),
-  /// Error in the configuration of the visibility of variables
-  #[error("there should be at least one set of public variables")]
-  Visibility,
-  /// Ezkl only supports divisions by constants
-  #[error("ezkl currently only supports division by constants")]
-  NonConstantDiv,
-  /// Ezkl only supports constant powers
-  #[error("ezkl currently only supports constant exponents")]
-  NonConstantPower,
-  /// Error when attempting to rescale an operation
-  #[error("failed to rescale inputs for {0}")]
-  RescalingError(String),
-  /// Error when attempting to load a model
-  #[error("failed to load model")]
-  ModelLoad,
-  /// Packing exponent is too large
-  #[error("largest packing exponent exceeds max. try reducing the scale")]
-  PackingExponent,
-  /// Invalid Input Types
-  #[error("invalid input types")]
-  InvalidInputTypes,
-  /// Missing results
-  #[error("missing results")]
-  MissingResults,
+    /// The wrong inputs were passed to a lookup node
+    #[error("invalid inputs for a lookup node")]
+    InvalidLookupInputs,
+    /// Shape mismatch in circuit construction
+    #[error("invalid dimensions used for node {0} ({1})")]
+    InvalidDims(usize, String),
+    /// Wrong method was called to configure an op
+    #[error("wrong method was called to configure node {0} ({1})")]
+    WrongMethod(usize, String),
+    /// A requested node is missing in the graph
+    #[error("a requested node is missing in the graph: {0}")]
+    MissingNode(usize),
+    /// The wrong method was called on an operation
+    #[error("an unsupported method was called on node {0} ({1})")]
+    OpMismatch(usize, String),
+    /// This operation is unsupported
+    #[error("unsupported operation in graph")]
+    UnsupportedOp,
+    /// This operation is unsupported
+    #[error("unsupported datatype in graph")]
+    UnsupportedDataType,
+    /// A node has missing parameters
+    #[error("a node is missing required params: {0}")]
+    MissingParams(String),
+    /// A node has missing parameters
+    #[error("a node is has misformed params: {0}")]
+    MisformedParams(String),
+    /// Error in the configuration of the visibility of variables
+    #[error("there should be at least one set of public variables")]
+    Visibility,
+    /// Ezkl only supports divisions by constants
+    #[error("ezkl currently only supports division by constants")]
+    NonConstantDiv,
+    /// Ezkl only supports constant powers
+    #[error("ezkl currently only supports constant exponents")]
+    NonConstantPower,
+    /// Error when attempting to rescale an operation
+    #[error("failed to rescale inputs for {0}")]
+    RescalingError(String),
+    /// Error when attempting to load a model
+    #[error("failed to load model")]
+    ModelLoad,
+    /// Packing exponent is too large
+    #[error("largest packing exponent exceeds max. try reducing the scale")]
+    PackingExponent,
+    /// Invalid Input Types
+    #[error("invalid input types")]
+    InvalidInputTypes,
+    /// Missing results
+    #[error("missing results")]
+    MissingResults,
 }
 
 // const ASSUMED_BLINDING_FACTORS: usize = 5;
@@ -139,22 +98,22 @@ pub enum GraphError {
 // /// Result from a forward pass
 // #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct GraphWitness {
-  //     /// The inputs of the forward pass
-  //     pub inputs: Vec<Vec<Fp>>,
-  //     /// The prettified outputs of the forward pass, we use a String to maximize compatibility
-  // with Python and JS clients     pub pretty_elements: Option<PrettyElements>,
-  //     /// The output of the forward pass
-  //     pub outputs: Vec<Vec<Fp>>,
-  //     /// Any hashes of inputs generated during the forward pass
-  //     pub processed_inputs: Option<ModuleForwardResult>,
-  //     /// Any hashes of params generated during the forward pass
-  //     pub processed_params: Option<ModuleForwardResult>,
-  //     /// Any hashes of outputs generated during the forward pass
-  //     pub processed_outputs: Option<ModuleForwardResult>,
-  //     /// max lookup input
-  //     pub max_lookup_inputs: i128,
-  //     /// max lookup input
-  //     pub min_lookup_inputs: i128,
+    //     /// The inputs of the forward pass
+    //     pub inputs: Vec<Vec<Fp>>,
+    //     /// The prettified outputs of the forward pass, we use a String to maximize compatibility
+    // with Python and JS clients     pub pretty_elements: Option<PrettyElements>,
+    //     /// The output of the forward pass
+    //     pub outputs: Vec<Vec<Fp>>,
+    //     /// Any hashes of inputs generated during the forward pass
+    //     pub processed_inputs: Option<ModuleForwardResult>,
+    //     /// Any hashes of params generated during the forward pass
+    //     pub processed_params: Option<ModuleForwardResult>,
+    //     /// Any hashes of outputs generated during the forward pass
+    //     pub processed_outputs: Option<ModuleForwardResult>,
+    //     /// max lookup input
+    //     pub max_lookup_inputs: i128,
+    //     /// max lookup input
+    //     pub min_lookup_inputs: i128,
 }
 
 // impl GraphWitness {

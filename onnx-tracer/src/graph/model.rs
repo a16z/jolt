@@ -124,7 +124,6 @@ impl Model {
                     .unwrap();
                 // get inner value to Arc<Tensor>
                 let constant = op.0.as_ref();
-
                 if constant.datum_type() == DatumType::TDim {
                     // Generally a shape or hyperparam
                     use tract_onnx::prelude::TDim;
@@ -239,7 +238,6 @@ impl Model {
                             traversed_len += mapping_len;
                         }
                     }
-
                     let subgraph_nodes = Self::nodes_from_graph(
                         &model,
                         _run_args,
@@ -248,15 +246,12 @@ impl Model {
                         Some(input_scales.clone()),
                         Some(output_scale_override),
                     );
-
                     let subgraph = ParsedNodes {
                         nodes: subgraph_nodes,
                         inputs: model.inputs.iter().map(|o| o.node).collect(),
                         outputs: model.outputs.iter().map(|o| (o.node, o.slot)).collect(),
                     };
-
                     let om = Model { graph: subgraph };
-
                     let out_dims = node_output_shapes(n, symbol_values).unwrap();
                     let mut output_scales = BTreeMap::new();
                     for (i, _mapping) in b.output_mapping.iter().enumerate() {
