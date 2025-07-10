@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::ops::Index;
 use std::sync::{Arc, Mutex};
 
+use tracer::instruction::RV32IMCycle;
+
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
@@ -31,6 +33,8 @@ pub enum OpeningsKeys {
     SpartanZ(JoltR1CSInputs),
     InstructionTypeFlag(usize),
     InstructionRa(usize),
+    // the claim of AddOperand + MultiplyOperands + SubtractOperands + Advice at r_cycle_prime
+    InstructionRafFlag,
 }
 
 impl<'a, F: JoltField, PCS: CommitmentScheme<T, Field = F>, T: Transcript>
@@ -57,7 +61,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<T, Field = F>, T: Transcript>
     }
 
     pub fn openings(&self, idx: OpeningsKeys) -> F {
-        self.openings.lock().unwrap().get(&idx).unwrap().1
+        self.openings
+            .lock()
+            .unwrap()
+            .get(&idx)
+            .unwrap_or_else(|| panic!("No openings for {idx:?}"))
+            .1
     }
 
     pub fn openings_point(&self, idx: OpeningsKeys) -> Vec<F> {
@@ -68,5 +77,42 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<T, Field = F>, T: Transcript>
             .unwrap_or_else(|| panic!("No openings for {idx:?}"))
             .0
             .clone()
+    }
+
+    pub fn temp_populate_openings(&mut self, trace: &[RV32IMCycle], r_cycle: Vec<F>) {
+        use crate::jolt::instruction::LookupQuery;
+        use crate::jolt::vm::instruction_lookups::WORD_SIZE;
+        use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
+        use rayon::prelude::*;
+        self.openings.lock().unwrap().insert(
+            OpeningsKeys::SpartanZ(JoltR1CSInputs::Imm),
+            (r_cycle.clone(), F::zero()),
+        );
+        // TODO: Get this from spartan, right now calculated here
+        let (left_operand_evals, right_operand_evals): (Vec<u64>, Vec<u64>) = trace
+            .par_iter()
+            .map(LookupQuery::<WORD_SIZE>::to_lookup_operands)
+            .collect();
+        let right_operand_claim =
+            MultilinearPolynomial::from(right_operand_evals).evaluate(&r_cycle);
+        let left_operand_claim = MultilinearPolynomial::from(left_operand_evals).evaluate(&r_cycle);
+        let lookup_output_evals: Vec<u64> = trace
+            .par_iter()
+            .map(LookupQuery::<WORD_SIZE>::to_lookup_output)
+            .collect();
+        let lookup_output_claim =
+            MultilinearPolynomial::from(lookup_output_evals).evaluate(&r_cycle);
+        self.openings.lock().unwrap().insert(
+            OpeningsKeys::SpartanZ(JoltR1CSInputs::RightLookupOperand),
+            (r_cycle.clone(), right_operand_claim),
+        );
+        self.openings.lock().unwrap().insert(
+            OpeningsKeys::SpartanZ(JoltR1CSInputs::LeftLookupOperand),
+            (r_cycle.clone(), left_operand_claim),
+        );
+        self.openings.lock().unwrap().insert(
+            OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput),
+            (r_cycle.clone(), lookup_output_claim),
+        );
     }
 }
