@@ -91,61 +91,111 @@ mod tests {
 
     #[test]
     fn test_keccak_state_equivalence() {
-        // 1. Set up initial state and instruction
-        let mut initial_state = [0u64; 25];
-        for i in 0..25 {
-            initial_state[i] = (i * 3 + 5) as u64; // Simple, predictable pattern
-        }
+        // Test vectors: (description, initial_state)
+        let test_vectors = vec![
+            ("zero state", [0u64; 25]),
+            ("simple pattern", {
+                let mut state = [0u64; 25];
+                for i in 0..25 {
+                    state[i] = (i * 3 + 5) as u64;
+                }
+                state
+            }),
+            (
+                "xkcp first permutation result",
+                [
+                    0xF1258F7940E1DDE7,
+                    0x84D5CCF933C0478A,
+                    0xD598261EA65AA9EE,
+                    0xBD1547306F80494D,
+                    0x8B284E056253D057,
+                    0xFF97A42D7F8E6FD4,
+                    0x90FEE5A0A44647C4,
+                    0x8C5BDA0CD6192E76,
+                    0xAD30A6F71B19059C,
+                    0x30935AB7D08FFC64,
+                    0xEB5AA93F2317D635,
+                    0xA9A6E6260D712103,
+                    0x81A57C16DBCF555F,
+                    0x43B831CD0347C826,
+                    0x01F22F1A11A5569F,
+                    0x05E5635A21D9AE61,
+                    0x64BEFEF28CC970F2,
+                    0x613670957BC46611,
+                    0xB87C5A554FD00ECB,
+                    0x8C3EE88A1CCF32C8,
+                    0x940C7922AE3A2614,
+                    0x1841F924A2C509E4,
+                    0x16F53526E70465C2,
+                    0x75F644E97F30A13B,
+                    0xEAF1FF7B5CECA249,
+                ],
+            ),
+        ];
 
-        let instruction = KECCAK256 {
-            address: 0,
-            operands: FormatR {
-                rs1: 10,
-                rs2: 0,
-                rd: 0,
-            },
-            virtual_sequence_remaining: None,
-        };
+        for (description, initial_state) in test_vectors {
+            println!("\n=== Testing: {} ===", description);
 
-        // 2. Set up the "exec" path CPU
-        let mut cpu_exec = Cpu::new(Box::new(DefaultTerminal::new()));
-        cpu_exec.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
-        let base_addr = DRAM_BASE;
-        cpu_exec.x[10] = base_addr as i64;
-        for (i, &lane) in initial_state.iter().enumerate() {
-            cpu_exec
-                .mmu
-                .store_doubleword(base_addr + (i * 8) as u64, lane)
-                .unwrap();
-        }
+            let instruction = KECCAK256 {
+                address: 0,
+                operands: FormatR {
+                    rs1: 10,
+                    rs2: 0,
+                    rd: 0,
+                },
+                virtual_sequence_remaining: None,
+            };
 
-        // 3. Set up the "trace" path CPU (must be identical)
-        let mut cpu_trace = Cpu::new(Box::new(DefaultTerminal::new()));
-        cpu_trace.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
-        cpu_trace.x[10] = base_addr as i64;
-        for (i, &lane) in initial_state.iter().enumerate() {
-            cpu_trace
-                .mmu
-                .store_doubleword(base_addr + (i * 8) as u64, lane)
-                .unwrap();
-        }
-
-        // 4. Run both paths
-        instruction.exec(&mut cpu_exec, &mut ());
-        instruction.trace(&mut cpu_trace, None);
-
-        // 5. Assert that the final memory states are identical
-        for i in 0..25 {
-            let addr = base_addr + (i * 8) as u64;
-            let val_exec = cpu_exec.mmu.load_doubleword(addr).unwrap().0;
-            let val_trace = cpu_trace.mmu.load_doubleword(addr).unwrap().0;
-            if val_exec != val_trace {
-                println!(
-                    "Mismatch at lane {}: exec {:#x}, trace {:#x}",
-                    i, val_exec, val_trace
-                );
+            // Set up the "exec" path CPU
+            let mut cpu_exec = Cpu::new(Box::new(DefaultTerminal::new()));
+            cpu_exec.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
+            let base_addr = DRAM_BASE;
+            cpu_exec.x[10] = base_addr as i64;
+            for (i, &lane) in initial_state.iter().enumerate() {
+                cpu_exec
+                    .mmu
+                    .store_doubleword(base_addr + (i * 8) as u64, lane)
+                    .unwrap();
             }
-            assert_eq!(val_exec, val_trace, "State mismatch at lane {}", i);
+
+            // Set up the "trace" path CPU (must be identical)
+            let mut cpu_trace = Cpu::new(Box::new(DefaultTerminal::new()));
+            cpu_trace.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
+            cpu_trace.x[10] = base_addr as i64;
+            for (i, &lane) in initial_state.iter().enumerate() {
+                cpu_trace
+                    .mmu
+                    .store_doubleword(base_addr + (i * 8) as u64, lane)
+                    .unwrap();
+            }
+
+            // Run both paths
+            instruction.exec(&mut cpu_exec, &mut ());
+            instruction.trace(&mut cpu_trace, None);
+
+            // Assert that the final memory states are identical
+            let mut all_match = true;
+            for i in 0..25 {
+                let addr = base_addr + (i * 8) as u64;
+                let val_exec = cpu_exec.mmu.load_doubleword(addr).unwrap().0;
+                let val_trace = cpu_trace.mmu.load_doubleword(addr).unwrap().0;
+                if val_exec != val_trace {
+                    println!(
+                        "Mismatch at lane {}: exec 0x{:016x}, trace 0x{:016x}",
+                        i, val_exec, val_trace
+                    );
+                    all_match = false;
+                }
+            }
+
+            if all_match {
+                println!(
+                    "✓ {} - Virtual sequence matches direct execution",
+                    description
+                );
+            } else {
+                panic!("Virtual sequence test failed for: {}", description);
+            }
         }
     }
 
@@ -2403,6 +2453,268 @@ mod tests {
                 "Rotation test case {} failed: rotate 0x{:016x} by {} should be 0x{:016x}, got 0x{:016x}",
                 i, input, rotation, expected, result
             );
+        }
+    }
+
+    #[test]
+    fn test_debug_virtual_sequence_basics() {
+        println!("=== Debugging Virtual Sequence Basics ===");
+
+        // Test 1: Check if direct exec works with zero state
+        let mut cpu_exec = Cpu::new(Box::new(DefaultTerminal::new()));
+        cpu_exec.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
+        let base_addr = DRAM_BASE;
+        cpu_exec.x[10] = base_addr as i64;
+
+        // Store zero state
+        let zero_state = [0u64; 25];
+        for (i, &lane) in zero_state.iter().enumerate() {
+            cpu_exec
+                .mmu
+                .store_doubleword(base_addr + (i * 8) as u64, lane)
+                .expect("Failed to store zero state");
+        }
+
+        let instruction = KECCAK256 {
+            address: 0,
+            operands: FormatR {
+                rs1: 10,
+                rs2: 0,
+                rd: 0,
+            },
+            virtual_sequence_remaining: None,
+        };
+
+        // Execute directly
+        instruction.exec(&mut cpu_exec, &mut ());
+
+        // Check result
+        let mut exec_result = [0u64; 25];
+        for i in 0..25 {
+            exec_result[i] = cpu_exec
+                .mmu
+                .load_doubleword(base_addr + (i * 8) as u64)
+                .unwrap()
+                .0;
+        }
+
+        // Expected result from XKCP test vectors
+        let expected_result = [
+            0xF1258F7940E1DDE7,
+            0x84D5CCF933C0478A,
+            0xD598261EA65AA9EE,
+            0xBD1547306F80494D,
+            0x8B284E056253D057,
+            0xFF97A42D7F8E6FD4,
+            0x90FEE5A0A44647C4,
+            0x8C5BDA0CD6192E76,
+            0xAD30A6F71B19059C,
+            0x30935AB7D08FFC64,
+            0xEB5AA93F2317D635,
+            0xA9A6E6260D712103,
+            0x81A57C16DBCF555F,
+            0x43B831CD0347C826,
+            0x01F22F1A11A5569F,
+            0x05E5635A21D9AE61,
+            0x64BEFEF28CC970F2,
+            0x613670957BC46611,
+            0xB87C5A554FD00ECB,
+            0x8C3EE88A1CCF32C8,
+            0x940C7922AE3A2614,
+            0x1841F924A2C509E4,
+            0x16F53526E70465C2,
+            0x75F644E97F30A13B,
+            0xEAF1FF7B5CECA249,
+        ];
+
+        let exec_correct = exec_result == expected_result;
+        println!("Direct exec correct: {}", exec_correct);
+
+        if !exec_correct {
+            println!("Direct exec result:");
+            for i in 0..5 {
+                println!(
+                    "  Lane {}: 0x{:016x} (expected 0x{:016x})",
+                    i, exec_result[i], expected_result[i]
+                );
+            }
+        }
+
+        // Test 2: Check virtual sequence generation
+        let virtual_sequence = instruction.virtual_sequence();
+        println!(
+            "Virtual sequence has {} instructions",
+            virtual_sequence.len()
+        );
+
+        // Test 3: Execute virtual sequence step by step
+        let mut cpu_trace = Cpu::new(Box::new(DefaultTerminal::new()));
+        cpu_trace.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
+        cpu_trace.x[10] = base_addr as i64;
+
+        // Store zero state
+        for (i, &lane) in zero_state.iter().enumerate() {
+            cpu_trace
+                .mmu
+                .store_doubleword(base_addr + (i * 8) as u64, lane)
+                .expect("Failed to store zero state");
+        }
+
+        // Execute virtual sequence using trace method
+        instruction.trace(&mut cpu_trace, None);
+
+        // Check result
+        let mut trace_result = [0u64; 25];
+        for i in 0..25 {
+            trace_result[i] = cpu_trace
+                .mmu
+                .load_doubleword(base_addr + (i * 8) as u64)
+                .unwrap()
+                .0;
+        }
+
+        println!("Virtual sequence result:");
+        for i in 0..5 {
+            println!(
+                "  Lane {}: 0x{:016x} (expected 0x{:016x})",
+                i, trace_result[i], expected_result[i]
+            );
+        }
+
+        let trace_correct = trace_result == expected_result;
+        println!("Virtual sequence correct: {}", trace_correct);
+
+        if !trace_correct {
+            println!("First mismatch:");
+            for i in 0..25 {
+                if trace_result[i] != expected_result[i] {
+                    println!(
+                        "  Lane {}: got 0x{:016x}, expected 0x{:016x}",
+                        i, trace_result[i], expected_result[i]
+                    );
+                    break;
+                }
+            }
+        }
+
+        // If direct exec works but virtual sequence doesn't, the issue is in virtual sequence
+        if exec_correct && !trace_correct {
+            println!("❌ ISSUE IDENTIFIED: Direct execution works, virtual sequence fails");
+            println!("The problem is in the virtual sequence implementation or execution");
+        } else if !exec_correct {
+            println!("❌ ISSUE: Direct execution itself is broken");
+        } else {
+            println!("✅ Both direct execution and virtual sequence work correctly");
+        }
+    }
+
+    #[test]
+    fn test_debug_store_state_issue() {
+        println!("=== Debugging Store State Issue ===");
+
+        // Test 1: Check if the full virtual sequence stores correctly
+        let mut cpu = Cpu::new(Box::new(DefaultTerminal::new()));
+        cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
+        let base_addr = DRAM_BASE;
+        cpu.x[10] = base_addr as i64;
+
+        // Store zero state
+        let zero_state = [0u64; 25];
+        for (i, &lane) in zero_state.iter().enumerate() {
+            cpu.mmu
+                .store_doubleword(base_addr + (i * 8) as u64, lane)
+                .expect("Failed to store zero state");
+        }
+
+        // Get virtual register mapping
+        let mut vr = [0; super::NEEDED_REGISTERS];
+        for i in 0..super::NEEDED_REGISTERS {
+            vr[i] = virtual_register_index(i as u64) as usize;
+        }
+
+        // Generate the full virtual sequence
+        let builder = super::Keccak256SequenceBuilder::new(0x1000, vr, 10, 11);
+        let full_sequence = builder.build();
+
+        println!("Full sequence has {} instructions", full_sequence.len());
+
+        // Create the instruction
+        let instruction = KECCAK256 {
+            address: 0,
+            operands: FormatR {
+                rs1: 10,
+                rs2: 0,
+                rd: 0,
+            },
+            virtual_sequence_remaining: None,
+        };
+
+        // Execute using trace() method (same as failing tests)
+        instruction.trace(&mut cpu, None);
+
+        // Check what's in memory after full sequence
+        let mut memory_result = [0u64; 25];
+        for i in 0..25 {
+            memory_result[i] = cpu
+                .mmu
+                .load_doubleword(base_addr + (i * 8) as u64)
+                .unwrap()
+                .0;
+        }
+
+        // Note: We're using trace() so we don't need to check virtual registers
+
+        println!("Memory result (first 5 lanes):");
+        for i in 0..5 {
+            println!("  Lane {}: 0x{:016x}", i, memory_result[i]);
+        }
+
+        // Virtual registers not checked when using trace() method
+
+        // Expected result
+        let expected_result = [
+            0xF1258F7940E1DDE7,
+            0x84D5CCF933C0478A,
+            0xD598261EA65AA9EE,
+            0xBD1547306F80494D,
+            0x8B284E056253D057,
+            0xFF97A42D7F8E6FD4,
+            0x90FEE5A0A44647C4,
+            0x8C5BDA0CD6192E76,
+            0xAD30A6F71B19059C,
+            0x30935AB7D08FFC64,
+            0xEB5AA93F2317D635,
+            0xA9A6E6260D712103,
+            0x81A57C16DBCF555F,
+            0x43B831CD0347C826,
+            0x01F22F1A11A5569F,
+            0x05E5635A21D9AE61,
+            0x64BEFEF28CC970F2,
+            0x613670957BC46611,
+            0xB87C5A554FD00ECB,
+            0x8C3EE88A1CCF32C8,
+            0x940C7922AE3A2614,
+            0x1841F924A2C509E4,
+            0x16F53526E70465C2,
+            0x75F644E97F30A13B,
+            0xEAF1FF7B5CECA249,
+        ];
+
+        println!("Expected result (first 5 lanes):");
+        for i in 0..5 {
+            println!("  Lane {}: 0x{:016x}", i, expected_result[i]);
+        }
+
+        // Compare
+        let memory_correct = memory_result == expected_result;
+
+        println!("Memory correct: {}", memory_correct);
+
+        if !memory_correct {
+            println!("❌ ISSUE: Virtual sequence via trace() produces wrong results!");
+            println!("The problem is in the trace() execution path");
+        } else {
+            println!("✅ Virtual sequence via trace() works correctly!");
         }
     }
 }
