@@ -740,43 +740,11 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                     )
             };
 
-            // We want to compute the evaluations of the cubic polynomial s(X) = l(X) * q(X), where
-            // l is linear, and q is quadratic, at the points {0, 2, 3}.
-            //
-            // At this point, we have
-            // - the linear polynomial, l(X) = a + bX
-            // - the quadratic polynomial, q(X) = c + dX + eX^2
-            // - the previous round's claim s(0) + s(1) = a * c + (a + b) * (c + d + e)
-            //
-            // Both l and q are represented by their evaluations at 0 and infinity. I.e., we have a, b, c,
-            // and e, but not d. We compute s by first computing l and q at points 2 and 3.
-
-            // Evaluations of the linear polynomial
-            let eq_eval_1 = gruens_B.current_scalar * gruens_B.w[gruens_B.current_index - 1];
-            let eq_eval_0 = gruens_B.current_scalar - eq_eval_1;
-            let eq_m = eq_eval_1 - eq_eval_0;
-            let eq_eval_2 = eq_eval_1 + eq_m;
-            let eq_eval_3 = eq_eval_2 + eq_m;
-
-            // Evaluations of the quadratic polynomial
-            let quadratic_eval_0 = quadratic_coeffs[0];
-            let cubic_eval_0 = eq_eval_0 * quadratic_eval_0;
-            let cubic_eval_1 = previous_claim - cubic_eval_0;
-            // q(1) = c + d + e
-            let quadratic_eval_1 = cubic_eval_1 / eq_eval_1;
-            // q(2) = c + 2d + 4e = q(1) + q(1) - q(0) + 2e
-            let e_times_2 = quadratic_coeffs[1] + quadratic_coeffs[1];
-            let quadratic_eval_2 =
-                quadratic_eval_1 + quadratic_eval_1 - quadratic_eval_0 + e_times_2;
-            // q(3) = c + 3d + 9e = q(2) + q(1) - q(0) + 4e
-            let quadratic_eval_3 =
-                quadratic_eval_2 + quadratic_eval_1 - quadratic_eval_0 + e_times_2 + e_times_2;
-
-            [
-                cubic_eval_0,
-                eq_eval_2 * quadratic_eval_2,
-                eq_eval_3 * quadratic_eval_3,
-            ]
+            gruens_B.sumcheck_evals_from_quadratic_coeffs(
+                quadratic_coeffs[0],
+                quadratic_coeffs[1],
+                previous_claim,
+            )
             .to_vec()
         } else {
             // Last log(T) rounds of sumcheck
