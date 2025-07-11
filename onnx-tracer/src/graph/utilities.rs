@@ -963,7 +963,6 @@ pub fn new_op_from_onnx(
         "Sign" => SupportedOp::Nonlinear(LookupOp::Sign),
         "Pow" => {
             // Extract the slope layer hyperparams from a const
-
             // if param_visibility.is_public() {
             if let Some(c) = inputs[1].opkind().get_mutable_constant() {
                 inputs[1].decrement_use();
@@ -1423,9 +1422,7 @@ pub fn homogenize_input_scales(
     if relevant_input_scales.windows(2).all(|w| w[0] == w[1]) {
         return Ok(op);
     }
-
     let mut multipliers: Vec<u128> = vec![1; input_scales.len()];
-
     let max_scale = input_scales.iter().max().ok_or("no max scale")?;
     let _ = input_scales
         .iter()
@@ -1441,7 +1438,6 @@ pub fn homogenize_input_scales(
             }
         })
         .collect_vec();
-
     // only rescale if need to
     if multipliers.iter().any(|&x| x > 1) {
         Ok(Box::new(Rescaled {
