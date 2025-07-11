@@ -746,7 +746,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         assert_eq!(self.compressed_polys.len(), num_rounds);
         for i in 0..self.compressed_polys.len() {
             // verify degree bound
-            if self.compressed_polys[i].degree() != degree_bound {
+            if self.compressed_polys[i].degree() > degree_bound {
                 return Err(ProofVerifyError::InvalidInputLength(
                     degree_bound,
                     self.compressed_polys[i].degree(),

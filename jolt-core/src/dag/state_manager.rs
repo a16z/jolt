@@ -86,8 +86,11 @@ impl<F: JoltField> From<Vec<F>> for OpeningPoint<BIG_ENDIAN, F> {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
 pub enum OpeningsKeys {
     SpartanZ(JoltR1CSInputs),
-    InstructionTypeFlag(usize),
+    LookupTableFlag(usize),
     InstructionRa(usize),
+    InstructionBooleanityRa(usize),
+    InstructionHammingRa(usize),
+    InstructionRafFlag,
     OuterSumcheckAz,        // Az claim from outer sumcheck
     OuterSumcheckBz,        // Bz claim from outer sumcheck
     OuterSumcheckCz,        // Cz claim from outer sumcheck

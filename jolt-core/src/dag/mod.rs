@@ -110,12 +110,12 @@ mod tests {
 
         // Run prove
         if let Err(e) = dag.prove() {
-            panic!("DAG prove failed: {}", e);
+            panic!("DAG prove failed: {e}");
         }
 
         // Now verify the proof
         if let Err(e) = dag.verify() {
-            panic!("DAG verify failed: {}", e);
+            panic!("DAG verify failed: {e}");
         }
 
         println!("DAG fib_e2e OK!");
