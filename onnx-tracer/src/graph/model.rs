@@ -558,7 +558,7 @@ impl Model {
                         tabled::settings::style::BorderColor::default()
                             .top(tabled::settings::Color::BG_YELLOW),
                     );
-                    string = format!("{} \n\n  MAIN GRAPH \n\n{}", string, table);
+                    string = format!("{string} \n\n  MAIN GRAPH \n\n{table}",);
                     node_accumulator = vec![];
                     string = format!(
                         "{}\n\n SUBGRAPH AT IDX {} WITH INPUTS {:?}\n{}",
@@ -572,7 +572,7 @@ impl Model {
         }
         let mut table = Table::new(node_accumulator.iter());
         table.with(tabled::settings::Style::modern());
-        format!("{} \n{}", string, table)
+        format!("{string} \n{table}",)
     }
 }
 

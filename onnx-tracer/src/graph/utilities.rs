@@ -1160,7 +1160,7 @@ pub fn new_op_from_onnx(
             // and this is the only way I can think of
             // see https://github.com/sonos/tract/issues/324
 
-            let resize_node = format!("{:?}", node);
+            let resize_node = format!("{node:?}",);
 
             if !resize_node.contains("interpolator: Nearest")
                 && !resize_node.contains("nearest: Floor")
@@ -1346,7 +1346,7 @@ dimensions"
             SupportedOp::Linear(PolyOp::Flatten(new_dims))
         }
         c => {
-            warn!("Unknown op: {}", c);
+            warn!("Unknown op: {c}");
             SupportedOp::Unknown(crate::circuit::ops::Unknown)
         }
     };

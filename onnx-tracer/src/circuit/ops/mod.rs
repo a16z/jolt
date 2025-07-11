@@ -2,7 +2,7 @@ use crate::{
     circuit::ops::lookup::LookupOp,
     graph::utilities::quantize_tensor,
     tensor::{Tensor, TensorError, TensorType},
-    trace_types::{ONNXInstr, ONNXOpcode},
+    trace_types::ONNXOpcode,
 };
 use halo2curves::ff::PrimeField;
 use serde::{Deserialize, Serialize};
