@@ -22,7 +22,8 @@ use tract_onnx::{
     prelude::{tract_itertools::Itertools, Node as OnnxNode, SymbolValues, TypedFact, TypedOp},
 };
 
-// /// A node's input is a tensor from another node's output.
+/// Represents a node output connection as (node_index, output_slot).
+/// A node's input is a tensor from another node's output.
 pub type Outlet = (usize, usize);
 
 /// A single operation in a [crate::graph::Model].
@@ -47,13 +48,39 @@ pub struct Node {
 }
 
 impl Node {
-    /// Converts a tract [OnnxNode] into an ezkl [Node].
-    /// # Arguments:
-    /// * `node` - [OnnxNode]
-    /// * `other_nodes` - [BTreeMap] of other previously initialized [Node]s in the
-    ///   computational graph.
-    ///  * `public_params` - flag if parameters of model are public
-    ///  * `idx` - The node's unique identifier.
+    /// Constructs a new [`Node`] from a given tract [`OnnxNode`], integrating it into the computational graph.
+    ///
+    /// # Arguments
+    /// * `node` - The tract [`OnnxNode`] to convert.
+    /// * `other_nodes` - A mutable reference to a [`BTreeMap`] containing previously initialized [`Node`]s in the graph.
+    /// * `scales` - Reference to [`VarScales`] for managing scale propagation.
+    /// * `idx` - The unique identifier for the new node.
+    /// * `symbol_values` - Reference to [`SymbolValues`] for resolving symbolic dimensions.
+    ///
+    /// # Returns
+    /// Returns a new [`Node`] instance representing the converted ONNX node, with its operation, inputs, output shape, scale, and usage count properly set up.
+    ///
+    /// # Step-by-step Functionality
+    /// 1. **Logging:** Emits trace logs for the node and its operation for debugging purposes.
+    /// 2. **Usage Counting:** Determines how many times this node's output is used in the graph, which is important for optimization (e.g., in-place rescaling of constants).
+    /// 3. **Input Collection:** Collects the indices of input nodes and retrieves their corresponding [`Node`] objects from `other_nodes`.
+    /// 4. **Operation Construction:** Calls `new_op_from_onnx` to parse and construct the operation (`opkind`) for this node, and identifies any unused input indices.
+    /// 5. **Node Map Update:** Updates `other_nodes` with any new or modified input nodes.
+    /// 6. **Input Pruning:** Marks and removes unused inputs based on `deleted_indices`.
+    /// 7. **Input Scale Gathering:** Collects the output scales of each input node to prepare for scale propagation.
+    /// 8. **Constant Rescaling:** For operations requiring homogeneous input scales, automatically rescales constants that are only used once to match the required scale, updating the corresponding input nodes.
+    /// 9. **Homogeneous Rescaling:** Applies homogeneous rescaling to the operation if required, ensuring all input scales are consistent.
+    /// 10. **Global Scale Rebase:** Rebases the operation's output scale to the global maximum scale, ensuring consistent fixed-point precision across the graph.
+    /// 11. **Output Shape Resolution:** Determines the output shape of the node using `node_output_shapes`, resolving symbolic dimensions as needed.
+    /// 12. **Output Shape Adjustment:** Ensures the output shape is non-empty, defaulting to `[1]` if necessary.
+    /// 13. **Node Construction:** Returns a new [`Node`] instance with all fields (index, operation, inputs, output dimensions, output scale, and usage count) properly initialized.
+    ///
+    /// # Panics
+    /// Panics if any required input node is missing from `other_nodes`, or if operation construction or scale propagation fails.
+    ///
+    /// # Notes
+    /// - This function not only constructs a new [`Node`], but also mutates `other_nodes` to reflect any changes to input nodes (e.g., after rescaling constants).
+    /// - The function ensures that all scale and shape propagation is handled consistently, which is critical for correct and efficient graph execution.
     pub fn new(
         node: OnnxNode<TypedFact, Box<dyn TypedOp>>,
         other_nodes: &mut BTreeMap<usize, NodeType>,
@@ -63,6 +90,11 @@ impl Node {
     ) -> Self {
         trace!("Create {node:?}",);
         trace!("Create op {:?}", node.op);
+        // Determine how many times this node's output is used in the graph.
+        // This is important for optimizations such as rescaling constants:
+        // if a constant is only used once, we can safely rescale it in-place
+        // to match the consumer's scale, which avoids unnecessary rescaling ops.
+        // For output nodes (with no successors), we ensure num_uses is at least 1.
         let num_uses = std::cmp::max(
             node.outputs
                 .iter()
@@ -73,18 +105,23 @@ impl Node {
         );
         // load the node inputs
         let mut inputs = vec![];
-        // we can only take the inputs as mutable once -- so we need to collect them first
+        // Collect (node index, slot index) pairs for each input of the current node.
+        // This allows us to later fetch and process the actual input nodes from `other_nodes`.
+        //
+        // Note: we can only take the inputs as mutable once -- so we need to collect them first
         let mut input_ids = node
             .inputs
             .iter()
             .map(|i| (i.node, i.slot))
             .collect::<Vec<_>>();
+        // For each input (by node index), fetch the corresponding Node from other_nodes and push it to inputs.
+        // This is necessary because we need the actual Node objects (not just their indices)
+        // in order to construct the new operation and handle scale/shape propagation.
         input_ids.iter().for_each(|(i, _)| {
             inputs.push(other_nodes.get(i).unwrap().clone());
         });
         let (mut opkind, deleted_indices) =
-            new_op_from_onnx(idx, scales, node.clone(), &mut inputs, symbol_values).unwrap(); // parses the op name
-                                                                                              // we can only take the inputs as mutable once -- so we need to collect them first
+            new_op_from_onnx(idx, scales, node.clone(), &mut inputs, symbol_values).unwrap(); // parses the op name                                                                                  // we can only take the inputs as mutable once -- so we need to collect them first
         other_nodes.extend(
             inputs
                 .iter()
@@ -97,10 +134,8 @@ impl Node {
                 *idx = usize::MAX;
             }
         });
-
         // remove the inputs that are not used
         input_ids.retain(|(idx, _)| *idx != usize::MAX);
-
         // rescale the inputs if necessary to get consistent fixed points
         let mut in_scales: Vec<crate::Scale> = input_ids
             .iter()
@@ -109,7 +144,6 @@ impl Node {
                 inputs[idx].out_scales()[*outlet]
             })
             .collect::<Vec<_>>();
-
         let homogenous_inputs = opkind.requires_homogenous_input_scales();
         // autoamtically increases a constant's scale if it is only used once and
         for input in homogenous_inputs
@@ -138,7 +172,6 @@ impl Node {
                 warn!("input {input} not found for rescaling, skipping ...",);
             }
         }
-
         opkind = opkind.homogenous_rescale(in_scales.clone()).unwrap().into();
         let mut out_scale = opkind.out_scale(in_scales.clone()).unwrap();
         // rescale the inputs if necessary to get consistent fixed points, we
@@ -146,16 +179,13 @@ impl Node {
         let global_scale = scales.get_max();
         opkind = RebaseScale::rebase(opkind, global_scale, out_scale, scales.rebase_multiplier);
         out_scale = opkind.out_scale(in_scales).unwrap();
-
         // get the output shape
         let out_dims = node_output_shapes(&node, symbol_values).unwrap();
         // nodes vs subgraphs always have a single output
         let mut out_dims = out_dims[0].clone();
-
         if out_dims.is_empty() {
             out_dims = vec![1];
         }
-
         Node {
             idx,
             opkind,
