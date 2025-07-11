@@ -715,12 +715,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                             })
                             .reduce(
                                 || [F::zero(); DEGREE - 1],
-                                |running, new| {
-                                    [
-                                        running[0] + new[0],
-                                        running[1] + new[1],
-                                    ]
-                                },
+                                |running, new| [running[0] + new[0], running[1] + new[1]],
                             );
 
                         // TODO(hamlinb): factory out E_out
@@ -731,12 +726,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                     })
                     .reduce(
                         || [F::zero(); DEGREE - 1],
-                        |running, new| {
-                            [
-                                running[0] + new[0],
-                                running[1] + new[1],
-                            ]
-                        },
+                        |running, new| [running[0] + new[0], running[1] + new[1]],
                     )
             };
 
@@ -776,7 +766,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                 cubic_eval_0,
                 eq_eval_2 * quadratic_eval_2,
                 eq_eval_3 * quadratic_eval_3,
-            ].to_vec()
+            ]
+            .to_vec()
         } else {
             // Last log(T) rounds of sumcheck
 
