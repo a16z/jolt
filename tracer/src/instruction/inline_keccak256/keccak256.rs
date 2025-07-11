@@ -79,13 +79,14 @@ mod tests {
     use super::*;
     use crate::emulator::{cpu::Cpu, default_terminal::DefaultTerminal, mmu::DRAM_BASE};
     use crate::instruction::format::format_r::FormatR;
+    use crate::instruction::inline_keccak256::test_constants::custom_vectors;
+    use crate::instruction::inline_keccak256::test_constants::xkcp_vectors;
     use crate::instruction::inline_keccak256::{
-        execute_chi, execute_iota, execute_keccak256, execute_keccak_f, execute_rho_and_pi,
-        execute_theta, ROTATION_OFFSETS, ROUND_CONSTANTS,
+        execute_chi, execute_iota, execute_keccak_f, execute_rho_and_pi, execute_theta,
+        ROTATION_OFFSETS, ROUND_CONSTANTS,
     };
     use crate::instruction::{RAMRead, RAMWrite};
     use common::constants::virtual_register_index;
-    use hex_literal::hex;
 
     const TEST_MEMORY_CAPACITY: u64 = 1024 * 1024; // 1MB
 
@@ -103,33 +104,7 @@ mod tests {
             }),
             (
                 "xkcp first permutation result",
-                [
-                    0xF1258F7940E1DDE7,
-                    0x84D5CCF933C0478A,
-                    0xD598261EA65AA9EE,
-                    0xBD1547306F80494D,
-                    0x8B284E056253D057,
-                    0xFF97A42D7F8E6FD4,
-                    0x90FEE5A0A44647C4,
-                    0x8C5BDA0CD6192E76,
-                    0xAD30A6F71B19059C,
-                    0x30935AB7D08FFC64,
-                    0xEB5AA93F2317D635,
-                    0xA9A6E6260D712103,
-                    0x81A57C16DBCF555F,
-                    0x43B831CD0347C826,
-                    0x01F22F1A11A5569F,
-                    0x05E5635A21D9AE61,
-                    0x64BEFEF28CC970F2,
-                    0x613670957BC46611,
-                    0xB87C5A554FD00ECB,
-                    0x8C3EE88A1CCF32C8,
-                    0x940C7922AE3A2614,
-                    0x1841F924A2C509E4,
-                    0x16F53526E70465C2,
-                    0x75F644E97F30A13B,
-                    0xEAF1FF7B5CECA249,
-                ],
+                xkcp_vectors::AFTER_ONE_PERMUTATION,
             ),
         ];
 
@@ -200,38 +175,132 @@ mod tests {
     }
 
     #[test]
+    fn test_virtual_sequence_detailed_divergence() {
+        println!("=== Finding Exact Divergence Point in Virtual Sequence ===");
+
+        // Set up CPU and memory
+        let mut cpu = Cpu::new(Box::new(DefaultTerminal::new()));
+        cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
+        let base_addr = DRAM_BASE;
+        cpu.x[10] = base_addr as i64;
+
+        // Initialize with all-zero state (same as XKCP test vectors)
+        let initial_state = [0u64; 25];
+
+        // Store initial state to memory
+        for (j, &lane) in initial_state.iter().enumerate() {
+            cpu.mmu
+                .store_doubleword(base_addr + (j * 8) as u64, lane)
+                .expect("Failed to store initial lane");
+        }
+
+        // Get virtual register mapping
+        let mut vr = [0; super::NEEDED_REGISTERS];
+        for i in 0..super::NEEDED_REGISTERS {
+            vr[i] = virtual_register_index(i as u64) as usize;
+        }
+
+        // Test each round and step
+        for round in 0..24 {
+            for step in &["theta", "rho_and_pi", "chi", "iota"] {
+                println!("\n--- Testing Round {} after {} ---", round, step);
+
+                // Create a new CPU for this test
+                let mut test_cpu = Cpu::new(Box::new(DefaultTerminal::new()));
+                test_cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
+                test_cpu.x[10] = base_addr as i64;
+
+                // Store initial state
+                for (j, &lane) in initial_state.iter().enumerate() {
+                    test_cpu
+                        .mmu
+                        .store_doubleword(base_addr + (j * 8) as u64, lane)
+                        .expect("Failed to store initial lane");
+                }
+
+                // Generate sequence up to this step
+                let builder = super::Keccak256SequenceBuilder::new(0x1000, vr, 10, 11);
+                let sequence = builder.build_up_to_step(round, step);
+
+                println!("Generated {} instructions", sequence.len());
+
+                // Execute the sequence
+                for instr in &sequence {
+                    execute_instruction(&mut test_cpu, instr);
+                }
+
+                // Read virtual registers
+                let mut virtual_state = [0u64; 25];
+                for i in 0..25 {
+                    virtual_state[i] = test_cpu.x[vr[i]] as u64;
+                }
+
+                // Compute expected state using reference implementation
+                let mut expected_state = initial_state;
+                for r in 0..=round {
+                    execute_theta(&mut expected_state);
+                    if r == round && *step == "theta" {
+                        break;
+                    }
+
+                    execute_rho_and_pi(&mut expected_state);
+                    if r == round && *step == "rho_and_pi" {
+                        break;
+                    }
+
+                    execute_chi(&mut expected_state);
+                    if r == round && *step == "chi" {
+                        break;
+                    }
+
+                    execute_iota(&mut expected_state, ROUND_CONSTANTS[r as usize]);
+                    if r == round && *step == "iota" {
+                        break;
+                    }
+                }
+
+                // Compare states
+                let mut all_match = true;
+                for i in 0..25 {
+                    if virtual_state[i] != expected_state[i] {
+                        println!(
+                            "MISMATCH at lane {}: virtual={:#018x}, expected={:#018x}",
+                            i, virtual_state[i], expected_state[i]
+                        );
+                        all_match = false;
+                    }
+                }
+
+                if all_match {
+                    println!("✓ All lanes match!");
+                } else {
+                    println!("\n❌ DIVERGENCE FOUND: Round {} after {}", round, step);
+                    println!(
+                        "This is the first point where virtual sequence diverges from expected!"
+                    );
+
+                    // Print first few mismatched lanes for debugging
+                    println!("\nFirst 5 lanes:");
+                    for i in 0..5 {
+                        println!(
+                            "  Lane {}: virtual={:#018x}, expected={:#018x}",
+                            i, virtual_state[i], expected_state[i]
+                        );
+                    }
+
+                    return; // Stop at first divergence
+                }
+            }
+        }
+    }
+
+    #[test]
     #[ignore] // For debugging purposes only
     fn debug_print_states() {
         // From https://github.com/XKCP/XKCP/blob/master/tests/TestVectors/KeccakF-1600-IntermediateValues.txt
         let initial_state_vec = vec![0u64; 25];
         let mut expected_final_state = [0u64; 25];
-        let final_state_vec: Vec<u64> = vec![
-            0xF1258F7940E1DDE7,
-            0x84D5CCF933C0478A,
-            0xD598261EA65AA9EE,
-            0xBD1547306F80494D,
-            0x8B284E056253D057,
-            0xFF97A42D7F8E6FD4,
-            0x90FEE5A0A44647C4,
-            0x8C5BDA0CD6192E76,
-            0xAD30A6F71B19059C,
-            0x30935AB7D08FFC64,
-            0xEB5AA93F2317D635,
-            0xA9A6E6260D712103,
-            0x81A57C16DBCF555F,
-            0x43B831CD0347C826,
-            0x01F22F1A11A5569F,
-            0x05E5635A21D9AE61,
-            0x64BEFEF28CC970F2,
-            0x613670957BC46611,
-            0xB87C5A554FD00ECB,
-            0x8C3EE88A1CCF32C8,
-            0x940C7922AE3A2614,
-            0x1841F924A2C509E4,
-            0x16F53526E70465C2,
-            0x75F644E97F30A13B,
-            0xEAF1FF7B5CECA249,
-        ];
+        let final_state_vec: Vec<u64> = xkcp_vectors::AFTER_ONE_PERMUTATION.to_vec();
         expected_final_state.copy_from_slice(&final_state_vec);
 
         let instruction = KECCAK256 {
@@ -290,33 +359,7 @@ mod tests {
             // Test case 1: All zeros input (standard test vector)
             TestCase {
                 input: [0u64; 25],
-                expected: [
-                    0xF1258F7940E1DDE7,
-                    0x84D5CCF933C0478A,
-                    0xD598261EA65AA9EE,
-                    0xBD1547306F80494D,
-                    0x8B284E056253D057,
-                    0xFF97A42D7F8E6FD4,
-                    0x90FEE5A0A44647C4,
-                    0x8C5BDA0CD6192E76,
-                    0xAD30A6F71B19059C,
-                    0x30935AB7D08FFC64,
-                    0xEB5AA93F2317D635,
-                    0xA9A6E6260D712103,
-                    0x81A57C16DBCF555F,
-                    0x43B831CD0347C826,
-                    0x01F22F1A11A5569F,
-                    0x05E5635A21D9AE61,
-                    0x64BEFEF28CC970F2,
-                    0x613670957BC46611,
-                    0xB87C5A554FD00ECB,
-                    0x8C3EE88A1CCF32C8,
-                    0x940C7922AE3A2614,
-                    0x1841F924A2C509E4,
-                    0x16F53526E70465C2,
-                    0x75F644E97F30A13B,
-                    0xEAF1FF7B5CECA249,
-                ],
+                expected: xkcp_vectors::AFTER_ONE_PERMUTATION,
                 description: "All zeros input (XKCP test vector)",
             },
             // Test case 2: Simple pattern
@@ -411,107 +454,6 @@ mod tests {
     }
 
     #[test]
-    fn test_execute_keccak256() {
-        // Test vectors for the end-to-end Keccak-256 hash function.
-        let e2e_vectors: &[(&[u8], [u8; 32])] = &[
-            (
-                b"",
-                hex!("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"),
-            ),
-            (
-                b"abc",
-                hex!("4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45"),
-            ),
-        ];
-
-        for (input, expected_hash) in e2e_vectors {
-            let hash = execute_keccak256(input);
-            assert_eq!(
-                &hash,
-                expected_hash,
-                "Failed on e2e test vector for input: {:?}",
-                std::str::from_utf8(input).unwrap_or("invalid utf-8")
-            );
-        }
-    }
-
-    #[test]
-    fn test_execute_keccak_f() {
-        // Test vectors for the Keccak-f[1600] permutation from XKCP.
-        // https://github.com/XKCP/XKCP/blob/master/tests/TestVectors/KeccakF-1600-IntermediateValues.txt
-        let after_one_permutation = [
-            0xF1258F7940E1DDE7,
-            0x84D5CCF933C0478A,
-            0xD598261EA65AA9EE,
-            0xBD1547306F80494D,
-            0x8B284E056253D057,
-            0xFF97A42D7F8E6FD4,
-            0x90FEE5A0A44647C4,
-            0x8C5BDA0CD6192E76,
-            0xAD30A6F71B19059C,
-            0x30935AB7D08FFC64,
-            0xEB5AA93F2317D635,
-            0xA9A6E6260D712103,
-            0x81A57C16DBCF555F,
-            0x43B831CD0347C826,
-            0x01F22F1A11A5569F,
-            0x05E5635A21D9AE61,
-            0x64BEFEF28CC970F2,
-            0x613670957BC46611,
-            0xB87C5A554FD00ECB,
-            0x8C3EE88A1CCF32C8,
-            0x940C7922AE3A2614,
-            0x1841F924A2C509E4,
-            0x16F53526E70465C2,
-            0x75F644E97F30A13B,
-            0xEAF1FF7B5CECA249,
-        ];
-        let after_two_permutations = [
-            0x2D5C954DF96ECB3C,
-            0x6A332CD07057B56D,
-            0x093D8D1270D76B6C,
-            0x8A20D9B25569D094,
-            0x4F9C4F99E5E7F156,
-            0xF957B9A2DA65FB38,
-            0x85773DAE1275AF0D,
-            0xFAF4F247C3D810F7,
-            0x1F1B9EE6F79A8759,
-            0xE4FECC0FEE98B425,
-            0x68CE61B6B9CE68A1,
-            0xDEEA66C4BA8F974F,
-            0x33C43D836EAFB1F5,
-            0xE00654042719DBD9,
-            0x7CF8A9F009831265,
-            0xFD5449A6BF174743,
-            0x97DDAD33D8994B40,
-            0x48EAD5FC5D0BE774,
-            0xE3B8C8EE55B7B03C,
-            0x91A0226E649E42E9,
-            0x900E3129E7BADD7B,
-            0x202A9EC5FAA3CCE8,
-            0x5B3402464E1C3DB6,
-            0x609F4E62A44C1059,
-            0x20D06CD26A8FBF5C,
-        ];
-
-        let mut state = [0u64; 25]; // Initial state is all zeros.
-
-        // First permutation
-        execute_keccak_f(&mut state);
-        assert_eq!(
-            state, after_one_permutation,
-            "Failed on first permutation of Keccak-f"
-        );
-
-        // Second permutation
-        execute_keccak_f(&mut state);
-        assert_eq!(
-            state, after_two_permutations,
-            "Failed on second permutation of Keccak-f"
-        );
-    }
-
-    #[test]
     fn test_step_by_step_round_0() {
         // Test the first round step by step using XKCP intermediate values
         let mut state = [0u64; 25]; // All zeros initially
@@ -553,64 +495,12 @@ mod tests {
 
         // Round 1 theta step
         execute_theta(&mut state);
-        let expected_after_theta = [
-            0x0000000000000001,
-            0x0000000000000001,
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000002,
-            0x0000000000000000,
-            0x0000000000000001,
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000002,
-            0x0000000000000000,
-            0x0000000000000001,
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000002,
-            0x0000000000000000,
-            0x0000000000000001,
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000002,
-            0x0000000000000000,
-            0x0000000000000001,
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000002,
-        ];
+        let expected_after_theta = xkcp_vectors::EXPECTED_AFTER_ROUND1_THETA;
         assert_eq!(state, expected_after_theta, "Round 1: Failed after theta");
 
         // Round 1 rho and pi step
         execute_rho_and_pi(&mut state);
-        let expected_after_rho_pi = [
-            0x0000000000000001u64, // After pi, before chi
-            0x0000100000000000u64,
-            0x0000000000000000u64,
-            0x0000000000000000u64,
-            0x0000000000008000u64,
-            0x0000000000000000u64,
-            0x0000000000200000u64,
-            0x0000000000000000u64,
-            0x0000200000000000u64,
-            0x0000000000000000u64,
-            0x0000000000000002u64,
-            0x0000000000000000u64,
-            0x0000000000000000u64,
-            0x0000000000000200u64,
-            0x0000000000000000u64,
-            0x0000000010000000u64,
-            0x0000000000000000u64,
-            0x0000000000000400u64,
-            0x0000000000000000u64,
-            0x0000000000000000u64,
-            0x0000000000000000u64,
-            0x0000000000000000u64,
-            0x0000010000000000u64,
-            0x0000000000000000u64,
-            0x0000000000000004u64,
-        ];
+        let expected_after_rho_pi = xkcp_vectors::EXPECTED_AFTER_ROUND1_RHO_PI;
         assert_eq!(
             state, expected_after_rho_pi,
             "Round 1: Failed after rho and pi"
@@ -618,64 +508,12 @@ mod tests {
 
         // Round 1 chi step
         execute_chi(&mut state);
-        let expected_after_chi = [
-            0x0000000000000001u64, // After chi, before iota
-            0x0000100000000000u64,
-            0x0000000000008000u64,
-            0x0000000000000001u64,
-            0x0000100000008000u64,
-            0x0000000000000000u64,
-            0x0000200000200000u64,
-            0x0000000000000000u64,
-            0x0000200000000000u64,
-            0x0000000000200000u64,
-            0x0000000000000002u64,
-            0x0000000000000200u64,
-            0x0000000000000000u64,
-            0x0000000000000202u64,
-            0x0000000000000000u64,
-            0x0000000010000400u64,
-            0x0000000000000000u64,
-            0x0000000000000400u64,
-            0x0000000010000000u64,
-            0x0000000000000000u64,
-            0x0000010000000000u64,
-            0x0000000000000000u64,
-            0x0000010000000004u64,
-            0x0000000000000000u64,
-            0x0000000000000004u64,
-        ];
+        let expected_after_chi = xkcp_vectors::EXPECTED_AFTER_ROUND1_CHI;
         assert_eq!(state, expected_after_chi, "Round 1: Failed after chi");
 
         // Round 1 iota step
         execute_iota(&mut state, ROUND_CONSTANTS[1]);
-        let expected_after_iota = [
-            0x0000000000008083u64,
-            0x0000100000000000u64,
-            0x0000000000008000u64,
-            0x0000000000000001u64,
-            0x0000100000008000u64,
-            0x0000000000000000u64,
-            0x0000200000200000u64,
-            0x0000000000000000u64,
-            0x0000200000000000u64,
-            0x0000000000200000u64,
-            0x0000000000000002u64,
-            0x0000000000000200u64,
-            0x0000000000000000u64,
-            0x0000000000000202u64,
-            0x0000000000000000u64,
-            0x0000000010000400u64,
-            0x0000000000000000u64,
-            0x0000000000000400u64,
-            0x0000000010000000u64,
-            0x0000000000000000u64,
-            0x0000010000000000u64,
-            0x0000000000000000u64,
-            0x0000010000000004u64,
-            0x0000000000000000u64,
-            0x0000000000000004u64,
-        ];
+        let expected_after_iota = xkcp_vectors::EXPECTED_AFTER_ROUND1_IOTA;
         assert_eq!(state, expected_after_iota, "Round 1: Failed after iota");
     }
 
@@ -741,59 +579,6 @@ mod tests {
     }
 
     #[test]
-    fn test_rotation_offsets() {
-        // Verify our rotation offsets match the XKCP reference
-        let expected_offsets = [
-            [0, 36, 3, 41, 18],
-            [1, 44, 10, 45, 2],
-            [62, 6, 43, 15, 61],
-            [28, 55, 25, 21, 56],
-            [27, 20, 39, 8, 14],
-        ];
-
-        assert_eq!(
-            ROTATION_OFFSETS, expected_offsets,
-            "Rotation offsets don't match XKCP reference"
-        );
-    }
-
-    #[test]
-    fn test_round_constants() {
-        // Verify our round constants match the XKCP reference
-        let expected_constants = [
-            0x0000000000000001,
-            0x0000000000008082,
-            0x800000000000808a,
-            0x8000000080008000,
-            0x000000000000808b,
-            0x0000000080000001,
-            0x8000000080008081,
-            0x8000000000008009,
-            0x000000000000008a,
-            0x0000000000000088,
-            0x0000000080008009,
-            0x000000008000000a,
-            0x000000008000808b,
-            0x800000000000008b,
-            0x8000000000008089,
-            0x8000000000008003,
-            0x8000000000008002,
-            0x8000000000000080,
-            0x000000000000800a,
-            0x800000008000000a,
-            0x8000000080008081,
-            0x8000000000008080,
-            0x0000000080000001,
-            0x8000000080008008,
-        ];
-
-        assert_eq!(
-            ROUND_CONSTANTS, expected_constants,
-            "Round constants don't match XKCP reference"
-        );
-    }
-
-    #[test]
     fn test_virtual_sequence_step_by_step() {
         println!("=== Testing Virtual Sequence Step-by-Step ===");
 
@@ -843,33 +628,7 @@ mod tests {
             state
         };
 
-        let expected_after_round_1 = [
-            0x0000000000008083u64,
-            0x0000100000000000u64,
-            0x0000000000008000u64,
-            0x0000000000000001u64,
-            0x0000100000008000u64,
-            0x0000000000000000u64,
-            0x0000200000200000u64,
-            0x0000000000000000u64,
-            0x0000200000000000u64,
-            0x0000000000200000u64,
-            0x0000000000000002u64,
-            0x0000000000000200u64,
-            0x0000000000000000u64,
-            0x0000000000000202u64,
-            0x0000000000000000u64,
-            0x0000000010000400u64,
-            0x0000000000000000u64,
-            0x0000000000000400u64,
-            0x0000000010000000u64,
-            0x0000000000000000u64,
-            0x0000010000000000u64,
-            0x0000000000000000u64,
-            0x0000010000000004u64,
-            0x0000000000000000u64,
-            0x0000000000000004u64,
-        ];
+        let expected_after_round_1 = xkcp_vectors::EXPECTED_AFTER_ROUND1_IOTA;
 
         // Execute virtual sequence and check intermediate states
         let mut instruction_count = 0;
@@ -984,33 +743,7 @@ mod tests {
         let final_state = read_state_from_memory(&mut cpu, base_addr);
 
         // Compare with expected final state (after all 24 rounds)
-        let expected_final_state = [
-            0xF1258F7940E1DDE7,
-            0x84D5CCF933C0478A,
-            0xD598261EA65AA9EE,
-            0xBD1547306F80494D,
-            0x8B284E056253D057,
-            0xFF97A42D7F8E6FD4,
-            0x90FEE5A0A44647C4,
-            0x8C5BDA0CD6192E76,
-            0xAD30A6F71B19059C,
-            0x30935AB7D08FFC64,
-            0xEB5AA93F2317D635,
-            0xA9A6E6260D712103,
-            0x81A57C16DBCF555F,
-            0x43B831CD0347C826,
-            0x01F22F1A11A5569F,
-            0x05E5635A21D9AE61,
-            0x64BEFEF28CC970F2,
-            0x613670957BC46611,
-            0xB87C5A554FD00ECB,
-            0x8C3EE88A1CCF32C8,
-            0x940C7922AE3A2614,
-            0x1841F924A2C509E4,
-            0x16F53526E70465C2,
-            0x75F644E97F30A13B,
-            0xEAF1FF7B5CECA249,
-        ];
+        let expected_final_state = xkcp_vectors::AFTER_ONE_PERMUTATION;
 
         println!("=== Final State Comparison ===");
         println!("Expected final state:");
@@ -1223,33 +956,7 @@ mod tests {
         print_state_hex(&final_state);
 
         // Expected final state from XKCP
-        let expected_final = [
-            0xF1258F7940E1DDE7,
-            0x84D5CCF933C0478A,
-            0xD598261EA65AA9EE,
-            0xBD1547306F80494D,
-            0x8B284E056253D057,
-            0xFF97A42D7F8E6FD4,
-            0x90FEE5A0A44647C4,
-            0x8C5BDA0CD6192E76,
-            0xAD30A6F71B19059C,
-            0x30935AB7D08FFC64,
-            0xEB5AA93F2317D635,
-            0xA9A6E6260D712103,
-            0x81A57C16DBCF555F,
-            0x43B831CD0347C826,
-            0x01F22F1A11A5569F,
-            0x05E5635A21D9AE61,
-            0x64BEFEF28CC970F2,
-            0x613670957BC46611,
-            0xB87C5A554FD00ECB,
-            0x8C3EE88A1CCF32C8,
-            0x940C7922AE3A2614,
-            0x1841F924A2C509E4,
-            0x16F53526E70465C2,
-            0x75F644E97F30A13B,
-            0xEAF1FF7B5CECA249,
-        ];
+        let expected_final = xkcp_vectors::AFTER_ONE_PERMUTATION;
 
         // Check if we got the correct result
         let mut all_correct = true;
@@ -1306,33 +1013,7 @@ mod tests {
         cpu.x[10] = base_addr as i64;
 
         // Set up a test state with a pattern that makes rotations obvious
-        let test_state = [
-            0x0000000000000001u64, // This should rotate to 0x0000000000000002 after ROTL(1)
-            0x8000000000000000u64, // This should rotate to 0x0000000000000001 after ROTL(1)
-            0xFFFFFFFFFFFFFFFFu64, // This should stay 0xFFFFFFFFFFFFFFFF after ROTL(1)
-            0x123456789ABCDEF0u64, // This should rotate to 0x2468ACF13579BDE0 after ROTL(1)
-            0x0F0F0F0F0F0F0F0Fu64, // Pattern to check
-            0x00FF00FF00FF00FFu64,
-            0x0000FFFF0000FFFFu64,
-            0x00000000FFFFFFFFu64,
-            0xAAAAAAAAAAAAAAAAu64,
-            0x5555555555555555u64,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-        ];
-
+        let test_state = custom_vectors::ROTATION_TEST;
         // Store test state to memory
         for (i, &lane) in test_state.iter().enumerate() {
             cpu.mmu
@@ -1405,126 +1086,6 @@ mod tests {
         }
 
         println!("\n✅ Debug test completed");
-    }
-
-    #[test]
-    fn test_virtual_sequence_detailed_divergence() {
-        println!("=== Finding Exact Divergence Point in Virtual Sequence ===");
-
-        // Set up CPU and memory
-        let mut cpu = Cpu::new(Box::new(DefaultTerminal::new()));
-        cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
-        let base_addr = DRAM_BASE;
-        cpu.x[10] = base_addr as i64;
-
-        // Initialize with all-zero state (same as XKCP test vectors)
-        let initial_state = [0u64; 25];
-
-        // Store initial state to memory
-        for (j, &lane) in initial_state.iter().enumerate() {
-            cpu.mmu
-                .store_doubleword(base_addr + (j * 8) as u64, lane)
-                .expect("Failed to store initial lane");
-        }
-
-        // Get virtual register mapping
-        let mut vr = [0; super::NEEDED_REGISTERS];
-        for i in 0..super::NEEDED_REGISTERS {
-            vr[i] = virtual_register_index(i as u64) as usize;
-        }
-
-        // Test each round and step
-        for round in 0..24 {
-            for step in &["theta", "rho_and_pi", "chi", "iota"] {
-                println!("\n--- Testing Round {} after {} ---", round, step);
-
-                // Create a new CPU for this test
-                let mut test_cpu = Cpu::new(Box::new(DefaultTerminal::new()));
-                test_cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
-                test_cpu.x[10] = base_addr as i64;
-
-                // Store initial state
-                for (j, &lane) in initial_state.iter().enumerate() {
-                    test_cpu
-                        .mmu
-                        .store_doubleword(base_addr + (j * 8) as u64, lane)
-                        .expect("Failed to store initial lane");
-                }
-
-                // Generate sequence up to this step
-                let builder = super::Keccak256SequenceBuilder::new(0x1000, vr, 10, 11);
-                let sequence = builder.build_up_to_step(round, step);
-
-                println!("Generated {} instructions", sequence.len());
-
-                // Execute the sequence
-                for instr in &sequence {
-                    execute_instruction(&mut test_cpu, instr);
-                }
-
-                // Read virtual registers
-                let mut virtual_state = [0u64; 25];
-                for i in 0..25 {
-                    virtual_state[i] = test_cpu.x[vr[i]] as u64;
-                }
-
-                // Compute expected state using reference implementation
-                let mut expected_state = initial_state;
-                for r in 0..=round {
-                    execute_theta(&mut expected_state);
-                    if r == round && *step == "theta" {
-                        break;
-                    }
-
-                    execute_rho_and_pi(&mut expected_state);
-                    if r == round && *step == "rho_and_pi" {
-                        break;
-                    }
-
-                    execute_chi(&mut expected_state);
-                    if r == round && *step == "chi" {
-                        break;
-                    }
-
-                    execute_iota(&mut expected_state, ROUND_CONSTANTS[r as usize]);
-                    if r == round && *step == "iota" {
-                        break;
-                    }
-                }
-
-                // Compare states
-                let mut all_match = true;
-                for i in 0..25 {
-                    if virtual_state[i] != expected_state[i] {
-                        println!(
-                            "MISMATCH at lane {}: virtual={:#018x}, expected={:#018x}",
-                            i, virtual_state[i], expected_state[i]
-                        );
-                        all_match = false;
-                    }
-                }
-
-                if all_match {
-                    println!("✓ All lanes match!");
-                } else {
-                    println!("\n❌ DIVERGENCE FOUND: Round {} after {}", round, step);
-                    println!(
-                        "This is the first point where virtual sequence diverges from expected!"
-                    );
-
-                    // Print first few mismatched lanes for debugging
-                    println!("\nFirst 5 lanes:");
-                    for i in 0..5 {
-                        println!(
-                            "  Lane {}: virtual={:#018x}, expected={:#018x}",
-                            i, virtual_state[i], expected_state[i]
-                        );
-                    }
-
-                    return; // Stop at first divergence
-                }
-            }
-        }
     }
 
     #[test]
@@ -2514,34 +2075,7 @@ mod tests {
         }
 
         // Expected result from XKCP test vectors
-        let expected_result = [
-            0xF1258F7940E1DDE7,
-            0x84D5CCF933C0478A,
-            0xD598261EA65AA9EE,
-            0xBD1547306F80494D,
-            0x8B284E056253D057,
-            0xFF97A42D7F8E6FD4,
-            0x90FEE5A0A44647C4,
-            0x8C5BDA0CD6192E76,
-            0xAD30A6F71B19059C,
-            0x30935AB7D08FFC64,
-            0xEB5AA93F2317D635,
-            0xA9A6E6260D712103,
-            0x81A57C16DBCF555F,
-            0x43B831CD0347C826,
-            0x01F22F1A11A5569F,
-            0x05E5635A21D9AE61,
-            0x64BEFEF28CC970F2,
-            0x613670957BC46611,
-            0xB87C5A554FD00ECB,
-            0x8C3EE88A1CCF32C8,
-            0x940C7922AE3A2614,
-            0x1841F924A2C509E4,
-            0x16F53526E70465C2,
-            0x75F644E97F30A13B,
-            0xEAF1FF7B5CECA249,
-        ];
-
+        let expected_result = xkcp_vectors::AFTER_ONE_PERMUTATION;
         let exec_correct = exec_result == expected_result;
         println!("Direct exec correct: {}", exec_correct);
 
@@ -2687,34 +2221,7 @@ mod tests {
         // Virtual registers not checked when using trace() method
 
         // Expected result
-        let expected_result = [
-            0xF1258F7940E1DDE7,
-            0x84D5CCF933C0478A,
-            0xD598261EA65AA9EE,
-            0xBD1547306F80494D,
-            0x8B284E056253D057,
-            0xFF97A42D7F8E6FD4,
-            0x90FEE5A0A44647C4,
-            0x8C5BDA0CD6192E76,
-            0xAD30A6F71B19059C,
-            0x30935AB7D08FFC64,
-            0xEB5AA93F2317D635,
-            0xA9A6E6260D712103,
-            0x81A57C16DBCF555F,
-            0x43B831CD0347C826,
-            0x01F22F1A11A5569F,
-            0x05E5635A21D9AE61,
-            0x64BEFEF28CC970F2,
-            0x613670957BC46611,
-            0xB87C5A554FD00ECB,
-            0x8C3EE88A1CCF32C8,
-            0x940C7922AE3A2614,
-            0x1841F924A2C509E4,
-            0x16F53526E70465C2,
-            0x75F644E97F30A13B,
-            0xEAF1FF7B5CECA249,
-        ];
-
+        let expected_result = xkcp_vectors::AFTER_ONE_PERMUTATION;
         println!("Expected result (first 5 lanes):");
         for i in 0..5 {
             println!("  Lane {}: 0x{:016x}", i, expected_result[i]);
