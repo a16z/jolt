@@ -380,8 +380,9 @@ struct BooleanityProverState<F: JoltField> {
     read_addresses: Vec<usize>,
     K: usize,
     T: usize,
-    B: MultilinearPolynomial<F>,
-    gruens_B: GruenSplitEqPolynomial<F>,
+    B: GruenSplitEqPolynomial<F>,
+    #[cfg(test)]
+    old_B: MultilinearPolynomial<F>,
     F: Vec<F>,
     G: Vec<F>,
     D: MultilinearPolynomial<F>,
@@ -402,8 +403,9 @@ impl<F: JoltField> BooleanityProverState<F> {
         let T = read_addresses.len();
 
         let D = MultilinearPolynomial::from(D);
-        let B = MultilinearPolynomial::from(EqPolynomial::evals(&r)); // (53)
-        let gruens_B = GruenSplitEqPolynomial::new(&r);
+        let B = GruenSplitEqPolynomial::new(&r); // (53)
+        #[cfg(test)]
+        let old_B = MultilinearPolynomial::from(EqPolynomial::evals(&r));
         let mut F: Vec<F> = unsafe_allocate_zero_vec(K);
         F[0] = F::one();
 
@@ -412,7 +414,8 @@ impl<F: JoltField> BooleanityProverState<F> {
             K,
             T,
             B,
-            gruens_B,
+            #[cfg(test)]
+            old_B,
             F,
             G,
             D,
@@ -454,7 +457,13 @@ impl<F: JoltField> BooleanitySumcheck<F> {
     fn compute_prover_message_cubic(&self, round: usize) -> Vec<F> {
         const DEGREE: usize = 3;
         let BooleanityProverState {
-            K, B, F, G, D, H, ..
+            K,
+            old_B: B,
+            F,
+            G,
+            D,
+            H,
+            ..
         } = self.prover_state.as_ref().unwrap();
 
         // EQ(k_m, c) for k_m \in {0, 1} and c \in {0, 2, 3}
@@ -601,8 +610,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         const DEGREE: usize = 3;
         let BooleanityProverState {
             K,
-            B,
-            gruens_B,
+            B: gruens_B,
             F,
             G,
             D,
@@ -620,7 +628,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             let m = round + 1;
 
             let quadratic_coeffs: [F; DEGREE - 1] = if gruens_B.E_in_current_len() == 1 {
-                (0..B.len() / 2)
+                (0..gruens_B.len() / 2)
                     .into_par_iter()
                     .map(|k_prime| {
                         let B_eval = gruens_B.E_out_current()[k_prime];
@@ -668,7 +676,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                 let num_x_in_bits = gruens_B.E_in_current_len().log_2();
                 let x_bitmask = (1 << num_x_in_bits) - 1;
 
-                (0..B.len() / 2)
+                (0..gruens_B.len() / 2)
                     .into_par_iter()
                     .map(|k_prime| {
                         let x_in = k_prime & x_bitmask;
@@ -798,7 +806,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                     },
                 );
 
-            let eq_r_r = B.final_sumcheck_claim();
+            let eq_r_r = gruens_B.current_scalar;
             univariate_poly_evals = [
                 eq_r_r * univariate_poly_evals[0],
                 eq_r_r * univariate_poly_evals[1],
@@ -821,7 +829,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         let BooleanityProverState {
             K,
             B,
-            gruens_B,
+            #[cfg(test)]
+            old_B,
             F,
             D,
             H,
@@ -830,8 +839,9 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         } = self.prover_state.as_mut().unwrap();
         if round < K.log_2() {
             // First log(K) rounds of sumcheck
-            B.bind_parallel(r_j, BindingOrder::LowToHigh);
-            gruens_B.bind(r_j);
+            B.bind(r_j);
+            #[cfg(test)]
+            old_B.bind_parallel(r_j, BindingOrder::LowToHigh);
 
             let inner_span = tracing::span!(tracing::Level::INFO, "Update F");
             let _inner_guard = inner_span.enter();
