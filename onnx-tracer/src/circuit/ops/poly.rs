@@ -99,14 +99,14 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for PolyOp<F> {
 
     fn as_string(&self) -> String {
         match &self {
-            PolyOp::MultiBroadcastTo { shape } => format!("MULTIBROADCASTTO (shape={:?})", shape),
+            PolyOp::MultiBroadcastTo { shape } => format!("MULTIBROADCASTTO (shape={shape:?})"),
             PolyOp::MoveAxis { .. } => "MOVEAXIS".into(),
             PolyOp::Downsample { .. } => "DOWNSAMPLE".into(),
             PolyOp::Resize { .. } => "RESIZE".into(),
             PolyOp::Iff => "IFF".into(),
-            PolyOp::Einsum { equation, .. } => format!("EINSUM {}", equation),
+            PolyOp::Einsum { equation, .. } => format!("EINSUM {equation}"),
             PolyOp::Identity => "IDENTITY".into(),
-            PolyOp::Reshape(shape) => format!("RESHAPE (shape={:?})", shape),
+            PolyOp::Reshape(shape) => format!("RESHAPE (shape={shape:?})"),
             PolyOp::Flatten(_) => "FLATTEN".into(),
             PolyOp::Pad(_) => "PAD".into(),
             PolyOp::Add => "ADD".into(),
@@ -119,9 +119,9 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for PolyOp<F> {
             PolyOp::GlobalSumPool => "GLOBALSUMPOOL".into(),
             PolyOp::Conv { .. } => "CONV".into(),
             PolyOp::DeConv { .. } => "DECONV".into(),
-            PolyOp::Concat { axis } => format!("CONCAT (axis={})", axis),
+            PolyOp::Concat { axis } => format!("CONCAT (axis={axis})"),
             PolyOp::Slice { axis, start, end } => {
-                format!("SLICE (axis={}, start={}, end={})", axis, start, end)
+                format!("SLICE (axis={axis}, start={start}, end={end})")
             }
             PolyOp::Neg => "NEG".into(),
             PolyOp::Not => "NOT".into(),
