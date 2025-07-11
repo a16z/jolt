@@ -26,18 +26,50 @@ use tract_onnx::{
 /// A node's input is a tensor from another node's output.
 pub type Outlet = (usize, usize);
 
-/// A single operation in a [crate::graph::Model].
 #[derive(Clone, Debug)]
+/// A single operation in a [crate::graph::Model].
+/// Represents a node in the computation graph, encapsulating an operation and its associated metadata.
+///
+/// # Fields
+///
+/// - `opkind`: The operation this node performs, represented by the [`SupportedOp`] enum.
+/// - `out_scale`: The denominator for the fixed-point representation of the node's output. This is used for quantization purposes; nodes with different output scales should not be combined directly.
+/// - `inputs`: A list of [`Outlet`]s, each representing a connection from another node's output to this node's input.
+///   - **Purpose:** The `inputs` field defines the data dependencies for this node. Each entry specifies which node and which output of that node is used as an input.
+///   - **When to use:** Use `inputs` when constructing or traversing the computation graph to determine the source of input data for this node.
+///   - **How to use:** Each `Outlet` in the vector identifies a specific output from another node (by node index and output slot). To fetch the input tensor for this node, follow the corresponding `Outlet` to the producing node's output.
+///   - **What is `Outlet`:** An `Outlet` is a reference to a specific output of another node in the graph, typically containing the producing node's index and the output slot index. This allows for flexible graph topologies, including nodes with multiple outputs or inputs.
+/// - `out_dims`: The shape (dimensions) of the output tensor produced by this node.
+/// - `idx`: The unique identifier for this node within the graph.
+/// - `num_uses`: The number of times this node's output is consumed by other nodes (i.e., how many downstream nodes depend on this node).
 pub struct Node {
     /// [Op] i.e what operation this node represents.
     pub opkind: SupportedOp,
     /// The denominator in the fixed point representation for the node's output.
     /// Tensors of differing scales should not be combined.
     pub out_scale: i32,
-    // Usually there is a simple in and out shape of the node as an operator.  For example, an Affine
-    // node has three input_shapes (one for the input, weight, and bias), but in_dim is [in],
-    // out_dim is [out]
-    /// The indices of the node's inputs.
+    /// A list of [`Outlet`]s representing the sources of input tensors for this node.
+    ///
+    /// Each entry in this vector specifies a connection from another node's output to this node's input.
+    /// An [`Outlet`] is a tuple of (node_index, output_slot), where:
+    ///   - `node_index` refers to the index of the producing node in the computation graph.
+    ///   - `output_slot` specifies which output of the producing node is being used (for nodes with multiple outputs).
+    ///
+    /// This field defines the data dependencies for this node: to compute its output, the node will
+    /// fetch tensors from the outputs of the nodes referenced here. The order of the vector corresponds
+    /// to the order in which the operation expects its inputs (e.g., for a binary operation, the first
+    /// entry is the left operand, the second is the right operand).
+    ///
+    /// Example:
+    ///   - For an affine (fully connected) node, `inputs` might contain three entries:
+    ///     1. The output of the previous layer (input tensor)
+    ///     2. The weights tensor
+    ///     3. The bias tensor
+    ///   - For a unary operation (like ReLU), `inputs` will typically have a single entry.
+    ///
+    /// This design allows for flexible and dynamic graph topologies, including support for nodes with
+    /// multiple inputs and outputs, and enables traversal or analysis of the graph structure by following
+    /// these connections.
     pub inputs: Vec<Outlet>,
     /// Dimensions of output.
     pub out_dims: Vec<usize>,
@@ -246,15 +278,12 @@ impl Node {
     where
         for<'a> &'a T: Into<ONNXOpcode> + Debug,
     {
-        // FIXME: It is not guaranteed that there will be two operands and secondly need to understand Vec<Outlet> to see if this is even correct for two operands
-        let input = self.inputs.first();
-        // ONNXInstr {
-        //     address,
-        //     opcode: op.into(),
-        //     ts1: input.map(|(node, slot)| *node),
-        //     ts2,
-        // }
-        todo!()
+        ONNXInstr {
+            address,
+            opcode: op.into(),
+            ts1: self.inputs.first().cloned(),
+            ts2: self.inputs.get(1).cloned(),
+        }
     }
 }
 
