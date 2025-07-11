@@ -27,7 +27,7 @@ use crate::{
     },
 };
 use rayon::{prelude::*, slice::Iter};
-use std::{fmt::Display, ops::Index};
+use std::{fmt::Display, iter, ops::Index, panic::panic_any};
 use strum::{EnumCount, IntoEnumIterator};
 use tracer::instruction::RV32IMCycle;
 
@@ -340,6 +340,15 @@ fn prover_msg_read_checking<const WORD_SIZE: usize, F: JoltField>(
             |running, new| (running.0 + new.0, running.1 + new.1, running.2 + new.2),
         );
     [eval_0, eval_2_right + eval_2_right - eval_2_left]
+}
+
+#[inline]
+fn update_D<F: JoltField>(D: F, C: F, r: &[F], j: usize) -> F {
+    let log_T = r.len().log_2();
+    let log_K = log_T / 2;
+    let log_m = log_K / 4;
+    let m = log_m.pow2();
+    todo!()
 }
 
 #[allow(clippy::type_complexity)]
@@ -684,6 +693,133 @@ pub fn prove_sparse_dense_shout<
 
     // TODO(moodlezoup): Implement optimization from Section 6.2.2 "An optimization leveraging small memory size"
 
+    // Implement the optimization for large d described in appendix C https://eprint.iacr.org/2025/105.pdf
+
+    // Compute and store log(T) - 1 arrays E_{log(T)−1}, . . . , E_1, where E_i
+    // contains all evaluations eqe (r>i, j>i) as j>i ranges over {0, 1}^{log(T)−i}
+    let mut E: Vec<Vec<F>> = (1..log_T)
+        .into_par_iter()
+        .map(|i| {
+            let E_i = EqPolynomial::evals(&r_cycle[i..]);
+            E_i
+        })
+        .collect();
+
+    // TODO:
+    let mut C = F::one();
+
+    let d = 6;
+    for round in 0..log_T {
+        for i in 0..d {
+            let span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
+            let _guard = span.enter();
+
+            let mut randomness: Vec<F> = Vec::with_capacity(d);
+            let univariate_poly_evals = (0..(log_T - round + 1).pow2())
+                .into_par_iter()
+                .map(|bj| {
+                    let eval_points = (0..d).filter(|c| *c != 1).map(|c| F::from_u64(c as u64));
+                    // TODO: check endianness for bj.
+                    let j = bj >> 1;
+                    let b = bj % 2;
+
+                    let at_idx_evals = if i != d - 1 {
+                        ra[i].sumcheck_evals(j, d, BindingOrder::HighToLow)
+                    } else {
+                        combined_instruction_val_poly.sumcheck_evals(j, d, BindingOrder::HighToLow)
+                    };
+
+                    let eq_evals = {
+                        let fb = F::from_u64(b as u64);
+                        let rb = r_cycle[round] * fb;
+                        let rb_prime = (F::one() - r_cycle[round]) * (F::one() - fb);
+
+                        (0..1)
+                            .chain(2..d + 1)
+                            .map(|c| F::from_u64(c as u64) * (rb - rb_prime) + rb_prime)
+                            .collect::<Vec<F>>()
+                    };
+
+                    let factor = ra
+                        .iter()
+                        .enumerate()
+                        .chain(iter::once((d, &combined_instruction_val_poly)))
+                        .filter(|(i_idx, _)| *i_idx > i)
+                        .map(|(_, poly)| poly.sumcheck_evals(bj, d, BindingOrder::HighToLow)[i])
+                        .product::<F>()
+                        * E[i][j]
+                        * C;
+                    
+                    // TODO: add lower terms.
+
+                    // TODO: can be cached.
+                    let C_evals = eval_points
+                        .map(|c| {
+                            let temp = iter::once(&r_cycle[round])
+                                .chain(randomness.iter())
+                                .chain(iter::once(&c))
+                                .map(|x| (*x, F::one() - x))
+                                .reduce(|running, new| (running.0 * new.0, running.1 * new.1))
+                                .unwrap();
+
+                            temp.0 * temp.1 * C
+                        })
+                        .collect::<Vec<F>>();
+
+                    eq_evals
+                        .iter()
+                        .zip(at_idx_evals.iter())
+                        .zip(C_evals.iter())
+                        .map(|((eq_eval, at_idx_eval), C_eval)| {
+                            factor * eq_eval * at_idx_eval * C_eval
+                        })
+                        .collect::<Vec<F>>()
+                })
+                .reduce(
+                    || vec![F::zero(); d],
+                    |running, new| {
+                        running
+                            .iter()
+                            .zip(new.iter())
+                            .map(|(a, b)| *a + *b)
+                            .collect::<Vec<F>>()
+                    },
+                );
+
+            let univariate_poly = UniPoly::from_evals(&[
+                univariate_poly_evals[0],
+                previous_claim - univariate_poly_evals[0],
+                univariate_poly_evals[1],
+                univariate_poly_evals[2],
+                univariate_poly_evals[3],
+                univariate_poly_evals[4],
+                univariate_poly_evals[5],
+            ]);
+
+            drop(_guard);
+            drop(span);
+
+            let compressed_poly = univariate_poly.compress();
+            compressed_poly.append_to_transcript(transcript);
+            compressed_polys.push(compressed_poly);
+
+            let r_j = transcript.challenge_scalar::<F>();
+            r.push(r_j);
+            randomness.push(r_j);
+
+            previous_claim = univariate_poly.evaluate(&r_j);
+
+            let span = tracing::span!(tracing::Level::INFO, "Binding");
+            let _guard = span.enter();
+
+            if i != d - 1 {
+                ra[i].bind_parallel(r_j, BindingOrder::HighToLow);
+            } else {
+                combined_instruction_val_poly.bind_parallel(r_j, BindingOrder::HighToLow);
+            }
+        }
+    }
+
     for _round in 0..log_T {
         let span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
         let _guard = span.enter();
@@ -864,7 +1000,7 @@ mod tests {
     const LOG_T: usize = 8;
     const T: usize = 1 << LOG_T;
 
-    fn random_instruction(rng: &mut StdRng, instruction: &Option<RV32IMCycle>) -> RV32IMCycle {
+    fn random_instruction(rng: &mut StdRng, instruction: &Option) -> RV32IMCycle {
         let instruction = instruction.unwrap_or_else(|| {
             let index = rng.next_u64() as usize % RV32IMCycle::COUNT;
             RV32IMCycle::iter()
