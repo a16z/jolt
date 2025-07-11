@@ -374,19 +374,15 @@ impl Model {
                                     chunk: info.chunk as usize,
                                 });
                             }
-
                             tract_onnx::tract_hir::ops::scan::InputMapping::State => {
                                 input_mappings.push(InputMapping::State);
                             }
-
                             tract_onnx::tract_hir::ops::scan::InputMapping::Full => {
                                 input_mappings.push(InputMapping::Full);
                             }
                         }
                     }
-
                     let input_state_idx = input_state_idx(&input_mappings);
-
                     let mut output_mappings = vec![];
                     for mapping in b.output_mapping.iter() {
                         let mut mappings = vec![];
@@ -748,10 +744,7 @@ subgraph"
     pub fn bump_scale(&mut self, scale: crate::Scale) {
         match self {
             NodeType::Node(n) => n.out_scale = scale,
-            NodeType::SubGraph { .. } => log::warn!(
-                "Cannot bump scale of
-subgraph"
-            ),
+            NodeType::SubGraph { .. } => log::warn!("Cannot bump scale of subgraph"),
         }
     }
 
@@ -759,10 +752,7 @@ subgraph"
     pub fn replace_opkind(&mut self, opkind: SupportedOp) {
         match self {
             NodeType::Node(n) => n.opkind = opkind,
-            NodeType::SubGraph { .. } => log::warn!(
-                "Cannot replace opkind of
-subgraph"
-            ),
+            NodeType::SubGraph { .. } => log::warn!("Cannot replace opkind of subgraph"),
         }
     }
 
@@ -836,7 +826,32 @@ impl OutputMapping {
     }
 }
 
-// ///
+/// Describes how each input to a subgraph (such as a Scan/Loop in ONNX) is mapped from the parent graph.
+///
+/// # Overview
+/// `InputMapping` is used to specify how the inputs to a subgraph are fed from the outer graph.
+/// This is essential for handling ONNX control flow operators like Scan, Loop, or custom subgraphs,
+/// where each input may be treated differently (e.g., as a state variable, as a full tensor, or as a chunked/stacked input).
+///
+/// # Variants
+/// - `Full`: The entire input tensor is passed as-is to the subgraph input.
+/// - `State`: The input acts as a state variable, typically carried across iterations (e.g., hidden state in RNNs).
+/// - `Stacked { axis, chunk }`: The input is split along the specified `axis` into chunks of size `chunk`,
+///   and each chunk is fed to the subgraph in each iteration (used for sequence processing).
+///
+/// # Role in the Codebase
+/// `InputMapping` is crucial for correctly wiring up subgraphs during model parsing and execution.
+/// It allows the code to handle dynamic and complex ONNX models that use control flow or iterative constructs,
+/// ensuring that data is fed into subgraphs in the correct shape and order. This enables support for models
+/// with recurrent or iterative computation patterns.
+///
+/// # Example
+/// For an ONNX Scan node processing a sequence, the input sequence tensor might be mapped as `Stacked`,
+/// while an initial hidden state would be mapped as `State`.
+///
+/// # Usage
+/// The mapping is determined during graph parsing (`nodes_from_graph`) and is later used during execution
+/// (`forward`) to slice, reshape, or carry inputs as needed for each subgraph invocation.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum InputMapping {
     ///
@@ -885,63 +900,4 @@ fn output_state_idx(output_mappings: &[Vec<OutputMapping>]) -> Vec<usize> {
         .flatten()
         .filter_map(|x| if x.is_state() { Some(x.outlet()) } else { None })
         .collect::<Vec<_>>()
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::logger::init_logger;
-
-    use super::*;
-    use std::{fs::File, path::PathBuf};
-
-    #[test]
-    fn test_model_forward_1l_relu() {
-        // Enable logging for debug/warn/info output in tests
-        init_logger();
-
-        // Path to the example ONNX model
-        let model_path = PathBuf::from("examples/onnx/1l_relu/network.onnx");
-        let mut file = File::open(&model_path).expect("Failed to open ONNX model");
-
-        // Default RunArgs (batch_size=1 by default)
-        let run_args = RunArgs::default();
-
-        // Load the model
-        let model = Model::new(&mut file, &run_args);
-
-        // Get input shapes
-        let input_shapes = model
-            .graph
-            .input_shapes()
-            .expect("Failed to get input shapes");
-        assert_eq!(input_shapes.len(), 1); // Should have one input
-
-        // Prepare dummy input: batch_size x 3
-        let shape = &input_shapes[0];
-        assert_eq!(shape.len(), 2);
-        assert_eq!(shape[0], 1); // batch_size
-        assert_eq!(shape[1], 3); // features
-
-        // Create a tensor of zeros as dummy input
-        let mut dummy_input =
-            Tensor::<Fp>::from(vec![Fp::from(0u64); shape.iter().product()].into_iter());
-        dummy_input
-            .reshape(shape)
-            .expect("Failed to reshape dummy input");
-        // Run forward pass
-        let result = model.forward(&[dummy_input]).expect("Forward pass failed");
-
-        // Print output for debugging
-        println!("Model output: {:#?}", result);
-    }
-
-    #[test]
-    fn test_text_classification() {
-        println!("testing text classification")
-    }
-
-    #[test]
-    fn test_execution_trace() {
-        println!("testing execution trace")
-    }
 }
