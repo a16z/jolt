@@ -3,9 +3,14 @@
 use std::{cell::RefCell, rc::Rc, vec};
 
 use crate::{
+    dag::{
+        stage::{StagedSumcheck, SumcheckStages},
+        state_manager::StateManager,
+    },
     field::JoltField,
     jolt::{
         vm::{
+            bytecode::read_checking::ReadCheckingSumcheck,
             output_check::{OutputProof, OutputSumcheck},
             ram_read_write_checking::{RamReadWriteChecking, RamReadWriteCheckingProof},
             JoltCommitments, JoltProverPreprocessing,
@@ -1157,7 +1162,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             preprocessing,
             trace,
             &program_io.memory_layout,
-            r_address.clone(),
+            r_address.to_vec(),
             r_cycle.clone(),
             init_eval,
             read_write_checking_proof.claims.val_claim,
@@ -1332,7 +1337,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             prover_state: None,
             verifier_state: Some(ValEvaluationVerifierState {
                 num_rounds: log_T,
-                r_address: r_address.clone(),
+                r_address: r_address.to_vec(),
                 r_cycle,
             }),
             claims: Some(ValEvaluationSumcheckClaims {
@@ -1805,6 +1810,203 @@ fn prove_ra_hamming_weight<F: JoltField, ProofTranscript: Transcript>(
         .expect("ra_claims should be cached after proving");
 
     (sumcheck_proof, r_address_double_prime, ra_claims)
+}
+
+pub struct RamDag {
+    K: usize,
+    T: usize,
+    initial_memory_state: Option<Vec<u32>>,
+    final_memory_state: Option<Vec<u32>>,
+}
+
+impl RamDag {
+    pub fn new_prover<
+        F: JoltField,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
+    >(
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Self {
+        let (preprocessing, trace, program_io, final_memory) = state_manager.get_prover_data();
+        let ram_preprocessing = &preprocessing.shared.ram;
+
+        let K = trace
+            .par_iter()
+            .map(|cycle| {
+                remap_address(
+                    cycle.ram_access().address() as u64,
+                    &preprocessing.shared.memory_layout,
+                ) as usize
+            })
+            .max()
+            .unwrap()
+            .next_power_of_two();
+
+        let T = trace.len();
+
+        let mut initial_memory_state = vec![0; K];
+        // Copy bytecode
+        let mut index = remap_address(
+            ram_preprocessing.min_bytecode_address,
+            &program_io.memory_layout,
+        ) as usize;
+        for word in ram_preprocessing.bytecode_words.iter() {
+            initial_memory_state[index] = *word;
+            index += 1;
+        }
+
+        let dram_start_index = remap_address(RAM_START_ADDRESS, &program_io.memory_layout) as usize;
+        let mut final_memory_state = vec![0; K];
+        // Note that `final_memory` only contains memory at addresses >= `RAM_START_ADDRESS`
+        // so we will still need to populate `final_memory_state` with the contents of
+        // `program_io`, which lives at addresses < `RAM_START_ADDRESS`
+        final_memory_state[dram_start_index..]
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(k, word)| {
+                *word = final_memory.read_word(4 * k as u64);
+            });
+
+        index = remap_address(
+            program_io.memory_layout.input_start,
+            &program_io.memory_layout,
+        ) as usize;
+        // Convert input bytes into words and populate
+        // `initial_memory_state` and `final_memory_state`
+        for chunk in program_io.inputs.chunks(4) {
+            let mut word = [0u8; 4];
+            for (i, byte) in chunk.iter().enumerate() {
+                word[i] = *byte;
+            }
+            let word = u32::from_le_bytes(word);
+            initial_memory_state[index] = word;
+            final_memory_state[index] = word;
+            index += 1;
+        }
+
+        // Convert output bytes into words and populate
+        // `final_memory_state`
+        index = remap_address(
+            program_io.memory_layout.output_start,
+            &program_io.memory_layout,
+        ) as usize;
+        for chunk in program_io.outputs.chunks(4) {
+            let mut word = [0u8; 4];
+            for (i, byte) in chunk.iter().enumerate() {
+                word[i] = *byte;
+            }
+            let word = u32::from_le_bytes(word);
+            final_memory_state[index] = word;
+            index += 1;
+        }
+
+        // Copy panic bit
+        let panic_index =
+            remap_address(program_io.memory_layout.panic, &program_io.memory_layout) as usize;
+        final_memory_state[panic_index] = program_io.panic as u32;
+        if !program_io.panic {
+            // Set termination bit
+            let termination_index = remap_address(
+                program_io.memory_layout.termination,
+                &program_io.memory_layout,
+            ) as usize;
+            final_memory_state[termination_index] = 1;
+        }
+
+        #[cfg(test)]
+        {
+            let mut expected_final_memory_state: Vec<_> = initial_memory_state
+                .iter()
+                .map(|word| *word as i64)
+                .collect();
+            let inc = CommittedPolynomials::RamInc.generate_witness(preprocessing, trace);
+            for (j, cycle) in trace.iter().enumerate() {
+                if let RAMAccess::Write(write) = cycle.ram_access() {
+                    let k = remap_address(write.address, &program_io.memory_layout) as usize;
+                    expected_final_memory_state[k] += inc.get_coeff_i64(j);
+                }
+            }
+            let expected_final_memory_state: Vec<u32> = expected_final_memory_state
+                .into_iter()
+                .map(|word| word.try_into().unwrap())
+                .collect();
+            assert_eq!(expected_final_memory_state, final_memory_state);
+        }
+
+        Self {
+            K,
+            T,
+            initial_memory_state: Some(initial_memory_state),
+            final_memory_state: Some(final_memory_state),
+        }
+    }
+}
+
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS>
+    for ReadCheckingSumcheck<F>
+{
+}
+
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS>
+    for RafEvaluationSumcheck<F>
+{
+}
+
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS> for OutputSumcheck<F> {}
+
+impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
+    SumcheckStages<F, ProofTranscript, PCS> for RamDag
+{
+    fn stage2_prover_instances(
+        &self,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
+        let read_write_checking = RamReadWriteChecking::new_prover(
+            self.K,
+            self.T,
+            self.initial_memory_state.as_ref().unwrap(),
+            state_manager,
+        );
+
+        todo!("raf-evaluation, read/write-checking, output check")
+    }
+
+    fn stage2_verifier_instances(
+        &self,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
+        let read_write_checking = RamReadWriteChecking::new_verifier(self.K, self.T, state_manager);
+
+        todo!("raf-evaluation, read/write-checking, output check")
+    }
+
+    fn stage3_prover_instances(
+        &self,
+        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
+        todo!("val evaluation and val_final evaluation")
+    }
+
+    fn stage3_verifier_instances(
+        &self,
+        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
+        todo!("val evaluation and val_final evaluation")
+    }
+
+    fn stage4_prover_instances(
+        &self,
+        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
+        todo!("ra virtualization, hamming weight, booleanity")
+    }
+
+    fn stage4_verifier_instances(
+        &self,
+        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
+        todo!("ra virtualization, hamming weight, booleanity")
+    }
 }
 
 #[cfg(test)]

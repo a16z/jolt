@@ -56,6 +56,10 @@ impl<const E: Endianness, F: JoltField> std::ops::Index<std::ops::RangeFull>
 }
 
 impl<const E: Endianness, F: JoltField> OpeningPoint<E, F> {
+    pub fn len(&self) -> usize {
+        self.r.len()
+    }
+
     pub fn split_at(&self, mid: usize) -> (&[F], &[F]) {
         self.r.split_at(mid)
     }
@@ -134,6 +138,9 @@ pub enum OpeningsKeys {
     RegistersReadWriteInc,          // Inc claim from registers read/write checking
     RegistersValEvaluationInc,      // Inc claim from registers Val evaluation sumcheck
     RegistersValEvaluationWa,       // Wa claim from registers Val evaluation sumcheck
+    RamReadWriteCheckingVal,
+    RamReadWriteCheckingRa,
+    RamReadWriteCheckingInc,
 }
 
 pub type Openings<F> = HashMap<OpeningsKeys, (OpeningPoint<LITTLE_ENDIAN, F>, F)>;

@@ -19,7 +19,7 @@ use crate::poly::opening_proof::{
     OpeningsExt, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
 };
 use crate::r1cs::builder::Constraint;
-use crate::r1cs::constraints::R1CSConstraints;
+use crate::r1cs::constraints::{JoltRV32IMConstraints, R1CSConstraints};
 use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::r1cs::inputs::ALL_R1CS_INPUTS;
 use crate::r1cs::inputs::COMMITTED_R1CS_INPUTS;
@@ -892,10 +892,7 @@ pub struct SpartanDag<F: JoltField> {
 
 impl<F: JoltField> SpartanDag<F> {
     pub fn new<ProofTranscript: Transcript>(padded_trace_length: usize) -> Self {
-        let constraint_builder =
-            crate::r1cs::constraints::JoltRV32IMConstraints::construct_constraints(
-                padded_trace_length,
-            );
+        let constraint_builder = JoltRV32IMConstraints::construct_constraints(padded_trace_length);
         let key = Arc::new(UniformSpartanProof::<F, ProofTranscript>::setup(
             &constraint_builder,
             padded_trace_length,
@@ -928,7 +925,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         let key = self.key.clone();
 
         // Create input polynomials from trace
-        let input_polys: Vec<MultilinearPolynomial<F>> = crate::r1cs::inputs::ALL_R1CS_INPUTS
+        let input_polys: Vec<MultilinearPolynomial<F>> = ALL_R1CS_INPUTS
             .par_iter()
             .map(|var| var.generate_witness(trace, preprocessing))
             .collect();
@@ -942,9 +939,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 
         // Recreate constraint_builder from padded_trace_length
         let constraint_builder: CombinedUniformBuilder<F> =
-            crate::r1cs::constraints::JoltRV32IMConstraints::construct_constraints(
-                padded_trace_length,
-            );
+            JoltRV32IMConstraints::construct_constraints(padded_trace_length);
 
         let uniform_constraints_only_padded = constraint_builder
             .uniform_builder
@@ -1305,7 +1300,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 
         let key = self.key.clone();
 
-        let input_polys: Vec<MultilinearPolynomial<F>> = crate::r1cs::inputs::ALL_R1CS_INPUTS
+        let input_polys: Vec<MultilinearPolynomial<F>> = ALL_R1CS_INPUTS
             .par_iter()
             .map(|var| var.generate_witness(trace, preprocessing))
             .collect();
