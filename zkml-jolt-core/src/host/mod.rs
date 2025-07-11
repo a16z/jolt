@@ -9,8 +9,12 @@ use std::path::PathBuf;
 /// Represents an ONNX program with tracing capabilities.
 /// The model binary is specified by a `PathBuf`, and model inputs are stored for inference.
 pub struct ONNXProgram {
-    model_path: PathBuf,
-    inputs: Tensor<i128>, // We quantize inputs to i28 bits
+    /// The path to the ONNX model file.
+    pub model_path: PathBuf,
+    /// The inputs to the ONNX model, represented as a tensor.
+    /// We quantize inputs to i128 bits for compatibility with the zkVM.
+    /// We limit batch size to 1 for simplicity.
+    pub inputs: Tensor<i128>,
 }
 
 impl ONNXProgram {

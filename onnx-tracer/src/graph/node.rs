@@ -201,10 +201,22 @@ impl Node {
         match &self.opkind {
             SupportedOp::Linear(poly_op) => self.decode_with_opcode(poly_op, address),
             SupportedOp::Nonlinear(lookup_op) => self.decode_with_opcode(lookup_op, address),
-            _ => panic!("Opkind not supported"),
+            SupportedOp::Hybrid(hybrid_op) => self.decode_with_opcode(hybrid_op, address),
+            _ => panic!("Opkind {:?} not supported", self.opkind),
         }
     }
 
+    /// Helper function to decode the node with a specific opcode.
+    ///
+    /// # Arguments
+    /// * `op` - The operation to decode.
+    /// * `address` - The address in the bytecode where this instruction will be placed.
+    ///
+    /// # Returns
+    /// An [ONNXInstr] representing the decoded instruction.
+    ///
+    /// # Panics
+    /// Panics if the operation does not have exactly two operands, as this is expected for the current implementation.
     fn decode_with_opcode<T>(&self, op: &T, address: usize) -> ONNXInstr
     where
         for<'a> &'a T: Into<ONNXOpcode>,
