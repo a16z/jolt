@@ -3,6 +3,7 @@ mod e2e_tests {
     use crate::host::ONNXProgram;
     use onnx_tracer::{logger::init_logger, tensor::Tensor};
 
+    // TODO(Forpee): refactor duplicate code in these tests
     #[test]
     fn test_simple_classification() {
         init_logger();
