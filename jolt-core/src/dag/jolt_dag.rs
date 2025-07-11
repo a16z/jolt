@@ -43,7 +43,8 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         spartan_dag.stage1_prove(&mut self.prover_state_manager)?;
 
         // Stage 2: Collect instances and prove
-        let mut stage2_instances = spartan_dag.stage2_prover_instances(&mut self.prover_state_manager);
+        let mut stage2_instances =
+            spartan_dag.stage2_prover_instances(&mut self.prover_state_manager);
         let stage2_instances_mut: Vec<&mut dyn BatchableSumcheckInstance<F>> = stage2_instances
             .iter_mut()
             .map(|instance| &mut **instance as &mut dyn BatchableSumcheckInstance<F>)
@@ -66,7 +67,8 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         }
 
         // Stage 3: Collect instances and prove
-        let mut stage3_instances = spartan_dag.stage3_prover_instances(&mut self.prover_state_manager);
+        let mut stage3_instances =
+            spartan_dag.stage3_prover_instances(&mut self.prover_state_manager);
         let stage3_instances_mut: Vec<&mut dyn BatchableSumcheckInstance<F>> = stage3_instances
             .iter_mut()
             .map(|instance| &mut **instance as &mut dyn BatchableSumcheckInstance<F>)
@@ -100,7 +102,8 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         spartan_dag.stage1_verify(&mut self.verifier_state_manager)?;
 
         // Stage 2: Collect instances and verify
-        let stage2_instances = spartan_dag.stage2_verifier_instances(&mut self.verifier_state_manager);
+        let stage2_instances =
+            spartan_dag.stage2_verifier_instances(&mut self.verifier_state_manager);
         let stage2_instances_ref: Vec<&dyn BatchableSumcheckInstance<F>> = stage2_instances
             .iter()
             .map(|instance| &**instance as &dyn BatchableSumcheckInstance<F>)
@@ -122,12 +125,12 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             stage2_instances_ref,
             &mut *transcript.borrow_mut(),
         )?;
-        println!("FUCK");
 
         drop(proofs); // Drop the borrow before borrowing mutably again
-        
+
         // Stage 3: Collect instances and verify
-        let stage3_instances = spartan_dag.stage3_verifier_instances(&mut self.verifier_state_manager);
+        let stage3_instances =
+            spartan_dag.stage3_verifier_instances(&mut self.verifier_state_manager);
         let stage3_instances_ref: Vec<&dyn BatchableSumcheckInstance<F>> = stage3_instances
             .iter()
             .map(|instance| &**instance as &dyn BatchableSumcheckInstance<F>)
@@ -153,12 +156,12 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
     }
 
     fn generate_and_commit_polynomials(&mut self) -> Result<(), anyhow::Error> {
-        let (preprocessing, trace, _program_io, _final_memory_state) = 
+        let (preprocessing, trace, _program_io, _final_memory_state) =
             self.prover_state_manager.get_prover_data();
 
         let trace_length = trace.len();
         let padded_trace_length = trace_length.next_power_of_two();
-        
+
         let ram_addresses: Vec<_> = trace
             .par_iter()
             .map(|cycle| {
@@ -169,7 +172,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             })
             .collect();
         let ram_K = ram_addresses.par_iter().max().unwrap().next_power_of_two();
-        
+
         let K = [
             preprocessing.shared.bytecode.code_size,
             ram_K,
@@ -178,7 +181,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         .into_iter()
         .max()
         .unwrap();
-        
+
         let _guard = crate::poly::commitment::dory::DoryGlobals::initialize(K, padded_trace_length);
 
         let committed_polys: Vec<_> = ALL_COMMITTED_POLYNOMIALS

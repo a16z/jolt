@@ -1317,12 +1317,14 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         let (r_cycle, _rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
         // The batched claim equals NextUnexpandedPC(r_cycle) + gamma * NextPC(r_cycle)
-        let next_unexpanded_pc_eval = state_manager.spartan_z_value(JoltR1CSInputs::NextUnexpandedPC);
+        let next_unexpanded_pc_eval =
+            state_manager.spartan_z_value(JoltR1CSInputs::NextUnexpandedPC);
         let next_pc_eval = state_manager.spartan_z_value(JoltR1CSInputs::NextPC);
         let shift_sumcheck_claim = next_unexpanded_pc_eval + gamma * next_pc_eval;
 
         // Get shift sumcheck witness evaluations from openings
-        let unexpanded_pc_eval_at_shift_r = state_manager.openings(OpeningsKeys::PCSumcheckUnexpandedPC);
+        let unexpanded_pc_eval_at_shift_r =
+            state_manager.openings(OpeningsKeys::PCSumcheckUnexpandedPC);
         let pc_eval_at_shift_r = state_manager.openings(OpeningsKeys::PCSumcheckPC);
 
         // Create the PC sumcheck verifier instance
