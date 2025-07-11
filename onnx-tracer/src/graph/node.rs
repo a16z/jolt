@@ -14,6 +14,7 @@ use crate::{
 };
 use halo2curves::bn256::Fr as Fp;
 use log::{trace, warn};
+use std::fmt::Debug;
 use std::{collections::BTreeMap, error::Error, fmt};
 use tabled::Tabled;
 use tract_onnx::{
@@ -62,7 +63,6 @@ impl Node {
     ) -> Self {
         trace!("Create {node:?}",);
         trace!("Create op {:?}", node.op);
-
         let num_uses = std::cmp::max(
             node.outputs
                 .iter()
@@ -71,32 +71,26 @@ impl Node {
             // cmp to 1 for outputs
             1,
         );
-
         // load the node inputs
         let mut inputs = vec![];
-
         // we can only take the inputs as mutable once -- so we need to collect them first
         let mut input_ids = node
             .inputs
             .iter()
             .map(|i| (i.node, i.slot))
             .collect::<Vec<_>>();
-
         input_ids.iter().for_each(|(i, _)| {
             inputs.push(other_nodes.get(i).unwrap().clone());
         });
-
         let (mut opkind, deleted_indices) =
             new_op_from_onnx(idx, scales, node.clone(), &mut inputs, symbol_values).unwrap(); // parses the op name
-
-        // we can only take the inputs as mutable once -- so we need to collect them first
+                                                                                              // we can only take the inputs as mutable once -- so we need to collect them first
         other_nodes.extend(
             inputs
                 .iter()
                 .map(|i| (i.idx(), i.clone()))
                 .collect::<BTreeMap<_, _>>(),
         );
-
         input_ids.iter_mut().enumerate().for_each(|(i, (idx, _))| {
             if deleted_indices.contains(&i) {
                 // this input is not used
@@ -202,6 +196,7 @@ impl Node {
             SupportedOp::Linear(poly_op) => self.decode_with_opcode(poly_op, address),
             SupportedOp::Nonlinear(lookup_op) => self.decode_with_opcode(lookup_op, address),
             SupportedOp::Hybrid(hybrid_op) => self.decode_with_opcode(hybrid_op, address),
+            SupportedOp::Constant(constant) => self.decode_with_opcode(constant, address),
             _ => panic!("Opkind {:?} not supported", self.opkind),
         }
     }
@@ -219,16 +214,17 @@ impl Node {
     /// Panics if the operation does not have exactly two operands, as this is expected for the current implementation.
     fn decode_with_opcode<T>(&self, op: &T, address: usize) -> ONNXInstr
     where
-        for<'a> &'a T: Into<ONNXOpcode>,
+        for<'a> &'a T: Into<ONNXOpcode> + Debug,
     {
         // FIXME: It is not guaranteed that there will be two operands and secondly need to understand Vec<Outlet> to see if this is even correct for two operands
-        let (ts1, ts2) = self.inputs.first().expect("No inputs found for op");
-        ONNXInstr {
-            address,
-            opcode: op.into(),
-            ts1: *ts1,
-            ts2: *ts2,
-        }
+        let input = self.inputs.first();
+        // ONNXInstr {
+        //     address,
+        //     opcode: op.into(),
+        //     ts1: input.map(|(node, slot)| *node),
+        //     ts2,
+        // }
+        todo!()
     }
 }
 

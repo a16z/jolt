@@ -11,9 +11,9 @@ pub struct ONNXInstr {
     /// The operation code (opcode) that defines the instruction's function.
     pub opcode: ONNXOpcode,
     /// The first tensor source operand, analogous to rs1 in RISC-V.
-    pub ts1: usize,
+    pub ts1: Option<usize>,
     /// The second tensor source operand, analogous to rs2 in RISC-V.
-    pub ts2: usize,
+    pub ts2: Option<usize>,
 }
 
 // TODO: Expand the instruction set architecture (ISA):
@@ -36,4 +36,5 @@ pub enum ONNXOpcode {
     ReduceMean,
     Softmax,
     Sqrt,
+    Constant,
 }
