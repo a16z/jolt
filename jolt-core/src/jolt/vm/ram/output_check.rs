@@ -1,6 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
+    dag::state_manager::StateManager,
     field::JoltField,
     jolt::{
         vm::{ram::remap_address, JoltProverPreprocessing},
@@ -12,7 +13,7 @@ use crate::{
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
-        opening_proof::ProverOpeningAccumulator,
+        opening_proof::{OpeningsKeys, ProverOpeningAccumulator},
         program_io_polynomial::ProgramIOPolynomial,
         range_mask_polynomial::RangeMaskPolynomial,
     },
@@ -20,10 +21,7 @@ use crate::{
         sparse_dense_shout::ExpandingTable,
         sumcheck::{BatchableSumcheckInstance, CacheSumcheckOpenings, SumcheckInstanceProof},
     },
-    utils::{
-        errors::ProofVerifyError, math::Math, thread::drop_in_background_thread,
-        transcript::Transcript,
-    },
+    utils::{math::Math, transcript::Transcript},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::RAM_START_ADDRESS;
@@ -143,96 +141,110 @@ pub struct OutputSumcheck<F: JoltField> {
 
 impl<F: JoltField> OutputSumcheck<F> {
     #[tracing::instrument(skip_all, name = "OutputSumcheck")]
-    pub fn prove<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        preprocessing: &JoltProverPreprocessing<F, PCS>,
-        trace: &[RV32IMCycle],
+    pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         initial_ram_state: Vec<u32>,
         final_ram_state: Vec<u32>,
-        program_io: &JoltDevice,
-        r_address: &[F],
-        transcript: &mut ProofTranscript,
-    ) -> OutputProof<F, ProofTranscript> {
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Self {
+        let (_, trace, program_io, _) = state_manager.get_prover_data();
         let K = final_ram_state.len();
         let T = trace.len();
+
+        let r_address = state_manager
+            .transcript
+            .borrow_mut()
+            .challenge_vector(K.log_2());
 
         let output_sumcheck_prover_state = OutputSumcheckProverState::initialize(
             initial_ram_state,
             final_ram_state,
             program_io,
-            r_address,
+            &r_address,
         );
-        let mut output_sumcheck = OutputSumcheck {
+        let output_sumcheck = OutputSumcheck {
             K,
             T,
             verifier_state: None,
             prover_state: Some(output_sumcheck_prover_state),
             val_final_claim: None,
         };
-        let (output_sumcheck_proof, _r_address) = output_sumcheck.prove_single(transcript);
-        let output_sumcheck_prover_state = output_sumcheck.prover_state.as_ref().unwrap();
 
-        let val_final_prover_state = ValFinalSumcheckProverState::initialize(
-            preprocessing,
-            trace,
-            output_sumcheck_prover_state,
-        );
-        let mut val_final_sumcheck = ValFinalSumcheck {
-            T,
-            prover_state: Some(val_final_prover_state),
-            val_init_eval: output_sumcheck_prover_state.val_init.final_sumcheck_claim(),
-            val_final_claim: output_sumcheck.val_final_claim.unwrap(),
-            output_claims: None,
-        };
-        let (val_final_sumcheck_proof, _r_cycle) = val_final_sumcheck.prove_single(transcript);
-        let output_claims = std::mem::take(val_final_sumcheck.output_claims.as_mut().unwrap());
-        let val_final_claim = val_final_sumcheck.val_final_claim;
+        output_sumcheck
 
-        drop_in_background_thread((output_sumcheck, val_final_sumcheck));
+        // let (output_sumcheck_proof, _r_address) = output_sumcheck.prove_single(transcript);
+        // let output_sumcheck_prover_state = output_sumcheck.prover_state.as_ref().unwrap();
 
-        OutputProof {
-            output_sumcheck_proof,
-            val_final_sumcheck_proof,
-            val_final_claim,
-            output_claims,
-        }
+        // let val_final_prover_state = ValFinalSumcheckProverState::initialize(
+        //     preprocessing,
+        //     trace,
+        //     output_sumcheck_prover_state,
+        // );
+        // let mut val_final_sumcheck = ValFinalSumcheck {
+        //     T,
+        //     prover_state: Some(val_final_prover_state),
+        //     val_init_eval: output_sumcheck_prover_state.val_init.final_sumcheck_claim(),
+        //     val_final_claim: output_sumcheck.val_final_claim.unwrap(),
+        //     output_claims: None,
+        // };
+        // let (val_final_sumcheck_proof, _r_cycle) = val_final_sumcheck.prove_single(transcript);
+        // let output_claims = std::mem::take(val_final_sumcheck.output_claims.as_mut().unwrap());
+        // let val_final_claim = val_final_sumcheck.val_final_claim;
+
+        // drop_in_background_thread((output_sumcheck, val_final_sumcheck));
+
+        // OutputProof {
+        //     output_sumcheck_proof,
+        //     val_final_sumcheck_proof,
+        //     val_final_claim,
+        //     output_claims,
+        // }
     }
 
-    pub fn verify<ProofTranscript: Transcript>(
-        program_io: &JoltDevice,
-        val_init: MultilinearPolynomial<F>,
-        r_address: &[F],
-        T: usize,
-        proof: &OutputProof<F, ProofTranscript>,
-        transcript: &mut ProofTranscript,
-    ) -> Result<(), ProofVerifyError> {
-        let K = r_address.len().pow2();
+    pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+        K: usize,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Self {
+        let (_, program_io, T) = state_manager.get_verifier_data();
+
+        let r_address = state_manager
+            .transcript
+            .borrow_mut()
+            .challenge_vector(K.log_2());
+
         let output_sumcheck_verifier_state = OutputSumcheckVerifierState {
             program_io: program_io.clone(),
             r_address: r_address.to_vec(),
         };
+
+        let val_final_claim = state_manager
+            .get_verifier_accumulator()
+            .borrow()
+            .get_opening(OpeningsKeys::RamValFinal);
 
         let output_sumcheck = OutputSumcheck {
             K,
             T,
             verifier_state: Some(output_sumcheck_verifier_state),
             prover_state: None,
-            val_final_claim: Some(proof.val_final_claim),
+            val_final_claim: Some(val_final_claim),
         };
 
-        let r_address_prime =
-            output_sumcheck.verify_single(&proof.output_sumcheck_proof, transcript)?;
+        output_sumcheck
 
-        let val_final_sumcheck = ValFinalSumcheck {
-            T,
-            prover_state: None,
-            val_init_eval: val_init.evaluate(&r_address_prime),
-            val_final_claim: output_sumcheck.val_final_claim.unwrap(),
-            output_claims: Some(proof.output_claims.clone()),
-        };
-        let _r_cycle_prime =
-            val_final_sumcheck.verify_single(&proof.val_final_sumcheck_proof, transcript)?;
+        // let r_address_prime =
+        //     output_sumcheck.verify_single(&proof.output_sumcheck_proof, transcript)?;
 
-        Ok(())
+        // let val_final_sumcheck = ValFinalSumcheck {
+        //     T,
+        //     prover_state: None,
+        //     val_init_eval: val_init.evaluate(&r_address_prime),
+        //     val_final_claim: output_sumcheck.val_final_claim.unwrap(),
+        //     output_claims: Some(proof.output_claims.clone()),
+        // };
+        // let _r_cycle_prime =
+        //     val_final_sumcheck.verify_single(&proof.val_final_sumcheck_proof, transcript)?;
+
+        // Ok(())
     }
 }
 
@@ -345,6 +357,7 @@ where
         &mut self,
         _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
+        // TODO(moodlezoup): add to _openings
         debug_assert!(self.val_final_claim.is_none());
         let OutputSumcheckProverState { val_final, .. } = self.prover_state.as_ref().unwrap();
         self.val_final_claim = Some(val_final.final_sumcheck_claim());

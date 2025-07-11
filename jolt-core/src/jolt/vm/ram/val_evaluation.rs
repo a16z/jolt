@@ -62,7 +62,7 @@ pub struct ValEvaluationSumcheck<F: JoltField> {
     /// Prover state
     prover_state: Option<ValEvaluationProverState<F>>,
     /// Verifier state
-    pub(crate) verifier_state: Option<ValEvaluationVerifierState<F>>,
+    verifier_state: Option<ValEvaluationVerifierState<F>>,
     /// Claims
     claims: Option<ValEvaluationSumcheckClaims<F>>,
 }

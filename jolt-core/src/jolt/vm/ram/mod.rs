@@ -10,7 +10,6 @@ use crate::{
     field::JoltField,
     jolt::{
         vm::{
-            bytecode::read_checking::ReadCheckingSumcheck,
             ram::{
                 booleanity::BooleanityProof,
                 hamming_weight::{HammingWeightProof, HammingWeightSumcheck},
@@ -1026,7 +1025,7 @@ impl RamDag {
 }
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS>
-    for ReadCheckingSumcheck<F>
+    for RamReadWriteChecking<F>
 {
 }
 
@@ -1053,7 +1052,17 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             state_manager,
         );
 
-        todo!("raf-evaluation, read/write-checking, output check")
+        let output_check = OutputSumcheck::new_prover(
+            self.initial_memory_state.as_ref().unwrap().clone(),
+            self.final_memory_state.as_ref().unwrap().clone(),
+            state_manager,
+        );
+
+        vec![
+            Box::new(raf_evaluation),
+            Box::new(read_write_checking),
+            Box::new(output_check),
+        ]
     }
 
     fn stage2_verifier_instances(
@@ -1061,10 +1070,14 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
         let raf_evaluation = RafEvaluationSumcheck::new_verifier(self.K, state_manager);
-
         let read_write_checking = RamReadWriteChecking::new_verifier(self.K, state_manager);
+        let output_check = OutputSumcheck::new_verifier(self.K, state_manager);
 
-        todo!("raf-evaluation, read/write-checking, output check")
+        vec![
+            Box::new(raf_evaluation),
+            Box::new(read_write_checking),
+            Box::new(output_check),
+        ]
     }
 
     fn stage3_prover_instances(
