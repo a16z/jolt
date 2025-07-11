@@ -75,15 +75,15 @@ mod tests {
 
         let prover_accumulator = Rc::new(RefCell::new(prover_accumulator_pre_wrap));
         let verifier_accumulator = Rc::new(RefCell::new(verifier_accumulator_pre_wrap));
-        let mut prover_transcript = KeccakTranscript::new(b"Jolt");
-        let mut verifier_transcript = KeccakTranscript::new(b"Jolt");
+        let prover_transcript = Rc::new(RefCell::new(KeccakTranscript::new(b"Jolt")));
+        let verifier_transcript = Rc::new(RefCell::new(KeccakTranscript::new(b"Jolt")));
         let proofs = Rc::new(RefCell::new(HashMap::new()));
 
         // Create prover state manager
         let mut prover_state_manager = state_manager::StateManager::new_prover(
             openings.clone(),
             prover_accumulator,
-            &mut prover_transcript,
+            prover_transcript.clone(),
             proofs.clone(),
         );
         prover_state_manager.set_prover_data(
@@ -97,7 +97,7 @@ mod tests {
         let mut verifier_state_manager = state_manager::StateManager::new_verifier(
             openings,
             verifier_accumulator,
-            &mut verifier_transcript,
+            verifier_transcript.clone(),
             proofs,
         );
 

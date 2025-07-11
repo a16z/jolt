@@ -152,7 +152,7 @@ pub struct StateManager<
     PCS: CommitmentScheme<Field = F>,
 > {
     pub openings: Rc<RefCell<Openings<F>>>,
-    pub transcript: RefCell<&'a mut ProofTranscript>,
+    pub transcript: Rc<RefCell<ProofTranscript>>,
     pub proofs: Rc<RefCell<Proofs<F, ProofTranscript>>>,
     prover_state: Option<ProverState<'a, F, PCS>>,
     verifier_state: Option<VerifierState<'a, F, PCS>>,
@@ -164,12 +164,12 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
     pub fn new_prover(
         openings: Rc<RefCell<Openings<F>>>,
         prover_accumulator: Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>,
-        transcript: &'a mut ProofTranscript,
+        transcript: Rc<RefCell<ProofTranscript>>,
         proofs: Rc<RefCell<Proofs<F, ProofTranscript>>>,
     ) -> Self {
         Self {
             openings,
-            transcript: RefCell::new(transcript),
+            transcript,
             proofs,
             prover_state: Some(ProverState {
                 preprocessing: None,
@@ -185,12 +185,12 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
     pub fn new_verifier(
         openings: Rc<RefCell<Openings<F>>>,
         verifier_accumulator: Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>,
-        transcript: &'a mut ProofTranscript,
+        transcript: Rc<RefCell<ProofTranscript>>,
         proofs: Rc<RefCell<Proofs<F, ProofTranscript>>>,
     ) -> Self {
         Self {
             openings,
-            transcript: RefCell::new(transcript),
+            transcript,
             proofs,
             prover_state: None,
             verifier_state: Some(VerifierState {
@@ -294,6 +294,11 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         } else {
             panic!("Prover state not initialized");
         }
+    }
+
+    // @TODO(markosg04) make this nicer with &mut or somethin
+    pub fn get_transcript(&self) -> Rc<RefCell<ProofTranscript>> {
+        self.transcript.clone()
     }
 
     pub fn get_verifier_accumulator(&self) -> Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>> {
