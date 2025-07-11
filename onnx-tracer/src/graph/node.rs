@@ -490,10 +490,6 @@ impl Op<Fp> for Rescaled {
         Op::<Fp>::out_scale(&*self.inner, in_scales)
     }
 
-    // fn required_lookups(&self) -> Vec<LookupOp> {
-    //   self.inner.required_lookups()
-    // }
-
     fn clone_dyn(&self) -> Box<dyn Op<Fp>> {
         Box::new(self.clone()) // Forward to the derive(Clone) impl
     }
@@ -645,9 +641,8 @@ impl From<&SupportedOp> for ONNXOpcode {
             SupportedOp::Input(input_op) => input_op.into(),
             SupportedOp::Constant(constant) => constant.into(),
             SupportedOp::RebaseScale(rebase_scale) => (&*rebase_scale.inner).into(),
-            _ => {
-                panic!("Unsupported operation type for ONNXOpcode conversion: {op:?}",);
-            }
+            SupportedOp::Unknown(unknown) => unknown.into(),
+            SupportedOp::Rescaled(rescaled) => (&*rescaled.inner).into(),
         }
     }
 }

@@ -13,4 +13,15 @@ mod e2e_tests {
         let program_code = text_classification.decode();
         println!("Program code: {program_code:#?}",);
     }
+
+    #[test]
+    fn test_medium_classification() {
+        init_logger();
+        let text_classification = ONNXProgram {
+            model_path: "../onnx-tracer/models/medium_text_classification/network.onnx".into(),
+            inputs: Tensor::new(Some(&[1, 2, 3, 4, 5]), &[1, 5]).unwrap(), // Example input
+        };
+        let program_code = text_classification.decode();
+        println!("Program code: {program_code:#?}",);
+    }
 }

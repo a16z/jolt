@@ -5,6 +5,7 @@ use crate::{
     trace_types::ONNXOpcode,
 };
 use halo2curves::ff::PrimeField;
+use log::warn;
 use serde::{Deserialize, Serialize};
 use std::{any::Any, error::Error};
 
@@ -214,6 +215,13 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for Unknown {
 
     fn clone_dyn(&self) -> Box<dyn Op<F>> {
         Box::new(self.clone()) // Forward to the derive(Clone) impl
+    }
+}
+
+impl From<&Unknown> for ONNXOpcode {
+    fn from(_: &Unknown) -> Self {
+        warn!("Unimplemented operation encountered, returning Noop");
+        ONNXOpcode::Noop
     }
 }
 

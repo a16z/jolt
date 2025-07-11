@@ -48,6 +48,7 @@ pub struct ONNXInstr {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 /// Operation code uniquely identifying each ONNX instruction's function
 pub enum ONNXOpcode {
+    Noop,
     Constant,
     Input,
     Add,
@@ -60,7 +61,9 @@ pub enum ONNXOpcode {
     Gather,
     Transpose,
     Sqrt,
-    ReduceMean,
+    /// Used for the ReduceMean operator, which is internally converted to a
+    /// combination of Sum and Div operations.
+    Sum,
     Sigmoid,
     Softmax,
 }
