@@ -93,19 +93,17 @@ impl Node {
     /// Returns a new [`Node`] instance representing the converted ONNX node, with its operation, inputs, output shape, scale, and usage count properly set up.
     ///
     /// # Step-by-step Functionality
-    /// 1. **Logging:** Emits trace logs for the node and its operation for debugging purposes.
-    /// 2. **Usage Counting:** Determines how many times this node's output is used in the graph, which is important for optimization (e.g., in-place rescaling of constants).
-    /// 3. **Input Collection:** Collects the indices of input nodes and retrieves their corresponding [`Node`] objects from `other_nodes`.
-    /// 4. **Operation Construction:** Calls `new_op_from_onnx` to parse and construct the operation (`opkind`) for this node, and identifies any unused input indices.
-    /// 5. **Node Map Update:** Updates `other_nodes` with any new or modified input nodes.
-    /// 6. **Input Pruning:** Marks and removes unused inputs based on `deleted_indices`.
-    /// 7. **Input Scale Gathering:** Collects the output scales of each input node to prepare for scale propagation.
-    /// 8. **Constant Rescaling:** For operations requiring homogeneous input scales, automatically rescales constants that are only used once to match the required scale, updating the corresponding input nodes.
-    /// 9. **Homogeneous Rescaling:** Applies homogeneous rescaling to the operation if required, ensuring all input scales are consistent.
-    /// 10. **Global Scale Rebase:** Rebases the operation's output scale to the global maximum scale, ensuring consistent fixed-point precision across the graph.
-    /// 11. **Output Shape Resolution:** Determines the output shape of the node using `node_output_shapes`, resolving symbolic dimensions as needed.
-    /// 12. **Output Shape Adjustment:** Ensures the output shape is non-empty, defaulting to `[1]` if necessary.
-    /// 13. **Node Construction:** Returns a new [`Node`] instance with all fields (index, operation, inputs, output dimensions, output scale, and usage count) properly initialized.
+    /// 0. **Input Collection:** Collects the indices of input nodes and retrieves their corresponding [`Node`] objects from `other_nodes`.
+    /// 1. **Operation Construction:** Calls `new_op_from_onnx` to parse and construct the operation (`opkind`) for this node, and identifies any unused input indices.
+    /// 2. **Node Map Update:** Updates `other_nodes` with any new or modified input nodes.
+    /// 3. **Input Pruning:** Marks and removes unused inputs based on `deleted_indices`.
+    /// 4. **Input Scale Gathering:** Collects the output scales of each input node to prepare for scale propagation.
+    /// 5. **Constant Rescaling:** For operations requiring homogeneous input scales, automatically rescales constants that are only used once to match the required scale, updating the corresponding input nodes.
+    /// 6. **Homogeneous Rescaling:** Applies homogeneous rescaling to the operation if required, ensuring all input scales are consistent.
+    /// 7. **Global Scale Rebase:** Rebases the operation's output scale to the global maximum scale, ensuring consistent fixed-point precision across the graph.
+    /// 8. **Output Shape Resolution:** Determines the output shape of the node using `node_output_shapes`, resolving symbolic dimensions as needed.
+    /// 9. **Output Shape Adjustment:** Ensures the output shape is non-empty, defaulting to `[1]` if necessary.
+    /// 10. **Node Construction:** Returns a new [`Node`] instance with all fields (index, operation, inputs, output dimensions, output scale, and usage count) properly initialized.
     ///
     /// # Panics
     /// Panics if any required input node is missing from `other_nodes`, or if operation construction or scale propagation fails.
