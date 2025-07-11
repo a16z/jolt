@@ -55,6 +55,8 @@ pub struct ONNXInstr {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 /// Operation code uniquely identifying each ONNX instruction's function
 pub enum ONNXOpcode {
+    Constant,
+    Input,
     Add,
     Sub,
     Mul,
@@ -64,10 +66,8 @@ pub enum ONNXOpcode {
     MatMult,
     Gather,
     Transpose,
-    Sigmoid,
-    ReduceMean,
-    Softmax,
     Sqrt,
-    Constant,
-    Input,
+    ReduceMean,
+    Sigmoid,
+    Softmax,
 }
