@@ -78,13 +78,15 @@ mod tests {
         let prover_transcript = Rc::new(RefCell::new(KeccakTranscript::new(b"Jolt")));
         let verifier_transcript = Rc::new(RefCell::new(KeccakTranscript::new(b"Jolt")));
         let proofs = Rc::new(RefCell::new(HashMap::new()));
+        let commitments = Rc::new(RefCell::new(None));
 
         // Create prover state manager
-        let mut prover_state_manager = state_manager::StateManager::new_prover(
+        let mut prover_state_manager = state_manager::StateManager::new_prover_with_commitments(
             openings.clone(),
             prover_accumulator,
             prover_transcript.clone(),
             proofs.clone(),
+            commitments.clone(),
         );
         prover_state_manager.set_prover_data(
             &preprocessing,
@@ -94,11 +96,12 @@ mod tests {
         );
 
         // Create verifier state manager
-        let mut verifier_state_manager = state_manager::StateManager::new_verifier(
+        let mut verifier_state_manager = state_manager::StateManager::new_verifier_with_commitments(
             openings,
             verifier_accumulator,
             verifier_transcript.clone(),
             proofs,
+            commitments,
         );
 
         let verifier_preprocessing =

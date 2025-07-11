@@ -1171,7 +1171,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         vec![Box::new(pc_sumcheck)]
     }
 
-    fn stage2_verifier_instances(
+    fn stage3_verifier_instances(
         &self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
@@ -1287,7 +1287,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         vec![Box::new(inner_sumcheck)]
     }
 
-    fn stage3_verifier_instances(
+    fn stage2_verifier_instances(
         &self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
@@ -1315,10 +1315,6 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         let outer_sumcheck_r = state_manager.openings_point(OuterSumcheckAz);
         let num_cycles_bits = key.num_steps.log_2();
         let (r_cycle, _rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
-
-        // Get NextUnexpandedPC and NextPC evaluations
-        let next_unexpanded_pc_index = JoltR1CSInputs::NextUnexpandedPC.to_index();
-        let next_pc_index = JoltR1CSInputs::NextPC.to_index();
 
         // The batched claim equals NextUnexpandedPC(r_cycle) + gamma * NextPC(r_cycle)
         let next_unexpanded_pc_eval = state_manager.spartan_z_value(JoltR1CSInputs::NextUnexpandedPC);

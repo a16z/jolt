@@ -147,6 +147,8 @@ pub enum ProofKeys {
     SpartanOuterSumcheck,
     SpartanInnerSumcheck,
     SpartanShiftSumcheck,
+    SpartanStage2Sumcheck,
+    SpartanStage3Sumcheck,
 }
 
 pub enum ProofData<F: JoltField, ProofTranscript: Transcript> {
@@ -175,7 +177,6 @@ where
     pub program_io: Option<JoltDevice>,
     pub trace_length: Option<usize>,
     pub accumulator: Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>,
-    pub commitments: Option<&'a JoltCommitments<F, PCS>>,
 }
 
 pub struct StateManager<
@@ -187,6 +188,7 @@ pub struct StateManager<
     pub openings: Rc<RefCell<Openings<F>>>,
     pub transcript: Rc<RefCell<ProofTranscript>>,
     pub proofs: Rc<RefCell<Proofs<F, ProofTranscript>>>,
+    pub commitments: Rc<RefCell<Option<JoltCommitments<F, PCS>>>>,
     prover_state: Option<ProverState<'a, F, PCS>>,
     verifier_state: Option<VerifierState<'a, F, PCS>>,
 }
@@ -200,10 +202,27 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         transcript: Rc<RefCell<ProofTranscript>>,
         proofs: Rc<RefCell<Proofs<F, ProofTranscript>>>,
     ) -> Self {
+        Self::new_prover_with_commitments(
+            openings,
+            prover_accumulator,
+            transcript,
+            proofs,
+            Rc::new(RefCell::new(None)),
+        )
+    }
+
+    pub fn new_prover_with_commitments(
+        openings: Rc<RefCell<Openings<F>>>,
+        prover_accumulator: Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>,
+        transcript: Rc<RefCell<ProofTranscript>>,
+        proofs: Rc<RefCell<Proofs<F, ProofTranscript>>>,
+        commitments: Rc<RefCell<Option<JoltCommitments<F, PCS>>>>,
+    ) -> Self {
         Self {
             openings,
             transcript,
             proofs,
+            commitments,
             prover_state: Some(ProverState {
                 preprocessing: None,
                 trace: None,
@@ -221,17 +240,33 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         transcript: Rc<RefCell<ProofTranscript>>,
         proofs: Rc<RefCell<Proofs<F, ProofTranscript>>>,
     ) -> Self {
+        Self::new_verifier_with_commitments(
+            openings,
+            verifier_accumulator,
+            transcript,
+            proofs,
+            Rc::new(RefCell::new(None)),
+        )
+    }
+
+    pub fn new_verifier_with_commitments(
+        openings: Rc<RefCell<Openings<F>>>,
+        verifier_accumulator: Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>,
+        transcript: Rc<RefCell<ProofTranscript>>,
+        proofs: Rc<RefCell<Proofs<F, ProofTranscript>>>,
+        commitments: Rc<RefCell<Option<JoltCommitments<F, PCS>>>>,
+    ) -> Self {
         Self {
             openings,
             transcript,
             proofs,
+            commitments,
             prover_state: None,
             verifier_state: Some(VerifierState {
                 preprocessing: None,
                 program_io: None,
                 trace_length: None,
                 accumulator: verifier_accumulator,
-                commitments: None,
             }),
         }
     }
@@ -359,7 +394,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         }
     }
 
-    // @TODO(markosg04) make this nicer with &mut or somethin
+    // @TODO(markosg04) make this nicer with &mut or something
     pub fn get_transcript(&self) -> Rc<RefCell<ProofTranscript>> {
         self.transcript.clone()
     }
@@ -376,13 +411,15 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         self.openings.clone()
     }
 
-    pub fn get_commitments(&self) -> &JoltCommitments<F, PCS> {
-        if let Some(ref verifier_state) = self.verifier_state {
-            verifier_state
-                .commitments
-                .expect("Commitments not set in verifier state")
-        } else {
-            panic!("Verifier state not initialized");
-        }
+    pub fn get_commitments(&self) -> JoltCommitments<F, PCS> {
+        self.commitments
+            .borrow()
+            .as_ref()
+            .expect("Commitments not set")
+            .clone()
+    }
+
+    pub fn set_commitments(&self, commitments: JoltCommitments<F, PCS>) {
+        *self.commitments.borrow_mut() = Some(commitments);
     }
 }
