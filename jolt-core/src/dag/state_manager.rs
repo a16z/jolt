@@ -4,7 +4,7 @@ use std::ops::{Index, RangeFull};
 use std::rc::Rc;
 
 use crate::field::JoltField;
-use crate::jolt::vm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
+use crate::jolt::vm::{JoltCommitments, JoltProverPreprocessing, JoltVerifierPreprocessing};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::r1cs::inputs::JoltR1CSInputs;
@@ -175,6 +175,7 @@ where
     pub program_io: Option<JoltDevice>,
     pub trace_length: Option<usize>,
     pub accumulator: Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>,
+    pub commitments: Option<&'a JoltCommitments<F, PCS>>,
 }
 
 pub struct StateManager<
@@ -230,6 +231,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
                 program_io: None,
                 trace_length: None,
                 accumulator: verifier_accumulator,
+                commitments: None,
             }),
         }
     }
@@ -372,5 +374,15 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
 
     pub fn get_openings(&self) -> Rc<RefCell<Openings<F>>> {
         self.openings.clone()
+    }
+
+    pub fn get_commitments(&self) -> &JoltCommitments<F, PCS> {
+        if let Some(ref verifier_state) = self.verifier_state {
+            verifier_state
+                .commitments
+                .expect("Commitments not set in verifier state")
+        } else {
+            panic!("Verifier state not initialized");
+        }
     }
 }
