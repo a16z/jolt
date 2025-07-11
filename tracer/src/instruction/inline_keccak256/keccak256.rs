@@ -813,6 +813,12 @@ mod tests {
                 .expect("Failed to store initial lane");
         }
 
+        // Get virtual register mapping
+        let mut vr = [0; super::NEEDED_REGISTERS];
+        for i in 0..super::NEEDED_REGISTERS {
+            vr[i] = super::virtual_register_index(i as u64) as usize;
+        }
+
         // Generate the virtual sequence
         let instruction = KECCAK256 {
             address: 0,
@@ -868,6 +874,8 @@ mod tests {
         // Execute virtual sequence and check intermediate states
         let mut instruction_count = 0;
         let mut round_count = 0;
+        let mut checked_round_0 = false;
+        let mut checked_round_1 = false;
 
         for (i, virtual_instr) in virtual_sequence.iter().enumerate() {
             // Execute the instruction
@@ -934,42 +942,45 @@ mod tests {
 
             instruction_count += 1;
 
-            // Check state at key points (this is a simplified check - we'd need to know
-            // exactly when each round completes in the virtual sequence)
-            if instruction_count == virtual_sequence.len() / 24 {
-                // Rough estimate for end of round 0
-                let current_state = read_state_from_memory(&mut cpu, base_addr);
-                if current_state != expected_after_round_0 {
-                    println!(
-                        "DIVERGENCE DETECTED after ~round 0 (instruction {}):",
-                        instruction_count
-                    );
-                    println!("Expected round 0 final state:");
-                    print_state_hex(&expected_after_round_0);
-                    println!("Actual state:");
-                    print_state_hex(&current_state);
+            // Check state at key points
+            // We need to check after specific patterns of instructions that indicate round completion
+            // For now, let's check when we see certain patterns or use the detailed divergence approach
 
-                    // Find first differing lane
-                    for (lane_idx, (&expected, &actual)) in expected_after_round_0
-                        .iter()
-                        .zip(current_state.iter())
-                        .enumerate()
-                    {
-                        if expected != actual {
-                            println!(
-                                "First difference at lane {}: expected 0x{:016x}, got 0x{:016x}",
-                                lane_idx, expected, actual
-                            );
-                            break;
-                        }
-                    }
-                    break;
+            // A more reliable approach: check virtual register state periodically
+            // and see if it matches our expected values
+            if !checked_round_0 && instruction_count > 100 {
+                // After load_state and some computation
+                let mut current_state = [0u64; 25];
+                for j in 0..25 {
+                    current_state[j] = cpu.x[vr[j]] as u64;
                 }
-                round_count += 1;
+
+                // Check if we've reached the end of round 0
+                if current_state[0] == 0x0000000000000001 && current_state[1..] == [0u64; 24] {
+                    println!("Found end of round 0 at instruction {}", instruction_count);
+                    assert_eq!(
+                        current_state, expected_after_round_0,
+                        "Round 0 state mismatch"
+                    );
+                    checked_round_0 = true;
+                }
+            }
+
+            if checked_round_0 && !checked_round_1 && instruction_count > 200 {
+                let mut current_state = [0u64; 25];
+                for j in 0..25 {
+                    current_state[j] = cpu.x[vr[j]] as u64;
+                }
+
+                // Check if we've reached the end of round 1
+                if current_state == expected_after_round_1 {
+                    println!("Found end of round 1 at instruction {}", instruction_count);
+                    checked_round_1 = true;
+                }
             }
         }
 
-        // Read final state
+        // Read final state from memory (after store_state)
         let final_state = read_state_from_memory(&mut cpu, base_addr);
 
         // Compare with expected final state (after all 24 rounds)
@@ -1027,6 +1038,10 @@ mod tests {
                 );
             }
         }
+
+        // Verify we found the intermediate checkpoints
+        assert!(checked_round_0, "Failed to find round 0 checkpoint");
+        assert!(checked_round_1, "Failed to find round 1 checkpoint");
 
         println!("Virtual sequence step-by-step test completed successfully!");
     }
