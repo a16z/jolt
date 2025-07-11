@@ -86,8 +86,11 @@ impl<F: JoltField> From<Vec<F>> for OpeningPoint<BIG_ENDIAN, F> {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
 pub enum OpeningsKeys {
     SpartanZ(JoltR1CSInputs),
-    InstructionTypeFlag(usize),
+    LookupTableFlag(usize),
     InstructionRa(usize),
+    InstructionBooleanityRa(usize),
+    InstructionHammingRa(usize),
+    InstructionRafFlag,
     OuterSumcheckAz,        // Az claim from outer sumcheck
     OuterSumcheckBz,        // Bz claim from outer sumcheck
     OuterSumcheckCz,        // Cz claim from outer sumcheck
@@ -306,5 +309,14 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
 
     pub fn get_openings(&self) -> Rc<RefCell<Openings<F>>> {
         self.openings.clone()
+    }
+
+    pub fn r_cycle(&self) -> OpeningPoint<LITTLE_ENDIAN, F> {
+        self.openings
+            .borrow()
+            .get(&OpeningsKeys::SpartanZ(JoltR1CSInputs::Imm))
+            .unwrap()
+            .0
+            .clone()
     }
 }
