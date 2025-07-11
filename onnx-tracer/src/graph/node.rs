@@ -135,59 +135,139 @@ impl Node {
             // cmp to 1 for outputs
             1,
         );
-        // load the node inputs
+        // ──────────────────────────────────────────────────────────────────────────────
+        // ★ Step 0: Gather input nodes and their identifiers for this ONNX node ★
+        // ──────────────────────────────────────────────────────────────────────────────
+        // WHY:
+        //   - Every node in a computational graph performs an operation on one or more input tensors.
+        //   - These input tensors are produced by other nodes in the graph (its "predecessors").
+        //   - To construct this node and its operation, we need to know:
+        //       1. Which nodes produce its inputs (by index and output slot).
+        //       2. The actual Node objects for those inputs, so we can access their metadata
+        //          (such as output scale, shape, etc.) for scale propagation, shape inference,
+        //          and operation construction.
+        //
+        // WHAT:
+        //   - We create two collections:
+        //       a) `input_ids`: a vector of (node index, output slot) pairs for each input.
+        //          This is a lightweight reference to the source of each input tensor.
+        //       b) `inputs`: a vector of the actual Node objects corresponding to those inputs.
+        //          This allows us to access all relevant information about each input node.
+        //
+        // HOW:
+        //   1. We iterate over the ONNX node's `inputs` field, which lists its input connections.
+        //      Each input is an object with a `.node` (index of the producing node) and `.slot`
+        //      (which output of that node is used, for multi-output nodes).
+        //   2. We collect these into `input_ids`, which will later be used to reference and update
+        //      the connections for this node.
+        //   3. For each input node index, we fetch the corresponding Node object from `other_nodes`
+        //      (the global map of all nodes constructed so far) and push a clone of it into `inputs`.
+        //      This gives us direct access to all input node metadata for downstream processing.
+        //
+        //   Note: We must collect the input node indices first, because we can only borrow `other_nodes`
+        //   mutably once per function scope. By collecting the indices up front, we avoid borrowing issues
+        //   and can safely fetch all input nodes before any mutations occur.
+        //
+        //   This setup is foundational for the rest of the node construction process, as it enables:
+        //     - Operation parsing (which may depend on input node properties)
+        //     - Scale and shape propagation (which require input node metadata)
+        //     - Input pruning and rescaling optimizations (which may mutate input nodes)
+        //
+        //   In summary: This block establishes the data dependencies for the new node, and prepares
+        //   all necessary input node information for the subsequent steps of operation construction,
+        //   scale handling, and graph mutation.
         let mut inputs = vec![];
         // Collect (node index, slot index) pairs for each input of the current node.
-        // This allows us to later fetch and process the actual input nodes from `other_nodes`.
-        //
-        // Note: we can only take the inputs as mutable once -- so we need to collect them first
         let mut input_ids = node
             .inputs
             .iter()
             .map(|i| (i.node, i.slot))
             .collect::<Vec<_>>();
-        // For each input (by node index), fetch the corresponding Node from other_nodes and push it to inputs.
-        // This is necessary because we need the actual Node objects (not just their indices)
-        // in order to construct the new operation and handle scale/shape propagation.
+        // For each input node index, fetch the corresponding Node from `other_nodes` and push it to `inputs`.
         input_ids.iter().for_each(|(i, _)| {
             inputs.push(other_nodes.get(i).unwrap().clone());
         });
+        // ──────────────────────────────────────────────────────────────────────────────
+        // ★ Step 1: Parse the ONNX node into an operation and identify unused inputs ★
+        // ──────────────────────────────────────────────────────────────────────────────
+        // `new_op_from_onnx` constructs the operation (`opkind`) for this node based on the ONNX node.
+        // It also returns a list of input indices (`deleted_indices`) that are not actually used by the operation.
+        // This is important for pruning unused inputs (e.g., optional bias in some layers).
         let (mut opkind, deleted_indices) =
-            new_op_from_onnx(idx, scales, node.clone(), &mut inputs, symbol_values).unwrap(); // parses the op name                                                                                  // we can only take the inputs as mutable once -- so we need to collect them first
+            new_op_from_onnx(idx, scales, node.clone(), &mut inputs, symbol_values).unwrap();
+
+        // ──────────────────────────────────────────────────────────────────────────────
+        // ★ Step 2: Update the global node map with any modified input nodes ★
+        // ──────────────────────────────────────────────────────────────────────────────
+        // Some input nodes may have been mutated (e.g., rescaled constants).
+        // We update `other_nodes` with the latest versions of all input nodes.
         other_nodes.extend(
             inputs
                 .iter()
                 .map(|i| (i.idx(), i.clone()))
                 .collect::<BTreeMap<_, _>>(),
         );
+
+        // ──────────────────────────────────────────────────────────────────────────────
+        // ★ Step 3: Mark unused inputs for removal ★
+        // ──────────────────────────────────────────────────────────────────────────────
+        // For each input, if its index is in `deleted_indices`, we set its node index to `usize::MAX`.
+        // This is a sentinel value indicating that this input should be ignored/removed.
+        // The actual pruning happens later via `retain`.
         input_ids.iter_mut().enumerate().for_each(|(i, (idx, _))| {
             if deleted_indices.contains(&i) {
-                // this input is not used
+                // ✗ This input is not used by the operation; mark for removal.
                 *idx = usize::MAX;
             }
         });
-        // remove the inputs that are not used
+        // ──────────────────────────────────────────────────────────────────────────────
+        // ★ Step 4: Prune unused inputs and gather input scales for scale propagation ★
+        // ──────────────────────────────────────────────────────────────────────────────
+        // Remove any inputs that were marked as unused (idx == usize::MAX) in the previous step.
+        // This ensures that only the relevant inputs are retained for this node's operation.
         input_ids.retain(|(idx, _)| *idx != usize::MAX);
-        // rescale the inputs if necessary to get consistent fixed points
+
+        // For each retained input, determine its output scale.
+        // This is necessary for scale propagation and for ensuring that all inputs to the operation
+        // are quantized to compatible fixed-point representations.
+        //
+        // - We map each (node_idx, outlet) pair to the corresponding input node in `inputs`.
+        // - For each input, we fetch the output scale for the specific outlet.
         let mut in_scales: Vec<crate::Scale> = input_ids
             .iter()
             .map(|(idx, outlet)| {
+                // Find the position of the input node in the `inputs` vector.
                 let idx = inputs.iter().position(|x| *idx == x.idx()).unwrap();
+                // Get the output scale for the specific outlet of this input node.
                 inputs[idx].out_scales()[*outlet]
             })
             .collect::<Vec<_>>();
+
+        // ──────────────────────────────────────────────────────────────────────────────
+        // ★ Step 5: Homogenize input scales for operations that require it ★
+        // ──────────────────────────────────────────────────────────────────────────────
+        // Some operations require all their inputs to have the same scale (homogenous input scales).
+        // - We query the operation for which input indices require homogenous scaling.
+        // - For each such input, if it is a constant and is only used once, we can safely rescale it
+        //   in-place to match the required scale, avoiding unnecessary rescaling operations.
+        // - This optimization is important for efficiency and for minimizing quantization error.
         let homogenous_inputs = opkind.requires_homogenous_input_scales();
-        // autoamtically increases a constant's scale if it is only used once and
+
+        // For each input that requires homogenous scaling and is not deleted:
         for input in homogenous_inputs
             .into_iter()
             .filter(|i| !deleted_indices.contains(i))
         {
+            // Ensure the input index is valid.
             if inputs.len() > input {
+                // Fetch the input node from the global node map.
                 let input_node = other_nodes
                     .get_mut(&inputs[input].idx())
                     .ok_or("input not found")
                     .unwrap();
+                // Get a mutable reference to the input node's operation.
                 let input_opkind = &mut input_node.opkind();
+                // If the input is a constant, and is only used once, rescale it in-place.
                 if let Some(constant) = input_opkind.get_mutable_constant() {
                     rescale_const_with_single_use(
                         constant,
@@ -195,29 +275,80 @@ impl Node {
                         input_node.num_uses(),
                     )
                     .unwrap();
+                    // Replace the input node's operation with the newly rescaled constant.
                     input_node.replace_opkind(constant.clone_dyn().into());
+                    // Update the input node's output scale to reflect the new scale.
                     let out_scale = input_opkind.out_scale(vec![]).unwrap();
                     input_node.bump_scale(out_scale);
+                    // Update the in_scales vector for this input.
                     in_scales[input] = out_scale;
                 }
             } else {
+                // If the input index is invalid, log a warning and skip.
                 warn!("input {input} not found for rescaling, skipping ...",);
             }
         }
+
+        // ──────────────────────────────────────────────────────────────────────────────
+        // ★ Step 6: Apply homogenous rescaling to the operation if required ★
+        // ──────────────────────────────────────────────────────────────────────────────
+        // If the operation requires homogenous input scales, apply the necessary rescaling.
+        // This ensures that all inputs to the operation are quantized to the same scale,
+        // which is required for correct computation in fixed-point arithmetic.
         opkind = opkind.homogenous_rescale(in_scales.clone()).unwrap().into();
+
+        // ──────────────────────────────────────────────────────────────────────────────
+        // ★ Step 7: Compute the output scale for this node ★
+        // ──────────────────────────────────────────────────────────────────────────────
+        // The output scale is determined by the operation, given the input scales.
+        // This is used for subsequent scale propagation and for quantizing the output tensor.
         let mut out_scale = opkind.out_scale(in_scales.clone()).unwrap();
-        // rescale the inputs if necessary to get consistent fixed points, we
-        // select the largest scale (highest precision)
+        // ──────────────────────────────────────────────────────────────────────────────
+        // ★ Step 8: Rebase the output scale to the global maximum scale ★
+        // ──────────────────────────────────────────────────────────────────────────────
+        // Why: To ensure consistent fixed-point precision across the entire computation graph,
+        //      we want all node outputs to use a common "global" scale (the highest precision required).
+        //      This avoids subtle bugs and numerical errors when combining outputs from different nodes,
+        //      and simplifies downstream processing (e.g., when exporting or verifying the model).
+        //
+        // What: If this node's output scale is higher than the global scale (i.e., it has more precision),
+        //       we "rebase" it down to the global scale by wrapping the operation in a `RebaseScale` op.
+        //       This applies a scaling multiplier to the output, so that its fixed-point representation
+        //       matches the global scale. The `scales.rebase_multiplier` allows for additional scaling
+        //       flexibility (e.g., for multi-scale quantization).
+        //
+        // How: We call `RebaseScale::rebase`, which checks if rebasing is needed and, if so, wraps the
+        //      operation accordingly. We then update `out_scale` to reflect the new (rebased) scale.
         let global_scale = scales.get_max();
         opkind = RebaseScale::rebase(opkind, global_scale, out_scale, scales.rebase_multiplier);
         out_scale = opkind.out_scale(in_scales).unwrap();
-        // get the output shape
+
+        // ──────────────────────────────────────────────────────────────────────────────
+        // ★ Step 9: Determine the output shape for this node ★
+        // ──────────────────────────────────────────────────────────────────────────────
+        // Why: Each node must know the shape of its output tensor for correct graph execution,
+        //      shape inference, and for allocating memory buffers.
+        //
+        // What: We use `node_output_shapes` to compute the output shape(s) of this ONNX node,
+        //       resolving any symbolic dimensions using `symbol_values`.
+        //
+        // How: Most nodes (except subgraphs) have a single output, so we take the first shape.
+        //      If the output shape is empty (e.g., a scalar), we default to `[1]` to ensure
+        //      downstream code always has a valid shape vector.
         let out_dims = node_output_shapes(&node, symbol_values).unwrap();
-        // nodes vs subgraphs always have a single output
         let mut out_dims = out_dims[0].clone();
         if out_dims.is_empty() {
             out_dims = vec![1];
         }
+
+        // ──────────────────────────────────────────────────────────────────────────────
+        // ★ Step 10: Construct and return the new Node instance ★
+        // ──────────────────────────────────────────────────────────────────────────────
+        // Why: All fields are now fully determined—operation, input connections, output shape,
+        //      output scale, and usage count—so we can safely construct the Node.
+        //
+        // What: The returned Node is ready for insertion into the computation graph, with all
+        //       metadata and invariants satisfied.
         Node {
             idx,
             opkind,
