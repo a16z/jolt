@@ -609,24 +609,29 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         const DEGREE: usize = 3;
         let BooleanityProverState {
-            K,
-            B: gruens_B,
-            F,
-            G,
-            D,
-            H,
-            ..
+            K, B, F, G, D, H, ..
         } = self.prover_state.as_ref().unwrap();
 
         let evals = if round < K.log_2() {
             // First log(K) rounds of sumcheck
             let m = round + 1;
 
-            let quadratic_coeffs: [F; DEGREE - 1] = if gruens_B.E_in_current_len() == 1 {
-                (0..gruens_B.len() / 2)
+            // We use both Dao-Thaler and Gruen's optimizations here. See "Our optimization on top of
+            // Gruen's" from Sec. 3 of https://eprint.iacr.org/2024/1210.pdf.
+            //
+            // We compute the evaluations of the cubic polynomial s(X) = l(X) * q(X) at {0, 2, 3} by
+            // first computing the evaluations of the quadratic polynomial q(X) at 0 and infinity.
+            // Moreover, we split the evaluations of the eq polynomial into two groups, E_in and E_out.
+            // We use the GruenSplitEqPolynomial data structure to do this.
+            //
+            // Since E_in is bound first, we have two cases to handle: one where E_in is fully bound
+            // and one where it is not.
+            let quadratic_coeffs: [F; DEGREE - 1] = if B.E_in_current_len() == 1 {
+                // Here E_in is fully bound, so we can ignore it and use the evaluations from E_out.
+                (0..B.len() / 2)
                     .into_par_iter()
                     .map(|k_prime| {
-                        let B_eval = gruens_B.E_out_current()[k_prime];
+                        let B_eval = B.E_out_current()[k_prime];
                         let inner_sum = G[k_prime << m..(k_prime + 1) << m]
                             .par_iter()
                             .enumerate()
@@ -671,21 +676,25 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                         |running, new| [running[0] + new[0], running[1] + new[1]],
                     )
             } else {
-                let num_x_in_bits = gruens_B.E_in_current_len().log_2();
+                // Here E_in has not been fully bound, so the correct evaluation of eq is
+                // E_in_eval * E_out_eval. We group the terms with the same value of E_out_eval in
+                // order to decrease the total number of multiplications.
+                let num_x_in_bits = B.E_in_current_len().log_2();
                 let x_bitmask = (1 << num_x_in_bits) - 1;
 
-                (0..gruens_B.len() / 2)
+                (0..B.len() / 2)
                     .collect::<Vec<_>>()
+                    // Group values of k_prime where E_out_eval will have the same value
                     .par_chunk_by(|k1, k2| k1 >> num_x_in_bits == k2 >> num_x_in_bits)
                     .map(|chunk| {
                         let x_out = chunk[0] >> num_x_in_bits;
-                        let B_E_out_eval = gruens_B.E_out_current()[x_out];
+                        let B_E_out_eval = B.E_out_current()[x_out];
 
                         let chunk_evals = chunk
                             .par_iter()
                             .map(|k_prime| {
                                 let x_in = k_prime & x_bitmask;
-                                let B_E_in_eval = gruens_B.E_in_current()[x_in];
+                                let B_E_in_eval = B.E_in_current()[x_in];
 
                                 let inner_sum = G[k_prime << m..(k_prime + 1) << m]
                                     .par_iter()
@@ -740,7 +749,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                     )
             };
 
-            gruens_B.sumcheck_evals_from_quadratic_coeffs(
+            B.sumcheck_evals_from_quadratic_coeffs(
                 quadratic_coeffs[0],
                 quadratic_coeffs[1],
                 previous_claim,
@@ -775,7 +784,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                     },
                 );
 
-            let eq_r_r = gruens_B.current_scalar;
+            let eq_r_r = B.current_scalar;
             univariate_poly_evals = [
                 eq_r_r * univariate_poly_evals[0],
                 eq_r_r * univariate_poly_evals[1],
