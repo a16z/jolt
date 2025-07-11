@@ -3,21 +3,15 @@
 
 // we allow this for our dynamic range based indexing scheme
 #![allow(clippy::single_range_in_vec_init)]
-// #![feature(round_ties_even)]
 #![allow(clippy::empty_docs)]
 
-use std::{fs::File, path::PathBuf};
-
-use clap::Args;
-use serde::{Deserialize, Serialize};
-
 use crate::{
-    graph::{
-        model::{Model, NodeType},
-        node::Node,
-    },
+    graph::model::{Model, NodeType},
     trace_types::ONNXInstr,
 };
+use clap::Args;
+use serde::{Deserialize, Serialize};
+use std::{fs::File, path::PathBuf};
 
 /// Methods for configuring tensor operations and assigning values to them in a Halo2
 /// circuit.
@@ -107,14 +101,14 @@ pub struct RunArgs {
 impl Default for RunArgs {
     fn default() -> Self {
         Self {
-            // tolerance: Tolerance::default(),
             input_scale: 7,
             param_scale: 7,
             scale_rebase_multiplier: 1,
+            variables: vec![("batch_size".to_string(), 1)],
+            // tolerance: Tolerance::default(),
             // lookup_range: (-32768, 32768),
             // logrows: 17,
             // num_inner_cols: 2,
-            variables: vec![("batch_size".to_string(), 1)],
         }
     }
 }
