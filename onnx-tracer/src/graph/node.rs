@@ -620,15 +620,15 @@ pub enum SupportedOp {
     Nonlinear(LookupOp),
     /// A hybrid operation.
     Hybrid(HybridOp),
-    ///
+    /// An input node (e.g., model input or placeholder).
     Input(Input),
-    ///
+    /// A constant value node (e.g., weights, biases, or fixed tensors).
     Constant(Constant<Fp>),
-    ///
+    /// An unknown or unsupported operation.
     Unknown(Unknown),
-    ///
+    /// An operation whose inputs have been rescaled for homogeneity.
     Rescaled(Rescaled),
-    ///
+    /// An operation whose output scale has been rebased to match the global scale.
     RebaseScale(RebaseScale),
 }
 
@@ -848,6 +848,36 @@ impl PartialEq for Node {
     }
 }
 
+/// Rescales a constant node's quantized values in-place if it is only used once and its scale does not match the required input scale(s).
+///
+/// In quantized computation graphs, operations often require all their inputs to have the same fixed-point scale for correct arithmetic.
+/// If a constant (such as a weight or bias tensor) is only used by a single node, it is safe and efficient to rescale it in-place to match the consumer's required scale.
+/// This avoids inserting extra rescaling operations into the graph, reducing computational overhead and minimizing quantization error.
+///
+/// This function checks if the provided constant node is only used once (`num_uses == 1`). If so, it compares the constant's current output scale to the maximum required input scale among its consumers.
+/// If the required scale is higher than the constant's current scale, it re-quantizes the constant's raw values to the new scale, updating its quantized representation in-place.
+///
+/// - If `num_uses == 1`, fetch the constant's current output scale.
+/// - Determine the maximum required input scale from `in_scales`.
+/// - If the required scale is greater than the current scale, re-quantize the constant's raw values to the new scale using `quantize_tensor`.
+/// - Update the constant's quantized values in-place.
+///
+/// Use this function during graph construction or optimization passes, specifically when preparing input nodes for operations that require homogeneous input scales.
+/// It is typically called as part of the node construction logic when building the computation graph from an ONNX model, just before inserting rescaling operations for constants.
+///
+/// # Arguments
+/// - `constant`: The mutable reference to the constant node to potentially rescale.
+/// - `in_scales`: The list of required input scales for the operation consuming this constant.
+/// - `num_uses`: The number of times this constant node is used in the graph.
+///
+/// # Returns
+/// Returns `Ok(())` if successful, or an error if scale information is missing or quantization fails.
+///
+/// # Example
+/// ```ignore
+/// // During node construction, for each constant input:
+/// rescale_const_with_single_use(constant, input_scales, constant_node.num_uses())?;
+/// ```
 fn rescale_const_with_single_use(
     constant: &mut Constant<Fp>,
     in_scales: Vec<crate::Scale>,
