@@ -31,7 +31,7 @@ pub struct StateManager<'a, F: JoltField, PCS: CommitmentScheme<T, Field = F>, T
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
 pub enum OpeningsKeys {
     SpartanZ(JoltR1CSInputs),
-    InstructionTypeFlag(usize),
+    LookupTableFlag(usize),
     InstructionRa(usize),
     InstructionBooleanityRa(usize),
     InstructionHammingRa(usize),

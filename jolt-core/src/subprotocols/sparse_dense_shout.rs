@@ -236,7 +236,7 @@ pub fn current_suffix_len(log_K: usize, j: usize) -> usize {
 ///   eq(r', j) (\prod_i ra_i(k_i, j)) * \sum_l flag_l * Val_l(k)
 /// is degree 2 in each "address" variable k.
 #[tracing::instrument(skip_all)]
-pub fn compute_sumcheck_prover_message<const WORD_SIZE: usize, F: JoltField>(
+pub fn compute_prefix_suffix_prover_message<const WORD_SIZE: usize, F: JoltField>(
     prefix_checkpoints: &[PrefixCheckpoint<F>],
     suffix_polys: &[Vec<DensePolynomial<F>>],
     identity_ps: &PrefixSuffixDecomposition<F, 2>,
@@ -562,7 +562,7 @@ pub fn prove_sparse_dense_shout<
             let span = tracing::span!(tracing::Level::INFO, "sparse-dense sumcheck round");
             let _guard = span.enter();
 
-            let univariate_poly_evals = compute_sumcheck_prover_message::<WORD_SIZE, F>(
+            let univariate_poly_evals = compute_prefix_suffix_prover_message::<WORD_SIZE, F>(
                 &prefix_checkpoints,
                 &suffix_polys,
                 &identity_ps,

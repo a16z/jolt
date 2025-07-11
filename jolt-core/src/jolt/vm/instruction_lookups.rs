@@ -35,7 +35,7 @@ use crate::{
     },
     r1cs::inputs::JoltR1CSInputs,
     subprotocols::{
-        sparse_dense_shout::{compute_sumcheck_prover_message, ExpandingTable, LookupBits},
+        sparse_dense_shout::{compute_prefix_suffix_prover_message, ExpandingTable, LookupBits},
         sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof},
     },
     utils::{
@@ -92,7 +92,7 @@ impl<F: JoltField, T: Transcript> ReadCheckingProof<F, T> {
                 .try_into()
                 .unwrap(),
             flag_claims: (0..LookupTables::<WORD_SIZE>::COUNT)
-                .map(|i| openings[&OpeningsKeys::InstructionTypeFlag(i)].1)
+                .map(|i| openings[&OpeningsKeys::LookupTableFlag(i)].1)
                 .collect(),
             raf_flag_claim: openings[&OpeningsKeys::InstructionRafFlag].1,
         }
@@ -115,7 +115,7 @@ impl<F: JoltField, T: Transcript> ReadCheckingProof<F, T> {
             openings.insert(OpeningsKeys::InstructionRa(i), (vec![], *claim));
         }
         for (i, claim) in self.flag_claims.iter().enumerate() {
-            openings.insert(OpeningsKeys::InstructionTypeFlag(i), (vec![], *claim));
+            openings.insert(OpeningsKeys::LookupTableFlag(i), (vec![], *claim));
         }
         openings.insert(
             OpeningsKeys::InstructionRafFlag,
@@ -317,7 +317,7 @@ const LOG_K: usize = WORD_SIZE * 2;
 const PHASES: usize = 4;
 const LOG_M: usize = LOG_K / PHASES;
 const M: usize = 1 << LOG_M;
-pub const D: usize = 8;
+pub const D: usize = 4;
 pub const LOG_K_CHUNK: usize = LOG_K / D;
 pub const K_CHUNK: usize = 1 << LOG_K_CHUNK;
 const RA_PER_LOG_M: usize = LOG_M / LOG_K_CHUNK;
@@ -337,7 +337,6 @@ struct ReadRafProverState<'a, F: JoltField> {
     suffix_polys: Vec<Vec<DensePolynomial<F>>>,
     v: [ExpandingTable<F>; RA_PER_LOG_M],
     u_evals: Vec<F>,
-    eq_r_cycle_evals: Vec<F>,
     eq_r_cycle: MultilinearPolynomial<F>,
 
     prefix_registry: PrefixRegistry<F>,
@@ -365,6 +364,44 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
         trace: &'a [RV32IMCycle],
         eq_r_cycle: &[F],
     ) -> Self {
+        let log_T = trace.len().log_2();
+        let gamma: F = sm.transcript.challenge_scalar();
+        let mut s = Self {
+            gamma,
+            gamma_squared: gamma.square(),
+            prover_state: Some(ReadRafProverState::new(trace, eq_r_cycle)),
+            r_cycle: sm.r_cycle(),
+            rv_claim: sm.z(JoltR1CSInputs::LookupOutput),
+            raf_claim: sm.z(JoltR1CSInputs::LeftLookupOperand)
+                + gamma * sm.z(JoltR1CSInputs::RightLookupOperand),
+            log_T,
+            openings: sm.openings.clone(),
+        };
+        s.init_phase(0);
+        s
+    }
+
+    pub fn new_verifier<T: Transcript>(
+        sm: &mut StateManager<F, impl CommitmentScheme<T, Field = F>, T>,
+    ) -> Self {
+        let log_T = sm.r_cycle().len();
+        let gamma: F = sm.transcript.challenge_scalar();
+        Self {
+            gamma,
+            gamma_squared: gamma * gamma,
+            prover_state: None,
+            r_cycle: sm.r_cycle(),
+            rv_claim: sm.z(JoltR1CSInputs::LookupOutput),
+            raf_claim: sm.z(JoltR1CSInputs::LeftLookupOperand)
+                + gamma * sm.z(JoltR1CSInputs::RightLookupOperand),
+            log_T,
+            openings: sm.openings.clone(),
+        }
+    }
+}
+
+impl<'a, F: JoltField> ReadRafProverState<'a, F> {
+    fn new(trace: &'a [RV32IMCycle], eq_r_cycle: &[F]) -> Self {
         let log_T = trace.len().log_2();
         let right_operand_poly = OperandPolynomial::new(LOG_K, OperandSide::Right);
         let left_operand_poly = OperandPolynomial::new(LOG_K, OperandSide::Left);
@@ -431,57 +468,25 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
                     .collect()
             })
             .collect();
-        let gamma: F = sm.transcript.challenge_scalar();
-        let mut s = Self {
-            gamma,
-            gamma_squared: gamma * gamma,
-            prover_state: Some(ReadRafProverState {
-                trace,
-                r: Vec::with_capacity(log_T + LOG_K),
-                ra: Vec::with_capacity(D),
-                lookup_tables,
-                lookup_indices,
-                lookup_indices_by_table,
-                lookup_indices_uninterleave,
-                lookup_indices_identity,
-                prefix_checkpoints: vec![None.into(); Prefixes::COUNT],
-                suffix_polys,
-                v: std::array::from_fn(|_| ExpandingTable::new(K_CHUNK)),
-                u_evals: eq_r_cycle.to_vec(),
-                eq_r_cycle_evals: eq_r_cycle.to_vec(),
-                eq_r_cycle: MultilinearPolynomial::from(eq_r_cycle.to_vec()),
-                prefix_registry: PrefixRegistry::new(),
-                right_operand_ps,
-                left_operand_ps,
-                identity_ps,
-                combined_val_polynomial: None,
-            }),
-            r_cycle: sm.r_cycle(),
-            rv_claim: sm.z(JoltR1CSInputs::LookupOutput),
-            raf_claim: sm.z(JoltR1CSInputs::LeftLookupOperand)
-                + gamma * sm.z(JoltR1CSInputs::RightLookupOperand),
-            log_T,
-            openings: sm.openings.clone(),
-        };
-        s.init_phase(0);
-        s
-    }
-
-    pub fn new_verifier<T: Transcript>(
-        sm: &mut StateManager<F, impl CommitmentScheme<T, Field = F>, T>,
-    ) -> Self {
-        let log_T = sm.r_cycle().len();
-        let gamma: F = sm.transcript.challenge_scalar();
-        Self {
-            gamma,
-            gamma_squared: gamma * gamma,
-            prover_state: None,
-            r_cycle: sm.r_cycle(),
-            rv_claim: sm.z(JoltR1CSInputs::LookupOutput),
-            raf_claim: sm.z(JoltR1CSInputs::LeftLookupOperand)
-                + gamma * sm.z(JoltR1CSInputs::RightLookupOperand),
-            log_T,
-            openings: sm.openings.clone(),
+        ReadRafProverState {
+            trace,
+            r: Vec::with_capacity(log_T + LOG_K),
+            ra: Vec::with_capacity(D),
+            lookup_tables,
+            lookup_indices,
+            lookup_indices_by_table,
+            lookup_indices_uninterleave,
+            lookup_indices_identity,
+            prefix_checkpoints: vec![None.into(); Prefixes::COUNT],
+            suffix_polys,
+            v: std::array::from_fn(|_| ExpandingTable::new(K_CHUNK)),
+            u_evals: eq_r_cycle.to_vec(),
+            eq_r_cycle: MultilinearPolynomial::from(eq_r_cycle.to_vec()),
+            prefix_registry: PrefixRegistry::new(),
+            right_operand_ps,
+            left_operand_ps,
+            identity_ps,
+            combined_val_polynomial: None,
         }
     }
 }
@@ -503,7 +508,7 @@ impl<'a, F: JoltField, T: Transcript> BatchableSumcheckInstance<F, T> for ReadRa
         let ps = self.prover_state.as_ref().unwrap();
         if round < LOG_K {
             // Phase 1: First log(K) rounds
-            compute_sumcheck_prover_message::<WORD_SIZE, F>(
+            compute_prefix_suffix_prover_message::<WORD_SIZE, F>(
                 &ps.prefix_checkpoints,
                 &ps.suffix_polys,
                 &ps.identity_ps,
@@ -628,7 +633,7 @@ impl<'a, F: JoltField, T: Transcript> BatchableSumcheckInstance<F, T> for ReadRa
         let mut openings = self.openings.lock().unwrap();
         flag_claims.into_iter().enumerate().for_each(|(i, claim)| {
             openings.insert(
-                OpeningsKeys::InstructionTypeFlag(i),
+                OpeningsKeys::LookupTableFlag(i),
                 (r_cycle_prime.to_vec(), claim),
             );
         });
@@ -664,7 +669,7 @@ impl<'a, F: JoltField, T: Transcript> BatchableSumcheckInstance<F, T> for ReadRa
 
         let openings = self.openings.lock().unwrap();
         let rv_val_claim = (0..LookupTables::<WORD_SIZE>::COUNT)
-            .map(|i| openings[&OpeningsKeys::InstructionTypeFlag(i)].1)
+            .map(|i| openings[&OpeningsKeys::LookupTableFlag(i)].1)
             .zip(val_evals.iter())
             .map(|(claim, val)| claim * val)
             .sum::<F>();
@@ -1258,10 +1263,12 @@ impl<F: JoltField, T: Transcript> BatchableSumcheckInstance<F, T> for HammingWei
     }
 
     fn expected_output_claim(&self, _r: &[F]) -> F {
-        (0..D)
-            .map(|i| self.openings.lock().unwrap()[&OpeningsKeys::InstructionHammingRa(i)].1)
+        self.gamma
+            .iter()
             .enumerate()
-            .map(|(i, claim)| claim * self.gamma[i])
+            .map(|(i, gamma)| {
+                self.openings.lock().unwrap()[&OpeningsKeys::InstructionHammingRa(i)].1 * gamma
+            })
             .sum()
     }
 }
