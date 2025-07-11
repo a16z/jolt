@@ -46,13 +46,17 @@ impl VirtualInstructionSequence for SLLI {
         let virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(0);
         let mut sequence = vec![];
 
+        // Determine word size based on immediate value and instruction encoding
+        // For SLLI: RV32 uses 5-bit immediates (0-31), RV64 uses 6-bit immediates (0-63)
+        let is_64bit = self.operands.imm > 31;
+        let shift_mask = if is_64bit { 0x3f } else { 0x1f };
+        let shift = self.operands.imm & shift_mask;
         let mul = RV32IMInstruction::VirtualMULI(VirtualMULI {
             address: self.address,
             operands: FormatI {
                 rd: self.operands.rd,
                 rs1: self.operands.rs1,
-                // TODO: this only works for Xlen = 32
-                imm: (1 << (self.operands.imm % 32)),
+                imm: (1 << shift),
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
         });

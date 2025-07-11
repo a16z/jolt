@@ -2129,9 +2129,11 @@ dependencies = [
  "ark-bn254",
  "ark-ec",
  "common",
+ "hex-literal",
  "jolt-core",
  "jolt-sdk-macros",
  "postcard",
+ "sha3",
  "tracer",
 ]
 
