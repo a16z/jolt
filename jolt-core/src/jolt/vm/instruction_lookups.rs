@@ -317,7 +317,7 @@ const LOG_K: usize = WORD_SIZE * 2;
 const PHASES: usize = 4;
 const LOG_M: usize = LOG_K / PHASES;
 const M: usize = 1 << LOG_M;
-pub const D: usize = 4;
+pub const D: usize = 8;
 pub const LOG_K_CHUNK: usize = LOG_K / D;
 pub const K_CHUNK: usize = 1 << LOG_K_CHUNK;
 const RA_PER_LOG_M: usize = LOG_M / LOG_K_CHUNK;
@@ -1119,17 +1119,11 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                     H_evals[0][2].square() - H_evals[0][2],
                 ];
 
-                evals[0] += self.gamma[1] * (H_evals[1][0].square() - H_evals[1][0]);
-                evals[1] += self.gamma[1] * (H_evals[1][1].square() - H_evals[1][1]);
-                evals[2] += self.gamma[1] * (H_evals[1][2].square() - H_evals[1][2]);
-
-                evals[0] += self.gamma[2] * (H_evals[2][0].square() - H_evals[2][0]);
-                evals[1] += self.gamma[2] * (H_evals[2][1].square() - H_evals[2][1]);
-                evals[2] += self.gamma[2] * (H_evals[2][2].square() - H_evals[2][2]);
-
-                evals[0] += self.gamma[3] * (H_evals[3][0].square() - H_evals[3][0]);
-                evals[1] += self.gamma[3] * (H_evals[3][1].square() - H_evals[3][1]);
-                evals[2] += self.gamma[3] * (H_evals[3][2].square() - H_evals[3][2]);
+                for i in 1..D {
+                    evals[0] += self.gamma[i] * (H_evals[i][0].square() - H_evals[i][0]);
+                    evals[1] += self.gamma[i] * (H_evals[i][1].square() - H_evals[i][1]);
+                    evals[2] += self.gamma[i] * (H_evals[i][2].square() - H_evals[i][2]);
+                }
 
                 [
                     D_evals[0] * evals[0],
