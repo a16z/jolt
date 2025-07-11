@@ -141,6 +141,7 @@ pub enum OpeningsKeys {
     RamReadWriteCheckingVal,
     RamReadWriteCheckingRa,
     RamReadWriteCheckingInc,
+    RamRafEvaluationRa,
 }
 
 pub type Openings<F> = HashMap<OpeningsKeys, (OpeningPoint<LITTLE_ENDIAN, F>, F)>;

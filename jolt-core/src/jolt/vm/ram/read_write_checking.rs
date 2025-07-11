@@ -342,11 +342,10 @@ impl<F: JoltField> RamReadWriteChecking<F> {
 
     pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         K: usize,
-        T: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         let z = state_manager.transcript.borrow_mut().challenge_scalar();
-        let (_, _, program_io, _) = state_manager.get_prover_data();
+        let (_, program_io, T) = state_manager.get_verifier_data();
         let memory_layout = program_io.memory_layout.clone();
         let openings = state_manager.get_verifier_accumulator();
 
