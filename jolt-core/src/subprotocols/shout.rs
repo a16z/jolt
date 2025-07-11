@@ -618,11 +618,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             ..
         } = self.prover_state.as_ref().unwrap();
 
-        // EQ(k_m, 0) for k_m \in {0, 1}
-        let eq_km_c = [F::one(), F::zero()];
-        // EQ(k_m, c)^2 for k_m \in {0, 1} and c \in {0, infty}
-        let eq_km_c_squared: [[F; DEGREE - 1]; 2] = [[F::one(), F::one()], [F::zero(), F::one()]];
-
         let evals = if round < K.log_2() {
             // First log(K) rounds of sumcheck
             let m = round + 1;
@@ -646,20 +641,23 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                                 //    G[k] * (F[k_1, ...., k_{m-1}, c]^2 - F[k_1, ...., k_{m-1}, c])
                                 //    = G_times_F * (eq(k_m, c)^2 * F[k_1, ...., k_{m-1}] - eq(k_m, c))
                                 //
-                                // TODO(hamlinb) we can get rid of the eq evals here, because...
-                                // We want the values
+                                // We want the following values, for k_m \in {0, 1}
                                 //   - s(0) = G_times_F * (eq(k_m, 0)^2 * F_k - eq(k_m, 0))
                                 //   - s(infty) = G_times_F * eq(k_m, infty)^2 * F_k
-                                // But note that for k_m \in {0, 1},
-                                //   - eq(k_m, 0) = eq(k_m, 0)^2 = [1, 0]
-                                //   - eq(k_m, infty)^2 = (eq(k_m, 1) - eq(k_m, 0))^2 = [1, 1]
+                                // But note that
+                                //   - eq(0, 0)^2 = eq(0, 0) = 1
+                                //   - eq(1, 0)^2 = eq(1, 0) = 0
+                                //   - eq(0, infty)^2 = eq(1, infty)^2 = 1
                                 // So we can instead compute
-                                //   - s(0) = k_m == 0 ? G_times_F * (F_k - 1) : G_times_F
+                                //   - s(0) = k_m == 0 ? G_times_F * (F_k - 1) : 0
                                 //   - s(1) = G_times_F * F_k
-                                [
-                                    G_times_F * (eq_km_c_squared[k_m][0] * F_k - eq_km_c[k_m]),
-                                    G_times_F * eq_km_c_squared[k_m][1] * F_k,
-                                ]
+                                let eval_0 = if k_m == 0 {
+                                    G_times_F * (F_k - F::one())
+                                } else {
+                                    F::zero()
+                                };
+                                let eval_infty = G_times_F * F_k;
+                                [eval_0, eval_infty]
                             })
                             .reduce(
                                 || [F::zero(); DEGREE - 1],
@@ -703,21 +701,24 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                                         //    G[k] * (F[k_1, ...., k_{m-1}, c]^2 - F[k_1, ...., k_{m-1}, c])
                                         //    = G_times_F * (eq(k_m, c)^2 * F[k_1, ...., k_{m-1}] - eq(k_m, c))
                                         //
-                                        // TODO(hamlinb) we can get rid of the eq evals here, because...
-                                        // We want the values
+                                        // We want the following values, for k_m \in {0, 1}
                                         //   - s(0) = G_times_F * (eq(k_m, 0)^2 * F_k - eq(k_m, 0))
                                         //   - s(infty) = G_times_F * eq(k_m, infty)^2 * F_k
-                                        // But note that for k_m \in {0, 1},
-                                        //   - eq(k_m, 0) = eq(k_m, 0)^2 = [1, 0]
-                                        //   - eq(k_m, infty)^2 = (eq(k_m, 1) - eq(k_m, 0))^2 = [1, 1]
+                                        // But note that all of the above values of eq(., .) and
+                                        // eq(., .)^2 are either 0 or 1. Namely:
+                                        //   - eq(0, 0)^2 = eq(0, 0) = 1
+                                        //   - eq(1, 0)^2 = eq(1, 0) = 0
+                                        //   - eq(0, infty)^2 = eq(1, infty)^2 = 1
                                         // So we can instead compute
-                                        //   - s(0) = k_m == 0 ? G_times_F * (F_k - 1) : G_times_F
+                                        //   - s(0) = k_m == 0 ? G_times_F * (F_k - 1) : 0
                                         //   - s(1) = G_times_F * F_k
-                                        [
-                                            G_times_F
-                                                * (eq_km_c_squared[k_m][0] * F_k - eq_km_c[k_m]),
-                                            G_times_F * eq_km_c_squared[k_m][1] * F_k,
-                                        ]
+                                        let eval_0 = if k_m == 0 {
+                                            G_times_F * (F_k - F::one())
+                                        } else {
+                                            F::zero()
+                                        };
+                                        let eval_infty = G_times_F * F_k;
+                                        [eval_0, eval_infty]
                                     })
                                     .reduce(
                                         || [F::zero(); DEGREE - 1],
