@@ -733,10 +733,7 @@ impl NodeType {
     pub fn decrement_use(&mut self) {
         match self {
             NodeType::Node(n) => n.num_uses -= 1,
-            NodeType::SubGraph { .. } => log::warn!(
-                "Cannot decrement const of
-subgraph"
-            ),
+            NodeType::SubGraph { .. } => log::warn!("Cannot decrement const of subgraph"),
         }
     }
 

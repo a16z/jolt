@@ -645,10 +645,7 @@ impl From<&SupportedOp> for ONNXOpcode {
             SupportedOp::Constant(constant) => constant.into(),
             SupportedOp::RebaseScale(rebase_scale) => (&*rebase_scale.inner).into(),
             _ => {
-                panic!(
-                    "Unsupported operation type for ONNXOpcode conversion: {:?}",
-                    op
-                );
+                panic!("Unsupported operation type for ONNXOpcode conversion: {op:?}",);
             }
         }
     }
@@ -739,7 +736,7 @@ impl From<Box<dyn Op<Fp>>> for SupportedOp {
         };
 
         if let Some(op) = value.as_any().downcast_ref::<LookupOp>() {
-            return SupportedOp::Nonlinear(op.clone());
+            return SupportedOp::Nonlinear(*op);
         };
 
         if let Some(op) = value.as_any().downcast_ref::<HybridOp>() {
