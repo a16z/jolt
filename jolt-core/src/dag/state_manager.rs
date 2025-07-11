@@ -100,6 +100,16 @@ pub type Openings<F> = HashMap<OpeningsKeys, (OpeningPoint<LITTLE_ENDIAN, F>, F)
 
 pub trait OpeningsExt<F: JoltField> {
     fn get_spartan_z(&self, index: JoltR1CSInputs) -> F;
+    fn get_spartan_z_point(&self, index: JoltR1CSInputs)
+        -> Option<&OpeningPoint<LITTLE_ENDIAN, F>>;
+    fn get_spartan_z_full(
+        &self,
+        index: JoltR1CSInputs,
+    ) -> Option<&(OpeningPoint<LITTLE_ENDIAN, F>, F)>;
+    fn get_spartan_z_mut(
+        &mut self,
+        index: JoltR1CSInputs,
+    ) -> Option<&mut (OpeningPoint<LITTLE_ENDIAN, F>, F)>;
 }
 
 impl<F: JoltField> OpeningsExt<F> for Openings<F> {
@@ -107,6 +117,28 @@ impl<F: JoltField> OpeningsExt<F> for Openings<F> {
         self.get(&OpeningsKeys::SpartanZ(index))
             .map(|(_, value)| *value)
             .unwrap_or(F::zero())
+    }
+
+    fn get_spartan_z_point(
+        &self,
+        index: JoltR1CSInputs,
+    ) -> Option<&OpeningPoint<LITTLE_ENDIAN, F>> {
+        self.get(&OpeningsKeys::SpartanZ(index))
+            .map(|(point, _)| point)
+    }
+
+    fn get_spartan_z_full(
+        &self,
+        index: JoltR1CSInputs,
+    ) -> Option<&(OpeningPoint<LITTLE_ENDIAN, F>, F)> {
+        self.get(&OpeningsKeys::SpartanZ(index))
+    }
+
+    fn get_spartan_z_mut(
+        &mut self,
+        index: JoltR1CSInputs,
+    ) -> Option<&mut (OpeningPoint<LITTLE_ENDIAN, F>, F)> {
+        self.get_mut(&OpeningsKeys::SpartanZ(index))
     }
 }
 
@@ -213,6 +245,35 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
 
     pub fn openings_point(&self, idx: OpeningsKeys) -> OpeningPoint<LITTLE_ENDIAN, F> {
         self.openings.borrow().get(&idx).unwrap().0.clone()
+    }
+
+    // SpartanZ-specific convenience methods
+    pub fn spartan_z_value(&self, index: JoltR1CSInputs) -> F {
+        self.z(index)
+    }
+
+    pub fn spartan_z_point(&self, index: JoltR1CSInputs) -> Option<OpeningPoint<LITTLE_ENDIAN, F>> {
+        use OpeningsExt;
+        self.openings.borrow().get_spartan_z_point(index).cloned()
+    }
+
+    pub fn spartan_z_full(
+        &self,
+        index: JoltR1CSInputs,
+    ) -> Option<(OpeningPoint<LITTLE_ENDIAN, F>, F)> {
+        use OpeningsExt;
+        self.openings.borrow().get_spartan_z_full(index).cloned()
+    }
+
+    pub fn set_spartan_z(
+        &self,
+        index: JoltR1CSInputs,
+        point: OpeningPoint<LITTLE_ENDIAN, F>,
+        value: F,
+    ) {
+        self.openings
+            .borrow_mut()
+            .insert(OpeningsKeys::SpartanZ(index), (point, value));
     }
 
     pub fn set_prover_data(
