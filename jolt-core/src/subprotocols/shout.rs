@@ -677,52 +677,61 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                 let x_bitmask = (1 << num_x_in_bits) - 1;
 
                 (0..gruens_B.len() / 2)
-                    .into_par_iter()
-                    .map(|k_prime| {
-                        let x_in = k_prime & x_bitmask;
-                        let x_out = k_prime >> num_x_in_bits;
-                        let B_E_in_eval = gruens_B.E_in_current()[x_in];
+                    .collect::<Vec<_>>()
+                    .par_chunk_by(|k1, k2| k1 >> num_x_in_bits == k2 >> num_x_in_bits)
+                    .map(|chunk| {
+                        let x_out = chunk[0] >> num_x_in_bits;
                         let B_E_out_eval = gruens_B.E_out_current()[x_out];
 
-                        let inner_sum = G[k_prime << m..(k_prime + 1) << m]
+                        let chunk_evals = chunk
                             .par_iter()
-                            .enumerate()
-                            .map(|(k, &G_k)| {
-                                // Since we're binding variables from low to high, k_m is the high bit
-                                let k_m = k >> (m - 1);
-                                // We then index into F using (k_{m-1}, ..., k_1)
-                                let F_k = F[k % (1 << (m - 1))];
-                                // G_times_F := G[k] * F[k_1, ...., k_{m-1}]
-                                let G_times_F = G_k * F_k;
-                                // For c \in {0, infty} compute:
-                                //    G[k] * (F[k_1, ...., k_{m-1}, c]^2 - F[k_1, ...., k_{m-1}, c])
-                                //    = G_times_F * (eq(k_m, c)^2 * F[k_1, ...., k_{m-1}] - eq(k_m, c))
-                                //
-                                // TODO(hamlinb) we can get rid of the eq evals here, because...
-                                // We want the values
-                                //   - s(0) = G_times_F * (eq(k_m, 0)^2 * F_k - eq(k_m, 0))
-                                //   - s(infty) = G_times_F * eq(k_m, infty)^2 * F_k
-                                // But note that for k_m \in {0, 1},
-                                //   - eq(k_m, 0) = eq(k_m, 0)^2 = [1, 0]
-                                //   - eq(k_m, infty)^2 = (eq(k_m, 1) - eq(k_m, 0))^2 = [1, 1]
-                                // So we can instead compute
-                                //   - s(0) = k_m == 0 ? G_times_F * (F_k - 1) : G_times_F
-                                //   - s(1) = G_times_F * F_k
-                                [
-                                    G_times_F * (eq_km_c_squared[k_m][0] * F_k - eq_km_c[k_m]),
-                                    G_times_F * eq_km_c_squared[k_m][1] * F_k,
-                                ]
+                            .map(|k_prime| {
+                                let x_in = k_prime & x_bitmask;
+                                let B_E_in_eval = gruens_B.E_in_current()[x_in];
+
+                                let inner_sum = G[k_prime << m..(k_prime + 1) << m]
+                                    .par_iter()
+                                    .enumerate()
+                                    .map(|(k, &G_k)| {
+                                        // Since we're binding variables from low to high, k_m is the high bit
+                                        let k_m = k >> (m - 1);
+                                        // We then index into F using (k_{m-1}, ..., k_1)
+                                        let F_k = F[k % (1 << (m - 1))];
+                                        // G_times_F := G[k] * F[k_1, ...., k_{m-1}]
+                                        let G_times_F = G_k * F_k;
+                                        // For c \in {0, infty} compute:
+                                        //    G[k] * (F[k_1, ...., k_{m-1}, c]^2 - F[k_1, ...., k_{m-1}, c])
+                                        //    = G_times_F * (eq(k_m, c)^2 * F[k_1, ...., k_{m-1}] - eq(k_m, c))
+                                        //
+                                        // TODO(hamlinb) we can get rid of the eq evals here, because...
+                                        // We want the values
+                                        //   - s(0) = G_times_F * (eq(k_m, 0)^2 * F_k - eq(k_m, 0))
+                                        //   - s(infty) = G_times_F * eq(k_m, infty)^2 * F_k
+                                        // But note that for k_m \in {0, 1},
+                                        //   - eq(k_m, 0) = eq(k_m, 0)^2 = [1, 0]
+                                        //   - eq(k_m, infty)^2 = (eq(k_m, 1) - eq(k_m, 0))^2 = [1, 1]
+                                        // So we can instead compute
+                                        //   - s(0) = k_m == 0 ? G_times_F * (F_k - 1) : G_times_F
+                                        //   - s(1) = G_times_F * F_k
+                                        [
+                                            G_times_F
+                                                * (eq_km_c_squared[k_m][0] * F_k - eq_km_c[k_m]),
+                                            G_times_F * eq_km_c_squared[k_m][1] * F_k,
+                                        ]
+                                    })
+                                    .reduce(
+                                        || [F::zero(); DEGREE - 1],
+                                        |running, new| [running[0] + new[0], running[1] + new[1]],
+                                    );
+
+                                [B_E_in_eval * inner_sum[0], B_E_in_eval * inner_sum[1]]
                             })
                             .reduce(
                                 || [F::zero(); DEGREE - 1],
                                 |running, new| [running[0] + new[0], running[1] + new[1]],
                             );
 
-                        // TODO(hamlinb): factory out E_out
-                        [
-                            B_E_in_eval * B_E_out_eval * inner_sum[0],
-                            B_E_in_eval * B_E_out_eval * inner_sum[1],
-                        ]
+                        [B_E_out_eval * chunk_evals[0], B_E_out_eval * chunk_evals[1]]
                     })
                     .reduce(
                         || [F::zero(); DEGREE - 1],
