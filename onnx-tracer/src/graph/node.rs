@@ -1,3 +1,37 @@
+//! # Node Module for ONNX Computational Graphs
+//!
+//! This module defines the core data structures and logic for representing and manipulating nodes within a computational graph, specifically tailored for ONNX model tracing and quantized execution in the zkML-Jolt framework.
+//!
+//! ## Purpose
+//!
+//! The `node` module is essential for modeling the computation graph of a neural network or other ONNX-based models. Each node encapsulates an operation (such as a layer or mathematical function), its input/output relationships, quantization scale, and metadata required for fixed-point arithmetic and zero-knowledge proof compatibility.
+//!
+//! ## Overview of Components
+//!
+//! - **Node Structure:** Represents a single operation in the computation graph, including its operation type (`SupportedOp`), input/output connections, quantization scale, output dimensions, and usage count.
+//! - **SupportedOp Enum:** Enumerates all supported operation types, including linear, nonlinear, hybrid, input, constant, and special wrappers for rescaling and rebasing scales.
+//! - **Rescaled & RebaseScale Wrappers:** Provide mechanisms for adjusting the scale of operations and outputs to ensure consistent fixed-point precision across the graph.
+//! - **Node Construction Logic:** Handles parsing ONNX nodes, propagating and homogenizing input scales, rescaling constants, and determining output shapes and scales.
+//! - **ONNX Instruction Decoding:** Allows nodes to be converted into ONNX instructions for downstream processing or execution in a zkVM context.
+//!
+//! ## Usage
+//!
+//! This module is typically used as part of the ONNX model import and tracing pipeline. When an ONNX model is loaded, each ONNX node is converted into a `Node` instance using the `Node::new` constructor. The resulting graph of `Node`s is then used for quantized inference, circuit synthesis, or zero-knowledge proof generation.
+//!
+//! Example usage context:
+//! 1. **Model Import:** Parse an ONNX model and construct a computation graph of `Node` instances.
+//! 2. **Quantization & Scale Propagation:** Ensure all nodes operate on compatible fixed-point scales, automatically rescaling constants and outputs as needed.
+//! 3. **Graph Traversal & Execution:** Traverse the graph to perform inference, generate zkVM instructions, or synthesize circuits for proof generation.
+//!
+//! ## Context
+//!
+//! This module is a foundational part of the `onnx-tracer` crate within the zkML-Jolt project. It interacts closely with:
+//! - The `model` and `vars` modules for graph-wide metadata and variable scale management.
+//! - The `circuit::ops` module for operation implementations.
+//! - The `tensor` module for tensor arithmetic and quantization utilities.
+//! - The `trace_types` module for ONNX instruction and opcode representations.
+//!
+//! By abstracting the details of node construction, scale management, and operation decoding, this module enables robust and efficient handling of ONNX models in privacy-preserving and quantized computation settings.
 use crate::graph::{model::NodeType, vars::VarScales};
 use crate::trace_types::{ONNXInstr, ONNXOpcode};
 use crate::{
@@ -431,7 +465,6 @@ impl Op<Fp> for Rescaled {
         if self.scale.len() != x.len() {
             return Err(TensorError::DimMismatch("rescaled inputs".to_string()));
         }
-
         let mut rescaled_inputs = vec![];
         let inputs = &mut x.to_vec();
         for (i, ri) in inputs.iter_mut().enumerate() {
