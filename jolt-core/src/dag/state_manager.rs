@@ -310,13 +310,4 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
     pub fn get_openings(&self) -> Rc<RefCell<Openings<F>>> {
         self.openings.clone()
     }
-
-    pub fn r_cycle(&self) -> OpeningPoint<LITTLE_ENDIAN, F> {
-        self.openings
-            .borrow()
-            .get(&OpeningsKeys::SpartanZ(JoltR1CSInputs::Imm))
-            .unwrap()
-            .0
-            .clone()
-    }
 }

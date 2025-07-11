@@ -13,6 +13,7 @@ use crate::{
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::ProverOpeningAccumulator,
     },
+    r1cs::inputs::JoltR1CSInputs,
     subprotocols::sumcheck::{
         BatchableSumcheckInstance, CacheSumcheckOpenings, SumcheckInstanceProof,
     },
@@ -53,6 +54,9 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
             .collect::<Vec<_>>()
             .try_into()
             .unwrap();
+        let r_cycle = sm
+            .openings_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
+            .r;
         Self {
             gamma: gamma_powers,
             prover_state: Some(HammingProverState {
@@ -61,7 +65,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
                 unbound_ra_polys,
             }),
             ra_claims: None,
-            r_cycle: sm.r_cycle().r,
+            r_cycle,
         }
     }
 
@@ -78,11 +82,14 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
             .collect::<Vec<F>>()
             .try_into()
             .unwrap();
+        let r_cycle = sm
+            .openings_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
+            .r;
         Self {
             gamma: gamma_powers,
             prover_state: None,
             ra_claims: Some(ra_claims),
-            r_cycle: sm.r_cycle().r,
+            r_cycle,
         }
     }
 }

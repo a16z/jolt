@@ -17,6 +17,7 @@ use crate::{
         },
         opening_proof::ProverOpeningAccumulator,
     },
+    r1cs::inputs::JoltR1CSInputs,
     subprotocols::sumcheck::{
         BatchableSumcheckInstance, CacheSumcheckOpenings, SumcheckInstanceProof,
     },
@@ -54,7 +55,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
     pub fn new_prover(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         trace: &[RV32IMCycle],
-        eq_r_cycle: &[F],
+        eq_r_cycle: Vec<F>,
         G: [Vec<F>; D],
         unbound_ra_polys: Vec<MultilinearPolynomial<F>>,
     ) -> Self {
@@ -64,6 +65,9 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
         let r_address: Vec<F> = sm.transcript.borrow_mut().challenge_vector(K_CHUNK);
+        let r_cycle = sm
+            .openings_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
+            .r;
 
         Self {
             gamma: gamma_powers,
@@ -76,7 +80,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             )),
             ra_claims: None,
             r_address,
-            r_cycle: sm.r_cycle().r,
+            r_cycle,
             log_T: trace.len().log_2(),
         }
     }
@@ -84,7 +88,10 @@ impl<F: JoltField> BooleanitySumcheck<F> {
     pub fn new_verifier(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
-        let log_T = sm.r_cycle().r.len();
+        let r_cycle = sm
+            .openings_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
+            .r;
+        let log_T = r_cycle.len();
         let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
         let mut gamma_powers = [F::one(); D];
         for i in 1..D {
@@ -101,7 +108,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             prover_state: None,
             ra_claims: Some(ra_claims),
             r_address,
-            r_cycle: sm.r_cycle().r,
+            r_cycle,
             log_T,
         }
     }
@@ -110,7 +117,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
 impl<F: JoltField> BooleanityProverState<F> {
     fn new(
         trace: &[RV32IMCycle],
-        eq_r_cycle: &[F],
+        eq_r_cycle: Vec<F>,
         G: [Vec<F>; D],
         unbound_ra_polys: Vec<MultilinearPolynomial<F>>,
         r_address: &[F],
@@ -149,7 +156,7 @@ impl<F: JoltField> BooleanityProverState<F> {
         ];
         BooleanityProverState {
             B,
-            D: MultilinearPolynomial::from(eq_r_cycle.to_vec()),
+            D: MultilinearPolynomial::from(eq_r_cycle),
             G,
             H_indices,
             H: None,

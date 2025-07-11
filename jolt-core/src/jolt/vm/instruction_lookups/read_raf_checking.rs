@@ -7,7 +7,7 @@ use tracer::instruction::RV32IMCycle;
 use super::{D, K_CHUNK, LOG_K, LOG_K_CHUNK, LOG_M, M, PHASES, RA_PER_LOG_M, WORD_SIZE};
 
 use crate::{
-    dag::state_manager::{OpeningPoint, Openings, OpeningsKeys, StateManager, LITTLE_ENDIAN},
+    dag::state_manager::{Openings, OpeningsKeys, StateManager},
     field::JoltField,
     jolt::{
         instruction::{InstructionFlags, InstructionLookup, InterleavedBitsMarker, LookupQuery},
@@ -77,7 +77,7 @@ pub struct ReadRafSumcheck<'a, F: JoltField> {
     table_flag_claims: Option<Vec<F>>,
     raf_flag_claim: Option<F>,
 
-    r_cycle: OpeningPoint<LITTLE_ENDIAN, F>,
+    r_cycle: Vec<F>,
     rv_claim: F,
     raf_claim: F,
     log_T: usize,
@@ -87,13 +87,16 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
     pub fn new_prover(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         trace: &'a [RV32IMCycle],
-        eq_r_cycle: &[F],
+        eq_r_cycle: Vec<F>,
         unbound_ra_polys: Vec<MultilinearPolynomial<F>>,
     ) -> Self {
         let log_T = trace.len().log_2();
         let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
         let mut ps = ReadRafProverState::new(trace, eq_r_cycle, unbound_ra_polys);
         ps.init_phase(0);
+        let r_cycle = sm
+            .openings_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
+            .r;
         Self {
             gamma,
             gamma_squared: gamma.square(),
@@ -101,7 +104,7 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
             prod_ra_claims: None,
             table_flag_claims: None,
             raf_flag_claim: None,
-            r_cycle: sm.r_cycle(),
+            r_cycle,
             rv_claim: sm.z(JoltR1CSInputs::LookupOutput),
             raf_claim: sm.z(JoltR1CSInputs::LeftLookupOperand)
                 + gamma * sm.z(JoltR1CSInputs::RightLookupOperand),
@@ -121,6 +124,9 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
             .map(|i| sm.openings(OpeningsKeys::LookupTableFlag(i)))
             .collect();
         let raf_flag_claim = sm.openings(OpeningsKeys::InstructionRafFlag);
+        let r_cycle = sm
+            .openings_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
+            .r;
         Self {
             gamma,
             gamma_squared: gamma * gamma,
@@ -128,7 +134,7 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
             prod_ra_claims: Some(prod_ra_claims),
             table_flag_claims: Some(table_flag_claims),
             raf_flag_claim: Some(raf_flag_claim),
-            r_cycle: sm.r_cycle(),
+            r_cycle,
             rv_claim: sm.z(JoltR1CSInputs::LookupOutput),
             raf_claim: sm.z(JoltR1CSInputs::LeftLookupOperand)
                 + gamma * sm.z(JoltR1CSInputs::RightLookupOperand),
@@ -140,7 +146,7 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
 impl<'a, F: JoltField> ReadRafProverState<'a, F> {
     fn new(
         trace: &'a [RV32IMCycle],
-        eq_r_cycle: &[F],
+        eq_r_cycle: Vec<F>,
         unbound_ra_polys: Vec<MultilinearPolynomial<F>>,
     ) -> Self {
         let log_T = trace.len().log_2();
@@ -221,8 +227,8 @@ impl<'a, F: JoltField> ReadRafProverState<'a, F> {
             prefix_checkpoints: vec![None.into(); Prefixes::COUNT],
             suffix_polys,
             v: std::array::from_fn(|_| ExpandingTable::new(K_CHUNK)),
-            u_evals: eq_r_cycle.to_vec(),
-            eq_r_cycle: MultilinearPolynomial::from(eq_r_cycle.to_vec()),
+            u_evals: eq_r_cycle.clone(),
+            eq_r_cycle: MultilinearPolynomial::from(eq_r_cycle),
             prefix_registry: PrefixRegistry::new(),
             right_operand_ps,
             left_operand_ps,
@@ -361,7 +367,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for ReadRafSumcheck<'_, F> {
         let val_evals: Vec<_> = LookupTables::<WORD_SIZE>::iter()
             .map(|table| table.evaluate_mle(r_address_prime))
             .collect();
-        let eq_eval_cycle = EqPolynomial::mle(&self.r_cycle.r, r_cycle_prime);
+        let eq_eval_cycle = EqPolynomial::mle(&self.r_cycle, r_cycle_prime);
 
         let rv_val_claim = val_evals
             .into_iter()
