@@ -435,11 +435,12 @@ impl Node {
     where
         for<'a> &'a T: Into<ONNXOpcode> + Debug,
     {
+        let node_idx = |(idx, _): &(usize, usize)| *idx;
         ONNXInstr {
             address,
             opcode: op.into(),
-            ts1: self.inputs.first().cloned(),
-            ts2: self.inputs.get(1).cloned(),
+            ts1: self.inputs.first().map(node_idx),
+            ts2: self.inputs.get(1).map(node_idx),
         }
     }
 }
