@@ -164,32 +164,94 @@ impl Program {
         elf_file.read_to_end(&mut elf_contents).unwrap();
         let (mut instructions, raw_bytes, is_32) = tracer::decode(&elf_contents);
         // Expand virtual sequences
-        instructions = instructions
-            .into_par_iter()
-            .flat_map_iter(|instr| match instr {
-                RV32IMInstruction::DIV(div) => div.virtual_sequence(is_32),
-                RV32IMInstruction::DIVU(divu) => divu.virtual_sequence(is_32),
-                RV32IMInstruction::LB(lb) => lb.virtual_sequence(is_32),
-                RV32IMInstruction::LBU(lbu) => lbu.virtual_sequence(is_32),
-                RV32IMInstruction::LH(lh) => lh.virtual_sequence(is_32),
-                RV32IMInstruction::LHU(lhu) => lhu.virtual_sequence(is_32),
-                RV32IMInstruction::MULH(mulh) => mulh.virtual_sequence(is_32),
-                RV32IMInstruction::MULHSU(mulhsu) => mulhsu.virtual_sequence(is_32),
-                RV32IMInstruction::REM(rem) => rem.virtual_sequence(is_32),
-                RV32IMInstruction::REMU(remu) => remu.virtual_sequence(is_32),
-                RV32IMInstruction::SB(sb) => sb.virtual_sequence(is_32),
-                RV32IMInstruction::SH(sh) => sh.virtual_sequence(is_32),
-                RV32IMInstruction::SLL(sll) => sll.virtual_sequence(is_32),
-                RV32IMInstruction::SLLI(slli) => slli.virtual_sequence(is_32),
-                RV32IMInstruction::SRA(sra) => sra.virtual_sequence(is_32),
-                RV32IMInstruction::SRAI(srai) => srai.virtual_sequence(is_32),
-                RV32IMInstruction::SRL(srl) => srl.virtual_sequence(is_32),
-                RV32IMInstruction::SRLI(srli) => srli.virtual_sequence(is_32),
-                RV32IMInstruction::SHA256(sha256) => sha256.virtual_sequence(is_32),
-                RV32IMInstruction::SHA256INIT(sha256init) => sha256init.virtual_sequence(is_32),
-                _ => vec![instr],
-            })
-            .collect();
+        if is_32 {
+            instructions = instructions
+                .into_par_iter()
+                .flat_map_iter(|instr| match instr {
+                    RV32IMInstruction::DIV(div) => div.virtual_sequence(is_32),
+                    RV32IMInstruction::DIVU(divu) => divu.virtual_sequence(is_32),
+                    RV32IMInstruction::LB(lb) => lb.virtual_sequence(is_32),
+                    RV32IMInstruction::LBU(lbu) => lbu.virtual_sequence(is_32),
+                    RV32IMInstruction::LH(lh) => lh.virtual_sequence(is_32),
+                    RV32IMInstruction::LHU(lhu) => lhu.virtual_sequence(is_32),
+                    RV32IMInstruction::MULH(mulh) => mulh.virtual_sequence(is_32),
+                    RV32IMInstruction::MULHSU(mulhsu) => mulhsu.virtual_sequence(is_32),
+                    RV32IMInstruction::REM(rem) => rem.virtual_sequence(is_32),
+                    RV32IMInstruction::REMU(remu) => remu.virtual_sequence(is_32),
+                    RV32IMInstruction::SB(sb) => sb.virtual_sequence(is_32),
+                    RV32IMInstruction::SH(sh) => sh.virtual_sequence(is_32),
+                    RV32IMInstruction::SLL(sll) => sll.virtual_sequence(is_32),
+                    RV32IMInstruction::SLLI(slli) => slli.virtual_sequence(is_32),
+                    RV32IMInstruction::SRA(sra) => sra.virtual_sequence(is_32),
+                    RV32IMInstruction::SRAI(srai) => srai.virtual_sequence(is_32),
+                    RV32IMInstruction::SRL(srl) => srl.virtual_sequence(is_32),
+                    RV32IMInstruction::SRLI(srli) => srli.virtual_sequence(is_32),
+                    RV32IMInstruction::SHA256(sha256) => sha256.virtual_sequence(is_32),
+                    RV32IMInstruction::SHA256INIT(sha256init) => sha256init.virtual_sequence(is_32),
+                    _ => vec![instr],
+                })
+                .collect();
+        } else {
+            instructions = instructions
+                .into_par_iter()
+                .flat_map_iter(|instr| match instr {
+                    RV32IMInstruction::ADDIW(addiw) => addiw.virtual_sequence(is_32),
+                    RV32IMInstruction::ADDW(addw) => addw.virtual_sequence(is_32),
+                    RV32IMInstruction::AMOADDD(amoaddd) => amoaddd.virtual_sequence(is_32),
+                    RV32IMInstruction::AMOADDW(amoaddw) => amoaddw.virtual_sequence(is_32),
+                    RV32IMInstruction::AMOANDD(amoandd) => amoandd.virtual_sequence(is_32),
+                    RV32IMInstruction::AMOANDW(amoandw) => amoandw.virtual_sequence(is_32),
+                    RV32IMInstruction::AMOMAXD(amomaxd) => amomaxd.virtual_sequence(is_32),
+                    RV32IMInstruction::AMOMAXUD(amomaxud) => amomaxud.virtual_sequence(is_32),
+                    RV32IMInstruction::AMOMAXUW(amomaxuw) => amomaxuw.virtual_sequence(is_32),
+                    RV32IMInstruction::AMOMAXW(amomaxw) => amomaxw.virtual_sequence(is_32),
+                    RV32IMInstruction::AMOMIND(amomind) => amomind.virtual_sequence(is_32),
+                    RV32IMInstruction::AMOMINUD(amominud) => amominud.virtual_sequence(is_32),
+                    RV32IMInstruction::AMOMINUW(amominuw) => amominuw.virtual_sequence(is_32),
+                    RV32IMInstruction::AMOMINW(amominw) => amominw.virtual_sequence(is_32),
+                    RV32IMInstruction::AMOORD(amoord) => amoord.virtual_sequence(is_32),
+                    RV32IMInstruction::AMOORW(amoorw) => amoorw.virtual_sequence(is_32),
+                    RV32IMInstruction::AMOSWAPD(amoswapd) => amoswapd.virtual_sequence(is_32),
+                    RV32IMInstruction::AMOSWAPW(amoswapw) => amoswapw.virtual_sequence(is_32),
+                    RV32IMInstruction::AMOXORD(amoxord) => amoxord.virtual_sequence(is_32),
+                    RV32IMInstruction::AMOXORW(amoxorw) => amoxorw.virtual_sequence(is_32),
+                    RV32IMInstruction::DIV(div) => div.virtual_sequence(is_32),
+                    RV32IMInstruction::DIVU(divu) => divu.virtual_sequence(is_32),
+                    RV32IMInstruction::DIVUW(divuw) => divuw.virtual_sequence(is_32),
+                    RV32IMInstruction::DIVW(divw) => divw.virtual_sequence(is_32),
+                    RV32IMInstruction::LB(lb) => lb.virtual_sequence(is_32),
+                    RV32IMInstruction::LBU(lbu) => lbu.virtual_sequence(is_32),
+                    RV32IMInstruction::LH(lh) => lh.virtual_sequence(is_32),
+                    RV32IMInstruction::LHU(lhu) => lhu.virtual_sequence(is_32),
+                    RV32IMInstruction::LW(lw) => lw.virtual_sequence(is_32),
+                    RV32IMInstruction::LWU(lwu) => lwu.virtual_sequence(is_32),
+                    RV32IMInstruction::MULH(mulh) => mulh.virtual_sequence(is_32),
+                    RV32IMInstruction::MULHSU(mulhsu) => mulhsu.virtual_sequence(is_32),
+                    RV32IMInstruction::MULW(mulw) => mulw.virtual_sequence(is_32),
+                    RV32IMInstruction::REM(rem) => rem.virtual_sequence(is_32),
+                    RV32IMInstruction::REMU(remu) => remu.virtual_sequence(is_32),
+                    RV32IMInstruction::REMUW(remuw) => remuw.virtual_sequence(is_32),
+                    RV32IMInstruction::REMW(remw) => remw.virtual_sequence(is_32),
+                    RV32IMInstruction::SB(sb) => sb.virtual_sequence(is_32),
+                    RV32IMInstruction::SH(sh) => sh.virtual_sequence(is_32),
+                    RV32IMInstruction::SLLI(slli) => slli.virtual_sequence(is_32),
+                    RV32IMInstruction::SLLIW(slliw) => slliw.virtual_sequence(is_32),
+                    RV32IMInstruction::SLL(sll) => sll.virtual_sequence(is_32),
+                    RV32IMInstruction::SLLW(sllw) => sllw.virtual_sequence(is_32),
+                    RV32IMInstruction::SRAI(srai) => srai.virtual_sequence(is_32),
+                    RV32IMInstruction::SRAIW(sraiw) => sraiw.virtual_sequence(is_32),
+                    RV32IMInstruction::SRA(sra) => sra.virtual_sequence(is_32),
+                    RV32IMInstruction::SRAW(sraw) => sraw.virtual_sequence(is_32),
+                    RV32IMInstruction::SRLI(srli) => srli.virtual_sequence(is_32),
+                    RV32IMInstruction::SRLIW(srliw) => srliw.virtual_sequence(is_32),
+                    RV32IMInstruction::SRL(srl) => srl.virtual_sequence(is_32),
+                    RV32IMInstruction::SRLW(srlw) => srlw.virtual_sequence(is_32),
+                    RV32IMInstruction::SUBW(subw) => subw.virtual_sequence(is_32),
+                    RV32IMInstruction::SW(sw) => sw.virtual_sequence(is_32),
+                    _ => vec![instr],
+                })
+                .collect();
+        }
 
         (instructions, raw_bytes)
     }
