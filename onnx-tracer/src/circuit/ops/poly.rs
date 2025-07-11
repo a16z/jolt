@@ -83,6 +83,7 @@ impl<F: PrimeField + TensorType + PartialOrd> From<&PolyOp<F>> for ONNXOpcode {
             PolyOp::Sub => ONNXOpcode::Sub,
             PolyOp::Mult => ONNXOpcode::Mul,
             PolyOp::Pow(_) => ONNXOpcode::Pow,
+            PolyOp::Einsum { .. } => ONNXOpcode::MatMult,
             _ => {
                 panic!("PolyOp {value:?} cannot be converted to ONNXOpcode",);
             }

@@ -254,13 +254,7 @@ impl Node {
     ///
     /// This method will panic if there is an unsupported operator
     pub fn decode(&self, address: usize) -> ONNXInstr {
-        match &self.opkind {
-            SupportedOp::Linear(poly_op) => self.decode_with_opcode(poly_op, address),
-            SupportedOp::Nonlinear(lookup_op) => self.decode_with_opcode(lookup_op, address),
-            SupportedOp::Hybrid(hybrid_op) => self.decode_with_opcode(hybrid_op, address),
-            SupportedOp::Constant(constant) => self.decode_with_opcode(constant, address),
-            _ => panic!("Opkind {:?} not supported", self.opkind),
-        }
+        self.decode_with_opcode(&self.opkind, address)
     }
 
     /// Helper function to decode the node with a specific opcode.
@@ -477,6 +471,25 @@ pub enum SupportedOp {
     Rescaled(Rescaled),
     ///
     RebaseScale(RebaseScale),
+}
+
+impl From<&SupportedOp> for ONNXOpcode {
+    fn from(op: &SupportedOp) -> Self {
+        match op {
+            SupportedOp::Linear(poly_op) => poly_op.into(),
+            SupportedOp::Nonlinear(lookup_op) => lookup_op.into(),
+            SupportedOp::Hybrid(hybrid_op) => hybrid_op.into(),
+            SupportedOp::Input(input_op) => input_op.into(),
+            SupportedOp::Constant(constant) => constant.into(),
+            SupportedOp::RebaseScale(rebase_scale) => (&*rebase_scale.inner).into(),
+            _ => {
+                panic!(
+                    "Unsupported operation type for ONNXOpcode conversion: {:?}",
+                    op
+                );
+            }
+        }
+    }
 }
 
 impl SupportedOp {

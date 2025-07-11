@@ -3,7 +3,9 @@
 //! Used by the runtime to generate an execution trace for ONNX runtime execution.
 
 use crate::graph::node::Outlet;
+use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 /// Represents a single ONNX instruction parsed from the model.
 /// The ONNX model is converted into a sequence of [`ONNXInstr`]s, forming the program code.
 /// During runtime, the program counter (PC) is used to fetch the next instruction from this sequence.
@@ -34,6 +36,7 @@ pub struct ONNXInstr {
 //       This reduced ISA currently includes only the opcodes commonly used in such models.
 //       Future phases should extend this set to support a broader range of ONNX operations.
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 /// Operation code uniquely identifying each ONNX instruction's function
 pub enum ONNXOpcode {
     Add,
@@ -50,4 +53,5 @@ pub enum ONNXOpcode {
     Softmax,
     Sqrt,
     Constant,
+    Input,
 }

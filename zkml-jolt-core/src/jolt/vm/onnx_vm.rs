@@ -11,5 +11,6 @@ mod e2e_tests {
             inputs: Tensor::new(Some(&[1, 2, 3]), &[1, 3]).unwrap(), // Example input
         };
         let program_code = text_classification.decode();
+        println!("Program code: {program_code:#?}",);
     }
 }

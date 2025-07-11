@@ -158,6 +158,12 @@ pub struct Input {
     pub datum_type: InputType,
 }
 
+impl From<&Input> for ONNXOpcode {
+    fn from(_: &Input) -> Self {
+        ONNXOpcode::Input
+    }
+}
+
 impl<F: PrimeField + TensorType + PartialOrd> Op<F> for Input {
     fn out_scale(&self, _: Vec<crate::Scale>) -> Result<crate::Scale, Box<dyn Error>> {
         Ok(self.scale)
