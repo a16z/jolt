@@ -57,6 +57,7 @@ impl<const E: Endianness, F: JoltField> std::ops::Index<std::ops::RangeFull>
 
 impl<const E: Endianness, F: JoltField> OpeningPoint<E, F> {
     pub fn split_at(&self, mid: usize) -> (&[F], &[F]) {
+        println!("length: {:?}", self.r.len());
         self.r.split_at(mid)
     }
 }
@@ -108,7 +109,7 @@ pub enum OpeningsKeys {
     OuterSumcheckCz,        // Cz claim from outer sumcheck
     OuterSumcheckRxVar,     // rx_var from outer sumcheck -- TODO(markosg04)where is this used ?
     PCSumcheckUnexpandedPC, // UnexpandedPC evaluation from PC sumcheck
-    PCSumcheckPC,           // PC evaluation from PC sumcheck
+    PCSumcheckNextPC,           // PC evaluation from PC sumcheck
 }
 
 pub type Openings<F> = HashMap<OpeningsKeys, (OpeningPoint<LITTLE_ENDIAN, F>, F)>;
@@ -893,6 +894,17 @@ where
         let opening_point_struct = OpeningPoint::<LITTLE_ENDIAN, F>::new(opening_point);
         self.evaluation_openings
             .insert(key, (opening_point_struct, claim));
+    }
+
+    /// Populates the opening point for an existing claim in the evaluation_openings map.
+    pub fn populate_claim_opening(&mut self, key: OpeningsKeys, opening_point: Vec<F>) {
+        if let Some((old_point, claim)) = self.evaluation_openings.get(&key) {
+            let claim = *claim; // Copy the claim value
+            let new_point = OpeningPoint::<LITTLE_ENDIAN, F>::new(opening_point);
+            self.evaluation_openings.insert(key, (new_point, claim));
+        } else {
+            panic!("Tried to populate opening point for non-existent key: {:?}", key);
+        }
     }
 
     /// Verifies that the given `reduced_opening_proof` (consisting of a sumcheck proof

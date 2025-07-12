@@ -897,7 +897,7 @@ where
         );
         accumulator
             .borrow_mut()
-            .append_virtual(OpeningsKeys::PCSumcheckPC, prover_state.r_cycle.clone(), pc_eval);
+            .append_virtual(OpeningsKeys::PCSumcheckNextPC, prover_state.r_cycle.clone(), pc_eval);
 
         self.cached_claims = Some((unexpanded_pc_eval, pc_eval));
     }
@@ -1111,6 +1111,17 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             .rev()
             .collect();
 
+        // Populate the opening points for Az, Bz, Cz claims now that we have outer_sumcheck_r
+        accumulator
+            .borrow_mut()
+            .populate_claim_opening(OpeningsKeys::OuterSumcheckAz, outer_sumcheck_r_reversed.clone());
+        accumulator
+            .borrow_mut()
+            .populate_claim_opening(OpeningsKeys::OuterSumcheckBz, outer_sumcheck_r_reversed.clone());
+        accumulator
+            .borrow_mut()
+            .populate_claim_opening(OpeningsKeys::OuterSumcheckCz, outer_sumcheck_r_reversed.clone());
+
         let tau_bound_rx = EqPolynomial::mle(&tau, &outer_sumcheck_r_reversed);
         let claim_outer_final_expected = tau_bound_rx * (claim_Az * claim_Bz - claim_Cz);
         if claim_outer_final != claim_outer_final_expected {
@@ -1150,7 +1161,6 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             })
             .collect();
 
-        // Add to verifier accumulator
         accumulator.borrow_mut().append(
             &r1cs_input_commitments,
             r_cycle.to_vec(),
@@ -1389,17 +1399,17 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         // The batched claim equals NextUnexpandedPC(r_cycle) + gamma * NextPC(r_cycle)
         let next_unexpanded_pc_eval = accumulator
             .borrow()
-            .get_opening(OpeningsKeys::SpartanZ(JoltR1CSInputs::NextUnexpandedPC));
+            .get_opening(OpeningsKeys::PCSumcheckUnexpandedPC);
         let next_pc_eval = accumulator
             .borrow()
-            .get_opening(OpeningsKeys::SpartanZ(JoltR1CSInputs::NextPC));
+            .get_opening(OpeningsKeys::PCSumcheckNextPC);
         let shift_sumcheck_claim = next_unexpanded_pc_eval + gamma * next_pc_eval;
 
         // Get shift sumcheck witness evaluations from openings
         let unexpanded_pc_eval_at_shift_r = accumulator
             .borrow()
             .get_opening(OpeningsKeys::PCSumcheckUnexpandedPC);
-        let pc_eval_at_shift_r = accumulator.borrow().get_opening(OpeningsKeys::PCSumcheckPC);
+        let pc_eval_at_shift_r = accumulator.borrow().get_opening(OpeningsKeys::PCSumcheckNextPC);
 
         // Create the PC sumcheck verifier instance
         let pc_sumcheck = PCSumcheck::<F>::new_verifier(
