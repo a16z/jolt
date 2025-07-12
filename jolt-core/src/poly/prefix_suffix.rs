@@ -250,7 +250,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
     }
 
     #[tracing::instrument(skip_all)]
-    pub fn init_Q<'a, I: IntoIterator<Item = &'a (usize, &'a LookupBits)> + Clone + Send + Sync>(
+    pub fn init_Q<'a, I: IntoIterator<Item = &'a (usize, LookupBits)> + Clone + Send + Sync>(
         &mut self,
         u_evals: &[F],
         indices: I,
@@ -393,8 +393,8 @@ pub mod tests {
 
         let indices = (0..(1 << NUM_VARS))
             .map(|i| LookupBits::new(i, NUM_VARS))
+            .enumerate()
             .collect::<Vec<_>>();
-        let enumerated_indices = indices.iter().enumerate().collect::<Vec<_>>();
 
         let mut rr = vec![];
         for phase in 0..(NUM_VARS / PREFIX_LEN) {
@@ -403,7 +403,7 @@ pub mod tests {
                 &(0..(1 << (NUM_VARS - PREFIX_LEN * phase)))
                     .map(|_| Fr::ONE)
                     .collect::<Vec<_>>(),
-                enumerated_indices.iter(),
+                indices.iter(),
             );
 
             for round in (0..PREFIX_LEN).rev() {

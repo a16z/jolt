@@ -107,11 +107,11 @@ mod tests {
         let mut dag = jolt_dag::JoltDAG::new(prover_state_manager, verifier_state_manager);
 
         if let Err(e) = dag.prove() {
-            panic!("DAG prove failed: {}", e);
+            panic!("DAG prove failed: {e}");
         }
 
         if let Err(e) = dag.verify() {
-            panic!("DAG verify failed: {}", e);
+            panic!("DAG verify failed: {e}");
         }
 
         println!("DAG fib_e2e OK!");

@@ -236,7 +236,7 @@ pub fn current_suffix_len(log_K: usize, j: usize) -> usize {
 ///   eq(r', j) (\prod_i ra_i(k_i, j)) * \sum_l flag_l * Val_l(k)
 /// is degree 2 in each "address" variable k.
 #[tracing::instrument(skip_all)]
-fn compute_sumcheck_prover_message<const WORD_SIZE: usize, F: JoltField>(
+pub fn compute_prefix_suffix_prover_message<const WORD_SIZE: usize, F: JoltField>(
     prefix_checkpoints: &[PrefixCheckpoint<F>],
     suffix_polys: &[Vec<DensePolynomial<F>>],
     identity_ps: &PrefixSuffixDecomposition<F, 2>,
@@ -276,7 +276,7 @@ fn prover_msg_raf<F: JoltField>(
             let (i0, i2) = identity_ps.sumcheck_evals(b);
             let (r0, r2) = right_operand_ps.sumcheck_evals(b);
             let (l0, l2) = left_operand_ps.sumcheck_evals(b);
-            (i0 + l0, i2 + l2, r0, r2)
+            (l0, l2, i0 + r0, i2 + r2)
         })
         .reduce(
             || (F::zero(), F::zero(), F::zero(), F::zero()),
@@ -290,8 +290,8 @@ fn prover_msg_raf<F: JoltField>(
             },
         );
     [
-        gamma * right_0 + gamma_squared * left_0,
-        gamma * right_2 + gamma_squared * left_2,
+        gamma * left_0 + gamma_squared * right_0,
+        gamma * left_2 + gamma_squared * right_2,
     ]
 }
 
@@ -473,6 +473,7 @@ pub fn prove_sparse_dense_shout<
         .collect();
     let (lookup_indices_uninterleave, lookup_indices_identity): (Vec<_>, Vec<_>) = lookup_indices
         .par_iter()
+        .cloned()
         .enumerate()
         .zip(trace.par_iter())
         .partition_map(|((idx, item), cycle)| {
@@ -561,7 +562,7 @@ pub fn prove_sparse_dense_shout<
             let span = tracing::span!(tracing::Level::INFO, "sparse-dense sumcheck round");
             let _guard = span.enter();
 
-            let univariate_poly_evals = compute_sumcheck_prover_message::<WORD_SIZE, F>(
+            let univariate_poly_evals = compute_prefix_suffix_prover_message::<WORD_SIZE, F>(
                 &prefix_checkpoints,
                 &suffix_polys,
                 &identity_ps,
@@ -667,8 +668,8 @@ pub fn prove_sparse_dense_shout<
             }
 
             if step.instruction().circuit_flags().is_interleaved_operands() {
-                *val += gamma * prefix_registry.checkpoints[Prefix::RightOperand].unwrap()
-                    + gamma_squared * prefix_registry.checkpoints[Prefix::LeftOperand].unwrap();
+                *val += gamma * prefix_registry.checkpoints[Prefix::LeftOperand].unwrap()
+                    + gamma_squared * prefix_registry.checkpoints[Prefix::RightOperand].unwrap();
             } else {
                 *val += gamma_squared * prefix_registry.checkpoints[Prefix::Identity].unwrap();
             }
@@ -818,13 +819,14 @@ pub fn verify_sparse_dense_shout<
     let gamma_squared = gamma.square();
 
     // The first log(K) rounds' univariate polynomials are degree 2
-    let (sumcheck_claim, r_address) = first_log_K_rounds.verify(rv_claim, log_K, 2, transcript)?;
+    let (sumcheck_claim, r_address_prime) =
+        first_log_K_rounds.verify(rv_claim, log_K, 2, transcript)?;
     // The last log(T) rounds' univariate polynomials are degree 6
     let (sumcheck_claim, r_cycle_prime) =
         last_log_T_rounds.verify(sumcheck_claim, log_T, 6, transcript)?;
 
     let val_evals: Vec<_> = LookupTables::<WORD_SIZE>::iter()
-        .map(|table| table.evaluate_mle(&r_address))
+        .map(|table| table.evaluate_mle(&r_address_prime))
         .collect();
     let eq_eval_cycle = EqPolynomial::mle(&r_cycle, &r_cycle_prime);
 
@@ -834,14 +836,16 @@ pub fn verify_sparse_dense_shout<
         .map(|(flag, val)| *flag * val)
         .sum::<F>();
 
-    let right_operand_eval = OperandPolynomial::new(log_K, OperandSide::Right).evaluate(&r_address);
-    let left_operand_eval = OperandPolynomial::new(log_K, OperandSide::Left).evaluate(&r_address);
+    let right_operand_eval =
+        OperandPolynomial::new(log_K, OperandSide::Right).evaluate(&r_address_prime);
+    let left_operand_eval =
+        OperandPolynomial::new(log_K, OperandSide::Left).evaluate(&r_address_prime);
     let identity_poly_eval =
-        IdentityPolynomial::new_with_endianness(log_K, Endianness::Big).evaluate(&r_address);
+        IdentityPolynomial::new_with_endianness(log_K, Endianness::Big).evaluate(&r_address_prime);
 
     let val_claim = rv_val_claim
         + (F::one() - is_add_mul_sub_flag_claim)
-            * (gamma * right_operand_eval + gamma_squared * left_operand_eval)
+            * (gamma * left_operand_eval + gamma_squared * right_operand_eval)
         + gamma_squared * is_add_mul_sub_flag_claim * identity_poly_eval;
 
     assert_eq!(
