@@ -107,7 +107,6 @@ pub enum OpeningsKeys {
     OuterSumcheckAz,        // Az claim from outer sumcheck
     OuterSumcheckBz,        // Bz claim from outer sumcheck
     OuterSumcheckCz,        // Cz claim from outer sumcheck
-    OuterSumcheckRxVar,     // rx_var from outer sumcheck -- TODO(markosg04)where is this used ?
     PCSumcheckUnexpandedPC, // UnexpandedPC evaluation from PC sumcheck
     PCSumcheckNextPC,       // PC evaluation from PC sumcheck
 }
@@ -116,12 +115,6 @@ pub type Openings<F> = HashMap<OpeningsKeys, (OpeningPoint<LITTLE_ENDIAN, F>, F)
 
 pub trait OpeningsExt<F: JoltField> {
     fn get_spartan_z(&self, index: JoltR1CSInputs) -> F;
-    fn get_spartan_z_point(&self, index: JoltR1CSInputs)
-        -> Option<&OpeningPoint<LITTLE_ENDIAN, F>>;
-    fn get_spartan_z_mut(
-        &mut self,
-        index: JoltR1CSInputs,
-    ) -> Option<&mut (OpeningPoint<LITTLE_ENDIAN, F>, F)>;
 }
 
 impl<F: JoltField> OpeningsExt<F> for Openings<F> {
@@ -129,21 +122,6 @@ impl<F: JoltField> OpeningsExt<F> for Openings<F> {
         self.get(&OpeningsKeys::SpartanZ(index))
             .map(|(_, value)| *value)
             .unwrap_or(F::zero())
-    }
-
-    fn get_spartan_z_point(
-        &self,
-        index: JoltR1CSInputs,
-    ) -> Option<&OpeningPoint<LITTLE_ENDIAN, F>> {
-        self.get(&OpeningsKeys::SpartanZ(index))
-            .map(|(point, _)| point)
-    }
-
-    fn get_spartan_z_mut(
-        &mut self,
-        index: JoltR1CSInputs,
-    ) -> Option<&mut (OpeningPoint<LITTLE_ENDIAN, F>, F)> {
-        self.get_mut(&OpeningsKeys::SpartanZ(index))
     }
 }
 

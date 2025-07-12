@@ -150,7 +150,7 @@ pub trait CacheSumcheckOpenings<F: JoltField, PCS: CommitmentScheme<Field = F>> 
         &mut self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
     ) {
-        //TODO(markosg04) - remove this default implementation after compiler is happy
+        //TODO(markosg04) - remove this default implementation after compiler is happy?
     }
 }
 

@@ -67,19 +67,6 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         prover_accumulator: Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>,
         transcript: Rc<RefCell<ProofTranscript>>,
         proofs: Rc<RefCell<Proofs<F, ProofTranscript>>>,
-    ) -> Self {
-        Self::new_prover_with_commitments(
-            prover_accumulator,
-            transcript,
-            proofs,
-            Rc::new(RefCell::new(None)),
-        )
-    }
-
-    pub fn new_prover_with_commitments(
-        prover_accumulator: Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>,
-        transcript: Rc<RefCell<ProofTranscript>>,
-        proofs: Rc<RefCell<Proofs<F, ProofTranscript>>>,
         commitments: Rc<RefCell<Option<JoltCommitments<F, PCS>>>>,
     ) -> Self {
         Self {
@@ -98,19 +85,6 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
     }
 
     pub fn new_verifier(
-        verifier_accumulator: Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>,
-        transcript: Rc<RefCell<ProofTranscript>>,
-        proofs: Rc<RefCell<Proofs<F, ProofTranscript>>>,
-    ) -> Self {
-        Self::new_verifier_with_commitments(
-            verifier_accumulator,
-            transcript,
-            proofs,
-            Rc::new(RefCell::new(None)),
-        )
-    }
-
-    pub fn new_verifier_with_commitments(
         verifier_accumulator: Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>,
         transcript: Rc<RefCell<ProofTranscript>>,
         proofs: Rc<RefCell<Proofs<F, ProofTranscript>>>,

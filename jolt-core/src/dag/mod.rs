@@ -79,8 +79,8 @@ mod tests {
         let proofs = Rc::new(RefCell::new(HashMap::new()));
         let commitments = Rc::new(RefCell::new(None));
 
-        // Create prover state manager
-        let mut prover_state_manager = state_manager::StateManager::new_prover_with_commitments(
+        // Create state managers
+        let mut prover_state_manager = state_manager::StateManager::new_prover(
             prover_accumulator,
             prover_transcript.clone(),
             proofs.clone(),
@@ -93,8 +93,7 @@ mod tests {
             final_memory_state.clone(),
         );
 
-        // Create verifier state manager
-        let mut verifier_state_manager = state_manager::StateManager::new_verifier_with_commitments(
+        let mut verifier_state_manager = state_manager::StateManager::new_verifier(
             verifier_accumulator,
             verifier_transcript.clone(),
             proofs,
@@ -105,15 +104,12 @@ mod tests {
             crate::jolt::vm::JoltVerifierPreprocessing::from(&preprocessing);
         verifier_state_manager.set_verifier_data(&verifier_preprocessing, io_device, trace.len());
 
-        // JoltDAG
         let mut dag = jolt_dag::JoltDAG::new(prover_state_manager, verifier_state_manager);
 
-        // Run prove
         if let Err(e) = dag.prove() {
             panic!("DAG prove failed: {}", e);
         }
 
-        // Now verify the proof
         if let Err(e) = dag.verify() {
             panic!("DAG verify failed: {}", e);
         }

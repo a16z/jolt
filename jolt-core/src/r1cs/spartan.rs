@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::rc::Rc;
+use std::sync::Arc;
 use tracer::instruction::RV32IMCycle;
 use tracing::{span, Level};
 
@@ -180,10 +181,8 @@ where
             rx_var: rx_var.to_vec(),
         };
 
-        // Wrap key in Rc for sharing
-        let key_rc = Rc::new(key);
         let (inner_sumcheck_proof, _inner_sumcheck_r) = Self::prove_inner_sumcheck(
-            key_rc,
+            key.into(),
             &input_polys,
             &claims,
             &params,
@@ -273,7 +272,7 @@ where
 
     #[tracing::instrument(skip_all)]
     fn prove_inner_sumcheck(
-        key: Rc<UniformSpartanKey<F>>,
+        key: Arc<UniformSpartanKey<F>>,
         input_polys: &[MultilinearPolynomial<F>],
         claims: &OuterClaims<F>,
         params: &InnerSumcheckParams<F>,
@@ -376,10 +375,9 @@ where
         let num_cycles_bits = key.num_steps.log_2();
         let (r_cycle, rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
-        let key_rc = Rc::new(key);
         let inner_sumcheck = InnerSumcheck::<F>::new_verifier(
             claim_inner_joint,
-            key_rc,
+            key.into(),
             rx_var.to_vec(),
             self.claimed_witness_evals.clone(),
             inner_sumcheck_RLC,
@@ -445,7 +443,7 @@ struct InnerSumcheckProverState<F: JoltField> {
 }
 
 struct InnerSumcheckVerifierState<F: JoltField> {
-    key: Rc<UniformSpartanKey<F>>,
+    key: Arc<UniformSpartanKey<F>>,
     rx_var: Vec<F>,
     claimed_witness_evals: Vec<F>,
     inner_sumcheck_RLC: F,
@@ -460,7 +458,7 @@ pub struct InnerSumcheck<F: JoltField> {
 
 impl<F: JoltField> InnerSumcheck<F> {
     pub fn new_prover(
-        key: Rc<UniformSpartanKey<F>>,
+        key: Arc<UniformSpartanKey<F>>,
         input_polys: &[MultilinearPolynomial<F>],
         claims: &OuterClaims<F>,
         params: &InnerSumcheckParams<F>,
@@ -514,7 +512,7 @@ impl<F: JoltField> InnerSumcheck<F> {
 
     pub fn new_verifier(
         input_claim: F,
-        key: Rc<UniformSpartanKey<F>>,
+        key: Arc<UniformSpartanKey<F>>,
         rx_var: Vec<F>,
         claimed_witness_evals: Vec<F>,
         inner_sumcheck_RLC: F,
@@ -887,15 +885,31 @@ where
     }
 }
 
-#[derive(Default)]
-pub struct SpartanDag {}
+pub struct SpartanDag<F: JoltField> {
+    /// Cached key to avoid recomputation across stages
+    key: Arc<UniformSpartanKey<F>>,
+}
+
+impl<F: JoltField> SpartanDag<F> {
+    pub fn new<ProofTranscript: Transcript>(padded_trace_length: usize) -> Self {
+        let constraint_builder =
+            crate::r1cs::constraints::JoltRV32IMConstraints::construct_constraints(
+                padded_trace_length,
+            );
+        let key = Arc::new(UniformSpartanProof::<F, ProofTranscript>::setup(
+            &constraint_builder,
+            padded_trace_length,
+        ));
+        Self { key }
+    }
+}
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS> for InnerSumcheck<F> {}
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS> for PCSumcheck<F> {}
 
 impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
-    SumcheckStages<F, ProofTranscript, PCS> for SpartanDag
+    SumcheckStages<F, ProofTranscript, PCS> for SpartanDag<F>
 {
     fn stage1_prove(
         &self,
@@ -910,16 +924,8 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         let (preprocessing, trace, _program_io, _final_memory_state) =
             state_manager.get_prover_data();
 
-        // Setup Spartan-specific data
         let padded_trace_length = trace.len().next_power_of_two();
-        let constraint_builder =
-            crate::r1cs::constraints::JoltRV32IMConstraints::construct_constraints(
-                padded_trace_length,
-            );
-        let key = UniformSpartanProof::<F, ProofTranscript>::setup(
-            &constraint_builder,
-            padded_trace_length,
-        );
+        let key = self.key.clone();
 
         // Create input polynomials from trace
         let input_polys: Vec<MultilinearPolynomial<F>> = crate::r1cs::inputs::ALL_R1CS_INPUTS
@@ -933,6 +939,12 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             .transcript
             .borrow_mut()
             .challenge_vector(num_rounds_x);
+
+        // Recreate constraint_builder from padded_trace_length
+        let constraint_builder: CombinedUniformBuilder<F> =
+            crate::r1cs::constraints::JoltRV32IMConstraints::construct_constraints(
+                padded_trace_length,
+            );
 
         let uniform_constraints_only_padded = constraint_builder
             .uniform_builder
@@ -1043,16 +1055,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     ) -> Result<(), anyhow::Error> {
         let (_preprocessing, _program_io, trace_length) = state_manager.get_verifier_data();
         let padded_trace_length = trace_length.next_power_of_two();
-
-        // Setup Spartan-specific data
-        let constraint_builder =
-            crate::r1cs::constraints::JoltRV32IMConstraints::construct_constraints(
-                padded_trace_length,
-            );
-        let key = UniformSpartanProof::<F, ProofTranscript>::setup(
-            &constraint_builder,
-            padded_trace_length,
-        );
+        let key = self.key.clone();
 
         let num_rounds_x = key.num_rows_bits();
 
@@ -1175,15 +1178,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         let (preprocessing, trace, _program_io, _final_memory_state) =
             state_manager.get_prover_data();
 
-        let padded_trace_length = trace.len().next_power_of_two();
-        let constraint_builder =
-            crate::r1cs::constraints::JoltRV32IMConstraints::construct_constraints(
-                padded_trace_length,
-            );
-        let key = UniformSpartanProof::<F, ProofTranscript>::setup(
-            &constraint_builder,
-            padded_trace_length,
-        );
+        let key = self.key.clone();
 
         let input_polys: Vec<MultilinearPolynomial<F>> = crate::r1cs::inputs::ALL_R1CS_INPUTS
             .par_iter()
@@ -1230,17 +1225,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
            Verifies the batched constraint for both NextUnexpandedPC and NextPC
         */
 
-        let (_preprocessing, _program_io, trace_length) = state_manager.get_verifier_data();
-        let padded_trace_length = trace_length.next_power_of_two();
-
-        let constraint_builder =
-            crate::r1cs::constraints::JoltRV32IMConstraints::construct_constraints(
-                padded_trace_length,
-            );
-        let key = UniformSpartanProof::<F, ProofTranscript>::setup(
-            &constraint_builder,
-            padded_trace_length,
-        );
+        let key = self.key.clone();
 
         // Get batching challenge for combining NextUnexpandedPC and NextPC
         let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
@@ -1300,15 +1285,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         let (preprocessing, trace, _program_io, _final_memory_state) =
             state_manager.get_prover_data();
 
-        let padded_trace_length = trace.len().next_power_of_two();
-        let constraint_builder =
-            crate::r1cs::constraints::JoltRV32IMConstraints::construct_constraints(
-                padded_trace_length,
-            );
-        let key = Rc::new(UniformSpartanProof::<F, ProofTranscript>::setup(
-            &constraint_builder,
-            padded_trace_length,
-        ));
+        let key = self.key.clone();
 
         let input_polys: Vec<MultilinearPolynomial<F>> = crate::r1cs::inputs::ALL_R1CS_INPUTS
             .par_iter()
@@ -1359,18 +1336,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
                     (A_small(rx, ry) + r * B_small(rx, ry) + r^2 * C_small(rx, ry)) * z(ry)
         */
 
-        // Get the program data
-        let (_preprocessing, _program_io, trace_length) = state_manager.get_verifier_data();
-        let padded_trace_length = trace_length.next_power_of_two();
-
-        let constraint_builder =
-            crate::r1cs::constraints::JoltRV32IMConstraints::construct_constraints(
-                padded_trace_length,
-            );
-        let key = Rc::new(UniformSpartanProof::<F, ProofTranscript>::setup(
-            &constraint_builder,
-            padded_trace_length,
-        ));
+        let key = self.key.clone();
 
         let inner_sumcheck_RLC: F = state_manager.transcript.borrow_mut().challenge_scalar();
 

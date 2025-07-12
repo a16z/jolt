@@ -41,7 +41,9 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         }
 
         // Stage 1:
-        let spartan_dag = SpartanDag::default();
+        let (_, trace, _, _) = self.prover_state_manager.get_prover_data();
+        let padded_trace_length = trace.len().next_power_of_two();
+        let spartan_dag = SpartanDag::<F>::new::<ProofTranscript>(padded_trace_length);
         spartan_dag.stage1_prove(&mut self.prover_state_manager)?;
 
         // Stage 2:
@@ -102,11 +104,13 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         self.receive_claims()?;
 
         // Stage 1:
-        let spartan_dag = SpartanDag::default();
+        let (_, _, trace_length) = self.verifier_state_manager.get_verifier_data();
+        let padded_trace_length = trace_length.next_power_of_two();
+        let spartan_dag = SpartanDag::<F>::new::<ProofTranscript>(padded_trace_length);
         spartan_dag.stage1_verify(&mut self.verifier_state_manager)?;
 
         // Stage 2:
-        let stage2_instances =
+        let mut stage2_instances =
             spartan_dag.stage2_verifier_instances(&mut self.verifier_state_manager);
         let stage2_instances_ref: Vec<&dyn BatchableSumcheckInstance<F>> = stage2_instances
             .iter()
@@ -131,8 +135,15 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
 
         drop(proofs);
 
+        // The spartan ones don't actually do anything but for future sumchecks we will want to invoke like this
+        // Same thing applies for stage 3
+        let accumulator = self.verifier_state_manager.get_verifier_accumulator();
+        for instance in stage2_instances.iter_mut() {
+            instance.cache_openings_verifier(Some(accumulator.clone()));
+        }
+
         // Stage 3:
-        let stage3_instances =
+        let mut stage3_instances =
             spartan_dag.stage3_verifier_instances(&mut self.verifier_state_manager);
         let stage3_instances_ref: Vec<&dyn BatchableSumcheckInstance<F>> = stage3_instances
             .iter()
@@ -153,6 +164,11 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             stage3_instances_ref,
             &mut *transcript.borrow_mut(),
         )?;
+
+        let accumulator = self.verifier_state_manager.get_verifier_accumulator();
+        for instance in stage3_instances.iter_mut() {
+            instance.cache_openings_verifier(Some(accumulator.clone()));
+        }
 
         Ok(())
     }
