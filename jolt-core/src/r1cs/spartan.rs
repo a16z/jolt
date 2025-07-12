@@ -15,7 +15,7 @@ use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::OpeningsKeys::{OuterSumcheckAz, OuterSumcheckBz, OuterSumcheckCz};
 use crate::poly::opening_proof::{
-    OpeningsExt, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator
+    OpeningsExt, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
 };
 use crate::r1cs::builder::Constraint;
 use crate::r1cs::constraints::R1CSConstraints;
@@ -57,7 +57,6 @@ pub struct InnerSumcheckParams<F: JoltField> {
 
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum SpartanError {
-
     /// returned when the outer sumcheck proof fails
     #[error("InvalidOuterSumcheckProof")]
     InvalidOuterSumcheckProof,
@@ -1077,15 +1076,11 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 
         // Get the claims:
         let accumulator = state_manager.get_verifier_accumulator();
-        let claim_Az = accumulator
-            .borrow()
-            .get_opening(OpeningsKeys::OuterSumcheckAz);
-        let claim_Bz = accumulator
-            .borrow()
-            .get_opening(OpeningsKeys::OuterSumcheckBz);
-        let claim_Cz = accumulator
-            .borrow()
-            .get_opening(OpeningsKeys::OuterSumcheckCz);
+        let accumulator_ref = accumulator.borrow();
+        let claim_Az = accumulator_ref.get_opening(OpeningsKeys::OuterSumcheckAz);
+        let claim_Bz = accumulator_ref.get_opening(OpeningsKeys::OuterSumcheckBz);
+        let claim_Cz = accumulator_ref.get_opening(OpeningsKeys::OuterSumcheckCz);
+        drop(accumulator_ref);
         let outer_sumcheck_claims = [claim_Az, claim_Bz, claim_Cz];
 
         // Run the main sumcheck verifier:
@@ -1097,12 +1092,10 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             }
         };
 
-        // Outer sumcheck is bound from the top, reverse the challenge TODO(markosg04) make use of Endianness here ?
-        let outer_sumcheck_r_reversed: Vec<F> = outer_sumcheck_r_original
-            .clone()
-            .into_iter()
-            .rev()
-            .collect();
+        // Outer sumcheck is bound from the top, reverse the challenge
+        // TODO(markosg04): Make use of Endianness here?
+        let outer_sumcheck_r_reversed: Vec<F> =
+            outer_sumcheck_r_original.iter().rev().cloned().collect();
 
         // Populate the opening points for Az, Bz, Cz claims now that we have outer_sumcheck_r
         accumulator.borrow_mut().populate_claim_opening(
@@ -1200,8 +1193,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         let num_cycles = key.num_steps;
         let num_cycles_bits = num_cycles.ilog2() as usize;
 
-        // we get this opening_point from accumulator.
-        // we use Az here but Bz, Cz would work as well.
+        // Get opening_point from accumulator (Az, Bz, Cz all have the same point)
         let accumulator = state_manager.get_prover_accumulator();
         let outer_sumcheck_r = accumulator
             .borrow()
@@ -1212,7 +1204,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         // Evaluate all witness polynomials P_i at r_cycle for the verifier
         // Verifier computes: z(r_inner, r_cycle) = Σ_i eq(r_inner, i) * P_i(r_cycle)
         let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
-        let (claimed_witness_evals, _chis) =
+        let (claimed_witness_evals, _) =
             MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
 
         let (_, eq_plus_one_r_cycle) = EqPlusOnePolynomial::evals(r_cycle, None);
@@ -1249,8 +1241,8 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             &constraint_builder,
             padded_trace_length,
         );
-        
-        // batching challenge
+
+        // Get batching challenge for combining NextUnexpandedPC and NextPC
         let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
 
         // Get r_cycle from outer sumcheck opening point
@@ -1328,8 +1320,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 
         let inner_sumcheck_RLC: F = state_manager.transcript.borrow_mut().challenge_scalar();
 
-        // we get this opening_point from accumulator.
-        // we use Az here but Bz, Cz work as well.
+        // Get opening_point from accumulator (Az, Bz, Cz all have the same point)
         let accumulator = state_manager.get_prover_accumulator();
         let outer_sumcheck_r = accumulator
             .borrow()
@@ -1337,9 +1328,11 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             .unwrap();
         let (r_cycle, rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
-        let claim_Az = accumulator.borrow().get_opening(OuterSumcheckAz);
-        let claim_Bz = accumulator.borrow().get_opening(OuterSumcheckBz);
-        let claim_Cz = accumulator.borrow().get_opening(OuterSumcheckCz);
+        let accumulator_ref = accumulator.borrow();
+        let claim_Az = accumulator_ref.get_opening(OuterSumcheckAz);
+        let claim_Bz = accumulator_ref.get_opening(OuterSumcheckBz);
+        let claim_Cz = accumulator_ref.get_opening(OuterSumcheckCz);
+        drop(accumulator_ref);
 
         let claims = OuterClaims {
             az: claim_Az,
@@ -1383,9 +1376,11 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 
         // Get outer sumcheck claims from accumulator
         let accumulator = state_manager.get_verifier_accumulator();
-        let claim_Az = accumulator.borrow().get_opening(OuterSumcheckAz);
-        let claim_Bz = accumulator.borrow().get_opening(OuterSumcheckBz);
-        let claim_Cz = accumulator.borrow().get_opening(OuterSumcheckCz);
+        let accumulator_ref = accumulator.borrow();
+        let claim_Az = accumulator_ref.get_opening(OuterSumcheckAz);
+        let claim_Bz = accumulator_ref.get_opening(OuterSumcheckBz);
+        let claim_Cz = accumulator_ref.get_opening(OuterSumcheckCz);
+        drop(accumulator_ref);
 
         // Compute joint claim
         let claim_inner_joint =
