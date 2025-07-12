@@ -865,15 +865,13 @@ where
 
     /// Populates the opening point for an existing claim in the evaluation_openings map.
     pub fn populate_claim_opening(&mut self, key: OpeningsKeys, opening_point: Vec<F>) {
-        if let Some((old_point, claim)) = self.evaluation_openings.get(&key) {
+        if let Some((_, claim)) = self.evaluation_openings.get(&key) {
             let claim = *claim; // Copy the claim value
-            let new_point = OpeningPoint::<LITTLE_ENDIAN, F>::new(opening_point);
+            let new_point: OpeningPoint<true, F> =
+                OpeningPoint::<LITTLE_ENDIAN, F>::new(opening_point);
             self.evaluation_openings.insert(key, (new_point, claim));
         } else {
-            panic!(
-                "Tried to populate opening point for non-existent key: {:?}",
-                key
-            );
+            panic!("Tried to populate opening point for non-existent key: {key:?}");
         }
     }
 

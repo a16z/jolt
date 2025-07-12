@@ -148,7 +148,7 @@ pub trait CacheSumcheckOpenings<F: JoltField, PCS: CommitmentScheme<Field = F>> 
 
     fn cache_openings_verifier(
         &mut self,
-        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
+        _accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
     ) {
         //TODO(markosg04) - remove this default implementation after compiler is happy?
     }

@@ -1053,8 +1053,6 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         &self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {
-        let (_preprocessing, _program_io, trace_length) = state_manager.get_verifier_data();
-        let padded_trace_length = trace_length.next_power_of_two();
         let key = self.key.clone();
 
         let num_rounds_x = key.num_rows_bits();
@@ -1224,7 +1222,6 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         /* Sumcheck 3: Batched sumcheck for NextUnexpandedPC and NextPC verification
            Verifies the batched constraint for both NextUnexpandedPC and NextPC
         */
-
         let key = self.key.clone();
 
         // Get batching challenge for combining NextUnexpandedPC and NextPC
