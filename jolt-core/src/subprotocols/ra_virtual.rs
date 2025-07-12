@@ -3,7 +3,6 @@ use std::rc::Rc;
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
-use crate::poly::opening_proof::Openings;
 use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::subprotocols::sumcheck::CacheSumcheckOpenings;
 use crate::{

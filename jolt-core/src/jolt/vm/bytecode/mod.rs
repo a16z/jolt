@@ -2,7 +2,6 @@ use std::cell::RefCell;
 use std::sync::Arc;
 use std::{collections::BTreeMap, rc::Rc};
 
-use crate::poly::opening_proof::Openings;
 use crate::subprotocols::sumcheck::CacheSumcheckOpenings;
 use crate::{
     field::JoltField,

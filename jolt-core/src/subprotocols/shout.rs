@@ -3,7 +3,6 @@ use std::{cell::RefCell, rc::Rc};
 use super::sumcheck::{BatchableSumcheckInstance, BatchedSumcheck, SumcheckInstanceProof};
 use crate::{
     field::JoltField,
-    poly::opening_proof::Openings,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,

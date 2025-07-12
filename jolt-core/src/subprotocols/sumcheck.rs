@@ -8,7 +8,7 @@ use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
 use crate::poly::opening_proof::ProverOpeningAccumulator;
-use crate::poly::opening_proof::{Openings, VerifierOpeningAccumulator};
+use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::poly::spartan_interleaved_poly::SpartanInterleavedPolynomial;
 use crate::poly::split_eq_poly::{GruenSplitEqPolynomial, SplitEqPolynomial};
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};

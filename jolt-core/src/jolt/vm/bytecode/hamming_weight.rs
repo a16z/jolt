@@ -2,7 +2,6 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::{
     field::JoltField,
-    poly::opening_proof::Openings,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         multilinear_polynomial::{

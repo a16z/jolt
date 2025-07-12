@@ -12,7 +12,6 @@ use crate::{
         },
         witness::CommittedPolynomials,
     },
-    poly::opening_proof::Openings,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,

@@ -15,7 +15,7 @@ use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::OpeningsKeys::{OuterSumcheckAz, OuterSumcheckBz, OuterSumcheckCz};
 use crate::poly::opening_proof::{
-    Openings, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
+    OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
 };
 use crate::r1cs::builder::Constraint;
 use crate::r1cs::constraints::R1CSConstraints;

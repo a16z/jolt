@@ -6,7 +6,6 @@ use crate::{
         instruction::{InstructionFlags, InstructionLookup, NUM_CIRCUIT_FLAGS},
         lookup_table::{LookupTables, NUM_LOOKUP_TABLES},
     },
-    poly::opening_proof::Openings,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         compact_polynomial::SmallScalar,
