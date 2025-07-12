@@ -235,6 +235,7 @@ where
             &input_polys,
             &claimed_witness_evals,
             eq_plus_one_r_cycle,
+            r_cycle.to_vec(),
             transcript,
         );
 
@@ -315,6 +316,7 @@ where
         input_polys: &[MultilinearPolynomial<F>],
         claimed_witness_evals: &[F],
         eq_plus_one_r_cycle: Vec<F>,
+        r_cycle: Vec<F>,
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>) {
         let span = span!(Level::INFO, "shift_sumcheck_pc");
@@ -323,7 +325,7 @@ where
         let r: F = transcript.challenge_scalar();
 
         let mut pc_sumcheck =
-            PCSumcheck::new_prover(input_polys, claimed_witness_evals, eq_plus_one_r_cycle, r);
+            PCSumcheck::new_prover(input_polys, claimed_witness_evals, eq_plus_one_r_cycle, r, r_cycle.to_vec());
 
         let (shift_sumcheck_proof, _r) = pc_sumcheck.prove_single(transcript);
 
@@ -690,6 +692,7 @@ struct PCSumcheckProverState<F: JoltField> {
     pc_poly: MultilinearPolynomial<F>,
     eq_plus_one_poly: MultilinearPolynomial<F>,
     r: F,
+    r_cycle: Vec<F>,
 }
 
 struct PCSumcheckVerifierState<F: JoltField> {
@@ -712,6 +715,7 @@ impl<F: JoltField> PCSumcheck<F> {
         claimed_witness_evals: &[F],
         eq_plus_one_r_cycle: Vec<F>,
         r: F,
+        r_cycle: Vec<F>,
     ) -> Self {
         let unexpanded_pc_index = JoltR1CSInputs::UnexpandedPC.to_index();
         let pc_index = JoltR1CSInputs::PC.to_index();
@@ -729,6 +733,7 @@ impl<F: JoltField> PCSumcheck<F> {
                 pc_poly: input_polys[pc_index].clone(),
                 eq_plus_one_poly: MultilinearPolynomial::from(eq_plus_one_r_cycle),
                 r,
+                r_cycle,
             }),
             verifier_state: None,
             cached_claims: None,
@@ -887,12 +892,12 @@ where
         // Store unexpanded_pc and pc evaluations
         accumulator.borrow_mut().append_virtual(
             OpeningsKeys::PCSumcheckUnexpandedPC,
-            vec![],
+            prover_state.r_cycle.clone(),
             unexpanded_pc_eval,
         );
         accumulator
             .borrow_mut()
-            .append_virtual(OpeningsKeys::PCSumcheckPC, vec![], pc_eval);
+            .append_virtual(OpeningsKeys::PCSumcheckPC, prover_state.r_cycle.clone(), pc_eval);
 
         self.cached_claims = Some((unexpanded_pc_eval, pc_eval));
     }
@@ -1202,7 +1207,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         // // Evaluate all witness polynomials P_i at r_cycle for the verifier
         // // Verifier computes: z(r_inner, r_cycle) = Σ_i eq(r_inner, i) * P_i(r_cycle)
         let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
-        let (claimed_witness_evals, chis) =
+        let (claimed_witness_evals, _chis) =
             MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
 
         let (_, eq_plus_one_r_cycle) = EqPlusOnePolynomial::evals(r_cycle, None);
@@ -1214,6 +1219,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             &claimed_witness_evals,
             eq_plus_one_r_cycle,
             gamma,
+            r_cycle.to_vec(),
         );
 
         vec![Box::new(pc_sumcheck)]
