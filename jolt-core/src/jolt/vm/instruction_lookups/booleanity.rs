@@ -6,7 +6,7 @@ use tracer::instruction::RV32IMCycle;
 use super::{D, K_CHUNK, LOG_K_CHUNK};
 
 use crate::{
-    dag::state_manager::{OpeningsKeys, StateManager},
+    dag::state_manager::StateManager,
     field::JoltField,
     jolt::instruction::LookupQuery,
     poly::{
@@ -15,7 +15,7 @@ use crate::{
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
-        opening_proof::{Openings, ProverOpeningAccumulator},
+        opening_proof::{Openings, OpeningsKeys, ProverOpeningAccumulator},
     },
     r1cs::inputs::JoltR1CSInputs,
     subprotocols::sumcheck::{
@@ -70,7 +70,8 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             .borrow()
             .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
             .unwrap()
-            .to_vec();
+            .r
+            .clone();
 
         Self {
             gamma: gamma_powers,
@@ -96,7 +97,8 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             .borrow()
             .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
             .unwrap()
-            .to_vec();
+            .r
+            .clone();
         let log_T = r_cycle.len();
         let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
         let mut gamma_powers = [F::one(); D];
@@ -105,7 +107,11 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         }
         let r_address: Vec<F> = sm.transcript.borrow_mut().challenge_vector(K_CHUNK);
         let ra_claims = (0..D)
-            .map(|i| sm.get_verifier_accumulator().borrow().get_opening(OpeningsKeys::InstructionBooleanityRa(i)))
+            .map(|i| {
+                sm.get_verifier_accumulator()
+                    .borrow()
+                    .get_opening(OpeningsKeys::InstructionBooleanityRa(i))
+            })
             .collect::<Vec<F>>()
             .try_into()
             .unwrap();

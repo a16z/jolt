@@ -7,7 +7,7 @@ use tracer::instruction::RV32IMCycle;
 use super::{D, K_CHUNK, LOG_K, LOG_K_CHUNK, LOG_M, M, PHASES, RA_PER_LOG_M, WORD_SIZE};
 
 use crate::{
-    dag::state_manager::{Openings, OpeningsKeys, StateManager},
+    dag::state_manager::StateManager,
     field::JoltField,
     jolt::{
         instruction::{InstructionFlags, InstructionLookup, InterleavedBitsMarker, LookupQuery},
@@ -24,7 +24,7 @@ use crate::{
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
-        opening_proof::ProverOpeningAccumulator,
+        opening_proof::{Openings, OpeningsExt, OpeningsKeys, ProverOpeningAccumulator},
         prefix_suffix::{Prefix, PrefixRegistry, PrefixSuffixDecomposition},
     },
     r1cs::inputs::JoltR1CSInputs,
@@ -95,8 +95,12 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
         let mut ps = ReadRafProverState::new(trace, eq_r_cycle, unbound_ra_polys);
         ps.init_phase(0);
         let r_cycle = sm
-            .openings_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
-            .r;
+            .get_prover_accumulator()
+            .borrow()
+            .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
+            .unwrap()
+            .r
+            .clone();
         Self {
             gamma,
             gamma_squared: gamma.square(),
@@ -105,9 +109,21 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
             table_flag_claims: None,
             raf_flag_claim: None,
             r_cycle,
-            rv_claim: sm.z(JoltR1CSInputs::LookupOutput),
-            raf_claim: sm.z(JoltR1CSInputs::LeftLookupOperand)
-                + gamma * sm.z(JoltR1CSInputs::RightLookupOperand),
+            rv_claim: sm
+                .get_prover_accumulator()
+                .borrow()
+                .evaluation_openings()
+                .get_spartan_z(JoltR1CSInputs::LookupOutput),
+            raf_claim: sm
+                .get_prover_accumulator()
+                .borrow()
+                .evaluation_openings()
+                .get_spartan_z(JoltR1CSInputs::LeftLookupOperand)
+                + gamma
+                    * sm.get_prover_accumulator()
+                        .borrow()
+                        .evaluation_openings()
+                        .get_spartan_z(JoltR1CSInputs::RightLookupOperand),
             log_T,
         }
     }
@@ -118,15 +134,30 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
         let log_T = sm.get_verifier_data().2;
         let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
         let prod_ra_claims: F = (0..D)
-            .map(|i| sm.openings(OpeningsKeys::InstructionRa(i)))
+            .map(|i| {
+                sm.get_verifier_accumulator()
+                    .borrow()
+                    .get_opening(OpeningsKeys::InstructionRa(i))
+            })
             .product();
         let table_flag_claims: Vec<F> = (0..LookupTables::<WORD_SIZE>::COUNT)
-            .map(|i| sm.openings(OpeningsKeys::LookupTableFlag(i)))
+            .map(|i| {
+                sm.get_verifier_accumulator()
+                    .borrow()
+                    .get_opening(OpeningsKeys::LookupTableFlag(i))
+            })
             .collect();
-        let raf_flag_claim = sm.openings(OpeningsKeys::InstructionRafFlag);
+        let raf_flag_claim = sm
+            .get_verifier_accumulator()
+            .borrow()
+            .get_opening(OpeningsKeys::InstructionRafFlag);
         let r_cycle = sm
-            .openings_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
-            .r;
+            .get_verifier_accumulator()
+            .borrow()
+            .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
+            .unwrap()
+            .r
+            .clone();
         Self {
             gamma,
             gamma_squared: gamma * gamma,
@@ -135,9 +166,21 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
             table_flag_claims: Some(table_flag_claims),
             raf_flag_claim: Some(raf_flag_claim),
             r_cycle,
-            rv_claim: sm.z(JoltR1CSInputs::LookupOutput),
-            raf_claim: sm.z(JoltR1CSInputs::LeftLookupOperand)
-                + gamma * sm.z(JoltR1CSInputs::RightLookupOperand),
+            rv_claim: sm
+                .get_verifier_accumulator()
+                .borrow()
+                .evaluation_openings()
+                .get_spartan_z(JoltR1CSInputs::LookupOutput),
+            raf_claim: sm
+                .get_verifier_accumulator()
+                .borrow()
+                .evaluation_openings()
+                .get_spartan_z(JoltR1CSInputs::LeftLookupOperand)
+                + gamma
+                    * sm.get_verifier_accumulator()
+                        .borrow()
+                        .evaluation_openings()
+                        .get_spartan_z(JoltR1CSInputs::RightLookupOperand),
             log_T,
         }
     }
@@ -388,10 +431,9 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for ReadRafSumcheck<'_, F> {
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PCS>
     for ReadRafSumcheck<'_, F>
 {
-    fn cache_openings(
+    fn cache_openings_prover(
         &mut self,
-        openings: Option<Rc<RefCell<Openings<F>>>>,
-        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         let ps = self.prover_state.as_mut().unwrap();
         let r_cycle_prime = &ps.r[ps.r.len() - self.log_T..];
@@ -412,17 +454,19 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
             .map(|ra| ra.final_sumcheck_claim())
             .collect::<Vec<F>>();
 
-        let mut openings = openings.as_ref().unwrap().borrow_mut();
+        let accumulator = accumulator.expect("accumulator is needed");
         flag_claims.into_iter().enumerate().for_each(|(i, claim)| {
-            openings.insert(
+            accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::LookupTableFlag(i),
-                (r_cycle_prime.to_vec().into(), claim),
+                r_cycle_prime.to_vec(),
+                claim,
             );
         });
         ra_claims.iter().enumerate().for_each(|(i, claim)| {
-            openings.insert(
+            accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::InstructionRa(i),
-                (ps.r.to_vec().into(), *claim),
+                ps.r.to_vec(),
+                *claim,
             );
         });
         let raf_flag_claim = ps
@@ -430,9 +474,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
             .par_iter()
             .map(|(j, _)| eq_r_cycle_prime[*j])
             .sum::<F>();
-        openings.insert(
+        accumulator.borrow_mut().append_virtual(
             OpeningsKeys::InstructionRafFlag,
-            (r_cycle_prime.to_vec().into(), raf_flag_claim),
+            r_cycle_prime.to_vec(),
+            raf_flag_claim,
         );
     }
 }

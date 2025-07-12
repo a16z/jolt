@@ -104,11 +104,15 @@ pub enum OpeningsKeys {
     SpartanZ(JoltR1CSInputs),
     InstructionTypeFlag(usize),
     InstructionRa(usize),
-    OuterSumcheckAz,        // Az claim from outer sumcheck
-    OuterSumcheckBz,        // Bz claim from outer sumcheck
-    OuterSumcheckCz,        // Cz claim from outer sumcheck
-    PCSumcheckUnexpandedPC, // UnexpandedPC evaluation from PC sumcheck
-    PCSumcheckNextPC,       // PC evaluation from PC sumcheck
+    InstructionBooleanityRa(usize), // Ra openings for booleanity instruction lookup
+    InstructionHammingRa(usize),    // Ra openings for hamming weight instruction lookup
+    LookupTableFlag(usize),         // Flag openings for lookup tables
+    InstructionRafFlag,             // RAF flag opening
+    OuterSumcheckAz,                // Az claim from outer sumcheck
+    OuterSumcheckBz,                // Bz claim from outer sumcheck
+    OuterSumcheckCz,                // Cz claim from outer sumcheck
+    PCSumcheckUnexpandedPC,         // UnexpandedPC evaluation from PC sumcheck
+    PCSumcheckNextPC,               // PC evaluation from PC sumcheck
 }
 
 pub type Openings<F> = HashMap<OpeningsKeys, (OpeningPoint<LITTLE_ENDIAN, F>, F)>;
