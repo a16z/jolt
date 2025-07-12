@@ -4,6 +4,14 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Represents a step in the execution trace, where an execution trace is a `Vec<ONNXCycle>`.
+/// Records what the VM did at a cycle of execution.
+/// Constructed at each step in the VM execution cycle, documenting instr, reads & state changes (writes).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ONNXCycle {
+    pub instr: ONNXInstr,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 /// Represents a single ONNX instruction parsed from the model.
 /// The ONNX model is converted into a sequence of [`ONNXInstr`]s, forming the program code.

@@ -44,6 +44,16 @@ pub fn decode(model_path: &PathBuf) -> Vec<ONNXInstr> {
         .collect()
 }
 
+/// Provides a simple API to obtain the execution trace for an ONNX model.
+/// Use this to extract the execution trace from an ONNX model and input, so it can be supplied to the Jolt system.
+///
+/// The execution trace (or transcript) records the changes to the CPU state at each cycle of execution,
+/// effectively capturing a step-by-step log of the VM's actions during model inference.
+/// These state transitions are later verified in the Jolt proof system, ensuring the prover possesses a valid execution trace for the given model and input.
+pub fn trace() {
+    todo!()
+}
+
 /// Given a file path, load the ONNX model and return a [`Model`].
 /// This function is used to initialize the model for further processing.
 fn model(model_path: &PathBuf) -> Model {
