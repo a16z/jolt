@@ -11,8 +11,8 @@ mod e2e_tests {
             model_path: "../onnx-tracer/models/simple_text_classification/network.onnx".into(),
             inputs: Tensor::new(Some(&[1, 2, 3, 4, 5]), &[1, 5]).unwrap(), // Example input
         };
-        let program_code = text_classification.decode();
-        println!("Program code: {program_code:#?}",);
+        let program_bytecode = text_classification.decode();
+        println!("Program code: {program_bytecode:#?}",);
         let execution_trace = text_classification.trace();
         println!("Execution trace: {execution_trace:#?}",);
     }
@@ -24,8 +24,8 @@ mod e2e_tests {
             model_path: "../onnx-tracer/models/medium_text_classification/network.onnx".into(),
             inputs: Tensor::new(Some(&[1, 2, 3, 4, 5]), &[1, 5]).unwrap(), // Example input
         };
-        let program_code = text_classification.decode();
-        println!("Program code: {program_code:#?}",);
+        let program_bytecode = text_classification.decode();
+        println!("Program code: {program_bytecode:#?}",);
         text_classification.trace();
     }
 }

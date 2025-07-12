@@ -92,7 +92,7 @@ pub fn node_output_shapes(
     for output in outputs {
         let shape = output.fact.shape;
         let shape = shape.eval_to_usize(symbol_values)?;
-        let mut mv = shape.to_vec();
+        let mv = shape.to_vec();
         // TODO: unsure if we need this (convert 1D tensors to 2D):
         // if mv.len() == 1 {
         //     mv.push(mv[0]);

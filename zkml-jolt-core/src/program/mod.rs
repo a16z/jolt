@@ -22,7 +22,7 @@ pub struct ONNXProgram {
 
 impl ONNXProgram {
     /// Get the [`ONNXProgram`] bytecode in a format accessible to the constraint system.
-    /// Called during pre-processsing time.
+    /// Called during pre-processsing time. We use this preprocessed bytecode to prove correctness of the bytecode trace.
     pub fn decode(&self) -> Vec<ONNXInstr> {
         onnx_tracer::decode(&self.model_path)
     }
