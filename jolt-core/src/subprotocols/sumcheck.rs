@@ -143,7 +143,6 @@ pub trait CacheSumcheckOpenings<F: JoltField, PCS: CommitmentScheme<Field = F>> 
     /// These openings will later be proven using either an opening proof or another sumcheck.
     fn cache_openings_prover(
         &mut self,
-        openings: Option<Rc<RefCell<Openings<F>>>>,
         accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     );
 
@@ -289,13 +288,12 @@ impl BatchedSumcheck {
         PCS: CommitmentScheme<Field = F>,
     >(
         mut sumcheck_instances: Vec<&mut dyn CacheSumcheckOpenings<F, PCS>>,
-        openings: Option<Rc<RefCell<Openings<F>>>>,
         accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         for sumcheck in sumcheck_instances.iter_mut() {
             // Cache polynomial opening claims, to be proven using either an
             // opening proof or sumcheck (in the case of virtual polynomials).
-            sumcheck.cache_openings_prover(openings.clone(), accumulator.clone());
+            sumcheck.cache_openings_prover(accumulator.clone());
         }
     }
 
