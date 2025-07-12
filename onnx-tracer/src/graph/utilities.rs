@@ -82,8 +82,7 @@ pub fn multiplier_to_scale(mult: f64) -> crate::Scale {
     mult.log2().round() as crate::Scale
 }
 
-// /// Gets the shape of a onnx node's outlets.
-
+/// Gets the shape of a onnx node's outlets.
 pub fn node_output_shapes(
     node: &OnnxNode<TypedFact, Box<dyn TypedOp>>,
     symbol_values: &SymbolValues,
@@ -93,7 +92,12 @@ pub fn node_output_shapes(
     for output in outputs {
         let shape = output.fact.shape;
         let shape = shape.eval_to_usize(symbol_values)?;
-        let mv = shape.to_vec();
+        let mut mv = shape.to_vec();
+        // TODO: unsure if we need this (convert 1D tensors to 2D):
+        // if mv.len() == 1 {
+        //     mv.push(mv[0]);
+        //     mv[0] = 1; // make it a 2D tensor
+        // }
         shapes.push(mv)
     }
     Ok(shapes)

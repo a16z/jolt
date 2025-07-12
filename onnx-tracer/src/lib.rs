@@ -6,8 +6,10 @@
 #![allow(clippy::empty_docs)]
 
 use crate::{
+    fieldutils::i128_to_felt,
     graph::model::{Model, NodeType},
-    trace_types::ONNXInstr,
+    tensor::Tensor,
+    trace_types::{ONNXCycle, ONNXInstr},
 };
 use clap::Args;
 use serde::{Deserialize, Serialize};
@@ -50,8 +52,16 @@ pub fn decode(model_path: &PathBuf) -> Vec<ONNXInstr> {
 /// The execution trace (or transcript) records the changes to the CPU state at each cycle of execution,
 /// effectively capturing a step-by-step log of the VM's actions during model inference.
 /// These state transitions are later verified in the Jolt proof system, ensuring the prover possesses a valid execution trace for the given model and input.
-pub fn trace() {
-    todo!()
+pub fn trace(model_path: &PathBuf, input: &Tensor<i128>) -> Vec<ONNXCycle> {
+    let model = model(model_path);
+    // Run the model with the provided inputs
+    let _ = model
+        .forward(&[input.map(i128_to_felt)])
+        .expect("Failed to run model");
+
+    // The tracer will automatically capture the execution trace during the forward pass
+    let execution_trace = model.tracer.execution_trace.borrow();
+    execution_trace.clone()
 }
 
 /// Given a file path, load the ONNX model and return a [`Model`].

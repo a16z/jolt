@@ -791,7 +791,6 @@ impl ParsedNodes {
     ///  Returns shapes of the computational graph's inputs
     pub fn input_shapes(&self) -> Result<Vec<Vec<usize>>, Box<dyn Error>> {
         let mut inputs = vec![];
-
         for input in self.inputs.iter() {
             let node = self
                 .nodes
@@ -801,7 +800,6 @@ impl ParsedNodes {
             let input_dim = input_dims.first().unwrap();
             inputs.push(input_dim.clone());
         }
-
         Ok(inputs)
     }
 

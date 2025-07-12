@@ -3,7 +3,10 @@
 //! This module enables loading ONNX models, managing their inputs, and preparing them for use in
 //! the zkVM.
 
-use onnx_tracer::{tensor::Tensor, trace_types::ONNXInstr};
+use onnx_tracer::{
+    tensor::Tensor,
+    trace_types::{ONNXCycle, ONNXInstr},
+};
 use std::path::PathBuf;
 
 /// Represents an ONNX program with tracing capabilities.
@@ -26,5 +29,7 @@ impl ONNXProgram {
 
     /// Get the execution trace for the [`ONNXProgram`].
     /// Called during proving time.
-    pub fn trace() {}
+    pub fn trace(&self) -> Vec<ONNXCycle> {
+        onnx_tracer::trace(&self.model_path, &self.inputs)
+    }
 }
