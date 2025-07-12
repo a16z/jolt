@@ -6,7 +6,6 @@ use crate::field::JoltField;
 use crate::jolt::vm::{JoltCommitments, JoltProverPreprocessing, JoltVerifierPreprocessing};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
-use crate::r1cs::spartan::UniformSpartanProof;
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::utils::transcript::Transcript;
 use tracer::emulator::memory::Memory;
@@ -16,15 +15,13 @@ use tracer::JoltDevice;
 #[derive(Hash, PartialEq, Eq, Clone, Debug)]
 pub enum ProofKeys {
     SpartanOuterSumcheck,
-    SpartanInnerSumcheck,
-    SpartanShiftSumcheck,
-    SpartanStage2Sumcheck,
-    SpartanStage3Sumcheck,
+    Stage2Sumcheck,
+    Stage3Sumcheck,
 }
 
 pub enum ProofData<F: JoltField, ProofTranscript: Transcript> {
-    Spartan(UniformSpartanProof<F, ProofTranscript>),
-    SpartanSumcheck(SumcheckInstanceProof<F, ProofTranscript>),
+    SpartanOuterData(SumcheckInstanceProof<F, ProofTranscript>),
+    BatchableSumcheckData(SumcheckInstanceProof<F, ProofTranscript>),
 }
 
 pub type Proofs<F, ProofTranscript> = HashMap<ProofKeys, ProofData<F, ProofTranscript>>;
@@ -214,7 +211,6 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         }
     }
 
-    // @TODO(markosg04) make this nicer with &mut or something
     pub fn get_transcript(&self) -> Rc<RefCell<ProofTranscript>> {
         self.transcript.clone()
     }

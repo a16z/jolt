@@ -109,7 +109,7 @@ pub enum OpeningsKeys {
     OuterSumcheckCz,        // Cz claim from outer sumcheck
     OuterSumcheckRxVar,     // rx_var from outer sumcheck -- TODO(markosg04)where is this used ?
     PCSumcheckUnexpandedPC, // UnexpandedPC evaluation from PC sumcheck
-    PCSumcheckNextPC,           // PC evaluation from PC sumcheck
+    PCSumcheckNextPC,       // PC evaluation from PC sumcheck
 }
 
 pub type Openings<F> = HashMap<OpeningsKeys, (OpeningPoint<LITTLE_ENDIAN, F>, F)>;
@@ -118,10 +118,6 @@ pub trait OpeningsExt<F: JoltField> {
     fn get_spartan_z(&self, index: JoltR1CSInputs) -> F;
     fn get_spartan_z_point(&self, index: JoltR1CSInputs)
         -> Option<&OpeningPoint<LITTLE_ENDIAN, F>>;
-    fn get_spartan_z_full(
-        &self,
-        index: JoltR1CSInputs,
-    ) -> Option<&(OpeningPoint<LITTLE_ENDIAN, F>, F)>;
     fn get_spartan_z_mut(
         &mut self,
         index: JoltR1CSInputs,
@@ -141,13 +137,6 @@ impl<F: JoltField> OpeningsExt<F> for Openings<F> {
     ) -> Option<&OpeningPoint<LITTLE_ENDIAN, F>> {
         self.get(&OpeningsKeys::SpartanZ(index))
             .map(|(point, _)| point)
-    }
-
-    fn get_spartan_z_full(
-        &self,
-        index: JoltR1CSInputs,
-    ) -> Option<&(OpeningPoint<LITTLE_ENDIAN, F>, F)> {
-        self.get(&OpeningsKeys::SpartanZ(index))
     }
 
     fn get_spartan_z_mut(
@@ -903,7 +892,10 @@ where
             let new_point = OpeningPoint::<LITTLE_ENDIAN, F>::new(opening_point);
             self.evaluation_openings.insert(key, (new_point, claim));
         } else {
-            panic!("Tried to populate opening point for non-existent key: {:?}", key);
+            panic!(
+                "Tried to populate opening point for non-existent key: {:?}",
+                key
+            );
         }
     }
 
