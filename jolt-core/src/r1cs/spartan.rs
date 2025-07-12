@@ -994,6 +994,48 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             ProofData::SpartanSumcheck(outer_sumcheck_proof),
         );
 
+        // Add committed polys to the accumulator
+
+        let num_cycles = key.num_steps;
+        let num_cycles_bits = num_cycles.ilog2() as usize;
+
+        let (r_cycle, _rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
+
+        // Evaluate all witness polynomials P_i at r_cycle for the verifier
+        // Verifier computes: z(r_inner, r_cycle) = Σ_i eq(r_inner, i) * P_i(r_cycle)
+        let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
+        let (claimed_witness_evals, chis) =
+            MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
+
+        // Only non-virtual (i.e. committed) polynomials' openings are
+        // proven using the PCS opening proof. Virtual polynomial openings
+        // are proven in some subsequent sumcheck.
+        let committed_polys: Vec<_> = COMMITTED_R1CS_INPUTS
+            .iter()
+            .map(|input| &input_polys[input.to_index()])
+            .collect();
+        let committed_poly_claims: Vec<_> = COMMITTED_R1CS_INPUTS
+            .iter()
+            .map(|input| claimed_witness_evals[input.to_index()])
+            .collect();
+
+        let accumulator = state_manager.get_prover_accumulator();
+
+        // Create OpeningsKeys for each committed input
+        let openings_keys: Vec<OpeningsKeys> = COMMITTED_R1CS_INPUTS
+            .iter()
+            .map(|input| OpeningsKeys::SpartanZ(*input))
+            .collect();
+
+        accumulator.borrow_mut().append_dense(
+            &committed_polys,
+            chis,
+            r_cycle.to_vec(),
+            &committed_poly_claims,
+            &mut *state_manager.transcript.borrow_mut(),
+            Some(openings_keys),
+        );
+
         Ok(())
     }
 
@@ -1058,8 +1100,11 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         };
 
         // Outer sumcheck is bound from the top, reverse the challenge TODO(markosg04 make use of Endianness here ?)
-        let outer_sumcheck_r_reversed: Vec<F> =
-            outer_sumcheck_r_original.into_iter().rev().collect();
+        let outer_sumcheck_r_reversed: Vec<F> = outer_sumcheck_r_original
+            .clone()
+            .into_iter()
+            .rev()
+            .collect();
 
         let tau_bound_rx = EqPolynomial::mle(&tau, &outer_sumcheck_r_reversed);
         let claim_outer_final_expected = tau_bound_rx * (claim_Az * claim_Bz - claim_Cz);
@@ -1070,6 +1115,42 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         ProofTranscript::append_scalars(
             &mut state_manager.transcript.borrow_mut(),
             &outer_sumcheck_claims[..],
+        );
+
+        // Add the commitments to verifier accumulator
+
+        let num_cycles = key.num_steps;
+        let num_cycles_bits = num_cycles.ilog2() as usize;
+
+        let (r_cycle, _rx_var) = outer_sumcheck_r_original.split_at(num_cycles_bits);
+
+        // Get the verifier accumulator and add committed polynomial claims
+        let accumulator = state_manager.get_verifier_accumulator();
+
+        // Get commitments - TODO(moodlezoup): This relies on ordering of commitments
+        let commitments = state_manager.get_commitments();
+        let r1cs_input_commitments: Vec<_> = commitments
+            .commitments
+            .iter()
+            .take(COMMITTED_R1CS_INPUTS.len())
+            .collect();
+
+        // Get claims for committed inputs
+        let claims: Vec<_> = COMMITTED_R1CS_INPUTS
+            .iter()
+            .map(|input| {
+                accumulator
+                    .borrow()
+                    .get_opening(OpeningsKeys::SpartanZ(*input))
+            })
+            .collect();
+
+        // Add to verifier accumulator
+        accumulator.borrow_mut().append(
+            &r1cs_input_commitments,
+            r_cycle.to_vec(),
+            &claims,
+            &mut *state_manager.transcript.borrow_mut(),
         );
 
         Ok(())
@@ -1118,8 +1199,8 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             .unwrap();
         let (r_cycle, _rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
-        // Evaluate all witness polynomials P_i at r_cycle for the verifier
-        // Verifier computes: z(r_inner, r_cycle) = Σ_i eq(r_inner, i) * P_i(r_cycle)
+        // // Evaluate all witness polynomials P_i at r_cycle for the verifier
+        // // Verifier computes: z(r_inner, r_cycle) = Σ_i eq(r_inner, i) * P_i(r_cycle)
         let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
         let (claimed_witness_evals, chis) =
             MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
@@ -1133,37 +1214,6 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             &claimed_witness_evals,
             eq_plus_one_r_cycle,
             gamma,
-        );
-
-        // We add to the accumulator for eventual PCS proof
-
-        // Only non-virtual (i.e. committed) polynomials' openings are
-        // proven using the PCS opening proof. Virtual polynomial openings
-        // are proven in some subsequent sumcheck.
-        let committed_polys: Vec<_> = COMMITTED_R1CS_INPUTS
-            .iter()
-            .map(|input| &input_polys[input.to_index()])
-            .collect();
-        let committed_poly_claims: Vec<_> = COMMITTED_R1CS_INPUTS
-            .iter()
-            .map(|input| claimed_witness_evals[input.to_index()])
-            .collect();
-
-        let accumulator = state_manager.get_prover_accumulator();
-
-        // Create OpeningsKeys for each committed input
-        let openings_keys: Vec<OpeningsKeys> = COMMITTED_R1CS_INPUTS
-            .iter()
-            .map(|input| OpeningsKeys::SpartanZ(*input))
-            .collect();
-
-        accumulator.borrow_mut().append_dense(
-            &committed_polys,
-            chis,
-            r_cycle.to_vec(),
-            &committed_poly_claims,
-            &mut *state_manager.transcript.borrow_mut(),
-            Some(openings_keys),
         );
 
         vec![Box::new(pc_sumcheck)]
@@ -1352,35 +1402,6 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             gamma,
             unexpanded_pc_eval_at_shift_r,
             pc_eval_at_shift_r,
-        );
-
-        // Get the verifier accumulator and add committed polynomial claims
-        let accumulator = state_manager.get_verifier_accumulator();
-
-        // Get commitments - TODO(moodlezoup): This relies on ordering of commitments
-        let commitments = state_manager.get_commitments();
-        let r1cs_input_commitments: Vec<_> = commitments
-            .commitments
-            .iter()
-            .take(COMMITTED_R1CS_INPUTS.len())
-            .collect();
-
-        // Get claims for committed inputs
-        let claims: Vec<_> = COMMITTED_R1CS_INPUTS
-            .iter()
-            .map(|input| {
-                accumulator
-                    .borrow()
-                    .get_opening(OpeningsKeys::SpartanZ(*input))
-            })
-            .collect();
-
-        // Add to verifier accumulator
-        accumulator.borrow_mut().append(
-            &r1cs_input_commitments,
-            r_cycle.to_vec(),
-            &claims,
-            &mut *state_manager.transcript.borrow_mut(),
         );
 
         vec![Box::new(pc_sumcheck)]
