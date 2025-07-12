@@ -44,28 +44,28 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         let spartan_dag = SpartanDag::default();
         spartan_dag.stage1_prove(&mut self.prover_state_manager)?;
 
-        // // Stage 2: Collect instances and prove
-        // let mut stage2_instances =
-        //     spartan_dag.stage2_prover_instances(&mut self.prover_state_manager);
-        // let stage2_instances_mut: Vec<&mut dyn BatchableSumcheckInstance<F>> = stage2_instances
-        //     .iter_mut()
-        //     .map(|instance| &mut **instance as &mut dyn BatchableSumcheckInstance<F>)
-        //     .collect();
+        // Stage 2: Collect instances and prove
+        let mut stage2_instances =
+            spartan_dag.stage2_prover_instances(&mut self.prover_state_manager);
+        let stage2_instances_mut: Vec<&mut dyn BatchableSumcheckInstance<F>> = stage2_instances
+            .iter_mut()
+            .map(|instance| &mut **instance as &mut dyn BatchableSumcheckInstance<F>)
+            .collect();
 
-        // let transcript = self.prover_state_manager.get_transcript();
-        // let (stage2_proof, _r_stage2) =
-        //     BatchedSumcheck::prove(stage2_instances_mut, &mut *transcript.borrow_mut());
+        let transcript = self.prover_state_manager.get_transcript();
+        let (stage2_proof, _r_stage2) =
+            BatchedSumcheck::prove(stage2_instances_mut, &mut *transcript.borrow_mut());
 
-        // self.prover_state_manager.proofs.borrow_mut().insert(
-        //     ProofKeys::SpartanStage2Sumcheck,
-        //     ProofData::SpartanSumcheck(stage2_proof),
-        // );
+        self.prover_state_manager.proofs.borrow_mut().insert(
+            ProofKeys::SpartanStage2Sumcheck,
+            ProofData::SpartanSumcheck(stage2_proof),
+        );
 
-        // // Cache openings for each stage 2 instance
-        // let accumulator = self.prover_state_manager.get_prover_accumulator();
-        // for instance in stage2_instances.iter_mut() {
-        //     instance.cache_openings_prover(Some(accumulator.clone()));
-        // }
+        // Cache openings for each stage 2 instance
+        let accumulator = self.prover_state_manager.get_prover_accumulator();
+        for instance in stage2_instances.iter_mut() {
+            instance.cache_openings_prover(Some(accumulator.clone()));
+        }
 
         // // Stage 3: Collect instances and prove
         // let mut stage3_instances =
@@ -106,30 +106,30 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         let spartan_dag = SpartanDag::default();
         spartan_dag.stage1_verify(&mut self.verifier_state_manager)?;
 
-        // // Stage 2: Collect instances and verify
-        // let stage2_instances =
-        //     spartan_dag.stage2_verifier_instances(&mut self.verifier_state_manager);
-        // let stage2_instances_ref: Vec<&dyn BatchableSumcheckInstance<F>> = stage2_instances
-        //     .iter()
-        //     .map(|instance| &**instance as &dyn BatchableSumcheckInstance<F>)
-        //     .collect();
+        // Stage 2: Collect instances and verify
+        let stage2_instances =
+            spartan_dag.stage2_verifier_instances(&mut self.verifier_state_manager);
+        let stage2_instances_ref: Vec<&dyn BatchableSumcheckInstance<F>> = stage2_instances
+            .iter()
+            .map(|instance| &**instance as &dyn BatchableSumcheckInstance<F>)
+            .collect();
 
-        // // Retrieve stage 2 proof from state manager
-        // let proofs = self.verifier_state_manager.proofs.borrow();
-        // let stage2_proof_data = proofs
-        //     .get(&ProofKeys::SpartanStage2Sumcheck)
-        //     .expect("Stage 2 sumcheck proof not found");
-        // let stage2_proof = match stage2_proof_data {
-        //     ProofData::SpartanSumcheck(proof) => proof,
-        //     _ => panic!("Invalid proof type for stage 2"),
-        // };
+        // Retrieve stage 2 proof from state manager
+        let proofs = self.verifier_state_manager.proofs.borrow();
+        let stage2_proof_data = proofs
+            .get(&ProofKeys::SpartanStage2Sumcheck)
+            .expect("Stage 2 sumcheck proof not found");
+        let stage2_proof = match stage2_proof_data {
+            ProofData::SpartanSumcheck(proof) => proof,
+            _ => panic!("Invalid proof type for stage 2"),
+        };
 
-        // let transcript = self.verifier_state_manager.get_transcript();
-        // let _r_stage2 = BatchedSumcheck::verify(
-        //     stage2_proof,
-        //     stage2_instances_ref,
-        //     &mut *transcript.borrow_mut(),
-        // )?;
+        let transcript = self.verifier_state_manager.get_transcript();
+        let _r_stage2 = BatchedSumcheck::verify(
+            stage2_proof,
+            stage2_instances_ref,
+            &mut *transcript.borrow_mut(),
+        )?;
 
         // drop(proofs); // Drop the borrow before borrowing mutably again
 

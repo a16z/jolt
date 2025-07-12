@@ -435,7 +435,7 @@ where
             .map_err(|_| SpartanError::InvalidShiftSumcheckProof)?;
 
         // TODO(moodlezoup): Relies on ordering of commitments
-        let r1cs_input_commitments = &commitments
+        let r1cs_input_commitments: &Vec<&<PCS as CommitmentScheme>::Commitment> = &commitments
             .commitments
             .iter()
             .take(COMMITTED_R1CS_INPUTS.len())
