@@ -45,7 +45,7 @@ pub fn decode(model_path: &PathBuf) -> Vec<ONNXInstr> {
 }
 
 /// Provides a simple API to obtain the execution trace for an ONNX model.
-/// Use this to extract the execution trace from an ONNX model and input, so it can be supplied to the Jolt system.
+/// Use this to extract the execution trace from an ONNX model and its inference input, so it can be fed into the Jolt system.
 ///
 /// The execution trace (or transcript) records the changes to the CPU state at each cycle of execution,
 /// effectively capturing a step-by-step log of the VM's actions during model inference.
@@ -66,7 +66,7 @@ fn model(model_path: &PathBuf) -> Model {
 
 /// Converts a [`NodeType`] and its program counter into an [`ONNXInstr`].
 /// This helper keeps the [decode] function concise and focused.
-fn decode_node((pc, node): (&usize, &NodeType)) -> ONNXInstr {
+pub fn decode_node((pc, node): (&usize, &NodeType)) -> ONNXInstr {
     match node {
         NodeType::Node(node) => node.decode(*pc),
         NodeType::SubGraph { .. } => {

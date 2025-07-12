@@ -1,9 +1,11 @@
 use super::node::*;
 use crate::{
     circuit::ops::{Input, Op, Unknown},
+    decode_node,
     fieldutils::felt_to_i128,
     graph::{
         input::GraphData,
+        tracer::Tracer,
         utilities::{node_output_shapes, scale_to_multiplier},
         vars::VarScales,
         GraphError,
@@ -33,6 +35,7 @@ use tract_onnx::{
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Model {
     pub graph: ParsedNodes,
+    pub tracer: Tracer,
 }
 
 impl Model {
@@ -42,27 +45,186 @@ impl Model {
     /// * `run_args` - [RunArgs]
     pub fn new(reader: &mut dyn std::io::Read, run_args: &RunArgs) -> Self {
         let graph = Self::load_onnx_model(reader, run_args);
-        let om = Model { graph };
+        let om = Model {
+            graph,
+            tracer: Tracer::default(),
+        };
         debug!("\n {}", om.table_nodes());
         om
     }
 
-    /// Runs a forward pass on sample data !
+    /// Executes a forward pass through the parsed ONNX model using provided input tensors.
+    ///
+    /// # Purpose
+    /// This function simulates running the ONNX model on input data, producing the model's outputs
+    /// as if it were being executed in a standard inference engine. It is essential for testing,
+    /// debugging, and validating the model conversion pipeline, as well as for extracting
+    /// intermediate and final outputs for further processing or verification.
+    ///
     /// # Arguments
-    /// * `reader` - A reader for an Onnx file.
-    /// * `model_inputs` - A vector of [Tensor]s to use as inputs to the model.
-    /// * `run_args` - [RunArgs]
+    /// * `model_inputs` - A slice of [`Tensor<Fp>`] representing the input data for the model.
+    ///   Each tensor in this slice should correspond to one of the model's input nodes, and must
+    ///   have the correct shape and data type expected by the model. The order of tensors must
+    ///   match the order of the model's input nodes.
+    ///
+    /// # Returns
+    /// Returns a [`Result<ForwardResult, Box<dyn Error>>`] where:
+    /// - `ForwardResult` contains:
+    ///     - `outputs`: The output tensors produced by the model (in the order of the model's outputs).
+    ///     - `max_lookup_inputs`/`min_lookup_inputs`: The maximum and minimum values encountered as inputs to any lookup operation during execution (useful for quantization or table sizing).
+    /// - If an error occurs (e.g., shape mismatch, missing node, or execution failure), returns an error describing the issue.
+    ///
+    /// # How It Works (Step by Step)
+    /// 1. **Prepare Results Map:** Initializes a map to store the output tensors of each node as the graph is executed.
+    /// 2. **Reshape and Insert Inputs:** Reshapes each provided input tensor to match the expected input shape, and inserts it into the results map keyed by the input node index.
+    /// 3. **Node Execution Loop:** Iterates through each node in the graph in topological order:
+    ///     - Gathers the required input tensors for the node from the results map.
+    ///     - Executes the node's operation (or recursively executes subgraphs for control flow nodes).
+    ///     - Tracks min/max values for lookup operations.
+    ///     - Stores the node's output(s) in the results map.
+    /// 4. **Collect Outputs:** After all nodes have been executed, collects the output tensors corresponding to the model's output nodes.
+    /// 5. **Return Results:** Packages the outputs and lookup statistics into a `ForwardResult` and returns it.
+    ///
+    /// # When to Use
+    /// Use this function whenever you need to:
+    /// - Simulate model inference on sample data (e.g., for testing or debugging).
+    /// - Validate that the model conversion from ONNX to the internal graph representation is correct.
+    /// - Extract intermediate or final outputs for further analysis.
+    ///
+    /// # Example Usage
+    /// ```ignore
+    /// let model = Model::new(&mut onnx_file, &run_args);
+    /// let input_tensors = vec![...]; // Prepare input tensors matching model's input shapes
+    /// let result = model.forward(&input_tensors)?;
+    /// println!("Model outputs: {:?}", result.outputs);
+    /// ```
+    ///
+    /// # Notes
+    /// - Input tensors must be in the correct order and shape.
+    /// - This function does not perform any hardware-accelerated inference; it executes the model using the internal Rust implementation.
+    /// - Handles both standard nodes and subgraphs (e.g., for ONNX Scan/Loop constructs).
     pub fn forward(&self, model_inputs: &[Tensor<Fp>]) -> Result<ForwardResult, Box<dyn Error>> {
+        // A map that stores the output tensors of each node in the computation graph.
+        //
+        // # Purpose
+        // `results` is used to keep track of the intermediate and final outputs produced by each node
+        // (identified by their unique index) during the execution of the model. The key is a reference to
+        // the node's index (`&usize`), and the value is a vector of `Tensor<Fp>`, representing the output
+        // tensors generated by that node.
+        //
+        // # Why we need `results`
+        // In a computational graph, nodes may depend on the outputs of previous nodes. By storing the
+        // results in a `BTreeMap`, we can efficiently retrieve the outputs of any node as needed for
+        // subsequent computations. This structure also ensures deterministic iteration order, which can be
+        // important for reproducibility and debugging.
+        //
+        // # Usage
+        // - When a node is executed, its output tensors are inserted into `results` under its index.
+        // - When another node requires the output of a previous node, it can look up the corresponding
+        //   entry in `results`.
+        // - After the entire graph has been executed, `results` contains the outputs of all nodes, which
+        //   can be used for further processing or for extracting the final model outputs.
+        //
+        // DESIGN NOTE: Why use `BTreeMap<&usize, Vec<Tensor<Fp>>>` for `results`?
+        //
+        // 1. Why a BTreeMap?
+        //    - Deterministic ordering: BTreeMap iterates in sorted order, which helps with reproducibility and debugging.
+        //    - Efficient lookup: We need to quickly retrieve the output(s) of any node by its index.
+        //    - Nodes are indexed by their unique usize index in the graph.
+        //
+        // 2. Why does the value type store a Vec<Tensor<Fp>> instead of just Tensor<Fp>?
+        //    - Some nodes (especially subgraphs or nodes with multiple outputs) can produce multiple output tensors.
+        //    - The Vec allows us to store all outputs for a node, indexed by their outlet (output slot).
+        //    - For most nodes, this Vec will have a single element, but for nodes with multiple outputs, each output is stored at its respective index.
+        //
+        // 3. How do you use this map to get the output of a node?
+        //    - To get the output tensor(s) of node 10, you would do:
+        //        `let outputs = results.get(&10);`
+        //      - If you want the first output (most common case): `let output = &outputs[0];`
+        //      - If the node has multiple outputs, you can access them by their outlet index: `let output = &outputs[outlet_index];`
+        //
+        // 4. Why is the key a reference (&usize) instead of just usize?
+        //    - This is because we often have references to node indices from elsewhere in the graph, and using references avoids unnecessary copies.
+        //    - BTreeMap allows lookups with either &usize or usize, but here the code is consistent with using references.
+        //
+        // 5. Summary:
+        //    - This structure allows us to efficiently store and retrieve all intermediate and final outputs of the computation graph,
+        //      supporting both single-output and multi-output nodes, and ensuring deterministic iteration order.
         let mut results: BTreeMap<&usize, Vec<Tensor<Fp>>> = BTreeMap::new();
         let mut max_lookup_inputs = 0;
         let mut min_lookup_inputs = 0;
+        // Retrieves the shapes of all input tensors for the current computational graph.
+        //
+        // # Intent
+        // This line obtains the dimensions (shapes) of each input tensor that the model expects,
+        // which is essential for validating input data, constructing subsequent layers, and ensuring
+        // compatibility throughout the model's execution.
+        //
+        // # Why it's needed
+        // Knowing the input shapes is crucial for tasks such as input validation, dynamic graph construction,
+        // and for informing downstream operations about the expected data structure. It helps prevent
+        // runtime errors due to shape mismatches and is often required when exporting, tracing, or
+        // transforming the model.
+        //
+        // # How it's used
+        // The returned `input_shapes` value is typically used to:
+        // - Validate that provided input data matches the model's requirements.
+        // - Dynamically allocate memory or buffers for inputs.
+        // - Inform other components or tools (e.g., ONNX exporters, tracers) about the model's input signature.
+        //
+        // # When it's used
+        // This is usually called during model initialization, tracing, or before running inference,
+        // whenever the input specification of the model needs to be known or verified.
         let input_shapes = self.graph.input_shapes()?;
+        // Insert model inputs into the results map after reshaping them to match expected input shapes.
+        //
+        // # Why this code is needed
+        // The model's forward execution relies on a map (`results`) that holds the output tensors of each node.
+        // For input nodes, we must provide the actual input tensors supplied by the user, but these may need to be reshaped
+        // to match the expected dimensions as defined by the model (e.g., to handle batch size or symbolic shapes).
+        //
+        // # Intent
+        // This code ensures that each input tensor provided to the model is reshaped to the correct shape and then
+        // inserted into the results map under the corresponding input node index. This allows subsequent nodes in the
+        // computation graph to retrieve the correct input data during execution.
+        //
+        // # How it works
+        // - Iterates over all input node indices and their corresponding position in the input tensor list.
+        // - For each input:
+        //     - Clones the provided input tensor.
+        //     - Reshapes it to match the expected shape for that input node.
+        //     - Inserts the reshaped tensor into the `results` map under the input node's index.
         for (i, input_idx) in self.graph.inputs.iter().enumerate() {
             let mut input = model_inputs[i].clone();
             input.reshape(&input_shapes[i])?;
             results.insert(input_idx, vec![input]);
         }
         for (idx, n) in self.graph.nodes.iter() {
+            let instr = decode_node((idx, n));
+            self.tracer.capture_pre_state(instr);
+            // Gathers the input tensors required for the current node's execution.
+            //
+            // # Intent
+            // This code block prepares the list of input tensors (`inputs`) that will be fed into the current node's operation.
+            // For each node in the graph, we must collect its input tensors from the results of previously executed nodes.
+            //
+            // # Why this code is needed
+            // In a computational graph, each node may depend on the outputs of other nodes (its inputs).
+            // Before executing a node, we must gather all its required input tensors in the correct order.
+            // This ensures that the node receives the correct data for computation, and is essential for correct model execution.
+            //
+            // # How it works
+            // - Initializes an empty `inputs` vector.
+            // - If the current node is an input node, retrieves its tensor from the `results` map.
+            // - Otherwise, iterates over the node's input connections (each a tuple of node index and outlet).
+            //   For each input:
+            //     - Looks up the output tensor of the source node from the `results` map.
+            //     - Pushes the required output (by outlet index) into the `inputs` vector.
+            //   - If any required input is missing, returns an error.
+            //
+            // # What it does
+            // After this block, `inputs` contains the tensors that should be passed to the current node's operation,
+            // in the order expected by the node. This enables the subsequent execution of the node's computation.
             let mut inputs = vec![];
             if n.is_input() {
                 let t = results.get(idx).ok_or(GraphError::MissingResults)?[0].clone();
@@ -213,6 +375,29 @@ impl Model {
                 }
             }
         }
+        // Collects the output tensors of the model from the results map.
+        //
+        // # Why we need this code
+        // After executing all nodes in the computational graph, we need to extract the final outputs of the model.
+        // The model's outputs are defined as specific nodes (and their output slots) in the graph.
+        // This code gathers those outputs from the `results` map, which contains the outputs of every node.
+        //
+        // # What it does
+        // - Iterates over the list of output node indices and outlet slots (`self.graph.outputs`).
+        // - For each output, retrieves the corresponding tensor from the `results` map.
+        // - Collects all output tensors into a vector, preserving the order defined by the model's outputs.
+        // - Wraps the outputs and lookup statistics into a `ForwardResult` struct.
+        //
+        // # How it works
+        // - Uses `.map()` to iterate over each output node and outlet.
+        // - Looks up the node's outputs in the `results` map using the node index.
+        // - Selects the correct output tensor by indexing into the vector with the outlet index.
+        // - Handles missing results by returning a `GraphError`.
+        // - Collects all outputs into a `Vec<Tensor<Fp>>`.
+        //
+        // # Intent
+        // The intent is to provide the user with the final outputs of the model in the correct order,
+        // as well as any statistics (such as min/max lookup inputs) gathered during execution.
         let output_nodes = self.graph.outputs.iter();
         debug!(
             "model outputs are nodes: {:?}",
@@ -431,7 +616,10 @@ impl Model {
                         inputs: model.inputs.iter().map(|o| o.node).collect(),
                         outputs: model.outputs.iter().map(|o| (o.node, o.slot)).collect(),
                     };
-                    let om = Model { graph: subgraph };
+                    let om = Model {
+                        graph: subgraph,
+                        tracer: Tracer::default(),
+                    }; // TODO: Figure out tracing for subgraphs
                     let out_dims = node_output_shapes(n, symbol_values).unwrap();
                     let mut output_scales = BTreeMap::new();
                     for (i, _mapping) in b.output_mapping.iter().enumerate() {
