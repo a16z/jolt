@@ -65,7 +65,6 @@ mod tests {
         );
 
         // State manager components
-        let openings = Rc::new(RefCell::new(HashMap::new()));
         let prover_accumulator_pre_wrap =
             crate::poly::opening_proof::ProverOpeningAccumulator::<Fr, MockCommitScheme<Fr>>::new();
         let verifier_accumulator_pre_wrap = crate::poly::opening_proof::VerifierOpeningAccumulator::<
@@ -82,7 +81,6 @@ mod tests {
 
         // Create prover state manager
         let mut prover_state_manager = state_manager::StateManager::new_prover_with_commitments(
-            openings.clone(),
             prover_accumulator,
             prover_transcript.clone(),
             proofs.clone(),
@@ -97,7 +95,6 @@ mod tests {
 
         // Create verifier state manager
         let mut verifier_state_manager = state_manager::StateManager::new_verifier_with_commitments(
-            openings,
             verifier_accumulator,
             verifier_transcript.clone(),
             proofs,

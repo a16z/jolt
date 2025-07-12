@@ -1,7 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
-    dag::state_manager::Openings,
     field::JoltField,
     jolt::{
         vm::{
@@ -12,6 +11,7 @@ use crate::{
         },
         witness::CommittedPolynomials,
     },
+    poly::opening_proof::Openings,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
@@ -192,7 +192,7 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    fn cache_openings(
+    fn cache_openings_prover(
         &mut self,
         _openings: Option<Rc<RefCell<Openings<F>>>>,
         _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
@@ -241,6 +241,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTran
             r_cycle_prime,
             &[val_evaluation_proof.inc_claim],
             transcript,
+            None, // No openings keys needed
         );
 
         RegistersTwistProof {

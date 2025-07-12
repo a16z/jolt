@@ -60,10 +60,9 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         );
 
         // Cache openings for each stage 2 instance
-        let openings = self.prover_state_manager.get_openings();
         let accumulator = self.prover_state_manager.get_prover_accumulator();
         for instance in stage2_instances.iter_mut() {
-            instance.cache_openings(Some(openings.clone()), Some(accumulator.clone()));
+            instance.cache_openings_prover(None, Some(accumulator.clone()));
         }
 
         // Stage 3: Collect instances and prove
@@ -83,8 +82,9 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         );
 
         // Cache openings for each stage 3 instance
+        let accumulator = self.prover_state_manager.get_prover_accumulator();
         for instance in stage3_instances.iter_mut() {
-            instance.cache_openings(Some(openings.clone()), Some(accumulator.clone()));
+            instance.cache_openings_prover(None, Some(accumulator.clone()));
         }
 
         Ok(())

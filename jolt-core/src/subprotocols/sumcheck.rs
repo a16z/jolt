@@ -1,7 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
-use crate::dag::state_manager::Openings;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
@@ -9,6 +8,7 @@ use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
 use crate::poly::opening_proof::ProverOpeningAccumulator;
+use crate::poly::opening_proof::{Openings, VerifierOpeningAccumulator};
 use crate::poly::spartan_interleaved_poly::SpartanInterleavedPolynomial;
 use crate::poly::split_eq_poly::{GruenSplitEqPolynomial, SplitEqPolynomial};
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
@@ -141,11 +141,18 @@ pub trait BatchableSumcheckInstance<F: JoltField> {
 pub trait CacheSumcheckOpenings<F: JoltField, PCS: CommitmentScheme<Field = F>> {
     /// Caches polynomial opening claims needed after the sumcheck protocol completes.
     /// These openings will later be proven using either an opening proof or another sumcheck.
-    fn cache_openings(
+    fn cache_openings_prover(
         &mut self,
         openings: Option<Rc<RefCell<Openings<F>>>>,
         accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     );
+
+    fn cache_openings_verifier(
+        &mut self,
+        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
+    ) {
+        //TODO(markosg04) - remove this default implementation after compiler is happy
+    }
 }
 
 /// Implements the standard technique for batching parallel sumchecks to reduce
@@ -288,7 +295,7 @@ impl BatchedSumcheck {
         for sumcheck in sumcheck_instances.iter_mut() {
             // Cache polynomial opening claims, to be proven using either an
             // opening proof or sumcheck (in the case of virtual polynomials).
-            sumcheck.cache_openings(openings.clone(), accumulator.clone());
+            sumcheck.cache_openings_prover(openings.clone(), accumulator.clone());
         }
     }
 

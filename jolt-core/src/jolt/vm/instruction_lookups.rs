@@ -143,6 +143,7 @@ where
             r_address_rev,
             r_cycle,
             ra_claims.to_vec(),
+            None, // No openings keys needed
         );
 
         // TODO(moodlezoup): Interleaved raf evaluation

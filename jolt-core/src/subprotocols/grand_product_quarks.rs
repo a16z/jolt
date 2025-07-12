@@ -416,6 +416,7 @@ where
             r_sumcheck.clone(),
             &g_r_sumcheck,
             transcript,
+            None, // No openings keys needed
         );
 
         // To prove openings 2 and 3, we use the following relation:
@@ -445,6 +446,7 @@ where
             reduced_opening_point_g,
             &[reduced_opening_g],
             transcript,
+            None, // No openings keys needed
         );
 
         // Similarly, we can reduce v(r', 0) and v(r', 1) to a single claim about v:

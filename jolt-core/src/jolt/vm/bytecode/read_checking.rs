@@ -1,12 +1,12 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
-    dag::state_manager::Openings,
     field::JoltField,
     jolt::{
         instruction::{InstructionFlags, InstructionLookup, NUM_CIRCUIT_FLAGS},
         lookup_table::{LookupTables, NUM_LOOKUP_TABLES},
     },
+    poly::opening_proof::Openings,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         compact_polynomial::SmallScalar,
@@ -166,7 +166,7 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    fn cache_openings(
+    fn cache_openings_prover(
         &mut self,
         _openings: Option<Rc<RefCell<Openings<F>>>>,
         _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
