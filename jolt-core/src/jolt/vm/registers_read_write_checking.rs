@@ -75,6 +75,8 @@ struct ReadWriteCheckingProverState<F: JoltField> {
     rs2_ra: Option<MultilinearPolynomial<F>>,
     rd_wa: Option<MultilinearPolynomial<F>>,
     val: Option<MultilinearPolynomial<F>>,
+    // Track the sumcheck rounds
+    r_sumcheck: Vec<F>,
 }
 
 impl<F: JoltField> ReadWriteCheckingProverState<F> {
@@ -86,7 +88,6 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         let T = trace.len();
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = T / num_chunks;
-        println!("the chunk size log_2: {:?}", chunk_size.log_2());
 
         let span = tracing::span!(tracing::Level::INFO, "compute deltas");
         let _guard = span.enter();
@@ -204,6 +205,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
             rs2_ra: None,
             rd_wa: None,
             val: None,
+            r_sumcheck: Vec::new(),
         }
     }
 }
@@ -262,7 +264,6 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
 
         let prover_state = sumcheck_instance.prover_state.as_ref().unwrap();
         let sumcheck_switch_index = prover_state.chunk_size.log_2();
-        // println!("sumcheck_switch_index prover: {:?}", sumcheck_switch_index);
 
         let (sumcheck_proof, r_sumcheck) = sumcheck_instance.prove_single(transcript);
         // The high-order cycle variables are bound after the switch
@@ -996,16 +997,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for RegistersReadWriteChecking<F
     }
 
     fn input_claim(&self) -> F {
-        println!("=== RegistersReadWriteChecking input_claim ===");
-        println!("rd_wv_claim: {:?}", self.rd_wv_claim);
-        println!("rs1_rv_claim: {:?}", self.rs1_rv_claim);
-        println!("rs2_rv_claim: {:?}", self.rs2_rv_claim);
-        println!("z: {:?}", self.z);
-        println!("z_squared: {:?}", self.z_squared);
-        let result = self.rd_wv_claim + self.z * self.rs1_rv_claim + self.z_squared * self.rs2_rv_claim;
-        println!("input_claim result: {:?}", result);
-        println!("==========================================");
-        result
+        self.rd_wv_claim + self.z * self.rs1_rv_claim + self.z_squared * self.rs2_rv_claim
     }
  
     fn compute_prover_message(&mut self, round: usize) -> Vec<F> {
@@ -1020,6 +1012,11 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for RegistersReadWriteChecking<F
     }
 
     fn bind(&mut self, r_j: F, round: usize) {
+        // Track the sumcheck rounds for prover
+        if let Some(prover_state) = self.prover_state.as_mut() {
+            prover_state.r_sumcheck.push(r_j);
+        }
+        
         let prover_state = self.prover_state.as_ref().unwrap();
         if round < prover_state.chunk_size.log_2() {
             self.phase1_bind(r_j, round);
@@ -1037,43 +1034,20 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for RegistersReadWriteChecking<F
             ..
         } = self.verifier_state.as_ref().unwrap();
 
-        println!("=== RegistersReadWriteChecking expected_output_claim ===");
-        println!("sumcheck_switch_index: {:?}", sumcheck_switch_index);
-        println!("r length: {:?}", r.len());
-        println!("T.log_2(): {:?}", self.T.log_2());
-
-        // let r: Vec<F> = r.iter().cloned().rev().collect();
-
         // The high-order cycle variables are bound after the switch
         let mut r_cycle = r[*sumcheck_switch_index..self.T.log_2()].to_vec();
         // First `sumcheck_switch_index` rounds bind cycle variables from low to high
         r_cycle.extend(r[..*sumcheck_switch_index].iter().rev());
 
-        println!("r_cycle: {:?}", r_cycle);
-        println!("r_prime: {:?}", r_prime);
-
         // eq(r', r_cycle)
         let eq_eval_cycle = EqPolynomial::mle(r_prime, &r_cycle);
-        println!("eq_eval_cycle: {:?}", eq_eval_cycle);
 
         let claims = self.claims.as_ref().unwrap();
-        println!("Claims:");
-        println!("  rd_wa_claim: {:?}", claims.rd_wa_claim);
-        println!("  rs1_ra_claim: {:?}", claims.rs1_ra_claim);
-        println!("  rs2_ra_claim: {:?}", claims.rs2_ra_claim);
-        println!("  val_claim: {:?}", claims.val_claim);
-        println!("  inc_claim: {:?}", claims.inc_claim);
-        println!("z: {:?}", self.z);
-        println!("z_squared: {:?}", self.z_squared);
         
-        let result = eq_eval_cycle
+        eq_eval_cycle
             * (claims.rd_wa_claim * (claims.inc_claim + claims.val_claim)
                 + self.z * claims.rs1_ra_claim * claims.val_claim
-                + self.z_squared * claims.rs2_ra_claim * claims.val_claim);
-        
-        println!("expected_output_claim result: {:?}", result);
-        println!("========================================================");
-        result
+                + self.z_squared * claims.rs2_ra_claim * claims.val_claim)
     }
 }
 
@@ -1108,37 +1082,44 @@ where
 
         // Append claims to accumulator if provided
         if let Some(accumulator) = accumulator {
-            // Get the sumcheck opening point from the accumulator
-            // We can use any of the spartan z openings since they all share the same opening point
-            let r_sumcheck: Vec<F> = accumulator
-                .borrow()
-                .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::Rs1Value))
-                .expect("r_cycle opening point not found")
-                .into();
+            // Get the sumcheck opening point from prover state and transform it
+            let r_sumcheck = &prover_state.r_sumcheck;
+            let sumcheck_switch_index = prover_state.chunk_size.log_2();
+            
+            // Transform r_sumcheck to r_address || r_cycle
+            // The high-order cycle variables are bound after the switch
+            let mut r_cycle = r_sumcheck[sumcheck_switch_index..self.T.log_2()].to_vec();
+            // First `sumcheck_switch_index` rounds bind cycle variables from low to high
+            r_cycle.extend(r_sumcheck[..sumcheck_switch_index].iter().rev());
+            let r_address = r_sumcheck[self.T.log_2()..].to_vec();
+            
+            // The final opening point is r_address || r_cycle
+            let mut final_opening_point = r_address.clone();
+            final_opening_point.extend(r_cycle.clone());
             
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersReadWriteVal,
-                r_sumcheck.clone(),
+                final_opening_point.clone(),
                 val_claim,
             );
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersReadWriteRs1,
-                r_sumcheck.clone(),
+                final_opening_point.clone(),
                 rs1_ra_claim,
             );
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersReadWriteRs2,
-                r_sumcheck.clone(),
+                final_opening_point.clone(),
                 rs2_ra_claim,
             );
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersReadWriteRd,
-                r_sumcheck.clone(),
+                final_opening_point.clone(),
                 rd_wa_claim,
             );
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersReadWriteInc,
-                r_sumcheck.clone(),
+                final_opening_point.clone(),
                 inc_claim,
             );
         }
@@ -1183,10 +1164,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::Rs1Value))
             .expect("r_cycle opening point not found");
 
-        // let r_cycle_rev: Vec<F> = r_cycle_vec.iter().cloned().rev().collect();
 
-        println!("r_cycle opening point size {:?}", r_cycle.r.len());
-        
         // Get transcript
         let transcript = &mut *state_manager.transcript.borrow_mut();
         
@@ -1268,13 +1246,10 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::Rs1Value))
             .expect("r_cycle opening point not found");
 
-        println!("r_cycle opening point size {:?}", r_cycle.r.len());
-        
         // Get transcript
         let transcript = &mut *state_manager.transcript.borrow_mut();
         
         let r_cycle_vec: Vec<F> = r_cycle.into();
-        // let r_cycle_rev: Vec<F> = r_cycle_vec.iter().cloned().rev().collect();
 
 
         // Calculate chunk size dynamically

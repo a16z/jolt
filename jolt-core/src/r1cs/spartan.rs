@@ -1127,7 +1127,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         let num_cycles = key.num_steps;
         let num_cycles_bits = num_cycles.ilog2() as usize;
 
-        let (r_cycle, _rx_var) = outer_sumcheck_r_original.split_at(num_cycles_bits);
+        let (r_cycle, _rx_var) = outer_sumcheck_r_reversed.split_at(num_cycles_bits);
 
         let accumulator = state_manager.get_verifier_accumulator();
 
@@ -1255,6 +1255,9 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             .get_opening_point(OuterSumcheckAz)
             .unwrap();
         let num_cycles_bits = key.num_steps.log_2();
+
+        let outer_sumcheck_r_reversed: Vec<F> =
+        outer_sumcheck_r.r.iter().rev().cloned().collect();
         let (r_cycle, _rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
         // The batched claim equals NextUnexpandedPC(r_cycle) + gamma * NextPC(r_cycle)
@@ -1321,7 +1324,9 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             .borrow()
             .get_opening_point(OuterSumcheckAz)
             .unwrap();
-        let (r_cycle, rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
+
+        // let outer_sumcheck_r_reversed: Vec<F> = outer_sumcheck_r.r.iter().rev().cloned().collect();
+        let (r_cycle, rx_var) = outer_sumcheck_r.r.split_at(num_cycles_bits);
 
         let accumulator_ref = accumulator.borrow();
         let claim_Az = accumulator_ref.get_opening(OuterSumcheckAz);
@@ -1375,6 +1380,8 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             .get_opening_point(OuterSumcheckAz)
             .unwrap();
         let num_cycles_bits = key.num_steps.log_2();
+
+        let outer_sumcheck_r_reversed: Vec<F> = outer_sumcheck_r.r.iter().rev().cloned().collect();
         let (_r_cycle, rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
         let claimed_witness_evals: Vec<F> = ALL_R1CS_INPUTS
