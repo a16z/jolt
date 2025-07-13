@@ -1,7 +1,7 @@
 use crate::dag::stage::SumcheckStages;
 use crate::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::field::JoltField;
-use crate::jolt::vm::registers_read_write_checking::RegistersDAG;
+use crate::jolt::vm::registers::RegistersDAG;
 use crate::jolt::vm::JoltCommitments;
 use crate::jolt::witness::ALL_COMMITTED_POLYNOMIALS;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
@@ -81,6 +81,11 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         // Stage 3: Collect instances and prove
         let mut stage3_instances =
             spartan_dag.stage3_prover_instances(&mut self.prover_state_manager);
+        
+        // Add RegistersDAG stage3 instances
+        let mut registers_stage3 =
+            registers_dag.stage3_prover_instances(&mut self.prover_state_manager);
+        stage3_instances.append(&mut registers_stage3);
         let stage3_instances_mut: Vec<&mut dyn BatchableSumcheckInstance<F>> = stage3_instances
             .iter_mut()
             .map(|instance| &mut **instance as &mut dyn BatchableSumcheckInstance<F>)
@@ -145,7 +150,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         };
 
         let transcript = self.verifier_state_manager.get_transcript();
-        let _r_stage2 = BatchedSumcheck::verify(
+        let r_stage2 = BatchedSumcheck::verify(
             stage2_proof,
             stage2_instances_ref,
             &mut *transcript.borrow_mut(),
@@ -157,12 +162,17 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         // Same thing applies for stage 3
         let accumulator = self.verifier_state_manager.get_verifier_accumulator();
         for instance in stage2_instances.iter_mut() {
-            instance.cache_openings_verifier(Some(accumulator.clone()));
+            instance.cache_openings_verifier(Some(accumulator.clone()), Some(&r_stage2));
         }
 
         // Stage 3:
         let mut stage3_instances =
             spartan_dag.stage3_verifier_instances(&mut self.verifier_state_manager);
+        
+        // Add RegistersDAG stage3 instances
+        let mut registers_stage3 =
+            registers_dag.stage3_verifier_instances(&mut self.verifier_state_manager);
+        stage3_instances.append(&mut registers_stage3);
         let stage3_instances_ref: Vec<&dyn BatchableSumcheckInstance<F>> = stage3_instances
             .iter()
             .map(|instance| &**instance as &dyn BatchableSumcheckInstance<F>)
@@ -177,7 +187,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             _ => panic!("Invalid proof type for stage 3"),
         };
 
-        let _r_stage3 = BatchedSumcheck::verify(
+        let r_stage3 = BatchedSumcheck::verify(
             stage3_proof,
             stage3_instances_ref,
             &mut *transcript.borrow_mut(),
@@ -185,7 +195,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
 
         let accumulator = self.verifier_state_manager.get_verifier_accumulator();
         for instance in stage3_instances.iter_mut() {
-            instance.cache_openings_verifier(Some(accumulator.clone()));
+            instance.cache_openings_verifier(Some(accumulator.clone()), Some(&r_stage3));
         }
 
         Ok(())

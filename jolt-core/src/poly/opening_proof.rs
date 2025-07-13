@@ -57,13 +57,6 @@ impl<const E: Endianness, F: JoltField> std::ops::Index<std::ops::RangeFull>
 
 impl<const E: Endianness, F: JoltField> OpeningPoint<E, F> {
     pub fn split_at(&self, mid: usize) -> (&[F], &[F]) {
-        println!("=== OpeningPoint::split_at called ===");
-        println!("length: {:?}", self.r.len());
-        println!("mid is: {:?}", mid);
-        println!("Backtrace:");
-        let backtrace = std::backtrace::Backtrace::capture();
-        println!("{}", backtrace);
-        println!("=====================================");
         self.r.split_at(mid)
     }
 }
@@ -139,6 +132,8 @@ pub enum OpeningsKeys {
     RegistersReadWriteRs2,          // Rs2 claim from registers read/write checking
     RegistersReadWriteRd,           // Rd claim from registers read/write checking
     RegistersReadWriteInc,          // Inc claim from registers read/write checking
+    RegistersValEvaluationInc,      // Inc claim from registers Val evaluation sumcheck
+    RegistersValEvaluationWa,       // Wa claim from registers Val evaluation sumcheck
 }
 
 pub type Openings<F> = HashMap<OpeningsKeys, (OpeningPoint<LITTLE_ENDIAN, F>, F)>;

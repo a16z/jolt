@@ -1381,7 +1381,6 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             .unwrap();
         let num_cycles_bits = key.num_steps.log_2();
 
-        let outer_sumcheck_r_reversed: Vec<F> = outer_sumcheck_r.r.iter().rev().cloned().collect();
         let (_r_cycle, rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
         let claimed_witness_evals: Vec<F> = ALL_R1CS_INPUTS
