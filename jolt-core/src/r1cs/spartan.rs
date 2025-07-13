@@ -1150,12 +1150,33 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             })
             .collect();
 
+        // let r_cycle: Vec<F> = r_cycle.into_iter().cloned().rev().collect();
+
         accumulator.borrow_mut().append(
             &r1cs_input_commitments,
             r_cycle.to_vec(),
             &claims,
             &mut *state_manager.transcript.borrow_mut(),
         );
+
+        // Add virtual polynomial evaluations to the accumulator
+        // These are needed by future sumchecks and are not part of the PCS opening proof
+        for input in ALL_R1CS_INPUTS.iter() {
+            // Skip if it's a committed input (already added above)
+            if !COMMITTED_R1CS_INPUTS.contains(input) {
+                // Get the evaluation from the verifier's received openings
+                let eval = accumulator
+                    .borrow()
+                    .evaluation_openings()
+                    .get_spartan_z(*input);
+                
+                accumulator.borrow_mut().append_virtual(
+                    OpeningsKeys::SpartanZ(*input),
+                    r_cycle.to_vec(),
+                    eval,
+                );
+            }
+        }
 
         Ok(())
     }

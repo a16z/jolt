@@ -57,7 +57,13 @@ impl<const E: Endianness, F: JoltField> std::ops::Index<std::ops::RangeFull>
 
 impl<const E: Endianness, F: JoltField> OpeningPoint<E, F> {
     pub fn split_at(&self, mid: usize) -> (&[F], &[F]) {
+        println!("=== OpeningPoint::split_at called ===");
         println!("length: {:?}", self.r.len());
+        println!("mid is: {:?}", mid);
+        println!("Backtrace:");
+        let backtrace = std::backtrace::Backtrace::capture();
+        println!("{}", backtrace);
+        println!("=====================================");
         self.r.split_at(mid)
     }
 }
@@ -99,6 +105,21 @@ impl<F: JoltField> From<Vec<F>> for OpeningPoint<BIG_ENDIAN, F> {
     }
 }
 
+impl<const E: Endianness, F: JoltField> Into<Vec<F>> for OpeningPoint<E, F> {
+    fn into(self) -> Vec<F> {
+        self.r
+    }
+}
+
+impl<const E: Endianness, F: JoltField> Into<Vec<F>> for &OpeningPoint<E, F> 
+where
+    F: Clone,
+{
+    fn into(self) -> Vec<F> {
+        self.r.clone()
+    }
+}
+
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
 pub enum OpeningsKeys {
     SpartanZ(JoltR1CSInputs),
@@ -113,6 +134,11 @@ pub enum OpeningsKeys {
     OuterSumcheckCz,                // Cz claim from outer sumcheck
     PCSumcheckUnexpandedPC,         // UnexpandedPC evaluation from PC sumcheck
     PCSumcheckNextPC,               // PC evaluation from PC sumcheck
+    RegistersReadWriteVal,          // Val claim from registers read/write checking
+    RegistersReadWriteRs1,          // Rs1 claim from registers read/write checking
+    RegistersReadWriteRs2,          // Rs2 claim from registers read/write checking
+    RegistersReadWriteRd,           // Rd claim from registers read/write checking
+    RegistersReadWriteInc,          // Inc claim from registers read/write checking
 }
 
 pub type Openings<F> = HashMap<OpeningsKeys, (OpeningPoint<LITTLE_ENDIAN, F>, F)>;
@@ -460,7 +486,12 @@ where
     pub fn get_opening_point(&self, key: OpeningsKeys) -> Option<OpeningPoint<LITTLE_ENDIAN, F>> {
         self.evaluation_openings
             .get(&key)
-            .map(|(point, _)| point.clone())
+            .map(|(point, _)| {
+                if point.r.is_empty() {
+                    panic!("Opening point for key {:?} exists but is empty. This should never happen.", key);
+                }
+                point.clone()
+            })
     }
 
     /// Adds openings to the accumulator. The given `polynomials` are opened at
@@ -781,7 +812,12 @@ where
     pub fn get_opening_point(&self, key: OpeningsKeys) -> Option<OpeningPoint<LITTLE_ENDIAN, F>> {
         self.evaluation_openings
             .get(&key)
-            .map(|(point, _)| point.clone())
+            .map(|(point, _)| {
+                if point.r.is_empty() {
+                    panic!("Opening point for key {:?} exists but is empty. Verifier needs to populate the point.", key);
+                }
+                point.clone()
+            })
     }
 
     /// Adds openings to the accumulator. The polynomials underlying the given
