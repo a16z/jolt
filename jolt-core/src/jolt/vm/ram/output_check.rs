@@ -164,15 +164,14 @@ impl<F: JoltField> OutputSumcheck<F> {
             program_io,
             &r_address,
         );
-        let output_sumcheck = OutputSumcheck {
+
+        OutputSumcheck {
             K,
             T,
             verifier_state: None,
             prover_state: Some(output_sumcheck_prover_state),
             val_final_claim: None,
-        };
-
-        output_sumcheck
+        }
     }
 
     pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
@@ -196,15 +195,13 @@ impl<F: JoltField> OutputSumcheck<F> {
             .borrow()
             .get_opening(OpeningsKeys::RamValFinal);
 
-        let output_sumcheck = OutputSumcheck {
+        OutputSumcheck {
             K,
             T,
             verifier_state: Some(output_sumcheck_verifier_state),
             prover_state: None,
             val_final_claim: Some(val_final_claim),
-        };
-
-        output_sumcheck
+        }
     }
 }
 

@@ -104,7 +104,7 @@ impl<F: JoltField> RASumcheck<F> {
             offset += size;
         }
 
-        let eq_poly = MultilinearPolynomial::from(EqPolynomial::evals(&r_cycle));
+        let eq_poly = MultilinearPolynomial::from(EqPolynomial::evals(r_cycle));
 
         // Precompute EQ tables for each chunk
         let eq_tables: Vec<Vec<F>> = r_address_chunks

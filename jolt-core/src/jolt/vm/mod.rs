@@ -20,7 +20,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use bytecode::{BytecodePreprocessing, BytecodeShoutProof};
 use common::jolt_device::MemoryLayout;
 use instruction_lookups::LookupsProof;
-use ram::{RAMPreprocessing, RAMTwistProof};
+use ram::RAMPreprocessing;
 use rayon::prelude::*;
 use registers::RegistersTwistProof;
 use std::{
@@ -237,7 +237,7 @@ where
     fn prove(
         mut program_io: JoltDevice,
         mut trace: Vec<RV32IMCycle>,
-        final_memory_state: Memory,
+        _final_memory_state: Memory,
         mut preprocessing: JoltProverPreprocessing<F, PCS>,
     ) -> (
         JoltProof<WORD_SIZE, F, PCS, ProofTranscript>,
@@ -308,7 +308,7 @@ where
             &program_io,
             &program_io.memory_layout,
             trace_length,
-            ram_K,
+            1 << 16, // TODO(moodlezoup)
         );
 
         let committed_polys: Vec<_> = ALL_COMMITTED_POLYNOMIALS
@@ -450,7 +450,7 @@ where
             &preprocessing.shared.memory_layout,
             proof.trace_length,
             // proof.ram.K,
-            todo!(),
+            1 << 16, // TODO(moodlezoup)
         );
 
         for commitment in proof.commitments.commitments.iter() {
