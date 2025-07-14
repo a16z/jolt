@@ -1,12 +1,12 @@
-use crate::dag::stage::SumcheckStages;
+use crate::dag::stage::{StagedSumcheck, SumcheckStages};
 use crate::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::field::JoltField;
+use crate::jolt::vm::ram::RamDag;
 use crate::jolt::vm::registers::RegistersDAG;
 use crate::jolt::vm::JoltCommitments;
 use crate::jolt::witness::ALL_COMMITTED_POLYNOMIALS;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::opening_proof::OpeningPoint;
-use crate::poly::opening_proof::LITTLE_ENDIAN;
+use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
 use crate::r1cs::spartan::SpartanDag;
 use crate::subprotocols::sumcheck::{BatchableSumcheckInstance, BatchedSumcheck};
 use crate::utils::transcript::Transcript;
@@ -48,6 +48,12 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             .collect();
         let ram_K = ram_addresses.par_iter().max().unwrap().next_power_of_two();
 
+        // HACK
+        self.prover_state_manager
+            .proofs
+            .borrow_mut()
+            .insert(ProofKeys::RamK, ProofData::RamK(ram_K));
+
         let K = [
             preprocessing.shared.bytecode.code_size,
             ram_K,
@@ -80,9 +86,11 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             spartan_dag.stage2_prover_instances(&mut self.prover_state_manager);
 
         let registers_dag = RegistersDAG {};
-        let mut registers_stage2 =
-            registers_dag.stage2_prover_instances(&mut self.prover_state_manager);
-        stage2_instances.append(&mut registers_stage2);
+        stage2_instances
+            .extend(registers_dag.stage2_prover_instances(&mut self.prover_state_manager));
+
+        // let ram_dag = RamDag::new_prover(&self.prover_state_manager);
+        // stage2_instances.extend(ram_dag.stage2_prover_instances(&mut self.prover_state_manager));
 
         let stage2_instances_mut: Vec<&mut dyn BatchableSumcheckInstance<F>> = stage2_instances
             .iter_mut()
@@ -90,7 +98,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             .collect();
 
         let transcript = self.prover_state_manager.get_transcript();
-        let (stage2_proof, _r_stage2) =
+        let (stage2_proof, r_stage2) =
             BatchedSumcheck::prove(stage2_instances_mut, &mut *transcript.borrow_mut());
 
         self.prover_state_manager.proofs.borrow_mut().insert(
@@ -98,10 +106,12 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             ProofData::BatchableSumcheckData(stage2_proof),
         );
 
+        let stage2_instances_mut: Vec<&mut dyn StagedSumcheck<F, PCS>> = stage2_instances
+            .iter_mut()
+            .map(|instance| &mut **instance as &mut dyn StagedSumcheck<F, PCS>)
+            .collect();
         let accumulator = self.prover_state_manager.get_prover_accumulator();
-        for instance in stage2_instances.iter_mut() {
-            instance.cache_openings_prover(Some(accumulator.clone()));
-        }
+        BatchedSumcheck::cache_openings(stage2_instances_mut, Some(accumulator.clone()), &r_stage2);
 
         // Stage 3:
         let mut stage3_instances =
@@ -115,7 +125,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             .map(|instance| &mut **instance as &mut dyn BatchableSumcheckInstance<F>)
             .collect();
 
-        let (stage3_proof, _r_stage3) =
+        let (stage3_proof, r_stage3) =
             BatchedSumcheck::prove(stage3_instances_mut, &mut *transcript.borrow_mut());
 
         self.prover_state_manager.proofs.borrow_mut().insert(
@@ -123,10 +133,11 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             ProofData::BatchableSumcheckData(stage3_proof),
         );
 
-        let accumulator = self.prover_state_manager.get_prover_accumulator();
-        for instance in stage3_instances.iter_mut() {
-            instance.cache_openings_prover(Some(accumulator.clone()));
-        }
+        let stage3_instances_mut: Vec<&mut dyn StagedSumcheck<F, PCS>> = stage3_instances
+            .iter_mut()
+            .map(|instance| &mut **instance as &mut dyn StagedSumcheck<F, PCS>)
+            .collect();
+        BatchedSumcheck::cache_openings(stage3_instances_mut, Some(accumulator.clone()), &r_stage3);
 
         Ok(())
     }
@@ -157,6 +168,10 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             registers_dag.stage2_verifier_instances(&mut self.verifier_state_manager);
         stage2_instances.append(&mut registers_stage2);
 
+        // let ram_dag = RamDag::new_verifier(&self.verifier_state_manager);
+        // stage2_instances
+        //     .extend(ram_dag.stage2_verifier_instances(&mut self.verifier_state_manager));
+
         let stage2_instances_ref: Vec<&dyn BatchableSumcheckInstance<F>> = stage2_instances
             .iter()
             .map(|instance| &**instance as &dyn BatchableSumcheckInstance<F>)
@@ -180,10 +195,12 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
 
         drop(proofs);
 
+        let stage2_instances_mut: Vec<&mut dyn StagedSumcheck<F, PCS>> = stage2_instances
+            .iter_mut()
+            .map(|instance| &mut **instance as &mut dyn StagedSumcheck<F, PCS>)
+            .collect();
         let accumulator = self.verifier_state_manager.get_verifier_accumulator();
-        for instance in stage2_instances.iter_mut() {
-            instance.cache_openings_verifier(Some(accumulator.clone()), Some(&r_stage2));
-        }
+        BatchedSumcheck::cache_claims(stage2_instances_mut, Some(accumulator), &r_stage2);
 
         // Stage 3:
         let mut stage3_instances =
@@ -212,10 +229,12 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             &mut *transcript.borrow_mut(),
         )?;
 
+        let stage3_instances_mut: Vec<&mut dyn StagedSumcheck<F, PCS>> = stage3_instances
+            .iter_mut()
+            .map(|instance| &mut **instance as &mut dyn StagedSumcheck<F, PCS>)
+            .collect();
         let accumulator = self.verifier_state_manager.get_verifier_accumulator();
-        for instance in stage3_instances.iter_mut() {
-            instance.cache_openings_verifier(Some(accumulator.clone()), Some(&r_stage3));
-        }
+        BatchedSumcheck::cache_claims(stage3_instances_mut, Some(accumulator), &r_stage3);
 
         Ok(())
     }
@@ -229,7 +248,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         let mut verifier_acc_borrow = verifier_accumulator.borrow_mut();
 
         for (key, (_, value)) in prover_acc_borrow.evaluation_openings().iter() {
-            let empty_point = OpeningPoint::<{ LITTLE_ENDIAN }, F>::new(vec![]);
+            let empty_point = OpeningPoint::<BIG_ENDIAN, F>::new(vec![]);
             verifier_acc_borrow
                 .evaluation_openings_mut()
                 .insert(*key, (empty_point, *value));

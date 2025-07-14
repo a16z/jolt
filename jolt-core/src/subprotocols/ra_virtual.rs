@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
-use crate::poly::opening_proof::ProverOpeningAccumulator;
+use crate::poly::opening_proof::{OpeningPoint, ProverOpeningAccumulator, BIG_ENDIAN};
 use crate::subprotocols::sumcheck::CacheSumcheckOpenings;
 use crate::{
     field::JoltField,
@@ -291,6 +291,7 @@ where
     fn cache_openings_prover(
         &mut self,
         _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         debug_assert!(self.ra_i_claims.is_none());
         let prover_state = self

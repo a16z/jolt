@@ -7,7 +7,7 @@ use crate::{
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
-        opening_proof::ProverOpeningAccumulator,
+        opening_proof::{OpeningPoint, ProverOpeningAccumulator, BIG_ENDIAN},
     },
     subprotocols::sumcheck::{
         BatchableSumcheckInstance, CacheSumcheckOpenings, SumcheckInstanceProof,
@@ -169,6 +169,7 @@ where
     fn cache_openings_prover(
         &mut self,
         _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         if let Some(prover_state) = &self.prover_state {
             self.claims = Some(ValEvaluationSumcheckClaims {

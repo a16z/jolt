@@ -10,7 +10,9 @@ use crate::{
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
-        opening_proof::{OpeningPoint, OpeningsKeys, ProverOpeningAccumulator, LITTLE_ENDIAN},
+        opening_proof::{
+            OpeningPoint, OpeningsKeys, ProverOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+        },
     },
     r1cs::inputs::JoltR1CSInputs,
     subprotocols::sumcheck::{
@@ -76,6 +78,12 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         let T = trace.len();
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = T / num_chunks;
+
+        // HACK
+        state_manager.proofs.borrow_mut().insert(
+            ProofKeys::RamSumcheckSwitchIndex,
+            ProofData::SumcheckSwitchIndex(chunk_size.log_2()),
+        );
 
         let span = tracing::span!(tracing::Level::INFO, "compute deltas");
         let _guard = span.enter();
@@ -274,7 +282,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
 }
 
 struct ReadWriteCheckingVerifierState<F: JoltField> {
-    r_prime: OpeningPoint<LITTLE_ENDIAN, F>,
+    r_prime: OpeningPoint<BIG_ENDIAN, F>,
     sumcheck_switch_index: usize,
 }
 
@@ -357,7 +365,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         let sumcheck_switch_index = match state_manager
             .proofs
             .borrow()
-            .get(&ProofKeys::RamReadWriteChecking)
+            .get(&ProofKeys::RamSumcheckSwitchIndex)
         {
             Some(ProofData::SumcheckSwitchIndex(index)) => *index,
             _ => panic!("SumcheckSwitchIndex not found"),
@@ -872,6 +880,7 @@ where
     fn cache_openings_prover(
         &mut self,
         _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         // TODO(moodlezoup): Add openings to _openings and _accumulator instead
         // We should probably just pass in the whole `StateManager` into

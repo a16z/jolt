@@ -16,7 +16,8 @@ use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::OpeningsKeys::{OuterSumcheckAz, OuterSumcheckBz, OuterSumcheckCz};
 use crate::poly::opening_proof::{
-    OpeningsExt, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
+    OpeningPoint, OpeningsExt, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
+    BIG_ENDIAN,
 };
 use crate::r1cs::builder::Constraint;
 use crate::r1cs::constraints::{JoltRV32IMConstraints, R1CSConstraints};
@@ -651,6 +652,7 @@ where
     fn cache_openings_prover(
         &mut self,
         _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         debug_assert!(self.cached_claims.is_none());
         let prover_state = self
@@ -857,6 +859,7 @@ where
     fn cache_openings_prover(
         &mut self,
         accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         debug_assert!(self.cached_claims.is_none());
         let prover_state = self

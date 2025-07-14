@@ -1,4 +1,5 @@
 use crate::jolt::vm::registers::RegistersDAG;
+use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
 use crate::{
     dag::stage::{StagedSumcheck, SumcheckStages},
     field::{JoltField, OptimizedMul},
@@ -1064,6 +1065,7 @@ where
     fn cache_openings_prover(
         &mut self,
         accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         debug_assert!(self.claims.is_none());
         let prover_state = self
@@ -1132,9 +1134,11 @@ where
     fn cache_openings_verifier(
         &mut self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
-        r_sumcheck: Option<&[F]>,
+        r_sumcheck: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        if let (Some(accumulator), Some(r_sumcheck)) = (accumulator, r_sumcheck) {
+        // TODO(moodlezoup): Replace with proper `normalize_opening_point`
+        let r_sumcheck = r_sumcheck.r;
+        if let Some(accumulator) = accumulator {
             if let Some(_claims) = &self.claims {
                 // Get the sumcheck opening point
                 let verifier_state = self

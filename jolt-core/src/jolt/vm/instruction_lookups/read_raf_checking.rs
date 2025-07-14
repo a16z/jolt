@@ -24,7 +24,9 @@ use crate::{
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
-        opening_proof::{Openings, OpeningsExt, OpeningsKeys, ProverOpeningAccumulator},
+        opening_proof::{
+            OpeningPoint, Openings, OpeningsExt, OpeningsKeys, ProverOpeningAccumulator, BIG_ENDIAN,
+        },
         prefix_suffix::{Prefix, PrefixRegistry, PrefixSuffixDecomposition},
     },
     r1cs::inputs::JoltR1CSInputs,
@@ -434,6 +436,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
     fn cache_openings_prover(
         &mut self,
         accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let ps = self.prover_state.as_mut().unwrap();
         let r_cycle_prime = &ps.r[ps.r.len() - self.log_T..];

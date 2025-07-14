@@ -15,7 +15,9 @@ use crate::{
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
-        opening_proof::{Openings, OpeningsKeys, ProverOpeningAccumulator},
+        opening_proof::{
+            OpeningPoint, Openings, OpeningsKeys, ProverOpeningAccumulator, BIG_ENDIAN,
+        },
     },
     r1cs::inputs::JoltR1CSInputs,
     subprotocols::sumcheck::{
@@ -384,6 +386,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
     fn cache_openings_prover(
         &mut self,
         accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let ra_claims = self
             .prover_state

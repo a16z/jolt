@@ -8,7 +8,7 @@ use crate::{
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
-        opening_proof::ProverOpeningAccumulator,
+        opening_proof::{OpeningPoint, ProverOpeningAccumulator, BIG_ENDIAN},
     },
     subprotocols::sumcheck::{
         BatchableSumcheckInstance, CacheSumcheckOpenings, SumcheckInstanceProof,
@@ -159,6 +159,7 @@ where
     fn cache_openings_prover(
         &mut self,
         _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         debug_assert!(self.cached_claims.is_none());
         let prover_state = self

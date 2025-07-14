@@ -5,7 +5,7 @@ use std::vec;
 use crate::{
     dag::{
         stage::{StagedSumcheck, SumcheckStages},
-        state_manager::StateManager,
+        state_manager::{ProofData, ProofKeys, StateManager},
     },
     field::JoltField,
     jolt::{
@@ -907,7 +907,7 @@ impl RamDag {
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        state_manager: &StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         let (preprocessing, trace, program_io, final_memory) = state_manager.get_prover_data();
         let ram_preprocessing = &preprocessing.shared.ram;
@@ -1020,6 +1020,56 @@ impl RamDag {
             T,
             initial_memory_state: Some(initial_memory_state),
             final_memory_state: Some(final_memory_state),
+        }
+    }
+
+    pub fn new_verifier<
+        F: JoltField,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
+    >(
+        state_manager: &StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Self {
+        let (preprocessing, program_io, T) = state_manager.get_verifier_data();
+        let ram_preprocessing = &preprocessing.shared.ram;
+
+        let K = match state_manager.proofs.borrow().get(&ProofKeys::RamK) {
+            Some(ProofData::RamK(K)) => *K,
+            _ => panic!("RAM K not set"),
+        };
+
+        let mut initial_memory_state = vec![0; K];
+        // Copy bytecode
+        let mut index = remap_address(
+            ram_preprocessing.min_bytecode_address,
+            &program_io.memory_layout,
+        ) as usize;
+        for word in ram_preprocessing.bytecode_words.iter() {
+            initial_memory_state[index] = *word;
+            index += 1;
+        }
+
+        index = remap_address(
+            program_io.memory_layout.input_start,
+            &program_io.memory_layout,
+        ) as usize;
+        // Convert input bytes into words and populate
+        // `initial_memory_state` and `final_memory_state`
+        for chunk in program_io.inputs.chunks(4) {
+            let mut word = [0u8; 4];
+            for (i, byte) in chunk.iter().enumerate() {
+                word[i] = *byte;
+            }
+            let word = u32::from_le_bytes(word);
+            initial_memory_state[index] = word;
+            index += 1;
+        }
+
+        Self {
+            K,
+            T,
+            initial_memory_state: Some(initial_memory_state),
+            final_memory_state: None,
         }
     }
 }

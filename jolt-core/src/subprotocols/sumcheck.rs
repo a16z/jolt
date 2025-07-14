@@ -1,14 +1,16 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
+use crate::dag::stage::StagedSumcheck;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
-use crate::poly::opening_proof::ProverOpeningAccumulator;
-use crate::poly::opening_proof::VerifierOpeningAccumulator;
+use crate::poly::opening_proof::{
+    OpeningPoint, ProverOpeningAccumulator, VerifierOpeningAccumulator, BIG_ENDIAN,
+};
 use crate::poly::spartan_interleaved_poly::SpartanInterleavedPolynomial;
 use crate::poly::split_eq_poly::{GruenSplitEqPolynomial, SplitEqPolynomial};
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
@@ -139,17 +141,23 @@ pub trait BatchableSumcheckInstance<F: JoltField> {
 }
 
 pub trait CacheSumcheckOpenings<F: JoltField, PCS: CommitmentScheme<Field = F>> {
+    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+        // TODO(moodlezoup): Remove this default
+        OpeningPoint::new(opening_point.to_vec())
+    }
+
     /// Caches polynomial opening claims needed after the sumcheck protocol completes.
     /// These openings will later be proven using either an opening proof or another sumcheck.
     fn cache_openings_prover(
         &mut self,
         accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
     );
 
     fn cache_openings_verifier(
         &mut self,
         _accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
-        _r_sumcheck: Option<&[F]>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         //TODO(markosg04) - remove this default implementation after compiler is happy?
     }
@@ -283,18 +291,59 @@ impl BatchedSumcheck {
         (SumcheckInstanceProof::new(compressed_polys), r)
     }
 
-    pub fn cache_openings<
-        F: JoltField,
-        ProofTranscript: Transcript,
-        PCS: CommitmentScheme<Field = F>,
-    >(
-        mut sumcheck_instances: Vec<&mut dyn CacheSumcheckOpenings<F, PCS>>,
+    pub fn cache_openings<F: JoltField, PCS: CommitmentScheme<Field = F>>(
+        mut sumcheck_instances: Vec<&mut dyn StagedSumcheck<F, PCS>>,
         accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        r_sumcheck: &[F],
     ) {
+        let max_num_rounds = sumcheck_instances
+            .iter()
+            .map(|sumcheck| sumcheck.num_rounds())
+            .max()
+            .unwrap();
+
         for sumcheck in sumcheck_instances.iter_mut() {
+            // If a sumcheck instance has fewer than `max_num_rounds`,
+            // we wait until there are <= `sumcheck.num_rounds()` left
+            // before binding its variables.
+            // So, the sumcheck *actually* uses just the last `sumcheck.num_rounds()`
+            // values of `r_sumcheck`.
+            let r_slice = &r_sumcheck[max_num_rounds - sumcheck.num_rounds()..];
+
             // Cache polynomial opening claims, to be proven using either an
             // opening proof or sumcheck (in the case of virtual polynomials).
-            sumcheck.cache_openings_prover(accumulator.clone());
+            sumcheck.cache_openings_prover(
+                accumulator.clone(),
+                sumcheck.normalize_opening_point(r_slice),
+            );
+        }
+    }
+
+    pub fn cache_claims<F: JoltField, PCS: CommitmentScheme<Field = F>>(
+        mut sumcheck_instances: Vec<&mut dyn StagedSumcheck<F, PCS>>,
+        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
+        r_sumcheck: &[F],
+    ) {
+        let max_num_rounds = sumcheck_instances
+            .iter()
+            .map(|sumcheck| sumcheck.num_rounds())
+            .max()
+            .unwrap();
+
+        for sumcheck in sumcheck_instances.iter_mut() {
+            // If a sumcheck instance has fewer than `max_num_rounds`,
+            // we wait until there are <= `sumcheck.num_rounds()` left
+            // before binding its variables.
+            // So, the sumcheck *actually* uses just the last `sumcheck.num_rounds()`
+            // values of `r_sumcheck`.
+            let r_slice = &r_sumcheck[max_num_rounds - sumcheck.num_rounds()..];
+
+            // Cache polynomial opening claims, to be proven using either an
+            // opening proof or sumcheck (in the case of virtual polynomials).
+            sumcheck.cache_openings_verifier(
+                accumulator.clone(),
+                sumcheck.normalize_opening_point(r_slice),
+            );
         }
     }
 
