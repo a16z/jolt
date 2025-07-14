@@ -55,14 +55,14 @@ pub struct ValEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
     wa_claim: F,
 }
 
-pub(crate) struct ValEvaluationProverState<F: JoltField> {
+pub struct ValEvaluationProverState<F: JoltField> {
     /// Inc polynomial
     pub inc: MultilinearPolynomial<F>,
     /// wa polynomial
     pub wa: MultilinearPolynomial<F>,
     /// LT polynomial
     pub lt: MultilinearPolynomial<F>,
-    /// Track the sumcheck rounds
+    /// r_cycle_prime
     pub r_sumcheck: Vec<F>,
 }
 
@@ -158,9 +158,8 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for ValEvaluationSumcheck<F> {
 
     fn bind(&mut self, r_j: F, _round: usize) {
         if let Some(prover_state) = &mut self.prover_state {
-            // Track the sumcheck rounds for prover
             prover_state.r_sumcheck.push(r_j);
-            
+
             [
                 &mut prover_state.inc,
                 &mut prover_state.wa,
@@ -208,22 +207,22 @@ where
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
-        
+
         let inc_claim = prover_state.inc.final_sumcheck_claim();
         let wa_claim = prover_state.wa.final_sumcheck_claim();
-        
+
         self.claims = Some(ValEvaluationSumcheckClaims {
             inc_claim,
             wa_claim,
         });
-        
-        // Append claims to accumulator if provided
+
+        // Append claims to accumulator
         if let Some(accumulator) = accumulator {
-            // Get the actual sumcheck opening point (r_cycle_prime)
+            // Get the sumcheck opening point during the batchable prove (r_cycle_prime)
             // The sumcheck binds in low-to-high order, so we reverse to get r_cycle_prime
             let mut r_cycle_prime = prover_state.r_sumcheck.clone();
             r_cycle_prime.reverse();
-            
+
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersValEvaluationInc,
                 r_cycle_prime.clone(),
@@ -236,6 +235,7 @@ where
             );
         }
     }
+    //@TODO(markosg04) verifier side for the bytecode claims
 }
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS>
@@ -399,9 +399,9 @@ pub fn prove_val_evaluation<
 
     let mut sumcheck_instance: ValEvaluationSumcheck<F> = ValEvaluationSumcheck {
         claimed_evaluation,
-        prover_state: Some(ValEvaluationProverState { 
-            inc, 
-            wa, 
+        prover_state: Some(ValEvaluationProverState {
+            inc,
+            wa,
             lt,
             r_sumcheck: Vec::new(),
         }),

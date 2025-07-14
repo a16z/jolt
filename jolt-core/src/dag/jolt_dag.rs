@@ -47,13 +47,10 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         let spartan_dag = SpartanDag::<F>::new::<ProofTranscript>(padded_trace_length);
         spartan_dag.stage1_prove(&mut self.prover_state_manager)?;
 
-        // // Stage 2:
+        // Stage 2:
         let mut stage2_instances =
             spartan_dag.stage2_prover_instances(&mut self.prover_state_manager);
 
-        // let mut stage2_instances = vec![];
-
-        // Add RegistersDAG stage2 instances
         let registers_dag = RegistersDAG {};
         let mut registers_stage2 =
             registers_dag.stage2_prover_instances(&mut self.prover_state_manager);
@@ -78,11 +75,10 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             instance.cache_openings_prover(Some(accumulator.clone()));
         }
 
-        // Stage 3: Collect instances and prove
+        // Stage 3:
         let mut stage3_instances =
             spartan_dag.stage3_prover_instances(&mut self.prover_state_manager);
-        
-        // Add RegistersDAG stage3 instances
+
         let mut registers_stage3 =
             registers_dag.stage3_prover_instances(&mut self.prover_state_manager);
         stage3_instances.append(&mut registers_stage3);
@@ -127,9 +123,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         // Stage 2:
         let mut stage2_instances =
             spartan_dag.stage2_verifier_instances(&mut self.verifier_state_manager);
-        // let stage2_instances = vec![];
 
-        // Add RegistersDAG stage2 instances
         let registers_dag = RegistersDAG {};
         let mut registers_stage2 =
             registers_dag.stage2_verifier_instances(&mut self.verifier_state_manager);
@@ -158,8 +152,6 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
 
         drop(proofs);
 
-        // The spartan ones don't actually do anything but for future sumchecks we will want to invoke like this
-        // Same thing applies for stage 3
         let accumulator = self.verifier_state_manager.get_verifier_accumulator();
         for instance in stage2_instances.iter_mut() {
             instance.cache_openings_verifier(Some(accumulator.clone()), Some(&r_stage2));
@@ -168,8 +160,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         // Stage 3:
         let mut stage3_instances =
             spartan_dag.stage3_verifier_instances(&mut self.verifier_state_manager);
-        
-        // Add RegistersDAG stage3 instances
+
         let mut registers_stage3 =
             registers_dag.stage3_verifier_instances(&mut self.verifier_state_manager);
         stage3_instances.append(&mut registers_stage3);

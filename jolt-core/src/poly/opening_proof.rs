@@ -104,7 +104,7 @@ impl<const E: Endianness, F: JoltField> Into<Vec<F>> for OpeningPoint<E, F> {
     }
 }
 
-impl<const E: Endianness, F: JoltField> Into<Vec<F>> for &OpeningPoint<E, F> 
+impl<const E: Endianness, F: JoltField> Into<Vec<F>> for &OpeningPoint<E, F>
 where
     F: Clone,
 {
@@ -128,9 +128,9 @@ pub enum OpeningsKeys {
     PCSumcheckUnexpandedPC,         // UnexpandedPC evaluation from PC sumcheck
     PCSumcheckNextPC,               // PC evaluation from PC sumcheck
     RegistersReadWriteVal,          // Val claim from registers read/write checking
-    RegistersReadWriteRs1,          // Rs1 claim from registers read/write checking
-    RegistersReadWriteRs2,          // Rs2 claim from registers read/write checking
-    RegistersReadWriteRd,           // Rd claim from registers read/write checking
+    RegistersReadWriteRs1Ra,        // Rs1 claim from registers read/write checking
+    RegistersReadWriteRs2Ra,        // Rs2 claim from registers read/write checking
+    RegistersReadWriteRdWa,         // Rd claim from registers read/write checking
     RegistersReadWriteInc,          // Inc claim from registers read/write checking
     RegistersValEvaluationInc,      // Inc claim from registers Val evaluation sumcheck
     RegistersValEvaluationWa,       // Wa claim from registers Val evaluation sumcheck
@@ -479,14 +479,15 @@ where
 
     /// Get the opening point by key
     pub fn get_opening_point(&self, key: OpeningsKeys) -> Option<OpeningPoint<LITTLE_ENDIAN, F>> {
-        self.evaluation_openings
-            .get(&key)
-            .map(|(point, _)| {
-                if point.r.is_empty() {
-                    panic!("Opening point for key {:?} exists but is empty. This should never happen.", key);
-                }
-                point.clone()
-            })
+        self.evaluation_openings.get(&key).map(|(point, _)| {
+            if point.r.is_empty() {
+                panic!(
+                    "Opening point for key {:?} exists but is empty. This should never happen...",
+                    key
+                );
+            }
+            point.clone()
+        })
     }
 
     /// Adds openings to the accumulator. The given `polynomials` are opened at

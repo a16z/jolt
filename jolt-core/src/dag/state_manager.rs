@@ -17,13 +17,11 @@ pub enum ProofKeys {
     SpartanOuterSumcheck,
     Stage2Sumcheck,
     Stage3Sumcheck,
-    RegistersSwitchIndex,
 }
 
 pub enum ProofData<F: JoltField, ProofTranscript: Transcript> {
     SpartanOuterData(SumcheckInstanceProof<F, ProofTranscript>),
     BatchableSumcheckData(SumcheckInstanceProof<F, ProofTranscript>),
-    RegisterSwitchIndex(usize),
 }
 
 pub type Proofs<F, ProofTranscript> = HashMap<ProofKeys, ProofData<F, ProofTranscript>>;

@@ -1159,22 +1159,14 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             &mut *state_manager.transcript.borrow_mut(),
         );
 
-        // Add virtual polynomial evaluations to the accumulator
-        // These are needed by future sumchecks and are not part of the PCS opening proof
+        // Populate opening points for virtual polynomial evaluations
+        // These claims already exist in the verifier's accumulator from receive_claims()
         for input in ALL_R1CS_INPUTS.iter() {
             // Skip if it's a committed input (already added above)
             if !COMMITTED_R1CS_INPUTS.contains(input) {
-                // Get the evaluation from the verifier's received openings
-                let eval = accumulator
-                    .borrow()
-                    .evaluation_openings()
-                    .get_spartan_z(*input);
-                
-                accumulator.borrow_mut().append_virtual(
-                    OpeningsKeys::SpartanZ(*input),
-                    r_cycle.to_vec(),
-                    eval,
-                );
+                accumulator
+                    .borrow_mut()
+                    .populate_claim_opening(OpeningsKeys::SpartanZ(*input), r_cycle.to_vec());
             }
         }
 
@@ -1256,8 +1248,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             .unwrap();
         let num_cycles_bits = key.num_steps.log_2();
 
-        let outer_sumcheck_r_reversed: Vec<F> =
-        outer_sumcheck_r.r.iter().rev().cloned().collect();
+        let outer_sumcheck_r_reversed: Vec<F> = outer_sumcheck_r.r.iter().rev().cloned().collect();
         let (r_cycle, _rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
         // The batched claim equals NextUnexpandedPC(r_cycle) + gamma * NextPC(r_cycle)
@@ -1325,7 +1316,6 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             .get_opening_point(OuterSumcheckAz)
             .unwrap();
 
-        // let outer_sumcheck_r_reversed: Vec<F> = outer_sumcheck_r.r.iter().rev().cloned().collect();
         let (r_cycle, rx_var) = outer_sumcheck_r.r.split_at(num_cycles_bits);
 
         let accumulator_ref = accumulator.borrow();
