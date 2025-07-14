@@ -74,10 +74,10 @@ where
             }
         );
 
-        let (g1_powers, g2_powers) = join_if_rayon!(
-            || P::G1::normalize_batch(&g1_powers_projective),
-            || P::G2::normalize_batch(&g2_powers_projective)
-        );
+        let (g1_powers, g2_powers) =
+            join_if_rayon!(|| P::G1::normalize_batch(&g1_powers_projective), || {
+                P::G2::normalize_batch(&g2_powers_projective)
+            });
 
         // Precompute a commitment to each power-of-two length vector of ones, which is just the sum of each power-of-two length prefix of the SRS
         let num_powers = (g1_powers.len() as f64).log2().floor() as usize + 1;

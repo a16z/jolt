@@ -4,13 +4,12 @@ use crate::poly::dense_interleaved_poly::DenseInterleavedPolynomial;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
-use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
+use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::subprotocols::grand_product::quark::{
     QuarkGrandProduct, QuarkGrandProductBase, QuarkGrandProductConfig, QuarkGrandProductProof,
 };
 use crate::subprotocols::grand_product::{
     BatchedGrandProductLayer, BatchedGrandProductProof, BatchedGrandProductProver,
-    BatchedGrandProductVerifier,
 };
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::utils::math::Math;

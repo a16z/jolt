@@ -7,7 +7,7 @@ use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
 use crate::poly::spartan_interleaved_poly::SpartanInterleavedPolynomial;
-use crate::poly::split_eq_poly::{GruenSplitEqPolynomial, SplitEqPolynomial};
+use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::r1cs::builder::Constraint;
 use crate::subprotocols::sumcheck::{
@@ -18,64 +18,6 @@ use crate::utils::small_value::svo_helpers::process_svo_sumcheck_rounds;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 use rayon::prelude::*;
-
-/// Batched cubic sumcheck used in grand products
-pub trait BatchedCubicSumcheck<F, ProofTranscript>: Bindable<F>
-where
-    F: JoltField,
-    ProofTranscript: Transcript,
-{
-    fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F>;
-    fn final_claims(&self) -> (F, F);
-
-    #[cfg(test)]
-    fn sumcheck_sanity_check(&self, eq_poly: &SplitEqPolynomial<F>, round_claim: F);
-
-    #[tracing::instrument(skip_all, name = "BatchedCubicSumcheck::prove_sumcheck")]
-    fn prove_sumcheck(
-        &mut self,
-        claim: &F,
-        eq_poly: &mut SplitEqPolynomial<F>,
-        transcript: &mut ProofTranscript,
-    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, (F, F)) {
-        let num_rounds = eq_poly.get_num_vars();
-
-        let mut previous_claim = *claim;
-        let mut r: Vec<F> = Vec::new();
-        let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
-
-        for _ in 0..num_rounds {
-            #[cfg(test)]
-            self.sumcheck_sanity_check(eq_poly, previous_claim);
-
-            let cubic_poly = self.compute_cubic(eq_poly, previous_claim);
-            let compressed_poly = cubic_poly.compress();
-            // append the prover's message to the transcript
-            compressed_poly.append_to_transcript(transcript);
-            // derive the verifier's challenge for the next round
-            let r_j = transcript.challenge_scalar();
-
-            r.push(r_j);
-            // bind polynomials to verifier's challenge
-            self.bind(r_j);
-            eq_poly.bind(r_j);
-
-            previous_claim = cubic_poly.evaluate(&r_j);
-            cubic_polys.push(compressed_poly);
-        }
-
-        #[cfg(test)]
-        self.sumcheck_sanity_check(eq_poly, previous_claim);
-
-        debug_assert_eq!(eq_poly.len(), 1);
-
-        (
-            SumcheckInstanceProof::new(cubic_polys),
-            r,
-            self.final_claims(),
-        )
-    }
-}
 
 /// Implements the standard technique for batching parallel sumchecks to reduce
 /// verifier cost and proof size.

@@ -7,11 +7,7 @@ use super::sumcheck::SumcheckInstanceProof;
 use crate::{
     field::JoltField,
     poly::{eq_poly::EqPolynomial, multilinear_polynomial::PolynomialBinding},
-    utils::{
-        errors::ProofVerifyError,
-        math::Math,
-        transcript::Transcript,
-    },
+    utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
 };
 
 /// The Twist+Shout paper gives two different prover algorithms for the read-checking

@@ -23,11 +23,10 @@ use crate::{
         math::Math,
         thread::{drop_in_background_thread, unsafe_allocate_zero_vec, unsafe_zero_slice},
         transcript::{AppendToTranscript, Transcript},
-        uninterleave_bits,
     },
 };
 use rayon::{prelude::*, slice::Iter};
-use std::{fmt::Display, ops::Index};
+use std::ops::Index;
 use strum::{EnumCount, IntoEnumIterator};
 use tracer::instruction::RV32IMCycle;
 

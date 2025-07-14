@@ -1,6 +1,6 @@
 use crate::field::JoltField;
-use crate::{into_optimal_iter, optimal_chunks_mut, optimal_iter_mut};
 use crate::utils::{math::Math, thread::unsafe_allocate_zero_vec};
+use crate::{into_optimal_iter, optimal_chunks_mut, optimal_iter_mut};
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 use std::marker::PhantomData;

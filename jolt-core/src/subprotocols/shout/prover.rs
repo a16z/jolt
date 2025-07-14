@@ -17,7 +17,6 @@ use crate::{
         unipoly::{CompressedUniPoly, UniPoly},
     },
     utils::{
-        errors::ProofVerifyError,
         math::Math,
         thread::unsafe_allocate_zero_vec,
         transcript::{AppendToTranscript, Transcript},

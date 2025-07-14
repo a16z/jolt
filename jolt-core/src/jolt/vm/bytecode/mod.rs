@@ -3,17 +3,17 @@ mod prover;
 #[cfg(feature = "prover")]
 pub use prover::*;
 
-use crate::{field::JoltField, optimal_iter, poly::{
-    compact_polynomial::SmallScalar,
-    eq_poly::EqPolynomial,
-    multilinear_polynomial::{
-        MultilinearPolynomial, PolynomialEvaluation,
+use crate::{
+    field::JoltField,
+    optimal_iter,
+    poly::{
+        compact_polynomial::SmallScalar,
+        eq_poly::EqPolynomial,
+        multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     },
-}, subprotocols::sumcheck::SumcheckInstanceProof, utils::{
-    errors::ProofVerifyError,
-    math::Math,
-    transcript::Transcript,
-}};
+    subprotocols::sumcheck::SumcheckInstanceProof,
+    utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
+};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
 #[cfg(feature = "rayon")]

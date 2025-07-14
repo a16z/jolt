@@ -7,9 +7,7 @@ mod verifier;
 use crate::jolt::vm::registers_read_write_checking::RegistersReadWriteCheckingProof;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::{
-    field::JoltField,
-    subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::transcript::Transcript,
+    field::JoltField, subprotocols::sumcheck::SumcheckInstanceProof, utils::transcript::Transcript,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 

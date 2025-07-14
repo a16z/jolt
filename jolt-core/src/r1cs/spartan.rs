@@ -1,8 +1,5 @@
 #![allow(unused_imports)]
 
-use std::marker::PhantomData;
-use tracer::instruction::RV32IMCycle;
-use tracing::{span, Level};
 use crate::field::JoltField;
 use crate::jolt::vm::JoltCommitments;
 use crate::jolt::vm::JoltProverPreprocessing;
@@ -16,6 +13,10 @@ use crate::r1cs::inputs::ALL_R1CS_INPUTS;
 use crate::r1cs::inputs::COMMITTED_R1CS_INPUTS;
 use crate::r1cs::key::UniformSpartanKey;
 use crate::utils::math::Math;
+use crate::utils::thread::drop_in_background_thread;
+use std::marker::PhantomData;
+use tracer::instruction::RV32IMCycle;
+use tracing::{span, Level};
 
 use crate::utils::transcript::Transcript;
 use ark_serialize::CanonicalDeserialize;

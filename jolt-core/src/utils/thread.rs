@@ -5,7 +5,10 @@ where
     T: Send + 'static,
 {
     // h/t https://abrams.cc/rust-dropping-things-in-another-thread
+    #[cfg(feature = "parallel")]
     rayon::spawn(move || drop(data));
+    #[cfg(not(feature = "parallel"))]
+    drop(data);
 }
 
 #[tracing::instrument(skip_all)]

@@ -48,10 +48,9 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         //         first half of remaining elements (for E_out)
         let (_, wprime) = w.split_last().unwrap();
         let (w_out, w_in) = wprime.split_at(m);
-        let (E_out_vec, E_in_vec) = join_if_rayon!(
-            || EqPolynomial::evals_cached(w_out),
-            || EqPolynomial::evals_cached(w_in)
-        );
+        let (E_out_vec, E_in_vec) = join_if_rayon!(|| EqPolynomial::evals_cached(w_out), || {
+            EqPolynomial::evals_cached(w_in)
+        });
         Self {
             current_index: w.len(),
             current_scalar: F::one(),
@@ -122,10 +121,10 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
             w_E_out_vars.extend_from_slice(&w[split_point_x_in..suffix_slice_end]);
         }
 
-        let (mut E_out_vec, E_in) = join_if_rayon!(
-            || EqPolynomial::evals_cached(&w_E_out_vars),
-            || EqPolynomial::evals(&w_E_in_vars)
-        );
+        let (mut E_out_vec, E_in) =
+            join_if_rayon!(|| EqPolynomial::evals_cached(&w_E_out_vars), || {
+                EqPolynomial::evals(&w_E_in_vars)
+            });
 
         // Take only the first `num_small_value_rounds` vectors from E_out_vec (after reversing)
         // Recall that at this point, E_out_vec[0] = `eq(w[0..split_point_x_out] ++ w[split_point_x_in..n-1], x)`

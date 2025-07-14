@@ -5,21 +5,22 @@ use super::{
 };
 use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
 #[cfg(feature = "prover")]
+use crate::{field::OptimizedMul, optimal_chunk_by, optimal_flat_map};
 use crate::{
-    field::OptimizedMul,
-    optimal_chunk_by, optimal_flat_map,
+    field::{JoltField, OptimizedMulI128},
+    into_optimal_iter, optimal_iter, optimal_num_threads,
+    r1cs::builder::Constraint,
+    utils::{
+        math::Math,
+        small_value::{svo_helpers, NUM_SVO_ROUNDS},
+        transcript::Transcript,
+    },
 };
-use crate::{field::{JoltField, OptimizedMulI128}, into_optimal_iter, optimal_iter, optimal_num_threads, r1cs::builder::Constraint, utils::{
-    math::Math,
-    small_value::{svo_helpers, NUM_SVO_ROUNDS},
-    transcript::Transcript,
-}};
 use ark_ff::Zero;
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 #[cfg(not(feature = "parallel"))]
 use itertools::Itertools;
-
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 pub const TOTAL_NUM_ACCUMS: usize = svo_helpers::total_num_accums(NUM_SVO_ROUNDS);
 pub const NUM_NONTRIVIAL_TERNARY_POINTS: usize =

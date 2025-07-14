@@ -1,22 +1,19 @@
 use super::{
     dense_interleaved_poly::DenseInterleavedPolynomial, dense_mlpoly::DensePolynomial,
-    split_eq_poly::SplitEqPolynomial, unipoly::UniPoly,
-};
-use crate::subprotocols::grand_product::BatchedGrandProductLayer;
-use crate::{
-    field::{JoltField, OptimizedMul},
-    subprotocols::sumcheck::{BatchedCubicSumcheck, Bindable},
-    utils::{math::Math, transcript::Transcript},
 };
 #[cfg(feature = "prover")]
 use super::{split_eq_poly::SplitEqPolynomial, unipoly::UniPoly};
 #[cfg(feature = "prover")]
-use crate::field::{OptimizedMul};
+use crate::field::OptimizedMul;
+use crate::subprotocols::grand_product::BatchedGrandProductLayer;
 #[cfg(feature = "prover")]
 use crate::utils::math::Math;
-use crate::{optimal_iter, optimal_iter_mut, field::JoltField, subprotocols::{
-    sumcheck::{BatchedCubicSumcheck, Bindable},
-}, utils::transcript::Transcript};
+use crate::{
+    field::JoltField,
+    optimal_iter, optimal_iter_mut,
+    subprotocols::sumcheck::{BatchedCubicSumcheck, Bindable},
+    utils::transcript::Transcript,
+};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -224,8 +221,7 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
                 coalesced: Some(coalesced.layer_output()),
             }
         } else {
-            let coeffs: Vec<Vec<_>> = optimal_iter!(self
-                .coeffs)
+            let coeffs: Vec<Vec<_>> = optimal_iter!(self.coeffs)
                 .map(|segment| {
                     let mut output_segment: Vec<SparseCoefficient<F>> =
                         Vec::with_capacity(segment.len());
@@ -280,7 +276,6 @@ impl<F: JoltField> Bindable<F> for SparseInterleavedPolynomial<F> {
     ///
     /// If `self` is not coalesced, we basically do the same thing but with the
     /// sparse vectors in `self.coeffs`, and many more cases to check 😬
-    #[tracing::instrument(skip_all, name = "SparseInterleavedPolynomial::bind")]
     fn bind(&mut self, r: F) {
         #[cfg(test)]
         let (mut left_before_binding, mut right_before_binding) = self.uninterleave();

@@ -1,19 +1,16 @@
 #[cfg(feature = "prover")]
 mod prover;
-// TODO fix all the other pub mod provers. they don't need to be pub if they're being transparently re-exported
-#[cfg(feature = "prover")]
-pub use prover::*;
 
 use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::{PolynomialBinding, PolynomialEvaluation};
+use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
+#[cfg(feature = "prover")]
+use crate::poly::split_eq_poly::SplitEqPolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 use ark_serialize::*;
 use std::marker::PhantomData;
-use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
-#[cfg(feature = "prover")]
-use crate::poly::split_eq_poly::SplitEqPolynomial;
 
 pub trait Bindable<F: JoltField>: Sync {
     fn bind(&mut self, r: F);

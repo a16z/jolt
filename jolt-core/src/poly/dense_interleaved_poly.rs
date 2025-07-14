@@ -5,10 +5,12 @@ use super::{split_eq_poly::SplitEqPolynomial, unipoly::UniPoly};
 use crate::subprotocols::grand_product::BatchedGrandProductLayer;
 use crate::{
     field::JoltField,
-    optimal_chunks, optimal_chunks_mut, optimal_iter,
+    optimal_chunks, optimal_chunks_mut,
     subprotocols::sumcheck::{BatchedCubicSumcheck, Bindable},
     utils::{thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
+#[cfg(feature = "prover")]
+use crate::{optimal_iter, optimal_reduce};
 #[cfg(feature = "parallel")]
 use rayon::{prelude::*, slice::Chunks};
 
@@ -209,43 +211,44 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
             // If `eq_poly.E1` has been fully bound, we compute the cubic polynomial as we
             // would without the Dao-Thaler optimization, using the standard linear-time
             // sumcheck algorithm.
-            optimal_reduce!(self.par_chunks(4)
-                .zip(optimal_chunks!(eq_poly.E2, 2))
-                .map(|(layer_chunk, eq_chunk)| {
-                    let eq_evals = {
-                        let eval_point_0 = eq_chunk[0];
-                        let m_eq = eq_chunk[1] - eq_chunk[0];
-                        let eval_point_2 = eq_chunk[1] + m_eq;
-                        let eval_point_3 = eval_point_2 + m_eq;
-                        (eval_point_0, eval_point_2, eval_point_3)
-                    };
-                    let left = (
-                        *layer_chunk.first().unwrap_or(&F::zero()),
-                        *layer_chunk.get(2).unwrap_or(&F::zero()),
-                    );
-                    let right = (
-                        *layer_chunk.get(1).unwrap_or(&F::zero()),
-                        *layer_chunk.get(3).unwrap_or(&F::zero()),
-                    );
+            optimal_reduce!(
+                self.par_chunks(4).zip(optimal_chunks!(eq_poly.E2, 2)).map(
+                    |(layer_chunk, eq_chunk)| {
+                        let eq_evals = {
+                            let eval_point_0 = eq_chunk[0];
+                            let m_eq = eq_chunk[1] - eq_chunk[0];
+                            let eval_point_2 = eq_chunk[1] + m_eq;
+                            let eval_point_3 = eval_point_2 + m_eq;
+                            (eval_point_0, eval_point_2, eval_point_3)
+                        };
+                        let left = (
+                            *layer_chunk.first().unwrap_or(&F::zero()),
+                            *layer_chunk.get(2).unwrap_or(&F::zero()),
+                        );
+                        let right = (
+                            *layer_chunk.get(1).unwrap_or(&F::zero()),
+                            *layer_chunk.get(3).unwrap_or(&F::zero()),
+                        );
 
-                    let m_left = left.1 - left.0;
-                    let m_right = right.1 - right.0;
+                        let m_left = left.1 - left.0;
+                        let m_right = right.1 - right.0;
 
-                    let left_eval_2 = left.1 + m_left;
-                    let left_eval_3 = left_eval_2 + m_left;
+                        let left_eval_2 = left.1 + m_left;
+                        let left_eval_3 = left_eval_2 + m_left;
 
-                    let right_eval_2 = right.1 + m_right;
-                    let right_eval_3 = right_eval_2 + m_right;
+                        let right_eval_2 = right.1 + m_right;
+                        let right_eval_3 = right_eval_2 + m_right;
 
-                    (
-                        eq_evals.0 * left.0 * right.0,
-                        eq_evals.1 * left_eval_2 * right_eval_2,
-                        eq_evals.2 * left_eval_3 * right_eval_3,
-                    )
-                }),
-                    || (F::zero(), F::zero(), F::zero()),
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2)
-                )
+                        (
+                            eq_evals.0 * left.0 * right.0,
+                            eq_evals.1 * left_eval_2 * right_eval_2,
+                            eq_evals.2 * left_eval_3 * right_eval_3,
+                        )
+                    }
+                ),
+                || (F::zero(), F::zero(), F::zero()),
+                |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2)
+            )
         } else {
             // If `eq_poly.E1` has NOT been fully bound, we compute the cubic polynomial
             // using the nested summation approach described in Section 2.2 of https://eprint.iacr.org/2024/1210.pdf
@@ -274,45 +277,46 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                 .collect();
 
             let chunk_size = (self.len.next_power_of_two() / eq_poly.E2_len).max(1);
-            optimal_reduce!(optimal_iter!(eq_poly.E2[..eq_poly.E2_len])
-                .zip(self.par_chunks(chunk_size))
-                .map(|(E2_eval, P_x2)| {
-                    // The for-loop below corresponds to the inner sum:
-                    // \sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2))
-                    let mut inner_sum = (F::zero(), F::zero(), F::zero());
-                    for (E1_evals, P_chunk) in E1_evals.iter().zip(P_x2.chunks(4)) {
-                        let left = (
-                            *P_chunk.first().unwrap_or(&F::zero()),
-                            *P_chunk.get(2).unwrap_or(&F::zero()),
-                        );
-                        let right = (
-                            *P_chunk.get(1).unwrap_or(&F::zero()),
-                            *P_chunk.get(3).unwrap_or(&F::zero()),
-                        );
-                        let m_left = left.1 - left.0;
-                        let m_right = right.1 - right.0;
+            optimal_reduce!(
+                optimal_iter!(eq_poly.E2[..eq_poly.E2_len])
+                    .zip(self.par_chunks(chunk_size))
+                    .map(|(E2_eval, P_x2)| {
+                        // The for-loop below corresponds to the inner sum:
+                        // \sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2))
+                        let mut inner_sum = (F::zero(), F::zero(), F::zero());
+                        for (E1_evals, P_chunk) in E1_evals.iter().zip(P_x2.chunks(4)) {
+                            let left = (
+                                *P_chunk.first().unwrap_or(&F::zero()),
+                                *P_chunk.get(2).unwrap_or(&F::zero()),
+                            );
+                            let right = (
+                                *P_chunk.get(1).unwrap_or(&F::zero()),
+                                *P_chunk.get(3).unwrap_or(&F::zero()),
+                            );
+                            let m_left = left.1 - left.0;
+                            let m_right = right.1 - right.0;
 
-                        let left_eval_2 = left.1 + m_left;
-                        let left_eval_3 = left_eval_2 + m_left;
+                            let left_eval_2 = left.1 + m_left;
+                            let left_eval_3 = left_eval_2 + m_left;
 
-                        let right_eval_2 = right.1 + m_right;
-                        let right_eval_3 = right_eval_2 + m_right;
+                            let right_eval_2 = right.1 + m_right;
+                            let right_eval_3 = right_eval_2 + m_right;
 
-                        inner_sum.0 += E1_evals.0 * left.0 * right.0;
-                        inner_sum.1 += E1_evals.1 * left_eval_2 * right_eval_2;
-                        inner_sum.2 += E1_evals.2 * left_eval_3 * right_eval_3;
-                    }
+                            inner_sum.0 += E1_evals.0 * left.0 * right.0;
+                            inner_sum.1 += E1_evals.1 * left_eval_2 * right_eval_2;
+                            inner_sum.2 += E1_evals.2 * left_eval_3 * right_eval_3;
+                        }
 
-                    // Multiply the inner sum by E2[x2]
-                    (
-                        *E2_eval * inner_sum.0,
-                        *E2_eval * inner_sum.1,
-                        *E2_eval * inner_sum.2,
-                    )
-                }),
-                    || (F::zero(), F::zero(), F::zero()),
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2)
-                )
+                        // Multiply the inner sum by E2[x2]
+                        (
+                            *E2_eval * inner_sum.0,
+                            *E2_eval * inner_sum.1,
+                            *E2_eval * inner_sum.2,
+                        )
+                    }),
+                || (F::zero(), F::zero(), F::zero()),
+                |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2)
+            )
         };
 
         let cubic_evals = [

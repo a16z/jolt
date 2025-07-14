@@ -2,6 +2,8 @@
 use crate::field::JoltField;
 
 use ark_std::test_rng;
+#[cfg(not(feature = "parallel"))]
+use itertools::Itertools;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -98,7 +100,8 @@ macro_rules! optimal_fold {
         }
         #[cfg(not(feature = "parallel"))]
         {
-            $T.fold($ID, $OP).expect("failed to reduce, unexpected empty iterator")
+            $T.fold($ID, $OP)
+                .expect("failed to reduce, unexpected empty iterator")
         }
     }};
 }
@@ -112,7 +115,8 @@ macro_rules! optimal_reduce {
         }
         #[cfg(not(feature = "parallel"))]
         {
-            $T.reduce($OP).expect("failed to reduce, unexpected empty iterator")
+            $T.reduce($OP)
+                .expect("failed to reduce, unexpected empty iterator")
         }
     }};
 }
@@ -187,7 +191,6 @@ macro_rules! optimal_partition_map {
     }};
 }
 
-
 /// Converts an integer value to a bitvector (all values {0,1}) of field elements.
 /// Note: ordering has the MSB in the highest index. All of the following represent the integer 1:
 /// - [1]
@@ -221,8 +224,8 @@ pub fn index_to_field_bitvector<F: JoltField>(value: u64, bits: usize) -> Vec<F>
 
 #[tracing::instrument(skip_all)]
 pub fn compute_dotproduct<F: JoltField>(a: &[F], b: &[F]) -> F {
-    a.par_iter()
-        .zip_eq(b.par_iter())
+    optimal_iter!(a)
+        .zip_eq(optimal_iter!(b))
         .map(|(a_i, b_i)| *a_i * *b_i)
         .sum()
 }
@@ -230,8 +233,8 @@ pub fn compute_dotproduct<F: JoltField>(a: &[F], b: &[F]) -> F {
 /// Compute dotproduct optimized for values being 0 / 1
 #[tracing::instrument(skip_all)]
 pub fn compute_dotproduct_low_optimized<F: JoltField>(a: &[F], b: &[F]) -> F {
-    a.par_iter()
-        .zip_eq(b.par_iter())
+    optimal_iter!(a)
+        .zip_eq(optimal_iter!(b))
         .map(|(a_i, b_i)| mul_0_1_optimized(a_i, b_i))
         .sum()
 }

@@ -10,6 +10,8 @@ use crate::jolt::vm::{
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::DoryCommitmentScheme as Dory;
 use crate::poly::commitment::hyperkzg::HyperKZG;
+use crate::poly::commitment::zeromorph::Zeromorph;
+use crate::subprotocols::shout::sparse_dense::prove_sparse_dense_shout;
 use crate::subprotocols::shout::ShoutProof;
 use crate::subprotocols::twist::{TwistAlgorithm, TwistProof};
 use crate::utils::math::Math;

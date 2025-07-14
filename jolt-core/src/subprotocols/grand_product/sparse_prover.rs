@@ -3,7 +3,7 @@ use crate::optimal_chunks;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 #[cfg(test)]
 use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
+use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::poly::sparse_interleaved_poly::SparseInterleavedPolynomial;
 use crate::poly::split_eq_poly::SplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;

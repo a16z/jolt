@@ -24,6 +24,8 @@ use crate::{
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, Zero};
+#[cfg(not(feature = "parallel"))]
+use itertools::Itertools;
 use rand_chacha::ChaCha20Rng;
 use rand_core::{CryptoRng, RngCore, SeedableRng};
 #[cfg(feature = "parallel")]
@@ -31,8 +33,6 @@ use rayon::iter::{
     IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
     IntoParallelRefMutIterator, ParallelIterator,
 };
-#[cfg(not(feature = "parallel"))]
-use itertools::Itertools;
 use std::borrow::Borrow;
 use std::{marker::PhantomData, sync::Arc};
 
