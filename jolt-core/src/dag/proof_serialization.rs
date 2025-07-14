@@ -101,9 +101,9 @@ where
             2 => Ok(ProofData::SumcheckSwitchIndex(
                 usize::deserialize_with_mode(reader, compress, validate)?,
             )),
-            3 => Ok(ProofData::RamK(
-                usize::deserialize_with_mode(reader, compress, validate)?,
-            )),
+            3 => Ok(ProofData::RamK(usize::deserialize_with_mode(
+                reader, compress, validate,
+            )?)),
             _ => Err(SerializationError::InvalidData),
         }
     }
@@ -285,9 +285,13 @@ impl CanonicalSerialize for OpeningsKeys {
             OpeningsKeys::RegistersValEvaluationWa => {
                 18u8.serialize_with_mode(&mut writer, compress)
             }
-            OpeningsKeys::RamReadWriteCheckingVal => 19u8.serialize_with_mode(&mut writer, compress),
+            OpeningsKeys::RamReadWriteCheckingVal => {
+                19u8.serialize_with_mode(&mut writer, compress)
+            }
             OpeningsKeys::RamReadWriteCheckingRa => 20u8.serialize_with_mode(&mut writer, compress),
-            OpeningsKeys::RamReadWriteCheckingInc => 21u8.serialize_with_mode(&mut writer, compress),
+            OpeningsKeys::RamReadWriteCheckingInc => {
+                21u8.serialize_with_mode(&mut writer, compress)
+            }
             OpeningsKeys::RamRafEvaluationRa => 22u8.serialize_with_mode(&mut writer, compress),
             OpeningsKeys::RamValInit => 23u8.serialize_with_mode(&mut writer, compress),
             OpeningsKeys::RamValFinal => 24u8.serialize_with_mode(&mut writer, compress),
@@ -385,9 +389,9 @@ impl CanonicalDeserialize for OpeningsKeys {
             30 => Ok(OpeningsKeys::RamBooleanityRa(usize::deserialize_with_mode(
                 reader, compress, validate,
             )?)),
-            31 => Ok(OpeningsKeys::RamRaVirtualization(usize::deserialize_with_mode(
-                reader, compress, validate,
-            )?)),
+            31 => Ok(OpeningsKeys::RamRaVirtualization(
+                usize::deserialize_with_mode(reader, compress, validate)?,
+            )),
             _ => Err(SerializationError::InvalidData),
         }
     }
@@ -744,7 +748,7 @@ where
     ProofTranscript: Transcript,
 {
     fn into(self) -> StateManager<'a, F, ProofTranscript, PCS> {
-        use crate::poly::opening_proof::{OpeningPoint, VerifierOpeningAccumulator, LITTLE_ENDIAN};
+        use crate::poly::opening_proof::{OpeningPoint, VerifierOpeningAccumulator};
 
         let proof = self;
 

@@ -74,10 +74,10 @@ impl JoltDAG {
             let _guard = DoryGlobals::initialize(K, padded_trace_length);
 
             // HACK
-            prover_state_manager.proofs.borrow_mut().insert(
-                ProofKeys::RamK,
-                ProofData::RamK(ram_K),
-            );
+            prover_state_manager
+                .proofs
+                .borrow_mut()
+                .insert(ProofKeys::RamK, ProofData::RamK(ram_K));
 
             _guard
         };
