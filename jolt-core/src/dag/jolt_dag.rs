@@ -11,11 +11,9 @@ use crate::subprotocols::sumcheck::{BatchableSumcheckInstance, BatchedSumcheck};
 use crate::utils::transcript::Transcript;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
-pub struct JoltDAG<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
-{
-    prover_state_manager: Option<StateManager<'a, F, ProofTranscript, PCS>>,
-    verifier_state_manager: Option<StateManager<'a, F, ProofTranscript, PCS>>,
-}
+use std::sync::Arc;
+
+pub struct JoltDAG;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct JoltDagProof<const WORD_SIZE: usize, F, PCS, ProofTranscript>
@@ -24,7 +22,7 @@ where
     PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript
 {
-    pub verifier_preprocessing: crate::jolt::vm::JoltVerifierPreprocessing<F, PCS>,
+    pub verifier_preprocessing: Arc<crate::jolt::vm::JoltVerifierPreprocessing<F, PCS>>,
     pub program_io: tracer::JoltDevice,
     pub trace_length: usize,
     pub sumcheck_switch_index_registers: usize,
@@ -35,36 +33,17 @@ where
     pub claims: crate::dag::state_manager::Claims<F>,
 }
 
-impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
-    JoltDAG<'a, F, ProofTranscript, PCS>
-{
+impl JoltDAG {
     pub fn new() -> Self {
-        Self {
-            prover_state_manager: None,
-            verifier_state_manager: None,
-        }
+        Self
     }
 
-    pub fn new_prover(prover_state_manager: StateManager<'a, F, ProofTranscript, PCS>) -> Self {
-        Self {
-            prover_state_manager: Some(prover_state_manager),
-            verifier_state_manager: None,
-        }
-    }
-
-    pub fn new_verifier(verifier_state_manager: StateManager<'a, F, ProofTranscript, PCS>) -> Self {
-        Self {
-            prover_state_manager: None,
-            verifier_state_manager: Some(verifier_state_manager),
-        }
-    }
-
-    pub fn prove<const WORD_SIZE: usize>(&mut self) -> Result<JoltDagProof<WORD_SIZE, F, PCS, ProofTranscript>, anyhow::Error> {
+    pub fn prove<'a, const WORD_SIZE: usize, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+        &mut self,
+        prover_state_manager: &mut StateManager<'a, F, ProofTranscript, PCS>,
+    ) -> Result<JoltDagProof<WORD_SIZE, F, PCS, ProofTranscript>, anyhow::Error> {
         // Initialize DoryGlobals first
         let _guard = {
-            let prover_state_manager = self.prover_state_manager.as_mut()
-                .ok_or_else(|| anyhow::anyhow!("Prover state not initialized"))?;
-            
             let (preprocessing, trace, _, _) = prover_state_manager.get_prover_data();
             let trace_length = trace.len();
             let padded_trace_length = trace_length.next_power_of_two();
@@ -95,8 +74,6 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
 
         // Generate and commit to all witness polynomials
         {
-            let prover_state_manager = self.prover_state_manager.as_mut()
-                .ok_or_else(|| anyhow::anyhow!("Prover state not initialized"))?;
             let (preprocessing, trace, _, _) = prover_state_manager.get_prover_data();
 
             let committed_polys: Vec<_> = ALL_COMMITTED_POLYNOMIALS
@@ -115,10 +92,6 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
 
             prover_state_manager.set_commitments(jolt_commitments);
         }
-
-        // Now work with the state manager
-        let prover_state_manager = self.prover_state_manager.as_mut()
-            .ok_or_else(|| anyhow::anyhow!("Prover state not initialized"))?;
 
         // Append commitments to transcript
         let commitments = prover_state_manager.get_commitments();
@@ -188,15 +161,12 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         Ok(JoltDagProof::from(&*prover_state_manager))
     }
 
-    pub fn verify<const WORD_SIZE: usize>(&mut self, proof: JoltDagProof<WORD_SIZE, F, PCS, ProofTranscript>) -> Result<(), anyhow::Error> {
+    pub fn verify<'a, const WORD_SIZE: usize, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+        &mut self,
+        proof: JoltDagProof<WORD_SIZE, F, PCS, ProofTranscript>,
+    ) -> Result<(), anyhow::Error> {
         // Convert proof to verifier state manager
-        let verifier_preprocessing = self.verifier_state_manager.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Verifier state not initialized"))?
-            .get_verifier_data().0;
-        
-        let verifier_state_manager_tuple = (proof, verifier_preprocessing);
-        self.verifier_state_manager = Some(verifier_state_manager_tuple.into());
-        let verifier_state_manager = self.verifier_state_manager.as_mut().unwrap();
+        let mut verifier_state_manager: StateManager<'a, F, ProofTranscript, PCS> = proof.into();
         // Append commitments to transcript
         let commitments = verifier_state_manager.get_commitments();
         let transcript = verifier_state_manager.get_transcript();
@@ -210,13 +180,13 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         let mut spartan_dag = SpartanDag::<F>::new::<ProofTranscript>(padded_trace_length);
         let mut lookups_dag = LookupsDag::<F>::default();
         let mut registers_dag = RegistersDag::default();
-        spartan_dag.stage1_verify(verifier_state_manager)?;
+        spartan_dag.stage1_verify(&mut verifier_state_manager)?;
 
         // Stage 2:
         let mut stage2_instances: Vec<_> = std::iter::empty()
-            .chain(spartan_dag.stage2_verifier_instances(verifier_state_manager))
-            .chain(registers_dag.stage2_verifier_instances(verifier_state_manager))
-            .chain(lookups_dag.stage2_verifier_instances(verifier_state_manager))
+            .chain(spartan_dag.stage2_verifier_instances(&mut verifier_state_manager))
+            .chain(registers_dag.stage2_verifier_instances(&mut verifier_state_manager))
+            .chain(lookups_dag.stage2_verifier_instances(&mut verifier_state_manager))
             .collect();
         let stage2_instances_ref: Vec<&dyn BatchableSumcheckInstance<F>> = stage2_instances
             .iter()
@@ -248,9 +218,9 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
 
         // Stage 3:
         let mut stage3_instances: Vec<_> = std::iter::empty()
-            .chain(spartan_dag.stage3_verifier_instances(verifier_state_manager))
-            .chain(registers_dag.stage3_verifier_instances(verifier_state_manager))
-            .chain(lookups_dag.stage3_verifier_instances(verifier_state_manager))
+            .chain(spartan_dag.stage3_verifier_instances(&mut verifier_state_manager))
+            .chain(registers_dag.stage3_verifier_instances(&mut verifier_state_manager))
+            .chain(lookups_dag.stage3_verifier_instances(&mut verifier_state_manager))
             .collect();
         let stage3_instances_ref: Vec<&dyn BatchableSumcheckInstance<F>> = stage3_instances
             .iter()

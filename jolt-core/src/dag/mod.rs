@@ -13,7 +13,6 @@ mod tests {
     use crate::utils::transcript::{KeccakTranscript, Transcript};
     use ark_bn254::Fr;
     use std::cell::RefCell;
-    use std::collections::HashMap;
     use std::rc::Rc;
     use tracer;
 
@@ -82,7 +81,7 @@ mod tests {
         let commitments = Rc::new(RefCell::new(None));
 
         // Create state manager for prover
-        let prover_state_manager = state_manager::StateManager::new_prover(
+        let mut prover_state_manager = state_manager::StateManager::new_prover(
             &preprocessing,
             trace.clone(),
             io_device.clone(),
@@ -93,42 +92,17 @@ mod tests {
             commitments.clone(),
         );
 
-        // Create DAG with prover state
-        let mut prover_dag = jolt_dag::JoltDAG::new_prover(prover_state_manager);
+        // Create DAG
+        let mut dag = jolt_dag::JoltDAG::new();
 
         // Prove and get the proof
-        let proof = match prover_dag.prove::<32>() {
+        let proof = match dag.prove::<32, Fr, KeccakTranscript, MockCommitScheme<Fr>>(&mut prover_state_manager) {
             Ok(proof) => proof,
             Err(e) => panic!("DAG prove failed: {e}"),
         };
 
-        // Create verifier preprocessing
-        let verifier_preprocessing =
-            crate::jolt::vm::JoltVerifierPreprocessing::from(&preprocessing);
-        
-        // Create verifier state manager with minimal data
-        let verifier_accumulator = Rc::new(RefCell::new(
-            crate::poly::opening_proof::VerifierOpeningAccumulator::<Fr, MockCommitScheme<Fr>>::new()
-        ));
-        let verifier_transcript = Rc::new(RefCell::new(KeccakTranscript::new(b"Jolt")));
-        let verifier_proofs = Rc::new(RefCell::new(Proofs::default()));
-        let verifier_commitments = Rc::new(RefCell::new(None));
-        
-        let verifier_state_manager = state_manager::StateManager::new_verifier(
-            &verifier_preprocessing,
-            io_device,
-            trace_length,
-            verifier_accumulator,
-            verifier_transcript,
-            verifier_proofs,
-            verifier_commitments,
-        );
-
-        // Create DAG with verifier state
-        let mut verifier_dag = jolt_dag::JoltDAG::new_verifier(verifier_state_manager);
-
         // Verify with the proof
-        if let Err(e) = verifier_dag.verify(proof) {
+        if let Err(e) = dag.verify::<32, Fr, KeccakTranscript, MockCommitScheme<Fr>>(proof) {
             panic!("DAG verify failed: {e}");
         }
 

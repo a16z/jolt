@@ -11,6 +11,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::rc::Rc;
+use std::sync::Arc;
 
 impl<F: JoltField, ProofTranscript: Transcript> CanonicalSerialize for ProofData<F, ProofTranscript>
 where
@@ -591,7 +592,7 @@ where
         let trace_length = trace.len();
         
         // Create verifier preprocessing from prover preprocessing
-        let verifier_preprocessing = JoltVerifierPreprocessing::from(preprocessing);
+        let verifier_preprocessing = Arc::new(JoltVerifierPreprocessing::from(preprocessing));
         
         // Get commitments
         let commitments = state_manager.get_commitments();
@@ -628,9 +629,8 @@ where
 }
 
 // Conversion from JoltDagProof to StateManager (with verifier state)
-// Since we store verifier_preprocessing in the proof, we still need to handle the lifetime issue
 impl<'a, const WORD_SIZE: usize, F, PCS, ProofTranscript> Into<StateManager<'a, F, ProofTranscript, PCS>>
-    for (JoltDagProof<WORD_SIZE, F, PCS, ProofTranscript>, &'a crate::jolt::vm::JoltVerifierPreprocessing<F, PCS>)
+    for JoltDagProof<WORD_SIZE, F, PCS, ProofTranscript>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
@@ -639,7 +639,7 @@ where
     fn into(self) -> StateManager<'a, F, ProofTranscript, PCS> {
         use crate::poly::opening_proof::{VerifierOpeningAccumulator, OpeningPoint, LITTLE_ENDIAN};
         
-        let (proof, verifier_preprocessing) = self;
+        let proof = self;
         
         // Create new verifier accumulator
         let verifier_accumulator = VerifierOpeningAccumulator::<F, PCS>::new();
@@ -655,7 +655,7 @@ where
         
         // Create state manager with all required data
         let state_manager = StateManager::new_verifier(
-            verifier_preprocessing,
+            proof.verifier_preprocessing.clone(),
             proof.program_io,
             proof.trace_length,
             verifier_accumulator.clone(),

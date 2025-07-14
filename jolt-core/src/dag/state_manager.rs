@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::field::JoltField;
 use crate::jolt::vm::{JoltCommitments, JoltProverPreprocessing, JoltVerifierPreprocessing};
@@ -16,18 +17,16 @@ use tracer::emulator::memory::Memory;
 use tracer::instruction::RV32IMCycle;
 use tracer::JoltDevice;
 
-// Wrapper type for the HashMap
+// Wrappers to avoid Orphan rules
 #[derive(Debug, Clone, Default)]
 pub struct Proofs<F: JoltField, ProofTranscript: Transcript>(
     pub HashMap<ProofKeys, ProofData<F, ProofTranscript>>
 );
 
-// Wrapper type for claims HashMap
 #[derive(Debug, Clone, Default)]
 pub struct Claims<F: JoltField>(
     pub HashMap<OpeningsKeys, F>
 );
-
 
 #[derive(Hash, PartialEq, Eq, Clone, Debug)]
 pub enum ProofKeys {
@@ -42,26 +41,24 @@ pub enum ProofData<F: JoltField, ProofTranscript: Transcript> {
     BatchableSumcheckData(SumcheckInstanceProof<F, ProofTranscript>),
 }
 
-// pub type Proofs<F, ProofTranscript> = HashMap<ProofKeys, ProofData<F, ProofTranscript>>;
-
 pub struct ProverState<'a, F: JoltField, PCS>
 where
     PCS: CommitmentScheme<Field = F>,
 {
-    pub preprocessing: Option<&'a JoltProverPreprocessing<F, PCS>>,
-    pub trace: Option<Vec<RV32IMCycle>>,
-    pub program_io: Option<JoltDevice>,
-    pub final_memory_state: Option<Memory>,
+    pub preprocessing: &'a JoltProverPreprocessing<F, PCS>,
+    pub trace: Vec<RV32IMCycle>,
+    pub program_io: JoltDevice,
+    pub final_memory_state: Memory,
     pub accumulator: Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>,
 }
 
-pub struct VerifierState<'a, F: JoltField, PCS>
+pub struct VerifierState<F: JoltField, PCS>
 where
     PCS: CommitmentScheme<Field = F>,
 {
-    pub preprocessing: Option<&'a JoltVerifierPreprocessing<F, PCS>>,
-    pub program_io: Option<JoltDevice>,
-    pub trace_length: Option<usize>,
+    pub preprocessing: Arc<JoltVerifierPreprocessing<F, PCS>>,
+    pub program_io: JoltDevice,
+    pub trace_length: usize,
     pub accumulator: Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>,
 }
 
@@ -75,7 +72,7 @@ pub struct StateManager<
     pub proofs: Rc<RefCell<Proofs<F, ProofTranscript>>>,
     pub commitments: Rc<RefCell<Option<JoltCommitments<F, PCS>>>>,
     prover_state: Option<ProverState<'a, F, PCS>>,
-    verifier_state: Option<VerifierState<'a, F, PCS>>,
+    verifier_state: Option<VerifierState<F, PCS>>,
 }
 
 impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
@@ -96,10 +93,10 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             proofs,
             commitments,
             prover_state: Some(ProverState {
-                preprocessing: Some(preprocessing),
-                trace: Some(trace),
-                program_io: Some(program_io),
-                final_memory_state: Some(final_memory_state),
+                preprocessing,
+                trace,
+                program_io,
+                final_memory_state,
                 accumulator: prover_accumulator,
             }),
             verifier_state: None,
@@ -107,7 +104,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
     }
 
     pub fn new_verifier(
-        preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
+        preprocessing: Arc<JoltVerifierPreprocessing<F, PCS>>,
         program_io: JoltDevice,
         trace_length: usize,
         verifier_accumulator: Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>,
@@ -121,9 +118,9 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             commitments,
             prover_state: None,
             verifier_state: Some(VerifierState {
-                preprocessing: Some(preprocessing),
-                program_io: Some(program_io),
-                trace_length: Some(trace_length),
+                preprocessing,
+                program_io,
+                trace_length,
                 accumulator: verifier_accumulator,
             }),
         }
@@ -140,31 +137,22 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
     ) {
         if let Some(ref prover_state) = self.prover_state {
             (
-                prover_state.preprocessing.expect("Preprocessing not set"),
-                prover_state.trace.as_ref().expect("Trace not set"),
-                prover_state
-                    .program_io
-                    .as_ref()
-                    .expect("Program IO not set"),
-                prover_state
-                    .final_memory_state
-                    .as_ref()
-                    .expect("Final memory state not set"),
+                prover_state.preprocessing,
+                &prover_state.trace,
+                &prover_state.program_io,
+                &prover_state.final_memory_state,
             )
         } else {
             panic!("Prover state not initialized");
         }
     }
 
-    pub fn get_verifier_data(&self) -> (&'a JoltVerifierPreprocessing<F, PCS>, &JoltDevice, usize) {
+    pub fn get_verifier_data(&self) -> (&JoltVerifierPreprocessing<F, PCS>, &JoltDevice, usize) {
         if let Some(ref verifier_state) = self.verifier_state {
             (
-                verifier_state.preprocessing.expect("Preprocessing not set"),
-                verifier_state
-                    .program_io
-                    .as_ref()
-                    .expect("Program IO not set"),
-                verifier_state.trace_length.expect("Trace length not set"),
+                &verifier_state.preprocessing,
+                &verifier_state.program_io,
+                verifier_state.trace_length,
             )
         } else {
             panic!("Verifier state not initialized");
