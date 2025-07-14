@@ -162,6 +162,16 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             .collect();
         BatchedSumcheck::cache_openings(stage4_instances_mut, Some(accumulator.clone()), &r_stage4);
 
+        // Batch-prove all openings
+        let opening_proof = accumulator
+            .borrow_mut()
+            .reduce_and_prove(&preprocessing.generators, &mut *transcript.borrow_mut());
+
+        self.prover_state_manager.proofs.borrow_mut().insert(
+            ProofKeys::ReducedOpeningProof,
+            ProofData::ReducedOpeningProof(opening_proof),
+        );
+
         Ok(())
     }
 
@@ -186,7 +196,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         self.receive_claims()?;
 
         // Stage 1:
-        let (_, _, trace_length) = self.verifier_state_manager.get_verifier_data();
+        let (preprocessing, _, trace_length) = self.verifier_state_manager.get_verifier_data();
         let padded_trace_length = trace_length.next_power_of_two();
         let mut spartan_dag = SpartanDag::<F>::new::<ProofTranscript>(padded_trace_length);
         let mut lookups_dag = LookupsDag::<F>::default();
@@ -297,6 +307,22 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             .collect();
         let accumulator = self.verifier_state_manager.get_verifier_accumulator();
         BatchedSumcheck::cache_claims(stage4_instances_mut, Some(accumulator), &r_stage4);
+
+        // Batch-prove all openings
+        let batched_opening_proof = proofs
+            .get(&ProofKeys::ReducedOpeningProof)
+            .expect("Reduced opening proof not found");
+        let batched_opening_proof = match batched_opening_proof {
+            ProofData::ReducedOpeningProof(proof) => proof,
+            _ => panic!("Invalid proof type for stage 4"),
+        };
+
+        let accumulator = self.verifier_state_manager.get_verifier_accumulator();
+        accumulator.borrow_mut().reduce_and_verify(
+            &preprocessing.generators,
+            batched_opening_proof,
+            &mut *transcript.borrow_mut(),
+        )?;
 
         Ok(())
     }
