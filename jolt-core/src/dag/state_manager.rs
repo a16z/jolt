@@ -21,6 +21,8 @@ pub enum ProofKeys {
     SpartanOuterSumcheck,
     Stage2Sumcheck,
     Stage3Sumcheck,
+    Stage5Sumcheck,
+    OpeningProof,
 }
 
 pub enum ProofData<F: JoltField, ProofTranscript: Transcript> {

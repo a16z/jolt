@@ -7,6 +7,7 @@ pub mod identity_poly;
 pub mod multilinear_polynomial;
 pub mod one_hot_polynomial;
 pub mod opening_proof;
+pub mod opening_proof_dag;
 pub mod prefix_suffix;
 pub mod program_io_polynomial;
 pub mod range_mask_polynomial;
