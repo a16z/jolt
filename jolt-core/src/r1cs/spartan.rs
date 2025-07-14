@@ -1,7 +1,8 @@
+#![allow(unused_imports)]
+
 use std::marker::PhantomData;
 use tracer::instruction::RV32IMCycle;
 use tracing::{span, Level};
-
 use crate::field::JoltField;
 use crate::jolt::vm::JoltCommitments;
 use crate::jolt::vm::JoltProverPreprocessing;

@@ -90,6 +90,34 @@ macro_rules! optimal_flat_map {
 }
 
 #[macro_export]
+macro_rules! optimal_fold {
+    ($T:expr, $ID:expr, $OP:expr) => {{
+        #[cfg(feature = "parallel")]
+        {
+            $T.fold($ID, $OP)
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            $T.fold($ID, $OP).expect("failed to reduce, unexpected empty iterator")
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! optimal_reduce {
+    ($T:expr, $ID:expr, $OP:expr) => {{
+        #[cfg(feature = "parallel")]
+        {
+            $T.reduce($ID, $OP)
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            $T.reduce($OP).expect("failed to reduce, unexpected empty iterator")
+        }
+    }};
+}
+
+#[macro_export]
 macro_rules! optimal_num_threads {
     () => {{
         #[cfg(feature = "parallel")]
@@ -144,6 +172,21 @@ macro_rules! join_if_rayon {
         }
     }};
 }
+
+#[macro_export]
+macro_rules! optimal_partition_map {
+    ($T:expr, $F:expr) => {{
+        #[cfg(feature = "parallel")]
+        {
+            $T.partition_map($F)
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            $T.partition_map($F)
+        }
+    }};
+}
+
 
 /// Converts an integer value to a bitvector (all values {0,1}) of field elements.
 /// Note: ordering has the MSB in the highest index. All of the following represent the integer 1:

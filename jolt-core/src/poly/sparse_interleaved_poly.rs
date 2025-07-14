@@ -8,6 +8,15 @@ use crate::{
     subprotocols::sumcheck::{BatchedCubicSumcheck, Bindable},
     utils::{math::Math, transcript::Transcript},
 };
+#[cfg(feature = "prover")]
+use super::{split_eq_poly::SplitEqPolynomial, unipoly::UniPoly};
+#[cfg(feature = "prover")]
+use crate::field::{OptimizedMul};
+#[cfg(feature = "prover")]
+use crate::utils::math::Math;
+use crate::{optimal_iter, optimal_iter_mut, field::JoltField, subprotocols::{
+    sumcheck::{BatchedCubicSumcheck, Bindable},
+}, utils::transcript::Transcript};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -215,9 +224,8 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
                 coalesced: Some(coalesced.layer_output()),
             }
         } else {
-            let coeffs: Vec<Vec<_>> = self
-                .coeffs
-                .par_iter()
+            let coeffs: Vec<Vec<_>> = optimal_iter!(self
+                .coeffs)
                 .map(|segment| {
                     let mut output_segment: Vec<SparseCoefficient<F>> =
                         Vec::with_capacity(segment.len());
@@ -282,8 +290,7 @@ impl<F: JoltField> Bindable<F> for SparseInterleavedPolynomial<F> {
             coalesced.bind(r);
             self.dense_len = padded_len / 2;
         } else {
-            self.coeffs
-                .par_iter_mut()
+            optimal_iter_mut!(self.coeffs)
                 .for_each(|segment: &mut Vec<SparseCoefficient<F>>| {
                     let mut next_left_node_to_process = 0;
                     let mut next_right_node_to_process = 0;
@@ -451,6 +458,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
     /// If `self` is not coalesced, we basically do the same thing but with with the
     /// sparse vectors in `self.coeffs`, some fancy optimizations, and many more cases to check 😬
     #[tracing::instrument(skip_all, name = "SparseInterleavedPolynomial::compute_cubic")]
+    #[cfg(feature = "prover")]
     fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
         if let Some(coalesced) = &self.coalesced {
             return BatchedCubicSumcheck::<F, ProofTranscript>::compute_cubic(

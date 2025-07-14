@@ -31,6 +31,8 @@ use rayon::iter::{
     IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
     IntoParallelRefMutIterator, ParallelIterator,
 };
+#[cfg(not(feature = "parallel"))]
+use itertools::Itertools;
 use std::borrow::Borrow;
 use std::{marker::PhantomData, sync::Arc};
 

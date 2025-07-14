@@ -6,12 +6,14 @@ pub use prover::*;
 
 use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::{PolynomialBinding, PolynomialEvaluation};
-use crate::poly::split_eq_poly::{GruenSplitEqPolynomial, SplitEqPolynomial};
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 use ark_serialize::*;
 use std::marker::PhantomData;
+use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
+#[cfg(feature = "prover")]
+use crate::poly::split_eq_poly::SplitEqPolynomial;
 
 pub trait Bindable<F: JoltField>: Sync {
     fn bind(&mut self, r: F);
@@ -23,6 +25,7 @@ where
     F: JoltField,
     ProofTranscript: Transcript,
 {
+    #[cfg(feature = "prover")]
     fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F>;
     fn final_claims(&self) -> (F, F);
 

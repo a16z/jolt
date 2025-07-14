@@ -1,5 +1,6 @@
 #[cfg(test)]
 use super::dense_mlpoly::DensePolynomial;
+#[cfg(feature = "prover")]
 use super::{split_eq_poly::SplitEqPolynomial, unipoly::UniPoly};
 use crate::subprotocols::grand_product::BatchedGrandProductLayer;
 use crate::{
@@ -200,6 +201,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
     ///    left(0, 0, 0, ..., x_b=0) |  |  right(0, 0, 0, ..., x_b=1)
     ///     right(0, 0, 0, ..., x_b=0)  left(0, 0, 0, ..., x_b=1)
     #[tracing::instrument(skip_all, name = "DenseInterleavedPolynomial::compute_cubic")]
+    #[cfg(feature = "prover")]
     fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
         // We use the Dao-Thaler optimization for the EQ polynomial, so there are two cases we
         // must handle. For details, refer to Section 2.2 of https://eprint.iacr.org/2024/1210.pdf
@@ -207,7 +209,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
             // If `eq_poly.E1` has been fully bound, we compute the cubic polynomial as we
             // would without the Dao-Thaler optimization, using the standard linear-time
             // sumcheck algorithm.
-            self.par_chunks(4)
+            optimal_reduce!(self.par_chunks(4)
                 .zip(optimal_chunks!(eq_poly.E2, 2))
                 .map(|(layer_chunk, eq_chunk)| {
                     let eq_evals = {
@@ -240,10 +242,9 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                         eq_evals.1 * left_eval_2 * right_eval_2,
                         eq_evals.2 * left_eval_3 * right_eval_3,
                     )
-                })
-                .reduce(
+                }),
                     || (F::zero(), F::zero(), F::zero()),
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2)
                 )
         } else {
             // If `eq_poly.E1` has NOT been fully bound, we compute the cubic polynomial
@@ -273,7 +274,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                 .collect();
 
             let chunk_size = (self.len.next_power_of_two() / eq_poly.E2_len).max(1);
-            optimal_iter!(eq_poly.E2[..eq_poly.E2_len])
+            optimal_reduce!(optimal_iter!(eq_poly.E2[..eq_poly.E2_len])
                 .zip(self.par_chunks(chunk_size))
                 .map(|(E2_eval, P_x2)| {
                     // The for-loop below corresponds to the inner sum:
@@ -308,10 +309,9 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                         *E2_eval * inner_sum.1,
                         *E2_eval * inner_sum.2,
                     )
-                })
-                .reduce(
+                }),
                     || (F::zero(), F::zero(), F::zero()),
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2)
                 )
         };
 

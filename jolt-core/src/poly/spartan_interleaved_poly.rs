@@ -4,19 +4,22 @@ use super::{
     unipoly::CompressedUniPoly,
 };
 use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
+#[cfg(feature = "prover")]
 use crate::{
-    field::{JoltField, OptimizedMul, OptimizedMulI128},
-    into_optimal_iter, optimal_chunk_by, optimal_flat_map, optimal_iter,
-    r1cs::builder::Constraint,
-    utils::{
-        math::Math,
-        small_value::{svo_helpers, NUM_SVO_ROUNDS},
-        transcript::Transcript,
-    },
+    field::OptimizedMul,
+    optimal_chunk_by, optimal_flat_map,
 };
+use crate::{field::{JoltField, OptimizedMulI128}, into_optimal_iter, optimal_iter, optimal_num_threads, r1cs::builder::Constraint, utils::{
+    math::Math,
+    small_value::{svo_helpers, NUM_SVO_ROUNDS},
+    transcript::Transcript,
+}};
 use ark_ff::Zero;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+#[cfg(not(feature = "parallel"))]
+use itertools::Itertools;
+
 
 pub const TOTAL_NUM_ACCUMS: usize = svo_helpers::total_num_accums(NUM_SVO_ROUNDS);
 pub const NUM_NONTRIVIAL_TERNARY_POINTS: usize =
@@ -196,7 +199,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
             std::cmp::min(
                 num_x_out_vals,
                 // Setting number of chunks for more even work distribution
-                rayon::current_num_threads().next_power_of_two() * 8,
+                optimal_num_threads!().next_power_of_two() * 8,
             )
         } else {
             1 // Avoid 0 chunks if num_x_out_vals is 0
@@ -744,6 +747,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         skip_all,
         name = "NewSpartanInterleavedPolynomial::remaining_sumcheck_round"
     )]
+    #[cfg(feature = "prover")]
     pub fn remaining_sumcheck_round<ProofTranscript: Transcript>(
         &mut self,
         eq_poly: &mut GruenSplitEqPolynomial<F>,

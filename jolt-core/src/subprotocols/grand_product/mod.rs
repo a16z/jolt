@@ -10,18 +10,23 @@ mod sparse_prover;
 
 use super::sumcheck::{BatchedCubicSumcheck, SumcheckInstanceProof};
 use crate::field::JoltField;
-use crate::into_optimal_iter;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::dense_interleaved_poly::DenseInterleavedPolynomial;
 use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
-use crate::poly::split_eq_poly::SplitEqPolynomial;
+use crate::poly::opening_proof::VerifierOpeningAccumulator;
+#[cfg(feature = "prover")]
+use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::subprotocols::grand_product::quark::QuarkGrandProductProof;
 use crate::utils::math::Math;
-use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::Transcript;
 use ark_serialize::*;
 use itertools::Itertools;
+#[cfg(feature = "prover")]
+use crate::into_optimal_iter;
+use crate::poly::dense_interleaved_poly::DenseInterleavedPolynomial;
+#[cfg(feature = "prover")]
+use crate::poly::split_eq_poly::SplitEqPolynomial;
+#[cfg(feature = "prover")]
+use crate::utils::thread::drop_in_background_thread;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 

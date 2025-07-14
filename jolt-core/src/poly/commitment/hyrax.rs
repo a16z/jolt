@@ -23,7 +23,7 @@ use rayon::prelude::*;
 use tracing::trace_span;
 
 use crate::msm::{Icicle, VariableBaseMSM};
-use crate::{into_optimal_iter, optimal_chunks, optimal_iter};
+use crate::{into_optimal_iter, optimal_chunks, optimal_flat_map, optimal_iter, optimal_num_threads, optimal_reduce};
 
 /// Hyrax commits to a multilinear polynomial by interpreting its coefficients as a
 /// matrix. Given the number of variables in the polynomial, and the desired "aspect
@@ -194,19 +194,18 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
     ) -> Vec<G::ScalarField> {
         let (_, R_size) = matrix_dimensions(poly.get_num_vars(), ratio);
 
-        optimal_chunks!(poly.evals_ref(), R_size)
+        optimal_reduce!(optimal_chunks!(poly.evals_ref(), R_size)
             .enumerate()
             .map(|(i, row)| {
                 row.iter()
                     .map(|x| mul_0_1_optimized(&L[i], x))
                     .collect::<Vec<G::ScalarField>>()
-            })
-            .reduce(
+            }),
                 || vec![G::ScalarField::zero(); R_size],
                 |mut acc: Vec<_>, row| {
                     acc.iter_mut().zip(row).for_each(|(x, y)| *x += y);
                     acc
-                },
+                }
             )
     }
 }
@@ -238,12 +237,11 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
 
         let poly_len = polynomials[0].len();
 
-        let num_chunks = rayon::current_num_threads().next_power_of_two();
+        let num_chunks = optimal_num_threads!().next_power_of_two();
         let chunk_size = poly_len / num_chunks;
 
         let rlc_poly = if chunk_size > 0 {
-            into_optimal_iter!((0..num_chunks))
-                .flat_map_iter(|chunk_index| {
+            optimal_flat_map!(into_optimal_iter!((0..num_chunks)), |chunk_index| {
                     let mut chunk = vec![G::ScalarField::zero(); chunk_size];
                     for (coeff, poly) in rlc_coefficients.iter().zip(polynomials.iter()) {
                         for (rlc, poly_eval) in chunk
@@ -257,19 +255,18 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
                 })
                 .collect::<Vec<_>>()
         } else {
-            optimal_iter!(rlc_coefficients)
+            optimal_reduce!(optimal_iter!(rlc_coefficients)
                 .zip(optimal_iter!(polynomials))
-                .map(|(coeff, poly)| poly.evals_ref().iter().map(|eval| *coeff * *eval).collect())
-                .reduce(
+                .map(|(coeff, poly)| poly.evals_ref().iter().map(|eval| *coeff * *eval).collect()),
                     || vec![G::ScalarField::zero(); poly_len],
-                    |running, new| {
+                    |running: Vec<_>, new: Vec<_>| {
                         debug_assert_eq!(running.len(), new.len());
                         running
                             .iter()
                             .zip(new.iter())
                             .map(|(r, n)| *r + *n)
                             .collect()
-                    },
+                    }
                 )
         };
 
@@ -310,7 +307,7 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
 
         let rlc_eval = compute_dotproduct(&rlc_coefficients, openings);
 
-        let rlc_commitment = optimal_iter!(rlc_coefficients)
+        let rlc_commitment = optimal_reduce!(optimal_iter!(rlc_coefficients)
             .zip(optimal_iter!(commitments))
             .map(|(coeff, commitment)| {
                 commitment
@@ -318,17 +315,16 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
                     .iter()
                     .map(|row_commitment| *row_commitment * coeff)
                     .collect()
-            })
-            .reduce(
+            }),
                 || vec![G::zero(); L_size],
-                |running, new| {
+                |running: Vec<_>, new: Vec<_>| {
                     debug_assert_eq!(running.len(), new.len());
                     running
                         .iter()
                         .zip(new.iter())
                         .map(|(r, n)| *r + n)
                         .collect()
-                },
+                }
             );
 
         self.joint_proof.verify(

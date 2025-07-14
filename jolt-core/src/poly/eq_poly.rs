@@ -1,5 +1,5 @@
 use crate::field::JoltField;
-use crate::optimal_iter_mut;
+use crate::{into_optimal_iter, optimal_chunks_mut, optimal_iter_mut};
 use crate::utils::{math::Math, thread::unsafe_allocate_zero_vec};
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
@@ -158,8 +158,7 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
             Then, the next bit in x is 0 and the next bit in y is 1.
             The remaining higher bits are the same in x and y.
         */
-        (0..l)
-            .into_par_iter()
+        into_optimal_iter!((0..l))
             .map(|k| {
                 let lower_bits_product = (0..k)
                     .map(|i| x[l - 1 - i] * (F::one() - y[l - 1 - i]))
@@ -187,9 +186,9 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
             debug_assert!(i != 0);
             let step = 1 << (ell - i); // step = (full / size)/2
 
-            let mut selected: Vec<_> = eq_evals.par_iter_mut().step_by(step).collect();
+            let mut selected: Vec<_> = optimal_iter_mut!(eq_evals).step_by(step).collect();
 
-            selected.par_chunks_mut(2).for_each(|chunk| {
+            optimal_chunks_mut!(selected, 2).for_each(|chunk| {
                 *chunk[1] = *chunk[0] * r[i - 1];
                 *chunk[0] -= *chunk[1];
             });
@@ -201,8 +200,7 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
 
             let r_lower_product = (F::one() - r[i]) * r.iter().skip(i + 1).copied().product::<F>();
 
-            eq_plus_one_evals
-                .par_iter_mut()
+            optimal_iter_mut!(eq_plus_one_evals)
                 .enumerate()
                 .skip(half_step)
                 .step_by(step)

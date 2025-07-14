@@ -24,8 +24,10 @@ pub type GpuBaseType<G: Icicle> = Affine<G::C>;
 pub type GpuBaseType<G: ScalarMul> = G::MulBase;
 
 use crate::poly::unipoly::UniPoly;
-use crate::{into_optimal_iter, optimal_iter};
-use itertools::Either;
+use crate::{into_optimal_iter, optimal_flat_map, optimal_iter, optimal_partition_map};
+use itertools::{Either};
+#[cfg(not(feature = "parallel"))]
+use itertools::Itertools;
 
 /// Copy of ark_ec::VariableBaseMSM with minor modifications to speed up
 /// known small element sized MSMs.
@@ -262,7 +264,7 @@ where
         let span = tracing::span!(tracing::Level::INFO, "group_scalar_indices_parallel");
         let _guard = span.enter();
         let (cpu_batch, gpu_batch): (Vec<_>, Vec<_>) =
-            optimal_iter!(polys).enumerate().partition_map(|(i, poly)| {
+            optimal_partition_map!(optimal_iter!(polys).enumerate(), |(i, poly)| {
                 let poly = poly.borrow();
                 let max_num_bits = poly.max_num_bits();
 
@@ -550,8 +552,7 @@ where
 
     let num_bits = max_num_bits;
     let digits_count = num_bits.div_ceil(c);
-    let scalar_digits = into_optimal_iter!(scalars)
-        .flat_map_iter(|s| make_digits_bigint(s, c, num_bits))
+    let scalar_digits = optimal_flat_map!(into_optimal_iter!(scalars), |s| make_digits_bigint(s, c, num_bits))
         .collect::<Vec<_>>();
     let zero = V::zero();
     let window_sums: Vec<_> = into_optimal_iter!((0..digits_count))

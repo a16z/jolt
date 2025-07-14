@@ -1,9 +1,6 @@
 #[cfg(feature = "prover")]
 mod prover;
-#[cfg(feature = "prover")]
-pub use prover::*;
 mod verifier;
-pub use verifier::*;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use std::marker::PhantomData;

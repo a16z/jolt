@@ -3,7 +3,6 @@ mod prover;
 #[cfg(feature = "prover")]
 pub use prover::*;
 mod verifier;
-pub use verifier::*;
 
 use crate::field::JoltField;
 use crate::jolt::vm::output_check::OutputProof;

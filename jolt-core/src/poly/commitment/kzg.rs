@@ -3,7 +3,7 @@ use crate::msm::{use_icicle, GpuBaseType, Icicle, VariableBaseMSM};
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::utils::errors::ProofVerifyError;
-use crate::{into_optimal_iter, optimal_iter};
+use crate::{into_optimal_iter, join_if_rayon, optimal_iter};
 use ark_ec::scalar_mul::fixed_base::FixedBase;
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::PrimeField;
@@ -51,7 +51,7 @@ where
         let g1_table = FixedBase::get_window_table(scalar_bits, g1_window_size, g1);
         let g2_table = FixedBase::get_window_table(scalar_bits, g2_window_size, g2);
 
-        let (g1_powers_projective, g2_powers_projective) = rayon::join(
+        let (g1_powers_projective, g2_powers_projective) = join_if_rayon!(
             || {
                 let beta_powers: Vec<P::ScalarField> = (0..=num_g1_powers)
                     .scan(beta, |acc, _| {
@@ -71,12 +71,12 @@ where
                     })
                     .collect();
                 FixedBase::msm(scalar_bits, g2_window_size, &g2_table, &beta_powers)
-            },
+            }
         );
 
-        let (g1_powers, g2_powers) = rayon::join(
+        let (g1_powers, g2_powers) = join_if_rayon!(
             || P::G1::normalize_batch(&g1_powers_projective),
-            || P::G2::normalize_batch(&g2_powers_projective),
+            || P::G2::normalize_batch(&g2_powers_projective)
         );
 
         // Precompute a commitment to each power-of-two length vector of ones, which is just the sum of each power-of-two length prefix of the SRS

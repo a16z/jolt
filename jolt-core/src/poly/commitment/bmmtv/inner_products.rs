@@ -7,7 +7,7 @@ use ark_ec::{
 };
 
 use crate::msm::{use_icicle, Icicle, VariableBaseMSM};
-use crate::{optimal_chunks, optimal_iter};
+use crate::{optimal_chunks, optimal_iter, optimal_num_threads};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -55,7 +55,7 @@ fn cfg_multi_pairing<P: Pairing>(left: &[P::G1], right: &[P::G2]) -> Option<Pair
         .collect::<Vec<_>>();
 
     // We want to process N chunks in parallel where N is the number of threads available
-    let num_chunks = rayon::current_num_threads();
+    let num_chunks = optimal_num_threads!();
 
     let chunk_size = if num_chunks <= left.len() {
         left.len() / num_chunks

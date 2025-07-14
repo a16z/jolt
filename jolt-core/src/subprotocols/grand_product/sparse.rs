@@ -1,5 +1,4 @@
 use crate::field::JoltField;
-use crate::optimal_chunks;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::poly::sparse_interleaved_poly::SparseInterleavedPolynomial;

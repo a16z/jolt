@@ -3,14 +3,13 @@ mod prover;
 #[cfg(feature = "prover")]
 pub use prover::*;
 mod verifier;
-pub use verifier::*;
 
 use crate::jolt::vm::registers_read_write_checking::RegistersReadWriteCheckingProof;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::{
     field::JoltField,
     subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::transcript::{AppendToTranscript, Transcript},
+    utils::transcript::Transcript,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 

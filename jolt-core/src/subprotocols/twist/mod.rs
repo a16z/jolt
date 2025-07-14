@@ -10,7 +10,7 @@ use crate::{
     utils::{
         errors::ProofVerifyError,
         math::Math,
-        transcript::{AppendToTranscript, Transcript},
+        transcript::Transcript,
     },
 };
 

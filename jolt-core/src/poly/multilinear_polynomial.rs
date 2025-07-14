@@ -5,6 +5,8 @@ use crate::{
 use num_traits::MulAdd;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+#[cfg(not(feature = "parallel"))]
+use itertools::Itertools;
 use strum_macros::EnumIter;
 
 use super::{
@@ -12,11 +14,7 @@ use super::{
     dense_mlpoly::DensePolynomial,
     eq_poly::EqPolynomial,
 };
-use crate::{
-    field::{JoltField, OptimizedMul},
-    into_optimal_iter, optimal_iter,
-    utils::thread::unsafe_allocate_zero_vec,
-};
+use crate::{field::{JoltField, OptimizedMul}, into_optimal_iter, optimal_flat_map, optimal_iter, optimal_num_threads, utils::thread::unsafe_allocate_zero_vec};
 
 /// Wrapper enum for the various multilinear polynomial types used in Jolt
 #[repr(u8)]
@@ -145,13 +143,12 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             .map(|poly| poly.original_len())
             .max()
             .unwrap();
-        let num_chunks = rayon::current_num_threads()
+        let num_chunks = optimal_num_threads!()
             .next_power_of_two()
             .min(max_length);
         let chunk_size = (max_length / num_chunks).max(1);
 
-        let lc_coeffs: Vec<F> = into_optimal_iter!((0..num_chunks))
-            .flat_map_iter(|chunk_index| {
+        let lc_coeffs: Vec<F> = optimal_flat_map!(into_optimal_iter!((0..num_chunks)), |chunk_index| {
                 let index = chunk_index * chunk_size;
                 let mut chunk = unsafe_allocate_zero_vec::<F>(chunk_size);
 
