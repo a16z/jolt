@@ -74,8 +74,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
         let r_cycle = sm
-            .get_prover_accumulator()
-            .borrow()
             .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
             .unwrap()
             .r

@@ -55,8 +55,6 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
             .try_into()
             .unwrap();
         let r_cycle = sm
-            .get_prover_accumulator()
-            .borrow()
             .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
             .unwrap()
             .r
@@ -82,17 +80,11 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
         let ra_claims = (0..D)
-            .map(|i| {
-                sm.get_verifier_accumulator()
-                    .borrow()
-                    .get_opening(OpeningsKeys::InstructionHammingRa(i))
-            })
+            .map(|i| sm.get_opening(OpeningsKeys::InstructionHammingRa(i)))
             .collect::<Vec<F>>()
             .try_into()
             .unwrap();
         let r_cycle = sm
-            .get_verifier_accumulator()
-            .borrow()
             .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
             .unwrap()
             .r

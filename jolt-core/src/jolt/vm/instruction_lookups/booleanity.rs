@@ -65,8 +65,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         }
         let r_address: Vec<F> = sm.transcript.borrow_mut().challenge_vector(LOG_K_CHUNK);
         let r_cycle = sm
-            .get_prover_accumulator()
-            .borrow()
             .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
             .unwrap()
             .r
@@ -93,8 +91,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
         let r_cycle = sm
-            .get_verifier_accumulator()
-            .borrow()
             .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
             .unwrap()
             .r
@@ -107,11 +103,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         }
         let r_address: Vec<F> = sm.transcript.borrow_mut().challenge_vector(LOG_K_CHUNK);
         let ra_claims = (0..D)
-            .map(|i| {
-                sm.get_verifier_accumulator()
-                    .borrow()
-                    .get_opening(OpeningsKeys::InstructionBooleanityRa(i))
-            })
+            .map(|i| sm.get_opening(OpeningsKeys::InstructionBooleanityRa(i)))
             .collect::<Vec<F>>()
             .try_into()
             .unwrap();

@@ -24,7 +24,7 @@ use crate::{
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
-        opening_proof::{Openings, OpeningsExt, OpeningsKeys, ProverOpeningAccumulator},
+        opening_proof::{Openings, OpeningsKeys, ProverOpeningAccumulator},
         prefix_suffix::{Prefix, PrefixRegistry, PrefixSuffixDecomposition},
     },
     r1cs::inputs::JoltR1CSInputs,
@@ -95,8 +95,6 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
         let mut ps = ReadRafProverState::new(trace, eq_r_cycle, unbound_ra_polys);
         ps.init_phase(0);
         let r_cycle = sm
-            .get_prover_accumulator()
-            .borrow()
             .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
             .unwrap()
             .r
@@ -109,21 +107,9 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
             table_flag_claims: None,
             raf_flag_claim: None,
             r_cycle,
-            rv_claim: sm
-                .get_prover_accumulator()
-                .borrow()
-                .evaluation_openings()
-                .get_spartan_z(JoltR1CSInputs::LookupOutput),
-            raf_claim: sm
-                .get_prover_accumulator()
-                .borrow()
-                .evaluation_openings()
-                .get_spartan_z(JoltR1CSInputs::LeftLookupOperand)
-                + gamma
-                    * sm.get_prover_accumulator()
-                        .borrow()
-                        .evaluation_openings()
-                        .get_spartan_z(JoltR1CSInputs::RightLookupOperand),
+            rv_claim: sm.get_spartan_z(JoltR1CSInputs::LookupOutput),
+            raf_claim: sm.get_spartan_z(JoltR1CSInputs::LeftLookupOperand)
+                + gamma * sm.get_spartan_z(JoltR1CSInputs::RightLookupOperand),
             log_T,
         }
     }
@@ -134,26 +120,13 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
         let log_T = sm.get_verifier_data().2.log_2();
         let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
         let prod_ra_claims: F = (0..D)
-            .map(|i| {
-                sm.get_verifier_accumulator()
-                    .borrow()
-                    .get_opening(OpeningsKeys::InstructionRa(i))
-            })
+            .map(|i| sm.get_opening(OpeningsKeys::InstructionRa(i)))
             .product();
         let table_flag_claims: Vec<F> = (0..LookupTables::<WORD_SIZE>::COUNT)
-            .map(|i| {
-                sm.get_verifier_accumulator()
-                    .borrow()
-                    .get_opening(OpeningsKeys::LookupTableFlag(i))
-            })
+            .map(|i| sm.get_opening(OpeningsKeys::LookupTableFlag(i)))
             .collect();
-        let raf_flag_claim = sm
-            .get_verifier_accumulator()
-            .borrow()
-            .get_opening(OpeningsKeys::InstructionRafFlag);
+        let raf_flag_claim = sm.get_opening(OpeningsKeys::InstructionRafFlag);
         let r_cycle = sm
-            .get_verifier_accumulator()
-            .borrow()
             .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
             .unwrap()
             .r
@@ -166,21 +139,9 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
             table_flag_claims: Some(table_flag_claims),
             raf_flag_claim: Some(raf_flag_claim),
             r_cycle,
-            rv_claim: sm
-                .get_verifier_accumulator()
-                .borrow()
-                .evaluation_openings()
-                .get_spartan_z(JoltR1CSInputs::LookupOutput),
-            raf_claim: sm
-                .get_verifier_accumulator()
-                .borrow()
-                .evaluation_openings()
-                .get_spartan_z(JoltR1CSInputs::LeftLookupOperand)
-                + gamma
-                    * sm.get_verifier_accumulator()
-                        .borrow()
-                        .evaluation_openings()
-                        .get_spartan_z(JoltR1CSInputs::RightLookupOperand),
+            rv_claim: sm.get_spartan_z(JoltR1CSInputs::LookupOutput),
+            raf_claim: sm.get_spartan_z(JoltR1CSInputs::LeftLookupOperand)
+                + gamma * sm.get_spartan_z(JoltR1CSInputs::RightLookupOperand),
             log_T,
         }
     }
