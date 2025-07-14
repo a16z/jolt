@@ -227,6 +227,14 @@ pub struct ReadWriteSumcheckClaims<F: JoltField> {
     inc_claim: F,
 }
 
+/// Claims for register read/write values from Spartan
+#[derive(Debug, Clone, Default)]
+pub struct ReadWriteValueClaims<F: JoltField> {
+    pub rs1_rv_claim: F,
+    pub rs2_rv_claim: F,
+    pub rd_wv_claim: F,
+}
+
 pub struct RegistersReadWriteChecking<F: JoltField> {
     T: usize,
     z: F,
@@ -396,16 +404,10 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
     fn new_verifier_stage<ProofTranscript: Transcript>(
         r_prime: &[F],
         transcript: &mut ProofTranscript,
-        rs1_rv_claim: F,
-        rs2_rv_claim: F,
-        rd_wv_claim: F,
+        value_claims: ReadWriteValueClaims<F>,
         trace_length: usize,
         chunk_size: usize,
-        val_claim: F,
-        rs1_ra_claim: F,
-        rs2_ra_claim: F,
-        rd_wa_claim: F,
-        inc_claim: F,
+        sumcheck_claims: ReadWriteSumcheckClaims<F>,
     ) -> Self {
         let T = trace_length;
         let z = transcript.challenge_scalar();
@@ -416,24 +418,16 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
             r_sumcheck: Vec::new(),
         };
 
-        let claims = ReadWriteSumcheckClaims {
-            val_claim,
-            rs1_ra_claim,
-            rs2_ra_claim,
-            rd_wa_claim,
-            inc_claim,
-        };
-
         Self {
             T,
             z,
             z_squared: z.square(),
             prover_state: None,
             verifier_state: Some(verifier_state),
-            claims: Some(claims),
-            rs1_rv_claim,
-            rs2_rv_claim,
-            rd_wv_claim,
+            claims: Some(sumcheck_claims),
+            rs1_rv_claim: value_claims.rs1_rv_claim,
+            rs2_rv_claim: value_claims.rs2_rv_claim,
+            rd_wv_claim: value_claims.rd_wv_claim,
         }
     }
 
@@ -1318,19 +1312,27 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         let chunk_size = trace_length / num_chunks;
 
         // Create the RegistersReadWriteChecking instance
-        let instance = RegistersReadWriteChecking::new_verifier_stage(
-            &r_cycle_vec,
-            transcript,
+        let value_claims = ReadWriteValueClaims {
             rs1_rv_claim,
             rs2_rv_claim,
             rd_wv_claim,
-            trace_length,
-            chunk_size,
+        };
+
+        let sumcheck_claims = ReadWriteSumcheckClaims {
             val_claim,
             rs1_ra_claim,
             rs2_ra_claim,
             rd_wa_claim,
             inc_claim,
+        };
+
+        let instance = RegistersReadWriteChecking::new_verifier_stage(
+            &r_cycle_vec,
+            transcript,
+            value_claims,
+            trace_length,
+            chunk_size,
+            sumcheck_claims,
         );
 
         vec![Box::new(instance)]

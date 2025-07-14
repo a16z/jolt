@@ -31,6 +31,34 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
     }
 
     pub fn prove(&mut self) -> Result<(), anyhow::Error> {
+        // Initialize DoryGlobals at the beginning to keep it alive for the entire proof
+        let (preprocessing, trace, _, _) = self.prover_state_manager.get_prover_data();
+        let trace_length = trace.len();
+        let padded_trace_length = trace_length.next_power_of_two();
+
+        // Calculate K for DoryGlobals initialization
+        let ram_addresses: Vec<_> = trace
+            .par_iter()
+            .map(|cycle| {
+                crate::jolt::vm::ram::remap_address(
+                    cycle.ram_access().address() as u64,
+                    &preprocessing.shared.memory_layout,
+                ) as usize
+            })
+            .collect();
+        let ram_K = ram_addresses.par_iter().max().unwrap().next_power_of_two();
+
+        let K = [
+            preprocessing.shared.bytecode.code_size,
+            ram_K,
+            1 << 16, // K for instruction lookups
+        ]
+        .into_iter()
+        .max()
+        .unwrap();
+
+        let _guard = crate::poly::commitment::dory::DoryGlobals::initialize(K, padded_trace_length);
+
         // Generate and commit to all witness polynomials
         self.generate_and_commit_polynomials()?;
 
@@ -194,16 +222,15 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
 
     fn receive_claims(&mut self) -> Result<(), anyhow::Error> {
         let prover_accumulator = self.prover_state_manager.get_prover_accumulator();
-        let prover_openings = prover_accumulator.borrow().evaluation_openings().clone();
-
         let verifier_accumulator = self.verifier_state_manager.get_verifier_accumulator();
-        let mut verifier_accumulator_mut = verifier_accumulator.borrow_mut();
 
-        // Copy all the opening evaluations from prover to verifier
-        // Keep the claims but make the OpeningPoint empty Vec for verifier to populate
-        for (key, (_, value)) in prover_openings.iter() {
+        // Copy only the claims from prover to verifier
+        let prover_acc_borrow = prover_accumulator.borrow();
+        let mut verifier_acc_borrow = verifier_accumulator.borrow_mut();
+
+        for (key, (_, value)) in prover_acc_borrow.evaluation_openings().iter() {
             let empty_point = OpeningPoint::<{ LITTLE_ENDIAN }, F>::new(vec![]);
-            verifier_accumulator_mut
+            verifier_acc_borrow
                 .evaluation_openings_mut()
                 .insert(*key, (empty_point, *value));
         }
@@ -215,31 +242,6 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
     fn generate_and_commit_polynomials(&mut self) -> Result<(), anyhow::Error> {
         let (preprocessing, trace, _program_io, _final_memory_state) =
             self.prover_state_manager.get_prover_data();
-
-        let trace_length = trace.len();
-        let padded_trace_length = trace_length.next_power_of_two();
-
-        let ram_addresses: Vec<_> = trace
-            .par_iter()
-            .map(|cycle| {
-                crate::jolt::vm::ram::remap_address(
-                    cycle.ram_access().address() as u64,
-                    &preprocessing.shared.memory_layout,
-                ) as usize
-            })
-            .collect();
-        let ram_K = ram_addresses.par_iter().max().unwrap().next_power_of_two();
-
-        let K = [
-            preprocessing.shared.bytecode.code_size,
-            ram_K,
-            1 << 16, // K for instruction lookups Shout
-        ]
-        .into_iter()
-        .max()
-        .unwrap();
-
-        let _guard = crate::poly::commitment::dory::DoryGlobals::initialize(K, padded_trace_length);
 
         let committed_polys: Vec<_> = ALL_COMMITTED_POLYNOMIALS
             .par_iter()

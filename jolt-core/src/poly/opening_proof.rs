@@ -482,8 +482,7 @@ where
         self.evaluation_openings.get(&key).map(|(point, _)| {
             if point.r.is_empty() {
                 panic!(
-                    "Opening point for key {:?} exists but is empty. This should never happen...",
-                    key
+                    "Opening point for key {key:?} exists but is empty. This should never happen..."
                 );
             }
             point.clone()
@@ -810,7 +809,7 @@ where
             .get(&key)
             .map(|(point, _)| {
                 if point.r.is_empty() {
-                    panic!("Opening point for key {:?} exists but is empty. Verifier needs to populate the point.", key);
+                    panic!("Opening point for key {key:?} exists but is empty. Verifier needs to populate the point.");
                 }
                 point.clone()
             })

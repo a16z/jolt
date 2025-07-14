@@ -1191,10 +1191,10 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 
         let key = self.key.clone();
 
-        let input_polys: Vec<MultilinearPolynomial<F>> = crate::r1cs::inputs::ALL_R1CS_INPUTS
-            .par_iter()
-            .map(|var| var.generate_witness(trace, preprocessing))
-            .collect();
+        // We need only pc and unexpanded pc for the next sumcheck
+        let pc_poly = JoltR1CSInputs::PC.generate_witness(trace, preprocessing);
+        let unexpanded_pc_poly =
+            JoltR1CSInputs::UnexpandedPC.generate_witness(trace, preprocessing);
 
         let num_cycles = key.num_steps;
         let num_cycles_bits = num_cycles.ilog2() as usize;
@@ -1207,23 +1207,30 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             .unwrap();
         let (r_cycle, _rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
-        // Evaluate all witness polynomials P_i at r_cycle for the verifier
-        // Verifier computes: z(r_inner, r_cycle) = Σ_i eq(r_inner, i) * P_i(r_cycle)
-        let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
-        let (claimed_witness_evals, _) =
-            MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
+        // Get the NextPC and NextUnexpandedPC claims from the accumulator from stage 1
+        let next_pc_eval = accumulator
+            .borrow()
+            .get_opening(OpeningsKeys::SpartanZ(JoltR1CSInputs::NextPC));
+        let next_unexpanded_pc_eval = accumulator
+            .borrow()
+            .get_opening(OpeningsKeys::SpartanZ(JoltR1CSInputs::NextUnexpandedPC));
 
         let (_, eq_plus_one_r_cycle) = EqPlusOnePolynomial::evals(r_cycle, None);
 
         let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
 
-        let pc_sumcheck = PCSumcheck::new_prover(
-            &input_polys,
-            &claimed_witness_evals,
-            eq_plus_one_r_cycle,
-            gamma,
-            r_cycle.to_vec(),
-        );
+        let pc_sumcheck = PCSumcheck {
+            input_claim: next_unexpanded_pc_eval + gamma * next_pc_eval,
+            prover_state: Some(PCSumcheckProverState {
+                unexpanded_pc_poly,
+                pc_poly,
+                eq_plus_one_poly: MultilinearPolynomial::from(eq_plus_one_r_cycle),
+                r: gamma,
+                r_cycle: r_cycle.to_vec(),
+            }),
+            verifier_state: None,
+            cached_claims: None,
+        };
 
         vec![Box::new(pc_sumcheck)]
     }
@@ -1248,7 +1255,6 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             .unwrap();
         let num_cycles_bits = key.num_steps.log_2();
 
-        let outer_sumcheck_r_reversed: Vec<F> = outer_sumcheck_r.r.iter().rev().cloned().collect();
         let (r_cycle, _rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
         // The batched claim equals NextUnexpandedPC(r_cycle) + gamma * NextPC(r_cycle)
