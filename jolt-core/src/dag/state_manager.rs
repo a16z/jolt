@@ -1,128 +1,27 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::ops::{Index, RangeFull};
 use std::rc::Rc;
 
 use crate::field::JoltField;
-use crate::jolt::vm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
+use crate::jolt::vm::{JoltCommitments, JoltProverPreprocessing, JoltVerifierPreprocessing};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
-use crate::r1cs::inputs::JoltR1CSInputs;
-use crate::r1cs::spartan::UniformSpartanProof;
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::utils::transcript::Transcript;
 use tracer::emulator::memory::Memory;
 use tracer::instruction::RV32IMCycle;
 use tracer::JoltDevice;
 
-pub type Endianness = bool;
-pub const BIG_ENDIAN: Endianness = false;
-pub const LITTLE_ENDIAN: Endianness = true;
-
-#[derive(Clone, Debug)]
-pub struct OpeningPoint<const E: Endianness, F: JoltField> {
-    pub r: Vec<F>,
-}
-
-impl<const E: Endianness, F: JoltField> Index<usize> for OpeningPoint<E, F> {
-    type Output = F;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        &self.r[index]
-    }
-}
-
-impl<const E: Endianness, F: JoltField> Index<RangeFull> for OpeningPoint<E, F> {
-    type Output = [F];
-
-    fn index(&self, _index: RangeFull) -> &Self::Output {
-        &self.r[..]
-    }
-}
-
-impl<const E: Endianness, F: JoltField> OpeningPoint<E, F> {
-    pub fn split_at(&self, mid: usize) -> (&[F], &[F]) {
-        self.r.split_at(mid)
-    }
-}
-
-impl<const E: Endianness, F: JoltField> OpeningPoint<E, F> {
-    pub fn new(r: Vec<F>) -> Self {
-        Self { r }
-    }
-
-    pub fn endianness(&self) -> &'static str {
-        if E == BIG_ENDIAN {
-            "big"
-        } else {
-            "little"
-        }
-    }
-
-    pub fn match_endianness<const SWAPPED_E: Endianness>(&self) -> OpeningPoint<SWAPPED_E, F>
-    where
-        F: Clone,
-    {
-        let mut reversed = self.r.clone();
-        if E != SWAPPED_E {
-            reversed.reverse();
-        }
-        OpeningPoint::<SWAPPED_E, F>::new(reversed)
-    }
-}
-
-impl<F: JoltField> From<Vec<F>> for OpeningPoint<LITTLE_ENDIAN, F> {
-    fn from(r: Vec<F>) -> Self {
-        Self::new(r)
-    }
-}
-
-impl<F: JoltField> From<Vec<F>> for OpeningPoint<BIG_ENDIAN, F> {
-    fn from(r: Vec<F>) -> Self {
-        Self::new(r)
-    }
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
-pub enum OpeningsKeys {
-    SpartanZ(JoltR1CSInputs),
-    LookupTableFlag(usize),
-    InstructionRa(usize),
-    InstructionBooleanityRa(usize),
-    InstructionHammingRa(usize),
-    InstructionRafFlag,
-    OuterSumcheckAz,        // Az claim from outer sumcheck
-    OuterSumcheckBz,        // Bz claim from outer sumcheck
-    OuterSumcheckCz,        // Cz claim from outer sumcheck
-    OuterSumcheckRxVar,     // rx_var from outer sumcheck -- TODO(markosg04)where is this used ?
-    PCSumcheckUnexpandedPC, // UnexpandedPC evaluation from PC sumcheck
-    PCSumcheckPC,           // PC evaluation from PC sumcheck
-}
-
-pub type Openings<F> = HashMap<OpeningsKeys, (OpeningPoint<LITTLE_ENDIAN, F>, F)>;
-
-pub trait OpeningsExt<F: JoltField> {
-    fn get_spartan_z(&self, index: JoltR1CSInputs) -> F;
-}
-
-impl<F: JoltField> OpeningsExt<F> for Openings<F> {
-    fn get_spartan_z(&self, index: JoltR1CSInputs) -> F {
-        self.get(&OpeningsKeys::SpartanZ(index))
-            .map(|(_, value)| *value)
-            .unwrap_or(F::zero())
-    }
-}
-
 #[derive(Hash, PartialEq, Eq, Clone, Debug)]
 pub enum ProofKeys {
     SpartanOuterSumcheck,
-    SpartanInnerSumcheck,
-    SpartanShiftSumcheck,
+    Stage2Sumcheck,
+    Stage3Sumcheck,
 }
 
 pub enum ProofData<F: JoltField, ProofTranscript: Transcript> {
-    Spartan(UniformSpartanProof<F, ProofTranscript>),
-    SpartanSumcheck(SumcheckInstanceProof<F, ProofTranscript>),
+    SpartanOuterData(SumcheckInstanceProof<F, ProofTranscript>),
+    BatchableSumcheckData(SumcheckInstanceProof<F, ProofTranscript>),
 }
 
 pub type Proofs<F, ProofTranscript> = HashMap<ProofKeys, ProofData<F, ProofTranscript>>;
@@ -154,9 +53,9 @@ pub struct StateManager<
     ProofTranscript: Transcript,
     PCS: CommitmentScheme<Field = F>,
 > {
-    pub openings: Rc<RefCell<Openings<F>>>,
-    pub transcript: RefCell<&'a mut ProofTranscript>,
+    pub transcript: Rc<RefCell<ProofTranscript>>,
     pub proofs: Rc<RefCell<Proofs<F, ProofTranscript>>>,
+    pub commitments: Rc<RefCell<Option<JoltCommitments<F, PCS>>>>,
     prover_state: Option<ProverState<'a, F, PCS>>,
     verifier_state: Option<VerifierState<'a, F, PCS>>,
 }
@@ -165,15 +64,15 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
     StateManager<'a, F, ProofTranscript, PCS>
 {
     pub fn new_prover(
-        openings: Rc<RefCell<Openings<F>>>,
         prover_accumulator: Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>,
-        transcript: &'a mut ProofTranscript,
+        transcript: Rc<RefCell<ProofTranscript>>,
         proofs: Rc<RefCell<Proofs<F, ProofTranscript>>>,
+        commitments: Rc<RefCell<Option<JoltCommitments<F, PCS>>>>,
     ) -> Self {
         Self {
-            openings,
-            transcript: RefCell::new(transcript),
+            transcript,
             proofs,
+            commitments,
             prover_state: Some(ProverState {
                 preprocessing: None,
                 trace: None,
@@ -186,15 +85,15 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
     }
 
     pub fn new_verifier(
-        openings: Rc<RefCell<Openings<F>>>,
         verifier_accumulator: Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>,
-        transcript: &'a mut ProofTranscript,
+        transcript: Rc<RefCell<ProofTranscript>>,
         proofs: Rc<RefCell<Proofs<F, ProofTranscript>>>,
+        commitments: Rc<RefCell<Option<JoltCommitments<F, PCS>>>>,
     ) -> Self {
         Self {
-            openings,
-            transcript: RefCell::new(transcript),
+            transcript,
             proofs,
+            commitments,
             prover_state: None,
             verifier_state: Some(VerifierState {
                 preprocessing: None,
@@ -203,19 +102,6 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
                 accumulator: verifier_accumulator,
             }),
         }
-    }
-
-    pub fn z(&self, idx: JoltR1CSInputs) -> F {
-        use OpeningsExt;
-        self.openings.borrow().get_spartan_z(idx)
-    }
-
-    pub fn openings(&self, idx: OpeningsKeys) -> F {
-        self.openings.borrow().get(&idx).unwrap().1
-    }
-
-    pub fn openings_point(&self, idx: OpeningsKeys) -> OpeningPoint<LITTLE_ENDIAN, F> {
-        self.openings.borrow().get(&idx).unwrap().0.clone()
     }
 
     pub fn set_prover_data(
@@ -299,6 +185,10 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         }
     }
 
+    pub fn get_transcript(&self) -> Rc<RefCell<ProofTranscript>> {
+        self.transcript.clone()
+    }
+
     pub fn get_verifier_accumulator(&self) -> Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>> {
         if let Some(ref verifier_state) = self.verifier_state {
             verifier_state.accumulator.clone()
@@ -307,7 +197,15 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         }
     }
 
-    pub fn get_openings(&self) -> Rc<RefCell<Openings<F>>> {
-        self.openings.clone()
+    pub fn get_commitments(&self) -> JoltCommitments<F, PCS> {
+        self.commitments
+            .borrow()
+            .as_ref()
+            .expect("Commitments not set")
+            .clone()
+    }
+
+    pub fn set_commitments(&self, commitments: JoltCommitments<F, PCS>) {
+        *self.commitments.borrow_mut() = Some(commitments);
     }
 }

@@ -6,12 +6,12 @@ use rayon::prelude::*;
 use super::{D, LOG_K_CHUNK};
 
 use crate::{
-    dag::state_manager::{Openings, OpeningsKeys, StateManager},
+    dag::state_manager::StateManager,
     field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
-        opening_proof::ProverOpeningAccumulator,
+        opening_proof::{Openings, OpeningsKeys, ProverOpeningAccumulator},
     },
     r1cs::inputs::JoltR1CSInputs,
     subprotocols::sumcheck::{
@@ -55,8 +55,12 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
             .try_into()
             .unwrap();
         let r_cycle = sm
-            .openings_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
-            .r;
+            .get_prover_accumulator()
+            .borrow()
+            .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
+            .unwrap()
+            .r
+            .clone();
         Self {
             gamma: gamma_powers,
             prover_state: Some(HammingProverState {
@@ -78,13 +82,21 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
         let ra_claims = (0..D)
-            .map(|i| sm.openings(OpeningsKeys::InstructionHammingRa(i)))
+            .map(|i| {
+                sm.get_verifier_accumulator()
+                    .borrow()
+                    .get_opening(OpeningsKeys::InstructionHammingRa(i))
+            })
             .collect::<Vec<F>>()
             .try_into()
             .unwrap();
         let r_cycle = sm
-            .openings_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
-            .r;
+            .get_verifier_accumulator()
+            .borrow()
+            .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
+            .unwrap()
+            .r
+            .clone();
         Self {
             gamma: gamma_powers,
             prover_state: None,
@@ -145,10 +157,9 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for HammingWeightSumcheck<F> {
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PCS>
     for HammingWeightSumcheck<F>
 {
-    fn cache_openings(
+    fn cache_openings_prover(
         &mut self,
-        openings: Option<Rc<RefCell<Openings<F>>>>,
-        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         let ra_claims = self
             .prover_state
@@ -164,10 +175,12 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
             .chain(self.r_cycle.iter())
             .cloned()
             .collect::<Vec<F>>();
+        let accumulator = accumulator.expect("accumulator is needed");
         ra_claims.iter().enumerate().for_each(|(i, claim)| {
-            openings.as_ref().unwrap().borrow_mut().insert(
+            accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::InstructionHammingRa(i),
-                (r.clone().into(), *claim),
+                r.clone(),
+                *claim,
             );
         });
     }

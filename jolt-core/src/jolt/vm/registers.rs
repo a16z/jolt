@@ -1,7 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
-    dag::state_manager::Openings,
+    dag::stage::StagedSumcheck,
     field::JoltField,
     jolt::{
         vm::{
@@ -18,7 +18,7 @@ use crate::{
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
-        opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
+        opening_proof::{OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator},
     },
     subprotocols::sumcheck::{
         BatchableSumcheckInstance, CacheSumcheckOpenings, SumcheckInstanceProof,
@@ -43,6 +43,8 @@ pub struct RegistersTwistProof<F: JoltField, ProofTranscript: Transcript> {
     val_evaluation_proof: ValEvaluationProof<F, ProofTranscript>,
 }
 
+pub struct RegistersDAG {}
+
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct ValEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
     /// Sumcheck proof for the Val-evaluation sumcheck (steps 6 of Figure 9).
@@ -53,44 +55,46 @@ pub struct ValEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
     wa_claim: F,
 }
 
-struct ValEvaluationProverState<F: JoltField> {
+pub struct ValEvaluationProverState<F: JoltField> {
     /// Inc polynomial
-    inc: MultilinearPolynomial<F>,
+    pub inc: MultilinearPolynomial<F>,
     /// wa polynomial
-    wa: MultilinearPolynomial<F>,
+    pub wa: MultilinearPolynomial<F>,
     /// LT polynomial
-    lt: MultilinearPolynomial<F>,
+    pub lt: MultilinearPolynomial<F>,
+    /// r_cycle_prime
+    pub r_sumcheck: Vec<F>,
 }
 
 /// Verifier state for the Val-evaluation sumcheck
-struct ValEvaluationVerifierState<F: JoltField> {
+pub(crate) struct ValEvaluationVerifierState<F: JoltField> {
     /// The number of rounds (log T)
-    num_rounds: usize,
+    pub num_rounds: usize,
     /// r_address used to compute LT evaluation
-    r_address: Vec<F>,
+    pub r_address: Vec<F>,
     /// r_cycle used to compute LT evaluation
-    r_cycle: Vec<F>,
+    pub r_cycle: Vec<F>,
 }
 
 /// Claims output by the Val-evaluation sumcheck
 #[derive(Clone)]
-struct ValEvaluationSumcheckClaims<F: JoltField> {
+pub(crate) struct ValEvaluationSumcheckClaims<F: JoltField> {
     /// Inc(r_cycle')
-    inc_claim: F,
+    pub inc_claim: F,
     /// wa(r_address, r_cycle')
-    wa_claim: F,
+    pub wa_claim: F,
 }
 
 /// Val-evaluation sumcheck instance implementing BatchableSumcheckInstance
-struct ValEvaluationSumcheck<F: JoltField> {
+pub(crate) struct ValEvaluationSumcheck<F: JoltField> {
     /// Initial claim value
-    claimed_evaluation: F,
+    pub claimed_evaluation: F,
     /// Prover state
-    prover_state: Option<ValEvaluationProverState<F>>,
+    pub prover_state: Option<ValEvaluationProverState<F>>,
     /// Verifier state
-    verifier_state: Option<ValEvaluationVerifierState<F>>,
+    pub verifier_state: Option<ValEvaluationVerifierState<F>>,
     /// Claims
-    claims: Option<ValEvaluationSumcheckClaims<F>>,
+    pub claims: Option<ValEvaluationSumcheckClaims<F>>,
 }
 
 impl<F: JoltField> BatchableSumcheckInstance<F> for ValEvaluationSumcheck<F> {
@@ -154,6 +158,8 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for ValEvaluationSumcheck<F> {
 
     fn bind(&mut self, r_j: F, _round: usize) {
         if let Some(prover_state) = &mut self.prover_state {
+            prover_state.r_sumcheck.push(r_j);
+
             [
                 &mut prover_state.inc,
                 &mut prover_state.wa,
@@ -192,21 +198,49 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    fn cache_openings(
+    fn cache_openings_prover(
         &mut self,
-        _openings: Option<Rc<RefCell<Openings<F>>>>,
-        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         debug_assert!(self.claims.is_none());
         let prover_state = self
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
+
+        let inc_claim = prover_state.inc.final_sumcheck_claim();
+        let wa_claim = prover_state.wa.final_sumcheck_claim();
+
         self.claims = Some(ValEvaluationSumcheckClaims {
-            inc_claim: prover_state.inc.final_sumcheck_claim(),
-            wa_claim: prover_state.wa.final_sumcheck_claim(),
+            inc_claim,
+            wa_claim,
         });
+
+        // Append claims to accumulator
+        if let Some(accumulator) = accumulator {
+            // Get the sumcheck opening point during the batchable prove (r_cycle_prime)
+            // The sumcheck binds in low-to-high order, so we reverse to get r_cycle_prime
+            let mut r_cycle_prime = prover_state.r_sumcheck.clone();
+            r_cycle_prime.reverse();
+
+            accumulator.borrow_mut().append_virtual(
+                OpeningsKeys::RegistersValEvaluationInc,
+                r_cycle_prime.clone(),
+                inc_claim,
+            );
+            accumulator.borrow_mut().append_virtual(
+                OpeningsKeys::RegistersValEvaluationWa,
+                r_cycle_prime,
+                wa_claim,
+            );
+        }
     }
+    //@TODO(markosg04) verifier side for the bytecode claims
+}
+
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS>
+    for ValEvaluationSumcheck<F>
+{
 }
 
 impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTranscript> {
@@ -241,6 +275,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTran
             r_cycle_prime,
             &[val_evaluation_proof.inc_claim],
             transcript,
+            None, // No openings keys needed
         );
 
         RegistersTwistProof {
@@ -364,7 +399,12 @@ pub fn prove_val_evaluation<
 
     let mut sumcheck_instance: ValEvaluationSumcheck<F> = ValEvaluationSumcheck {
         claimed_evaluation,
-        prover_state: Some(ValEvaluationProverState { inc, wa, lt }),
+        prover_state: Some(ValEvaluationProverState {
+            inc,
+            wa,
+            lt,
+            r_sumcheck: Vec::new(),
+        }),
         verifier_state: None,
         claims: None,
     };

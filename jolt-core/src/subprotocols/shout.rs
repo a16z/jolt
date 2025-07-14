@@ -2,7 +2,6 @@ use std::{cell::RefCell, rc::Rc};
 
 use super::sumcheck::{BatchableSumcheckInstance, BatchedSumcheck, SumcheckInstanceProof};
 use crate::{
-    dag::state_manager::Openings,
     field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
@@ -213,9 +212,8 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    fn cache_openings(
+    fn cache_openings_prover(
         &mut self,
-        _openings: Option<Rc<RefCell<Openings<F>>>>,
         _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         debug_assert!(self.claims.is_none());
@@ -683,9 +681,8 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    fn cache_openings(
+    fn cache_openings_prover(
         &mut self,
-        _openings: Option<Rc<RefCell<Openings<F>>>>,
         _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         debug_assert!(self.ra_claim.is_none());

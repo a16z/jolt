@@ -333,7 +333,7 @@ where
         let r1cs_proof = UniformSpartanProof::prove::<PCS>(
             &preprocessing,
             &constraint_builder,
-            &spartan_key,
+            spartan_key,
             &trace,
             &mut opening_accumulator,
             &mut transcript,
@@ -466,7 +466,7 @@ where
         proof
             .r1cs
             .verify(
-                &spartan_key,
+                spartan_key,
                 &proof.commitments,
                 &mut opening_accumulator,
                 &mut transcript,

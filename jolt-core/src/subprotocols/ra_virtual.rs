@@ -1,7 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::dag::state_manager::Openings;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::ProverOpeningAccumulator;
@@ -289,9 +288,8 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    fn cache_openings(
+    fn cache_openings_prover(
         &mut self,
-        _openings: Option<Rc<RefCell<Openings<F>>>>,
         _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         debug_assert!(self.ra_i_claims.is_none());

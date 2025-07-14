@@ -2,7 +2,6 @@ use std::cell::RefCell;
 use std::sync::Arc;
 use std::{collections::BTreeMap, rc::Rc};
 
-use crate::dag::state_manager::Openings;
 use crate::subprotocols::sumcheck::CacheSumcheckOpenings;
 use crate::{
     field::JoltField,
@@ -196,6 +195,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
             r_address_rev,
             r_cycle.clone(),
             vec![ra_claim],
+            None, // No openings keys needed
         );
 
         // Prove booleanity
@@ -212,6 +212,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
             r_address_prime,
             r_cycle_prime,
             vec![ra_claim_prime],
+            None, // No openings keys needed
         );
 
         // Prove raf
@@ -512,9 +513,8 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    fn cache_openings(
+    fn cache_openings_prover(
         &mut self,
-        _openings: Option<Rc<RefCell<Openings<F>>>>,
         _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         debug_assert!(self.ra_claim_prime.is_none());
@@ -847,9 +847,8 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    fn cache_openings(
+    fn cache_openings_prover(
         &mut self,
-        _openings: Option<Rc<RefCell<Openings<F>>>>,
         _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         debug_assert!(self.ra_claims.is_none());

@@ -4,7 +4,7 @@
 //! can use a sumcheck to reduce multiple opening proofs (multiple polynomials, not
 //! necessarily of the same size, each opened at a different point) into a single opening.
 
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
@@ -14,7 +14,6 @@ use super::{
     multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
 };
 use crate::{
-    dag::state_manager::Openings,
     field::JoltField,
     poly::{
         dense_mlpoly::DensePolynomial,
@@ -22,11 +21,134 @@ use crate::{
             OneHotPolynomial, OneHotPolynomialProverOpening, OneHotSumcheckState,
         },
     },
+    r1cs::inputs::JoltR1CSInputs,
     subprotocols::sumcheck::{
         BatchableSumcheckInstance, BatchedSumcheck, CacheSumcheckOpenings, SumcheckInstanceProof,
     },
     utils::{errors::ProofVerifyError, transcript::Transcript},
 };
+
+pub type Endianness = bool;
+pub const BIG_ENDIAN: Endianness = false;
+pub const LITTLE_ENDIAN: Endianness = true;
+
+#[derive(Clone, Debug)]
+pub struct OpeningPoint<const E: Endianness, F: JoltField> {
+    pub r: Vec<F>,
+}
+
+impl<const E: Endianness, F: JoltField> std::ops::Index<usize> for OpeningPoint<E, F> {
+    type Output = F;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.r[index]
+    }
+}
+
+impl<const E: Endianness, F: JoltField> std::ops::Index<std::ops::RangeFull>
+    for OpeningPoint<E, F>
+{
+    type Output = [F];
+
+    fn index(&self, _index: std::ops::RangeFull) -> &Self::Output {
+        &self.r[..]
+    }
+}
+
+impl<const E: Endianness, F: JoltField> OpeningPoint<E, F> {
+    pub fn split_at(&self, mid: usize) -> (&[F], &[F]) {
+        self.r.split_at(mid)
+    }
+}
+
+impl<const E: Endianness, F: JoltField> OpeningPoint<E, F> {
+    pub fn new(r: Vec<F>) -> Self {
+        Self { r }
+    }
+
+    pub fn endianness(&self) -> &'static str {
+        if E == BIG_ENDIAN {
+            "big"
+        } else {
+            "little"
+        }
+    }
+
+    pub fn match_endianness<const SWAPPED_E: Endianness>(&self) -> OpeningPoint<SWAPPED_E, F>
+    where
+        F: Clone,
+    {
+        let mut reversed = self.r.clone();
+        if E != SWAPPED_E {
+            reversed.reverse();
+        }
+        OpeningPoint::<SWAPPED_E, F>::new(reversed)
+    }
+}
+
+impl<F: JoltField> From<Vec<F>> for OpeningPoint<LITTLE_ENDIAN, F> {
+    fn from(r: Vec<F>) -> Self {
+        Self::new(r)
+    }
+}
+
+impl<F: JoltField> From<Vec<F>> for OpeningPoint<BIG_ENDIAN, F> {
+    fn from(r: Vec<F>) -> Self {
+        Self::new(r)
+    }
+}
+
+impl<const E: Endianness, F: JoltField> Into<Vec<F>> for OpeningPoint<E, F> {
+    fn into(self) -> Vec<F> {
+        self.r
+    }
+}
+
+impl<const E: Endianness, F: JoltField> Into<Vec<F>> for &OpeningPoint<E, F>
+where
+    F: Clone,
+{
+    fn into(self) -> Vec<F> {
+        self.r.clone()
+    }
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
+pub enum OpeningsKeys {
+    SpartanZ(JoltR1CSInputs),
+    InstructionTypeFlag(usize),
+    InstructionRa(usize),
+    InstructionBooleanityRa(usize), // Ra openings for booleanity instruction lookup
+    InstructionHammingRa(usize),    // Ra openings for hamming weight instruction lookup
+    LookupTableFlag(usize),         // Flag openings for lookup tables
+    InstructionRafFlag,             // RAF flag opening
+    OuterSumcheckAz,                // Az claim from outer sumcheck
+    OuterSumcheckBz,                // Bz claim from outer sumcheck
+    OuterSumcheckCz,                // Cz claim from outer sumcheck
+    PCSumcheckUnexpandedPC,         // UnexpandedPC evaluation from PC sumcheck
+    PCSumcheckNextPC,               // PC evaluation from PC sumcheck
+    RegistersReadWriteVal,          // Val claim from registers read/write checking
+    RegistersReadWriteRs1Ra,        // Rs1 claim from registers read/write checking
+    RegistersReadWriteRs2Ra,        // Rs2 claim from registers read/write checking
+    RegistersReadWriteRdWa,         // Rd claim from registers read/write checking
+    RegistersReadWriteInc,          // Inc claim from registers read/write checking
+    RegistersValEvaluationInc,      // Inc claim from registers Val evaluation sumcheck
+    RegistersValEvaluationWa,       // Wa claim from registers Val evaluation sumcheck
+}
+
+pub type Openings<F> = HashMap<OpeningsKeys, (OpeningPoint<LITTLE_ENDIAN, F>, F)>;
+
+pub trait OpeningsExt<F: JoltField> {
+    fn get_spartan_z(&self, index: JoltR1CSInputs) -> F;
+}
+
+impl<F: JoltField> OpeningsExt<F> for Openings<F> {
+    fn get_spartan_z(&self, index: JoltR1CSInputs) -> F {
+        self.get(&OpeningsKeys::SpartanZ(index))
+            .map(|(_, value)| *value)
+            .unwrap_or(F::zero())
+    }
+}
 
 pub struct SharedEqPolynomial<F: JoltField> {
     num_variables_bound: usize,
@@ -235,9 +357,8 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    fn cache_openings(
+    fn cache_openings_prover(
         &mut self,
-        _openings: Option<Rc<RefCell<Openings<F>>>>,
         _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         debug_assert!(self.sumcheck_claim.is_none());
@@ -282,6 +403,7 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     openings: Vec<OpeningProofReductionSumcheck<F, PCS>>,
+    evaluation_openings: Openings<F>,
     #[cfg(test)]
     joint_commitment: Option<PCS::Commitment>,
 }
@@ -294,6 +416,7 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     openings: Vec<OpeningProofReductionSumcheck<F, PCS>>,
+    evaluation_openings: Openings<F>,
     #[cfg(test)]
     /// In testing, the Jolt verifier may be provided the prover's openings so that we
     /// can detect any places where the openings don't match up.
@@ -331,6 +454,7 @@ where
     pub fn new() -> Self {
         Self {
             openings: vec![],
+            evaluation_openings: HashMap::new(),
             #[cfg(test)]
             joint_commitment: None,
         }
@@ -338,6 +462,31 @@ where
 
     pub fn len(&self) -> usize {
         self.openings.len()
+    }
+
+    pub fn evaluation_openings(&self) -> &Openings<F> {
+        &self.evaluation_openings
+    }
+
+    pub fn evaluation_openings_mut(&mut self) -> &mut Openings<F> {
+        &mut self.evaluation_openings
+    }
+
+    /// Get the value of an opening by key
+    pub fn get_opening(&self, key: OpeningsKeys) -> F {
+        self.evaluation_openings.get(&key).unwrap().1
+    }
+
+    /// Get the opening point by key
+    pub fn get_opening_point(&self, key: OpeningsKeys) -> Option<OpeningPoint<LITTLE_ENDIAN, F>> {
+        self.evaluation_openings.get(&key).map(|(point, _)| {
+            if point.r.is_empty() {
+                panic!(
+                    "Opening point for key {key:?} exists but is empty. This should never happen..."
+                );
+            }
+            point.clone()
+        })
     }
 
     /// Adds openings to the accumulator. The given `polynomials` are opened at
@@ -354,6 +503,7 @@ where
         opening_point: Vec<F>,
         claims: &[F],
         transcript: &mut ProofTranscript,
+        openings_keys: Option<Vec<OpeningsKeys>>,
     ) {
         assert_eq!(polynomials.len(), claims.len());
         #[cfg(test)]
@@ -406,6 +556,20 @@ where
             (claims[0], polynomials[0].clone())
         };
 
+        // Store evaluations in the HashMap if keys are provided
+        if let Some(keys) = openings_keys {
+            assert_eq!(
+                keys.len(),
+                claims.len(),
+                "Number of keys must match number of claims"
+            );
+            let opening_point_struct = OpeningPoint::<LITTLE_ENDIAN, F>::new(opening_point.clone());
+            for (key, claim) in keys.into_iter().zip(claims.iter()) {
+                self.evaluation_openings
+                    .insert(key, (opening_point_struct.clone(), *claim));
+            }
+        }
+
         #[cfg(test)]
         {
             let mut opening = OpeningProofReductionSumcheck::new_prover_instance_dense(
@@ -439,6 +603,7 @@ where
         r_address: Vec<F>,
         r_cycle: Vec<F>,
         claims: Vec<F>,
+        openings_keys: Option<Vec<OpeningsKeys>>,
     ) {
         let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
         let shared_eq = Rc::new(RefCell::new(OneHotSumcheckState::new(&r_address, &r_cycle)));
@@ -450,6 +615,20 @@ where
             all_sparse,
             "Tried to append dense polynomial using ProverOpeningAccumulator::append_sparse"
         );
+
+        // Store evaluations in the HashMap if keys are provided
+        if let Some(keys) = openings_keys {
+            assert_eq!(
+                keys.len(),
+                claims.len(),
+                "Number of keys must match number of claims"
+            );
+            let opening_point_struct = OpeningPoint::<LITTLE_ENDIAN, F>::new(r_concat.clone());
+            for (key, claim) in keys.into_iter().zip(claims.iter()) {
+                self.evaluation_openings
+                    .insert(key, (opening_point_struct.clone(), *claim));
+            }
+        }
 
         for (poly, claim) in polynomials.into_iter().zip(claims.into_iter()) {
             match poly {
@@ -482,6 +661,11 @@ where
                 _ => unreachable!("Unexpected MultilinearPolynomial variant"),
             }
         }
+    }
+
+    pub fn append_virtual(&mut self, key: OpeningsKeys, opening_point: Vec<F>, claim: F) {
+        let opening_point = OpeningPoint::<LITTLE_ENDIAN, F>::new(opening_point);
+        self.evaluation_openings.insert(key, (opening_point, claim));
     }
 
     /// Reduces the multiple openings accumulated into a single opening proof,
@@ -582,6 +766,7 @@ where
     pub fn new() -> Self {
         Self {
             openings: vec![],
+            evaluation_openings: HashMap::new(),
             #[cfg(test)]
             prover_openings: None,
             #[cfg(test)]
@@ -603,6 +788,31 @@ where
 
     pub fn len(&self) -> usize {
         self.openings.len()
+    }
+
+    pub fn evaluation_openings(&self) -> &Openings<F> {
+        &self.evaluation_openings
+    }
+
+    pub fn evaluation_openings_mut(&mut self) -> &mut Openings<F> {
+        &mut self.evaluation_openings
+    }
+
+    /// Get the value of an opening by key
+    pub fn get_opening(&self, key: OpeningsKeys) -> F {
+        self.evaluation_openings.get(&key).unwrap().1
+    }
+
+    /// Get the opening point by key
+    pub fn get_opening_point(&self, key: OpeningsKeys) -> Option<OpeningPoint<LITTLE_ENDIAN, F>> {
+        self.evaluation_openings
+            .get(&key)
+            .map(|(point, _)| {
+                if point.r.is_empty() {
+                    panic!("Opening point for key {key:?} exists but is empty. Verifier needs to populate the point.");
+                }
+                point.clone()
+            })
     }
 
     /// Adds openings to the accumulator. The polynomials underlying the given
@@ -680,6 +890,24 @@ where
                 opening_point,
                 batched_claim,
             ));
+    }
+
+    pub fn append_virtual(&mut self, key: OpeningsKeys, opening_point: Vec<F>, claim: F) {
+        let opening_point_struct = OpeningPoint::<LITTLE_ENDIAN, F>::new(opening_point);
+        self.evaluation_openings
+            .insert(key, (opening_point_struct, claim));
+    }
+
+    /// Populates the opening point for an existing claim in the evaluation_openings map.
+    pub fn populate_claim_opening(&mut self, key: OpeningsKeys, opening_point: Vec<F>) {
+        if let Some((_, claim)) = self.evaluation_openings.get(&key) {
+            let claim = *claim; // Copy the claim value
+            let new_point: OpeningPoint<true, F> =
+                OpeningPoint::<LITTLE_ENDIAN, F>::new(opening_point);
+            self.evaluation_openings.insert(key, (new_point, claim));
+        } else {
+            panic!("Tried to populate opening point for non-existent key: {key:?}");
+        }
     }
 
     /// Verifies that the given `reduced_opening_proof` (consisting of a sumcheck proof

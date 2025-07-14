@@ -3,7 +3,6 @@
 use std::{cell::RefCell, rc::Rc, vec};
 
 use crate::{
-    dag::state_manager::Openings,
     field::JoltField,
     jolt::{
         vm::{
@@ -253,9 +252,8 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    fn cache_openings(
+    fn cache_openings_prover(
         &mut self,
-        _openings: Option<Rc<RefCell<Openings<F>>>>,
         _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         if let Some(prover_state) = &self.prover_state {
@@ -461,9 +459,8 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    fn cache_openings(
+    fn cache_openings_prover(
         &mut self,
-        _openings: Option<Rc<RefCell<Openings<F>>>>,
         _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         debug_assert!(self.ra_claims.is_none());
@@ -761,9 +758,8 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    fn cache_openings(
+    fn cache_openings_prover(
         &mut self,
-        _openings: Option<Rc<RefCell<Openings<F>>>>,
         _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         debug_assert!(self.cached_claims.is_none());
@@ -918,9 +914,8 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    fn cache_openings(
+    fn cache_openings_prover(
         &mut self,
-        _openings: Option<Rc<RefCell<Openings<F>>>>,
         _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         debug_assert!(self.cached_claim.is_none());
@@ -1178,6 +1173,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             r_cycle_prime,
             &[val_evaluation_proof.inc_claim],
             transcript,
+            None, // No openings keys needed
         );
 
         // Calculate D dynamically such that 2^8 = K^(1/D)
@@ -1234,6 +1230,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             r_address_prime.clone(),
             r_cycle_bound,
             ra_proof.ra_i_claims.clone(),
+            None, // No openings keys needed
         );
 
         let (hamming_weight_sumcheck, _, ra_claims) = prove_ra_hamming_weight(

@@ -1,7 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
-    dag::state_manager::Openings,
     field::{JoltField, OptimizedMul},
     jolt::{
         vm::{ram::remap_address, JoltProverPreprocessing},
@@ -916,9 +915,8 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    fn cache_openings(
+    fn cache_openings_prover(
         &mut self,
-        _openings: Option<Rc<RefCell<Openings<F>>>>,
         _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         debug_assert!(self.claims.is_none());
