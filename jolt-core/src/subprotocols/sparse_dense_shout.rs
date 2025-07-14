@@ -1,6 +1,6 @@
 use super::sumcheck::SumcheckInstanceProof;
 use crate::{
-    field::JoltField,
+    field::{JoltField, OptimizedMul},
     jolt::{
         instruction::{InstructionFlags, InstructionLookup, InterleavedBitsMarker, LookupQuery},
         lookup_table::{
@@ -367,6 +367,7 @@ pub fn prove_sparse_dense_shout<
     F,
     Vec<F>,
     Vec<F>,
+    F,
 ) {
     let log_K: usize = 2 * WORD_SIZE;
     let log_m = log_K / 4;
@@ -376,7 +377,7 @@ pub fn prove_sparse_dense_shout<
     let log_T = T.log_2();
     debug_assert_eq!(r_cycle.len(), log_T);
 
-    let num_rounds = log_K + log_T;
+    let num_rounds = log_K + 5 * log_T;
     let mut r: Vec<F> = Vec::with_capacity(num_rounds);
     let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
@@ -705,75 +706,79 @@ pub fn prove_sparse_dense_shout<
         })
         .collect();
 
-    // TODO:
-    let mut C = F::one();
+    let mut D = F::one();
 
     let d = 6;
     for round in 0..log_T {
-        for i in 0..d {
+        // See D defined after equation 103. C summands are used to update D per round.
+        let mut C_summands = [r_cycle[round], F::one() - r_cycle[round]];
+
+        for i in 0..d - 1 {
             let span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
             let _guard = span.enter();
 
             let mut randomness: Vec<F> = Vec::with_capacity(d);
-            let univariate_poly_evals = (0..(log_T - round + 1).pow2())
+            let univariate_poly_evals = (0..(log_T - round - 1).pow2())
                 .into_par_iter()
                 .map(|bj| {
-                    let eval_points = (0..d).filter(|c| *c != 1).map(|c| F::from_u64(c as u64));
+                    let eval_points = (0..d + 1)
+                        .filter(|c| *c != 1)
+                        .map(|c| F::from_u64(c as u64));
                     // TODO: check endianness for bj.
                     let j = bj >> 1;
                     let b = bj % 2;
 
-                    let at_idx_evals = if i != d - 1 {
+                    let at_idx_evals = if i != d - 2 {
                         ra[i].sumcheck_evals(j, d, BindingOrder::HighToLow)
                     } else {
                         combined_instruction_val_poly.sumcheck_evals(j, d, BindingOrder::HighToLow)
                     };
 
-                    let eq_evals = {
-                        let fb = F::from_u64(b as u64);
-                        let rb = r_cycle[round] * fb;
-                        let rb_prime = (F::one() - r_cycle[round]) * (F::one() - fb);
+                    // TODO: can amortize the cost across rounds.
+                    let before_idx_evals = ra
+                        .iter()
+                        .take(i)
+                        .map(|poly| poly.get_bound_coeff(j))
+                        .product::<F>();
 
-                        (0..1)
-                            .chain(2..d + 1)
-                            .map(|c| F::from_u64(c as u64) * (rb - rb_prime) + rb_prime)
-                            .collect::<Vec<F>>()
+                    let mut after_idx_evals = if i == d - 2 {
+                        F::one()
+                    } else {
+                        combined_instruction_val_poly.get_bound_coeff(bj)
                     };
 
-                    let factor = ra
-                        .iter()
-                        .enumerate()
-                        .chain(iter::once((d, &combined_instruction_val_poly)))
-                        .filter(|(i_idx, _)| *i_idx > i)
-                        .map(|(_, poly)| poly.sumcheck_evals(bj, d, BindingOrder::HighToLow)[i])
-                        .product::<F>()
-                        * E[i][j]
-                        * C;
-                    
-                    // TODO: add lower terms.
+                    if i != 0 && d > i + 3 {
+                        after_idx_evals = after_idx_evals.mul_1_optimized(
+                            ra.iter()
+                                .rev()
+                                .take(d - i - 3)
+                                .map(|poly| poly.get_bound_coeff(bj))
+                                .product::<F>(),
+                        );
+                    }
 
-                    // TODO: can be cached.
                     let C_evals = eval_points
                         .map(|c| {
-                            let temp = iter::once(&r_cycle[round])
-                                .chain(randomness.iter())
-                                .chain(iter::once(&c))
-                                .map(|x| (*x, F::one() - x))
-                                .reduce(|running, new| (running.0 * new.0, running.1 * new.1))
-                                .unwrap();
-
-                            temp.0 * temp.1 * C
+                            // C_summands[0] * c + C_summands[1] * (1 - c)
+                            c * (C_summands[0] - C_summands[1])
                         })
                         .collect::<Vec<F>>();
 
-                    eq_evals
+                    let factor = if round < log_T - 1 {
+                        before_idx_evals * after_idx_evals * E[round][j]
+                    } else {
+                        before_idx_evals * after_idx_evals
+                    };
+
+                    let res = at_idx_evals
                         .iter()
-                        .zip(at_idx_evals.iter())
                         .zip(C_evals.iter())
-                        .map(|((eq_eval, at_idx_eval), C_eval)| {
-                            factor * eq_eval * at_idx_eval * C_eval
-                        })
-                        .collect::<Vec<F>>()
+                        .map(|(at_idx_eval, C_eval)| *at_idx_eval * C_eval * factor)
+                        .collect::<Vec<F>>();
+
+                    assert_eq!(res.len(), d);
+
+                    res
                 })
                 .reduce(
                     || vec![F::zero(); d],
@@ -809,85 +814,91 @@ pub fn prove_sparse_dense_shout<
 
             previous_claim = univariate_poly.evaluate(&r_j);
 
+            // Update relevant states
+            C_summands[0] *= r_j;
+            C_summands[1] *= F::one() - r_j;
+
             let span = tracing::span!(tracing::Level::INFO, "Binding");
             let _guard = span.enter();
 
-            if i != d - 1 {
+            if i != d - 2 {
                 ra[i].bind_parallel(r_j, BindingOrder::HighToLow);
             } else {
                 combined_instruction_val_poly.bind_parallel(r_j, BindingOrder::HighToLow);
             }
         }
+
+        D *= C_summands[0] + C_summands[1];
     }
 
-    for _round in 0..log_T {
-        let span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
-        let _guard = span.enter();
+    // for _round in 0..log_T {
+    //     let span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
+    //     let _guard = span.enter();
 
-        let univariate_poly_evals: [F; 6] = (0..eq_r_prime.len() / 2)
-            .into_par_iter()
-            .map(|i| {
-                let eq_evals = eq_r_prime.sumcheck_evals(i, 6, BindingOrder::HighToLow);
-                let ra_0_evals = ra[0].sumcheck_evals(i, 6, BindingOrder::HighToLow);
-                let ra_1_evals = ra[1].sumcheck_evals(i, 6, BindingOrder::HighToLow);
-                let ra_2_evals = ra[2].sumcheck_evals(i, 6, BindingOrder::HighToLow);
-                let ra_3_evals = ra[3].sumcheck_evals(i, 6, BindingOrder::HighToLow);
-                let val_evals =
-                    combined_instruction_val_poly.sumcheck_evals(i, 6, BindingOrder::HighToLow);
+    //     let univariate_poly_evals: [F; 6] = (0..eq_r_prime.len() / 2)
+    //         .into_par_iter()
+    //         .map(|i| {
+    //             let eq_evals = eq_r_prime.sumcheck_evals(i, 6, BindingOrder::HighToLow);
+    //             let ra_0_evals = ra[0].sumcheck_evals(i, 6, BindingOrder::HighToLow);
+    //             let ra_1_evals = ra[1].sumcheck_evals(i, 6, BindingOrder::HighToLow);
+    //             let ra_2_evals = ra[2].sumcheck_evals(i, 6, BindingOrder::HighToLow);
+    //             let ra_3_evals = ra[3].sumcheck_evals(i, 6, BindingOrder::HighToLow);
+    //             let val_evals =
+    //                 combined_instruction_val_poly.sumcheck_evals(i, 6, BindingOrder::HighToLow);
 
-                std::array::from_fn(|i| {
-                    eq_evals[i]
-                        * ra_0_evals[i]
-                        * ra_1_evals[i]
-                        * ra_2_evals[i]
-                        * ra_3_evals[i]
-                        * val_evals[i]
-                })
-            })
-            .reduce(
-                || [F::zero(); 6],
-                |running, new| {
-                    [
-                        running[0] + new[0],
-                        running[1] + new[1],
-                        running[2] + new[2],
-                        running[3] + new[3],
-                        running[4] + new[4],
-                        running[5] + new[5],
-                    ]
-                },
-            );
+    //             std::array::from_fn(|i| {
+    //                 eq_evals[i]
+    //                     * ra_0_evals[i]
+    //                     * ra_1_evals[i]
+    //                     * ra_2_evals[i]
+    //                     * ra_3_evals[i]
+    //                     * val_evals[i]
+    //             })
+    //         })
+    //         .reduce(
+    //             || [F::zero(); 6],
+    //             |running, new| {
+    //                 [
+    //                     running[0] + new[0],
+    //                     running[1] + new[1],
+    //                     running[2] + new[2],
+    //                     running[3] + new[3],
+    //                     running[4] + new[4],
+    //                     running[5] + new[5],
+    //                 ]
+    //             },
+    //         );
 
-        let univariate_poly = UniPoly::from_evals(&[
-            univariate_poly_evals[0],
-            previous_claim - univariate_poly_evals[0],
-            univariate_poly_evals[1],
-            univariate_poly_evals[2],
-            univariate_poly_evals[3],
-            univariate_poly_evals[4],
-            univariate_poly_evals[5],
-        ]);
+    //     let univariate_poly = UniPoly::from_evals(&[
+    //         univariate_poly_evals[0],
+    //         previous_claim - univariate_poly_evals[0],
+    //         univariate_poly_evals[1],
+    //         univariate_poly_evals[2],
+    //         univariate_poly_evals[3],
+    //         univariate_poly_evals[4],
+    //         univariate_poly_evals[5],
+    //     ]);
 
-        drop(_guard);
-        drop(span);
+    //     drop(_guard);
+    //     drop(span);
 
-        let compressed_poly = univariate_poly.compress();
-        compressed_poly.append_to_transcript(transcript);
-        compressed_polys.push(compressed_poly);
+    //     let compressed_poly = univariate_poly.compress();
+    //     compressed_poly.append_to_transcript(transcript);
+    //     compressed_polys.push(compressed_poly);
 
-        let r_j = transcript.challenge_scalar::<F>();
-        r.push(r_j);
+    //     let r_j = transcript.challenge_scalar::<F>();
+    //     r.push(r_j);
 
-        previous_claim = univariate_poly.evaluate(&r_j);
+    //     previous_claim = univariate_poly.evaluate(&r_j);
 
-        let span = tracing::span!(tracing::Level::INFO, "Binding");
-        let _guard = span.enter();
+    //     let span = tracing::span!(tracing::Level::INFO, "Binding");
+    //     let _guard = span.enter();
 
-        ra.par_iter_mut()
-            .chain([&mut combined_instruction_val_poly].into_par_iter())
-            .chain([&mut eq_r_prime].into_par_iter())
-            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
-    }
+    //     ra.par_iter_mut()
+    //         .chain([&mut combined_instruction_val_poly].into_par_iter())
+    //         .chain([&mut eq_r_prime].into_par_iter())
+    //         .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+    // }
 
     let span = tracing::span!(tracing::Level::INFO, "compute flag claims");
     let _guard = span.enter();
@@ -929,6 +940,7 @@ pub fn prove_sparse_dense_shout<
         add_mul_sub_claims,
         flag_claims,
         eq_r_prime_evals,
+        D,
     )
 }
 
@@ -939,11 +951,11 @@ pub fn verify_sparse_dense_shout<
 >(
     proof: &SumcheckInstanceProof<F, ProofTranscript>,
     log_T: usize,
-    r_cycle: Vec<F>,
     rv_claim: F,
     ra_claims: [F; 4],
     is_add_mul_sub_flag_claim: F,
     flag_claims: &[F],
+    eq_eval_cycle: F,
     transcript: &mut ProofTranscript,
 ) -> Result<(), ProofVerifyError> {
     let log_K = 2 * WORD_SIZE;
@@ -957,12 +969,12 @@ pub fn verify_sparse_dense_shout<
     let (sumcheck_claim, r_address) = first_log_K_rounds.verify(rv_claim, log_K, 2, transcript)?;
     // The last log(T) rounds' univariate polynomials are degree 6
     let (sumcheck_claim, r_cycle_prime) =
-        last_log_T_rounds.verify(sumcheck_claim, log_T, 6, transcript)?;
+        last_log_T_rounds.verify(sumcheck_claim, 5 * log_T, 6, transcript)?;
 
     let val_evals: Vec<_> = LookupTables::<WORD_SIZE>::iter()
         .map(|table| table.evaluate_mle(&r_address))
         .collect();
-    let eq_eval_cycle = EqPolynomial::mle(&r_cycle, &r_cycle_prime);
+    // let eq_eval_cycle = EqPolynomial::mle(&r_cycle, &r_cycle_prime);
 
     let rv_val_claim = flag_claims
         .iter()
@@ -1000,7 +1012,7 @@ mod tests {
     const LOG_T: usize = 8;
     const T: usize = 1 << LOG_T;
 
-    fn random_instruction(rng: &mut StdRng, instruction: &Option) -> RV32IMCycle {
+    fn random_instruction(rng: &mut StdRng, instruction: &Option<RV32IMCycle>) -> RV32IMCycle {
         let instruction = instruction.unwrap_or_else(|| {
             let index = rng.next_u64() as usize % RV32IMCycle::COUNT;
             RV32IMCycle::iter()
@@ -1072,22 +1084,25 @@ mod tests {
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(LOG_T);
 
-        let (proof, rv_claim, ra_claims, add_mul_sub_claim, flag_claims, _) =
+        let (proof, rv_claim, ra_claims, add_mul_sub_claim, flag_claims, _, eq_eval_cycle) =
             prove_sparse_dense_shout::<WORD_SIZE, _, _>(&trace, &r_cycle, &mut prover_transcript);
 
         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
         verifier_transcript.compare_to(prover_transcript);
-        let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(LOG_T);
+        // Need to do this to sync the verifier transcript.
+        let _r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(LOG_T);
+
         let verification_result = verify_sparse_dense_shout::<WORD_SIZE, _, _>(
             &proof,
             LOG_T,
-            r_cycle,
             rv_claim,
             ra_claims,
             add_mul_sub_claim,
             &flag_claims,
+            eq_eval_cycle,
             &mut verifier_transcript,
         );
+
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
