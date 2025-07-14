@@ -911,7 +911,7 @@ where
             }
         }
 
-        let mut opening = OpeningProofReductionSumcheck::new_verifier_instance(
+        let opening = OpeningProofReductionSumcheck::new_verifier_instance(
             joint_commitment,
             opening_point,
             batched_claim,
