@@ -134,6 +134,7 @@ pub enum OpeningsKeys {
     RegistersReadWriteInc,          // Inc claim from registers read/write checking
     RegistersValEvaluationInc,      // Inc claim from registers Val evaluation sumcheck
     RegistersValEvaluationWa,       // Wa claim from registers Val evaluation sumcheck
+    OpeningsSumcheckClaim(usize),   // Final sumcheck claim for the openings proof
 }
 
 pub type Openings<F> = HashMap<OpeningsKeys, (OpeningPoint<LITTLE_ENDIAN, F>, F)>;
@@ -246,7 +247,7 @@ where
     verifier_state: Option<VerifierOpening<F, PCS>>,
     opening_point: Vec<F>,
     input_claim: F,
-    sumcheck_claim: Option<F>,
+    pub sumcheck_claim: Option<F>,
     #[cfg(test)]
     /// If this is a batched opening, this `Vec` contains the individual
     /// polynomials in the batch.
@@ -359,18 +360,33 @@ where
 {
     fn cache_openings_prover(
         &mut self,
-        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
         debug_assert!(self.sumcheck_claim.is_none());
         let prover_state = self
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
+
+        let accumulator_ref = accumulator.expect("accumulator must be provided");
+        let mut accumulator_borrow = accumulator_ref.borrow_mut();
+        let instance_index = accumulator_borrow.len();
+
         match prover_state {
             ProverOpening::Dense(opening) => {
+                accumulator_borrow.append_virtual(
+                    OpeningsKeys::OpeningsSumcheckClaim(instance_index),
+                    vec![],
+                    opening.final_sumcheck_claim(),
+                );
                 self.sumcheck_claim = Some(opening.final_sumcheck_claim())
             }
             ProverOpening::OneHot(opening) => {
+                accumulator_borrow.append_virtual(
+                    OpeningsKeys::OpeningsSumcheckClaim(instance_index),
+                    vec![],
+                    opening.final_sumcheck_claim(),
+                );
                 self.sumcheck_claim = Some(opening.final_sumcheck_claim())
             }
         };
@@ -402,7 +418,7 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    openings: Vec<OpeningProofReductionSumcheck<F, PCS>>,
+    pub openings: Vec<OpeningProofReductionSumcheck<F, PCS>>,
     evaluation_openings: Openings<F>,
     #[cfg(test)]
     joint_commitment: Option<PCS::Commitment>,
@@ -415,7 +431,7 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    openings: Vec<OpeningProofReductionSumcheck<F, PCS>>,
+    pub openings: Vec<OpeningProofReductionSumcheck<F, PCS>>,
     evaluation_openings: Openings<F>,
     #[cfg(test)]
     /// In testing, the Jolt verifier may be provided the prover's openings so that we
