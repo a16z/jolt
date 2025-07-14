@@ -11,6 +11,12 @@ pub struct OpeningProofDAG<F: JoltField, PCS: CommitmentScheme<Field = F>> {
     _marker: PhantomData<(F, PCS)>,
 }
 
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> Default for OpeningProofDAG<F, PCS> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>> OpeningProofDAG<F, PCS> {
     pub fn new() -> Self {
         Self {
@@ -62,7 +68,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         let openings: Vec<Box<dyn StagedSumcheck<F, PCS>>> = accumulator_borrow
             .openings
             .drain(..)
-            .zip(sumcheck_claims.into_iter())
+            .zip(sumcheck_claims)
             .map(|(mut opening, sumcheck_claim)| {
                 // Set the sumcheck claim for this opening
                 opening.sumcheck_claim = Some(sumcheck_claim);
