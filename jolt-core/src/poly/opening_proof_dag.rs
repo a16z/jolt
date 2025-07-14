@@ -11,6 +11,12 @@ pub struct OpeningProofDAG<F: JoltField, PCS: CommitmentScheme<Field = F>> {
     _marker: PhantomData<(F, PCS)>,
 }
 
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> Default for OpeningProofDAG<F, PCS> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>> OpeningProofDAG<F, PCS> {
     pub fn new() -> Self {
         Self {
@@ -48,19 +54,19 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
         let accumulator = state_manager.get_verifier_accumulator();
         let accumulator_borrow = accumulator.borrow();
-        
+
         // Collect the claims for each index
         let num_openings = accumulator_borrow.openings.len();
         let claims: Vec<F> = (0..num_openings)
             .map(|index| {
                 accumulator_borrow.get_opening(
-                    crate::poly::opening_proof::OpeningsKeys::OpeningsSumcheckClaim(index)
+                    crate::poly::opening_proof::OpeningsKeys::OpeningsSumcheckClaim(index),
                 )
             })
             .collect();
-        
+
         drop(accumulator_borrow);
-        
+
         // Now drain and set both instance_index and sumcheck_claim
         let mut accumulator_borrow = accumulator.borrow_mut();
         let openings: Vec<Box<dyn StagedSumcheck<F, PCS>>> = accumulator_borrow
@@ -70,10 +76,10 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             .map(|(index, mut opening)| {
                 // Set the instance index
                 opening.instance_index = Some(index);
-                
+
                 // Set the sumcheck claim from our pre-collected claims
                 opening.sumcheck_claim = Some(claims[index]);
-                
+
                 Box::new(opening) as Box<dyn StagedSumcheck<F, PCS>>
             })
             .collect();

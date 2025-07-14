@@ -129,7 +129,8 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
 
         // Stage 5: Opening proof reduction sumcheck
         // This stage handles the batch opening reduction for all accumulated openings
-        let mut opening_proof_dag = crate::poly::opening_proof_dag::OpeningProofDAG::<F, PCS>::new();
+        let mut opening_proof_dag =
+            crate::poly::opening_proof_dag::OpeningProofDAG::<F, PCS>::new();
         let mut stage5_instances =
             opening_proof_dag.stage5_prover_instances(&mut self.prover_state_manager);
 
@@ -246,7 +247,8 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         }
 
         // Stage 5: Opening proof reduction sumcheck
-        let mut opening_proof_dag = crate::poly::opening_proof_dag::OpeningProofDAG::<F, PCS>::new();
+        let mut opening_proof_dag =
+            crate::poly::opening_proof_dag::OpeningProofDAG::<F, PCS>::new();
         let stage5_instances =
             opening_proof_dag.stage5_verifier_instances(&mut self.verifier_state_manager);
 
@@ -266,7 +268,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             };
 
             let transcript = self.verifier_state_manager.get_transcript();
-            
+
             // r_stage5 is not used for any further sumchecks (this is the last sumcheck step)
             let _r_stage5 = BatchedSumcheck::verify(
                 stage5_proof,

@@ -373,7 +373,7 @@ where
             .expect("Prover state not initialized");
 
         let instance_index = self.instance_index.expect("instance_index must be set");
-        
+
         match prover_state {
             ProverOpening::Dense(opening) => {
                 accumulator
@@ -610,7 +610,7 @@ where
 
         #[cfg(not(test))]
         {
-            let mut opening = OpeningProofReductionSumcheck::new_prover_instance_dense(
+            let opening = OpeningProofReductionSumcheck::new_prover_instance_dense(
                 batched_poly,
                 Rc::new(RefCell::new(eq_evals.into())),
                 opening_point,
@@ -673,12 +673,13 @@ where
                     }
                     #[cfg(not(test))]
                     {
-                        let mut opening = OpeningProofReductionSumcheck::new_prover_instance_one_hot(
-                            one_hot_polynomial,
-                            shared_eq.clone(),
-                            r_concat.clone(),
-                            claim,
-                        );
+                        let opening =
+                            OpeningProofReductionSumcheck::new_prover_instance_one_hot(
+                                one_hot_polynomial,
+                                shared_eq.clone(),
+                                r_concat.clone(),
+                                claim,
+                            );
                         self.openings.push(opening);
                     }
                 }
