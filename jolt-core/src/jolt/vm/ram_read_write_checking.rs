@@ -50,6 +50,41 @@ struct DataBuffers<F: JoltField> {
     dirty_indices: Vec<usize>,
 }
 
+enum MaybeSplitEq<F: JoltField> {
+    Normal(MultilinearPolynomial<F>),
+    Split(GruenSplitEqPolynomial<F>),
+}
+
+impl<F: JoltField> MaybeSplitEq<F> {
+    fn normal(&self) -> Option<&MultilinearPolynomial<F>> {
+        match self {
+            Self::Normal(normal) => Some(normal),
+            Self::Split(_) => None,
+        }
+    }
+
+    fn normal_mut(&mut self) -> Option<&mut MultilinearPolynomial<F>> {
+        match self {
+            Self::Normal(normal) => Some(normal),
+            Self::Split(_) => None,
+        }
+    }
+
+    fn split(&self) -> Option<&GruenSplitEqPolynomial<F>> {
+        match self {
+            Self::Normal(_) => None,
+            Self::Split(split) => Some(split),
+        }
+    }
+
+    fn split_mut(&mut self) -> Option<&mut GruenSplitEqPolynomial<F>> {
+        match self {
+            Self::Normal(_) => None,
+            Self::Split(split) => Some(split),
+        }
+    }
+}
+
 struct ReadWriteCheckingProverState<F: JoltField> {
     trace: Vec<RV32IMCycle>,
     chunk_size: usize,
@@ -57,8 +92,8 @@ struct ReadWriteCheckingProverState<F: JoltField> {
     data_buffers: Vec<DataBuffers<F>>,
     I: Vec<Vec<(usize, usize, F, F)>>,
     A: Vec<F>,
-    eq_r_prime: MultilinearPolynomial<F>,
-    gruens_eq_r_prime: GruenSplitEqPolynomial<F>,
+    old_eq_r_prime: MultilinearPolynomial<F>,
+    eq_r_prime: MaybeSplitEq<F>,
     inc_cycle: MultilinearPolynomial<F>,
     ra: Option<MultilinearPolynomial<F>>,
     val: Option<MultilinearPolynomial<F>>,
@@ -248,8 +283,8 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         drop(_guard);
         drop(span);
 
-        let eq_r_prime = MultilinearPolynomial::from(EqPolynomial::evals(r_prime));
-        let gruens_eq_r_prime = GruenSplitEqPolynomial::new(r_prime);
+        let old_eq_r_prime = MultilinearPolynomial::from(EqPolynomial::evals(r_prime));
+        let eq_r_prime = MaybeSplitEq::Split(GruenSplitEqPolynomial::new(r_prime));
         let inc_cycle = CommittedPolynomials::RamInc.generate_witness(preprocessing, trace);
 
         let data_buffers: Vec<DataBuffers<F>> = (0..num_chunks)
@@ -269,8 +304,8 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
             data_buffers,
             I,
             A,
+            old_eq_r_prime,
             eq_r_prime,
-            gruens_eq_r_prime,
             inc_cycle,
             ra: None,
             val: None,
@@ -462,7 +497,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             A,
             val_checkpoints,
             inc_cycle,
-            eq_r_prime,
+            old_eq_r_prime,
             ..
         } = self.prover_state.as_mut().unwrap();
 
@@ -539,7 +574,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                         }
 
                         let eq_r_prime_evals =
-                            eq_r_prime.sumcheck_evals(j_prime / 2, DEGREE, BindingOrder::LowToHigh);
+                            old_eq_r_prime.sumcheck_evals(j_prime / 2, DEGREE, BindingOrder::LowToHigh);
                         let inc_cycle_evals =
                             inc_cycle.sumcheck_evals(j_prime / 2, DEGREE, BindingOrder::LowToHigh);
 
@@ -605,9 +640,10 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             A,
             val_checkpoints,
             inc_cycle,
-            gruens_eq_r_prime,
+            eq_r_prime,
             ..
         } = self.prover_state.as_mut().unwrap();
+        let eq_r_prime = eq_r_prime.split().unwrap();
 
         // We use both Dao-Thaler and Gruen's optimizations here. See "Our optimization on top of
         // Gruen's" from Sec. 3 of https://eprint.iacr.org/2024/1210.pdf.
@@ -619,7 +655,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         //
         // Since E_in is bound first, we have two cases to handle: one where E_in is fully bound
         // and one where it is not.
-        let quadratic_coeffs: [F; DEGREE - 1] = if gruens_eq_r_prime.E_in_current_len() == 1 {
+        let quadratic_coeffs: [F; DEGREE - 1] = if eq_r_prime.E_in_current_len() == 1 {
             // Here E_in is fully bound, so we can ignore it and use the evaluations from E_out.
             I.par_iter()
                 .zip(data_buffers.par_iter_mut())
@@ -692,7 +728,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                                 val_j_0[col] += inc;
                             }
 
-                            let eq_r_prime_eval = gruens_eq_r_prime.E_out_current()[j_prime / 2];
+                            let eq_r_prime_eval = eq_r_prime.E_out_current()[j_prime / 2];
                             let inc_cycle_evals = {
                                 let inc_cycle_0 = inc_cycle.get_bound_coeff(j_prime);
                                 let inc_cycle_1 = inc_cycle.get_bound_coeff(j_prime + 1);
@@ -739,7 +775,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             // number of multiplications. Therefore, we keep a running sum evaluations multiplied
             // by E_in_eval values and only multiply them by E_out_eval when the value of the
             // latter changes.
-            let num_x_in_bits = gruens_eq_r_prime.E_in_current_len().log_2();
+            let num_x_in_bits = eq_r_prime.E_in_current_len().log_2();
             let x_bitmask = (1 << num_x_in_bits) - 1;
 
             I.par_iter()
@@ -818,7 +854,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
 
                             let x_in = (j_prime / 2) & x_bitmask;
                             let x_out = (j_prime / 2) >> num_x_in_bits;
-                            let E_in_eval = gruens_eq_r_prime.E_in_current()[x_in];
+                            let E_in_eval = eq_r_prime.E_in_current()[x_in];
 
                             let inc_cycle_evals = {
                                 let inc_cycle_0 = inc_cycle.get_bound_coeff(j_prime);
@@ -836,7 +872,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                                 Some(x) if x_out != x => {
                                     x_out_prev = Some(x_out);
 
-                                    let E_out_eval = gruens_eq_r_prime.E_out_current()[x];
+                                    let E_out_eval = eq_r_prime.E_out_current()[x];
                                     evals[0] += E_out_eval * evals_for_current_E_out[0];
                                     evals[1] += E_out_eval * evals_for_current_E_out[1];
 
@@ -875,7 +911,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                     // Multiply the final running sum by the final value of E_out_eval and add the
                     // result to the total.
                     if let Some(x) = x_out_prev {
-                        let E_out_eval = gruens_eq_r_prime.E_out_current()[x];
+                        let E_out_eval = eq_r_prime.E_out_current()[x];
                         evals[0] += E_out_eval * evals_for_current_E_out[0];
                         evals[1] += E_out_eval * evals_for_current_E_out[1];
                     }
@@ -887,7 +923,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                 )
         };
 
-        let cubic_evals = gruens_eq_r_prime
+        let cubic_evals = eq_r_prime
             .sumcheck_evals_from_quadratic_coeffs(
                 quadratic_coeffs[0],
                 quadratic_coeffs[1],
@@ -904,12 +940,13 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         cubic_evals
     }
 
-    fn phase2_compute_prover_message(&self) -> Vec<F> {
+    #[cfg(test)]
+    fn phase2_compute_prover_message_cubic(&self) -> Vec<F> {
         const DEGREE: usize = 3;
 
         let ReadWriteCheckingProverState {
             inc_cycle,
-            eq_r_prime,
+            old_eq_r_prime,
             ra,
             val,
             ..
@@ -917,11 +954,11 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         let ra = ra.as_ref().unwrap();
         let val = val.as_ref().unwrap();
 
-        let univariate_poly_evals = (0..eq_r_prime.len() / 2)
+        let univariate_poly_evals = (0..old_eq_r_prime.len() / 2)
             .into_par_iter()
             .map(|j| {
                 let eq_r_prime_evals =
-                    eq_r_prime.sumcheck_evals(j, DEGREE, BindingOrder::HighToLow);
+                    old_eq_r_prime.sumcheck_evals(j, DEGREE, BindingOrder::HighToLow);
                 let inc_evals = inc_cycle.sumcheck_evals(j, DEGREE, BindingOrder::HighToLow);
 
                 let inner_sum_evals: [F; DEGREE] = (0..self.K)
@@ -974,6 +1011,84 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         univariate_poly_evals.into()
     }
 
+    fn phase2_compute_prover_message_quadratic(&self) -> Vec<F> {
+        const DEGREE: usize = 3;
+
+        let ReadWriteCheckingProverState {
+            inc_cycle,
+            eq_r_prime,
+            ra,
+            val,
+            ..
+        } = self.prover_state.as_ref().unwrap();
+        let ra = ra.as_ref().unwrap();
+        let val = val.as_ref().unwrap();
+        let eq_r_prime = eq_r_prime.normal().unwrap();
+
+        let cubic_evals = (0..eq_r_prime.len() / 2)
+            .into_par_iter()
+            .map(|j| {
+                let eq_r_prime_evals =
+                    eq_r_prime.sumcheck_evals(j, DEGREE, BindingOrder::HighToLow);
+                let inc_evals = inc_cycle.sumcheck_evals(j, DEGREE, BindingOrder::HighToLow);
+
+                let inner_sum_evals: [F; DEGREE] = (0..self.K)
+                    .into_par_iter()
+                    .map(|k| {
+                        let index = j * self.K + k;
+                        let ra_evals = ra.sumcheck_evals(index, DEGREE, BindingOrder::HighToLow);
+                        let val_evals = val.sumcheck_evals(index, DEGREE, BindingOrder::HighToLow);
+
+                        [
+                            ra_evals[0].mul_0_optimized(
+                                val_evals[0] + self.z * (inc_evals[0] + val_evals[0]),
+                            ),
+                            ra_evals[1].mul_0_optimized(
+                                val_evals[1] + self.z * (inc_evals[1] + val_evals[1]),
+                            ),
+                            ra_evals[2].mul_0_optimized(
+                                val_evals[2] + self.z * (inc_evals[2] + val_evals[2]),
+                            ),
+                        ]
+                    })
+                    .reduce(
+                        || [F::zero(); DEGREE],
+                        |running, new| {
+                            [
+                                running[0] + new[0],
+                                running[1] + new[1],
+                                running[2] + new[2],
+                            ]
+                        },
+                    );
+
+                [
+                    eq_r_prime_evals[0] * inner_sum_evals[0],
+                    eq_r_prime_evals[1] * inner_sum_evals[1],
+                    eq_r_prime_evals[2] * inner_sum_evals[2],
+                ]
+            })
+            .reduce(
+                || [F::zero(); DEGREE],
+                |running, new| {
+                    [
+                        running[0] + new[0],
+                        running[1] + new[1],
+                        running[2] + new[2],
+                    ]
+                },
+            )
+            .into();
+
+        #[cfg(test)]
+        {
+            let test_cubic_evals = self.phase2_compute_prover_message_cubic();
+            assert_eq!(cubic_evals, test_cubic_evals);
+        }
+
+        cubic_evals
+    }
+
     fn phase3_compute_prover_message(&self) -> Vec<F> {
         const DEGREE: usize = 3;
 
@@ -986,6 +1101,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         } = self.prover_state.as_ref().unwrap();
         let ra = ra.as_ref().unwrap();
         let val = val.as_ref().unwrap();
+        let eq_r_prime = eq_r_prime.normal().unwrap();
 
         // Cycle variables are fully bound, so:
         // eq(r', r_cycle) is a constant
@@ -1028,8 +1144,8 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             I,
             A,
             inc_cycle,
-            gruens_eq_r_prime,
             eq_r_prime,
+            old_eq_r_prime,
             chunk_size,
             val_checkpoints,
             trace,
@@ -1037,6 +1153,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             val,
             ..
         } = self.prover_state.as_mut().unwrap();
+        let eq_r_prime = eq_r_prime.split_mut().unwrap();
 
         let inner_span = tracing::span!(tracing::Level::INFO, "Bind I");
         let _inner_guard = inner_span.enter();
@@ -1076,8 +1193,8 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         drop(_inner_guard);
         drop(inner_span);
 
-        gruens_eq_r_prime.bind(r_j);
-        eq_r_prime.bind_parallel(r_j, BindingOrder::LowToHigh);
+        eq_r_prime.bind(r_j);
+        old_eq_r_prime.bind_parallel(r_j, BindingOrder::LowToHigh);
         inc_cycle.bind_parallel(r_j, BindingOrder::LowToHigh);
 
         let inner_span = tracing::span!(tracing::Level::INFO, "Update A");
@@ -1150,14 +1267,14 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             val,
             inc_cycle,
             eq_r_prime,
+            old_eq_r_prime,
             ..
         } = self.prover_state.as_mut().unwrap();
         let ra = ra.as_mut().unwrap();
         let val = val.as_mut().unwrap();
+        let eq_r_prime = eq_r_prime.normal_mut().unwrap();
 
-        // Note that we only use `gruens_eq_r_prime` for phase 1, so there's no need to continue
-        // binding it here.
-        [ra, val, inc_cycle, eq_r_prime]
+        [ra, val, inc_cycle, eq_r_prime, old_eq_r_prime]
             .into_par_iter()
             .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
     }
@@ -1195,7 +1312,13 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         if round < prover_state.chunk_size.log_2() {
             self.phase1_compute_prover_message_quadratic(round, previous_claim)
         } else if round < self.T.log_2() {
-            self.phase2_compute_prover_message()
+            if let MaybeSplitEq::Split(split) = &self.prover_state.as_ref().unwrap().eq_r_prime {
+                self.prover_state.as_mut().unwrap().eq_r_prime = MaybeSplitEq::Normal(
+                    //MultilinearPolynomial::<F>::from(split.merge().Z)
+                    self.prover_state.as_ref().unwrap().old_eq_r_prime.clone()
+                );
+            }
+            self.phase2_compute_prover_message_quadratic()
         } else {
             self.phase3_compute_prover_message()
         }

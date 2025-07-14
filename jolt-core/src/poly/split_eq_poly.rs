@@ -1,6 +1,5 @@
 //! Implements the Dao-Thaler optimization for EQ polynomial evaluations
 //! https://eprint.iacr.org/2024/1210.pdf
-#[cfg(test)]
 use super::dense_mlpoly::DensePolynomial;
 use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
 
@@ -264,7 +263,6 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         }
     }
 
-    #[cfg(test)]
     pub fn merge(&self) -> DensePolynomial<F> {
         let evals = EqPolynomial::evals(&self.w[..self.current_index])
             .iter()
