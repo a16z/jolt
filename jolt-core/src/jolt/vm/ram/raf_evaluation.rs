@@ -226,24 +226,24 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    // fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
-
-    // }
+    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+        OpeningPoint::new(opening_point.iter().cloned().rev().collect())
+    }
 
     fn cache_openings_prover(
         &mut self,
-        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let prover_state = self
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
-        // TODO(moodlezoup): Fix
-        // openings.unwrap().borrow_mut().insert(
-        //     OpeningsKeys::RamRafEvaluationRa,
-        //     prover_state.ra.final_sumcheck_claim(),
-        // );
+        accumulator.unwrap().borrow_mut().append_virtual(
+            OpeningsKeys::RamRafEvaluationRa,
+            opening_point,
+            prover_state.ra.final_sumcheck_claim(),
+        );
     }
 }
 

@@ -1105,27 +1105,27 @@ where
 
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersReadWriteVal,
-                final_opening_point.clone(),
+                OpeningPoint::new(final_opening_point.clone()),
                 val_claim,
             );
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersReadWriteRs1Ra,
-                final_opening_point.clone(),
+                OpeningPoint::new(final_opening_point.clone()),
                 rs1_ra_claim,
             );
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersReadWriteRs2Ra,
-                final_opening_point.clone(),
+                OpeningPoint::new(final_opening_point.clone()),
                 rs2_ra_claim,
             );
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersReadWriteRdWa,
-                final_opening_point.clone(),
+                OpeningPoint::new(final_opening_point.clone()),
                 rd_wa_claim,
             );
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersReadWriteInc,
-                final_opening_point.clone(),
+                OpeningPoint::new(final_opening_point.clone()),
                 inc_claim,
             );
         }

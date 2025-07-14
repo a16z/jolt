@@ -461,14 +461,14 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
         flag_claims.into_iter().enumerate().for_each(|(i, claim)| {
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::LookupTableFlag(i),
-                r_cycle_prime.to_vec(),
+                OpeningPoint::new(r_cycle_prime.to_vec()),
                 claim,
             );
         });
         ra_claims.iter().enumerate().for_each(|(i, claim)| {
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::InstructionRa(i),
-                ps.r.to_vec(),
+                OpeningPoint::new(ps.r.to_vec()),
                 *claim,
             );
         });
@@ -479,7 +479,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
             .sum::<F>();
         accumulator.borrow_mut().append_virtual(
             OpeningsKeys::InstructionRafFlag,
-            r_cycle_prime.to_vec(),
+            OpeningPoint::new(r_cycle_prime.to_vec()),
             raf_flag_claim,
         );
     }

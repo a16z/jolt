@@ -229,12 +229,12 @@ where
 
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersValEvaluationInc,
-                r_cycle_prime.clone(),
+                OpeningPoint::new(r_cycle_prime.clone()),
                 inc_claim,
             );
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersValEvaluationWa,
-                r_cycle_prime,
+                OpeningPoint::new(r_cycle_prime),
                 wa_claim,
             );
         }

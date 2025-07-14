@@ -875,12 +875,12 @@ where
         // Store unexpanded_pc and pc evaluations
         accumulator.borrow_mut().append_virtual(
             OpeningsKeys::PCSumcheckUnexpandedPC,
-            prover_state.r_cycle.clone(),
+            OpeningPoint::new(prover_state.r_cycle.clone()),
             unexpanded_pc_eval,
         );
         accumulator.borrow_mut().append_virtual(
             OpeningsKeys::PCSumcheckNextPC,
-            prover_state.r_cycle.clone(),
+            OpeningPoint::new(prover_state.r_cycle.clone()),
             pc_eval,
         );
 
@@ -973,17 +973,17 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         let accumulator = state_manager.get_prover_accumulator();
         accumulator.borrow_mut().append_virtual(
             OpeningsKeys::OuterSumcheckAz,
-            outer_sumcheck_r.clone(),
+            OpeningPoint::new(outer_sumcheck_r.clone()),
             outer_sumcheck_claims[0],
         );
         accumulator.borrow_mut().append_virtual(
             OpeningsKeys::OuterSumcheckBz,
-            outer_sumcheck_r.clone(),
+            OpeningPoint::new(outer_sumcheck_r.clone()),
             outer_sumcheck_claims[1],
         );
         accumulator.borrow_mut().append_virtual(
             OpeningsKeys::OuterSumcheckCz,
-            outer_sumcheck_r.clone(),
+            OpeningPoint::new(outer_sumcheck_r.clone()),
             outer_sumcheck_claims[2],
         );
 
@@ -1038,7 +1038,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             if !COMMITTED_R1CS_INPUTS.contains(input) {
                 accumulator.borrow_mut().append_virtual(
                     OpeningsKeys::SpartanZ(*input),
-                    r_cycle.to_vec(),
+                    OpeningPoint::new(r_cycle.to_vec()),
                     *eval,
                 );
             }

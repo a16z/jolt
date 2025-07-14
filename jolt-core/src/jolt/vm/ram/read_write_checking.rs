@@ -877,20 +877,57 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
+    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+        let sumcheck_switch_index = if let Some(state) = &self.verifier_state {
+            state.sumcheck_switch_index
+        } else {
+            self.prover_state.as_ref().unwrap().chunk_size.log_2()
+        };
+
+        // The high-order cycle variables are bound after the switch
+        let mut r_cycle = opening_point[sumcheck_switch_index..self.T.log_2()].to_vec();
+        // First `sumcheck_switch_index` rounds bind cycle variables from low to high
+        r_cycle.extend(opening_point[..sumcheck_switch_index].iter().rev());
+        // Address variables are bound high-to-low
+        let r_address = opening_point[self.T.log_2()..].to_vec();
+
+        [r_address, r_cycle].concat().into()
+    }
+
     fn cache_openings_prover(
         &mut self,
-        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        // TODO(moodlezoup): Add openings to _openings and _accumulator instead
-        // We should probably just pass in the whole `StateManager` into
-        // cache_openings instead of Openings and ProverOpeningAccumulator
-
         debug_assert!(self.claims.is_none());
         let prover_state = self
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
+
+        let mut r_address = opening_point.clone();
+        let r_cycle = r_address.split_off(self.K.log_2());
+
+        accumulator.as_ref().unwrap().borrow_mut().append_virtual(
+            OpeningsKeys::RamReadWriteCheckingVal,
+            r_address,
+            prover_state.val.as_ref().unwrap().final_sumcheck_claim(),
+        );
+
+        accumulator.as_ref().unwrap().borrow_mut().append_virtual(
+            OpeningsKeys::RamReadWriteCheckingRa,
+            opening_point,
+            prover_state.ra.as_ref().unwrap().final_sumcheck_claim(),
+        );
+
+        // TODO(moodlezoup): append_dense
+        accumulator.as_ref().unwrap().borrow_mut().append_virtual(
+            OpeningsKeys::RamReadWriteCheckingInc,
+            r_cycle,
+            prover_state.inc_cycle.final_sumcheck_claim(),
+        );
+
+        // TODO(moodlezoup): Remove this
         self.claims = Some(ReadWriteSumcheckClaims {
             val_claim: prover_state.val.as_ref().unwrap().final_sumcheck_claim(),
             ra_claim: prover_state.ra.as_ref().unwrap().final_sumcheck_claim(),

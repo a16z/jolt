@@ -404,7 +404,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
         ra_claims.iter().enumerate().for_each(|(i, claim)| {
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::InstructionBooleanityRa(i),
-                r.clone(),
+                OpeningPoint::new(r.clone()),
                 *claim,
             );
         });

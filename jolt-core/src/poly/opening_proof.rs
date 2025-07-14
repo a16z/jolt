@@ -63,6 +63,10 @@ impl<const E: Endianness, F: JoltField> OpeningPoint<E, F> {
     pub fn split_at(&self, mid: usize) -> (&[F], &[F]) {
         self.r.split_at(mid)
     }
+
+    pub fn split_off(&mut self, mid: usize) -> Self {
+        Self::new(self.r.split_off(mid))
+    }
 }
 
 impl<const E: Endianness, F: JoltField> OpeningPoint<E, F> {
@@ -673,8 +677,12 @@ where
         }
     }
 
-    pub fn append_virtual(&mut self, key: OpeningsKeys, opening_point: Vec<F>, claim: F) {
-        let opening_point = OpeningPoint::<BIG_ENDIAN, F>::new(opening_point);
+    pub fn append_virtual(
+        &mut self,
+        key: OpeningsKeys,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        claim: F,
+    ) {
         self.evaluation_openings.insert(key, (opening_point, claim));
     }
 

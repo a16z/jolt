@@ -89,8 +89,8 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         stage2_instances
             .extend(registers_dag.stage2_prover_instances(&mut self.prover_state_manager));
 
-        // let ram_dag = RamDag::new_prover(&self.prover_state_manager);
-        // stage2_instances.extend(ram_dag.stage2_prover_instances(&mut self.prover_state_manager));
+        let ram_dag = RamDag::new_prover(&self.prover_state_manager);
+        stage2_instances.extend(ram_dag.stage2_prover_instances(&mut self.prover_state_manager));
 
         let stage2_instances_mut: Vec<&mut dyn BatchableSumcheckInstance<F>> = stage2_instances
             .iter_mut()
@@ -168,9 +168,9 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             registers_dag.stage2_verifier_instances(&mut self.verifier_state_manager);
         stage2_instances.append(&mut registers_stage2);
 
-        // let ram_dag = RamDag::new_verifier(&self.verifier_state_manager);
-        // stage2_instances
-        //     .extend(ram_dag.stage2_verifier_instances(&mut self.verifier_state_manager));
+        let ram_dag = RamDag::new_verifier(&self.verifier_state_manager);
+        stage2_instances
+            .extend(ram_dag.stage2_verifier_instances(&mut self.verifier_state_manager));
 
         let stage2_instances_ref: Vec<&dyn BatchableSumcheckInstance<F>> = stage2_instances
             .iter()
