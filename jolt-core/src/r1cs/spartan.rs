@@ -16,10 +16,11 @@ use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::OpeningsKeys::{OuterSumcheckAz, OuterSumcheckBz, OuterSumcheckCz};
 use crate::poly::opening_proof::{
-    OpeningsExt, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
+    OpeningPoint, OpeningsExt, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
+    BIG_ENDIAN,
 };
 use crate::r1cs::builder::Constraint;
-use crate::r1cs::constraints::R1CSConstraints;
+use crate::r1cs::constraints::{JoltRV32IMConstraints, R1CSConstraints};
 use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::r1cs::inputs::ALL_R1CS_INPUTS;
 use crate::r1cs::inputs::COMMITTED_R1CS_INPUTS;
@@ -651,6 +652,7 @@ where
     fn cache_openings_prover(
         &mut self,
         _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         debug_assert!(self.cached_claims.is_none());
         let prover_state = self
@@ -857,6 +859,7 @@ where
     fn cache_openings_prover(
         &mut self,
         accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         debug_assert!(self.cached_claims.is_none());
         let prover_state = self
@@ -872,12 +875,12 @@ where
         // Store unexpanded_pc and pc evaluations
         accumulator.borrow_mut().append_virtual(
             OpeningsKeys::PCSumcheckUnexpandedPC,
-            prover_state.r_cycle.clone(),
+            OpeningPoint::new(prover_state.r_cycle.clone()),
             unexpanded_pc_eval,
         );
         accumulator.borrow_mut().append_virtual(
             OpeningsKeys::PCSumcheckNextPC,
-            prover_state.r_cycle.clone(),
+            OpeningPoint::new(prover_state.r_cycle.clone()),
             pc_eval,
         );
 
@@ -892,10 +895,7 @@ pub struct SpartanDag<F: JoltField> {
 
 impl<F: JoltField> SpartanDag<F> {
     pub fn new<ProofTranscript: Transcript>(padded_trace_length: usize) -> Self {
-        let constraint_builder =
-            crate::r1cs::constraints::JoltRV32IMConstraints::construct_constraints(
-                padded_trace_length,
-            );
+        let constraint_builder = JoltRV32IMConstraints::construct_constraints(padded_trace_length);
         let key = Arc::new(UniformSpartanProof::<F, ProofTranscript>::setup(
             &constraint_builder,
             padded_trace_length,
@@ -928,7 +928,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         let key = self.key.clone();
 
         // Create input polynomials from trace
-        let input_polys: Vec<MultilinearPolynomial<F>> = crate::r1cs::inputs::ALL_R1CS_INPUTS
+        let input_polys: Vec<MultilinearPolynomial<F>> = ALL_R1CS_INPUTS
             .par_iter()
             .map(|var| var.generate_witness(trace, preprocessing))
             .collect();
@@ -942,9 +942,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 
         // Recreate constraint_builder from padded_trace_length
         let constraint_builder: CombinedUniformBuilder<F> =
-            crate::r1cs::constraints::JoltRV32IMConstraints::construct_constraints(
-                padded_trace_length,
-            );
+            JoltRV32IMConstraints::construct_constraints(padded_trace_length);
 
         let uniform_constraints_only_padded = constraint_builder
             .uniform_builder
@@ -975,17 +973,17 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         let accumulator = state_manager.get_prover_accumulator();
         accumulator.borrow_mut().append_virtual(
             OpeningsKeys::OuterSumcheckAz,
-            outer_sumcheck_r.clone(),
+            OpeningPoint::new(outer_sumcheck_r.clone()),
             outer_sumcheck_claims[0],
         );
         accumulator.borrow_mut().append_virtual(
             OpeningsKeys::OuterSumcheckBz,
-            outer_sumcheck_r.clone(),
+            OpeningPoint::new(outer_sumcheck_r.clone()),
             outer_sumcheck_claims[1],
         );
         accumulator.borrow_mut().append_virtual(
             OpeningsKeys::OuterSumcheckCz,
-            outer_sumcheck_r.clone(),
+            OpeningPoint::new(outer_sumcheck_r.clone()),
             outer_sumcheck_claims[2],
         );
 
@@ -1040,7 +1038,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             if !COMMITTED_R1CS_INPUTS.contains(input) {
                 accumulator.borrow_mut().append_virtual(
                     OpeningsKeys::SpartanZ(*input),
-                    r_cycle.to_vec(),
+                    OpeningPoint::new(r_cycle.to_vec()),
                     *eval,
                 );
             }
@@ -1097,20 +1095,18 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         // TODO(markosg04): Make use of Endianness here?
         let outer_sumcheck_r_reversed: Vec<F> =
             outer_sumcheck_r_original.iter().rev().cloned().collect();
+        let opening_point = OpeningPoint::new(outer_sumcheck_r_reversed.clone());
 
         // Populate the opening points for Az, Bz, Cz claims now that we have outer_sumcheck_r
-        accumulator.borrow_mut().populate_claim_opening(
-            OpeningsKeys::OuterSumcheckAz,
-            outer_sumcheck_r_reversed.clone(),
-        );
-        accumulator.borrow_mut().populate_claim_opening(
-            OpeningsKeys::OuterSumcheckBz,
-            outer_sumcheck_r_reversed.clone(),
-        );
-        accumulator.borrow_mut().populate_claim_opening(
-            OpeningsKeys::OuterSumcheckCz,
-            outer_sumcheck_r_reversed.clone(),
-        );
+        accumulator
+            .borrow_mut()
+            .populate_claim_opening(OpeningsKeys::OuterSumcheckAz, opening_point.clone());
+        accumulator
+            .borrow_mut()
+            .populate_claim_opening(OpeningsKeys::OuterSumcheckBz, opening_point.clone());
+        accumulator
+            .borrow_mut()
+            .populate_claim_opening(OpeningsKeys::OuterSumcheckCz, opening_point.clone());
 
         let tau_bound_rx = EqPolynomial::mle(&tau, &outer_sumcheck_r_reversed);
         let claim_outer_final_expected = tau_bound_rx * (claim_Az * claim_Bz - claim_Cz);
@@ -1160,9 +1156,10 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         );
 
         ALL_R1CS_INPUTS.iter().for_each(|input| {
-            accumulator
-                .borrow_mut()
-                .populate_claim_opening(OpeningsKeys::SpartanZ(*input), r_cycle.to_vec());
+            accumulator.borrow_mut().populate_claim_opening(
+                OpeningsKeys::SpartanZ(*input),
+                OpeningPoint::new(r_cycle.to_vec()),
+            );
         });
 
         Ok(())
@@ -1300,7 +1297,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 
         let key = self.key.clone();
 
-        let input_polys: Vec<MultilinearPolynomial<F>> = crate::r1cs::inputs::ALL_R1CS_INPUTS
+        let input_polys: Vec<MultilinearPolynomial<F>> = ALL_R1CS_INPUTS
             .par_iter()
             .map(|var| var.generate_witness(trace, preprocessing))
             .collect();

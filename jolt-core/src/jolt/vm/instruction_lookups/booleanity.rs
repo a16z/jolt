@@ -16,7 +16,8 @@ use crate::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         opening_proof::{
-            Openings, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
+            OpeningPoint, Openings, OpeningsKeys, ProverOpeningAccumulator,
+            VerifierOpeningAccumulator, BIG_ENDIAN,
         },
     },
     r1cs::inputs::JoltR1CSInputs,
@@ -378,6 +379,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
     fn cache_openings_prover(
         &mut self,
         accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let ps = self.prover_state.as_mut().unwrap();
         let ra_claims =
@@ -403,14 +405,14 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
     fn cache_openings_verifier(
         &mut self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
-        r_sumcheck: Option<&[F]>,
+        r_sumcheck: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let accumulator = accumulator.expect("accumulator is needed");
         (0..D).for_each(|i| {
             accumulator.borrow_mut().populate_claim_opening(
                 OpeningsKeys::InstructionBooleanityRa(i),
-                r_sumcheck.unwrap().to_vec(),
-            )
+                r_sumcheck.clone(),
+            );
         });
     }
 }

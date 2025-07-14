@@ -1,4 +1,5 @@
 use crate::jolt::vm::registers::RegistersDag;
+use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
 use crate::{
     dag::stage::{StagedSumcheck, SumcheckStages},
     field::{JoltField, OptimizedMul},
@@ -1064,6 +1065,7 @@ where
     fn cache_openings_prover(
         &mut self,
         accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         debug_assert!(self.claims.is_none());
         let prover_state = self
@@ -1103,27 +1105,27 @@ where
 
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersReadWriteVal,
-                final_opening_point.clone(),
+                OpeningPoint::new(final_opening_point.clone()),
                 val_claim,
             );
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersReadWriteRs1Ra,
-                final_opening_point.clone(),
+                OpeningPoint::new(final_opening_point.clone()),
                 rs1_ra_claim,
             );
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersReadWriteRs2Ra,
-                final_opening_point.clone(),
+                OpeningPoint::new(final_opening_point.clone()),
                 rs2_ra_claim,
             );
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersReadWriteRdWa,
-                final_opening_point.clone(),
+                OpeningPoint::new(final_opening_point.clone()),
                 rd_wa_claim,
             );
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersReadWriteInc,
-                final_opening_point.clone(),
+                OpeningPoint::new(final_opening_point.clone()),
                 inc_claim,
             );
         }
@@ -1132,9 +1134,11 @@ where
     fn cache_openings_verifier(
         &mut self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
-        r_sumcheck: Option<&[F]>,
+        r_sumcheck: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        if let (Some(accumulator), Some(r_sumcheck)) = (accumulator, r_sumcheck) {
+        // TODO(moodlezoup): Replace with proper `normalize_opening_point`
+        let r_sumcheck = r_sumcheck.r;
+        if let Some(accumulator) = accumulator {
             if let Some(_claims) = &self.claims {
                 // Get the sumcheck opening point
                 let verifier_state = self
@@ -1160,6 +1164,7 @@ where
                 // The final opening point is r_address || r_cycle
                 let mut final_opening_point = r_address;
                 final_opening_point.extend(r_cycle);
+                let final_opening_point = OpeningPoint::new(final_opening_point);
 
                 // Populate opening points for all claims
                 accumulator.borrow_mut().populate_claim_opening(

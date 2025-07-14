@@ -1,4 +1,5 @@
 use crate::field::JoltField;
+use crate::poly::opening_proof::{Endianness, OpeningPoint};
 use crate::utils::{math::Math, thread::unsafe_allocate_zero_vec};
 use rayon::prelude::*;
 use std::marker::PhantomData;
@@ -14,6 +15,25 @@ impl<F: JoltField> EqPolynomial<F> {
             .zip(y.par_iter())
             .map(|(x_i, y_i)| *x_i * y_i + (F::one() - x_i) * (F::one() - y_i))
             .product()
+    }
+
+    /// Computes the MLE evaluation EQ(x, y)
+    pub fn mle_endian<const E1: Endianness, const E2: Endianness>(
+        x: &OpeningPoint<E1, F>,
+        y: &OpeningPoint<E2, F>,
+    ) -> F {
+        assert_eq!(x.len(), y.len());
+        if E1 == E2 {
+            x.r.par_iter()
+                .zip(y.r.par_iter())
+                .map(|(x_i, y_i)| *x_i * y_i + (F::one() - x_i) * (F::one() - y_i))
+                .product()
+        } else {
+            x.r.par_iter()
+                .zip(y.r.par_iter().rev())
+                .map(|(x_i, y_i)| *x_i * y_i + (F::one() - x_i) * (F::one() - y_i))
+                .product()
+        }
     }
 
     #[tracing::instrument(skip_all, name = "EqPolynomial::evals")]

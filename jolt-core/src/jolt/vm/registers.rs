@@ -18,7 +18,10 @@ use crate::{
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
-        opening_proof::{OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator},
+        opening_proof::{
+            OpeningPoint, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
+            BIG_ENDIAN,
+        },
     },
     subprotocols::sumcheck::{
         BatchableSumcheckInstance, CacheSumcheckOpenings, SumcheckInstanceProof,
@@ -202,6 +205,7 @@ where
     fn cache_openings_prover(
         &mut self,
         accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         debug_assert!(self.claims.is_none());
         let prover_state = self
@@ -226,12 +230,12 @@ where
 
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersValEvaluationInc,
-                r_cycle_prime.clone(),
+                OpeningPoint::new(r_cycle_prime.clone()),
                 inc_claim,
             );
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersValEvaluationWa,
-                r_cycle_prime,
+                OpeningPoint::new(r_cycle_prime),
                 wa_claim,
             );
         }

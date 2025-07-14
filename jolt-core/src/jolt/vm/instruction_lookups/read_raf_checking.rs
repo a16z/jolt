@@ -25,7 +25,8 @@ use crate::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         opening_proof::{
-            Openings, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
+            OpeningPoint, Openings, OpeningsKeys, ProverOpeningAccumulator,
+            VerifierOpeningAccumulator, BIG_ENDIAN,
         },
         prefix_suffix::{Prefix, PrefixRegistry, PrefixSuffixDecomposition},
     },
@@ -411,6 +412,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
     fn cache_openings_prover(
         &mut self,
         accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let ps = self.prover_state.as_mut().unwrap();
         let r_cycle_prime = &ps.r[ps.r.len() - self.log_T..];
@@ -436,7 +438,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
         flag_claims.into_iter().enumerate().for_each(|(i, claim)| {
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::LookupTableFlag(i),
-                r_cycle_prime.to_vec(),
+                OpeningPoint::new(r_cycle_prime.to_vec()),
                 claim,
             );
         });
@@ -461,7 +463,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
             .sum::<F>();
         accumulator.borrow_mut().append_virtual(
             OpeningsKeys::InstructionRafFlag,
-            r_cycle_prime.to_vec(),
+            OpeningPoint::new(r_cycle_prime.to_vec()),
             raf_flag_claim,
         );
     }
@@ -469,16 +471,16 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
     fn cache_openings_verifier(
         &mut self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
-        r_sumcheck: Option<&[F]>,
+        mut r_sumcheck: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let accumulator = accumulator.expect("accumulator is needed");
         (0..D).for_each(|i| {
             accumulator.borrow_mut().populate_claim_opening(
                 OpeningsKeys::InstructionBooleanityRa(i),
-                r_sumcheck.unwrap().to_vec(),
+                r_sumcheck.clone(),
             )
         });
-        let r_cycle_prime = r_sumcheck.unwrap()[LOG_K_CHUNK..].to_vec();
+        let r_cycle_prime = r_sumcheck.split_off(LOG_K_CHUNK);
         accumulator
             .borrow_mut()
             .populate_claim_opening(OpeningsKeys::InstructionRafFlag, r_cycle_prime.clone());
