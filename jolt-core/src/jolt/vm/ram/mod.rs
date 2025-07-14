@@ -13,7 +13,9 @@ use crate::{
             ram::{
                 booleanity::BooleanityProof,
                 hamming_weight::{HammingWeightProof, HammingWeightSumcheck},
-                output_check::{OutputProof, OutputSumcheck},
+                output_check::{
+                    OutputProof, OutputSumcheck, ValFinalSumcheck, ValFinalSumcheckClaims,
+                },
                 raf_evaluation::{RafEvaluationProof, RafEvaluationSumcheck},
                 read_write_checking::{RamReadWriteChecking, RamReadWriteCheckingProof},
                 val_evaluation::{
@@ -551,114 +553,6 @@ pub struct RAMTwistProof<F: JoltField, ProofTranscript: Transcript> {
 //     }
 // }
 
-// /// Implements the sumcheck prover for the Val-evaluation sumcheck described in
-// /// Section 8.1 and Appendix B of the Twist+Shout paper
-// /// TODO(moodlezoup): incorporate optimization from Appendix B.2
-// #[tracing::instrument(skip_all)]
-// pub fn prove_val_evaluation<
-//     F: JoltField,
-//     ProofTranscript: Transcript,
-//     PCS: CommitmentScheme<Field = F>,
-// >(
-//     preprocessing: &JoltProverPreprocessing<F, PCS>,
-//     trace: &[RV32IMCycle],
-//     memory_layout: &MemoryLayout,
-//     r_address: Vec<F>,
-//     r_cycle: Vec<F>,
-//     init_eval: F,
-//     claimed_evaluation: F,
-//     transcript: &mut ProofTranscript,
-// ) -> (ValEvaluationProof<F, ProofTranscript>, Vec<F>) {
-//     let T = r_cycle.len().pow2();
-
-//     // Compute the size-K table storing all eq(r_address, k) evaluations for
-//     // k \in {0, 1}^log(K)
-//     let eq_r_address = EqPolynomial::evals(&r_address);
-
-//     let span = tracing::span!(tracing::Level::INFO, "compute wa(r_address, j)");
-//     let _guard = span.enter();
-
-//     // Compute the wa polynomial using the above table
-//     let wa: Vec<F> = trace
-//         .par_iter()
-//         .map(|cycle| {
-//             let ram_op = cycle.ram_access();
-//             match ram_op {
-//                 RAMAccess::Write(write) => {
-//                     let k = remap_address(write.address, memory_layout) as usize;
-//                     eq_r_address[k]
-//                 }
-//                 _ => F::zero(),
-//             }
-//         })
-//         .collect();
-//     let wa = MultilinearPolynomial::from(wa);
-
-//     drop(_guard);
-//     drop(span);
-
-//     let inc = CommittedPolynomials::RamInc.generate_witness(preprocessing, trace);
-
-//     let span = tracing::span!(tracing::Level::INFO, "compute LT(j, r_cycle)");
-//     let _guard = span.enter();
-
-//     let mut lt: Vec<F> = unsafe_allocate_zero_vec(T);
-//     for (i, r) in r_cycle.iter().rev().enumerate() {
-//         let (evals_left, evals_right) = lt.split_at_mut(1 << i);
-//         evals_left
-//             .par_iter_mut()
-//             .zip(evals_right.par_iter_mut())
-//             .for_each(|(x, y)| {
-//                 *y = *x * r;
-//                 *x += *r - *y;
-//             });
-//     }
-//     let lt = MultilinearPolynomial::from(lt);
-
-//     drop(_guard);
-//     drop(span);
-
-//     // Create the sumcheck instance
-//     let mut sumcheck_instance: ValEvaluationSumcheck<F> = ValEvaluationSumcheck {
-//         claimed_evaluation,
-//         init_eval,
-//         prover_state: Some(ValEvaluationProverState { inc, wa, lt }),
-//         verifier_state: None,
-//         claims: None,
-//     };
-
-//     let span = tracing::span!(tracing::Level::INFO, "Val-evaluation sumcheck");
-//     let _guard = span.enter();
-
-//     // Run the sumcheck protocol
-//     let (sumcheck_proof, r_cycle_prime) = <ValEvaluationSumcheck<F> as BatchableSumcheckInstance<
-//         F,
-//     >>::prove_single(&mut sumcheck_instance, transcript);
-
-//     drop(_guard);
-//     drop(span);
-
-//     let claims = sumcheck_instance.claims.expect("Claims should be set");
-
-//     let proof = ValEvaluationProof {
-//         sumcheck_proof,
-//         inc_claim: claims.inc_claim,
-//         wa_claim: claims.wa_claim,
-//     };
-
-//     // Clean up
-//     if let Some(prover_state) = sumcheck_instance.prover_state {
-//         drop_in_background_thread((
-//             prover_state.inc,
-//             prover_state.wa,
-//             eq_r_address,
-//             prover_state.lt,
-//         ));
-//     }
-
-//     (proof, r_cycle_prime)
-// }
-
 pub fn remap_address(address: u64, memory_layout: &MemoryLayout) -> u64 {
     if address == 0 {
         return 0; // [JOLT-135]: Better handling for no-ops
@@ -1086,6 +980,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS>
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS> for OutputSumcheck<F> {}
 
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS>
+    for ValFinalSumcheck<F>
+{
+}
+
 impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
     SumcheckStages<F, ProofTranscript, PCS> for RamDag
 {
@@ -1132,16 +1031,35 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 
     fn stage3_prover_instances(
         &mut self,
-        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
-        todo!("val evaluation and val_final evaluation")
+        let val_evaluation = ValEvaluationSumcheck::new_prover(
+            self.K,
+            self.initial_memory_state.as_ref().unwrap(),
+            state_manager,
+        );
+
+        let val_final_evaluation = ValFinalSumcheck::new_prover(state_manager);
+
+        vec![Box::new(val_evaluation), Box::new(val_final_evaluation)]
     }
 
     fn stage3_verifier_instances(
         &mut self,
-        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
-        todo!("val evaluation and val_final evaluation")
+        let val_evaluation = ValEvaluationSumcheck::new_verifier(
+            self.K,
+            self.initial_memory_state.as_ref().unwrap(),
+            state_manager,
+        );
+
+        let val_final_evaluation = ValFinalSumcheck::new_verifier(
+            self.initial_memory_state.as_ref().unwrap(),
+            state_manager,
+        );
+
+        vec![Box::new(val_evaluation), Box::new(val_final_evaluation)]
     }
 
     fn stage4_prover_instances(

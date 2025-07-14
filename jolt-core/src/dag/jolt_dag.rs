@@ -118,6 +118,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             .chain(spartan_dag.stage3_prover_instances(&mut self.prover_state_manager))
             .chain(registers_dag.stage3_prover_instances(&mut self.prover_state_manager))
             .chain(lookups_dag.stage3_prover_instances(&mut self.prover_state_manager))
+            .chain(ram_dag.stage3_prover_instances(&mut self.prover_state_manager))
             .collect();
         let stage3_instances_mut: Vec<&mut dyn BatchableSumcheckInstance<F>> = stage3_instances
             .iter_mut()
@@ -203,6 +204,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             .chain(spartan_dag.stage3_verifier_instances(&mut self.verifier_state_manager))
             .chain(registers_dag.stage3_verifier_instances(&mut self.verifier_state_manager))
             .chain(lookups_dag.stage3_verifier_instances(&mut self.verifier_state_manager))
+            .chain(ram_dag.stage3_verifier_instances(&mut self.verifier_state_manager))
             .collect();
         let stage3_instances_ref: Vec<&dyn BatchableSumcheckInstance<F>> = stage3_instances
             .iter()

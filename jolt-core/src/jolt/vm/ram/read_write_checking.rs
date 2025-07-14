@@ -11,7 +11,8 @@ use crate::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         opening_proof::{
-            OpeningPoint, OpeningsKeys, ProverOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+            OpeningPoint, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
+            BIG_ENDIAN, LITTLE_ENDIAN,
         },
     },
     r1cs::inputs::JoltR1CSInputs,
@@ -905,20 +906,20 @@ where
             .as_ref()
             .expect("Prover state not initialized");
 
-        let mut r_address = opening_point.clone();
-        let r_cycle = r_address.split_off(self.K.log_2());
-
         accumulator.as_ref().unwrap().borrow_mut().append_virtual(
             OpeningsKeys::RamReadWriteCheckingVal,
-            r_address,
+            opening_point.clone(),
             prover_state.val.as_ref().unwrap().final_sumcheck_claim(),
         );
 
         accumulator.as_ref().unwrap().borrow_mut().append_virtual(
             OpeningsKeys::RamReadWriteCheckingRa,
-            opening_point,
+            opening_point.clone(),
             prover_state.ra.as_ref().unwrap().final_sumcheck_claim(),
         );
+
+        let mut r_address = opening_point;
+        let r_cycle = r_address.split_off(self.K.log_2());
 
         // TODO(moodlezoup): append_dense
         accumulator.as_ref().unwrap().borrow_mut().append_virtual(
@@ -933,5 +934,16 @@ where
             ra_claim: prover_state.ra.as_ref().unwrap().final_sumcheck_claim(),
             inc_claim: prover_state.inc_cycle.final_sumcheck_claim(),
         });
+    }
+
+    fn cache_openings_verifier(
+        &mut self,
+        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) {
+        accumulator
+            .unwrap()
+            .borrow_mut()
+            .populate_claim_opening(OpeningsKeys::RamReadWriteCheckingVal, opening_point);
     }
 }

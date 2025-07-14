@@ -142,11 +142,16 @@ pub enum OpeningsKeys {
     RegistersReadWriteInc,          // Inc claim from registers read/write checking
     RegistersValEvaluationInc,      // Inc claim from registers Val evaluation sumcheck
     RegistersValEvaluationWa,       // Wa claim from registers Val evaluation sumcheck
-    RamReadWriteCheckingVal,
-    RamReadWriteCheckingRa,
-    RamReadWriteCheckingInc,
-    RamRafEvaluationRa,
-    RamValFinal,
+    RamReadWriteCheckingVal,        // Val claim from RAM read/write checking
+    RamReadWriteCheckingRa,         // ra claim from RAM read/write checking
+    RamReadWriteCheckingInc,        // Inc claim from RAM read/write checking
+    RamRafEvaluationRa,             // ra claim from RAM raf-evaluation
+    RamValInit,                     // Val_init claim from RAM output sumcheck
+    RamValFinal,                    // Val_final claim from RAM output sumcheck
+    RamValEvaluationInc,            // Inc claim from RAM Val evaluation
+    RamValEvaluationWa,             // wa claim from RAM Val evaluation
+    ValFinalInc,                    // Inc claim from RAM Val_final evaluation
+    ValFinalWa,                     // wa claim from RAM Val_final evaluation
 }
 
 pub type Openings<F> = HashMap<OpeningsKeys, (OpeningPoint<BIG_ENDIAN, F>, F)>;
