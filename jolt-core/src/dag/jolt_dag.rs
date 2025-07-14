@@ -1,7 +1,8 @@
-use crate::dag::stage::SumcheckStages;
+use crate::dag::stage::{StagedSumcheck, SumcheckStages};
 use crate::dag::state_manager::{ProofData, ProofKeys, Proofs, StateManager};
 use crate::field::JoltField;
 use crate::jolt::vm::instruction_lookups::LookupsDag;
+use crate::jolt::vm::ram::RamDag;
 use crate::jolt::vm::registers::RegistersDag;
 use crate::jolt::vm::JoltCommitments;
 use crate::jolt::witness::ALL_COMMITTED_POLYNOMIALS;
@@ -70,7 +71,15 @@ impl JoltDAG {
             .max()
             .unwrap();
 
-            DoryGlobals::initialize(K, padded_trace_length)
+            let _guard = DoryGlobals::initialize(K, padded_trace_length);
+
+            // HACK
+            prover_state_manager.proofs.borrow_mut().insert(
+                ProofKeys::RamK,
+                ProofData::RamK(ram_K),
+            );
+
+            _guard
         };
 
         // Generate and commit to all witness polynomials
@@ -106,6 +115,7 @@ impl JoltDAG {
         let mut spartan_dag = SpartanDag::<F>::new::<ProofTranscript>(padded_trace_length);
         let mut lookups_dag = LookupsDag::<F>::default();
         let mut registers_dag = RegistersDag::default();
+        let mut ram_dag = RamDag::new_prover(prover_state_manager);
         spartan_dag.stage1_prove(prover_state_manager)?;
 
         // Stage 2:
@@ -113,6 +123,7 @@ impl JoltDAG {
             .chain(spartan_dag.stage2_prover_instances(prover_state_manager))
             .chain(registers_dag.stage2_prover_instances(prover_state_manager))
             .chain(lookups_dag.stage2_prover_instances(prover_state_manager))
+            .chain(ram_dag.stage2_prover_instances(prover_state_manager))
             .collect();
         let stage2_instances_mut: Vec<&mut dyn BatchableSumcheckInstance<F>> = stage2_instances
             .iter_mut()
@@ -120,7 +131,7 @@ impl JoltDAG {
             .collect();
 
         let transcript = prover_state_manager.get_transcript();
-        let (stage2_proof, _r_stage2) =
+        let (stage2_proof, r_stage2) =
             BatchedSumcheck::prove(stage2_instances_mut, &mut *transcript.borrow_mut());
 
         prover_state_manager.proofs.borrow_mut().insert(
@@ -128,23 +139,26 @@ impl JoltDAG {
             ProofData::BatchableSumcheckData(stage2_proof),
         );
 
+        let stage2_instances_mut: Vec<&mut dyn StagedSumcheck<F, PCS>> = stage2_instances
+            .iter_mut()
+            .map(|instance| &mut **instance as &mut dyn StagedSumcheck<F, PCS>)
+            .collect();
         let accumulator = prover_state_manager.get_prover_accumulator();
-        for instance in stage2_instances.iter_mut() {
-            instance.cache_openings_prover(Some(accumulator.clone()));
-        }
+        BatchedSumcheck::cache_openings(stage2_instances_mut, Some(accumulator.clone()), &r_stage2);
 
         // Stage 3:
         let mut stage3_instances: Vec<_> = std::iter::empty()
             .chain(spartan_dag.stage3_prover_instances(prover_state_manager))
             .chain(registers_dag.stage3_prover_instances(prover_state_manager))
             .chain(lookups_dag.stage3_prover_instances(prover_state_manager))
+            .chain(ram_dag.stage3_prover_instances(prover_state_manager))
             .collect();
         let stage3_instances_mut: Vec<&mut dyn BatchableSumcheckInstance<F>> = stage3_instances
             .iter_mut()
             .map(|instance| &mut **instance as &mut dyn BatchableSumcheckInstance<F>)
             .collect();
 
-        let (stage3_proof, _r_stage3) =
+        let (stage3_proof, r_stage3) =
             BatchedSumcheck::prove(stage3_instances_mut, &mut *transcript.borrow_mut());
 
         prover_state_manager.proofs.borrow_mut().insert(
@@ -152,10 +166,35 @@ impl JoltDAG {
             ProofData::BatchableSumcheckData(stage3_proof),
         );
 
+        let stage3_instances_mut: Vec<&mut dyn StagedSumcheck<F, PCS>> = stage3_instances
+            .iter_mut()
+            .map(|instance| &mut **instance as &mut dyn StagedSumcheck<F, PCS>)
+            .collect();
         let accumulator = prover_state_manager.get_prover_accumulator();
-        for instance in stage3_instances.iter_mut() {
-            instance.cache_openings_prover(Some(accumulator.clone()));
-        }
+        BatchedSumcheck::cache_openings(stage3_instances_mut, Some(accumulator.clone()), &r_stage3);
+
+        // Stage 4:
+        let mut stage4_instances: Vec<_> = std::iter::empty()
+            .chain(ram_dag.stage4_prover_instances(prover_state_manager))
+            .collect();
+        let stage4_instances_mut: Vec<&mut dyn BatchableSumcheckInstance<F>> = stage4_instances
+            .iter_mut()
+            .map(|instance| &mut **instance as &mut dyn BatchableSumcheckInstance<F>)
+            .collect();
+
+        let (stage4_proof, r_stage4) =
+            BatchedSumcheck::prove(stage4_instances_mut, &mut *transcript.borrow_mut());
+
+        prover_state_manager.proofs.borrow_mut().insert(
+            ProofKeys::Stage4Sumcheck,
+            ProofData::BatchableSumcheckData(stage4_proof),
+        );
+
+        let stage4_instances_mut: Vec<&mut dyn StagedSumcheck<F, PCS>> = stage4_instances
+            .iter_mut()
+            .map(|instance| &mut **instance as &mut dyn StagedSumcheck<F, PCS>)
+            .collect();
+        BatchedSumcheck::cache_openings(stage4_instances_mut, Some(accumulator.clone()), &r_stage4);
 
         // Convert the state manager to a proof
         Ok(JoltDagProof::from(&*prover_state_manager))
@@ -183,6 +222,7 @@ impl JoltDAG {
         let mut spartan_dag = SpartanDag::<F>::new::<ProofTranscript>(padded_trace_length);
         let mut lookups_dag = LookupsDag::<F>::default();
         let mut registers_dag = RegistersDag::default();
+        let mut ram_dag = RamDag::new_verifier(&verifier_state_manager);
         spartan_dag.stage1_verify(&mut verifier_state_manager)?;
 
         // Stage 2:
@@ -190,6 +230,7 @@ impl JoltDAG {
             .chain(spartan_dag.stage2_verifier_instances(&mut verifier_state_manager))
             .chain(registers_dag.stage2_verifier_instances(&mut verifier_state_manager))
             .chain(lookups_dag.stage2_verifier_instances(&mut verifier_state_manager))
+            .chain(ram_dag.stage2_verifier_instances(&mut verifier_state_manager))
             .collect();
         let stage2_instances_ref: Vec<&dyn BatchableSumcheckInstance<F>> = stage2_instances
             .iter()
@@ -214,16 +255,19 @@ impl JoltDAG {
 
         drop(proofs);
 
+        let stage2_instances_mut: Vec<&mut dyn StagedSumcheck<F, PCS>> = stage2_instances
+            .iter_mut()
+            .map(|instance| &mut **instance as &mut dyn StagedSumcheck<F, PCS>)
+            .collect();
         let accumulator = verifier_state_manager.get_verifier_accumulator();
-        for instance in stage2_instances.iter_mut() {
-            instance.cache_openings_verifier(Some(accumulator.clone()), Some(&r_stage2));
-        }
+        BatchedSumcheck::cache_claims(stage2_instances_mut, Some(accumulator.clone()), &r_stage2);
 
         // Stage 3:
         let mut stage3_instances: Vec<_> = std::iter::empty()
             .chain(spartan_dag.stage3_verifier_instances(&mut verifier_state_manager))
             .chain(registers_dag.stage3_verifier_instances(&mut verifier_state_manager))
             .chain(lookups_dag.stage3_verifier_instances(&mut verifier_state_manager))
+            .chain(ram_dag.stage3_verifier_instances(&mut verifier_state_manager))
             .collect();
         let stage3_instances_ref: Vec<&dyn BatchableSumcheckInstance<F>> = stage3_instances
             .iter()
@@ -245,10 +289,45 @@ impl JoltDAG {
             &mut *transcript.borrow_mut(),
         )?;
 
+        drop(proofs);
+
+        let stage3_instances_mut: Vec<&mut dyn StagedSumcheck<F, PCS>> = stage3_instances
+            .iter_mut()
+            .map(|instance| &mut **instance as &mut dyn StagedSumcheck<F, PCS>)
+            .collect();
         let accumulator = verifier_state_manager.get_verifier_accumulator();
-        for instance in stage3_instances.iter_mut() {
-            instance.cache_openings_verifier(Some(accumulator.clone()), Some(&r_stage3));
-        }
+        BatchedSumcheck::cache_claims(stage3_instances_mut, Some(accumulator.clone()), &r_stage3);
+
+        // Stage 4:
+        let mut stage4_instances: Vec<_> = std::iter::empty()
+            .chain(ram_dag.stage4_verifier_instances(&mut verifier_state_manager))
+            .collect();
+        let stage4_instances_ref: Vec<&dyn BatchableSumcheckInstance<F>> = stage4_instances
+            .iter()
+            .map(|instance| &**instance as &dyn BatchableSumcheckInstance<F>)
+            .collect();
+
+        let proofs = verifier_state_manager.proofs.borrow();
+        let stage4_proof_data = proofs
+            .get(&ProofKeys::Stage4Sumcheck)
+            .expect("Stage 4 sumcheck proof not found");
+        let stage4_proof = match stage4_proof_data {
+            ProofData::BatchableSumcheckData(proof) => proof,
+            _ => panic!("Invalid proof type for stage 4"),
+        };
+
+        let r_stage4 = BatchedSumcheck::verify(
+            stage4_proof,
+            stage4_instances_ref,
+            &mut *transcript.borrow_mut(),
+        )?;
+
+        let stage4_instances_mut: Vec<&mut dyn StagedSumcheck<F, PCS>> = stage4_instances
+            .iter_mut()
+            .map(|instance| &mut **instance as &mut dyn StagedSumcheck<F, PCS>)
+            .collect();
+        let accumulator = verifier_state_manager.get_verifier_accumulator();
+        BatchedSumcheck::cache_claims(stage4_instances_mut, Some(accumulator), &r_stage4);
 
         Ok(())
     }

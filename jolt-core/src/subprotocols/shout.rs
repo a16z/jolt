@@ -10,7 +10,7 @@ use crate::{
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
-        opening_proof::ProverOpeningAccumulator,
+        opening_proof::{OpeningPoint, ProverOpeningAccumulator, BIG_ENDIAN},
         unipoly::{CompressedUniPoly, UniPoly},
     },
     subprotocols::sumcheck::CacheSumcheckOpenings,
@@ -215,6 +215,7 @@ where
     fn cache_openings_prover(
         &mut self,
         _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         debug_assert!(self.claims.is_none());
         let prover_state = self
@@ -684,6 +685,7 @@ where
     fn cache_openings_prover(
         &mut self,
         _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         debug_assert!(self.ra_claim.is_none());
         let prover_state = self

@@ -32,7 +32,7 @@ pub type Endianness = bool;
 pub const BIG_ENDIAN: Endianness = false;
 pub const LITTLE_ENDIAN: Endianness = true;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct OpeningPoint<const E: Endianness, F: JoltField> {
     pub r: Vec<F>,
 }
@@ -56,8 +56,16 @@ impl<const E: Endianness, F: JoltField> std::ops::Index<std::ops::RangeFull>
 }
 
 impl<const E: Endianness, F: JoltField> OpeningPoint<E, F> {
+    pub fn len(&self) -> usize {
+        self.r.len()
+    }
+
     pub fn split_at(&self, mid: usize) -> (&[F], &[F]) {
         self.r.split_at(mid)
+    }
+
+    pub fn split_off(&mut self, mid: usize) -> Self {
+        Self::new(self.r.split_off(mid))
     }
 }
 
@@ -134,9 +142,22 @@ pub enum OpeningsKeys {
     RegistersReadWriteInc,          // Inc claim from registers read/write checking
     RegistersValEvaluationInc,      // Inc claim from registers Val evaluation sumcheck
     RegistersValEvaluationWa,       // Wa claim from registers Val evaluation sumcheck
+    RamReadWriteCheckingVal,        // Val claim from RAM read/write checking
+    RamReadWriteCheckingRa,         // ra claim from RAM read/write checking
+    RamReadWriteCheckingInc,        // Inc claim from RAM read/write checking
+    RamRafEvaluationRa,             // ra claim from RAM raf-evaluation
+    RamValInit,                     // Val_init claim from RAM output sumcheck
+    RamValFinal,                    // Val_final claim from RAM output sumcheck
+    RamValEvaluationInc,            // Inc claim from RAM Val evaluation
+    RamValEvaluationWa,             // wa claim from RAM Val evaluation
+    ValFinalInc,                    // Inc claim from RAM Val_final evaluation
+    ValFinalWa,                     // wa claim from RAM Val_final evaluation
+    RamHammingRa(usize),            // ra_i openings for RAM Hamming weight
+    RamBooleanityRa(usize),         // ra_i openings for RAM booleanity
+    RamRaVirtualization(usize),     // ra_i openings for RAM ra virtualization
 }
 
-pub type Openings<F> = HashMap<OpeningsKeys, (OpeningPoint<LITTLE_ENDIAN, F>, F)>;
+pub type Openings<F> = HashMap<OpeningsKeys, (OpeningPoint<BIG_ENDIAN, F>, F)>;
 
 pub trait OpeningsExt<F: JoltField> {
     fn get_spartan_z(&self, index: JoltR1CSInputs) -> F;
@@ -360,6 +381,7 @@ where
     fn cache_openings_prover(
         &mut self,
         _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         debug_assert!(self.sumcheck_claim.is_none());
         let prover_state = self
@@ -478,7 +500,7 @@ where
     }
 
     /// Get the opening point by key
-    pub fn get_opening_point(&self, key: OpeningsKeys) -> Option<OpeningPoint<LITTLE_ENDIAN, F>> {
+    pub fn get_opening_point(&self, key: OpeningsKeys) -> Option<OpeningPoint<BIG_ENDIAN, F>> {
         self.evaluation_openings.get(&key).map(|(point, _)| {
             if point.r.is_empty() {
                 panic!(
@@ -563,7 +585,7 @@ where
                 claims.len(),
                 "Number of keys must match number of claims"
             );
-            let opening_point_struct = OpeningPoint::<LITTLE_ENDIAN, F>::new(opening_point.clone());
+            let opening_point_struct = OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone());
             for (key, claim) in keys.into_iter().zip(claims.iter()) {
                 self.evaluation_openings
                     .insert(key, (opening_point_struct.clone(), *claim));
@@ -623,7 +645,7 @@ where
                 claims.len(),
                 "Number of keys must match number of claims"
             );
-            let opening_point_struct = OpeningPoint::<LITTLE_ENDIAN, F>::new(r_concat.clone());
+            let opening_point_struct = OpeningPoint::<BIG_ENDIAN, F>::new(r_concat.clone());
             for (key, claim) in keys.into_iter().zip(claims.iter()) {
                 self.evaluation_openings
                     .insert(key, (opening_point_struct.clone(), *claim));
@@ -663,8 +685,12 @@ where
         }
     }
 
-    pub fn append_virtual(&mut self, key: OpeningsKeys, opening_point: Vec<F>, claim: F) {
-        let opening_point = OpeningPoint::<LITTLE_ENDIAN, F>::new(opening_point);
+    pub fn append_virtual(
+        &mut self,
+        key: OpeningsKeys,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        claim: F,
+    ) {
         self.evaluation_openings.insert(key, (opening_point, claim));
     }
 
@@ -807,7 +833,7 @@ where
     }
 
     /// Get the opening point by key
-    pub fn get_opening_point(&self, key: OpeningsKeys) -> Option<OpeningPoint<LITTLE_ENDIAN, F>> {
+    pub fn get_opening_point(&self, key: OpeningsKeys) -> Option<OpeningPoint<BIG_ENDIAN, F>> {
         self.evaluation_openings
             .get(&key)
             .map(|(point, _)| {
@@ -896,18 +922,21 @@ where
     }
 
     pub fn append_virtual(&mut self, key: OpeningsKeys, opening_point: Vec<F>, claim: F) {
-        let opening_point_struct = OpeningPoint::<LITTLE_ENDIAN, F>::new(opening_point);
+        let opening_point_struct = OpeningPoint::<BIG_ENDIAN, F>::new(opening_point);
         self.evaluation_openings
             .insert(key, (opening_point_struct, claim));
     }
 
     /// Populates the opening point for an existing claim in the evaluation_openings map.
-    pub fn populate_claim_opening(&mut self, key: OpeningsKeys, opening_point: Vec<F>) {
+    pub fn populate_claim_opening(
+        &mut self,
+        key: OpeningsKeys,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) {
         if let Some((_, claim)) = self.evaluation_openings.get(&key) {
             let claim = *claim; // Copy the claim value
-            let new_point: OpeningPoint<true, F> =
-                OpeningPoint::<LITTLE_ENDIAN, F>::new(opening_point);
-            self.evaluation_openings.insert(key, (new_point, claim));
+            self.evaluation_openings
+                .insert(key, (opening_point.clone(), claim));
         } else {
             panic!("Tried to populate opening point for non-existent key: {key:?}");
         }

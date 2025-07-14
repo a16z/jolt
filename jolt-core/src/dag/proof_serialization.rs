@@ -2,7 +2,7 @@ use crate::dag::jolt_dag::JoltDagProof;
 use crate::dag::state_manager::{self, Claims, ProofData, ProofKeys, Proofs, StateManager};
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::opening_proof::OpeningsKeys;
+use crate::poly::opening_proof::{OpeningsKeys, BIG_ENDIAN};
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::utils::transcript::Transcript;
 
@@ -59,6 +59,14 @@ where
                 1u8.serialize_with_mode(&mut writer, compress)?;
                 proof.serialize_with_mode(writer, compress)
             }
+            ProofData::SumcheckSwitchIndex(index) => {
+                2u8.serialize_with_mode(&mut writer, compress)?;
+                index.serialize_with_mode(writer, compress)
+            }
+            ProofData::RamK(k) => {
+                3u8.serialize_with_mode(&mut writer, compress)?;
+                k.serialize_with_mode(writer, compress)
+            }
         }
     }
 
@@ -66,6 +74,8 @@ where
         1 + match self {
             ProofData::SpartanOuterData(proof) => proof.serialized_size(compress),
             ProofData::BatchableSumcheckData(proof) => proof.serialized_size(compress),
+            ProofData::SumcheckSwitchIndex(index) => index.serialized_size(compress),
+            ProofData::RamK(k) => k.serialized_size(compress),
         }
     }
 }
@@ -87,6 +97,12 @@ where
             )),
             1 => Ok(ProofData::BatchableSumcheckData(
                 SumcheckInstanceProof::deserialize_with_mode(reader, compress, validate)?,
+            )),
+            2 => Ok(ProofData::SumcheckSwitchIndex(
+                usize::deserialize_with_mode(reader, compress, validate)?,
+            )),
+            3 => Ok(ProofData::RamK(
+                usize::deserialize_with_mode(reader, compress, validate)?,
             )),
             _ => Err(SerializationError::InvalidData),
         }
@@ -133,6 +149,8 @@ where
         match self {
             ProofData::SpartanOuterData(proof) => proof.check(),
             ProofData::BatchableSumcheckData(proof) => proof.check(),
+            ProofData::SumcheckSwitchIndex(_) => Ok(()),
+            ProofData::RamK(_) => Ok(()),
         }
     }
 }
@@ -147,6 +165,9 @@ impl CanonicalSerialize for ProofKeys {
             ProofKeys::SpartanOuterSumcheck => 0u8.serialize_with_mode(&mut writer, compress),
             ProofKeys::Stage2Sumcheck => 1u8.serialize_with_mode(&mut writer, compress),
             ProofKeys::Stage3Sumcheck => 2u8.serialize_with_mode(&mut writer, compress),
+            ProofKeys::Stage4Sumcheck => 3u8.serialize_with_mode(&mut writer, compress),
+            ProofKeys::RamSumcheckSwitchIndex => 4u8.serialize_with_mode(&mut writer, compress),
+            ProofKeys::RamK => 5u8.serialize_with_mode(&mut writer, compress),
         }
     }
 
@@ -166,6 +187,9 @@ impl CanonicalDeserialize for ProofKeys {
             0 => Ok(ProofKeys::SpartanOuterSumcheck),
             1 => Ok(ProofKeys::Stage2Sumcheck),
             2 => Ok(ProofKeys::Stage3Sumcheck),
+            3 => Ok(ProofKeys::Stage4Sumcheck),
+            4 => Ok(ProofKeys::RamSumcheckSwitchIndex),
+            5 => Ok(ProofKeys::RamK),
             _ => Err(SerializationError::InvalidData),
         }
     }
@@ -261,6 +285,28 @@ impl CanonicalSerialize for OpeningsKeys {
             OpeningsKeys::RegistersValEvaluationWa => {
                 18u8.serialize_with_mode(&mut writer, compress)
             }
+            OpeningsKeys::RamReadWriteCheckingVal => 19u8.serialize_with_mode(&mut writer, compress),
+            OpeningsKeys::RamReadWriteCheckingRa => 20u8.serialize_with_mode(&mut writer, compress),
+            OpeningsKeys::RamReadWriteCheckingInc => 21u8.serialize_with_mode(&mut writer, compress),
+            OpeningsKeys::RamRafEvaluationRa => 22u8.serialize_with_mode(&mut writer, compress),
+            OpeningsKeys::RamValInit => 23u8.serialize_with_mode(&mut writer, compress),
+            OpeningsKeys::RamValFinal => 24u8.serialize_with_mode(&mut writer, compress),
+            OpeningsKeys::RamValEvaluationInc => 25u8.serialize_with_mode(&mut writer, compress),
+            OpeningsKeys::RamValEvaluationWa => 26u8.serialize_with_mode(&mut writer, compress),
+            OpeningsKeys::ValFinalInc => 27u8.serialize_with_mode(&mut writer, compress),
+            OpeningsKeys::ValFinalWa => 28u8.serialize_with_mode(&mut writer, compress),
+            OpeningsKeys::RamHammingRa(idx) => {
+                29u8.serialize_with_mode(&mut writer, compress)?;
+                idx.serialize_with_mode(&mut writer, compress)
+            }
+            OpeningsKeys::RamBooleanityRa(idx) => {
+                30u8.serialize_with_mode(&mut writer, compress)?;
+                idx.serialize_with_mode(&mut writer, compress)
+            }
+            OpeningsKeys::RamRaVirtualization(idx) => {
+                31u8.serialize_with_mode(&mut writer, compress)?;
+                idx.serialize_with_mode(&mut writer, compress)
+            }
         }
     }
 
@@ -272,7 +318,10 @@ impl CanonicalSerialize for OpeningsKeys {
             | OpeningsKeys::InstructionRa(idx)
             | OpeningsKeys::InstructionBooleanityRa(idx)
             | OpeningsKeys::InstructionHammingRa(idx)
-            | OpeningsKeys::LookupTableFlag(idx) => size += idx.serialized_size(compress),
+            | OpeningsKeys::LookupTableFlag(idx)
+            | OpeningsKeys::RamHammingRa(idx)
+            | OpeningsKeys::RamBooleanityRa(idx)
+            | OpeningsKeys::RamRaVirtualization(idx) => size += idx.serialized_size(compress),
             _ => {} // No additional data for other variants
         }
         size
@@ -320,6 +369,25 @@ impl CanonicalDeserialize for OpeningsKeys {
             16 => Ok(OpeningsKeys::RegistersReadWriteInc),
             17 => Ok(OpeningsKeys::RegistersValEvaluationInc),
             18 => Ok(OpeningsKeys::RegistersValEvaluationWa),
+            19 => Ok(OpeningsKeys::RamReadWriteCheckingVal),
+            20 => Ok(OpeningsKeys::RamReadWriteCheckingRa),
+            21 => Ok(OpeningsKeys::RamReadWriteCheckingInc),
+            22 => Ok(OpeningsKeys::RamRafEvaluationRa),
+            23 => Ok(OpeningsKeys::RamValInit),
+            24 => Ok(OpeningsKeys::RamValFinal),
+            25 => Ok(OpeningsKeys::RamValEvaluationInc),
+            26 => Ok(OpeningsKeys::RamValEvaluationWa),
+            27 => Ok(OpeningsKeys::ValFinalInc),
+            28 => Ok(OpeningsKeys::ValFinalWa),
+            29 => Ok(OpeningsKeys::RamHammingRa(usize::deserialize_with_mode(
+                reader, compress, validate,
+            )?)),
+            30 => Ok(OpeningsKeys::RamBooleanityRa(usize::deserialize_with_mode(
+                reader, compress, validate,
+            )?)),
+            31 => Ok(OpeningsKeys::RamRaVirtualization(usize::deserialize_with_mode(
+                reader, compress, validate,
+            )?)),
             _ => Err(SerializationError::InvalidData),
         }
     }
@@ -706,7 +774,7 @@ where
         // Populate claims in the verifier accumulator
         let mut verifier_acc_borrow = verifier_accumulator.borrow_mut();
         for (key, claim) in proof.claims.iter() {
-            let empty_point = OpeningPoint::<{ LITTLE_ENDIAN }, F>::new(vec![]);
+            let empty_point = OpeningPoint::<{ BIG_ENDIAN }, F>::new(vec![]);
             verifier_acc_borrow
                 .evaluation_openings_mut()
                 .insert(*key, (empty_point, *claim));

@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::sync::Arc;
 use std::{collections::BTreeMap, rc::Rc};
 
+use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
 use crate::subprotocols::sumcheck::CacheSumcheckOpenings;
 use crate::{
     field::JoltField,
@@ -516,6 +517,7 @@ where
     fn cache_openings_prover(
         &mut self,
         _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         debug_assert!(self.ra_claim_prime.is_none());
         let prover_state = self
@@ -850,6 +852,7 @@ where
     fn cache_openings_prover(
         &mut self,
         _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         debug_assert!(self.ra_claims.is_none());
         let prover_state = self

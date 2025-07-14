@@ -20,7 +20,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use bytecode::{BytecodePreprocessing, BytecodeShoutProof};
 use common::jolt_device::MemoryLayout;
 use instruction_lookups::LookupsProof;
-use ram::{RAMPreprocessing, RAMTwistProof};
+use ram::RAMPreprocessing;
 use rayon::prelude::*;
 use registers::RegistersTwistProof;
 use std::{
@@ -155,7 +155,7 @@ where
     pub trace_length: usize,
     pub bytecode: BytecodeShoutProof<F, ProofTranscript>,
     pub instruction_lookups: LookupsProof<WORD_SIZE, F, PCS, ProofTranscript>,
-    pub ram: RAMTwistProof<F, ProofTranscript>,
+    // pub ram: RAMTwistProof<F, ProofTranscript>,
     pub registers: RegistersTwistProof<F, ProofTranscript>,
     pub r1cs: UniformSpartanProof<F, ProofTranscript>,
     pub opening_proof: ReducedOpeningProof<F, PCS, ProofTranscript>,
@@ -237,7 +237,7 @@ where
     fn prove(
         mut program_io: JoltDevice,
         mut trace: Vec<RV32IMCycle>,
-        final_memory_state: Memory,
+        _final_memory_state: Memory,
         mut preprocessing: JoltProverPreprocessing<F, PCS>,
     ) -> (
         JoltProof<WORD_SIZE, F, PCS, ProofTranscript>,
@@ -308,7 +308,7 @@ where
             &program_io,
             &program_io.memory_layout,
             trace_length,
-            ram_K,
+            1 << 16, // TODO(moodlezoup)
         );
 
         let committed_polys: Vec<_> = ALL_COMMITTED_POLYNOMIALS
@@ -355,15 +355,15 @@ where
             &mut transcript,
         );
 
-        let ram_proof = RAMTwistProof::prove(
-            &preprocessing,
-            &trace,
-            final_memory_state,
-            &program_io,
-            ram_K,
-            &mut opening_accumulator,
-            &mut transcript,
-        );
+        // let ram_proof = RAMTwistProof::prove(
+        //     &preprocessing,
+        //     &trace,
+        //     final_memory_state,
+        //     &program_io,
+        //     ram_K,
+        //     &mut opening_accumulator,
+        //     &mut transcript,
+        // );
 
         let bytecode_proof = BytecodeShoutProof::prove(
             &preprocessing,
@@ -380,7 +380,7 @@ where
             trace_length,
             bytecode: bytecode_proof,
             instruction_lookups: instruction_proof,
-            ram: ram_proof,
+            // ram: ram_proof,
             registers: registers_proof,
             r1cs: r1cs_proof,
             opening_proof,
@@ -431,7 +431,7 @@ where
         #[cfg(test)]
         let K = [
             preprocessing.shared.bytecode.code_size,
-            proof.ram.K,
+            // proof.ram.K,
             1 << 16, // K for instruction lookups Shout
         ]
         .into_iter()
@@ -449,7 +449,8 @@ where
             &program_io,
             &preprocessing.shared.memory_layout,
             proof.trace_length,
-            proof.ram.K,
+            // proof.ram.K,
+            1 << 16, // TODO(moodlezoup)
         );
 
         for commitment in proof.commitments.commitments.iter() {
@@ -486,14 +487,14 @@ where
             &mut transcript,
         )?;
 
-        proof.ram.verify(
-            padded_trace_length,
-            &preprocessing.shared.ram,
-            &proof.commitments,
-            &program_io,
-            &mut transcript,
-            &mut opening_accumulator,
-        )?;
+        // proof.ram.verify(
+        //     padded_trace_length,
+        //     &preprocessing.shared.ram,
+        //     &proof.commitments,
+        //     &program_io,
+        //     &mut transcript,
+        //     &mut opening_accumulator,
+        // )?;
 
         proof.bytecode.verify(
             &preprocessing.shared.bytecode,
@@ -533,9 +534,7 @@ where
 
 pub mod bytecode;
 pub mod instruction_lookups;
-pub mod output_check;
 pub mod ram;
-pub mod ram_read_write_checking;
 pub mod registers;
 pub mod registers_read_write_checking;
 pub mod rv32i_vm;

@@ -8,7 +8,7 @@ use crate::jolt::vm::{JoltCommitments, JoltProverPreprocessing, JoltVerifierPrep
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::opening_proof::{
     OpeningPoint, OpeningsExt, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
-    LITTLE_ENDIAN,
+    BIG_ENDIAN,
 };
 use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
@@ -44,12 +44,17 @@ pub enum ProofKeys {
     SpartanOuterSumcheck,
     Stage2Sumcheck,
     Stage3Sumcheck,
+    Stage4Sumcheck,
+    RamSumcheckSwitchIndex,
+    RamK,
 }
 
 #[derive(Debug, Clone)]
 pub enum ProofData<F: JoltField, ProofTranscript: Transcript> {
     SpartanOuterData(SumcheckInstanceProof<F, ProofTranscript>),
     BatchableSumcheckData(SumcheckInstanceProof<F, ProofTranscript>),
+    SumcheckSwitchIndex(usize),
+    RamK(usize),
 }
 
 pub struct ProverState<'a, F: JoltField, PCS>
@@ -198,7 +203,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
 
     /// Gets the opening point for a given key from whichever accumulator is available.
     /// Returns the opening point from the prover accumulator if available, otherwise from the verifier accumulator.
-    pub fn get_opening_point(&self, key: OpeningsKeys) -> Option<OpeningPoint<LITTLE_ENDIAN, F>> {
+    pub fn get_opening_point(&self, key: OpeningsKeys) -> Option<OpeningPoint<BIG_ENDIAN, F>> {
         if let Some(ref prover_state) = self.prover_state {
             prover_state.accumulator.borrow().get_opening_point(key)
         } else if let Some(ref verifier_state) = self.verifier_state {
@@ -245,7 +250,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
     pub fn get_evaluation_opening(
         &self,
         key: &OpeningsKeys,
-    ) -> Option<(OpeningPoint<LITTLE_ENDIAN, F>, F)> {
+    ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
         if let Some(ref prover_state) = self.prover_state {
             prover_state
                 .accumulator
