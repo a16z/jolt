@@ -6,13 +6,14 @@ use crate::jolt::vm::registers::RegistersDag;
 use crate::jolt::vm::JoltCommitments;
 use crate::jolt::witness::ALL_COMMITTED_POLYNOMIALS;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::dory::DoryGlobals;
 use crate::r1cs::spartan::SpartanDag;
 use crate::subprotocols::sumcheck::{BatchableSumcheckInstance, BatchedSumcheck};
 use crate::utils::transcript::Transcript;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 use std::sync::Arc;
-
+#[derive(Default)]
 pub struct JoltDAG;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
@@ -20,35 +21,35 @@ pub struct JoltDagProof<const WORD_SIZE: usize, F, PCS, ProofTranscript>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
-    ProofTranscript: Transcript
+    ProofTranscript: Transcript,
 {
     pub verifier_preprocessing: Arc<crate::jolt::vm::JoltVerifierPreprocessing<F, PCS>>,
     pub program_io: tracer::JoltDevice,
     pub trace_length: usize,
     pub sumcheck_switch_index_registers: usize,
     pub sumcheck_switch_index_ram: usize,
-    
+
     pub commitments: JoltCommitments<F, PCS>,
     pub dag_proofs: Proofs<F, ProofTranscript>,
     pub claims: crate::dag::state_manager::Claims<F>,
 }
 
 impl JoltDAG {
-    pub fn new() -> Self {
-        Self
-    }
-
-    pub fn prove<'a, const WORD_SIZE: usize, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+    pub fn prove<
+        'a,
+        const WORD_SIZE: usize,
+        F: JoltField,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
+    >(
         &mut self,
         prover_state_manager: &mut StateManager<'a, F, ProofTranscript, PCS>,
     ) -> Result<JoltDagProof<WORD_SIZE, F, PCS, ProofTranscript>, anyhow::Error> {
-        // Initialize DoryGlobals first
         let _guard = {
             let (preprocessing, trace, _, _) = prover_state_manager.get_prover_data();
             let trace_length = trace.len();
             let padded_trace_length = trace_length.next_power_of_two();
 
-            // Calculate K for DoryGlobals initialization
             let ram_addresses: Vec<_> = trace
                 .par_iter()
                 .map(|cycle| {
@@ -69,7 +70,7 @@ impl JoltDAG {
             .max()
             .unwrap();
 
-            crate::poly::commitment::dory::DoryGlobals::initialize(K, padded_trace_length)
+            DoryGlobals::initialize(K, padded_trace_length)
         };
 
         // Generate and commit to all witness polynomials
@@ -93,7 +94,6 @@ impl JoltDAG {
             prover_state_manager.set_commitments(jolt_commitments);
         }
 
-        // Append commitments to transcript
         let commitments = prover_state_manager.get_commitments();
         let transcript = prover_state_manager.get_transcript();
         for commitment in commitments.commitments.iter() {
@@ -157,17 +157,20 @@ impl JoltDAG {
             instance.cache_openings_prover(Some(accumulator.clone()));
         }
 
-        // Convert the state manager to a proof and return it
+        // Convert the state manager to a proof
         Ok(JoltDagProof::from(&*prover_state_manager))
     }
 
-    pub fn verify<'a, const WORD_SIZE: usize, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+    pub fn verify<
+        const WORD_SIZE: usize,
+        F: JoltField,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
+    >(
         &mut self,
         proof: JoltDagProof<WORD_SIZE, F, PCS, ProofTranscript>,
     ) -> Result<(), anyhow::Error> {
-        // Convert proof to verifier state manager
-        let mut verifier_state_manager: StateManager<'a, F, ProofTranscript, PCS> = proof.into();
-        // Append commitments to transcript
+        let mut verifier_state_manager: StateManager<F, ProofTranscript, PCS> = proof.into();
         let commitments = verifier_state_manager.get_commitments();
         let transcript = verifier_state_manager.get_transcript();
         for commitment in commitments.commitments.iter() {
@@ -249,6 +252,4 @@ impl JoltDAG {
 
         Ok(())
     }
-
-
 }

@@ -17,16 +17,27 @@ use tracer::emulator::memory::Memory;
 use tracer::instruction::RV32IMCycle;
 use tracer::JoltDevice;
 
+pub struct ProgramData<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> {
+    pub preprocessing: &'a JoltProverPreprocessing<F, PCS>,
+    pub trace: Vec<RV32IMCycle>,
+    pub program_io: JoltDevice,
+    pub final_memory_state: Memory,
+}
+
+pub struct VerifierProgramData<F: JoltField, PCS: CommitmentScheme<Field = F>> {
+    pub preprocessing: Arc<JoltVerifierPreprocessing<F, PCS>>,
+    pub program_io: JoltDevice,
+    pub trace_length: usize,
+}
+
 // Wrappers to avoid Orphan rules
 #[derive(Debug, Clone, Default)]
 pub struct Proofs<F: JoltField, ProofTranscript: Transcript>(
-    pub HashMap<ProofKeys, ProofData<F, ProofTranscript>>
+    pub HashMap<ProofKeys, ProofData<F, ProofTranscript>>,
 );
 
 #[derive(Debug, Clone, Default)]
-pub struct Claims<F: JoltField>(
-    pub HashMap<OpeningsKeys, F>
-);
+pub struct Claims<F: JoltField>(pub HashMap<OpeningsKeys, F>);
 
 #[derive(Hash, PartialEq, Eq, Clone, Debug)]
 pub enum ProofKeys {
@@ -79,10 +90,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
     StateManager<'a, F, ProofTranscript, PCS>
 {
     pub fn new_prover(
-        preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        trace: Vec<RV32IMCycle>,
-        program_io: JoltDevice,
-        final_memory_state: Memory,
+        program_data: ProgramData<'a, F, PCS>,
         prover_accumulator: Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>,
         transcript: Rc<RefCell<ProofTranscript>>,
         proofs: Rc<RefCell<Proofs<F, ProofTranscript>>>,
@@ -93,10 +101,10 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             proofs,
             commitments,
             prover_state: Some(ProverState {
-                preprocessing,
-                trace,
-                program_io,
-                final_memory_state,
+                preprocessing: program_data.preprocessing,
+                trace: program_data.trace,
+                program_io: program_data.program_io,
+                final_memory_state: program_data.final_memory_state,
                 accumulator: prover_accumulator,
             }),
             verifier_state: None,
@@ -104,9 +112,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
     }
 
     pub fn new_verifier(
-        preprocessing: Arc<JoltVerifierPreprocessing<F, PCS>>,
-        program_io: JoltDevice,
-        trace_length: usize,
+        program_data: VerifierProgramData<F, PCS>,
         verifier_accumulator: Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>,
         transcript: Rc<RefCell<ProofTranscript>>,
         proofs: Rc<RefCell<Proofs<F, ProofTranscript>>>,
@@ -118,14 +124,13 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             commitments,
             prover_state: None,
             verifier_state: Some(VerifierState {
-                preprocessing,
-                program_io,
-                trace_length,
+                preprocessing: program_data.preprocessing,
+                program_io: program_data.program_io,
+                trace_length: program_data.trace_length,
                 accumulator: verifier_accumulator,
             }),
         }
     }
-
 
     pub fn get_prover_data(
         &self,

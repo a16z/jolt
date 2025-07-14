@@ -883,24 +883,6 @@ where
 
         self.cached_claims = Some((unexpanded_pc_eval, pc_eval));
     }
-
-    fn cache_openings_verifier(
-        &mut self,
-        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
-        r_sumcheck: Option<&[F]>,
-    ) {
-        let accumulator = accumulator.expect("accumulator is needed");
-        let r_sumcheck = r_sumcheck.expect("r_sumcheck is needed for PC sumcheck verifier");
-        
-        accumulator.borrow_mut().populate_claim_opening(
-            OpeningsKeys::PCSumcheckUnexpandedPC,
-            r_sumcheck.to_vec(),
-        );
-        accumulator.borrow_mut().populate_claim_opening(
-            OpeningsKeys::PCSumcheckNextPC,
-            r_sumcheck.to_vec(),
-        );
-    }
 }
 
 pub struct SpartanDag<F: JoltField> {
