@@ -50,37 +50,37 @@ struct DataBuffers<F: JoltField> {
     dirty_indices: Vec<usize>,
 }
 
-enum MaybeSplitEq<F: JoltField> {
-    Normal(MultilinearPolynomial<F>),
-    Split(GruenSplitEqPolynomial<F>),
+enum HighOrLowSplitEq<F: JoltField> {
+    HighToLow(MultilinearPolynomial<F>),
+    LowToHigh(GruenSplitEqPolynomial<F>),
 }
 
-impl<F: JoltField> MaybeSplitEq<F> {
-    fn normal(&self) -> Option<&MultilinearPolynomial<F>> {
+impl<F: JoltField> HighOrLowSplitEq<F> {
+    fn high_to_low(&self) -> Option<&MultilinearPolynomial<F>> {
         match self {
-            Self::Normal(normal) => Some(normal),
-            Self::Split(_) => None,
+            Self::HighToLow(normal) => Some(normal),
+            Self::LowToHigh(_) => None,
         }
     }
 
-    fn normal_mut(&mut self) -> Option<&mut MultilinearPolynomial<F>> {
+    fn high_to_low_mut(&mut self) -> Option<&mut MultilinearPolynomial<F>> {
         match self {
-            Self::Normal(normal) => Some(normal),
-            Self::Split(_) => None,
+            Self::HighToLow(normal) => Some(normal),
+            Self::LowToHigh(_) => None,
         }
     }
 
-    fn split(&self) -> Option<&GruenSplitEqPolynomial<F>> {
+    fn low_to_high(&self) -> Option<&GruenSplitEqPolynomial<F>> {
         match self {
-            Self::Normal(_) => None,
-            Self::Split(split) => Some(split),
+            Self::HighToLow(_) => None,
+            Self::LowToHigh(split) => Some(split),
         }
     }
 
-    fn split_mut(&mut self) -> Option<&mut GruenSplitEqPolynomial<F>> {
+    fn low_to_high_mut(&mut self) -> Option<&mut GruenSplitEqPolynomial<F>> {
         match self {
-            Self::Normal(_) => None,
-            Self::Split(split) => Some(split),
+            Self::HighToLow(_) => None,
+            Self::LowToHigh(split) => Some(split),
         }
     }
 }
@@ -92,8 +92,9 @@ struct ReadWriteCheckingProverState<F: JoltField> {
     data_buffers: Vec<DataBuffers<F>>,
     I: Vec<Vec<(usize, usize, F, F)>>,
     A: Vec<F>,
+    #[cfg(test)]
     old_eq_r_prime: MultilinearPolynomial<F>,
-    eq_r_prime: MaybeSplitEq<F>,
+    eq_r_prime: HighOrLowSplitEq<F>,
     inc_cycle: MultilinearPolynomial<F>,
     ra: Option<MultilinearPolynomial<F>>,
     val: Option<MultilinearPolynomial<F>>,
@@ -283,8 +284,9 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         drop(_guard);
         drop(span);
 
+        #[cfg(test)]
         let old_eq_r_prime = MultilinearPolynomial::from(EqPolynomial::evals(r_prime));
-        let eq_r_prime = MaybeSplitEq::Split(GruenSplitEqPolynomial::new(r_prime));
+        let eq_r_prime = HighOrLowSplitEq::LowToHigh(GruenSplitEqPolynomial::new(r_prime));
         let inc_cycle = CommittedPolynomials::RamInc.generate_witness(preprocessing, trace);
 
         let data_buffers: Vec<DataBuffers<F>> = (0..num_chunks)
@@ -304,6 +306,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
             data_buffers,
             I,
             A,
+            #[cfg(test)]
             old_eq_r_prime,
             eq_r_prime,
             inc_cycle,
@@ -643,7 +646,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             eq_r_prime,
             ..
         } = self.prover_state.as_mut().unwrap();
-        let eq_r_prime = eq_r_prime.split().unwrap();
+        let eq_r_prime = eq_r_prime.low_to_high().unwrap();
 
         // We use both Dao-Thaler and Gruen's optimizations here. See "Our optimization on top of
         // Gruen's" from Sec. 3 of https://eprint.iacr.org/2024/1210.pdf.
@@ -1023,7 +1026,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         } = self.prover_state.as_ref().unwrap();
         let ra = ra.as_ref().unwrap();
         let val = val.as_ref().unwrap();
-        let eq_r_prime = eq_r_prime.normal().unwrap();
+        let eq_r_prime = eq_r_prime.high_to_low().unwrap();
 
         let cubic_evals = (0..eq_r_prime.len() / 2)
             .into_par_iter()
@@ -1101,7 +1104,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         } = self.prover_state.as_ref().unwrap();
         let ra = ra.as_ref().unwrap();
         let val = val.as_ref().unwrap();
-        let eq_r_prime = eq_r_prime.normal().unwrap();
+        let eq_r_prime = eq_r_prime.high_to_low().unwrap();
 
         // Cycle variables are fully bound, so:
         // eq(r', r_cycle) is a constant
@@ -1145,6 +1148,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             A,
             inc_cycle,
             eq_r_prime,
+            #[cfg(test)]
             old_eq_r_prime,
             chunk_size,
             val_checkpoints,
@@ -1153,7 +1157,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             val,
             ..
         } = self.prover_state.as_mut().unwrap();
-        let eq_r_prime = eq_r_prime.split_mut().unwrap();
+        let eq_r_prime = eq_r_prime.low_to_high_mut().unwrap();
 
         let inner_span = tracing::span!(tracing::Level::INFO, "Bind I");
         let _inner_guard = inner_span.enter();
@@ -1194,6 +1198,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         drop(inner_span);
 
         eq_r_prime.bind(r_j);
+        #[cfg(test)]
         old_eq_r_prime.bind_parallel(r_j, BindingOrder::LowToHigh);
         inc_cycle.bind_parallel(r_j, BindingOrder::LowToHigh);
 
@@ -1267,14 +1272,17 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             val,
             inc_cycle,
             eq_r_prime,
+            #[cfg(test)]
             old_eq_r_prime,
             ..
         } = self.prover_state.as_mut().unwrap();
         let ra = ra.as_mut().unwrap();
         let val = val.as_mut().unwrap();
-        let eq_r_prime = eq_r_prime.normal_mut().unwrap();
+        let eq_r_prime = eq_r_prime.high_to_low_mut().unwrap();
 
-        [ra, val, inc_cycle, eq_r_prime, old_eq_r_prime]
+        #[cfg(test)]
+        old_eq_r_prime.bind_parallel(r_j, BindingOrder::HighToLow);
+        [ra, val, inc_cycle, eq_r_prime]
             .into_par_iter()
             .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
     }
@@ -1312,10 +1320,9 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         if round < prover_state.chunk_size.log_2() {
             self.phase1_compute_prover_message_quadratic(round, previous_claim)
         } else if round < self.T.log_2() {
-            if let MaybeSplitEq::Split(split) = &self.prover_state.as_ref().unwrap().eq_r_prime {
-                self.prover_state.as_mut().unwrap().eq_r_prime = MaybeSplitEq::Normal(
-                    //MultilinearPolynomial::<F>::from(split.merge().Z)
-                    self.prover_state.as_ref().unwrap().old_eq_r_prime.clone()
+            if let HighOrLowSplitEq::LowToHigh(low_to_high) = &self.prover_state.as_ref().unwrap().eq_r_prime {
+                self.prover_state.as_mut().unwrap().eq_r_prime = HighOrLowSplitEq::HighToLow(
+                    MultilinearPolynomial::<F>::from(low_to_high.merge().Z)
                 );
             }
             self.phase2_compute_prover_message_quadratic()
