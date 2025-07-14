@@ -4,22 +4,31 @@ use std::marker::PhantomData;
 use tracer::instruction::RV32IMCycle;
 
 use crate::{
+    dag::{
+        stage::{StagedSumcheck, SumcheckStages},
+        state_manager::StateManager,
+    },
     field::JoltField,
     jolt::{
         instruction::LookupQuery,
         lookup_table::LookupTables,
         vm::{
             instruction_lookups::{
-                booleanity::BooleanityProof, hamming_weight::HammingWeightProof,
-                read_raf_checking::ReadCheckingProof,
+                booleanity::{BooleanityProof, BooleanitySumcheck},
+                hamming_weight::{HammingWeightProof, HammingWeightSumcheck},
+                read_raf_checking::{ReadCheckingProof, ReadRafSumcheck},
             },
             JoltCommitments, JoltProverPreprocessing,
         },
+        witness::CommittedPolynomials,
     },
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
-        opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
+        eq_poly::EqPolynomial,
+        multilinear_polynomial::MultilinearPolynomial,
+        opening_proof::{OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator},
     },
+    r1cs::inputs::JoltR1CSInputs,
     utils::{errors::ProofVerifyError, thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
 
@@ -49,6 +58,78 @@ where
     hamming_weight_proof: HammingWeightProof<F, ProofTranscript>,
     log_T: usize,
     _marker: PhantomData<PCS>,
+}
+
+#[derive(Default)]
+pub struct LookupsDag<F: JoltField> {
+    eq_r_cycle: Option<Vec<F>>,
+    unbound_ra_polys: Option<Vec<MultilinearPolynomial<F>>>,
+}
+
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStages<F, T, PCS>
+    for LookupsDag<F>
+{
+    fn stage2_prover_instances(
+        &mut self,
+        sm: &mut StateManager<'_, F, T, PCS>,
+    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
+        let r_cycle = sm
+            .get_prover_accumulator()
+            .borrow()
+            .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
+            .unwrap()
+            .r
+            .clone();
+        let (preprocessing, trace, _, _) = sm.get_prover_data();
+        let unbound_ra_polys = (0..D)
+            .map(|i| CommittedPolynomials::InstructionRa(i).generate_witness(preprocessing, trace))
+            .collect::<Vec<_>>();
+        self.eq_r_cycle = Some(EqPolynomial::evals(&r_cycle));
+        self.unbound_ra_polys = Some(unbound_ra_polys);
+
+        let read_raf = ReadRafSumcheck::new_prover(
+            sm,
+            self.eq_r_cycle.clone().unwrap(),
+            self.unbound_ra_polys.clone().unwrap(),
+        );
+        vec![Box::new(read_raf)]
+    }
+
+    fn stage2_verifier_instances(
+        &mut self,
+        sm: &mut StateManager<'_, F, T, PCS>,
+    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
+        let read_raf = ReadRafSumcheck::new_verifier(sm);
+        vec![Box::new(read_raf)]
+    }
+
+    fn stage3_prover_instances(
+        &mut self,
+        sm: &mut StateManager<'_, F, T, PCS>,
+    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
+        let (_, trace, _, _) = sm.get_prover_data();
+        let F = compute_ra_evals(trace, self.eq_r_cycle.as_ref().unwrap());
+        let booleanity = BooleanitySumcheck::new_prover(
+            sm,
+            self.eq_r_cycle.clone().unwrap(),
+            F.clone(),
+            self.unbound_ra_polys.clone().unwrap(),
+        );
+        let hamming_weight =
+            HammingWeightSumcheck::new_prover(sm, F, self.unbound_ra_polys.clone().unwrap());
+
+        vec![Box::new(booleanity), Box::new(hamming_weight)]
+    }
+
+    fn stage3_verifier_instances(
+        &mut self,
+        sm: &mut StateManager<'_, F, T, PCS>,
+    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
+        let booleanity = BooleanitySumcheck::new_verifier(sm);
+        let hamming_weight = HammingWeightSumcheck::new_verifier(sm);
+
+        vec![Box::new(booleanity), Box::new(hamming_weight)]
+    }
 }
 
 impl<const WORD_SIZE: usize, F, PCS, ProofTranscript>

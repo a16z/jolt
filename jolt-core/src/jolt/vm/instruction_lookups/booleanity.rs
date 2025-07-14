@@ -6,7 +6,7 @@ use tracer::instruction::RV32IMCycle;
 use super::{D, K_CHUNK, LOG_K_CHUNK};
 
 use crate::{
-    dag::state_manager::StateManager,
+    dag::{stage::StagedSumcheck, state_manager::StateManager},
     field::JoltField,
     jolt::instruction::LookupQuery,
     poly::{
@@ -54,7 +54,6 @@ pub struct BooleanitySumcheck<F: JoltField> {
 impl<F: JoltField> BooleanitySumcheck<F> {
     pub fn new_prover(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
-        trace: &[RV32IMCycle],
         eq_r_cycle: Vec<F>,
         G: [Vec<F>; D],
         unbound_ra_polys: Vec<MultilinearPolynomial<F>>,
@@ -64,7 +63,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         for i in 1..D {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
-        let r_address: Vec<F> = sm.transcript.borrow_mut().challenge_vector(K_CHUNK);
+        let r_address: Vec<F> = sm.transcript.borrow_mut().challenge_vector(LOG_K_CHUNK);
         let r_cycle = sm
             .get_prover_accumulator()
             .borrow()
@@ -72,6 +71,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             .unwrap()
             .r
             .clone();
+        let trace = sm.get_prover_data().1;
 
         Self {
             gamma: gamma_powers,
@@ -105,7 +105,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         for i in 1..D {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
-        let r_address: Vec<F> = sm.transcript.borrow_mut().challenge_vector(K_CHUNK);
+        let r_address: Vec<F> = sm.transcript.borrow_mut().challenge_vector(LOG_K_CHUNK);
         let ra_claims = (0..D)
             .map(|i| {
                 sm.get_verifier_accumulator()
@@ -406,6 +406,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
             );
         });
     }
+}
+
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS>
+    for BooleanitySumcheck<F>
+{
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]

@@ -6,7 +6,7 @@ use rayon::prelude::*;
 use super::{D, LOG_K_CHUNK};
 
 use crate::{
-    dag::state_manager::StateManager,
+    dag::{stage::StagedSumcheck, state_manager::StateManager},
     field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
@@ -184,6 +184,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
             );
         });
     }
+}
+
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS>
+    for HammingWeightSumcheck<F>
+{
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]

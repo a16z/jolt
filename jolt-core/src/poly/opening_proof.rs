@@ -800,7 +800,10 @@ where
 
     /// Get the value of an opening by key
     pub fn get_opening(&self, key: OpeningsKeys) -> F {
-        self.evaluation_openings.get(&key).unwrap().1
+        self.evaluation_openings
+            .get(&key)
+            .unwrap_or_else(|| panic!("Key not found: {key:?}"))
+            .1
     }
 
     /// Get the opening point by key

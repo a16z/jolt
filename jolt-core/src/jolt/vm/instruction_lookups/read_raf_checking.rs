@@ -7,7 +7,7 @@ use tracer::instruction::RV32IMCycle;
 use super::{D, K_CHUNK, LOG_K, LOG_K_CHUNK, LOG_M, M, PHASES, RA_PER_LOG_M, WORD_SIZE};
 
 use crate::{
-    dag::state_manager::StateManager,
+    dag::{stage::StagedSumcheck, state_manager::StateManager},
     field::JoltField,
     jolt::{
         instruction::{InstructionFlags, InstructionLookup, InterleavedBitsMarker, LookupQuery},
@@ -41,16 +41,16 @@ use crate::{
 
 const DEGREE: usize = D + 2;
 
-struct ReadRafProverState<'a, F: JoltField> {
-    trace: &'a [RV32IMCycle],
+struct ReadRafProverState<F: JoltField> {
     ra: Vec<MultilinearPolynomial<F>>,
     r: Vec<F>,
 
-    lookup_tables: Vec<LookupTables<WORD_SIZE>>,
     lookup_indices: Vec<LookupBits>,
     lookup_indices_by_table: Vec<Vec<(usize, LookupBits)>>,
     lookup_indices_uninterleave: Vec<(usize, LookupBits)>,
     lookup_indices_identity: Vec<(usize, LookupBits)>,
+    is_interleaved_operands: Vec<bool>,
+    lookup_tables: Vec<Option<LookupTables<WORD_SIZE>>>,
 
     prefix_checkpoints: Vec<PrefixCheckpoint<F>>,
     suffix_polys: Vec<Vec<DensePolynomial<F>>>,
@@ -69,10 +69,10 @@ struct ReadRafProverState<'a, F: JoltField> {
     unbound_ra_polys: Vec<MultilinearPolynomial<F>>,
 }
 
-pub struct ReadRafSumcheck<'a, F: JoltField> {
+pub struct ReadRafSumcheck<F: JoltField> {
     gamma: F,
     gamma_squared: F,
-    prover_state: Option<ReadRafProverState<'a, F>>,
+    prover_state: Option<ReadRafProverState<F>>,
     prod_ra_claims: Option<F>,
     table_flag_claims: Option<Vec<F>>,
     raf_flag_claim: Option<F>,
@@ -83,13 +83,13 @@ pub struct ReadRafSumcheck<'a, F: JoltField> {
     log_T: usize,
 }
 
-impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
+impl<'a, F: JoltField> ReadRafSumcheck<F> {
     pub fn new_prover(
-        sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
-        trace: &'a [RV32IMCycle],
+        sm: &'a mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         eq_r_cycle: Vec<F>,
         unbound_ra_polys: Vec<MultilinearPolynomial<F>>,
     ) -> Self {
+        let trace = sm.get_prover_data().1;
         let log_T = trace.len().log_2();
         let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
         let mut ps = ReadRafProverState::new(trace, eq_r_cycle, unbound_ra_polys);
@@ -131,7 +131,7 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
     pub fn new_verifier(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
-        let log_T = sm.get_verifier_data().2;
+        let log_T = sm.get_verifier_data().2.log_2();
         let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
         let prod_ra_claims: F = (0..D)
             .map(|i| {
@@ -186,7 +186,7 @@ impl<'a, F: JoltField> ReadRafSumcheck<'a, F> {
     }
 }
 
-impl<'a, F: JoltField> ReadRafProverState<'a, F> {
+impl<'a, F: JoltField> ReadRafProverState<F> {
     fn new(
         trace: &'a [RV32IMCycle],
         eq_r_cycle: Vec<F>,
@@ -207,8 +207,8 @@ impl<'a, F: JoltField> ReadRafProverState<'a, F> {
             .par_iter()
             .map(|cycle| LookupBits::new(LookupQuery::<WORD_SIZE>::to_lookup_index(cycle), LOG_K))
             .collect();
-        let lookup_tables: Vec<_> = LookupTables::<WORD_SIZE>::iter().collect();
-        let lookup_indices_by_table: Vec<_> = lookup_tables
+        let lookup_indices_by_table: Vec<_> = LookupTables::<WORD_SIZE>::iter()
+            .collect::<Vec<_>>()
             .par_iter()
             .map(|table| {
                 let table_lookups: Vec<_> = trace
@@ -248,7 +248,21 @@ impl<'a, F: JoltField> ReadRafProverState<'a, F> {
                         itertools::Either::Right((idx, item))
                     }
                 });
-        let suffix_polys: Vec<Vec<DensePolynomial<F>>> = lookup_tables
+
+        let (is_interleaved_operands, lookup_tables): (Vec<_>, Vec<_>) = trace
+            .par_iter()
+            .map(|cycle| {
+                (
+                    cycle
+                        .instruction()
+                        .circuit_flags()
+                        .is_interleaved_operands(),
+                    cycle.instruction().lookup_table(),
+                )
+            })
+            .collect();
+        let suffix_polys: Vec<Vec<DensePolynomial<F>>> = LookupTables::<WORD_SIZE>::iter()
+            .collect::<Vec<_>>()
             .par_iter()
             .map(|table| {
                 table
@@ -259,7 +273,6 @@ impl<'a, F: JoltField> ReadRafProverState<'a, F> {
             })
             .collect();
         ReadRafProverState {
-            trace,
             r: Vec::with_capacity(log_T + LOG_K),
             ra: Vec::with_capacity(D),
             lookup_tables,
@@ -267,6 +280,7 @@ impl<'a, F: JoltField> ReadRafProverState<'a, F> {
             lookup_indices_by_table,
             lookup_indices_uninterleave,
             lookup_indices_identity,
+            is_interleaved_operands,
             prefix_checkpoints: vec![None.into(); Prefixes::COUNT],
             suffix_polys,
             v: std::array::from_fn(|_| ExpandingTable::new(K_CHUNK)),
@@ -282,7 +296,7 @@ impl<'a, F: JoltField> ReadRafProverState<'a, F> {
     }
 }
 
-impl<F: JoltField> BatchableSumcheckInstance<F> for ReadRafSumcheck<'_, F> {
+impl<F: JoltField> BatchableSumcheckInstance<F> for ReadRafSumcheck<F> {
     fn degree(&self) -> usize {
         DEGREE
     }
@@ -429,7 +443,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for ReadRafSumcheck<'_, F> {
 }
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PCS>
-    for ReadRafSumcheck<'_, F>
+    for ReadRafSumcheck<F>
 {
     fn cache_openings_prover(
         &mut self,
@@ -482,7 +496,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
     }
 }
 
-impl<'a, F: JoltField> ReadRafProverState<'a, F> {
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS> for ReadRafSumcheck<F> {}
+
+impl<F: JoltField> ReadRafProverState<F> {
     /// To be called in the beginning of each phase, before any binding
     fn init_phase(&mut self, phase: usize) {
         // Condensation
@@ -507,7 +523,8 @@ impl<'a, F: JoltField> ReadRafProverState<'a, F> {
 
         rayon::scope(|s| {
             s.spawn(|_| {
-                self.lookup_tables
+                LookupTables::<WORD_SIZE>::iter()
+                    .collect::<Vec<_>>()
                     .par_iter()
                     .zip(self.suffix_polys.par_iter_mut())
                     .zip(self.lookup_indices_by_table.par_iter())
@@ -591,9 +608,9 @@ impl<'a, F: JoltField> ReadRafProverState<'a, F> {
         let mut combined_val_poly: Vec<F> = unsafe_allocate_zero_vec(self.lookup_indices.len());
         combined_val_poly
             .par_iter_mut()
-            .zip(self.trace.par_iter())
-            .for_each(|(val, step)| {
-                let table: Option<LookupTables<WORD_SIZE>> = step.lookup_table();
+            .zip(std::mem::take(&mut self.lookup_tables))
+            .zip(std::mem::take(&mut self.is_interleaved_operands))
+            .for_each(|((val, table), is_interleaved_operands)| {
                 if let Some(table) = table {
                     let suffixes: Vec<_> = table
                         .suffixes()
@@ -605,7 +622,7 @@ impl<'a, F: JoltField> ReadRafProverState<'a, F> {
                     *val += table.combine(&prefixes, &suffixes);
                 }
 
-                if step.instruction().circuit_flags().is_interleaved_operands() {
+                if is_interleaved_operands {
                     *val += gamma * self.prefix_registry.checkpoints[Prefix::LeftOperand].unwrap()
                         + gamma_squared
                             * self.prefix_registry.checkpoints[Prefix::RightOperand].unwrap();
