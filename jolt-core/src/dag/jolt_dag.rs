@@ -139,10 +139,42 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             .collect();
         BatchedSumcheck::cache_openings(stage3_instances_mut, Some(accumulator.clone()), &r_stage3);
 
+        // Stage 4:
+        let mut stage4_instances: Vec<_> = std::iter::empty()
+            .chain(ram_dag.stage4_prover_instances(&mut self.prover_state_manager))
+            .collect();
+        let stage4_instances_mut: Vec<&mut dyn BatchableSumcheckInstance<F>> = stage4_instances
+            .iter_mut()
+            .map(|instance| &mut **instance as &mut dyn BatchableSumcheckInstance<F>)
+            .collect();
+
+        let (stage4_proof, r_stage4) =
+            BatchedSumcheck::prove(stage4_instances_mut, &mut *transcript.borrow_mut());
+
+        self.prover_state_manager.proofs.borrow_mut().insert(
+            ProofKeys::Stage4Sumcheck,
+            ProofData::BatchableSumcheckData(stage4_proof),
+        );
+
+        let stage4_instances_mut: Vec<&mut dyn StagedSumcheck<F, PCS>> = stage4_instances
+            .iter_mut()
+            .map(|instance| &mut **instance as &mut dyn StagedSumcheck<F, PCS>)
+            .collect();
+        BatchedSumcheck::cache_openings(stage4_instances_mut, Some(accumulator.clone()), &r_stage4);
+
         Ok(())
     }
 
     pub fn verify(&mut self) -> Result<(), anyhow::Error> {
+        #[cfg(test)]
+        {
+            let prover_transcript = self.prover_state_manager.get_transcript().take();
+            self.verifier_state_manager
+                .transcript
+                .borrow_mut()
+                .compare_to(prover_transcript);
+        }
+
         // Append commitments to transcript
         let commitments = self.verifier_state_manager.get_commitments();
         let transcript = self.verifier_state_manager.get_transcript();
@@ -226,12 +258,45 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             &mut *transcript.borrow_mut(),
         )?;
 
+        drop(proofs);
+
         let stage3_instances_mut: Vec<&mut dyn StagedSumcheck<F, PCS>> = stage3_instances
             .iter_mut()
             .map(|instance| &mut **instance as &mut dyn StagedSumcheck<F, PCS>)
             .collect();
         let accumulator = self.verifier_state_manager.get_verifier_accumulator();
         BatchedSumcheck::cache_claims(stage3_instances_mut, Some(accumulator), &r_stage3);
+
+        // Stage 4:
+        let mut stage4_instances: Vec<_> = std::iter::empty()
+            .chain(ram_dag.stage4_verifier_instances(&mut self.verifier_state_manager))
+            .collect();
+        let stage4_instances_ref: Vec<&dyn BatchableSumcheckInstance<F>> = stage4_instances
+            .iter()
+            .map(|instance| &**instance as &dyn BatchableSumcheckInstance<F>)
+            .collect();
+
+        let proofs = self.verifier_state_manager.proofs.borrow();
+        let stage4_proof_data = proofs
+            .get(&ProofKeys::Stage4Sumcheck)
+            .expect("Stage 4 sumcheck proof not found");
+        let stage4_proof = match stage4_proof_data {
+            ProofData::BatchableSumcheckData(proof) => proof,
+            _ => panic!("Invalid proof type for stage 4"),
+        };
+
+        let r_stage4 = BatchedSumcheck::verify(
+            stage4_proof,
+            stage4_instances_ref,
+            &mut *transcript.borrow_mut(),
+        )?;
+
+        let stage4_instances_mut: Vec<&mut dyn StagedSumcheck<F, PCS>> = stage4_instances
+            .iter_mut()
+            .map(|instance| &mut **instance as &mut dyn StagedSumcheck<F, PCS>)
+            .collect();
+        let accumulator = self.verifier_state_manager.get_verifier_accumulator();
+        BatchedSumcheck::cache_claims(stage4_instances_mut, Some(accumulator), &r_stage4);
 
         Ok(())
     }

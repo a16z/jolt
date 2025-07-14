@@ -21,6 +21,7 @@ pub enum ProofKeys {
     SpartanOuterSumcheck,
     Stage2Sumcheck,
     Stage3Sumcheck,
+    Stage4Sumcheck,
     RamSumcheckSwitchIndex,
     RamK,
 }

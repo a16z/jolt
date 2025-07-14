@@ -597,7 +597,7 @@ where
     fn cache_openings_prover(
         &mut self,
         accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        r_cycle_prime: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         debug_assert!(self.output_claims.is_none());
         let ValFinalSumcheckProverState { inc, wa, .. } = self.prover_state.as_mut().unwrap();
@@ -607,14 +607,21 @@ where
         });
 
         let accumulator = accumulator.expect("accumulator is needed");
+        let r_address = accumulator
+            .borrow()
+            .get_opening_point(OpeningsKeys::RamValFinal)
+            .unwrap();
+        let wa_opening_point =
+            OpeningPoint::new([r_address.r.as_slice(), r_cycle_prime.r.as_slice()].concat());
+
         accumulator.borrow_mut().append_virtual(
             OpeningsKeys::ValFinalInc,
-            opening_point.clone(),
+            r_cycle_prime,
             inc.final_sumcheck_claim(),
         );
         accumulator.borrow_mut().append_virtual(
             OpeningsKeys::ValFinalWa,
-            opening_point,
+            wa_opening_point,
             wa.final_sumcheck_claim(),
         );
     }

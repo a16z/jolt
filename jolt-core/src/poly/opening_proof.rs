@@ -32,7 +32,7 @@ pub type Endianness = bool;
 pub const BIG_ENDIAN: Endianness = false;
 pub const LITTLE_ENDIAN: Endianness = true;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct OpeningPoint<const E: Endianness, F: JoltField> {
     pub r: Vec<F>,
 }
@@ -152,6 +152,9 @@ pub enum OpeningsKeys {
     RamValEvaluationWa,             // wa claim from RAM Val evaluation
     ValFinalInc,                    // Inc claim from RAM Val_final evaluation
     ValFinalWa,                     // wa claim from RAM Val_final evaluation
+    RamHammingRa(usize),            // ra_i openings for RAM Hamming weight
+    RamBooleanityRa(usize),         // ra_i openings for RAM booleanity
+    RamRaVirtualization(usize),     // ra_i openings for RAM ra virtualization
 }
 
 pub type Openings<F> = HashMap<OpeningsKeys, (OpeningPoint<BIG_ENDIAN, F>, F)>;
