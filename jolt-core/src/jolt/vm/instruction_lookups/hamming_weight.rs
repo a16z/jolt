@@ -6,12 +6,14 @@ use rayon::prelude::*;
 use super::{D, LOG_K_CHUNK};
 
 use crate::{
-    dag::state_manager::StateManager,
+    dag::{stage::StagedSumcheck, state_manager::StateManager},
     field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
-        opening_proof::{Openings, OpeningsKeys, ProverOpeningAccumulator},
+        opening_proof::{
+            Openings, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
+        },
     },
     r1cs::inputs::JoltR1CSInputs,
     subprotocols::sumcheck::{
@@ -55,8 +57,6 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
             .try_into()
             .unwrap();
         let r_cycle = sm
-            .get_prover_accumulator()
-            .borrow()
             .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
             .unwrap()
             .r
@@ -82,17 +82,11 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
         let ra_claims = (0..D)
-            .map(|i| {
-                sm.get_verifier_accumulator()
-                    .borrow()
-                    .get_opening(OpeningsKeys::InstructionHammingRa(i))
-            })
+            .map(|i| sm.get_opening(OpeningsKeys::InstructionHammingRa(i)))
             .collect::<Vec<F>>()
             .try_into()
             .unwrap();
         let r_cycle = sm
-            .get_verifier_accumulator()
-            .borrow()
             .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
             .unwrap()
             .r
@@ -161,29 +155,48 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
         &mut self,
         accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
-        let ra_claims = self
-            .prover_state
-            .as_ref()
-            .unwrap()
+        let ps = self.prover_state.as_mut().unwrap();
+        let ra_claims = ps
             .ra
             .iter()
             .map(|ra| ra.final_sumcheck_claim())
             .collect::<Vec<F>>();
-        let r_address_prime = self.prover_state.as_ref().unwrap().r.clone();
-        let r = r_address_prime
-            .iter()
-            .chain(self.r_cycle.iter())
-            .cloned()
-            .collect::<Vec<F>>();
+        let ra_keys = (0..D)
+            .map(OpeningsKeys::InstructionHammingRa)
+            .collect::<Vec<_>>();
         let accumulator = accumulator.expect("accumulator is needed");
-        ra_claims.iter().enumerate().for_each(|(i, claim)| {
-            accumulator.borrow_mut().append_virtual(
-                OpeningsKeys::InstructionHammingRa(i),
-                r.clone(),
-                *claim,
-            );
+        accumulator.borrow_mut().append_sparse(
+            std::mem::take(&mut ps.unbound_ra_polys),
+            ps.r.to_vec(),
+            self.r_cycle.clone(),
+            ra_claims,
+            Some(ra_keys),
+        );
+    }
+
+    fn cache_openings_verifier(
+        &mut self,
+        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
+        r_sumcheck: Option<&[F]>,
+    ) {
+        let r = r_sumcheck
+            .unwrap()
+            .iter()
+            .cloned()
+            .chain(self.r_cycle.iter().cloned())
+            .collect::<Vec<_>>();
+        let accumulator = accumulator.expect("accumulator is needed");
+        (0..D).for_each(|i| {
+            accumulator
+                .borrow_mut()
+                .populate_claim_opening(OpeningsKeys::InstructionHammingRa(i), r.clone())
         });
     }
+}
+
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS>
+    for HammingWeightSumcheck<F>
+{
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]

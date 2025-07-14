@@ -189,7 +189,7 @@ impl BatchedSumcheck {
                 let num_rounds = sumcheck.num_rounds();
                 sumcheck
                     .input_claim()
-                    .mul_u64(1 << (max_num_rounds - num_rounds))
+                    .mul_pow_2(max_num_rounds - num_rounds)
             })
             .collect();
 
@@ -218,7 +218,7 @@ impl BatchedSumcheck {
                         let num_rounds = sumcheck.num_rounds();
                         let scaled_input_claim = sumcheck
                             .input_claim()
-                            .mul_u64(1 << (remaining_rounds - num_rounds - 1));
+                            .mul_pow_2(remaining_rounds - num_rounds - 1);
                         // Constant polynomial
                         UniPoly::from_coeff(vec![scaled_input_claim])
                     } else {
@@ -332,7 +332,7 @@ impl BatchedSumcheck {
                 let num_rounds = sumcheck.num_rounds();
                 sumcheck
                     .input_claim()
-                    .mul_u64(1 << (max_num_rounds - num_rounds))
+                    .mul_pow_2(max_num_rounds - num_rounds)
                     * coeff
             })
             .sum();

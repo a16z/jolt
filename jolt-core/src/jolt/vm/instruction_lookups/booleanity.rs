@@ -6,7 +6,7 @@ use tracer::instruction::RV32IMCycle;
 use super::{D, K_CHUNK, LOG_K_CHUNK};
 
 use crate::{
-    dag::state_manager::StateManager,
+    dag::{stage::StagedSumcheck, state_manager::StateManager},
     field::JoltField,
     jolt::instruction::LookupQuery,
     poly::{
@@ -15,7 +15,9 @@ use crate::{
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
-        opening_proof::{Openings, OpeningsKeys, ProverOpeningAccumulator},
+        opening_proof::{
+            Openings, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
+        },
     },
     r1cs::inputs::JoltR1CSInputs,
     subprotocols::sumcheck::{
@@ -54,7 +56,6 @@ pub struct BooleanitySumcheck<F: JoltField> {
 impl<F: JoltField> BooleanitySumcheck<F> {
     pub fn new_prover(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
-        trace: &[RV32IMCycle],
         eq_r_cycle: Vec<F>,
         G: [Vec<F>; D],
         unbound_ra_polys: Vec<MultilinearPolynomial<F>>,
@@ -64,14 +65,13 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         for i in 1..D {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
-        let r_address: Vec<F> = sm.transcript.borrow_mut().challenge_vector(K_CHUNK);
+        let r_address: Vec<F> = sm.transcript.borrow_mut().challenge_vector(LOG_K_CHUNK);
         let r_cycle = sm
-            .get_prover_accumulator()
-            .borrow()
             .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
             .unwrap()
             .r
             .clone();
+        let trace = sm.get_prover_data().1;
 
         Self {
             gamma: gamma_powers,
@@ -93,8 +93,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
         let r_cycle = sm
-            .get_verifier_accumulator()
-            .borrow()
             .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
             .unwrap()
             .r
@@ -105,13 +103,9 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         for i in 1..D {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
-        let r_address: Vec<F> = sm.transcript.borrow_mut().challenge_vector(K_CHUNK);
+        let r_address: Vec<F> = sm.transcript.borrow_mut().challenge_vector(LOG_K_CHUNK);
         let ra_claims = (0..D)
-            .map(|i| {
-                sm.get_verifier_accumulator()
-                    .borrow()
-                    .get_opening(OpeningsKeys::InstructionBooleanityRa(i))
-            })
+            .map(|i| sm.get_opening(OpeningsKeys::InstructionBooleanityRa(i)))
             .collect::<Vec<F>>()
             .try_into()
             .unwrap();
@@ -385,27 +379,45 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
         &mut self,
         accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
-        let ra_claims = self
-            .prover_state
-            .as_ref()
-            .unwrap()
-            .H
-            .as_ref()
-            .unwrap()
-            .iter()
-            .map(|ra| ra.final_sumcheck_claim())
-            .collect::<Vec<F>>();
-        let r = self.prover_state.as_ref().unwrap().r.clone();
+        let ps = self.prover_state.as_mut().unwrap();
+        let ra_claims =
+            ps.H.as_ref()
+                .unwrap()
+                .iter()
+                .map(|ra| ra.final_sumcheck_claim())
+                .collect::<Vec<F>>();
+        let ra_keys = (0..D)
+            .map(OpeningsKeys::InstructionBooleanityRa)
+            .collect::<Vec<_>>();
 
         let accumulator = accumulator.expect("accumulator is needed");
-        ra_claims.iter().enumerate().for_each(|(i, claim)| {
-            accumulator.borrow_mut().append_virtual(
+        accumulator.borrow_mut().append_sparse(
+            std::mem::take(&mut ps.unbound_ra_polys),
+            ps.r[..LOG_K_CHUNK].to_vec(),
+            ps.r[LOG_K_CHUNK..].to_vec(),
+            ra_claims,
+            Some(ra_keys),
+        );
+    }
+
+    fn cache_openings_verifier(
+        &mut self,
+        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
+        r_sumcheck: Option<&[F]>,
+    ) {
+        let accumulator = accumulator.expect("accumulator is needed");
+        (0..D).for_each(|i| {
+            accumulator.borrow_mut().populate_claim_opening(
                 OpeningsKeys::InstructionBooleanityRa(i),
-                r.clone(),
-                *claim,
-            );
+                r_sumcheck.unwrap().to_vec(),
+            )
         });
     }
+}
+
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS>
+    for BooleanitySumcheck<F>
+{
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]

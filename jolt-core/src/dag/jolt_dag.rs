@@ -1,7 +1,8 @@
 use crate::dag::stage::SumcheckStages;
 use crate::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::field::JoltField;
-use crate::jolt::vm::registers::RegistersDAG;
+use crate::jolt::vm::instruction_lookups::LookupsDag;
+use crate::jolt::vm::registers::RegistersDag;
 use crate::jolt::vm::JoltCommitments;
 use crate::jolt::witness::ALL_COMMITTED_POLYNOMIALS;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
@@ -72,18 +73,17 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         // Stage 1:
         let (_, trace, _, _) = self.prover_state_manager.get_prover_data();
         let padded_trace_length = trace.len().next_power_of_two();
-        let spartan_dag = SpartanDag::<F>::new::<ProofTranscript>(padded_trace_length);
+        let mut spartan_dag = SpartanDag::<F>::new::<ProofTranscript>(padded_trace_length);
+        let mut lookups_dag = LookupsDag::<F>::default();
+        let mut registers_dag = RegistersDag::default();
         spartan_dag.stage1_prove(&mut self.prover_state_manager)?;
 
         // Stage 2:
-        let mut stage2_instances =
-            spartan_dag.stage2_prover_instances(&mut self.prover_state_manager);
-
-        let registers_dag = RegistersDAG {};
-        let mut registers_stage2 =
-            registers_dag.stage2_prover_instances(&mut self.prover_state_manager);
-        stage2_instances.append(&mut registers_stage2);
-
+        let mut stage2_instances: Vec<_> = std::iter::empty()
+            .chain(spartan_dag.stage2_prover_instances(&mut self.prover_state_manager))
+            .chain(registers_dag.stage2_prover_instances(&mut self.prover_state_manager))
+            .chain(lookups_dag.stage2_prover_instances(&mut self.prover_state_manager))
+            .collect();
         let stage2_instances_mut: Vec<&mut dyn BatchableSumcheckInstance<F>> = stage2_instances
             .iter_mut()
             .map(|instance| &mut **instance as &mut dyn BatchableSumcheckInstance<F>)
@@ -104,12 +104,11 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         }
 
         // Stage 3:
-        let mut stage3_instances =
-            spartan_dag.stage3_prover_instances(&mut self.prover_state_manager);
-
-        let mut registers_stage3 =
-            registers_dag.stage3_prover_instances(&mut self.prover_state_manager);
-        stage3_instances.append(&mut registers_stage3);
+        let mut stage3_instances: Vec<_> = std::iter::empty()
+            .chain(spartan_dag.stage3_prover_instances(&mut self.prover_state_manager))
+            .chain(registers_dag.stage3_prover_instances(&mut self.prover_state_manager))
+            .chain(lookups_dag.stage3_prover_instances(&mut self.prover_state_manager))
+            .collect();
         let stage3_instances_mut: Vec<&mut dyn BatchableSumcheckInstance<F>> = stage3_instances
             .iter_mut()
             .map(|instance| &mut **instance as &mut dyn BatchableSumcheckInstance<F>)
@@ -145,18 +144,17 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         // Stage 1:
         let (_, _, trace_length) = self.verifier_state_manager.get_verifier_data();
         let padded_trace_length = trace_length.next_power_of_two();
-        let spartan_dag = SpartanDag::<F>::new::<ProofTranscript>(padded_trace_length);
+        let mut spartan_dag = SpartanDag::<F>::new::<ProofTranscript>(padded_trace_length);
+        let mut lookups_dag = LookupsDag::<F>::default();
+        let mut registers_dag = RegistersDag::default();
         spartan_dag.stage1_verify(&mut self.verifier_state_manager)?;
 
         // Stage 2:
-        let mut stage2_instances =
-            spartan_dag.stage2_verifier_instances(&mut self.verifier_state_manager);
-
-        let registers_dag = RegistersDAG {};
-        let mut registers_stage2 =
-            registers_dag.stage2_verifier_instances(&mut self.verifier_state_manager);
-        stage2_instances.append(&mut registers_stage2);
-
+        let mut stage2_instances: Vec<_> = std::iter::empty()
+            .chain(spartan_dag.stage2_verifier_instances(&mut self.verifier_state_manager))
+            .chain(registers_dag.stage2_verifier_instances(&mut self.verifier_state_manager))
+            .chain(lookups_dag.stage2_verifier_instances(&mut self.verifier_state_manager))
+            .collect();
         let stage2_instances_ref: Vec<&dyn BatchableSumcheckInstance<F>> = stage2_instances
             .iter()
             .map(|instance| &**instance as &dyn BatchableSumcheckInstance<F>)
@@ -186,12 +184,11 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         }
 
         // Stage 3:
-        let mut stage3_instances =
-            spartan_dag.stage3_verifier_instances(&mut self.verifier_state_manager);
-
-        let mut registers_stage3 =
-            registers_dag.stage3_verifier_instances(&mut self.verifier_state_manager);
-        stage3_instances.append(&mut registers_stage3);
+        let mut stage3_instances: Vec<_> = std::iter::empty()
+            .chain(spartan_dag.stage3_verifier_instances(&mut self.verifier_state_manager))
+            .chain(registers_dag.stage3_verifier_instances(&mut self.verifier_state_manager))
+            .chain(lookups_dag.stage3_verifier_instances(&mut self.verifier_state_manager))
+            .collect();
         let stage3_instances_ref: Vec<&dyn BatchableSumcheckInstance<F>> = stage3_instances
             .iter()
             .map(|instance| &**instance as &dyn BatchableSumcheckInstance<F>)
