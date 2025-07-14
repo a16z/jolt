@@ -275,7 +275,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             };
 
             let transcript = self.verifier_state_manager.get_transcript();
-            let r_stage5 = BatchedSumcheck::verify(
+            let _r_stage5 = BatchedSumcheck::verify(
                 stage5_proof,
                 stage5_instances_ref,
                 &mut *transcript.borrow_mut(),
