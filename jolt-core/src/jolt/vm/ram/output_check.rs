@@ -355,12 +355,19 @@ where
 {
     fn cache_openings_prover(
         &mut self,
-        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        // TODO(moodlezoup): add to _openings
         debug_assert!(self.val_final_claim.is_none());
         let OutputSumcheckProverState { val_final, .. } = self.prover_state.as_ref().unwrap();
+
+        accumulator.unwrap().borrow_mut().append_virtual(
+            OpeningsKeys::RamValFinal,
+            opening_point,
+            val_final.final_sumcheck_claim(),
+        );
+
+        // TODO(moodlezoup): remove this
         self.val_final_claim = Some(val_final.final_sumcheck_claim());
     }
 }
