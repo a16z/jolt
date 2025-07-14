@@ -1,10 +1,12 @@
 pub mod jolt_dag;
 pub mod stage;
 pub mod state_manager;
+pub mod proof_serialization;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dag::state_manager::Proofs;
     use crate::host;
     use crate::jolt::vm::{rv32i_vm::RV32IJoltVM, Jolt, JoltProverPreprocessing};
     use crate::poly::commitment::mock::MockCommitScheme;
@@ -76,41 +78,57 @@ mod tests {
         let verifier_accumulator = Rc::new(RefCell::new(verifier_accumulator_pre_wrap));
         let prover_transcript = Rc::new(RefCell::new(KeccakTranscript::new(b"Jolt")));
         let verifier_transcript = Rc::new(RefCell::new(KeccakTranscript::new(b"Jolt")));
-        let proofs = Rc::new(RefCell::new(HashMap::new()));
+        let proofs = Rc::new(RefCell::new(Proofs::default()));
         let commitments = Rc::new(RefCell::new(None));
 
-        // Create state managers
-        let mut prover_state_manager = state_manager::StateManager::new_prover(
+        // Create state manager for prover
+        let prover_state_manager = state_manager::StateManager::new_prover(
+            &preprocessing,
+            trace.clone(),
+            io_device.clone(),
+            final_memory_state.clone(),
             prover_accumulator,
             prover_transcript.clone(),
             proofs.clone(),
             commitments.clone(),
         );
-        prover_state_manager.set_prover_data(
-            &preprocessing,
-            trace.clone(),
-            io_device.clone(),
-            final_memory_state.clone(),
-        );
 
-        let mut verifier_state_manager = state_manager::StateManager::new_verifier(
-            verifier_accumulator,
-            verifier_transcript.clone(),
-            proofs,
-            commitments,
-        );
+        // Create DAG with prover state
+        let mut prover_dag = jolt_dag::JoltDAG::new_prover(prover_state_manager);
 
+        // Prove and get the proof
+        let proof = match prover_dag.prove::<32>() {
+            Ok(proof) => proof,
+            Err(e) => panic!("DAG prove failed: {e}"),
+        };
+
+        // Create verifier preprocessing
         let verifier_preprocessing =
             crate::jolt::vm::JoltVerifierPreprocessing::from(&preprocessing);
-        verifier_state_manager.set_verifier_data(&verifier_preprocessing, io_device, trace.len());
+        
+        // Create verifier state manager with minimal data
+        let verifier_accumulator = Rc::new(RefCell::new(
+            crate::poly::opening_proof::VerifierOpeningAccumulator::<Fr, MockCommitScheme<Fr>>::new()
+        ));
+        let verifier_transcript = Rc::new(RefCell::new(KeccakTranscript::new(b"Jolt")));
+        let verifier_proofs = Rc::new(RefCell::new(Proofs::default()));
+        let verifier_commitments = Rc::new(RefCell::new(None));
+        
+        let verifier_state_manager = state_manager::StateManager::new_verifier(
+            &verifier_preprocessing,
+            io_device,
+            trace_length,
+            verifier_accumulator,
+            verifier_transcript,
+            verifier_proofs,
+            verifier_commitments,
+        );
 
-        let mut dag = jolt_dag::JoltDAG::new(prover_state_manager, verifier_state_manager);
+        // Create DAG with verifier state
+        let mut verifier_dag = jolt_dag::JoltDAG::new_verifier(verifier_state_manager);
 
-        if let Err(e) = dag.prove() {
-            panic!("DAG prove failed: {e}");
-        }
-
-        if let Err(e) = dag.verify() {
+        // Verify with the proof
+        if let Err(e) = verifier_dag.verify(proof) {
             panic!("DAG verify failed: {e}");
         }
 
