@@ -15,7 +15,9 @@ use crate::{
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
-        opening_proof::{Openings, OpeningsKeys, ProverOpeningAccumulator},
+        opening_proof::{
+            Openings, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
+        },
     },
     r1cs::inputs::JoltR1CSInputs,
     subprotocols::sumcheck::{
@@ -377,25 +379,38 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
         &mut self,
         accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
     ) {
-        let ra_claims = self
-            .prover_state
-            .as_ref()
-            .unwrap()
-            .H
-            .as_ref()
-            .unwrap()
-            .iter()
-            .map(|ra| ra.final_sumcheck_claim())
-            .collect::<Vec<F>>();
-        let r = self.prover_state.as_ref().unwrap().r.clone();
+        let ps = self.prover_state.as_mut().unwrap();
+        let ra_claims =
+            ps.H.as_ref()
+                .unwrap()
+                .iter()
+                .map(|ra| ra.final_sumcheck_claim())
+                .collect::<Vec<F>>();
+        let ra_keys = (0..D)
+            .map(OpeningsKeys::InstructionBooleanityRa)
+            .collect::<Vec<_>>();
 
         let accumulator = accumulator.expect("accumulator is needed");
-        ra_claims.iter().enumerate().for_each(|(i, claim)| {
-            accumulator.borrow_mut().append_virtual(
+        accumulator.borrow_mut().append_sparse(
+            std::mem::take(&mut ps.unbound_ra_polys),
+            ps.r[..LOG_K_CHUNK].to_vec(),
+            ps.r[LOG_K_CHUNK..].to_vec(),
+            ra_claims,
+            Some(ra_keys),
+        );
+    }
+
+    fn cache_openings_verifier(
+        &mut self,
+        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
+        r_sumcheck: Option<&[F]>,
+    ) {
+        let accumulator = accumulator.expect("accumulator is needed");
+        (0..D).for_each(|i| {
+            accumulator.borrow_mut().populate_claim_opening(
                 OpeningsKeys::InstructionBooleanityRa(i),
-                r.clone(),
-                *claim,
-            );
+                r_sumcheck.unwrap().to_vec(),
+            )
         });
     }
 }

@@ -24,7 +24,9 @@ use crate::{
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
-        opening_proof::{Openings, OpeningsKeys, ProverOpeningAccumulator},
+        opening_proof::{
+            Openings, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
+        },
         prefix_suffix::{Prefix, PrefixRegistry, PrefixSuffixDecomposition},
     },
     r1cs::inputs::JoltR1CSInputs,
@@ -428,6 +430,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
             .iter()
             .map(|ra| ra.final_sumcheck_claim())
             .collect::<Vec<F>>();
+        let ra_keys = (0..D).map(OpeningsKeys::InstructionRa).collect::<Vec<_>>();
 
         let accumulator = accumulator.expect("accumulator is needed");
         flag_claims.into_iter().enumerate().for_each(|(i, claim)| {
@@ -437,13 +440,20 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
                 claim,
             );
         });
-        ra_claims.iter().enumerate().for_each(|(i, claim)| {
-            accumulator.borrow_mut().append_virtual(
-                OpeningsKeys::InstructionRa(i),
-                ps.r.to_vec(),
-                *claim,
-            );
-        });
+        ps.unbound_ra_polys
+            .iter_mut()
+            .zip(ra_claims)
+            .zip(ra_keys)
+            .enumerate()
+            .for_each(|(i, ((ra, claim), key))| {
+                accumulator.borrow_mut().append_sparse(
+                    vec![std::mem::take(ra)],
+                    ps.r[LOG_K_CHUNK * i..LOG_K_CHUNK * (i + 1)].to_vec(),
+                    ps.r[LOG_K..].to_vec(),
+                    vec![claim],
+                    Some(vec![key]),
+                );
+            });
         let raf_flag_claim = ps
             .lookup_indices_identity
             .par_iter()
@@ -454,6 +464,29 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
             r_cycle_prime.to_vec(),
             raf_flag_claim,
         );
+    }
+
+    fn cache_openings_verifier(
+        &mut self,
+        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
+        r_sumcheck: Option<&[F]>,
+    ) {
+        let accumulator = accumulator.expect("accumulator is needed");
+        (0..D).for_each(|i| {
+            accumulator.borrow_mut().populate_claim_opening(
+                OpeningsKeys::InstructionBooleanityRa(i),
+                r_sumcheck.unwrap().to_vec(),
+            )
+        });
+        let r_cycle_prime = r_sumcheck.unwrap()[LOG_K_CHUNK..].to_vec();
+        accumulator
+            .borrow_mut()
+            .populate_claim_opening(OpeningsKeys::InstructionRafFlag, r_cycle_prime.clone());
+        (0..LookupTables::<WORD_SIZE>::COUNT).for_each(|i| {
+            accumulator
+                .borrow_mut()
+                .populate_claim_opening(OpeningsKeys::LookupTableFlag(i), r_cycle_prime.clone())
+        })
     }
 }
 
