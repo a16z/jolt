@@ -252,6 +252,7 @@ where
     /// If this is a batched opening, this `Vec` contains the individual
     /// polynomials in the batch.
     batch: Vec<MultilinearPolynomial<F>>,
+    pub instance_index: Option<usize>,
 }
 
 impl<F, PCS> OpeningProofReductionSumcheck<F, PCS>
@@ -277,6 +278,7 @@ where
             sumcheck_claim: None,
             #[cfg(test)]
             batch: vec![],
+            instance_index: None,
         }
     }
 
@@ -295,6 +297,7 @@ where
             sumcheck_claim: None,
             #[cfg(test)]
             batch: vec![],
+            instance_index: None,
         }
     }
 
@@ -307,6 +310,7 @@ where
             sumcheck_claim: None,
             #[cfg(test)]
             batch: vec![],
+            instance_index: None,
         }
     }
 }
@@ -368,25 +372,29 @@ where
             .as_ref()
             .expect("Prover state not initialized");
 
-        let accumulator_ref = accumulator.expect("accumulator must be provided");
-        let mut accumulator_borrow = accumulator_ref.borrow_mut();
-        let instance_index = accumulator_borrow.len();
-
+        let instance_index = self.instance_index.expect("instance_index must be set");
+        
         match prover_state {
             ProverOpening::Dense(opening) => {
-                accumulator_borrow.append_virtual(
-                    OpeningsKeys::OpeningsSumcheckClaim(instance_index),
-                    vec![],
-                    opening.final_sumcheck_claim(),
-                );
+                accumulator
+                    .expect("accumulator must be provided")
+                    .borrow_mut()
+                    .append_virtual(
+                        OpeningsKeys::OpeningsSumcheckClaim(instance_index),
+                        vec![],
+                        opening.final_sumcheck_claim(),
+                    );
                 self.sumcheck_claim = Some(opening.final_sumcheck_claim())
             }
             ProverOpening::OneHot(opening) => {
-                accumulator_borrow.append_virtual(
-                    OpeningsKeys::OpeningsSumcheckClaim(instance_index),
-                    vec![],
-                    opening.final_sumcheck_claim(),
-                );
+                accumulator
+                    .expect("accumulator must be provided")
+                    .borrow_mut()
+                    .append_virtual(
+                        OpeningsKeys::OpeningsSumcheckClaim(instance_index),
+                        vec![],
+                        opening.final_sumcheck_claim(),
+                    );
                 self.sumcheck_claim = Some(opening.final_sumcheck_claim())
             }
         };
@@ -602,7 +610,7 @@ where
 
         #[cfg(not(test))]
         {
-            let opening = OpeningProofReductionSumcheck::new_prover_instance_dense(
+            let mut opening = OpeningProofReductionSumcheck::new_prover_instance_dense(
                 batched_poly,
                 Rc::new(RefCell::new(eq_evals.into())),
                 opening_point,
@@ -665,7 +673,7 @@ where
                     }
                     #[cfg(not(test))]
                     {
-                        let opening = OpeningProofReductionSumcheck::new_prover_instance_one_hot(
+                        let mut opening = OpeningProofReductionSumcheck::new_prover_instance_one_hot(
                             one_hot_polynomial,
                             shared_eq.clone(),
                             r_concat.clone(),
@@ -903,12 +911,12 @@ where
             }
         }
 
-        self.openings
-            .push(OpeningProofReductionSumcheck::new_verifier_instance(
-                joint_commitment,
-                opening_point,
-                batched_claim,
-            ));
+        let mut opening = OpeningProofReductionSumcheck::new_verifier_instance(
+            joint_commitment,
+            opening_point,
+            batched_claim,
+        );
+        self.openings.push(opening);
     }
 
     pub fn append_virtual(&mut self, key: OpeningsKeys, opening_point: Vec<F>, claim: F) {

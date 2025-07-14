@@ -129,7 +129,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
 
         // Stage 5: Opening proof reduction sumcheck
         // This stage handles the batch opening reduction for all accumulated openings
-        let opening_proof_dag = crate::poly::opening_proof_dag::OpeningProofDAG::<F, PCS>::new();
+        let mut opening_proof_dag = crate::poly::opening_proof_dag::OpeningProofDAG::<F, PCS>::new();
         let mut stage5_instances =
             opening_proof_dag.stage5_prover_instances(&mut self.prover_state_manager);
 
@@ -245,18 +245,12 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             instance.cache_openings_verifier(Some(accumulator.clone()), Some(&r_stage3));
         }
 
-        // Stage 5: Opening proof reduction sumcheck verification
-        let opening_proof_dag = crate::poly::opening_proof_dag::OpeningProofDAG::<F, PCS>::new();
-        let mut stage5_instances =
+        // Stage 5: Opening proof reduction sumcheck
+        let mut opening_proof_dag = crate::poly::opening_proof_dag::OpeningProofDAG::<F, PCS>::new();
+        let stage5_instances =
             opening_proof_dag.stage5_verifier_instances(&mut self.verifier_state_manager);
 
         if !stage5_instances.is_empty() {
-            // Call cache_openings_verifier before verification to populate sumcheck claims
-            let accumulator = self.verifier_state_manager.get_verifier_accumulator();
-            for instance in stage5_instances.iter_mut() {
-                instance.cache_openings_verifier(Some(accumulator.clone()), None);
-            }
-
             let stage5_instances_ref: Vec<&dyn BatchableSumcheckInstance<F>> = stage5_instances
                 .iter()
                 .map(|instance| &**instance as &dyn BatchableSumcheckInstance<F>)
@@ -272,19 +266,15 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             };
 
             let transcript = self.verifier_state_manager.get_transcript();
-            let r_stage5 = BatchedSumcheck::verify(
+            
+            // r_stage5 is not used for any further sumchecks (this is the last sumcheck step)
+            let _r_stage5 = BatchedSumcheck::verify(
                 stage5_proof,
                 stage5_instances_ref,
                 &mut *transcript.borrow_mut(),
             )?;
 
             drop(proofs);
-
-            // // Cache openings after verification with the sumcheck randomness
-            // let accumulator = self.verifier_state_manager.get_verifier_accumulator();
-            // for instance in stage5_instances.iter_mut() {
-            //     instance.cache_openings_verifier(Some(accumulator.clone()), Some(&r_stage5));
-            // }
         }
 
         Ok(())

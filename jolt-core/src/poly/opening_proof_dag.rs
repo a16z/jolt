@@ -23,49 +23,57 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     SumcheckStages<F, ProofTranscript, PCS> for OpeningProofDAG<F, PCS>
 {
     fn stage5_prover_instances(
-        &self,
+        &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
-        // Get the prover accumulator which contains all the openings
         let accumulator = state_manager.get_prover_accumulator();
         let mut accumulator_borrow = accumulator.borrow_mut();
 
-        // Get mutable references to all the OpeningProofReductionSumcheck instances
         let openings: Vec<Box<dyn StagedSumcheck<F, PCS>>> = accumulator_borrow
             .openings
             .drain(..)
-            .map(|opening| Box::new(opening) as Box<dyn StagedSumcheck<F, PCS>>)
+            .enumerate()
+            .map(|(index, mut opening)| {
+                opening.instance_index = Some(index);
+                Box::new(opening) as Box<dyn StagedSumcheck<F, PCS>>
+            })
             .collect();
 
         openings
     }
 
     fn stage5_verifier_instances(
-        &self,
+        &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
-        // Get the verifier accumulator which contains all the openings
         let accumulator = state_manager.get_verifier_accumulator();
-        let mut accumulator_borrow = accumulator.borrow_mut();
-
-        // First, collect all the sumcheck claims for each instance
+        let accumulator_borrow = accumulator.borrow();
+        
+        // Collect the claims for each index
         let num_openings = accumulator_borrow.openings.len();
-        let sumcheck_claims: Vec<F> = (0..num_openings)
+        let claims: Vec<F> = (0..num_openings)
             .map(|index| {
                 accumulator_borrow.get_opening(
-                    crate::poly::opening_proof::OpeningsKeys::OpeningsSumcheckClaim(index),
+                    crate::poly::opening_proof::OpeningsKeys::OpeningsSumcheckClaim(index)
                 )
             })
             .collect();
-
-        // Now drain and update the openings with their corresponding claims
+        
+        drop(accumulator_borrow);
+        
+        // Now drain and set both instance_index and sumcheck_claim
+        let mut accumulator_borrow = accumulator.borrow_mut();
         let openings: Vec<Box<dyn StagedSumcheck<F, PCS>>> = accumulator_borrow
             .openings
             .drain(..)
-            .zip(sumcheck_claims.into_iter())
-            .map(|(mut opening, sumcheck_claim)| {
-                // Set the sumcheck claim for this opening
-                opening.sumcheck_claim = Some(sumcheck_claim);
+            .enumerate()
+            .map(|(index, mut opening)| {
+                // Set the instance index
+                opening.instance_index = Some(index);
+                
+                // Set the sumcheck claim from our pre-collected claims
+                opening.sumcheck_claim = Some(claims[index]);
+                
                 Box::new(opening) as Box<dyn StagedSumcheck<F, PCS>>
             })
             .collect();
