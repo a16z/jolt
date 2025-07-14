@@ -183,6 +183,17 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
                 .transcript
                 .borrow_mut()
                 .compare_to(prover_transcript);
+
+            let prover_opening_accumulator = self
+                .prover_state_manager
+                .get_prover_accumulator()
+                .borrow()
+                .clone();
+            let (prover_preprocessing, _, _, _) = self.prover_state_manager.get_prover_data();
+            self.verifier_state_manager
+                .get_verifier_accumulator()
+                .borrow_mut()
+                .compare_to(prover_opening_accumulator, &prover_preprocessing.generators);
         }
 
         // Append commitments to transcript

@@ -191,6 +191,7 @@ impl<F: JoltField> From<Vec<F>> for SharedEqPolynomial<F> {
 /// at the (same) point.
 /// Multiple openings can be accumulated and further
 /// batched/reduced using a `ProverOpeningAccumulator`.
+#[derive(Clone)]
 pub struct DensePolynomialProverOpening<F: JoltField> {
     /// The polynomial being opened. May be a random linear combination
     /// of multiple polynomials all being opened at the same point.
@@ -240,7 +241,7 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
     }
 }
 
-#[derive(derive_more::From)]
+#[derive(derive_more::From, Clone)]
 pub enum ProverOpening<F: JoltField> {
     Dense(DensePolynomialProverOpening<F>),
     OneHot(OneHotPolynomialProverOpening<F>),
@@ -257,6 +258,7 @@ impl<F: JoltField> ProverOpening<F> {
     }
 }
 
+#[derive(Clone)]
 pub struct OpeningProofReductionSumcheck<F, PCS>
 where
     F: JoltField,
@@ -393,6 +395,7 @@ where
 /// at the (same) point.
 /// Multiple `VerifierOpening`s can be accumulated and further
 /// batched/reduced using a `VerifierOpeningAccumulator`.
+#[derive(Clone)]
 pub struct VerifierOpening<F, PCS>
 where
     F: JoltField,
@@ -406,6 +409,7 @@ where
 
 /// Accumulates openings computed by the prover over the course of Jolt,
 /// so that they can all be reduced to a single opening proof using sumcheck.
+#[derive(Clone)]
 pub struct ProverOpeningAccumulator<F, PCS>
 where
     F: JoltField,
@@ -690,6 +694,7 @@ where
         transcript: &mut ProofTranscript,
     ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
         println!("# instances: {}", self.openings.len());
+        self.openings.truncate(1);
         // TODO(moodlezoup): surely there's a better way to do this
         let unbound_polys = self
             .openings
@@ -940,6 +945,11 @@ where
         reduced_opening_proof: &ReducedOpeningProof<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
+        #[cfg(test)]
+        if let Some(prover_openings) = &self.prover_openings {
+            assert_eq!(prover_openings.len(), self.len());
+        }
+
         let num_sumcheck_rounds = self
             .openings
             .iter()
