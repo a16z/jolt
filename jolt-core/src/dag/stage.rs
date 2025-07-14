@@ -20,14 +20,14 @@ pub trait SumcheckStages<
 {
     // Stage 1 is special case of outer sumcheck from spartan
     fn stage1_prove(
-        &self,
+        &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {
         Ok(())
     }
 
     fn stage1_verify(
-        &self,
+        &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {
         Ok(())
@@ -35,56 +35,56 @@ pub trait SumcheckStages<
 
     // Stages 2-5 return sumcheck instances that will be batched together
     fn stage2_prover_instances(
-        &self,
+        &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
         vec![]
     }
 
     fn stage2_verifier_instances(
-        &self,
+        &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
         vec![]
     }
 
     fn stage3_prover_instances(
-        &self,
+        &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
         vec![]
     }
 
     fn stage3_verifier_instances(
-        &self,
+        &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
         vec![]
     }
 
     fn stage4_prover_instances(
-        &self,
+        &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
         vec![]
     }
 
     fn stage4_verifier_instances(
-        &self,
+        &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
         vec![]
     }
 
     fn stage5_prover_instances(
-        &self,
+        &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
         vec![]
     }
 
     fn stage5_verifier_instances(
-        &self,
+        &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
         vec![]

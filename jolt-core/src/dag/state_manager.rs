@@ -5,7 +5,11 @@ use std::rc::Rc;
 use crate::field::JoltField;
 use crate::jolt::vm::{JoltCommitments, JoltProverPreprocessing, JoltVerifierPreprocessing};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
+use crate::poly::opening_proof::{
+    OpeningPoint, OpeningsExt, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
+    BIG_ENDIAN,
+};
+use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::utils::transcript::Transcript;
 use tracer::emulator::memory::Memory;
@@ -211,5 +215,74 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
 
     pub fn set_commitments(&self, commitments: JoltCommitments<F, PCS>) {
         *self.commitments.borrow_mut() = Some(commitments);
+    }
+
+    /// Gets the opening point for a given key from whichever accumulator is available.
+    /// Returns the opening point from the prover accumulator if available, otherwise from the verifier accumulator.
+    pub fn get_opening_point(&self, key: OpeningsKeys) -> Option<OpeningPoint<BIG_ENDIAN, F>> {
+        if let Some(ref prover_state) = self.prover_state {
+            prover_state.accumulator.borrow().get_opening_point(key)
+        } else if let Some(ref verifier_state) = self.verifier_state {
+            verifier_state.accumulator.borrow().get_opening_point(key)
+        } else {
+            panic!("Neither prover nor verifier state initialized");
+        }
+    }
+
+    /// Gets the opening value for a given key from whichever accumulator is available.
+    /// Returns the opening value from the prover accumulator if available, otherwise from the verifier accumulator.
+    pub fn get_opening(&self, key: OpeningsKeys) -> F {
+        if let Some(ref prover_state) = self.prover_state {
+            prover_state.accumulator.borrow().get_opening(key)
+        } else if let Some(ref verifier_state) = self.verifier_state {
+            verifier_state.accumulator.borrow().get_opening(key)
+        } else {
+            panic!("Neither prover nor verifier state initialized");
+        }
+    }
+
+    /// Gets a specific spartan z value from the evaluation openings from whichever accumulator is available.
+    /// Returns the spartan z value from the prover accumulator if available, otherwise from the verifier accumulator.
+    pub fn get_spartan_z(&self, index: JoltR1CSInputs) -> F {
+        if let Some(ref prover_state) = self.prover_state {
+            prover_state
+                .accumulator
+                .borrow()
+                .evaluation_openings()
+                .get_spartan_z(index)
+        } else if let Some(ref verifier_state) = self.verifier_state {
+            verifier_state
+                .accumulator
+                .borrow()
+                .evaluation_openings()
+                .get_spartan_z(index)
+        } else {
+            panic!("Neither prover nor verifier state initialized");
+        }
+    }
+
+    /// Gets a specific evaluation opening value by key from whichever accumulator is available.
+    /// Returns the evaluation opening value from the prover accumulator if available, otherwise from the verifier accumulator.
+    pub fn get_evaluation_opening(
+        &self,
+        key: &OpeningsKeys,
+    ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
+        if let Some(ref prover_state) = self.prover_state {
+            prover_state
+                .accumulator
+                .borrow()
+                .evaluation_openings()
+                .get(key)
+                .cloned()
+        } else if let Some(ref verifier_state) = self.verifier_state {
+            verifier_state
+                .accumulator
+                .borrow()
+                .evaluation_openings()
+                .get(key)
+                .cloned()
+        } else {
+            panic!("Neither prover nor verifier state initialized");
+        }
     }
 }

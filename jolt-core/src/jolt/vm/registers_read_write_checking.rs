@@ -1,4 +1,4 @@
-use crate::jolt::vm::registers::RegistersDAG;
+use crate::jolt::vm::registers::RegistersDag;
 use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
 use crate::{
     dag::stage::{StagedSumcheck, SumcheckStages},
@@ -1164,6 +1164,7 @@ where
                 // The final opening point is r_address || r_cycle
                 let mut final_opening_point = r_address;
                 final_opening_point.extend(r_cycle);
+                let final_opening_point = OpeningPoint::new(final_opening_point);
 
                 // Populate opening points for all claims
                 accumulator.borrow_mut().populate_claim_opening(
@@ -1197,10 +1198,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS>
 }
 
 impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
-    SumcheckStages<F, ProofTranscript, PCS> for RegistersDAG
+    SumcheckStages<F, ProofTranscript, PCS> for RegistersDag
 {
     fn stage2_prover_instances(
-        &self,
+        &mut self,
         state_manager: &mut crate::dag::state_manager::StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
         let (preprocessing, trace, _, _) = state_manager.get_prover_data();
@@ -1243,7 +1244,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     }
 
     fn stage2_verifier_instances(
-        &self,
+        &mut self,
         state_manager: &mut crate::dag::state_manager::StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
         let (_, _, trace_length) = state_manager.get_verifier_data();
@@ -1343,7 +1344,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     }
 
     fn stage3_prover_instances(
-        &self,
+        &mut self,
         state_manager: &mut crate::dag::state_manager::StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
         // Get the prover data
@@ -1415,7 +1416,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     }
 
     fn stage3_verifier_instances(
-        &self,
+        &mut self,
         state_manager: &mut crate::dag::state_manager::StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
         let (_, _, trace_length) = state_manager.get_verifier_data();

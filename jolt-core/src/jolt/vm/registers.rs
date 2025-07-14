@@ -46,7 +46,8 @@ pub struct RegistersTwistProof<F: JoltField, ProofTranscript: Transcript> {
     val_evaluation_proof: ValEvaluationProof<F, ProofTranscript>,
 }
 
-pub struct RegistersDAG {}
+#[derive(Default)]
+pub struct RegistersDag {}
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct ValEvaluationProof<F: JoltField, ProofTranscript: Transcript> {

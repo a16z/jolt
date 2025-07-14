@@ -1090,7 +1090,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     SumcheckStages<F, ProofTranscript, PCS> for RamDag
 {
     fn stage2_prover_instances(
-        &self,
+        &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
         let raf_evaluation = RafEvaluationSumcheck::new_prover(self.K, self.T, state_manager);
@@ -1116,7 +1116,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     }
 
     fn stage2_verifier_instances(
-        &self,
+        &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
         let raf_evaluation = RafEvaluationSumcheck::new_verifier(self.K, state_manager);
@@ -1131,28 +1131,28 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     }
 
     fn stage3_prover_instances(
-        &self,
+        &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
         todo!("val evaluation and val_final evaluation")
     }
 
     fn stage3_verifier_instances(
-        &self,
+        &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
         todo!("val evaluation and val_final evaluation")
     }
 
     fn stage4_prover_instances(
-        &self,
+        &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
         todo!("ra virtualization, hamming weight, booleanity")
     }
 
     fn stage4_verifier_instances(
-        &self,
+        &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
         todo!("ra virtualization, hamming weight, booleanity")

@@ -912,7 +912,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     SumcheckStages<F, ProofTranscript, PCS> for SpartanDag<F>
 {
     fn stage1_prove(
-        &self,
+        &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {
         /* Sumcheck 1: Outer sumcheck
@@ -1048,7 +1048,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     }
 
     fn stage1_verify(
-        &self,
+        &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {
         let key = self.key.clone();
@@ -1095,20 +1095,18 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         // TODO(markosg04): Make use of Endianness here?
         let outer_sumcheck_r_reversed: Vec<F> =
             outer_sumcheck_r_original.iter().rev().cloned().collect();
+        let opening_point = OpeningPoint::new(outer_sumcheck_r_reversed.clone());
 
         // Populate the opening points for Az, Bz, Cz claims now that we have outer_sumcheck_r
-        accumulator.borrow_mut().populate_claim_opening(
-            OpeningsKeys::OuterSumcheckAz,
-            outer_sumcheck_r_reversed.clone(),
-        );
-        accumulator.borrow_mut().populate_claim_opening(
-            OpeningsKeys::OuterSumcheckBz,
-            outer_sumcheck_r_reversed.clone(),
-        );
-        accumulator.borrow_mut().populate_claim_opening(
-            OpeningsKeys::OuterSumcheckCz,
-            outer_sumcheck_r_reversed.clone(),
-        );
+        accumulator
+            .borrow_mut()
+            .populate_claim_opening(OpeningsKeys::OuterSumcheckAz, opening_point.clone());
+        accumulator
+            .borrow_mut()
+            .populate_claim_opening(OpeningsKeys::OuterSumcheckBz, opening_point.clone());
+        accumulator
+            .borrow_mut()
+            .populate_claim_opening(OpeningsKeys::OuterSumcheckCz, opening_point.clone());
 
         let tau_bound_rx = EqPolynomial::mle(&tau, &outer_sumcheck_r_reversed);
         let claim_outer_final_expected = tau_bound_rx * (claim_Az * claim_Bz - claim_Cz);
@@ -1157,22 +1155,18 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             &mut *state_manager.transcript.borrow_mut(),
         );
 
-        // Populate opening points for virtual polynomial evaluations
-        // These claims already exist in the verifier's accumulator from receive_claims()
-        for input in ALL_R1CS_INPUTS.iter() {
-            // Skip if it's a committed input (already added above)
-            if !COMMITTED_R1CS_INPUTS.contains(input) {
-                accumulator
-                    .borrow_mut()
-                    .populate_claim_opening(OpeningsKeys::SpartanZ(*input), r_cycle.to_vec());
-            }
-        }
+        ALL_R1CS_INPUTS.iter().for_each(|input| {
+            accumulator.borrow_mut().populate_claim_opening(
+                OpeningsKeys::SpartanZ(*input),
+                OpeningPoint::new(r_cycle.to_vec()),
+            );
+        });
 
         Ok(())
     }
 
     fn stage2_prover_instances(
-        &self,
+        &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
         /*  Sumcheck 3: Batched sumcheck for NextUnexpandedPC and NextPC verification
@@ -1234,7 +1228,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     }
 
     fn stage2_verifier_instances(
-        &self,
+        &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
         /* Sumcheck 3: Batched sumcheck for NextUnexpandedPC and NextPC verification
@@ -1286,7 +1280,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     }
 
     fn stage3_prover_instances(
-        &self,
+        &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
         /* Sumcheck 2: Inner sumcheck
@@ -1345,7 +1339,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     }
 
     fn stage3_verifier_instances(
-        &self,
+        &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
         /* Sumcheck 2: Inner sumcheck

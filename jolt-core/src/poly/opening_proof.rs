@@ -818,7 +818,10 @@ where
 
     /// Get the value of an opening by key
     pub fn get_opening(&self, key: OpeningsKeys) -> F {
-        self.evaluation_openings.get(&key).unwrap().1
+        self.evaluation_openings
+            .get(&key)
+            .unwrap_or_else(|| panic!("Key not found: {key:?}"))
+            .1
     }
 
     /// Get the opening point by key
@@ -917,11 +920,15 @@ where
     }
 
     /// Populates the opening point for an existing claim in the evaluation_openings map.
-    pub fn populate_claim_opening(&mut self, key: OpeningsKeys, opening_point: Vec<F>) {
+    pub fn populate_claim_opening(
+        &mut self,
+        key: OpeningsKeys,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) {
         if let Some((_, claim)) = self.evaluation_openings.get(&key) {
             let claim = *claim; // Copy the claim value
-            let new_point = OpeningPoint::<BIG_ENDIAN, F>::new(opening_point);
-            self.evaluation_openings.insert(key, (new_point, claim));
+            self.evaluation_openings
+                .insert(key, (opening_point.clone(), claim));
         } else {
             panic!("Tried to populate opening point for non-existent key: {key:?}");
         }
