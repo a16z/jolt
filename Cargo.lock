@@ -2129,9 +2129,11 @@ dependencies = [
  "ark-bn254",
  "ark-ec",
  "common",
+ "hex-literal",
  "jolt-core",
  "jolt-sdk-macros",
  "postcard",
+ "sha3",
  "tracer",
 ]
 
@@ -4018,6 +4020,7 @@ dependencies = [
  "common",
  "derive_more 2.0.1",
  "fnv",
+ "hex-literal",
  "itertools 0.10.5",
  "object",
  "paste",
