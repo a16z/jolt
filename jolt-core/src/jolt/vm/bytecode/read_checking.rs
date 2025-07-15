@@ -52,6 +52,7 @@ pub struct ReadCheckingSumcheck<F: JoltField> {
     r_cycle: Vec<F>,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum ReadCheckingValTypes {
     /// Spartan outer sumcheck
     Stage1,
@@ -72,7 +73,7 @@ impl<F: JoltField> ReadCheckingSumcheck<F> {
         let (val, rv_claim, r_cycle, op_key) = Self::compute_val_rv(sm, val_type);
 
         let rv_claim_check = F.iter().zip(val.iter()).map(|(f, v)| *f * v).sum::<F>();
-        assert_eq!(rv_claim, rv_claim_check);
+        assert_eq!(rv_claim, rv_claim_check, "failed in {val_type:?}");
 
         let ra_poly = MultilinearPolynomial::from(F);
         let val_poly = MultilinearPolynomial::from(val);
@@ -175,6 +176,7 @@ impl<F: JoltField> ReadCheckingSumcheck<F> {
 
                 let mut linear_combination = F::zero();
                 linear_combination += F::from_u64(unexpanded_pc as u64);
+                // TODO: Check if this is in fact correct and not failing because imm is i64
                 linear_combination += operands.imm.field_mul(gamma_powers[1]);
                 for (flag, gamma_power) in instruction
                     .circuit_flags()
@@ -216,11 +218,18 @@ impl<F: JoltField> ReadCheckingSumcheck<F> {
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         gamma_powers: &[F],
     ) -> Vec<F> {
+        // TODO: this len shouldn't be caluclated like tihs
+        let log_T = sm
+            .get_opening_point(OpeningsKeys::PCSumcheckUnexpandedPC)
+            .unwrap()
+            .r
+            .len();
         let r_register = sm
             .get_opening_point(OpeningsKeys::RegistersReadWriteRdWa)
             .unwrap()
             .r;
-        let eq_r_register = EqPolynomial::evals(&r_register);
+        let r_register = &r_register[0..r_register.len() - log_T];
+        let eq_r_register = EqPolynomial::evals(r_register);
         sm.get_bytecode()
             .par_iter()
             .map(|instruction| {
@@ -230,13 +239,13 @@ impl<F: JoltField> ReadCheckingSumcheck<F> {
                 let mut linear_combination = F::zero();
                 linear_combination += F::from_u64(unexpanded_pc as u64);
 
-                linear_combination += eq_r_register[instr.operands.rd] * gamma_powers[1];
-                linear_combination += eq_r_register[instr.operands.rs1] * gamma_powers[2];
-                linear_combination += eq_r_register[instr.operands.rs2] * gamma_powers[3];
+                // linear_combination += eq_r_register[instr.operands.rd] * gamma_powers[1];
+                // linear_combination += eq_r_register[instr.operands.rs1] * gamma_powers[2];
+                // linear_combination += eq_r_register[instr.operands.rs2] * gamma_powers[3];
 
                 if let Some(table) = instruction.lookup_table() {
                     let table_index = LookupTables::enum_index(&table);
-                    linear_combination += gamma_powers[4 + table_index];
+                    linear_combination += gamma_powers[1 + table_index];
                 }
 
                 linear_combination
@@ -249,9 +258,9 @@ impl<F: JoltField> ReadCheckingSumcheck<F> {
         gamma_powers: &[F],
     ) -> F {
         once(sm.get_opening(OpeningsKeys::PCSumcheckUnexpandedPC))
-            .chain(once(sm.get_opening(OpeningsKeys::RegistersReadWriteRdWa)))
-            .chain(once(sm.get_opening(OpeningsKeys::RegistersReadWriteRs1Ra)))
-            .chain(once(sm.get_opening(OpeningsKeys::RegistersReadWriteRs2Ra)))
+            // .chain(once(sm.get_opening(OpeningsKeys::RegistersReadWriteRdWa)))
+            // .chain(once(sm.get_opening(OpeningsKeys::RegistersReadWriteRs1Ra)))
+            // .chain(once(sm.get_opening(OpeningsKeys::RegistersReadWriteRs2Ra)))
             .chain(
                 (0..LookupTables::<WORD_SIZE>::COUNT)
                     .map(|i| sm.get_opening(OpeningsKeys::LookupTableFlag(i))),
@@ -353,8 +362,6 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for ReadCheckingSumcheck<F> {
     fn expected_output_claim(&self, r: &[F]) -> F {
         let ra_claim = self.ra_claim.as_ref().expect("ra_claim not set");
         let r: Vec<_> = r.iter().rev().copied().collect();
-        println!("val = {}", self.val_poly.evaluate(&r));
-        println!("ra = {ra_claim}",);
 
         // Verify sumcheck_claim = ra_claim * val_eval
         *ra_claim * self.val_poly.evaluate(&r)
@@ -376,8 +383,6 @@ where
             .as_mut()
             .expect("Prover state not initialized");
         let ra_claim = ps.ra_poly.final_sumcheck_claim();
-        println!("ra_claim = {ra_claim}");
-        println!("val_claim = {}", self.val_poly.final_sumcheck_claim());
         let accumulator = accumulator.expect("accumulator should be set");
         accumulator.borrow_mut().append_sparse(
             vec![std::mem::take(&mut ps.unbound_ra_poly)],

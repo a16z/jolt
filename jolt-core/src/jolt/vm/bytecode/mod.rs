@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use crate::dag::stage::{StagedSumcheck, SumcheckStages};
 use crate::dag::state_manager::StateManager;
 use crate::jolt::vm::bytecode::booleanity::BooleanityProof;
-use crate::jolt::vm::bytecode::raf::RafEvaluationProof;
+use crate::jolt::vm::bytecode::raf::{RafBytecode, RafEvaluationProof};
 use crate::jolt::vm::bytecode::read_checking::{ReadCheckingSumcheck, ReadCheckingValTypes};
 use crate::poly::opening_proof::OpeningsKeys;
 use crate::r1cs::inputs::JoltR1CSInputs;
@@ -121,6 +121,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             .unwrap()
             .r;
         let r_register = sm
+            .get_opening_point(OpeningsKeys::RegistersReadWriteRdWa)
+            .unwrap()
+            .r;
+        assert_eq!(&r_shift, &r_register[r_register.len() - r_shift.len()..]);
+        let r_register = sm
             .get_opening_point(OpeningsKeys::RegistersValEvaluationWa)
             .unwrap()
             .r;
@@ -184,18 +189,18 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         let unbound_ra_poly =
             CommittedPolynomials::BytecodeRa.generate_witness(preprocessing, trace);
 
-        // let read_checking_1 = ReadCheckingSumcheck::new_prover(
-        //     sm,
-        //     F.clone(),
-        //     unbound_ra_poly.clone(),
-        //     ReadCheckingValTypes::Stage1,
-        // );
-        // let read_checking_2 = ReadCheckingSumcheck::new_prover(
-        //     sm,
-        //     F_shift.clone(),
-        //     unbound_ra_poly.clone(),
-        //     ReadCheckingValTypes::Stage2,
-        // );
+        let read_checking_1 = ReadCheckingSumcheck::new_prover(
+            sm,
+            F.clone(),
+            unbound_ra_poly.clone(),
+            ReadCheckingValTypes::Stage1,
+        );
+        let read_checking_2 = ReadCheckingSumcheck::new_prover(
+            sm,
+            F_shift.clone(),
+            unbound_ra_poly.clone(),
+            ReadCheckingValTypes::Stage2,
+        );
         // let read_checking_3 = ReadCheckingSumcheck::new_prover(
         //     sm,
         //     F_register,
@@ -209,8 +214,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         // );
 
         vec![
-            // Box::new(read_checking_1),
-            // Box::new(read_checking_2),
+            Box::new(read_checking_1),
+            Box::new(read_checking_2),
             // Box::new(read_checking_3),
             // Box::new(raf),
         ]
@@ -220,14 +225,14 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
-        // let read_checking_1 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValTypes::Stage1);
-        // let read_checking_2 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValTypes::Stage2);
+        let read_checking_1 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValTypes::Stage1);
+        let read_checking_2 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValTypes::Stage2);
         // let read_checking_3 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValTypes::Stage3);
         // let raf = RafBytecode::new_verifier(sm);
 
         vec![
-            // Box::new(read_checking_1),
-            // Box::new(read_checking_2),
+            Box::new(read_checking_1),
+            Box::new(read_checking_2),
             // Box::new(read_checking_3),
             // Box::new(raf),
         ]

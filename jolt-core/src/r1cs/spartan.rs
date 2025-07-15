@@ -8,7 +8,7 @@ use tracing::{span, Level};
 use crate::dag::stage::{StagedSumcheck, SumcheckStages};
 use crate::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::field::JoltField;
-use crate::jolt::instruction::{CircuitFlags, InstructionFlags};
+use crate::jolt::instruction::CircuitFlags;
 use crate::jolt::vm::JoltCommitments;
 use crate::jolt::vm::JoltProverPreprocessing;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
@@ -677,7 +677,6 @@ struct PCSumcheckProverState<F: JoltField> {
     pc_poly: MultilinearPolynomial<F>,
     is_noop_poly: MultilinearPolynomial<F>,
     eq_plus_one_poly: MultilinearPolynomial<F>,
-    r_cycle: Vec<F>,
 }
 
 struct PCSumcheckVerifierState<F: JoltField> {
@@ -691,6 +690,7 @@ pub struct PCSumcheck<F: JoltField> {
     input_claim: F,
     gamma: F,
     gamma_squared: F,
+    log_T: usize,
     prover_state: Option<PCSumcheckProverState<F>>,
     verifier_state: Option<PCSumcheckVerifierState<F>>,
 }
@@ -717,12 +717,12 @@ impl<F: JoltField> PCSumcheck<F> {
 
         Self {
             input_claim,
+            log_T: r_cycle.len(),
             prover_state: Some(PCSumcheckProverState {
                 unexpanded_pc_poly: input_polys[unexpanded_pc_index].clone(),
                 pc_poly: input_polys[pc_index].clone(),
                 is_noop_poly: input_polys[noop_index].clone(),
                 eq_plus_one_poly: MultilinearPolynomial::from(eq_plus_one_r_cycle),
-                r_cycle,
             }),
             gamma,
             gamma_squared,
@@ -742,6 +742,7 @@ impl<F: JoltField> PCSumcheck<F> {
         Self {
             input_claim,
             prover_state: None,
+            log_T: r_cycle.len(),
             verifier_state: Some(PCSumcheckVerifierState {
                 r_cycle,
                 unexpanded_pc_eval_at_shift_r,
@@ -760,13 +761,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for PCSumcheck<F> {
     }
 
     fn num_rounds(&self) -> usize {
-        if let Some(prover_state) = &self.prover_state {
-            prover_state.unexpanded_pc_poly.get_num_vars()
-        } else if let Some(verifier_state) = &self.verifier_state {
-            verifier_state.r_cycle.len()
-        } else {
-            panic!("Neither prover state nor verifier state is initialized");
-        }
+        self.log_T
     }
 
     fn input_claim(&self) -> F {
@@ -877,7 +872,7 @@ where
     fn cache_openings_prover(
         &mut self,
         accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let prover_state = self
             .prover_state
@@ -890,20 +885,19 @@ where
 
         let accumulator = accumulator.expect("accumulator is needed");
 
-        // Store unexpanded_pc and pc evaluations
         accumulator.borrow_mut().append_virtual(
             OpeningsKeys::PCSumcheckUnexpandedPC,
-            OpeningPoint::new(prover_state.r_cycle.clone()),
+            opening_point.clone(),
             unexpanded_pc_eval,
         );
         accumulator.borrow_mut().append_virtual(
             OpeningsKeys::PCSumcheckPC,
-            OpeningPoint::new(prover_state.r_cycle.clone()),
+            opening_point.clone(),
             pc_eval,
         );
         accumulator.borrow_mut().append_virtual(
             OpeningsKeys::PCSumcheckIsNoop,
-            OpeningPoint::new(prover_state.r_cycle.clone()),
+            opening_point,
             is_noop_eval,
         );
     }
@@ -1260,12 +1254,12 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             input_claim: next_unexpanded_pc_eval
                 + gamma * next_pc_eval
                 + gamma_squared * next_is_noop_eval,
+            log_T: r_cycle.len(),
             prover_state: Some(PCSumcheckProverState {
                 unexpanded_pc_poly,
                 pc_poly,
                 is_noop_poly,
                 eq_plus_one_poly: MultilinearPolynomial::from(eq_plus_one_r_cycle),
-                r_cycle: r_cycle.to_vec(),
             }),
             gamma,
             gamma_squared,

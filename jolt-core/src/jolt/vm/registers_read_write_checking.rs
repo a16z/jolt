@@ -1073,7 +1073,7 @@ where
     fn cache_openings_prover(
         &mut self,
         accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         debug_assert!(self.claims.is_none());
         let prover_state = self
@@ -1097,43 +1097,29 @@ where
 
         // Append claims to accumulator
         if let Some(accumulator) = accumulator {
-            let r_sumcheck = &prover_state.r_sumcheck;
-            let sumcheck_switch_index = prover_state.chunk_size.log_2();
-
-            // Transform r_sumcheck to r_address || r_cycle
-            // The high-order cycle variables are bound after the switch
-            let mut r_cycle = r_sumcheck[sumcheck_switch_index..self.T.log_2()].to_vec();
-            // First `sumcheck_switch_index` rounds bind cycle variables from low to high
-            r_cycle.extend(r_sumcheck[..sumcheck_switch_index].iter().rev());
-            let r_address = r_sumcheck[self.T.log_2()..].to_vec();
-
-            // The final opening point is r_address || r_cycle
-            let mut final_opening_point = r_address.clone();
-            final_opening_point.extend(r_cycle.clone());
-
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersReadWriteVal,
-                OpeningPoint::new(final_opening_point.clone()),
+                opening_point.clone(),
                 val_claim,
             );
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersReadWriteRs1Ra,
-                OpeningPoint::new(final_opening_point.clone()),
+                opening_point.clone(),
                 rs1_ra_claim,
             );
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersReadWriteRs2Ra,
-                OpeningPoint::new(final_opening_point.clone()),
+                opening_point.clone(),
                 rs2_ra_claim,
             );
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersReadWriteRdWa,
-                OpeningPoint::new(final_opening_point.clone()),
+                opening_point.clone(),
                 rd_wa_claim,
             );
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersReadWriteInc,
-                OpeningPoint::new(final_opening_point.clone()),
+                opening_point.clone(),
                 inc_claim,
             );
         }
@@ -1142,60 +1128,27 @@ where
     fn cache_openings_verifier(
         &mut self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
-        r_sumcheck: OpeningPoint<BIG_ENDIAN, F>,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        // TODO(moodlezoup): Replace with proper `normalize_opening_point`
-        let r_sumcheck = r_sumcheck.r;
         if let Some(accumulator) = accumulator {
-            if let Some(_claims) = &self.claims {
-                // Get the sumcheck opening point
-                let verifier_state = self
-                    .verifier_state
-                    .as_ref()
-                    .expect("Verifier state not initialized");
-                let sumcheck_switch_index = verifier_state.sumcheck_switch_index;
-                let T_log = self.T.log_2();
-
-                // For batched sumcheck, we need to use the correct slice of r_sumcheck
-                // based on the number of rounds for this instance
-                let num_rounds = self.num_rounds();
-                let offset = r_sumcheck.len() - num_rounds;
-                let r_slice = &r_sumcheck[offset..];
-
-                // Transform r_sumcheck to r_address || r_cycle
-                // The high-order cycle variables are bound after the switch
-                let mut r_cycle = r_slice[sumcheck_switch_index..T_log].to_vec();
-                // First `sumcheck_switch_index` rounds bind cycle variables from low to high
-                r_cycle.extend(r_slice[..sumcheck_switch_index].iter().rev());
-                let r_address = r_slice[T_log..].to_vec();
-
-                // The final opening point is r_address || r_cycle
-                let mut final_opening_point = r_address;
-                final_opening_point.extend(r_cycle);
-                let final_opening_point = OpeningPoint::new(final_opening_point);
-
-                // Populate opening points for all claims
-                accumulator.borrow_mut().populate_claim_opening(
-                    OpeningsKeys::RegistersReadWriteVal,
-                    final_opening_point.clone(),
-                );
-                accumulator.borrow_mut().populate_claim_opening(
-                    OpeningsKeys::RegistersReadWriteRs1Ra,
-                    final_opening_point.clone(),
-                );
-                accumulator.borrow_mut().populate_claim_opening(
-                    OpeningsKeys::RegistersReadWriteRs2Ra,
-                    final_opening_point.clone(),
-                );
-                accumulator.borrow_mut().populate_claim_opening(
-                    OpeningsKeys::RegistersReadWriteRdWa,
-                    final_opening_point.clone(),
-                );
-                accumulator.borrow_mut().populate_claim_opening(
-                    OpeningsKeys::RegistersReadWriteInc,
-                    final_opening_point,
-                );
-            }
+            accumulator
+                .borrow_mut()
+                .populate_claim_opening(OpeningsKeys::RegistersReadWriteVal, opening_point.clone());
+            accumulator.borrow_mut().populate_claim_opening(
+                OpeningsKeys::RegistersReadWriteRs1Ra,
+                opening_point.clone(),
+            );
+            accumulator.borrow_mut().populate_claim_opening(
+                OpeningsKeys::RegistersReadWriteRs2Ra,
+                opening_point.clone(),
+            );
+            accumulator.borrow_mut().populate_claim_opening(
+                OpeningsKeys::RegistersReadWriteRdWa,
+                opening_point.clone(),
+            );
+            accumulator
+                .borrow_mut()
+                .populate_claim_opening(OpeningsKeys::RegistersReadWriteInc, opening_point);
         }
     }
 }
