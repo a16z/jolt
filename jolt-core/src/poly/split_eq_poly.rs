@@ -206,7 +206,11 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         // and e, but not d. We compute s by first computing l and q at points 2 and 3.
 
         // Evaluations of the linear polynomial
-        let eq_eval_1 = self.current_scalar * self.w[self.current_index - 1];
+        let eq_eval_1 = if self.current_index > 0 {
+            self.current_scalar * self.w[self.current_index - 1]
+        } else {
+            F::zero()
+        };
         let eq_eval_0 = self.current_scalar - eq_eval_1;
         let eq_m = eq_eval_1 - eq_eval_0;
         let eq_eval_2 = eq_eval_1 + eq_m;
@@ -230,6 +234,37 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
             eq_eval_2 * quadratic_eval_2,
             eq_eval_3 * quadratic_eval_3,
         ]
+    }
+
+    #[cfg(test)]
+    fn get_bound_coeff(&self, j: usize) -> F {
+        use crate::utils::math::Math as _;
+
+        let index = j / 2;
+
+        let eval = if self.E_in_current_len() == 1 {
+            self.E_out_current()[index]
+        } else {
+            let num_x_in_bits = self.E_in_current_len().log_2();
+            let x_bitmask = (1 << num_x_in_bits) - 1;
+
+            let x_in = index & x_bitmask;
+            let x_out = index >> num_x_in_bits;
+
+            self.E_in_current()[x_in] * self.E_out_current()[x_out]
+        };
+
+        let eval_at_1 = if self.current_index > 0 {
+            self.current_scalar * self.w[self.current_index - 1]
+        } else {
+            F::zero()
+        };
+        let eval_at_0 = self.current_scalar - eval_at_1;
+        if j % 2 == 0 {
+            eval_at_0 * eval
+        } else {
+            eval_at_1 * eval
+        }
     }
 
     #[cfg(test)]
@@ -362,13 +397,18 @@ mod tests {
         let mut split_eq = GruenSplitEqPolynomial::new(&w);
         assert_eq!(regular_eq, split_eq.merge());
 
-        for _ in 0..NUM_VARS {
+        for round in 0..NUM_VARS {
             let r = Fr::random(&mut rng);
             regular_eq.bound_poly_var_bot(&r);
             split_eq.bind(r);
 
             let merged = split_eq.merge();
             assert_eq!(regular_eq.Z[..regular_eq.len()], merged.Z[..merged.len()]);
+
+            assert_eq!(split_eq.len(), regular_eq.len(), "Failed at round {round}");
+            for j in 0..regular_eq.len() {
+                assert_eq!(split_eq.get_bound_coeff(j), regular_eq[j], "Failed at round {round}, index {j}");
+            }
         }
     }
 
