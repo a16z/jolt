@@ -54,6 +54,7 @@ struct OutputSumcheckProverState<F: JoltField> {
 }
 
 impl<F: JoltField> OutputSumcheckProverState<F> {
+    #[tracing::instrument(skip_all, name = "OutputSumcheckProverState::initialize")]
     fn initialize(
         initial_ram_state: Vec<u32>,
         final_ram_state: Vec<u32>,
@@ -366,6 +367,7 @@ struct ValFinalSumcheckProverState<F: JoltField> {
 }
 
 impl<F: JoltField> ValFinalSumcheckProverState<F> {
+    #[tracing::instrument(skip_all, name = "ValFinalSumcheckProverState::initialize")]
     fn initialize<PCS: CommitmentScheme<Field = F>>(
         preprocessing: &JoltProverPreprocessing<F, PCS>,
         trace: &[RV32IMCycle],

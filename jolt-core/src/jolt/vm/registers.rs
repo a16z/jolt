@@ -120,6 +120,10 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for ValEvaluationSumcheck<F> {
         self.claimed_evaluation
     }
 
+    #[tracing::instrument(
+        skip_all,
+        name = "RegistersValEvaluationSumcheck::compute_prover_message"
+    )]
     fn compute_prover_message(&mut self, _round: usize) -> Vec<F> {
         let prover_state = self
             .prover_state
@@ -160,6 +164,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for ValEvaluationSumcheck<F> {
         univariate_poly_evals.to_vec()
     }
 
+    #[tracing::instrument(skip_all, name = "RegistersValEvaluationSumcheck::bind")]
     fn bind(&mut self, r_j: F, _round: usize) {
         if let Some(prover_state) = &mut self.prover_state {
             prover_state.r_sumcheck.push(r_j);

@@ -87,6 +87,7 @@ pub struct ReadRafSumcheck<F: JoltField> {
 }
 
 impl<'a, F: JoltField> ReadRafSumcheck<F> {
+    #[tracing::instrument(skip_all, name = "InstructionReadRafSumcheck::new_prover")]
     pub fn new_prover(
         sm: &'a mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         eq_r_cycle: Vec<F>,
@@ -273,6 +274,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for ReadRafSumcheck<F> {
         self.rv_claim + self.gamma * self.raf_claim
     }
 
+    #[tracing::instrument(skip_all, name = "InstructionReadRafSumcheck::compute_prover_message")]
     fn compute_prover_message(&mut self, round: usize) -> Vec<F> {
         let ps = self.prover_state.as_ref().unwrap();
         if round < LOG_K {
@@ -326,6 +328,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for ReadRafSumcheck<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "InstructionReadRafSumcheck::bind")]
     fn bind(&mut self, r_j: F, round: usize) {
         let ps = self.prover_state.as_mut().unwrap();
         ps.r.push(r_j);

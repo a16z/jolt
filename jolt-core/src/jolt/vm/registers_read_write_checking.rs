@@ -83,6 +83,7 @@ struct ReadWriteCheckingProverState<F: JoltField> {
 }
 
 impl<F: JoltField> ReadWriteCheckingProverState<F> {
+    #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProverState::initialize")]
     fn initialize<PCS: CommitmentScheme<Field = F>>(
         preprocessing: &JoltProverPreprocessing<F, PCS>,
         trace: &[RV32IMCycle],
@@ -1000,6 +1001,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for RegistersReadWriteChecking<F
         self.rd_wv_claim + self.z * self.rs1_rv_claim + self.z_squared * self.rs2_rv_claim
     }
 
+    #[tracing::instrument(skip_all, name = "RegistersReadWriteChecking::compute_prover_message")]
     fn compute_prover_message(&mut self, round: usize) -> Vec<F> {
         let prover_state = self.prover_state.as_ref().unwrap();
         if round < prover_state.chunk_size.log_2() {
@@ -1011,6 +1013,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for RegistersReadWriteChecking<F
         }
     }
 
+    #[tracing::instrument(skip_all, name = "RegistersReadWriteChecking::bind")]
     fn bind(&mut self, r_j: F, round: usize) {
         // Track the sumcheck rounds for prover
         if let Some(prover_state) = self.prover_state.as_mut() {

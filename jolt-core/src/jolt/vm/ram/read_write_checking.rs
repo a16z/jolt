@@ -63,6 +63,7 @@ struct ReadWriteCheckingProverState<F: JoltField> {
 }
 
 impl<F: JoltField> ReadWriteCheckingProverState<F> {
+    #[tracing::instrument(skip_all, name = "RamReadWriteCheckingProverState::initialize")]
     fn initialize<PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript>(
         initial_memory_state: &[u32],
         K: usize,
@@ -828,6 +829,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for RamReadWriteChecking<F> {
         self.rv_claim + self.z * self.wv_claim
     }
 
+    #[tracing::instrument(skip_all, name = "RamReadWriteChecking::compute_prover_message")]
     fn compute_prover_message(&mut self, round: usize) -> Vec<F> {
         let prover_state = self.prover_state.as_ref().unwrap();
         if round < prover_state.chunk_size.log_2() {
@@ -839,6 +841,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for RamReadWriteChecking<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "RamReadWriteChecking::bind")]
     fn bind(&mut self, r_j: F, round: usize) {
         let prover_state = self.prover_state.as_ref().unwrap();
         if round < prover_state.chunk_size.log_2() {

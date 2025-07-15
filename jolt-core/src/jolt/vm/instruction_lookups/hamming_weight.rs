@@ -41,6 +41,7 @@ pub struct HammingWeightSumcheck<F: JoltField> {
 }
 
 impl<F: JoltField> HammingWeightSumcheck<F> {
+    #[tracing::instrument(skip_all, name = "InstructionHammingWeightSumcheck::new_prover")]
     pub fn new_prover(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         F: [Vec<F>; D],
@@ -114,6 +115,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for HammingWeightSumcheck<F> {
         self.gamma.iter().sum()
     }
 
+    #[tracing::instrument(skip_all, name = "InstructionHammingWeight::compute_prover_message")]
     fn compute_prover_message(&mut self, _round: usize) -> Vec<F> {
         let prover_state = self.prover_state.as_ref().unwrap();
         vec![prover_state
@@ -130,6 +132,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for HammingWeightSumcheck<F> {
             .sum()]
     }
 
+    #[tracing::instrument(skip_all, name = "InstructionHammingWeight::bind")]
     fn bind(&mut self, r_j: F, _round: usize) {
         self.prover_state.as_mut().unwrap().r.push(r_j);
         self.prover_state

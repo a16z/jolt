@@ -694,7 +694,6 @@ where
         transcript: &mut ProofTranscript,
     ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
         println!("# instances: {}", self.openings.len());
-        // self.openings.truncate(1);
         // TODO(moodlezoup): surely there's a better way to do this
         let unbound_polys = self
             .openings

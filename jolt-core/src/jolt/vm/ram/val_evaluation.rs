@@ -74,6 +74,7 @@ pub struct ValEvaluationSumcheck<F: JoltField> {
 }
 
 impl<F: JoltField> ValEvaluationSumcheck<F> {
+    #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         K: usize,
         initial_ram_state: &[u32],
@@ -200,6 +201,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for ValEvaluationSumcheck<F> {
         self.claimed_evaluation - self.init_eval
     }
 
+    #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheck::compute_prover_message")]
     fn compute_prover_message(&mut self, _round: usize) -> Vec<F> {
         let prover_state = self
             .prover_state
@@ -240,6 +242,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for ValEvaluationSumcheck<F> {
         univariate_poly_evals.to_vec()
     }
 
+    #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheck::bind")]
     fn bind(&mut self, r_j: F, _round: usize) {
         if let Some(prover_state) = &mut self.prover_state {
             [
