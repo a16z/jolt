@@ -126,12 +126,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         let K = bytecode_preprocessing.bytecode.len().next_power_of_two();
 
         let r_cycle: Vec<F> = sm
-            .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::Imm))
+            .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::UnexpandedPC))
             .unwrap()
-            .r
-            .into_iter()
-            .rev()
-            .collect();
+            .r;
         let r_shift = sm
             .get_opening_point(OpeningsKeys::PCSumcheckUnexpandedPC)
             .unwrap()
