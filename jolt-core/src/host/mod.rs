@@ -114,8 +114,10 @@ impl Program {
                 "riscv32im-jolt-zkvm-elf"
             } else {
                 if cfg!(feature = "rv64") {
+                    println!("target: {}", "riscv64imac-unknown-none-elf");
                     "riscv64imac-unknown-none-elf"
                 } else {
+                    println!("target: {}", "riscv32im-unknown-none-elf");
                     "riscv32im-unknown-none-elf"
                 }
             };
