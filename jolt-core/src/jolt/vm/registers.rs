@@ -244,8 +244,8 @@ where
         }
     }
     //@TODO(markosg04) verifier side for the bytecode claims
-    
-     fn cache_openings_verifier(
+
+    fn cache_openings_verifier(
         &mut self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
@@ -256,10 +256,9 @@ where
             OpeningsKeys::RegistersValEvaluationInc,
             opening_point.clone(),
         );
-        accumulator.borrow_mut().populate_claim_opening(
-            OpeningsKeys::RegistersValEvaluationWa,
-            opening_point,
-        );
+        accumulator
+            .borrow_mut()
+            .populate_claim_opening(OpeningsKeys::RegistersValEvaluationWa, opening_point);
     }
 }
 

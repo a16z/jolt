@@ -9,12 +9,16 @@ use crate::{
         vm::instruction_lookups::WORD_SIZE,
     },
     poly::{
-        commitment::commitment_scheme::CommitmentScheme, compact_polynomial::SmallScalar, eq_poly::EqPolynomial, multilinear_polynomial::{
+        commitment::commitment_scheme::CommitmentScheme,
+        compact_polynomial::SmallScalar,
+        eq_poly::EqPolynomial,
+        multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-        }, opening_proof::{
+        },
+        opening_proof::{
             OpeningPoint, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
             BIG_ENDIAN,
-        }
+        },
     },
     r1cs::inputs::JoltR1CSInputs,
     subprotocols::sumcheck::{

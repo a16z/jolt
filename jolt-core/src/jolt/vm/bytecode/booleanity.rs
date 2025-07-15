@@ -263,7 +263,7 @@ where
 
         self.ra_claim_prime = Some(prover_state.H.final_sumcheck_claim());
     }
-    
+
     fn cache_openings_verifier(
         &mut self,
         _accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
