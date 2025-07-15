@@ -1,12 +1,13 @@
 #![allow(unused_imports)]
 #![allow(clippy::extra_unused_type_parameters)]
 
+use crate::dag::{jolt_dag, state_manager};
 use crate::field::JoltField;
 use crate::host;
 use crate::jolt::vm::rv32i_vm::RV32IJoltVM;
 use crate::jolt::vm::{Jolt, JoltProverPreprocessing, JoltVerifierPreprocessing};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::commitment::dory::DoryCommitmentScheme as Dory;
+use crate::poly::commitment::dory::{DoryCommitmentScheme as Dory, DoryGlobals};
 use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::subprotocols::shout::ShoutProof;
 use crate::subprotocols::twist::{TwistAlgorithm, TwistProof};
@@ -17,6 +18,10 @@ use ark_std::test_rng;
 use rand_core::RngCore;
 use rand_distr::{Distribution, Zipf};
 use serde::Serialize;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+use tracer;
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
 pub enum PCSType {
@@ -27,6 +32,7 @@ pub enum PCSType {
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
 pub enum BenchType {
     Fibonacci,
+    FibonacciDag,
     Sha2,
     Sha3,
     Sha2Chain,
@@ -46,6 +52,7 @@ pub fn benchmarks(
             BenchType::Sha3 => sha3::<Fr, Dory, KeccakTranscript>(),
             BenchType::Sha2Chain => sha2chain::<Fr, Dory, KeccakTranscript>(),
             BenchType::Fibonacci => fibonacci::<Fr, Dory, KeccakTranscript>(),
+            BenchType::FibonacciDag => fibonacci_dag::<Fr, Dory, KeccakTranscript>(),
             BenchType::Shout => shout::<Fr, KeccakTranscript>(),
             BenchType::Twist => twist::<Fr, KeccakTranscript>(),
             BenchType::SparseDenseShout => sparse_dense_shout::<Fr, KeccakTranscript>(),
@@ -241,6 +248,15 @@ where
     prove_example::<u32, PCS, F, ProofTranscript>("fibonacci-guest", &400000u32)
 }
 
+fn fibonacci_dag<F, PCS, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+    ProofTranscript: Transcript,
+{
+    prove_example_dag::<u32, PCS, F, ProofTranscript>("fibonacci-guest", &50000u32)
+}
+
 fn sha2<F, PCS, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
 where
     F: JoltField,
@@ -329,6 +345,118 @@ where
 
     tasks.push((
         tracing::info_span!("Example_E2E"),
+        Box::new(task) as Box<dyn FnOnce()>,
+    ));
+
+    tasks
+}
+
+fn prove_example_dag<T: Serialize, PCS, F, ProofTranscript>(
+    example_name: &str,
+    input: &T,
+) -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+    ProofTranscript: Transcript,
+{
+    let mut tasks = Vec::new();
+    let mut program = host::Program::new(example_name);
+    let inputs = postcard::to_stdvec(input).unwrap();
+
+    let task = move || {
+        let (mut trace, final_memory_state, mut io_device) = program.trace(&inputs);
+        let (bytecode, init_memory_state) = program.decode();
+
+        let preprocessing: JoltProverPreprocessing<F, PCS> = RV32IJoltVM::prover_preprocess(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            init_memory_state,
+            1 << 18,
+            1 << 18,
+            1 << 20,
+        );
+
+        // Setup trace length and padding (similar to DAG test)
+        let trace_length = trace.len();
+        let padded_trace_length = trace_length.next_power_of_two();
+        let padding = padded_trace_length - trace_length;
+
+        let last_address = trace.last().unwrap().instruction().normalize().address;
+        if padding != 0 {
+            trace.extend(
+                (0..padding - 1)
+                    .map(|i| tracer::instruction::RV32IMCycle::NoOp(last_address + 4 * i)),
+            );
+            trace.push(tracer::instruction::RV32IMCycle::last_jalr(
+                last_address + 4 * (padding - 1),
+            ));
+        } else {
+            assert!(matches!(
+                trace.last().unwrap(),
+                tracer::instruction::RV32IMCycle::JAL(_)
+            ));
+            *trace.last_mut().unwrap() = tracer::instruction::RV32IMCycle::last_jalr(last_address);
+        }
+
+        // Truncate trailing zeros on device outputs
+        io_device.outputs.truncate(
+            io_device
+                .outputs
+                .iter()
+                .rposition(|&b| b != 0)
+                .map_or(0, |pos| pos + 1),
+        );
+
+        // Initialize Dory globals
+        // let _guard = DoryGlobals::initialize(1 << 18, 1 << 20);
+
+        // Create state manager components
+        let prover_accumulator_pre_wrap =
+            crate::poly::opening_proof::ProverOpeningAccumulator::<F, PCS>::new();
+        let prover_accumulator = Rc::new(RefCell::new(prover_accumulator_pre_wrap));
+        let prover_transcript = Rc::new(RefCell::new(ProofTranscript::new(b"Jolt")));
+        let proofs = Rc::new(RefCell::new(HashMap::new()));
+        let commitments = Rc::new(RefCell::new(None));
+
+        // Create prover state manager
+        let mut prover_state_manager = state_manager::StateManager::new_prover(
+            prover_accumulator,
+            prover_transcript.clone(),
+            proofs.clone(),
+            commitments.clone(),
+        );
+        prover_state_manager.set_prover_data(
+            &preprocessing,
+            trace.clone(),
+            io_device.clone(),
+            final_memory_state.clone(),
+        );
+
+        // We only need the prover state manager for benchmarking
+        let verifier_accumulator_pre_wrap = crate::poly::opening_proof::VerifierOpeningAccumulator::<
+            F,
+            PCS,
+        >::new();
+        let verifier_accumulator = Rc::new(RefCell::new(verifier_accumulator_pre_wrap));
+        let verifier_transcript = Rc::new(RefCell::new(ProofTranscript::new(b"Jolt")));
+        let verifier_state_manager = state_manager::StateManager::new_verifier(
+            verifier_accumulator,
+            verifier_transcript.clone(),
+            proofs,
+            commitments,
+        );
+
+        let mut dag = jolt_dag::JoltDAG::new(prover_state_manager, verifier_state_manager);
+
+        // Only run the prover
+        if let Err(e) = dag.prove() {
+            panic!("DAG prove failed: {e}");
+        }
+    };
+
+    tasks.push((
+        tracing::info_span!("DAG_Prover_Only"),
         Box::new(task) as Box<dyn FnOnce()>,
     ));
 
