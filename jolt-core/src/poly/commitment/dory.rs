@@ -18,7 +18,7 @@ type BnG1Prepared = G1Prepared<ark_bn254::Config>;
 type BnG2Prepared = G2Prepared<ark_bn254::Config>;
 use ark_ec::{
     pairing::{MillerLoopOutput, Pairing as ArkPairing, PairingOutput},
-    CurveGroup,
+    AffineRepr, CurveGroup,
 };
 use ark_ff::{Field, One, PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -771,18 +771,27 @@ where
                     std::slice::from_raw_parts(g2_points.as_ptr() as *const E::G2, g2_points.len())
                 };
 
-                let aff_left = E::G1::normalize_batch(g1_inner);
-                let aff_right = E::G2::normalize_batch(g2_inner);
+                let aff_g1 = E::G1::normalize_batch(g1_inner);
+                let aff_g2 = E::G2::normalize_batch(g2_inner);
 
-                let left: Vec<_> = aff_left.par_iter().map(E::G1Prepared::from).collect();
-                let right: Vec<_> = aff_right.par_iter().map(E::G2Prepared::from).collect();
+                let (prepared_g1, prepared_g2): (Vec<_>, Vec<_>) = aff_g1
+                    .par_iter()
+                    .zip(aff_g2.par_iter())
+                    .filter_map(|(g1, g2)| {
+                        if g1.is_zero() {
+                            None
+                        } else {
+                            Some((E::G1Prepared::from(g1), E::G2Prepared::from(g2)))
+                        }
+                    })
+                    .unzip();
 
                 let num_chunks = rayon::current_num_threads();
-                let chunk_size = (left.len() / num_chunks.max(1)).max(1);
+                let chunk_size = (prepared_g1.len() / num_chunks.max(1)).max(1);
 
-                let ml_result = left
+                let ml_result = prepared_g1
                     .par_chunks(chunk_size)
-                    .zip(right.par_chunks(chunk_size))
+                    .zip(prepared_g2.par_chunks(chunk_size))
                     .map(|(aa, bb)| E::multi_miller_loop(aa.iter().cloned(), bb.iter().cloned()).0)
                     .product();
 
