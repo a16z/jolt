@@ -45,4 +45,57 @@ impl ProgramSummary {
         io::Write::write_all(&mut file, &data)?;
         Ok(())
     }
+
+    pub fn write_trace_analysis<F: JoltField>(
+        &self,
+        filename: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let instruction_counts = self.analyze::<F>();
+
+        let mut output = String::new();
+
+        // Basic statistics
+        output.push_str("=== BASIC STATISTICS ===\n");
+        output.push_str(&format!("Trace length: {}\n", self.trace_len()));
+        output.push_str(&format!("Bytecode length: {}\n", self.bytecode.len()));
+        output.push_str(&format!(
+            "Memory init entries: {}\n",
+            self.memory_init.len()
+        ));
+        output.push_str("\n");
+
+        // Instruction frequency analysis
+        output.push_str("=== INSTRUCTION FREQUENCY ANALYSIS ===\n");
+        output.push_str(&format!(
+            "{:<20} | {:>10} | {:>8}\n",
+            "Instruction", "Count", "Percent"
+        ));
+        output.push_str(&format!("{:-<20}-+-{:->10}-+-{:->8}\n", "", "", ""));
+
+        for (instruction, count) in instruction_counts.iter() {
+            let percentage = (*count as f64 / self.trace_len() as f64) * 100.0;
+            output.push_str(&format!(
+                "{:<20} | {:>10} | {:>7.2}%\n",
+                instruction, count, percentage
+            ));
+        }
+        output.push_str("\n");
+
+        // All bytecode instructions
+        output.push_str("=== ALL BYTECODE INSTRUCTIONS ===\n");
+        for (i, instruction) in self.bytecode.iter().enumerate() {
+            output.push_str(&format!("{:4}: {:?}\n", i, instruction));
+        }
+        output.push_str("\n");
+
+        // All trace instructions
+        output.push_str("=== ALL TRACE INSTRUCTIONS ===\n");
+        for (i, cycle) in self.trace.iter().enumerate() {
+            output.push_str(&format!("{:4}: {:?}\n", i, cycle));
+        }
+
+        // Write to file
+        std::fs::write(filename, output)?;
+        Ok(())
+    }
 }
