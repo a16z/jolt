@@ -1,5 +1,5 @@
 use crate::field::JoltField;
-use crate::msm::{use_icicle, GpuBaseType, Icicle, VariableBaseMSM};
+use crate::msm::VariableBaseMSM;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::utils::errors::ProofVerifyError;
@@ -15,21 +15,13 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct SRS<P: Pairing>
-where
-    P::G1: Icicle,
-{
+pub struct SRS<P: Pairing> {
     pub g1_powers: Vec<P::G1Affine>,
     pub g2_powers: Vec<P::G2Affine>,
     pub g_products: Vec<P::G1Affine>,
-    // g1_powers in icicle's GPU types
-    pub gpu_g1: Option<Vec<GpuBaseType<P::G1>>>,
 }
 
-impl<P: Pairing> SRS<P>
-where
-    P::G1: Icicle,
-{
+impl<P: Pairing> SRS<P> {
     pub fn setup<R: RngCore + CryptoRng>(
         mut rng: &mut R,
         num_g1_powers: usize,
@@ -83,31 +75,16 @@ where
         let powers_of_2 = (0..num_powers).into_par_iter().map(|i| 1usize << i);
         let g_products = powers_of_2
             .map(|power| {
-                <P::G1 as VariableBaseMSM>::msm_u8(
-                    &g1_powers[..power],
-                    &all_ones_coeffs[..power],
-                    Some(1),
-                )
-                .unwrap()
-                .into_affine()
+                <P::G1 as VariableBaseMSM>::msm_u8(&g1_powers[..power], &all_ones_coeffs[..power])
+                    .unwrap()
+                    .into_affine()
             })
             .collect();
-
-        #[cfg(feature = "icicle")]
-        let gpu_g1 = Some(
-            g1_powers
-                .par_iter()
-                .map(<P::G1 as Icicle>::from_ark_affine)
-                .collect::<Vec<_>>(),
-        );
-        #[cfg(not(feature = "icicle"))]
-        let gpu_g1 = None;
 
         Self {
             g1_powers,
             g2_powers,
             g_products,
-            gpu_g1,
         }
     }
 
@@ -124,10 +101,7 @@ where
 }
 
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct KZGProverKey<P: Pairing>
-where
-    P::G1: Icicle,
-{
+pub struct KZGProverKey<P: Pairing> {
     pub(crate) srs: Arc<SRS<P>>,
     // offset to read into SRS
     offset: usize,
@@ -135,10 +109,7 @@ where
     pub(crate) supported_size: usize,
 }
 
-impl<P: Pairing> KZGProverKey<P>
-where
-    P::G1: Icicle,
-{
+impl<P: Pairing> KZGProverKey<P> {
     pub fn new(srs: Arc<SRS<P>>, offset: usize, supported_size: usize) -> Self {
         assert!(
             srs.g1_powers.len() >= offset + supported_size,
@@ -165,13 +136,6 @@ where
     pub fn len(&self) -> usize {
         self.g1_powers().len()
     }
-
-    pub fn gpu_g1(&self) -> Option<&[GpuBaseType<P::G1>]> {
-        self.srs
-            .gpu_g1
-            .as_ref()
-            .map(|gpu_g1| &gpu_g1[self.offset..self.offset + self.supported_size])
-    }
 }
 
 #[derive(Clone, Copy, Debug, CanonicalSerialize, CanonicalDeserialize)]
@@ -182,10 +146,7 @@ pub struct KZGVerifierKey<P: Pairing> {
     pub beta_g2: P::G2Affine,
 }
 
-impl<P: Pairing> From<&KZGProverKey<P>> for KZGVerifierKey<P>
-where
-    P::G1: Icicle,
-{
+impl<P: Pairing> From<&KZGProverKey<P>> for KZGVerifierKey<P> {
     fn from(pk: &KZGProverKey<P>) -> Self {
         let g1 = pk.g1_powers()[0];
         let g2 = pk.g2_powers()[0];
@@ -225,7 +186,6 @@ pub struct UnivariateKZG<P: Pairing, G: Group<P> = G1> {
 impl<P: Pairing> UnivariateKZG<P>
 where
     P::ScalarField: JoltField,
-    P::G1: Icicle,
 {
     #[tracing::instrument(skip_all, name = "KZG::commit_batch")]
     pub fn commit_batch<U>(
@@ -236,7 +196,6 @@ where
         U: Borrow<MultilinearPolynomial<P::ScalarField>> + Sync,
     {
         let g1_powers = &pk.g1_powers();
-        let gpu_g1 = pk.gpu_g1();
 
         // batch commit requires all batches to have the same length
         assert!(polys
@@ -255,11 +214,7 @@ where
         }
 
         let msm_size = polys[0].borrow().len();
-        let commitments = <P::G1 as VariableBaseMSM>::batch_msm(
-            &g1_powers[..msm_size],
-            gpu_g1.map(|g| &g[..msm_size]),
-            polys,
-        );
+        let commitments = <P::G1 as VariableBaseMSM>::batch_msm(&g1_powers[..msm_size], polys);
         Ok(commitments.into_iter().map(|c| c.into_affine()).collect())
     }
 
@@ -270,7 +225,6 @@ where
         polys: &[MultilinearPolynomial<P::ScalarField>],
     ) -> Result<Vec<P::G1Affine>, ProofVerifyError> {
         let g1_powers = &pk.g1_powers();
-        let gpu_g1 = pk.gpu_g1();
 
         // batch commit requires all batches be less than the bases in size
         if let Some(invalid) = polys.iter().find(|poly| poly.len() > g1_powers.len()) {
@@ -280,7 +234,7 @@ where
             ));
         }
 
-        let commitments = <P::G1 as VariableBaseMSM>::variable_batch_msm(g1_powers, gpu_g1, polys);
+        let commitments = <P::G1 as VariableBaseMSM>::batch_msm(g1_powers, polys);
         Ok(commitments.into_iter().map(|c| c.into_affine()).collect())
     }
 
@@ -290,7 +244,6 @@ where
         polys: &[UniPoly<P::ScalarField>],
     ) -> Result<Vec<P::G1Affine>, ProofVerifyError> {
         let g1_powers = &pk.g1_powers();
-        let gpu_g1 = pk.gpu_g1();
 
         // batch commit requires all batches be less than the bases in size
         if let Some(invalid) = polys
@@ -303,8 +256,7 @@ where
             ));
         }
 
-        let commitments =
-            <P::G1 as VariableBaseMSM>::variable_batch_msm_univariate(g1_powers, gpu_g1, polys);
+        let commitments = <P::G1 as VariableBaseMSM>::batch_msm_univariate(g1_powers, polys);
         Ok(commitments.into_iter().map(|c| c.into_affine()).collect())
     }
 
@@ -337,12 +289,8 @@ where
             ));
         }
 
-        let c = <P::G1 as VariableBaseMSM>::msm(
-            &pk.g1_powers()[..poly.original_len()],
-            pk.gpu_g1().map(|g| &g[..poly.original_len()]),
-            poly,
-            None,
-        )?;
+        let c =
+            <P::G1 as VariableBaseMSM>::msm(&pk.g1_powers()[..poly.original_len()], poly, None)?;
         Ok(c.into_affine())
     }
 
@@ -372,10 +320,8 @@ where
 
         let c = <P::G1 as VariableBaseMSM>::msm_field_elements(
             &pk.g1_powers()[offset..offset + coeffs.len()],
-            pk.gpu_g1().map(|g| &g[offset..offset + coeffs.len()]),
             coeffs,
             None,
-            use_icicle(),
         )?;
 
         Ok(c)
@@ -390,7 +336,7 @@ where
     where
         <P as Pairing>::ScalarField: JoltField,
     {
-        let proof = Self::generic_open(pk.g1_powers(), pk.gpu_g1(), poly, *point)?;
+        let proof = Self::generic_open(pk.g1_powers(), poly, *point)?;
         let evaluation = poly.evaluate(point);
         Ok((proof.into_affine(), evaluation))
     }
@@ -416,12 +362,11 @@ where
 impl<P: Pairing, G: Group<P>> UnivariateKZG<P, G>
 where
     P::ScalarField: JoltField,
-    G::Curve: CurveGroup<ScalarField = P::ScalarField> + Icicle,
+    G::Curve: CurveGroup<ScalarField = P::ScalarField>,
 {
     #[tracing::instrument(skip_all, name = "KZG::open")]
     pub fn generic_open(
         powers: &[<G::Curve as CurveGroup>::Affine],
-        gpu_powers: Option<&[GpuBaseType<G::Curve>]>,
         poly: &UniPoly<P::ScalarField>,
         point: P::ScalarField,
     ) -> Result<G::Curve, ProofVerifyError>
@@ -432,10 +377,8 @@ where
         let (witness_poly, _) = poly.divide_with_remainder(&divisor).unwrap();
         let proof = <G::Curve as VariableBaseMSM>::msm_field_elements(
             &powers[..witness_poly.coeffs.len()],
-            gpu_powers.map(|g| &g[..witness_poly.coeffs.len()]),
             witness_poly.coeffs.as_slice(),
             None,
-            use_icicle(),
         )?;
         Ok(proof)
     }

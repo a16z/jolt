@@ -55,6 +55,7 @@ pub struct BooleanitySumcheck<F: JoltField> {
 }
 
 impl<F: JoltField> BooleanitySumcheck<F> {
+    #[tracing::instrument(skip_all, name = "InstructionBooleanitySumcheck::new_prover")]
     pub fn new_prover(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         eq_r_cycle: Vec<F>,
@@ -190,6 +191,10 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for BooleanitySumcheck<F> {
         F::zero()
     }
 
+    #[tracing::instrument(
+        skip_all,
+        name = "InstructionBooleanitySumcheck::compute_prover_message"
+    )]
     fn compute_prover_message(&mut self, round: usize) -> Vec<F> {
         if round < LOG_K_CHUNK {
             // Phase 1: First log(K_CHUNK) rounds
@@ -200,6 +205,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for BooleanitySumcheck<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "InstructionBooleanitySumcheck::bind")]
     fn bind(&mut self, r_j: F, round: usize) {
         let ps = self.prover_state.as_mut().unwrap();
         ps.r.push(r_j);

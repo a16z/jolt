@@ -8,7 +8,6 @@ where
     rayon::spawn(move || drop(data));
 }
 
-#[tracing::instrument(skip_all)]
 pub fn unsafe_allocate_zero_vec<F: JoltField + Sized>(size: usize) -> Vec<F> {
     // https://stackoverflow.com/questions/59314686/how-to-efficiently-create-a-large-vector-of-items-initialized-to-the-same-value
 

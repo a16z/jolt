@@ -18,7 +18,6 @@ use super::{
 };
 use crate::{
     field::JoltField,
-    msm::Icicle,
     poly::{
         commitment::kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG, G2},
         unipoly::UniPoly,
@@ -35,7 +34,6 @@ pub fn prove_commitment_key_kzg_opening<P: Pairing>(
 ) -> Result<P::G2, Error>
 where
     P::ScalarField: JoltField,
-    P::G2: Icicle,
 {
     let ck_polynomial =
         UniPoly::from_coeff(polynomial_coefficients_from_transcript(transcript, r_shift));
@@ -47,9 +45,7 @@ where
     let poly = ck_polynomial - UniPoly::from_coeff(vec![ck_polynomial_c_eval]);
     let powers = P::G2::normalize_batch(srs_powers);
 
-    Ok(UnivariateKZG::<P, G2>::generic_open(
-        &powers, None, &poly, point,
-    )?)
+    Ok(UnivariateKZG::<P, G2>::generic_open(&powers, &poly, point)?)
 }
 
 pub fn verify_kzg_g2<P: Pairing>(
@@ -121,8 +117,6 @@ where
 impl<P> MippK<P>
 where
     P: Pairing,
-    P::G1: Icicle,
-    P::G2: Icicle,
     P::ScalarField: JoltField,
 {
     #[tracing::instrument(name = "MippK::prove", skip_all)]

@@ -57,6 +57,7 @@ pub struct RafEvaluationSumcheck<F: JoltField> {
 
 impl<F: JoltField> RafEvaluationSumcheck<F> {
     /// Create a new prover instance
+    #[tracing::instrument(skip_all, name = "RamRafEvaluationSumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         K: usize,
         T: usize,
@@ -162,6 +163,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for RafEvaluationSumcheck<F> {
         self.input_claim
     }
 
+    #[tracing::instrument(skip_all, name = "RamRafEvaluationSumcheck::compute_prover_message")]
     fn compute_prover_message(&mut self, _round: usize) -> Vec<F> {
         let prover_state = self
             .prover_state
@@ -191,6 +193,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for RafEvaluationSumcheck<F> {
         univariate_poly_evals.to_vec()
     }
 
+    #[tracing::instrument(skip_all, name = "RamRafEvaluationSumcheck::bind")]
     fn bind(&mut self, r_j: F, _round: usize) {
         if let Some(prover_state) = &mut self.prover_state {
             rayon::join(

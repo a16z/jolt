@@ -10,6 +10,7 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
 use crate::r1cs::spartan::SpartanDag;
 use crate::subprotocols::sumcheck::{BatchableSumcheckInstance, BatchedSumcheck};
+use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::Transcript;
 use rayon::prelude::*;
 pub struct JoltDAG<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
@@ -55,10 +56,11 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             .borrow_mut()
             .insert(ProofKeys::RamK, ProofData::RamK(ram_K));
 
+        println!("bytecode size: {}", preprocessing.shared.bytecode.code_size);
         let K = [
-            preprocessing.shared.bytecode.code_size,
-            ram_K,
-            1 << 16, // K for instruction lookups
+            // preprocessing.shared.bytecode.code_size,
+            // ram_K,
+            1 << 8, // K for instruction lookups
         ]
         .into_iter()
         .max()
@@ -77,6 +79,9 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         }
 
         // Stage 1:
+        let span = tracing::span!(tracing::Level::INFO, "Stage 1 sumchecks");
+        let _guard = span.enter();
+
         let (_, trace, _, _) = self.prover_state_manager.get_prover_data();
         let padded_trace_length = trace.len().next_power_of_two();
         let mut spartan_dag = SpartanDag::<F>::new::<ProofTranscript>(padded_trace_length);
@@ -85,7 +90,13 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         let mut ram_dag = RamDag::new_prover(&self.prover_state_manager);
         spartan_dag.stage1_prove(&mut self.prover_state_manager)?;
 
+        drop(_guard);
+        drop(span);
+
         // Stage 2:
+        let span = tracing::span!(tracing::Level::INFO, "Stage 2 sumchecks");
+        let _guard = span.enter();
+
         let mut stage2_instances: Vec<_> = std::iter::empty()
             .chain(spartan_dag.stage2_prover_instances(&mut self.prover_state_manager))
             .chain(registers_dag.stage2_prover_instances(&mut self.prover_state_manager))
@@ -113,7 +124,13 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         let accumulator = self.prover_state_manager.get_prover_accumulator();
         BatchedSumcheck::cache_openings(stage2_instances_mut, Some(accumulator.clone()), &r_stage2);
 
+        drop(_guard);
+        drop(span);
+
         // Stage 3:
+        let span = tracing::span!(tracing::Level::INFO, "Stage 3 sumchecks");
+        let _guard = span.enter();
+
         let mut stage3_instances: Vec<_> = std::iter::empty()
             .chain(spartan_dag.stage3_prover_instances(&mut self.prover_state_manager))
             .chain(registers_dag.stage3_prover_instances(&mut self.prover_state_manager))
@@ -139,7 +156,13 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             .collect();
         BatchedSumcheck::cache_openings(stage3_instances_mut, Some(accumulator.clone()), &r_stage3);
 
+        drop(_guard);
+        drop(span);
+
         // Stage 4:
+        let span = tracing::span!(tracing::Level::INFO, "Stage 4 sumchecks");
+        let _guard = span.enter();
+
         let mut stage4_instances: Vec<_> = std::iter::empty()
             .chain(ram_dag.stage4_prover_instances(&mut self.prover_state_manager))
             .collect();
@@ -161,6 +184,9 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             .map(|instance| &mut **instance as &mut dyn StagedSumcheck<F, PCS>)
             .collect();
         BatchedSumcheck::cache_openings(stage4_instances_mut, Some(accumulator.clone()), &r_stage4);
+
+        drop(_guard);
+        drop(span);
 
         // Batch-prove all openings
         let opening_proof = accumulator
@@ -357,6 +383,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
     }
 
     // Prover utility to commit to all the polynomials for the PCS
+    #[tracing::instrument(skip_all)]
     fn generate_and_commit_polynomials(&mut self) -> Result<(), anyhow::Error> {
         let (preprocessing, trace, _program_io, _final_memory_state) =
             self.prover_state_manager.get_prover_data();
@@ -376,6 +403,8 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         };
 
         self.prover_state_manager.set_commitments(jolt_commitments);
+
+        drop_in_background_thread(committed_polys);
 
         Ok(())
     }

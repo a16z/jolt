@@ -551,6 +551,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for InnerSumcheck<F> {
         self.input_claim
     }
 
+    #[tracing::instrument(skip_all, name = "InnerSumcheck::compute_prover_message")]
     fn compute_prover_message(&mut self, _round: usize) -> Vec<F> {
         let prover_state = self
             .prover_state
@@ -588,6 +589,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for InnerSumcheck<F> {
         univariate_poly_evals
     }
 
+    #[tracing::instrument(skip_all, name = "InnerSumcheck::bind")]
     fn bind(&mut self, r_j: F, _round: usize) {
         let prover_state = self
             .prover_state
@@ -761,6 +763,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for PCSumcheck<F> {
         self.input_claim
     }
 
+    #[tracing::instrument(skip_all, name = "PCSumcheck::compute_prover_message")]
     fn compute_prover_message(&mut self, _round: usize) -> Vec<F> {
         let prover_state = self
             .prover_state
@@ -804,6 +807,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for PCSumcheck<F> {
         univariate_poly_evals
     }
 
+    #[tracing::instrument(skip_all, name = "PCSumcheck::bind")]
     fn bind(&mut self, r_j: F, _round: usize) {
         let prover_state = self
             .prover_state

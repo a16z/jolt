@@ -15,7 +15,6 @@ pub mod benches;
 pub mod host;
 
 pub mod dag;
-pub mod fast_msm;
 pub mod field;
 pub mod jolt;
 pub mod msm;

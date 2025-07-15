@@ -58,8 +58,7 @@ impl<F: JoltField> RLCPolynomial<F> {
             .zip(row_commitments.par_iter_mut())
             .for_each(|(dense_row, commitment)| {
                 let msm_result: G =
-                    VariableBaseMSM::msm_field_elements(bases, None, dense_row, None, false)
-                        .unwrap();
+                    VariableBaseMSM::msm_field_elements(bases, dense_row, None).unwrap();
                 *commitment = JoltGroupWrapper(commitment.0 + msm_result)
             });
 

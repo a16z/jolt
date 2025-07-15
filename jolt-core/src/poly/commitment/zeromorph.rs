@@ -1,7 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
-use crate::msm::{use_icicle, Icicle, VariableBaseMSM};
+use crate::msm::VariableBaseMSM;
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use crate::poly::{dense_mlpoly::DensePolynomial, unipoly::UniPoly};
 use crate::utils::{
@@ -26,14 +26,9 @@ use super::{
 use crate::field::JoltField;
 use rayon::prelude::*;
 
-pub struct ZeromorphSRS<P: Pairing>(Arc<SRS<P>>)
-where
-    P::G1: Icicle;
+pub struct ZeromorphSRS<P: Pairing>(Arc<SRS<P>>);
 
-impl<P: Pairing> ZeromorphSRS<P>
-where
-    P::G1: Icicle,
-{
+impl<P: Pairing> ZeromorphSRS<P> {
     pub fn setup<R: RngCore + CryptoRng>(rng: &mut R, max_degree: usize) -> Self
     where
         P::ScalarField: JoltField,
@@ -58,10 +53,7 @@ where
 
 //TODO: adapt interface to have prover and verifier key
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct ZeromorphProverKey<P: Pairing>
-where
-    P::G1: Icicle,
-{
+pub struct ZeromorphProverKey<P: Pairing> {
     pub commit_pp: KZGProverKey<P>,
     pub open_pp: KZGProverKey<P>,
 }
@@ -72,10 +64,7 @@ pub struct ZeromorphVerifierKey<P: Pairing> {
     pub tau_N_max_sub_2_N: P::G2Affine,
 }
 
-impl<P: Pairing> From<&ZeromorphProverKey<P>> for ZeromorphVerifierKey<P>
-where
-    P::G1: Icicle,
-{
+impl<P: Pairing> From<&ZeromorphProverKey<P>> for ZeromorphVerifierKey<P> {
     fn from(prover_key: &ZeromorphProverKey<P>) -> Self {
         let kzg_vk = KZGVerifierKey::from(&prover_key.commit_pp);
         let max_degree = prover_key.commit_pp.supported_size - 1;
@@ -255,7 +244,6 @@ pub struct Zeromorph<P: Pairing> {
 impl<P> Zeromorph<P>
 where
     <P as Pairing>::ScalarField: JoltField,
-    <P as Pairing>::G1: Icicle,
     P: Pairing,
 {
     pub fn protocol_name() -> &'static [u8] {
@@ -406,14 +394,9 @@ where
             proof.q_k_com.clone(),
         ]
         .concat();
-        let zeta_z_com = <P::G1 as VariableBaseMSM>::msm_field_elements(
-            &bases,
-            None,
-            &scalars,
-            Some(256),
-            use_icicle(),
-        )?
-        .into_affine();
+        let zeta_z_com =
+            <P::G1 as VariableBaseMSM>::msm_field_elements(&bases, &scalars, Some(256))?
+                .into_affine();
 
         // e(pi, [tau]_2 - x * [1]_2) == e(C_{\zeta,Z}, -[X^(N_max - 2^n - 1)]_2) <==> e(C_{\zeta,Z} - x * pi, [X^{N_max - 2^n - 1}]_2) * e(-pi, [tau_2]) == 1
         let pairing = P::multi_pairing(
@@ -434,7 +417,6 @@ where
 impl<P: Pairing> CommitmentScheme for Zeromorph<P>
 where
     <P as Pairing>::ScalarField: JoltField,
-    <P as Pairing>::G1: Icicle,
 {
     type Field = P::ScalarField;
     type ProverSetup = ZeromorphProverKey<P>;
@@ -446,7 +428,6 @@ where
     fn setup_prover(max_len: usize) -> Self::ProverSetup
     where
         P::ScalarField: JoltField,
-        P::G1: Icicle,
     {
         ZeromorphSRS(Arc::new(SRS::setup(
             &mut ChaCha20Rng::from_seed(*b"ZEROMORPH_POLY_COMMITMENT_SCHEME"),
