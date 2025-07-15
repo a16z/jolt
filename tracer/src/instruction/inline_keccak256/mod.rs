@@ -300,12 +300,12 @@ impl Keccak256SequenceBuilder {
 
         // --- 2. Copy the temporary state B back to the main state A ---
         // We can do this with a no-op XOR with register zero, which acts as a move.
-        for i in 0..25 {
-            let b_reg = self.vr[25 + i];
-            let a_reg = self.vr[i];
-            // This is equivalent to: a_reg = b_reg
-            self.xor64(Reg(b_reg), Imm(0), a_reg);
-        }
+        // for i in 0..25 {
+        //     let b_reg = self.vr[25 + i];
+        //     let a_reg = self.vr[i];
+        //     // This is equivalent to: a_reg = b_reg
+        //     self.xor64(Reg(b_reg), Imm(0), a_reg);
+        // }
     }
 
     fn chi(&mut self) {
@@ -316,23 +316,27 @@ impl Keccak256SequenceBuilder {
         // we first copy the row into a temporary buffer (vr[60..64]).
         for y in 0..5 {
             // 1. Copy the current row from state A into the temporary row buffer.
-            for x in 0..5 {
-                // For each lane A[x,y] in the current row,
-                // copy its value from self.lane(x, y) to the temp row register self.vr[60 + x].
+            // for x in 0..5 {
+            //     // For each lane A[x,y] in the current row,
+            //     // copy its value from self.lane(x, y) to the temp row register self.vr[60 + x].
 
-                let a_reg = self.lane(x, y);
-                let temp_row_reg = self.vr[60 + x];
-                // A no-op XOR (xor with 0) is a good way to copy a register value.
-                self.xor64(Reg(a_reg), Imm(0), temp_row_reg);
-            }
+            //     // let a_reg = self.lane(x, y);
+            //     let b_reg = 25 + self.lane(x, y);
+            //     let temp_row_reg = self.vr[60 + x];
+            //     // A no-op XOR (xor with 0) is a good way to copy a register value.
+            //     self.xor64(Reg(b_reg), Imm(0), temp_row_reg);
+            // }
 
             // 2. Calculate the new lane values using the temporary buffer.
             for x in 0..5 {
                 // Get the registers for the three input values from the temp buffer.
                 // A[x,y], A[x+1,y], A[x+2,y]
-                let current = self.vr[60 + x];
-                let next = self.vr[60 + (x + 1) % 5];
-                let two_next = self.vr[60 + (x + 2) % 5];
+                let current = 25 + self.lane(x, y);
+                let next = 25 + self.lane((x + 1) % 5, y);
+                let two_next = 25 + self.lane((x + 2) % 5, y);
+                // let current = self.vr[60 + x];
+                // let next = self.vr[60 + (x + 1) % 5];
+                // let two_next = self.vr[60 + (x + 2) % 5];
 
                 // Define scratch registers for intermediate results.
                 let not_next = self.vr[65];
