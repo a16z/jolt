@@ -123,18 +123,6 @@ name = "compute_cubic"
 harness = false
 
 [[bench]]
-name = "msm"
-harness = false
-
-[[bench]]
-name = "msm_batch"
-harness = false
-
-[[bench]]
-name = "msm_adapter_batch"
-harness = false
-
-[[bench]]
 name = "poly_bench"
 harness = false
 
