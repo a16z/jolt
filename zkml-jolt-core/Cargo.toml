@@ -5,3 +5,6 @@ edition = "2024"
 
 [dependencies]
 onnx-tracer = { path = "../onnx-tracer" }
+jolt-core = { path = "../jolt-core" }
+itertools = "0.10.0"
+rayon = { version = "^1.8.0" }

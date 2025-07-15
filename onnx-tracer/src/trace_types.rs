@@ -53,7 +53,7 @@ pub struct ONNXInstr {
 //       This reduced ISA currently includes only the opcodes commonly used in such models.
 //       Future phases should extend this set to support a broader range of ONNX operations.
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Hash, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 /// Operation code uniquely identifying each ONNX instruction's function
 pub enum ONNXOpcode {
     Noop,
@@ -74,4 +74,10 @@ pub enum ONNXOpcode {
     Sum,
     Sigmoid,
     Softmax,
+}
+
+impl ONNXOpcode {
+    pub fn into_bitflag(self) -> u64 {
+        1u64 << (self as u8)
+    }
 }
