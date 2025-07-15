@@ -1094,7 +1094,7 @@ dependencies = [
 [[package]]
 name = "dory"
 version = "1.0.0"
-source = "git+https://github.com/spaceandtimefdn/sxt-dory?branch=dev%2Ftwist-shout#97e92ae94dc6a4fa3a1a98f39a80520cc3c58bc7"
+source = "git+https://github.com/spaceandtimefdn/sxt-dory?branch=feat%2Freturn_row_commitments#e05ce0ac949e9979bf49c641ed4d904760a13a6f"
 dependencies = [
  "ark-bn254",
  "ark-ec",
