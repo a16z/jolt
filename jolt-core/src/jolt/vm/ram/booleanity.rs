@@ -87,6 +87,7 @@ pub struct BooleanitySumcheck<F: JoltField> {
 }
 
 impl<F: JoltField> BooleanitySumcheck<F> {
+    #[tracing::instrument(skip_all, name = "RamBooleanitySumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         K: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
@@ -255,6 +256,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for BooleanitySumcheck<F> {
         F::zero() // Always zero for booleanity
     }
 
+    #[tracing::instrument(skip_all, name = "RamBooleanitySumcheck::compute_prover_message")]
     fn compute_prover_message(&mut self, round: usize) -> Vec<F> {
         let log_K = self.K.log_2();
 
@@ -267,6 +269,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for BooleanitySumcheck<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "RamBooleanitySumcheck::bind")]
     fn bind(&mut self, r_j: F, round: usize) {
         let prover_state = self
             .prover_state

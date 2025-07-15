@@ -307,20 +307,18 @@ impl<F: JoltField> OneHotPolynomial<F> {
         let row_len = DoryGlobals::get_num_columns();
         let T = DoryGlobals::get_T();
 
-        let num_chunks = 4 * rayon::current_num_threads().next_power_of_two();
+        let num_chunks = rayon::current_num_threads().next_power_of_two();
         let chunk_size = std::cmp::max(1, num_rows / num_chunks);
-        let num_chunks = num_rows / chunk_size;
 
         // Iterate over chunks of contiguous rows in parallel
         // TODO(moodlezoup): Optimize this
-        (0..num_chunks)
-            .into_par_iter()
-            .flat_map(|chunk_index| {
+        let mut result: Vec<JoltGroupWrapper<G>> = vec![JoltGroupWrapper(G::zero()); num_rows];
+        result
+            .par_chunks_mut(chunk_size)
+            .enumerate()
+            .for_each(|(chunk_index, chunk)| {
                 let min_row_index = chunk_index * chunk_size;
                 let max_row_index = min_row_index + chunk_size;
-
-                let mut result: Vec<JoltGroupWrapper<G>> =
-                    vec![JoltGroupWrapper(G::zero()); chunk_size];
 
                 for (t, k) in self.nonzero_indices.iter().enumerate() {
                     let global_index = *k as u128 * T as u128 + t as u128;
@@ -332,13 +330,11 @@ impl<F: JoltField> OneHotPolynomial<F> {
                         let col_index = global_index % row_len as u128;
                         // All the nonzero coefficients are 1, so we simply add
                         // the associated base to the result.
-                        result[row_index % chunk_size].0 += bases[col_index as usize];
+                        chunk[row_index % chunk_size].0 += bases[col_index as usize];
                     }
                 }
-
-                result
-            })
-            .collect()
+            });
+        result
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPolynomial::vector_matrix_product")]
@@ -346,17 +342,17 @@ impl<F: JoltField> OneHotPolynomial<F> {
         let T = DoryGlobals::get_T();
         let num_columns = DoryGlobals::get_num_columns();
         let row_len = num_columns;
-        let num_chunks = 4 * rayon::current_num_threads().next_power_of_two();
+        let num_chunks = rayon::current_num_threads().next_power_of_two();
         let chunk_size = std::cmp::max(1, num_columns / num_chunks);
-        let num_chunks = num_columns / chunk_size;
 
         // TODO(moodlezoup): Optimize this
-        let product: Vec<_> = (0..num_chunks)
-            .into_par_iter()
-            .flat_map(|chunk_index| {
+        let mut result = unsafe_allocate_zero_vec(num_columns);
+        result
+            .par_chunks_mut(chunk_size)
+            .enumerate()
+            .for_each(|(chunk_index, chunk)| {
                 let min_col_index = chunk_index * chunk_size;
                 let max_col_index = min_col_index + chunk_size;
-                let mut result: Vec<F> = unsafe_allocate_zero_vec(chunk_size);
                 for (t, k) in self.nonzero_indices.iter().enumerate() {
                     let global_index = *k as u128 * T as u128 + t as u128;
                     let col_index = (global_index % row_len as u128) as usize;
@@ -364,15 +360,11 @@ impl<F: JoltField> OneHotPolynomial<F> {
                     // to `chunk_index`, compute its contribution to the result.
                     if col_index >= min_col_index && col_index < max_col_index {
                         let row_index = (global_index / row_len as u128) as usize;
-                        result[col_index % chunk_size] += left_vec[row_index];
+                        chunk[col_index % chunk_size] += left_vec[row_index];
                     }
                 }
-
-                result
-            })
-            .collect();
-
-        product
+            });
+        result
     }
 }
 

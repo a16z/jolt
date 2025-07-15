@@ -4,7 +4,6 @@
 use std::marker::PhantomData;
 
 use super::Error;
-use crate::msm::Icicle;
 use crate::{
     field::JoltField,
     poly::commitment::bmmtv::{
@@ -39,7 +38,6 @@ pub struct GipaProof<P: Pairing, ProofTranscript> {
 impl<P, ProofTranscript> GipaProof<P, ProofTranscript>
 where
     P: Pairing,
-    P::G1: Icicle,
     P::ScalarField: JoltField,
     ProofTranscript: Transcript,
 {
@@ -226,7 +224,7 @@ mod tests {
         super::inner_products::MultiexponentiationInnerProduct,
         *,
     };
-    use crate::msm::{use_icicle, Icicle, VariableBaseMSM};
+    use crate::msm::VariableBaseMSM;
     use crate::utils::transcript::KeccakTranscript;
     use ark_bn254::Bn254;
     use ark_ec::pairing::Pairing;
@@ -243,8 +241,6 @@ mod tests {
     impl<P, ProofTranscript> GipaProof<P, ProofTranscript>
     where
         P: Pairing,
-        P::G1: Icicle,
-        P::G2: Icicle,
         P::ScalarField: JoltField,
         ProofTranscript: Transcript,
     {
@@ -267,10 +263,8 @@ mod tests {
             assert_eq!(ck_a_agg_challenge_exponents.len(), l_params.len());
             let ck_a_base = <P::G2 as VariableBaseMSM>::msm_field_elements(
                 &P::G2::normalize_batch(l_params),
-                None,
                 &ck_a_agg_challenge_exponents,
                 None,
-                use_icicle(),
             )?;
             Ok(ck_a_base)
         }

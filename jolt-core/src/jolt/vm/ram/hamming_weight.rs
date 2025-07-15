@@ -65,6 +65,7 @@ pub struct HammingWeightSumcheck<F: JoltField> {
 }
 
 impl<F: JoltField> HammingWeightSumcheck<F> {
+    #[tracing::instrument(skip_all, name = "RamHammingWeightSumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         K: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
@@ -234,6 +235,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for HammingWeightSumcheck<F> {
         self.input_claim
     }
 
+    #[tracing::instrument(skip_all, name = "RamHammingWeightSumcheck::compute_prover_message")]
     fn compute_prover_message(&mut self, _round: usize) -> Vec<F> {
         let prover_state = self
             .prover_state
@@ -256,6 +258,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for HammingWeightSumcheck<F> {
         vec![univariate_poly_eval]
     }
 
+    #[tracing::instrument(skip_all, name = "RamHammingWeightSumcheck::bind")]
     fn bind(&mut self, r_j: F, _round: usize) {
         if let Some(prover_state) = &mut self.prover_state {
             prover_state

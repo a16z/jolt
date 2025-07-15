@@ -50,6 +50,7 @@ pub struct RASumcheck<F: JoltField> {
 }
 
 impl<F: JoltField> RASumcheck<F> {
+    #[tracing::instrument(skip_all, name = "RaVirtualization::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         K: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
@@ -225,6 +226,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for RASumcheck<F> {
         self.T.log_2()
     }
 
+    #[tracing::instrument(skip_all, name = "RaVirtualization::bind")]
     fn bind(&mut self, r_j: F, _: usize) {
         let prover_state = self
             .prover_state
@@ -259,6 +261,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for RASumcheck<F> {
         eq_eval * product
     }
 
+    #[tracing::instrument(skip_all, name = "RaVirtualization::compute_prover_message")]
     fn compute_prover_message(&mut self, _round: usize) -> Vec<F> {
         let prover_state = self
             .prover_state

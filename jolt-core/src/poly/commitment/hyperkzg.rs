@@ -15,7 +15,7 @@ use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use crate::utils::transcript::Transcript;
 use crate::{
-    msm::{Icicle, VariableBaseMSM},
+    msm::VariableBaseMSM,
     poly::{commitment::kzg::SRS, dense_mlpoly::DensePolynomial, unipoly::UniPoly},
     utils::{errors::ProofVerifyError, transcript::AppendToTranscript},
 };
@@ -31,14 +31,9 @@ use rayon::iter::{
 use std::borrow::Borrow;
 use std::{marker::PhantomData, sync::Arc};
 
-pub struct HyperKZGSRS<P: Pairing>(Arc<SRS<P>>)
-where
-    P::G1: Icicle;
+pub struct HyperKZGSRS<P: Pairing>(Arc<SRS<P>>);
 
-impl<P: Pairing> HyperKZGSRS<P>
-where
-    P::G1: Icicle,
-{
+impl<P: Pairing> HyperKZGSRS<P> {
     pub fn setup<R: RngCore + CryptoRng>(rng: &mut R, max_degree: usize) -> Self
     where
         P::ScalarField: JoltField,
@@ -53,10 +48,7 @@ where
 }
 
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct HyperKZGProverKey<P: Pairing>
-where
-    P::G1: Icicle,
-{
+pub struct HyperKZGProverKey<P: Pairing> {
     pub kzg_pk: KZGProverKey<P>,
 }
 
@@ -107,7 +99,6 @@ fn kzg_batch_open_no_rem<P: Pairing>(
 ) -> Vec<P::G1Affine>
 where
     <P as Pairing>::ScalarField: JoltField,
-    <P as Pairing>::G1: Icicle,
 {
     let f: &DensePolynomial<P::ScalarField> = f.try_into().unwrap();
     let h = u
@@ -147,7 +138,6 @@ fn kzg_open_batch<P: Pairing, ProofTranscript: Transcript>(
 ) -> (Vec<P::G1Affine>, Vec<Vec<P::ScalarField>>)
 where
     <P as Pairing>::ScalarField: JoltField,
-    <P as Pairing>::G1: Icicle,
 {
     let k = f.len();
     let t = u.len();
@@ -191,7 +181,6 @@ fn kzg_verify_batch<P: Pairing, ProofTranscript: Transcript>(
 ) -> bool
 where
     <P as Pairing>::ScalarField: JoltField,
-    <P as Pairing>::G1: Icicle,
 {
     let k = C.len();
     let t = u.len();
@@ -245,7 +234,6 @@ where
 
     let L = <P::G1 as VariableBaseMSM>::msm_field_elements(
         &[&C[..k], &[W[0], W[1], W[2], vk.kzg_vk.g1]].concat(),
-        None,
         &[
             &q_powers_multiplied[..k],
             &[
@@ -257,7 +245,6 @@ where
         ]
         .concat(),
         None,
-        false,
     )
     .unwrap();
 
@@ -275,7 +262,6 @@ pub struct HyperKZG<P: Pairing> {
 impl<P: Pairing> HyperKZG<P>
 where
     <P as Pairing>::ScalarField: JoltField,
-    <P as Pairing>::G1: Icicle,
 {
     pub fn protocol_name() -> &'static [u8] {
         b"HyperKZG"
@@ -409,7 +395,6 @@ where
 impl<P: Pairing> CommitmentScheme for HyperKZG<P>
 where
     <P as Pairing>::ScalarField: JoltField,
-    <P as Pairing>::G1: Icicle,
 {
     type Field = P::ScalarField;
     type ProverSetup = HyperKZGProverKey<P>;
@@ -504,10 +489,7 @@ where
 }
 
 // #[derive(Clone, Debug)]
-pub struct HyperKZGState<'a, P: Pairing>
-where
-    P::G1: Icicle,
-{
+pub struct HyperKZGState<'a, P: Pairing> {
     acc: P::G1,
     prover_key: &'a KZGProverKey<P>,
     current_chunk: Vec<P::ScalarField>,
@@ -519,7 +501,6 @@ const CHUNK_SIZE: usize = 256;
 impl<P: Pairing> StreamingCommitmentScheme for HyperKZG<P>
 where
     <P as Pairing>::ScalarField: JoltField,
-    <P as Pairing>::G1: Icicle,
 {
     type State<'a> = HyperKZGState<'a, P>;
 

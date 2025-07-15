@@ -8,7 +8,6 @@ use std::{borrow::Borrow, marker::PhantomData, sync::Arc};
 
 use crate::{
     field::JoltField,
-    msm::Icicle,
     poly::{
         commitment::{
             bmmtv::poly_commit::{OpeningProof, UnivariatePolynomialCommitment},
@@ -89,8 +88,6 @@ impl<P: Pairing> CommitmentScheme for HyperBmmtv<P>
 where
     PairingOutput<P>: CanonicalSerialize,
     P::ScalarField: JoltField,
-    P::G1: Icicle,
-    P::G2: Icicle,
 {
     type Field = P::ScalarField;
 

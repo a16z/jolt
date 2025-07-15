@@ -5,7 +5,6 @@ use crate::field::JoltField;
 use crate::jolt::vm::ram::remap_address;
 use crate::jolt::vm::rv32i_vm::Serializable;
 use crate::jolt::witness::ALL_COMMITTED_POLYNOMIALS;
-use crate::msm::icicle;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::opening_proof::{
@@ -185,8 +184,6 @@ where
         memory_layout: MemoryLayout,
         memory_init: Vec<(u64, u8)>,
     ) -> JoltSharedPreprocessing {
-        icicle::icicle_init();
-
         let bytecode_preprocessing = BytecodePreprocessing::preprocess(bytecode);
         let ram_preprocessing = RAMPreprocessing::preprocess(memory_init);
 
@@ -244,7 +241,6 @@ where
         JoltDevice,
         Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
     ) {
-        icicle::icicle_init();
         let trace_length = trace.len();
         println!("Trace length: {trace_length}");
 

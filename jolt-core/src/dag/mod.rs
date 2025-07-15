@@ -96,9 +96,24 @@ mod tests {
             Err(e) => panic!("DAG prove failed: {e}"),
         };
 
-        if let Err(e) = dag.verify::<32, Fr, KeccakTranscript, MockCommitScheme<Fr>>(proof) {
+        let prover_verification_data = {
+            let prover_accumulator = prover_state_manager.get_prover_accumulator().borrow().clone();
+            let prover_transcript = prover_state_manager.get_transcript().borrow().clone();
+            let (preprocessing, _, _, _) = prover_state_manager.get_prover_data();
+            jolt_dag::ProverVerificationData {
+                transcript: prover_transcript,
+                accumulator: prover_accumulator,
+                generators: preprocessing.generators.clone(),
+            }
+        };
+
+        if let Err(e) = dag.verify::<32, Fr, KeccakTranscript, MockCommitScheme<Fr>>(
+            proof,
+            prover_verification_data,
+        ) {
             panic!("DAG verify failed: {e}");
         }
+
 
         println!("DAG fib_e2e OK!");
     }

@@ -8,8 +8,11 @@ use crate::jolt::vm::JoltCommitments;
 use crate::jolt::witness::ALL_COMMITTED_POLYNOMIALS;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::DoryGlobals;
+#[cfg(test)]
+use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::r1cs::spartan::SpartanDag;
 use crate::subprotocols::sumcheck::{BatchableSumcheckInstance, BatchedSumcheck};
+use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::Transcript;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
@@ -35,6 +38,13 @@ where
     pub claims: crate::dag::state_manager::Claims<F>,
 }
 
+#[cfg(test)]
+pub struct ProverVerificationData<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> {
+    pub transcript: ProofTranscript,
+    pub accumulator: ProverOpeningAccumulator<F, PCS>,
+    pub generators: PCS::ProverSetup,
+}
+
 impl JoltDAG {
     pub fn prove<
         'a,
@@ -46,10 +56,11 @@ impl JoltDAG {
         &mut self,
         prover_state_manager: &mut StateManager<'a, F, ProofTranscript, PCS>,
     ) -> Result<JoltDagProof<WORD_SIZE, F, PCS, ProofTranscript>, anyhow::Error> {
+        let (preprocessing, trace, _, _) = prover_state_manager.get_prover_data();
+        let trace_length = trace.len();
+        let padded_trace_length = trace_length.next_power_of_two();
+
         let _guard = {
-            let (preprocessing, trace, _, _) = prover_state_manager.get_prover_data();
-            let trace_length = trace.len();
-            let padded_trace_length = trace_length.next_power_of_two();
 
             let ram_addresses: Vec<_> = trace
                 .par_iter()
@@ -78,6 +89,7 @@ impl JoltDAG {
                 .proofs
                 .borrow_mut()
                 .insert(ProofKeys::RamK, ProofData::RamK(ram_K));
+        println!("bytecode size: {}", preprocessing.shared.bytecode.code_size);
 
             _guard
         };
@@ -110,15 +122,22 @@ impl JoltDAG {
         }
 
         // Stage 1:
-        let (_, trace, _, _) = prover_state_manager.get_prover_data();
-        let padded_trace_length = trace.len().next_power_of_two();
+        let span = tracing::span!(tracing::Level::INFO, "Stage 1 sumchecks");
+        let _guard = span.enter();
+
         let mut spartan_dag = SpartanDag::<F>::new::<ProofTranscript>(padded_trace_length);
         let mut lookups_dag = LookupsDag::<F>::default();
         let mut registers_dag = RegistersDag::default();
         let mut ram_dag = RamDag::new_prover(prover_state_manager);
         spartan_dag.stage1_prove(prover_state_manager)?;
 
+        drop(_guard);
+        drop(span);
+
         // Stage 2:
+        let span = tracing::span!(tracing::Level::INFO, "Stage 2 sumchecks");
+        let _guard = span.enter();
+
         let mut stage2_instances: Vec<_> = std::iter::empty()
             .chain(spartan_dag.stage2_prover_instances(prover_state_manager))
             .chain(registers_dag.stage2_prover_instances(prover_state_manager))
@@ -146,7 +165,13 @@ impl JoltDAG {
         let accumulator = prover_state_manager.get_prover_accumulator();
         BatchedSumcheck::cache_openings(stage2_instances_mut, Some(accumulator.clone()), &r_stage2);
 
+        drop(_guard);
+        drop(span);
+
         // Stage 3:
+        let span = tracing::span!(tracing::Level::INFO, "Stage 3 sumchecks");
+        let _guard = span.enter();
+
         let mut stage3_instances: Vec<_> = std::iter::empty()
             .chain(spartan_dag.stage3_prover_instances(prover_state_manager))
             .chain(registers_dag.stage3_prover_instances(prover_state_manager))
@@ -173,7 +198,13 @@ impl JoltDAG {
         let accumulator = prover_state_manager.get_prover_accumulator();
         BatchedSumcheck::cache_openings(stage3_instances_mut, Some(accumulator.clone()), &r_stage3);
 
+        drop(_guard);
+        drop(span);
+
         // Stage 4:
+        let span = tracing::span!(tracing::Level::INFO, "Stage 4 sumchecks");
+        let _guard = span.enter();
+
         let mut stage4_instances: Vec<_> = std::iter::empty()
             .chain(ram_dag.stage4_prover_instances(prover_state_manager))
             .collect();
@@ -195,6 +226,9 @@ impl JoltDAG {
             .map(|instance| &mut **instance as &mut dyn StagedSumcheck<F, PCS>)
             .collect();
         BatchedSumcheck::cache_openings(stage4_instances_mut, Some(accumulator.clone()), &r_stage4);
+
+        drop(_guard);
+        drop(span);
 
         // Batch-prove all openings
         let (preprocessing, _, _, _) = prover_state_manager.get_prover_data();
@@ -220,12 +254,27 @@ impl JoltDAG {
     >(
         &mut self,
         proof: JoltDagProof<WORD_SIZE, F, PCS, ProofTranscript>,
+        #[cfg(test)]
+        prover_data: ProverVerificationData<F, PCS, ProofTranscript>,
     ) -> Result<(), anyhow::Error> {
         let mut verifier_state_manager: StateManager<F, ProofTranscript, PCS> = proof.into();
         let commitments = verifier_state_manager.get_commitments();
         let transcript = verifier_state_manager.get_transcript();
         for commitment in commitments.commitments.iter() {
             transcript.borrow_mut().append_serializable(commitment);
+        }
+        #[cfg(test)]
+        {
+            // Compare transcripts
+            let verifier_transcript = verifier_state_manager.get_transcript().borrow().clone();
+            let mut prover_transcript = prover_data.transcript;
+            prover_transcript.compare_to(verifier_transcript);
+            
+            // Compare accumulators
+            verifier_state_manager
+                .get_verifier_accumulator()
+                .borrow_mut()
+                .compare_to(prover_data.accumulator, &prover_data.generators);
         }
 
         // Stage 1:
