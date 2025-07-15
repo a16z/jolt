@@ -14,7 +14,7 @@ use crate::{
 
 use super::commitment_scheme::CommitmentScheme;
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct MockCommitScheme<F: JoltField> {
     _marker: PhantomData<F>,
 }

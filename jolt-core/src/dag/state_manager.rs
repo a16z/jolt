@@ -7,8 +7,8 @@ use crate::field::JoltField;
 use crate::jolt::vm::{JoltCommitments, JoltProverPreprocessing, JoltVerifierPreprocessing};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::opening_proof::{
-    OpeningPoint, OpeningsExt, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
-    BIG_ENDIAN,
+    OpeningPoint, OpeningsExt, OpeningsKeys, ProverOpeningAccumulator, ReducedOpeningProof,
+    VerifierOpeningAccumulator, BIG_ENDIAN,
 };
 use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
@@ -32,9 +32,19 @@ pub struct VerifierProgramData<F: JoltField, PCS: CommitmentScheme<Field = F>> {
 
 // Wrappers to avoid Orphan rules
 #[derive(Debug, Clone, Default)]
-pub struct Proofs<F: JoltField, ProofTranscript: Transcript>(
-    pub HashMap<ProofKeys, ProofData<F, ProofTranscript>>,
+pub struct Proofs<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript>(
+    pub HashMap<ProofKeys, ProofData<F, PCS, ProofTranscript>>,
 );
+
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> Proofs<F, PCS, ProofTranscript> {
+    pub fn insert(&mut self, key: ProofKeys, value: ProofData<F, PCS, ProofTranscript>) {
+        self.0.insert(key, value);
+    }
+
+    pub fn get(&self, key: &ProofKeys) -> Option<&ProofData<F, PCS, ProofTranscript>> {
+        self.0.get(key)
+    }
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct Claims<F: JoltField>(pub HashMap<OpeningsKeys, F>);
@@ -45,14 +55,16 @@ pub enum ProofKeys {
     Stage2Sumcheck,
     Stage3Sumcheck,
     Stage4Sumcheck,
+    ReducedOpeningProof,
     RamSumcheckSwitchIndex,
     RamK,
 }
 
 #[derive(Debug, Clone)]
-pub enum ProofData<F: JoltField, ProofTranscript: Transcript> {
+pub enum ProofData<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> {
     SpartanOuterData(SumcheckInstanceProof<F, ProofTranscript>),
     BatchableSumcheckData(SumcheckInstanceProof<F, ProofTranscript>),
+    ReducedOpeningProof(ReducedOpeningProof<F, PCS, ProofTranscript>),
     SumcheckSwitchIndex(usize),
     RamK(usize),
 }
@@ -85,7 +97,7 @@ pub struct StateManager<
     PCS: CommitmentScheme<Field = F>,
 > {
     pub transcript: Rc<RefCell<ProofTranscript>>,
-    pub proofs: Rc<RefCell<Proofs<F, ProofTranscript>>>,
+    pub proofs: Rc<RefCell<Proofs<F, PCS, ProofTranscript>>>,
     pub commitments: Rc<RefCell<Option<JoltCommitments<F, PCS>>>>,
     prover_state: Option<ProverState<'a, F, PCS>>,
     verifier_state: Option<VerifierState<F, PCS>>,
@@ -98,7 +110,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         program_data: ProgramData<'a, F, PCS>,
         prover_accumulator: Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>,
         transcript: Rc<RefCell<ProofTranscript>>,
-        proofs: Rc<RefCell<Proofs<F, ProofTranscript>>>,
+        proofs: Rc<RefCell<Proofs<F, PCS, ProofTranscript>>>,
         commitments: Rc<RefCell<Option<JoltCommitments<F, PCS>>>>,
     ) -> Self {
         Self {
@@ -120,7 +132,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         program_data: VerifierProgramData<F, PCS>,
         verifier_accumulator: Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>,
         transcript: Rc<RefCell<ProofTranscript>>,
-        proofs: Rc<RefCell<Proofs<F, ProofTranscript>>>,
+        proofs: Rc<RefCell<Proofs<F, PCS, ProofTranscript>>>,
         commitments: Rc<RefCell<Option<JoltCommitments<F, PCS>>>>,
     ) -> Self {
         Self {

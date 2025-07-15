@@ -13,15 +13,15 @@ use std::io::{Read, Write};
 use std::rc::Rc;
 use std::sync::Arc;
 
-impl<F: JoltField, ProofTranscript: Transcript> std::ops::Deref for Proofs<F, ProofTranscript> {
-    type Target = HashMap<ProofKeys, ProofData<F, ProofTranscript>>;
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> std::ops::Deref for Proofs<F, PCS, ProofTranscript> {
+    type Target = HashMap<ProofKeys, ProofData<F, PCS, ProofTranscript>>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> std::ops::DerefMut for Proofs<F, ProofTranscript> {
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> std::ops::DerefMut for Proofs<F, PCS, ProofTranscript> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
@@ -41,9 +41,10 @@ impl<F: JoltField> std::ops::DerefMut for Claims<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> CanonicalSerialize for ProofData<F, ProofTranscript>
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> CanonicalSerialize for ProofData<F, PCS, ProofTranscript>
 where
     SumcheckInstanceProof<F, ProofTranscript>: CanonicalSerialize,
+    crate::poly::opening_proof::ReducedOpeningProof<F, PCS, ProofTranscript>: CanonicalSerialize,
 {
     fn serialize_with_mode<W: Write>(
         &self,
@@ -67,6 +68,10 @@ where
                 3u8.serialize_with_mode(&mut writer, compress)?;
                 k.serialize_with_mode(writer, compress)
             }
+            ProofData::ReducedOpeningProof(proof) => {
+                4u8.serialize_with_mode(&mut writer, compress)?;
+                proof.serialize_with_mode(writer, compress)
+            }
         }
     }
 
@@ -76,14 +81,16 @@ where
             ProofData::BatchableSumcheckData(proof) => proof.serialized_size(compress),
             ProofData::SumcheckSwitchIndex(index) => index.serialized_size(compress),
             ProofData::RamK(k) => k.serialized_size(compress),
+            ProofData::ReducedOpeningProof(proof) => proof.serialized_size(compress),
         }
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> CanonicalDeserialize
-    for ProofData<F, ProofTranscript>
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> CanonicalDeserialize
+    for ProofData<F, PCS, ProofTranscript>
 where
     SumcheckInstanceProof<F, ProofTranscript>: CanonicalDeserialize,
+    crate::poly::opening_proof::ReducedOpeningProof<F, PCS, ProofTranscript>: CanonicalDeserialize,
 {
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
@@ -104,6 +111,9 @@ where
             3 => Ok(ProofData::RamK(usize::deserialize_with_mode(
                 reader, compress, validate,
             )?)),
+            4 => Ok(ProofData::ReducedOpeningProof(
+                crate::poly::opening_proof::ReducedOpeningProof::deserialize_with_mode(reader, compress, validate)?,
+            )),
             _ => Err(SerializationError::InvalidData),
         }
     }
@@ -141,9 +151,10 @@ where
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> Valid for ProofData<F, ProofTranscript>
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> Valid for ProofData<F, PCS, ProofTranscript>
 where
     SumcheckInstanceProof<F, ProofTranscript>: Valid,
+    crate::poly::opening_proof::ReducedOpeningProof<F, PCS, ProofTranscript>: Valid,
 {
     fn check(&self) -> Result<(), SerializationError> {
         match self {
@@ -151,6 +162,7 @@ where
             ProofData::BatchableSumcheckData(proof) => proof.check(),
             ProofData::SumcheckSwitchIndex(_) => Ok(()),
             ProofData::RamK(_) => Ok(()),
+            ProofData::ReducedOpeningProof(proof) => proof.check(),
         }
     }
 }
@@ -168,6 +180,7 @@ impl CanonicalSerialize for ProofKeys {
             ProofKeys::Stage4Sumcheck => 3u8.serialize_with_mode(&mut writer, compress),
             ProofKeys::RamSumcheckSwitchIndex => 4u8.serialize_with_mode(&mut writer, compress),
             ProofKeys::RamK => 5u8.serialize_with_mode(&mut writer, compress),
+            ProofKeys::ReducedOpeningProof => 6u8.serialize_with_mode(&mut writer, compress),
         }
     }
 
@@ -190,6 +203,7 @@ impl CanonicalDeserialize for ProofKeys {
             3 => Ok(ProofKeys::Stage4Sumcheck),
             4 => Ok(ProofKeys::RamSumcheckSwitchIndex),
             5 => Ok(ProofKeys::RamK),
+            6 => Ok(ProofKeys::ReducedOpeningProof),
             _ => Err(SerializationError::InvalidData),
         }
     }
@@ -311,6 +325,10 @@ impl CanonicalSerialize for OpeningsKeys {
                 31u8.serialize_with_mode(&mut writer, compress)?;
                 idx.serialize_with_mode(&mut writer, compress)
             }
+            OpeningsKeys::OpeningReduction(idx) => {
+                32u8.serialize_with_mode(&mut writer, compress)?;
+                idx.serialize_with_mode(&mut writer, compress)
+            }
         }
     }
 
@@ -325,7 +343,8 @@ impl CanonicalSerialize for OpeningsKeys {
             | OpeningsKeys::LookupTableFlag(idx)
             | OpeningsKeys::RamHammingRa(idx)
             | OpeningsKeys::RamBooleanityRa(idx)
-            | OpeningsKeys::RamRaVirtualization(idx) => size += idx.serialized_size(compress),
+            | OpeningsKeys::RamRaVirtualization(idx)
+            | OpeningsKeys::OpeningReduction(idx) => size += idx.serialized_size(compress),
             _ => {} // No additional data for other variants
         }
         size
@@ -390,6 +409,9 @@ impl CanonicalDeserialize for OpeningsKeys {
                 reader, compress, validate,
             )?)),
             31 => Ok(OpeningsKeys::RamRaVirtualization(
+                usize::deserialize_with_mode(reader, compress, validate)?,
+            )),
+            32 => Ok(OpeningsKeys::OpeningReduction(
                 usize::deserialize_with_mode(reader, compress, validate)?,
             )),
             _ => Err(SerializationError::InvalidData),
@@ -500,9 +522,9 @@ impl Valid for crate::r1cs::inputs::JoltR1CSInputs {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> Valid for Proofs<F, ProofTranscript>
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> Valid for Proofs<F, PCS, ProofTranscript>
 where
-    ProofData<F, ProofTranscript>: Valid,
+    ProofData<F, PCS, ProofTranscript>: Valid,
 {
     fn check(&self) -> Result<(), SerializationError> {
         for key in self.0.keys() {
@@ -517,9 +539,9 @@ where
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> CanonicalSerialize for Proofs<F, ProofTranscript>
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> CanonicalSerialize for Proofs<F, PCS, ProofTranscript>
 where
-    ProofData<F, ProofTranscript>: CanonicalSerialize,
+    ProofData<F, PCS, ProofTranscript>: CanonicalSerialize,
 {
     fn serialize_with_mode<W: Write>(
         &self,
@@ -547,9 +569,9 @@ where
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> CanonicalDeserialize for Proofs<F, ProofTranscript>
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> CanonicalDeserialize for Proofs<F, PCS, ProofTranscript>
 where
-    ProofData<F, ProofTranscript>: CanonicalDeserialize,
+    ProofData<F, PCS, ProofTranscript>: CanonicalDeserialize,
 {
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
