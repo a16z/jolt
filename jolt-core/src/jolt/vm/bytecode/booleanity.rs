@@ -77,8 +77,9 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         F_vec[0] = F::one();
 
         // Compute H (will be used in phase 2)
-        let H: Vec<F> = preprocessing
-            .map_trace_to_pc(trace)
+        let H: Vec<F> = trace
+            .par_iter()
+            .map(|cycle| preprocessing.get_pc(cycle))
             .map(|_pc| F::zero()) // Will be computed during phase 1
             .collect();
         let H = MultilinearPolynomial::from(H);
@@ -203,8 +204,9 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for BooleanitySumcheck<F> {
                 // Compute H using the final F values
                 let preprocessing = self.preprocessing.as_ref().unwrap();
                 let trace = self.trace.as_ref().unwrap();
-                let H_vec: Vec<F> = preprocessing
-                    .map_trace_to_pc(trace)
+                let H_vec: Vec<F> = trace
+                    .par_iter()
+                    .map(|cycle| preprocessing.get_pc(cycle))
                     .map(|pc| prover_state.F[pc as usize])
                     .collect();
                 prover_state.H = MultilinearPolynomial::from(H_vec);

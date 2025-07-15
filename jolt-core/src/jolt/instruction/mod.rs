@@ -73,6 +73,8 @@ pub enum CircuitFlags {
     DoNotUpdateUnexpandedPC,
     /// Is (virtual) advice instruction
     Advice,
+    /// Is noop instruction
+    IsNoop,
 }
 
 pub const NUM_CIRCUIT_FLAGS: usize = CircuitFlags::COUNT;
@@ -114,7 +116,7 @@ macro_rules! define_rv32im_trait_impls {
         impl InstructionLookup<32> for RV32IMInstruction {
             fn lookup_table(&self) -> Option<LookupTables<32>> {
                 match self {
-                    RV32IMInstruction::NoOp(_) => None,
+                    RV32IMInstruction::NoOp => None,
                     $(
                         RV32IMInstruction::$instr(instr) => instr.lookup_table(),
                     )*
@@ -127,7 +129,12 @@ macro_rules! define_rv32im_trait_impls {
         impl InstructionFlags for RV32IMInstruction {
             fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
                 match self {
-                    RV32IMInstruction::NoOp(_) => [false; NUM_CIRCUIT_FLAGS],
+                    RV32IMInstruction::NoOp => {
+                        let mut flags = [false; NUM_CIRCUIT_FLAGS];
+                        flags[CircuitFlags::IsNoop] = true;
+                        flags[CircuitFlags::DoNotUpdateUnexpandedPC] = true;
+                        flags
+                    },
                     $(
                         RV32IMInstruction::$instr(instr) => instr.circuit_flags(),
                     )*
@@ -140,7 +147,7 @@ macro_rules! define_rv32im_trait_impls {
         impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for RV32IMCycle {
             fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
                 match self {
-                    RV32IMCycle::NoOp(_) => None,
+                    RV32IMCycle::NoOp => None,
                     $(
                         RV32IMCycle::$instr(cycle) => cycle.instruction.lookup_table(),
                     )*
@@ -152,7 +159,7 @@ macro_rules! define_rv32im_trait_impls {
         impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RV32IMCycle {
             fn to_instruction_inputs(&self) -> (u64, i64) {
                 match self {
-                    RV32IMCycle::NoOp(_) => (0, 0),
+                    RV32IMCycle::NoOp => (0, 0),
                     $(
                         RV32IMCycle::$instr(cycle) => LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle),
                     )*
@@ -162,7 +169,7 @@ macro_rules! define_rv32im_trait_impls {
 
             fn to_lookup_index(&self) -> u64 {
                 match self {
-                    RV32IMCycle::NoOp(_) => 0,
+                    RV32IMCycle::NoOp => 0,
                     $(
                         RV32IMCycle::$instr(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_index(cycle),
                     )*
@@ -172,7 +179,7 @@ macro_rules! define_rv32im_trait_impls {
 
             fn to_lookup_operands(&self) -> (u64, u64) {
                 match self {
-                    RV32IMCycle::NoOp(_) => (0, 0),
+                    RV32IMCycle::NoOp => (0, 0),
                     $(
                         RV32IMCycle::$instr(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
                     )*
@@ -182,7 +189,7 @@ macro_rules! define_rv32im_trait_impls {
 
             fn to_lookup_output(&self) -> u64 {
                 match self {
-                    RV32IMCycle::NoOp(_) => 0,
+                    RV32IMCycle::NoOp => 0,
                     $(
                         RV32IMCycle::$instr(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_output(cycle),
                     )*

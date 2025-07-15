@@ -258,19 +258,8 @@ where
         // TODO(moodlezoup): Truncate generators
 
         // TODO(JP): Drop padding on number of steps
-        let padded_trace_length = trace_length.next_power_of_two();
-        let padding = padded_trace_length - trace_length;
-        let last_address = trace.last().unwrap().instruction().normalize().address;
-        if padding != 0 {
-            // Pad with NoOps (with sequential addresses) followed by a final JALR
-            trace.extend((0..padding - 1).map(|i| RV32IMCycle::NoOp(last_address + 4 * i)));
-            // Final JALR sets NextUnexpandedPC = 0
-            trace.push(RV32IMCycle::last_jalr(last_address + 4 * (padding - 1)));
-        } else {
-            // Replace last JAL with JALR to set NextUnexpandedPC = 0
-            assert!(matches!(trace.last().unwrap(), RV32IMCycle::JAL(_)));
-            *trace.last_mut().unwrap() = RV32IMCycle::last_jalr(last_address);
-        }
+        let padded_trace_length = (trace_length + 1).next_power_of_two();
+        trace.resize(padded_trace_length, RV32IMCycle::NoOp);
 
         let ram_addresses: Vec<usize> = trace
             .par_iter()

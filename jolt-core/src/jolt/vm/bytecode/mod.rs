@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use crate::dag::stage::{StagedSumcheck, SumcheckStages};
 use crate::dag::state_manager::StateManager;
 use crate::jolt::vm::bytecode::booleanity::BooleanityProof;
-use crate::jolt::vm::bytecode::raf::{RafBytecode, RafEvaluationProof};
+use crate::jolt::vm::bytecode::raf::RafEvaluationProof;
 use crate::jolt::vm::bytecode::read_checking::{ReadCheckingSumcheck, ReadCheckingValTypes};
 use crate::poly::opening_proof::OpeningsKeys;
 use crate::r1cs::inputs::JoltR1CSInputs;
@@ -72,15 +72,12 @@ impl BytecodePreprocessing {
         }
 
         // Bytecode: Prepend a single no-op instruction
-        bytecode.insert(0, RV32IMInstruction::NoOp(0));
+        bytecode.insert(0, RV32IMInstruction::NoOp);
         assert_eq!(virtual_address_map.insert((0, 0), 0), None);
 
         // Bytecode: Pad to nearest power of 2
-        // Get last address
-        let last_address = bytecode.last().unwrap().normalize().address;
         let code_size = bytecode.len().next_power_of_two();
-        let padding = code_size - bytecode.len();
-        bytecode.extend((0..padding).map(|i| RV32IMInstruction::NoOp(last_address + 4 * (i + 1))));
+        bytecode.resize(code_size, RV32IMInstruction::NoOp);
 
         Self {
             code_size,
@@ -89,25 +86,15 @@ impl BytecodePreprocessing {
         }
     }
 
-    pub fn get_pc(&self, cycle: &RV32IMCycle, is_last: bool) -> usize {
-        let instr = cycle.instruction().normalize();
-        if matches!(cycle, tracer::instruction::RV32IMCycle::NoOp(_)) || is_last {
+    pub fn get_pc(&self, cycle: &RV32IMCycle) -> usize {
+        if matches!(cycle, tracer::instruction::RV32IMCycle::NoOp) {
             return 0;
         }
+        let instr = cycle.instruction().normalize();
         *self
             .virtual_address_map
             .get(&(instr.address, instr.virtual_sequence_remaining.unwrap_or(0)))
             .unwrap()
-    }
-
-    pub fn map_trace_to_pc<'a, 'b>(
-        &'b self,
-        trace: &'a [RV32IMCycle],
-    ) -> impl rayon::iter::ParallelIterator<Item = u64> + use<'a, 'b> {
-        let (_, init) = trace.split_last().unwrap();
-        init.par_iter()
-            .map(|cycle| self.get_pc(cycle, false) as u64)
-            .chain(rayon::iter::once(0))
     }
 }
 
@@ -158,7 +145,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
                 let mut result_register: Vec<F> = unsafe_allocate_zero_vec(K);
                 let mut j = chunk_index * chunk_size;
                 for cycle in trace_chunk {
-                    let k = bytecode_preprocessing.get_pc(cycle, j == trace.len() - 1);
+                    let k = bytecode_preprocessing.get_pc(cycle);
                     result[k] += E[j];
                     result_shift[k] += E_shift[j];
                     result_register[k] += E_register[j];
@@ -197,12 +184,12 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         let unbound_ra_poly =
             CommittedPolynomials::BytecodeRa.generate_witness(preprocessing, trace);
 
-        let read_checking_1 = ReadCheckingSumcheck::new_prover(
-            sm,
-            F.clone(),
-            unbound_ra_poly.clone(),
-            ReadCheckingValTypes::Stage1,
-        );
+        // let read_checking_1 = ReadCheckingSumcheck::new_prover(
+        //     sm,
+        //     F.clone(),
+        //     unbound_ra_poly.clone(),
+        //     ReadCheckingValTypes::Stage1,
+        // );
         // let read_checking_2 = ReadCheckingSumcheck::new_prover(
         //     sm,
         //     F_shift.clone(),
@@ -222,7 +209,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         // );
 
         vec![
-            Box::new(read_checking_1),
+            // Box::new(read_checking_1),
             // Box::new(read_checking_2),
             // Box::new(read_checking_3),
             // Box::new(raf),
@@ -233,13 +220,13 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
-        let read_checking_1 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValTypes::Stage1);
+        // let read_checking_1 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValTypes::Stage1);
         // let read_checking_2 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValTypes::Stage2);
         // let read_checking_3 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValTypes::Stage3);
         // let raf = RafBytecode::new_verifier(sm);
 
         vec![
-            Box::new(read_checking_1),
+            // Box::new(read_checking_1),
             // Box::new(read_checking_2),
             // Box::new(read_checking_3),
             // Box::new(raf),
@@ -289,7 +276,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
                 let mut result_shift: Vec<F> = unsafe_allocate_zero_vec(K);
                 let mut j = chunk_index * chunk_size;
                 for cycle in trace_chunk {
-                    let k = bytecode_preprocessing.get_pc(cycle, j == trace.len() - 1);
+                    let k = bytecode_preprocessing.get_pc(cycle);
                     result[k] += E[j];
                     result_shift[k] += E_shift[j];
                     j += 1;

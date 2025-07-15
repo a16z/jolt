@@ -213,11 +213,16 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::UnexpandedPC + 4,
         );
 
-        // if Jump {
+        // if Jump && !NextIsNoop {
         //     assert!(NextUnexpandedPC == LookupOutput)
         // }
-        cs.constrain_eq_conditional(
+        cs.constrain_prod(
             JoltR1CSInputs::OpFlags(CircuitFlags::Jump),
+            1 - JoltR1CSInputs::NextIsNoop,
+            JoltR1CSInputs::ShouldJump,
+        );
+        cs.constrain_eq_conditional(
+            JoltR1CSInputs::ShouldJump,
             JoltR1CSInputs::NextUnexpandedPC,
             JoltR1CSInputs::LookupOutput,
         );
@@ -236,7 +241,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::UnexpandedPC + JoltR1CSInputs::Imm,
         );
 
-        // if !(ShouldBranch || Jump) {
+        // if !(ShouldBranch || Jump || IsNoop) {
         //     if DoNotUpdatePC {
         //         assert!(NextUnexpandedPC == UnexpandedPC)
         //     } else {
@@ -244,12 +249,12 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         //     }
         // }
         // Note that Branch and Jump instructions are mutually exclusive
-        cs.constrain_eq_conditional(
-            1 - JoltR1CSInputs::ShouldBranch - JoltR1CSInputs::OpFlags(CircuitFlags::Jump),
-            JoltR1CSInputs::NextUnexpandedPC,
-            JoltR1CSInputs::UnexpandedPC + 4
-                - 4 * JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC),
-        );
+        // cs.constrain_eq_conditional(
+        //     1 - JoltR1CSInputs::ShouldBranch - JoltR1CSInputs::ShouldJump,
+        //     JoltR1CSInputs::NextUnexpandedPC,
+        //     JoltR1CSInputs::UnexpandedPC + 4
+        //         - 4 * JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC),
+        // );
 
         // if Inline {
         //     assert!(NextPC == PC + 1)
