@@ -1,9 +1,12 @@
 use std::collections::BTreeMap;
 
-use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
-use crate::subprotocols::sumcheck::CacheSumcheckOpenings;
+use crate::dag::stage::{StagedSumcheck, SumcheckStages};
+use crate::dag::state_manager::StateManager;
 use crate::jolt::vm::bytecode::booleanity::BooleanityProof;
-use crate::jolt::vm::bytecode::raf::RafEvaluationProof;
+use crate::jolt::vm::bytecode::raf::{RafBytecode, RafEvaluationProof};
+use crate::jolt::vm::bytecode::read_checking::{ReadCheckingSumcheck, ReadCheckingValTypes};
+use crate::poly::opening_proof::OpeningsKeys;
+use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::{
     field::JoltField,
     jolt::{
@@ -37,7 +40,7 @@ pub mod read_checking;
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BytecodePreprocessing {
     pub code_size: usize,
-    bytecode: Vec<RV32IMInstruction>,
+    pub bytecode: Vec<RV32IMInstruction>,
     /// Maps the memory address of each instruction in the bytecode to its "virtual" address.
     /// See Section 6.1 of the Jolt paper, "Reflecting the program counter". The virtual address
     /// is the one used to keep track of the next (potentially virtual) instruction to execute.
@@ -105,6 +108,145 @@ impl BytecodePreprocessing {
         init.par_iter()
             .map(|cycle| self.get_pc(cycle, false) as u64)
             .chain(rayon::iter::once(0))
+    }
+}
+
+#[derive(Default)]
+pub struct BytecodeDag {}
+
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStages<F, T, PCS>
+    for BytecodeDag
+{
+    fn stage4_prover_instances(
+        &mut self,
+        sm: &mut StateManager<'_, F, T, PCS>,
+    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
+        let (preprocessing, trace, _, _) = sm.get_prover_data();
+        let bytecode_preprocessing = &preprocessing.shared.bytecode;
+        let K = bytecode_preprocessing.bytecode.len().next_power_of_two();
+
+        let r_cycle: Vec<F> = sm
+            .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::Imm))
+            .unwrap()
+            .r
+            .into_iter()
+            .rev()
+            .collect();
+        let r_shift = sm
+            .get_opening_point(OpeningsKeys::PCSumcheckUnexpandedPC)
+            .unwrap()
+            .r;
+        let r_register = sm
+            .get_opening_point(OpeningsKeys::RegistersValEvaluationWa)
+            .unwrap()
+            .r;
+
+        let E: Vec<F> = EqPolynomial::evals(&r_cycle);
+        let E_shift: Vec<F> = EqPolynomial::evals(&r_shift);
+        let E_register: Vec<F> = EqPolynomial::evals(&r_register);
+
+        let span = tracing::span!(tracing::Level::INFO, "compute F");
+        let _guard = span.enter();
+
+        let num_chunks = rayon::current_num_threads()
+            .next_power_of_two()
+            .min(trace.len());
+        let chunk_size = (trace.len() / num_chunks).max(1);
+        let (F, F_shift, F_register): (Vec<_>, Vec<_>, Vec<_>) = trace
+            .par_chunks(chunk_size)
+            .enumerate()
+            .map(|(chunk_index, trace_chunk)| {
+                let mut result: Vec<F> = unsafe_allocate_zero_vec(K);
+                let mut result_shift: Vec<F> = unsafe_allocate_zero_vec(K);
+                let mut result_register: Vec<F> = unsafe_allocate_zero_vec(K);
+                let mut j = chunk_index * chunk_size;
+                for cycle in trace_chunk {
+                    let k = bytecode_preprocessing.get_pc(cycle, j == trace.len() - 1);
+                    result[k] += E[j];
+                    result_shift[k] += E_shift[j];
+                    result_register[k] += E_register[j];
+                    j += 1;
+                }
+                (result, result_shift, result_register)
+            })
+            .reduce(
+                || {
+                    (
+                        unsafe_allocate_zero_vec(K),
+                        unsafe_allocate_zero_vec(K),
+                        unsafe_allocate_zero_vec(K),
+                    )
+                },
+                |(mut running, mut running_shift, mut running_register),
+                 (new, new_shift, new_register)| {
+                    running
+                        .par_iter_mut()
+                        .zip(new.into_par_iter())
+                        .for_each(|(x, y)| *x += y);
+                    running_shift
+                        .par_iter_mut()
+                        .zip(new_shift.into_par_iter())
+                        .for_each(|(x, y)| *x += y);
+                    running_register
+                        .par_iter_mut()
+                        .zip(new_register.into_par_iter())
+                        .for_each(|(x, y)| *x += y);
+                    (running, running_shift, running_register)
+                },
+            );
+        drop(_guard);
+        drop(span);
+
+        let unbound_ra_poly =
+            CommittedPolynomials::BytecodeRa.generate_witness(preprocessing, trace);
+
+        let read_checking_1 = ReadCheckingSumcheck::new_prover(
+            sm,
+            F.clone(),
+            unbound_ra_poly.clone(),
+            ReadCheckingValTypes::Stage1,
+        );
+        // let read_checking_2 = ReadCheckingSumcheck::new_prover(
+        //     sm,
+        //     F_shift.clone(),
+        //     unbound_ra_poly.clone(),
+        //     ReadCheckingValTypes::Stage2,
+        // );
+        // let read_checking_3 = ReadCheckingSumcheck::new_prover(
+        //     sm,
+        //     F_register,
+        //     unbound_ra_poly,
+        //     ReadCheckingValTypes::Stage3,
+        // );
+        // let raf = RafBytecode::new_prover(
+        //     sm,
+        //     MultilinearPolynomial::from(F),
+        //     MultilinearPolynomial::from(F_shift),
+        // );
+
+        vec![
+            Box::new(read_checking_1),
+            // Box::new(read_checking_2),
+            // Box::new(read_checking_3),
+            // Box::new(raf),
+        ]
+    }
+
+    fn stage4_verifier_instances(
+        &mut self,
+        sm: &mut StateManager<'_, F, T, PCS>,
+    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
+        let read_checking_1 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValTypes::Stage1);
+        // let read_checking_2 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValTypes::Stage2);
+        // let read_checking_3 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValTypes::Stage3);
+        // let raf = RafBytecode::new_verifier(sm);
+
+        vec![
+            Box::new(read_checking_1),
+            // Box::new(read_checking_2),
+            // Box::new(read_checking_3),
+            // Box::new(raf),
+        ]
     }
 }
 

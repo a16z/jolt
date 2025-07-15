@@ -3,6 +3,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::jolt::vm::bytecode::BytecodePreprocessing;
+use crate::poly::opening_proof::{OpeningPoint, VerifierOpeningAccumulator, BIG_ENDIAN};
 use crate::subprotocols::sumcheck::CacheSumcheckOpenings;
 use crate::utils::errors::ProofVerifyError;
 use crate::{
@@ -250,6 +251,7 @@ where
     fn cache_openings_prover(
         &mut self,
         _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         debug_assert!(self.ra_claim_prime.is_none());
         let prover_state = self
@@ -258,6 +260,14 @@ where
             .expect("Prover state not initialized");
 
         self.ra_claim_prime = Some(prover_state.H.final_sumcheck_claim());
+    }
+    
+    fn cache_openings_verifier(
+        &mut self,
+        _accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) {
+        todo!()
     }
 }
 

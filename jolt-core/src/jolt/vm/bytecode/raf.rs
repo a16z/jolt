@@ -1,8 +1,14 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::dag::stage::StagedSumcheck;
+use crate::dag::state_manager::StateManager;
 use crate::jolt::vm::bytecode::BytecodePreprocessing;
 use crate::poly::identity_poly::IdentityPolynomial;
+use crate::poly::opening_proof::{
+    OpeningPoint, OpeningsKeys, VerifierOpeningAccumulator, BIG_ENDIAN,
+};
+use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::subprotocols::sumcheck::CacheSumcheckOpenings;
 use crate::utils::errors::ProofVerifyError;
 use crate::{
@@ -28,30 +34,32 @@ struct RafBytecodeProverState<F: JoltField> {
 }
 
 pub struct RafBytecode<F: JoltField> {
-    /// Input claim: raf_claim + challenge * raf_claim_shift
-    input_claim: F,
-    /// Challenge value shared by prover and verifier
-    challenge: F,
-    /// K value shared by prover and verifier
+    raf_claim: F,
+    raf_shift_claim: F,
+    /// Batching challenge
+    gamma: F,
     K: usize,
     /// Prover state
     prover_state: Option<RafBytecodeProverState<F>>,
-    /// Cached ra claims after sumcheck completes
+    /// Ra claims, set only by verifier
     ra_claims: Option<(F, F)>,
 }
 
 impl<F: JoltField> RafBytecode<F> {
-    pub fn new(
-        input_claim: F,
+    pub fn new_prover(
+        sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         ra_poly: MultilinearPolynomial<F>,
         ra_poly_shift: MultilinearPolynomial<F>,
-        int_poly: IdentityPolynomial<F>,
-        challenge: F,
-        K: usize,
     ) -> Self {
+        let K = sm.get_prover_data().0.shared.bytecode.bytecode.len();
+        let int_poly = IdentityPolynomial::new(K.log_2());
+        let gamma: F = sm.get_transcript().borrow_mut().challenge_scalar();
+        let raf_claim = sm.get_spartan_z(JoltR1CSInputs::PC);
+        let raf_shift_claim = sm.get_opening(OpeningsKeys::PCSumcheckPC);
         Self {
-            input_claim,
-            challenge,
+            raf_claim,
+            raf_shift_claim,
+            gamma,
             K,
             prover_state: Some(RafBytecodeProverState {
                 ra_poly,
@@ -62,13 +70,24 @@ impl<F: JoltField> RafBytecode<F> {
         }
     }
 
-    pub fn new_verifier(input_claim: F, challenge: F, K: usize) -> Self {
+    pub fn new_verifier(
+        sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
+    ) -> Self {
+        let raf_claim = sm.get_spartan_z(JoltR1CSInputs::PC);
+        let raf_shift_claim = sm.get_opening(OpeningsKeys::PCSumcheckPC);
+        let gamma = sm.get_transcript().borrow_mut().challenge_scalar();
+        let K = sm.get_verifier_data().0.shared.bytecode.bytecode.len();
+        let ra_claims = (
+            sm.get_opening(OpeningsKeys::BytecodeStage1Ra),
+            sm.get_opening(OpeningsKeys::BytecodeStage2Ra),
+        );
         Self {
-            input_claim,
-            challenge,
+            raf_claim,
+            raf_shift_claim,
+            gamma,
             K,
             prover_state: None,
-            ra_claims: None,
+            ra_claims: Some(ra_claims),
         }
     }
 }
@@ -83,7 +102,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for RafBytecode<F> {
     }
 
     fn input_claim(&self) -> F {
-        self.input_claim
+        self.raf_claim + self.gamma * self.raf_shift_claim
     }
 
     fn compute_prover_message(&mut self, _round: usize) -> Vec<F> {
@@ -108,8 +127,8 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for RafBytecode<F> {
                         .sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
 
                 [
-                    (ra_evals[0] + self.challenge * ra_evals_shift[0]) * int_evals[0],
-                    (ra_evals[1] + self.challenge * ra_evals_shift[1]) * int_evals[1],
+                    (ra_evals[0] + self.gamma * ra_evals_shift[0]) * int_evals[0],
+                    (ra_evals[1] + self.gamma * ra_evals_shift[1]) * int_evals[1],
                 ]
             })
             .reduce(
@@ -159,8 +178,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for RafBytecode<F> {
 
         let int_eval = IdentityPolynomial::new(self.K.log_2()).evaluate(r);
 
-        // Verify sumcheck_claim = int(r) * (ra_claim + challenge * ra_claim_shift)
-        int_eval * (*ra_claim + self.challenge * *ra_claim_shift)
+        int_eval * (*ra_claim + self.gamma * *ra_claim_shift)
     }
 }
 
@@ -172,19 +190,27 @@ where
     fn cache_openings_prover(
         &mut self,
         _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        debug_assert!(self.ra_claims.is_none());
-        let prover_state = self
-            .prover_state
-            .as_ref()
-            .expect("Prover state not initialized");
+        // We don't need to cache claims since the read-checking sumcheck
+        // already cached them, and since we are in the same batch,
+        // claims are exactly the same
+        // TODO: Add asserts
+    }
 
-        let ra_claim = prover_state.ra_poly.final_sumcheck_claim();
-        let ra_claim_shift = prover_state.ra_poly_shift.final_sumcheck_claim();
-
-        self.ra_claims = Some((ra_claim, ra_claim_shift));
+    fn cache_openings_verifier(
+        &mut self,
+        _accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) {
+        // We don't need to cache claims since the read-checking sumcheck
+        // already cached them, and since we are in the same batch,
+        // claims are exactly the same
+        // TODO: Add asserts
     }
 }
+
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS> for RafBytecode<F> {}
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct RafEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
@@ -199,57 +225,59 @@ impl<F: JoltField, ProofTranscript: Transcript> RafEvaluationProof<F, ProofTrans
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "RafEvaluationProof::prove")]
     pub fn prove(
-        preprocessing: &BytecodePreprocessing,
-        trace: &[RV32IMCycle],
-        ra_poly: MultilinearPolynomial<F>,
-        ra_poly_shift: MultilinearPolynomial<F>,
-        r_cycle: &[F],
-        r_shift: &[F],
-        challenge: F,
-        transcript: &mut ProofTranscript,
+        _preprocessing: &BytecodePreprocessing,
+        _trace: &[RV32IMCycle],
+        _ra_poly: MultilinearPolynomial<F>,
+        _ra_poly_shift: MultilinearPolynomial<F>,
+        _r_cycle: &[F],
+        _r_shift: &[F],
+        _challenge: F,
+        _transcript: &mut ProofTranscript,
     ) -> Self {
-        let K = preprocessing.bytecode.len().next_power_of_two();
-        let int_poly = IdentityPolynomial::new(K.log_2());
-
-        // TODO: Propagate raf claim from Spartan
-        let raf_evals = preprocessing.map_trace_to_pc(trace).collect::<Vec<u64>>();
-        let raf_poly = MultilinearPolynomial::from(raf_evals);
-        let raf_claim = raf_poly.evaluate(r_cycle);
-        let raf_claim_shift = raf_poly.evaluate(r_shift);
-        let input_claim = raf_claim + challenge * raf_claim_shift;
-
-        let mut raf_sumcheck =
-            RafBytecode::new(input_claim, ra_poly, ra_poly_shift, int_poly, challenge, K);
-
-        let (sumcheck_proof, _r_address) = raf_sumcheck.prove_single(transcript);
-
-        let (ra_claim, ra_claim_shift) = raf_sumcheck
-            .ra_claims
-            .expect("ra_claims should be set after prove_single");
-
-        Self {
-            sumcheck_proof,
-            ra_claim,
-            ra_claim_shift,
-            raf_claim,
-            raf_claim_shift,
-        }
+        todo!()
+        // let K = preprocessing.bytecode.len().next_power_of_two();
+        // let int_poly = IdentityPolynomial::new(K.log_2());
+        //
+        // // TODO: Propagate raf claim from Spartan
+        // let raf_evals = preprocessing.map_trace_to_pc(trace).collect::<Vec<u64>>();
+        // let raf_poly = MultilinearPolynomial::from(raf_evals);
+        // let raf_claim = raf_poly.evaluate(r_cycle);
+        // let raf_claim_shift = raf_poly.evaluate(r_shift);
+        // let input_claim = raf_claim + challenge * raf_claim_shift;
+        //
+        // let mut raf_sumcheck =
+        //     RafBytecode::new_prover(input_claim, ra_poly, ra_poly_shift, challenge, K);
+        //
+        // let (sumcheck_proof, _r_address) = raf_sumcheck.prove_single(transcript);
+        //
+        // let (ra_claim, ra_claim_shift) = raf_sumcheck
+        //     .ra_claims
+        //     .expect("ra_claims should be set after prove_single");
+        //
+        // Self {
+        //     sumcheck_proof,
+        //     ra_claim,
+        //     ra_claim_shift,
+        //     raf_claim,
+        //     raf_claim_shift,
+        // }
     }
 
     pub fn verify(
         &self,
-        K: usize,
-        challenge: F,
-        transcript: &mut ProofTranscript,
+        _K: usize,
+        _challenge: F,
+        _transcript: &mut ProofTranscript,
     ) -> Result<Vec<F>, ProofVerifyError> {
-        let input_claim = self.raf_claim + challenge * self.raf_claim_shift;
-
-        let mut raf_sumcheck = RafBytecode::new_verifier(input_claim, challenge, K);
-
-        raf_sumcheck.ra_claims = Some((self.ra_claim, self.ra_claim_shift));
-
-        let r_raf_sumcheck = raf_sumcheck.verify_single(&self.sumcheck_proof, transcript)?;
-
-        Ok(r_raf_sumcheck)
+        todo!()
+        // let input_claim = self.raf_claim + challenge * self.raf_claim_shift;
+        //
+        // let mut raf_sumcheck = RafBytecode::new_verifier(input_claim, challenge, K);
+        //
+        // raf_sumcheck.ra_claims = Some((self.ra_claim, self.ra_claim_shift));
+        //
+        // let r_raf_sumcheck = raf_sumcheck.verify_single(&self.sumcheck_proof, transcript)?;
+        //
+        // Ok(r_raf_sumcheck)
     }
 }

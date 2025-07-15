@@ -13,7 +13,7 @@ use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::utils::transcript::Transcript;
 use tracer::emulator::memory::Memory;
-use tracer::instruction::RV32IMCycle;
+use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
 use tracer::JoltDevice;
 
 #[derive(Hash, PartialEq, Eq, Clone, Debug)]
@@ -185,6 +185,26 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             )
         } else {
             panic!("Verifier state not initialized");
+        }
+    }
+
+    pub fn get_bytecode(&self) -> &[RV32IMInstruction] {
+        if let Some(ref verifier_state) = self.verifier_state {
+            &verifier_state
+                .preprocessing
+                .expect("Preprocessing not set")
+                .shared
+                .bytecode
+                .bytecode
+        } else if let Some(ref prover_state) = self.prover_state {
+            &prover_state
+                .preprocessing
+                .expect("Preprocessing not set")
+                .shared
+                .bytecode
+                .bytecode
+        } else {
+            panic!("Neither prover nor verifier state initialized");
         }
     }
 

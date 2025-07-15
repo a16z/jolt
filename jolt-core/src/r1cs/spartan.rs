@@ -876,12 +876,29 @@ where
             unexpanded_pc_eval,
         );
         accumulator.borrow_mut().append_virtual(
-            OpeningsKeys::PCSumcheckNextPC,
+            OpeningsKeys::PCSumcheckPC,
             OpeningPoint::new(prover_state.r_cycle.clone()),
             pc_eval,
         );
 
         self.cached_claims = Some((unexpanded_pc_eval, pc_eval));
+    }
+
+     fn cache_openings_verifier(
+        &mut self,
+        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) {
+        let accumulator = accumulator.expect("accumulator is needed");
+        
+        accumulator.borrow_mut().populate_claim_opening(
+            OpeningsKeys::PCSumcheckUnexpandedPC,
+            opening_point.clone(),
+        );
+        accumulator.borrow_mut().populate_claim_opening(
+            OpeningsKeys::PCSumcheckPC,
+            opening_point,
+        );
     }
 }
 
@@ -1263,7 +1280,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             .get_opening(OpeningsKeys::PCSumcheckUnexpandedPC);
         let pc_eval_at_shift_r = accumulator
             .borrow()
-            .get_opening(OpeningsKeys::PCSumcheckNextPC);
+            .get_opening(OpeningsKeys::PCSumcheckPC);
 
         let pc_sumcheck = PCSumcheck::<F>::new_verifier(
             shift_sumcheck_claim,

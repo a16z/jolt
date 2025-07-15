@@ -133,7 +133,7 @@ pub enum OpeningsKeys {
     OuterSumcheckBz,                // Bz claim from outer sumcheck
     OuterSumcheckCz,                // Cz claim from outer sumcheck
     PCSumcheckUnexpandedPC,         // UnexpandedPC evaluation from PC sumcheck
-    PCSumcheckNextPC,               // PC evaluation from PC sumcheck
+    PCSumcheckPC,                   // PC evaluation from PC sumcheck
     RegistersReadWriteVal,          // Val claim from registers read/write checking
     RegistersReadWriteRs1Ra,        // Rs1 claim from registers read/write checking
     RegistersReadWriteRs2Ra,        // Rs2 claim from registers read/write checking
@@ -154,6 +154,9 @@ pub enum OpeningsKeys {
     RamHammingRa(usize),            // ra_i openings for RAM Hamming weight
     RamBooleanityRa(usize),         // ra_i openings for RAM booleanity
     RamRaVirtualization(usize),     // ra_i openings for RAM ra virtualization
+    BytecodeStage1Ra,
+    BytecodeStage2Ra,
+    BytecodeStage3Ra,
     OpeningReduction(usize),        // claims from the opening proof reduction sumcheck
 }
 

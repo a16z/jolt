@@ -1,6 +1,7 @@
 use crate::dag::stage::{StagedSumcheck, SumcheckStages};
 use crate::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::field::JoltField;
+use crate::jolt::vm::bytecode::BytecodeDag;
 use crate::jolt::vm::instruction_lookups::LookupsDag;
 use crate::jolt::vm::ram::RamDag;
 use crate::jolt::vm::registers::RegistersDag;
@@ -88,6 +89,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         let mut lookups_dag = LookupsDag::<F>::default();
         let mut registers_dag = RegistersDag::default();
         let mut ram_dag = RamDag::new_prover(&self.prover_state_manager);
+        let mut bytecode_dag = BytecodeDag::default();
         spartan_dag.stage1_prove(&mut self.prover_state_manager)?;
 
         drop(_guard);
@@ -165,6 +167,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
 
         let mut stage4_instances: Vec<_> = std::iter::empty()
             .chain(ram_dag.stage4_prover_instances(&mut self.prover_state_manager))
+            .chain(bytecode_dag.stage4_prover_instances(&mut self.prover_state_manager))
             .collect();
         let stage4_instances_mut: Vec<&mut dyn BatchableSumcheckInstance<F>> = stage4_instances
             .iter_mut()
@@ -239,6 +242,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         let mut lookups_dag = LookupsDag::<F>::default();
         let mut registers_dag = RegistersDag::default();
         let mut ram_dag = RamDag::new_verifier(&self.verifier_state_manager);
+        let mut bytecode_dag = BytecodeDag::default();
         spartan_dag.stage1_verify(&mut self.verifier_state_manager)?;
 
         // Stage 2:
@@ -304,7 +308,6 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             stage3_instances_ref,
             &mut *transcript.borrow_mut(),
         )?;
-
         drop(proofs);
 
         let stage3_instances_mut: Vec<&mut dyn StagedSumcheck<F, PCS>> = stage3_instances
@@ -317,6 +320,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         // Stage 4:
         let mut stage4_instances: Vec<_> = std::iter::empty()
             .chain(ram_dag.stage4_verifier_instances(&mut self.verifier_state_manager))
+            .chain(bytecode_dag.stage4_verifier_instances(&mut self.verifier_state_manager))
             .collect();
         let stage4_instances_ref: Vec<&dyn BatchableSumcheckInstance<F>> = stage4_instances
             .iter()
