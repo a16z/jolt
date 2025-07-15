@@ -49,14 +49,14 @@ pub enum CommittedPolynomials {
     InstructionRa(usize),
 }
 
-pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 18] = [
+pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 17] = [
     CommittedPolynomials::LeftInstructionInput,
     CommittedPolynomials::RightInstructionInput,
     CommittedPolynomials::Product,
     CommittedPolynomials::WriteLookupOutputToRD,
     CommittedPolynomials::WritePCtoRD,
     CommittedPolynomials::ShouldBranch,
-    CommittedPolynomials::BytecodeRa,
+    // CommittedPolynomials::BytecodeRa,
     CommittedPolynomials::RamRa(0),
     CommittedPolynomials::RdInc,
     CommittedPolynomials::RamInc,

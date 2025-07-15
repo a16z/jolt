@@ -254,7 +254,7 @@ where
     PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 {
-    prove_example_dag::<u32, PCS, F, ProofTranscript>("fibonacci-guest", &50000u32)
+    prove_example_dag::<u32, PCS, F, ProofTranscript>("fibonacci-guest", &600000u32)
 }
 
 fn sha2<F, PCS, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
@@ -374,7 +374,7 @@ where
             init_memory_state,
             1 << 18,
             1 << 18,
-            1 << 20,
+            1 << 24,
         );
 
         // Setup trace length and padding (similar to DAG test)
@@ -434,10 +434,8 @@ where
         );
 
         // We only need the prover state manager for benchmarking
-        let verifier_accumulator_pre_wrap = crate::poly::opening_proof::VerifierOpeningAccumulator::<
-            F,
-            PCS,
-        >::new();
+        let verifier_accumulator_pre_wrap =
+            crate::poly::opening_proof::VerifierOpeningAccumulator::<F, PCS>::new();
         let verifier_accumulator = Rc::new(RefCell::new(verifier_accumulator_pre_wrap));
         let verifier_transcript = Rc::new(RefCell::new(ProofTranscript::new(b"Jolt")));
         let verifier_state_manager = state_manager::StateManager::new_verifier(

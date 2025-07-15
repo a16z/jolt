@@ -136,11 +136,11 @@ harness = false
 
 [[bench]]
 name = "poly_bench"
-harness= false
+harness = false
 
 [[bench]]
 name = "compact_poly_bench"
-harness= false
+harness = false
 
 [lib]
 name = "jolt_core"

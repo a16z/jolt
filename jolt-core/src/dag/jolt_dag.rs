@@ -55,10 +55,11 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             .borrow_mut()
             .insert(ProofKeys::RamK, ProofData::RamK(ram_K));
 
+        println!("bytecode size: {}", preprocessing.shared.bytecode.code_size);
         let K = [
-            preprocessing.shared.bytecode.code_size,
-            ram_K,
-            1 << 16, // K for instruction lookups
+            // preprocessing.shared.bytecode.code_size,
+            // ram_K,
+            1 << 8, // K for instruction lookups
         ]
         .into_iter()
         .max()

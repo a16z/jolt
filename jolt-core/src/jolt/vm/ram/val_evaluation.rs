@@ -301,7 +301,6 @@ where
             let wa_opening_point =
                 OpeningPoint::new([r_address.r.as_slice(), r_cycle_prime.r.as_slice()].concat());
 
-            // TODO(moodlezoup): append_dense
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RamValEvaluationWa,
                 wa_opening_point,
