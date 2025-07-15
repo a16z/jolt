@@ -249,6 +249,45 @@ impl Iterator for LazyTraceIterator {
     }
 }
 
+// #[tracing::instrument(skip_all)]
+// pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>) {
+//     let obj = object::File::parse(elf).unwrap();
+
+//     let sections = obj
+//         .sections()
+//         .filter(|s| s.address() >= RAM_START_ADDRESS)
+//         .collect::<Vec<_>>();
+
+//     let mut instructions = Vec::new();
+//     let mut data = Vec::new();
+
+//     for section in sections {
+//         let raw_data = section.data().unwrap();
+
+//         if let SectionKind::Text = section.kind() {
+//             for (chunk, word) in raw_data.chunks(4).enumerate() {
+//                 let word = u32::from_le_bytes(word.try_into().unwrap());
+//                 let address = chunk as u64 * 4 + section.address();
+
+//                 if let Ok(inst) = RV32IMInstruction::decode(word, address) {
+//                     instructions.push(inst);
+//                     continue;
+//                 }
+//                 // Unrecognized instruction, or from a ReadOnlyData section
+//                 eprintln!("Warning: word: {word:08X} at address: {address:08X} is not recognized as a valid instruction.");
+//                 instructions.push(RV32IMInstruction::UNIMPL);
+//             }
+//         }
+//         let address = section.address();
+//         for (offset, byte) in raw_data.iter().enumerate() {
+//             data.push((address + offset as u64, *byte));
+//         }
+//     }
+
+//     (instructions, data)
+// }
+
+
 #[tracing::instrument(skip_all)]
 pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>) {
     let obj = object::File::parse(elf).unwrap();
@@ -265,17 +304,46 @@ pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>) {
         let raw_data = section.data().unwrap();
 
         if let SectionKind::Text = section.kind() {
-            for (chunk, word) in raw_data.chunks(4).enumerate() {
-                let word = u32::from_le_bytes(word.try_into().unwrap());
-                let address = chunk as u64 * 4 + section.address();
+            let mut i = 0;
+            while i < raw_data.len() {
+                let address = section.address() + i as u64;
+                
+                // Check if we have at least 2 bytes for instruction length detection
+                if i + 1 >= raw_data.len() {
+                    break;
+                }
+                
+                // Read first 2 bytes to determine instruction length
+                let first_halfword = u16::from_le_bytes([raw_data[i], raw_data[i + 1]]);
+                
+                let (word, instruction_length) = if (first_halfword & 0x3) == 0x3 {
+                    // 32-bit instruction (bits [1:0] == 11)
+                    if i + 3 >= raw_data.len() {
+                        // Not enough bytes for 32-bit instruction
+                        break;
+                    }
+                    let word = u32::from_le_bytes([
+                        raw_data[i], 
+                        raw_data[i + 1], 
+                        raw_data[i + 2], 
+                        raw_data[i + 3]
+                    ]);
+                    (word, 4)
+                } else {
+                    // 16-bit compressed instruction (bits [1:0] != 11)
+                    let uncompressed_word = uncompress_instruction(first_halfword as u32);
+                    (uncompressed_word, 2)
+                };
 
                 if let Ok(inst) = RV32IMInstruction::decode(word, address) {
                     instructions.push(inst);
-                    continue;
+                } else {
+                    // Unrecognized instruction, or from a ReadOnlyData section
+                    eprintln!("Warning: word: {word:08X} at address: {address:08X} is not recognized as a valid instruction.");
+                    instructions.push(RV32IMInstruction::UNIMPL);
                 }
-                // Unrecognized instruction, or from a ReadOnlyData section
-                eprintln!("Warning: word: {word:08X} at address: {address:08X} is not recognized as a valid instruction.");
-                instructions.push(RV32IMInstruction::UNIMPL);
+                
+                i += instruction_length;
             }
         }
         let address = section.address();
@@ -294,6 +362,156 @@ fn get_xlen() -> Xlen {
         _ => panic!("Emulator only supports 32 / 64 bit registers."),
     }
 }
+
+fn uncompress_instruction(halfword: u32) -> u32 {
+    let op = halfword & 0x3; // [1:0]
+    let funct3 = (halfword >> 13) & 0x7; // [15:13]
+
+    match op {
+        0 => match funct3 {
+            0 => {
+                // C.ADDI4SPN
+                // addi rd+8, x2, nzuimm
+                let rd = (halfword >> 2) & 0x7; // [4:2]
+                let nzuimm = ((halfword >> 7) & 0x30) | // nzuimm[5:4] <= [12:11]
+                    ((halfword >> 1) & 0x3c0) | // nzuimm{9:6] <= [10:7]
+                    ((halfword >> 4) & 0x4) | // nzuimm[2] <= [6]
+                    ((halfword >> 2) & 0x8); // nzuimm[3] <= [5]
+                                             // nzuimm == 0 is reserved instruction
+                if nzuimm != 0 {
+                    return (nzuimm << 20) | (2 << 15) | ((rd + 8) << 7) | 0x13;
+                }
+            }
+            1 => {
+                // @TODO: Support C.LQ for 128-bit
+                // C.FLD for 32, 64-bit
+                // fld rd+8, offset(rs1+8)
+                let rd = (halfword >> 2) & 0x7; // [4:2]
+                let rs1 = (halfword >> 7) & 0x7; // [9:7]
+                let offset = ((halfword >> 7) & 0x38) | // offset[5:3] <= [12:10]
+                    ((halfword << 1) & 0xc0); // offset[7:6] <= [6:5]
+                return (offset << 20) | ((rs1 + 8) << 15) | (3 << 12) | ((rd + 8) << 7) | 0x7;
+            }
+            2 => {
+                // C.LW
+                // lw rd+8, offset(rs1+8)
+                let rd = (halfword >> 2) & 0x7; // [4:2]
+                let rs1 = (halfword >> 7) & 0x7; // [9:7]
+                let offset = ((halfword >> 7) & 0x38) | // offset[5:3] <= [12:10]
+                    ((halfword >> 4) & 0x4) | // offset[2] <= [6]
+                    ((halfword << 1) & 0x40); // offset[6] <= [5]
+                return (offset << 20) | ((rs1 + 8) << 15) | (2 << 12) | ((rd + 8) << 7) | 0x3;
+            }
+            3 => {
+                // C.LD for 64-bit
+                // ld rd+8, offset(rs1+8)
+                let rd = (halfword >> 2) & 0x7; // [4:2]
+                let rs1 = (halfword >> 7) & 0x7; // [9:7]
+                let offset = ((halfword >> 7) & 0x38) | // offset[5:3] <= [12:10]
+                    ((halfword << 1) & 0xc0); // offset[7:6] <= [6:5]
+                return (offset << 20) | ((rs1 + 8) << 15) | (3 << 12) | ((rd + 8) << 7) | 0x3;
+            }
+            _ => {}
+        }
+        1 => match funct3 {
+            0 => {
+                // C.ADDI
+                // addi rd, rd, nzimm
+                let rd = (halfword >> 7) & 0x1f; // [11:7]
+                let nzimm = ((halfword >> 7) & 0x20) | // nzimm[5] <= [12]
+                    ((halfword >> 2) & 0x1f); // nzimm[4:0] <= [6:2]
+                if rd != 0 {
+                    return (nzimm << 20) | (rd << 15) | (rd << 7) | 0x13;
+                }
+            }
+            1 => {
+                // C.JAL (RV32) / C.ADDIW (RV64)
+                // For RV64, this is C.ADDIW: addiw rd, rd, imm
+                let rd = (halfword >> 7) & 0x1f; // [11:7]
+                let imm = ((halfword >> 7) & 0x20) | // imm[5] <= [12]
+                    ((halfword >> 2) & 0x1f); // imm[4:0] <= [6:2]
+                if rd != 0 {
+                    return (imm << 20) | (rd << 15) | (rd << 7) | 0x1b;
+                }
+            }
+            2 => {
+                // C.LI
+                // addi rd, x0, imm
+                let rd = (halfword >> 7) & 0x1f; // [11:7]
+                let imm = ((halfword >> 7) & 0x20) | // imm[5] <= [12]
+                    ((halfword >> 2) & 0x1f); // imm[4:0] <= [6:2]
+                if rd != 0 {
+                    return (imm << 20) | (rd << 7) | 0x13;
+                }
+            }
+            3 => {
+                let rd = (halfword >> 7) & 0x1f; // [11:7]
+                if rd == 2 {
+                    // C.ADDI16SP
+                    // addi x2, x2, nzimm
+                    let nzimm = ((halfword >> 3) & 0x200) | // nzimm[9] <= [12]
+                        ((halfword >> 2) & 0x10) | // nzimm[4] <= [6]
+                        ((halfword << 1) & 0x40) | // nzimm[6] <= [5]
+                        ((halfword << 4) & 0x180) | // nzimm[8:7] <= [4:3]
+                        ((halfword << 3) & 0x20); // nzimm[5] <= [2]
+                    if nzimm != 0 {
+                        return (nzimm << 20) | (2 << 15) | (2 << 7) | 0x13;
+                    }
+                } else if rd != 0 {
+                    // C.LUI
+                    // lui rd, nzimm
+                    let nzimm = ((halfword >> 7) & 0x20) | // nzimm[5] <= [12]
+                        ((halfword >> 2) & 0x1f); // nzimm[4:0] <= [6:2]
+                    if nzimm != 0 {
+                        return (nzimm << 12) | (rd << 7) | 0x37;
+                    }
+                }
+            }
+            _ => {}
+        }
+        2 => match funct3 {
+            0 => {
+                // C.SLLI
+                // slli rd, rd, shamt
+                let rd = (halfword >> 7) & 0x1f; // [11:7]
+                let shamt = ((halfword >> 7) & 0x20) | // shamt[5] <= [12]
+                    ((halfword >> 2) & 0x1f); // shamt[4:0] <= [6:2]
+                if rd != 0 && shamt != 0 {
+                    return (shamt << 20) | (rd << 15) | (1 << 12) | (rd << 7) | 0x13;
+                }
+            }
+            2 => {
+                // C.LWSP
+                // lw rd, offset(x2)
+                let rd = (halfword >> 7) & 0x1f; // [11:7]
+                let offset = ((halfword >> 4) & 0x3c) | // offset[5:2] <= [12:11]
+                    ((halfword << 2) & 0xc0) | // offset[7:6] <= [6:5]
+                    ((halfword >> 2) & 0x20); // offset[4] <= [3]
+                if rd != 0 {
+                    return (offset << 20) | (2 << 15) | (2 << 12) | (rd << 7) | 0x3;
+                }
+            }
+            3 => {
+                // C.LDSP for 64-bit
+                // ld rd, offset(x2)
+                let rd = (halfword >> 7) & 0x1f; // [11:7]
+                let offset = ((halfword >> 4) & 0x38) | // offset[5:3] <= [12:10]
+                    ((halfword << 2) & 0xc0) | // offset[7:6] <= [6:5]
+                    ((halfword >> 2) & 0x20); // offset[4] <= [3]
+                if rd != 0 {
+                    return (offset << 20) | (2 << 15) | (3 << 12) | (rd << 7) | 0x3;
+                }
+            }
+            _ => {}
+        }
+        _ => {}
+    }
+    
+    // If we get here, it's an unsupported or invalid compressed instruction
+    // Return a NOP instruction
+    0x13 // ADDI x0, x0, 0 (NOP)
+}
+
 
 #[cfg(test)]
 mod test {

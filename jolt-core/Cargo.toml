@@ -37,6 +37,8 @@ icicle = [
     "dep:icicle-bn254",
 ]
 test_incremental = []
+rv32 = []          # 32-bit RISC-V
+rv64 = []          # 64-bit RISC-V
 
 [dependencies]
 ark-bn254 = "0.5.0"
