@@ -12,7 +12,6 @@ use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::r1cs::spartan::SpartanDag;
 use crate::subprotocols::sumcheck::{BatchableSumcheckInstance, BatchedSumcheck};
-use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::Transcript;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
@@ -39,7 +38,11 @@ where
 }
 
 #[cfg(test)]
-pub struct ProverVerificationData<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> {
+pub struct ProverVerificationData<
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+    ProofTranscript: Transcript,
+> {
     pub transcript: ProofTranscript,
     pub accumulator: ProverOpeningAccumulator<F, PCS>,
     pub generators: PCS::ProverSetup,
@@ -61,7 +64,6 @@ impl JoltDAG {
         let padded_trace_length = trace_length.next_power_of_two();
 
         let _guard = {
-
             let ram_addresses: Vec<_> = trace
                 .par_iter()
                 .map(|cycle| {
@@ -89,7 +91,7 @@ impl JoltDAG {
                 .proofs
                 .borrow_mut()
                 .insert(ProofKeys::RamK, ProofData::RamK(ram_K));
-        println!("bytecode size: {}", preprocessing.shared.bytecode.code_size);
+            println!("bytecode size: {}", preprocessing.shared.bytecode.code_size);
 
             _guard
         };
@@ -254,8 +256,7 @@ impl JoltDAG {
     >(
         &mut self,
         proof: JoltDagProof<WORD_SIZE, F, PCS, ProofTranscript>,
-        #[cfg(test)]
-        prover_data: ProverVerificationData<F, PCS, ProofTranscript>,
+        #[cfg(test)] prover_data: ProverVerificationData<F, PCS, ProofTranscript>,
     ) -> Result<(), anyhow::Error> {
         let mut verifier_state_manager: StateManager<F, ProofTranscript, PCS> = proof.into();
         let commitments = verifier_state_manager.get_commitments();
@@ -269,7 +270,7 @@ impl JoltDAG {
             let verifier_transcript = verifier_state_manager.get_transcript().borrow().clone();
             let mut prover_transcript = prover_data.transcript;
             prover_transcript.compare_to(verifier_transcript);
-            
+
             // Compare accumulators
             verifier_state_manager
                 .get_verifier_accumulator()
@@ -291,7 +292,8 @@ impl JoltDAG {
         // Stage 2:
         let mut stage2_instances: Vec<_> = vec![];
         stage2_instances.extend(spartan_dag.stage2_verifier_instances(&mut verifier_state_manager));
-        stage2_instances.extend(registers_dag.stage2_verifier_instances(&mut verifier_state_manager));
+        stage2_instances
+            .extend(registers_dag.stage2_verifier_instances(&mut verifier_state_manager));
         stage2_instances.extend(lookups_dag.stage2_verifier_instances(&mut verifier_state_manager));
         stage2_instances.extend(ram_dag.stage2_verifier_instances(&mut verifier_state_manager));
         let stage2_instances_ref: Vec<&dyn BatchableSumcheckInstance<F>> = stage2_instances
@@ -327,7 +329,8 @@ impl JoltDAG {
         // Stage 3:
         let mut stage3_instances: Vec<_> = vec![];
         stage3_instances.extend(spartan_dag.stage3_verifier_instances(&mut verifier_state_manager));
-        stage3_instances.extend(registers_dag.stage3_verifier_instances(&mut verifier_state_manager));
+        stage3_instances
+            .extend(registers_dag.stage3_verifier_instances(&mut verifier_state_manager));
         stage3_instances.extend(lookups_dag.stage3_verifier_instances(&mut verifier_state_manager));
         stage3_instances.extend(ram_dag.stage3_verifier_instances(&mut verifier_state_manager));
         let stage3_instances_ref: Vec<&dyn BatchableSumcheckInstance<F>> = stage3_instances

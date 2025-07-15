@@ -36,7 +36,9 @@ pub struct Proofs<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscrip
     pub HashMap<ProofKeys, ProofData<F, PCS, ProofTranscript>>,
 );
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> Proofs<F, PCS, ProofTranscript> {
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript>
+    Proofs<F, PCS, ProofTranscript>
+{
     pub fn insert(&mut self, key: ProofKeys, value: ProofData<F, PCS, ProofTranscript>) {
         self.0.insert(key, value);
     }

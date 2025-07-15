@@ -97,7 +97,10 @@ mod tests {
         };
 
         let prover_verification_data = {
-            let prover_accumulator = prover_state_manager.get_prover_accumulator().borrow().clone();
+            let prover_accumulator = prover_state_manager
+                .get_prover_accumulator()
+                .borrow()
+                .clone();
             let prover_transcript = prover_state_manager.get_transcript().borrow().clone();
             let (preprocessing, _, _, _) = prover_state_manager.get_prover_data();
             jolt_dag::ProverVerificationData {
@@ -113,7 +116,6 @@ mod tests {
         ) {
             panic!("DAG verify failed: {e}");
         }
-
 
         println!("DAG fib_e2e OK!");
     }

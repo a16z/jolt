@@ -695,7 +695,7 @@ where
     ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
         println!("# instances: {}", self.openings.len());
         self.openings.truncate(1); // @TODO(markosg04) fib_dag only passes with this right now
-        // TODO(moodlezoup): surely there's a better way to do this
+                                   // TODO(moodlezoup): surely there's a better way to do this
         let unbound_polys = self
             .openings
             .iter()

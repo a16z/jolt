@@ -13,7 +13,9 @@ use std::io::{Read, Write};
 use std::rc::Rc;
 use std::sync::Arc;
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> std::ops::Deref for Proofs<F, PCS, ProofTranscript> {
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> std::ops::Deref
+    for Proofs<F, PCS, ProofTranscript>
+{
     type Target = HashMap<ProofKeys, ProofData<F, PCS, ProofTranscript>>;
 
     fn deref(&self) -> &Self::Target {
@@ -21,7 +23,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> std::ops::DerefMut for Proofs<F, PCS, ProofTranscript> {
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> std::ops::DerefMut
+    for Proofs<F, PCS, ProofTranscript>
+{
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
@@ -41,7 +45,8 @@ impl<F: JoltField> std::ops::DerefMut for Claims<F> {
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> CanonicalSerialize for ProofData<F, PCS, ProofTranscript>
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> CanonicalSerialize
+    for ProofData<F, PCS, ProofTranscript>
 where
     SumcheckInstanceProof<F, ProofTranscript>: CanonicalSerialize,
     crate::poly::opening_proof::ReducedOpeningProof<F, PCS, ProofTranscript>: CanonicalSerialize,
@@ -86,8 +91,8 @@ where
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> CanonicalDeserialize
-    for ProofData<F, PCS, ProofTranscript>
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript>
+    CanonicalDeserialize for ProofData<F, PCS, ProofTranscript>
 where
     SumcheckInstanceProof<F, ProofTranscript>: CanonicalDeserialize,
     crate::poly::opening_proof::ReducedOpeningProof<F, PCS, ProofTranscript>: CanonicalDeserialize,
@@ -112,7 +117,9 @@ where
                 reader, compress, validate,
             )?)),
             4 => Ok(ProofData::ReducedOpeningProof(
-                crate::poly::opening_proof::ReducedOpeningProof::deserialize_with_mode(reader, compress, validate)?,
+                crate::poly::opening_proof::ReducedOpeningProof::deserialize_with_mode(
+                    reader, compress, validate,
+                )?,
             )),
             _ => Err(SerializationError::InvalidData),
         }
@@ -151,7 +158,8 @@ where
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> Valid for ProofData<F, PCS, ProofTranscript>
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> Valid
+    for ProofData<F, PCS, ProofTranscript>
 where
     SumcheckInstanceProof<F, ProofTranscript>: Valid,
     crate::poly::opening_proof::ReducedOpeningProof<F, PCS, ProofTranscript>: Valid,
@@ -522,7 +530,8 @@ impl Valid for crate::r1cs::inputs::JoltR1CSInputs {
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> Valid for Proofs<F, PCS, ProofTranscript>
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> Valid
+    for Proofs<F, PCS, ProofTranscript>
 where
     ProofData<F, PCS, ProofTranscript>: Valid,
 {
@@ -539,7 +548,8 @@ where
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> CanonicalSerialize for Proofs<F, PCS, ProofTranscript>
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> CanonicalSerialize
+    for Proofs<F, PCS, ProofTranscript>
 where
     ProofData<F, PCS, ProofTranscript>: CanonicalSerialize,
 {
@@ -569,7 +579,8 @@ where
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> CanonicalDeserialize for Proofs<F, PCS, ProofTranscript>
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript>
+    CanonicalDeserialize for Proofs<F, PCS, ProofTranscript>
 where
     ProofData<F, PCS, ProofTranscript>: CanonicalDeserialize,
 {

@@ -254,7 +254,7 @@ where
     PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 {
-    prove_example_dag::<u32, PCS, F, ProofTranscript>("fibonacci-guest", &600000u32)
+    prove_example_dag::<u32, PCS, F, ProofTranscript>("fibonacci-guest", &6000u32)
 }
 
 fn sha2<F, PCS, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
@@ -431,12 +431,10 @@ where
             commitments.clone(),
         );
 
-        let mut dag = jolt_dag::JoltDAG::default();
+        let mut dag = jolt_dag::JoltDAG;
 
         // Only run the prover
-        let _proof = match dag
-            .prove::<32, F, ProofTranscript, PCS>(&mut prover_state_manager)
-        {
+        let _proof = match dag.prove::<32, F, ProofTranscript, PCS>(&mut prover_state_manager) {
             Ok(proof) => proof,
             Err(e) => panic!("DAG prove failed: {e}"),
         };
