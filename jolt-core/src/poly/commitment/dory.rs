@@ -3,7 +3,7 @@
 use super::commitment_scheme::CommitmentScheme;
 use crate::{
     field::JoltField,
-    msm::{Icicle, VariableBaseMSM},
+    msm::VariableBaseMSM,
     poly::compact_polynomial::SmallScalar,
     poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     utils::{
@@ -299,7 +299,7 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G1Projective>> for JoltMsmG1 {
         let raw_scalars: &[Fr] =
             unsafe { std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len()) };
 
-        let result = G1Projective::msm_field_elements(&affines, None, raw_scalars, None, false)
+        let result = G1Projective::msm_field_elements(&affines, raw_scalars, None)
             .expect("msm_field_elements should not fail");
 
         JoltGroupWrapper(result)
@@ -420,7 +420,7 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
         let raw_scalars: &[Fr] =
             unsafe { std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len()) };
 
-        let result = G2Projective::msm_field_elements(&affines, None, raw_scalars, None, false)
+        let result = G2Projective::msm_field_elements(&affines, raw_scalars, None)
             .expect("msm_field_elements should not fail");
 
         JoltGroupWrapper(result)
@@ -581,8 +581,6 @@ impl<E> DoryPairing for JoltPairing<E>
 where
     E: ArkPairing,
     E::ScalarField: JoltField,
-    E::G1: Icicle,
-    E::G2: Icicle,
 {
     type G1 = JoltGroupWrapper<E::G1>;
     type G2 = JoltGroupWrapper<E::G2>;
@@ -841,42 +839,29 @@ where
                 .par_chunks(row_len)
                 .map(|row| {
                     JoltGroupWrapper(
-                        VariableBaseMSM::msm_field_elements(&bases, None, row, None, false)
-                            .unwrap(),
+                        VariableBaseMSM::msm_field_elements(&bases, row, None).unwrap(),
                     )
                 })
                 .collect(),
             MultilinearPolynomial::U8Scalars(poly) => poly
                 .coeffs
                 .par_chunks(row_len)
-                .map(|row| JoltGroupWrapper(VariableBaseMSM::msm_u8(&bases, row, None).unwrap()))
+                .map(|row| JoltGroupWrapper(VariableBaseMSM::msm_u8(&bases, row).unwrap()))
                 .collect(),
             MultilinearPolynomial::U16Scalars(poly) => poly
                 .coeffs
                 .par_chunks(row_len)
-                .map(|row| {
-                    JoltGroupWrapper(
-                        VariableBaseMSM::msm_u16(&bases, None, row, None, false).unwrap(),
-                    )
-                })
+                .map(|row| JoltGroupWrapper(VariableBaseMSM::msm_u16(&bases, row).unwrap()))
                 .collect(),
             MultilinearPolynomial::U32Scalars(poly) => poly
                 .coeffs
                 .par_chunks(row_len)
-                .map(|row| {
-                    JoltGroupWrapper(
-                        VariableBaseMSM::msm_u32(&bases, None, row, None, false).unwrap(),
-                    )
-                })
+                .map(|row| JoltGroupWrapper(VariableBaseMSM::msm_u32(&bases, row).unwrap()))
                 .collect(),
             MultilinearPolynomial::U64Scalars(poly) => poly
                 .coeffs
                 .par_chunks(row_len)
-                .map(|row| {
-                    JoltGroupWrapper(
-                        VariableBaseMSM::msm_u64(&bases, None, row, None, false).unwrap(),
-                    )
-                })
+                .map(|row| JoltGroupWrapper(VariableBaseMSM::msm_u64(&bases, row).unwrap()))
                 .collect(),
             MultilinearPolynomial::I64Scalars(poly) => poly
                 .coeffs
@@ -885,8 +870,7 @@ where
                     // TODO(moodlezoup): This can be optimized
                     let scalars: Vec<_> = row.iter().map(|x| F::from_i64(*x)).collect();
                     JoltGroupWrapper(
-                        VariableBaseMSM::msm_field_elements(&bases, None, &scalars, None, false)
-                            .unwrap(),
+                        VariableBaseMSM::msm_field_elements(&bases, &scalars, None).unwrap(),
                     )
                 })
                 .collect(),

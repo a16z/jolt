@@ -1,4 +1,3 @@
-use crate::msm::Icicle;
 use ark_ec::AffineRepr;
 use ark_ec::{
     pairing::{Pairing, PairingOutput},
@@ -57,8 +56,6 @@ pub struct BivariatePolynomialCommitment<P>(MippK<P>);
 impl<P: Pairing> BivariatePolynomialCommitment<P>
 where
     P::ScalarField: JoltField,
-    P::G1: Icicle,
-    P::G2: Icicle,
 {
     pub fn setup<R: Rng + CryptoRng>(
         rng: &mut R,
@@ -184,8 +181,6 @@ pub struct UnivariatePolynomialCommitment<P>(BivariatePolynomialCommitment<P>);
 impl<P: Pairing> UnivariatePolynomialCommitment<P>
 where
     P::ScalarField: JoltField,
-    P::G1: Icicle,
-    P::G2: Icicle,
 {
     fn bivariate_degrees(univariate_degree: usize) -> (usize, usize) {
         //(((univariate_degree + 1) as f64).sqrt().ceil() as usize).next_power_of_two() - 1;
