@@ -698,7 +698,7 @@ pub fn prove_sparse_dense_shout<
 
     // Compute and store log(T) - 1 arrays E_{log(T)−1}, . . . , E_1, where E_i
     // contains all evaluations eqe (r>i, j>i) as j>i ranges over {0, 1}^{log(T)−i}
-    let mut E: Vec<Vec<F>> = (1..log_T)
+    let E: Vec<Vec<F>> = (1..log_T)
         .into_par_iter()
         .map(|i| {
             let E_i = EqPolynomial::evals(&r_cycle[i..]);
@@ -706,9 +706,10 @@ pub fn prove_sparse_dense_shout<
         })
         .collect();
 
+    let d = 6;
+    let mut j_randomness: Vec<Vec<F>> = (0..d - 1).map(|_| Vec::with_capacity(log_T)).collect();
     let mut D = F::one();
 
-    let d = 6;
     for round in 0..log_T {
         // See D defined after equation 103. C summands are used to update D per round.
         let mut C_summands = [r_cycle[round], F::one() - r_cycle[round]];
@@ -826,6 +827,7 @@ pub fn prove_sparse_dense_shout<
             let r_j = transcript.challenge_scalar::<F>();
             r.push(r_j);
             randomness.push(r_j);
+            j_randomness[i].push(r_j);
 
             previous_claim = univariate_poly.evaluate(&r_j);
 
@@ -849,7 +851,8 @@ pub fn prove_sparse_dense_shout<
     let span = tracing::span!(tracing::Level::INFO, "compute flag claims");
     let _guard = span.enter();
 
-    let r_cycle_prime = &r[r.len() - log_T..];
+    //let r_cycle_prime = &r[r.len() - log_T..];
+    let r_cycle_prime = &j_randomness[d - 2];
     let eq_r_cycle_prime = EqPolynomial::evals(r_cycle_prime);
 
     // Evaluate each flag polynomial on `r_cycle_prime` by computing its
