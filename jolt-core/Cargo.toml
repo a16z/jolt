@@ -91,7 +91,7 @@ rand_distr = "0.4.3"
 anyhow = "1.0.97"
 derive_more = { version = "2.0.1", features = ["from"] }
 paste = "1.0.15"
-dory = { git = "https://github.com/spaceandtimefdn/sxt-dory", branch = "dev/twist-shout" }
+dory = { git = "https://github.com/spaceandtimefdn/sxt-dory", branch = "feat/return_row_commitments" }
 lazy_static = "1.5.0"
 
 [dev-dependencies]

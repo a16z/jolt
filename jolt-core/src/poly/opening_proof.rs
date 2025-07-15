@@ -741,7 +741,7 @@ where
 
         #[cfg(test)]
         {
-            self.joint_commitment = Some(PCS::commit(&joint_poly, pcs_setup));
+            self.joint_commitment = Some(PCS::commit(&joint_poly, pcs_setup).0);
         }
 
         ReducedOpeningProof {
@@ -911,7 +911,7 @@ where
                 .zip(commitments.iter())
                 .enumerate()
             {
-                let prover_commitment = PCS::commit(poly, self.pcs_setup.as_ref().unwrap());
+                let prover_commitment = PCS::commit(poly, self.pcs_setup.as_ref().unwrap()).0;
                 assert_eq!(
                     prover_commitment, **commitment,
                     "commitment mismatch at index {i}"

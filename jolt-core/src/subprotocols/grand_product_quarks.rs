@@ -320,7 +320,7 @@ where
         let mut sumcheck_polys = vec![f_1x, f_x0, f_x1];
 
         // We commit to g(x) = f(1, x)
-        let g_commitment = PCS::commit(&g_polynomial, setup);
+        let g_commitment = PCS::commit(&g_polynomial, setup).0;
         g_commitment.append_to_transcript(transcript);
 
         let tau: Vec<PCS::Field> = transcript.challenge_vector(v_variables);
