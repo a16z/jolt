@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use itertools::Itertools;
 use jolt_core::{
     field::JoltField,
@@ -14,11 +12,12 @@ use jolt_core::{
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{
         math::Math,
-        transcript::{AppendToTranscript, Transcript},
+        transcript::{self, AppendToTranscript, Transcript},
     },
 };
 use onnx_tracer::trace_types::{ONNXCycle, ONNXInstr};
 use rayon::prelude::*;
+use std::marker::PhantomData;
 
 pub struct BytecodePreprocessing {
     code_size: usize,
@@ -140,4 +139,12 @@ where
             })
             .collect()
     }
+}
+
+pub fn prove_booleanity<F, ProofTranscript>(r: &[F], D: Vec<F>, transcript: &mut ProofTranscript)
+where
+    ProofTranscript: Transcript,
+    F: JoltField,
+{
+    let B = EqPolynomial::evals(r);
 }

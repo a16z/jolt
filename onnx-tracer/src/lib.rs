@@ -49,9 +49,9 @@ pub fn decode(model_path: &PathBuf) -> Vec<ONNXInstr> {
 /// Provides a simple API to obtain the execution trace for an ONNX model.
 /// Use this to extract the execution trace from an ONNX model and its inference input, so it can be fed into the Jolt system.
 ///
-/// The execution trace (or transcript) records the changes to the CPU state at each cycle of execution,
-/// effectively capturing a step-by-step log of the VM's actions during model inference.
-/// These state transitions are later verified in the Jolt proof system, ensuring the prover possesses a valid execution trace for the given model and input.
+/// An execution trace is, a step-by-step record of what the VM did over the course of its execution.
+/// Roughly speaking, the trace describes just the changes to virtual machine state at each step of its execution (this includes read operations).
+/// These state transitions are later checked & verified in the Jolt proof system, ensuring the prover possesses a valid execution trace for the given model and input.
 pub fn trace(model_path: &PathBuf, input: &Tensor<i128>) -> Vec<ONNXCycle> {
     let model = model(model_path);
     // Run the model with the provided inputs
