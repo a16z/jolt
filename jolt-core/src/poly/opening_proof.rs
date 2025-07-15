@@ -22,9 +22,7 @@ use crate::{
         },
     },
     r1cs::inputs::JoltR1CSInputs,
-    subprotocols::sumcheck::{
-        BatchableSumcheckInstance, BatchedSumcheck, CacheSumcheckOpenings, SumcheckInstanceProof,
-    },
+    subprotocols::sumcheck::{BatchableSumcheckInstance, BatchedSumcheck, SumcheckInstanceProof},
     utils::{errors::ProofVerifyError, transcript::Transcript},
 };
 
@@ -155,6 +153,7 @@ pub enum OpeningsKeys {
     RamHammingRa(usize),            // ra_i openings for RAM Hamming weight
     RamBooleanityRa(usize),         // ra_i openings for RAM booleanity
     RamRaVirtualization(usize),     // ra_i openings for RAM ra virtualization
+    OpeningReduction(usize),        // claims from the opening proof reduction sumcheck
 }
 
 pub type Openings<F> = HashMap<OpeningsKeys, (OpeningPoint<BIG_ENDIAN, F>, F)>;
@@ -192,6 +191,7 @@ impl<F: JoltField> From<Vec<F>> for SharedEqPolynomial<F> {
 /// at the (same) point.
 /// Multiple openings can be accumulated and further
 /// batched/reduced using a `ProverOpeningAccumulator`.
+#[derive(Clone)]
 pub struct DensePolynomialProverOpening<F: JoltField> {
     /// The polynomial being opened. May be a random linear combination
     /// of multiple polynomials all being opened at the same point.
@@ -241,7 +241,7 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
     }
 }
 
-#[derive(derive_more::From)]
+#[derive(derive_more::From, Clone)]
 pub enum ProverOpening<F: JoltField> {
     Dense(DensePolynomialProverOpening<F>),
     OneHot(OneHotPolynomialProverOpening<F>),
@@ -258,6 +258,7 @@ impl<F: JoltField> ProverOpening<F> {
     }
 }
 
+#[derive(Clone)]
 pub struct OpeningProofReductionSumcheck<F, PCS>
 where
     F: JoltField,
@@ -329,6 +330,20 @@ where
             batch: vec![],
         }
     }
+
+    fn cache_sumcheck_claim(&mut self) {
+        debug_assert!(self.sumcheck_claim.is_none());
+        let prover_state = self
+            .prover_state
+            .as_ref()
+            .expect("Prover state not initialized");
+
+        let claim = match prover_state {
+            ProverOpening::Dense(opening) => opening.final_sumcheck_claim(),
+            ProverOpening::OneHot(opening) => opening.final_sumcheck_claim(),
+        };
+        self.sumcheck_claim = Some(claim);
+    }
 }
 
 impl<F, PCS> BatchableSumcheckInstance<F> for OpeningProofReductionSumcheck<F, PCS>
@@ -373,32 +388,6 @@ where
     }
 }
 
-impl<F, PCS> CacheSumcheckOpenings<F, PCS> for OpeningProofReductionSumcheck<F, PCS>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-{
-    fn cache_openings_prover(
-        &mut self,
-        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
-    ) {
-        debug_assert!(self.sumcheck_claim.is_none());
-        let prover_state = self
-            .prover_state
-            .as_ref()
-            .expect("Prover state not initialized");
-        match prover_state {
-            ProverOpening::Dense(opening) => {
-                self.sumcheck_claim = Some(opening.final_sumcheck_claim())
-            }
-            ProverOpening::OneHot(opening) => {
-                self.sumcheck_claim = Some(opening.final_sumcheck_claim())
-            }
-        };
-    }
-}
-
 /// An opening that the verifier must verify.
 ///
 /// May be a batched opening, where multiple polynomials opened
@@ -406,6 +395,7 @@ where
 /// at the (same) point.
 /// Multiple `VerifierOpening`s can be accumulated and further
 /// batched/reduced using a `VerifierOpeningAccumulator`.
+#[derive(Clone)]
 pub struct VerifierOpening<F, PCS>
 where
     F: JoltField,
@@ -419,12 +409,13 @@ where
 
 /// Accumulates openings computed by the prover over the course of Jolt,
 /// so that they can all be reduced to a single opening proof using sumcheck.
+#[derive(Clone)]
 pub struct ProverOpeningAccumulator<F, PCS>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    openings: Vec<OpeningProofReductionSumcheck<F, PCS>>,
+    pub openings: Vec<OpeningProofReductionSumcheck<F, PCS>>,
     evaluation_openings: Openings<F>,
     #[cfg(test)]
     joint_commitment: Option<PCS::Commitment>,
@@ -453,8 +444,8 @@ pub struct ReducedOpeningProof<
     PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 > {
-    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    sumcheck_claims: Vec<F>,
+    pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
+    pub sumcheck_claims: Vec<F>,
     joint_opening_proof: PCS::Proof,
 }
 
@@ -703,6 +694,7 @@ where
         transcript: &mut ProofTranscript,
     ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
         println!("# instances: {}", self.openings.len());
+        self.openings.truncate(1);
         // TODO(moodlezoup): surely there's a better way to do this
         let unbound_polys = self
             .openings
@@ -766,8 +758,11 @@ where
 
         let claims: Vec<_> = self
             .openings
-            .iter()
-            .map(|opening| opening.sumcheck_claim.unwrap())
+            .iter_mut()
+            .map(|opening| {
+                opening.cache_sumcheck_claim();
+                opening.sumcheck_claim.unwrap()
+            })
             .collect();
 
         (sumcheck_proof, r_sumcheck, claims)
@@ -950,6 +945,11 @@ where
         reduced_opening_proof: &ReducedOpeningProof<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
+        #[cfg(test)]
+        if let Some(prover_openings) = &self.prover_openings {
+            assert_eq!(prover_openings.len(), self.len());
+        }
+
         let num_sumcheck_rounds = self
             .openings
             .iter()

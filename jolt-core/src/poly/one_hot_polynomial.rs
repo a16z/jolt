@@ -82,6 +82,7 @@ impl<F: JoltField> OneHotSumcheckState<F> {
     }
 }
 
+#[derive(Clone)]
 pub struct OneHotPolynomialProverOpening<F: JoltField> {
     pub polynomial: OneHotPolynomial<F>,
     pub eq_state: Rc<RefCell<OneHotSumcheckState<F>>>,
