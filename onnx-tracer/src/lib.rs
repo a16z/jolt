@@ -53,15 +53,18 @@ pub fn decode(model_path: &PathBuf) -> Vec<ONNXInstr> {
 /// Roughly speaking, the trace describes just the changes to virtual machine state at each step of its execution (this includes read operations).
 /// These state transitions are later checked & verified in the Jolt proof system, ensuring the prover possesses a valid execution trace for the given model and input.
 pub fn trace(model_path: &PathBuf, input: &Tensor<i128>) -> Vec<ONNXCycle> {
-    let model = model(model_path);
-    // Run the model with the provided inputs
+    execution_trace(model(model_path), input)
+}
+
+/// Given a model and input extract the execution trace
+fn execution_trace(model: Model, input: &Tensor<i128>) -> Vec<ONNXCycle> {
+    // Run the model with the provided inputs.
+    // The internal model tracer will automatically capture the execution trace during the forward pass
     let _ = model
         .forward(&[input.map(i128_to_felt)])
         .expect("Failed to run model");
-
-    // The tracer will automatically capture the execution trace during the forward pass
-    let execution_trace = model.tracer.execution_trace.borrow();
-    execution_trace.clone()
+    let execution_trace = model.tracer.execution_trace.borrow().clone();
+    execution_trace
 }
 
 /// Given a file path, load the ONNX model and return a [`Model`].
