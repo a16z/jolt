@@ -406,7 +406,7 @@ impl MacroBuilder {
                     proof: jolt_proof,
                 };
 
-                (ret_val, proof)
+                (ret_val, output_io_device, proof)
             }
         }
     }
@@ -544,6 +544,7 @@ impl MacroBuilder {
             use jolt::{
                 JoltField,
                 host::Program,
+                JoltDevice,
                 JoltProverPreprocessing,
                 JoltVerifierPreprocessing,
                 JoltProver,
@@ -633,10 +634,10 @@ impl MacroBuilder {
     fn get_prove_output_type(&self) -> TokenStream2 {
         match &self.func.sig.output {
             ReturnType::Default => quote! {
-                ((), jolt::JoltHyperKZGProof)
+                ((), jolt::JoltDevice, jolt::JoltHyperKZGProof)
             },
             ReturnType::Type(_, ty) => quote! {
-                (#ty, jolt::JoltHyperKZGProof)
+                (#ty, jolt::JoltDevice, jolt::JoltHyperKZGProof)
             },
         }
     }

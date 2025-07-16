@@ -1,4 +1,6 @@
+#[allow(dead_code)]
 pub mod quark;
+#[allow(dead_code)]
 pub mod sparse;
 
 #[cfg(feature = "prover")]
@@ -27,7 +29,7 @@ use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::Transcript;
 use ark_serialize::*;
 use itertools::Itertools;
-#[cfg(feature = "parallel")]
+#[cfg(feature = "prover")]
 use rayon::prelude::*;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]

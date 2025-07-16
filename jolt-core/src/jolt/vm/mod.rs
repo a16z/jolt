@@ -13,7 +13,7 @@ use crate::utils::errors::ProofVerifyError;
 use crate::utils::transcript::Transcript;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use bytecode::{BytecodePreprocessing, BytecodeShoutProof};
-use common::jolt_device::MemoryLayout;
+use common::jolt_device::{JoltDevice, MemoryLayout};
 use instruction_lookups::LookupsProof;
 use ram::{RAMPreprocessing, RAMTwistProof};
 use registers::RegistersTwistProof;
@@ -23,7 +23,8 @@ use std::{
     path::Path,
 };
 use tracer::instruction::RV32IMInstruction;
-use tracer::JoltDevice;
+
+impl Serializable for JoltDevice {}
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltSharedPreprocessing {

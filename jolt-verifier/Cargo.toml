@@ -5,11 +5,10 @@ edition = "2024"
 
 [dependencies]
 jolt-core = { path = "../jolt-core", default-features = false, features = ["host-verifier"] }
-tracer = { path = "../tracer", default-features = false }
 common = { path = "../common" }
 
 [dev-dependencies]
-
+ark-serialize = "0.5.0"
 
 [features]
 default = ["parallel"]
