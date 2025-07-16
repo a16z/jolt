@@ -394,7 +394,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             .collect();
 
         let commitments: Vec<_> = committed_polys
-            .par_iter()
+            .iter()
             .map(|poly| PCS::commit(poly, &preprocessing.generators))
             .collect();
 
