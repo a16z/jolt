@@ -539,10 +539,9 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             .into_par_iter()
             .map(|k_prime| {
                 // Get B evaluations at points 0, 2, 3
-                let B_evals =
-                    prover_state
-                        .B
-                        .sumcheck_evals(k_prime, DEGREE, BindingOrder::LowToHigh);
+                let B_evals = prover_state
+                    .B
+                    .sumcheck_evals_array::<DEGREE>(k_prime, BindingOrder::LowToHigh);
 
                 let inner_sum = prover_state.G[k_prime << m..(k_prime + 1) << m]
                     .par_iter()
@@ -610,10 +609,10 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                 // Get D and H evaluations at points 0, 2, 3
                 let D_evals = prover_state
                     .D
-                    .sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
                 let H_evals = prover_state
                     .H
-                    .sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
 
                 [
                     D_evals[0] * (H_evals[0].square() - H_evals[0]),
@@ -769,23 +768,21 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for RafBytecode<F> {
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
-        let degree = <Self as BatchableSumcheckInstance<F>>::degree(self);
+        const DEGREE: usize = 2;
 
         let univariate_poly_evals: [F; 2] = (0..prover_state.ra_poly.len() / 2)
             .into_par_iter()
             .map(|i| {
-                let ra_evals =
-                    prover_state
-                        .ra_poly
-                        .sumcheck_evals(i, degree, BindingOrder::LowToHigh);
-                let ra_evals_shift =
-                    prover_state
-                        .ra_poly_shift
-                        .sumcheck_evals(i, degree, BindingOrder::LowToHigh);
+                let ra_evals = prover_state
+                    .ra_poly
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
+                let ra_evals_shift = prover_state
+                    .ra_poly_shift
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
                 let int_evals =
                     prover_state
                         .int_poly
-                        .sumcheck_evals(i, degree, BindingOrder::LowToHigh);
+                        .sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
 
                 [
                     (ra_evals[0] + self.challenge * ra_evals_shift[0]) * int_evals[0],

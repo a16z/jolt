@@ -12,9 +12,7 @@ use crate::{
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
-        multilinear_polynomial::{
-            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-        },
+        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
             OpeningPoint, Openings, OpeningsKeys, ProverOpeningAccumulator,
             VerifierOpeningAccumulator, BIG_ENDIAN,
@@ -273,7 +271,8 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         let univariate_poly_evals: [F; 3] = (0..p.B.len() / 2)
             .into_par_iter()
             .map(|k_prime| {
-                let B_evals = p.B.sumcheck_evals(k_prime, DEGREE, BindingOrder::LowToHigh);
+                let B_evals =
+                    p.B.sumcheck_evals_array::<DEGREE>(k_prime, BindingOrder::LowToHigh);
 
                 let inner_sum = (0..1 << m)
                     .into_par_iter()
@@ -335,11 +334,12 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         let univariate_poly_evals: [F; 3] = (0..p.D.len() / 2)
             .into_par_iter()
             .map(|i| {
-                let D_evals = p.D.sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
+                let D_evals =
+                    p.D.sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
                 let H = p.H.as_ref().unwrap();
                 let H_evals = H
                     .iter()
-                    .map(|h| h.sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh))
+                    .map(|h| h.sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh))
                     .collect::<Vec<_>>();
 
                 let mut evals = [

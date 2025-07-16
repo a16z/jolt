@@ -541,10 +541,10 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                             val_j_0[col] += inc;
                         }
 
-                        let eq_r_prime_evals =
-                            eq_r_prime.sumcheck_evals(j_prime / 2, DEGREE, BindingOrder::LowToHigh);
-                        let inc_cycle_evals =
-                            inc_cycle.sumcheck_evals(j_prime / 2, DEGREE, BindingOrder::LowToHigh);
+                        let eq_r_prime_evals = eq_r_prime
+                            .sumcheck_evals_array::<DEGREE>(j_prime / 2, BindingOrder::LowToHigh);
+                        let inc_cycle_evals = inc_cycle
+                            .sumcheck_evals_array::<DEGREE>(j_prime / 2, BindingOrder::LowToHigh);
 
                         let mut inner_sum_evals = [F::zero(); 3];
                         for k in dirty_indices.ones() {
@@ -664,19 +664,22 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
             .into_par_iter()
             .map(|j| {
                 let eq_r_prime_evals =
-                    eq_r_prime.sumcheck_evals(j, DEGREE, BindingOrder::HighToLow);
-                let inc_evals = inc_cycle.sumcheck_evals(j, DEGREE, BindingOrder::HighToLow);
+                    eq_r_prime.sumcheck_evals_array::<DEGREE>(j, BindingOrder::HighToLow);
+                let inc_evals =
+                    inc_cycle.sumcheck_evals_array::<DEGREE>(j, BindingOrder::HighToLow);
 
                 let inner_sum_evals: [F; DEGREE] = (0..K)
                     .into_par_iter()
                     .map(|k| {
                         let index = j * K + k;
                         let rs1_ra_evals =
-                            rs1_ra.sumcheck_evals(index, DEGREE, BindingOrder::HighToLow);
+                            rs1_ra.sumcheck_evals_array::<DEGREE>(index, BindingOrder::HighToLow);
                         let rs2_ra_evals =
-                            rs2_ra.sumcheck_evals(index, DEGREE, BindingOrder::HighToLow);
-                        let wa_evals = rd_wa.sumcheck_evals(index, DEGREE, BindingOrder::HighToLow);
-                        let val_evals = val.sumcheck_evals(index, DEGREE, BindingOrder::HighToLow);
+                            rs2_ra.sumcheck_evals_array::<DEGREE>(index, BindingOrder::HighToLow);
+                        let wa_evals =
+                            rd_wa.sumcheck_evals_array::<DEGREE>(index, BindingOrder::HighToLow);
+                        let val_evals =
+                            val.sumcheck_evals_array::<DEGREE>(index, BindingOrder::HighToLow);
 
                         [
                             wa_evals[0].mul_0_optimized(inc_evals[0] + val_evals[0])
@@ -747,10 +750,12 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
         let evals = (0..rs1_ra.len() / 2)
             .into_par_iter()
             .map(|k| {
-                let rs1_ra_evals = rs1_ra.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
-                let rs2_ra_evals = rs2_ra.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
-                let wa_evals = rd_wa.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
-                let val_evals = val.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
+                let rs1_ra_evals =
+                    rs1_ra.sumcheck_evals_array::<DEGREE>(k, BindingOrder::HighToLow);
+                let rs2_ra_evals =
+                    rs2_ra.sumcheck_evals_array::<DEGREE>(k, BindingOrder::HighToLow);
+                let wa_evals = rd_wa.sumcheck_evals_array::<DEGREE>(k, BindingOrder::HighToLow);
+                let val_evals = val.sumcheck_evals_array::<DEGREE>(k, BindingOrder::HighToLow);
 
                 [
                     wa_evals[0] * (inc_eval + val_evals[0])

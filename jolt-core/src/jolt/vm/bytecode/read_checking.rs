@@ -106,18 +106,17 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for ReadCheckingSumcheck<F> {
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
-        let degree = <Self as BatchableSumcheckInstance<F>>::degree(self);
+        const DEGREE: usize = 2;
 
         let univariate_poly_evals: [F; 2] = (0..prover_state.ra_poly.len() / 2)
             .into_par_iter()
             .map(|i| {
-                let ra_evals =
-                    prover_state
-                        .ra_poly
-                        .sumcheck_evals(i, degree, BindingOrder::LowToHigh);
+                let ra_evals = prover_state
+                    .ra_poly
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
                 let val_evals = self
                     .val_poly
-                    .sumcheck_evals(i, degree, BindingOrder::LowToHigh);
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
 
                 // Compute ra[i] * val[i] for points 0 and 2
                 [ra_evals[0] * val_evals[0], ra_evals[1] * val_evals[1]]

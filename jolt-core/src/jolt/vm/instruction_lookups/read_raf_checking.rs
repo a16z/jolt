@@ -296,24 +296,24 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for ReadRafSumcheck<F> {
                 .map(|i| {
                     let eq_evals = ps
                         .eq_r_cycle
-                        .sumcheck_evals(i, DEGREE, BindingOrder::HighToLow);
-                    let ra_evals = ps
+                        .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
+                    let eq_ra_evals = ps
                         .ra
                         .iter()
-                        .map(|ra| ra.sumcheck_evals(i, DEGREE, BindingOrder::HighToLow))
-                        .fold([F::one(); DEGREE], |mut running, new| {
+                        .map(|ra| ra.sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow))
+                        .fold(eq_evals, |mut running, new| {
                             for j in 0..DEGREE {
                                 running[j] *= new[j];
                             }
                             running
                         });
-                    let val_evals = ps.combined_val_polynomial.as_ref().unwrap().sumcheck_evals(
-                        i,
-                        DEGREE,
-                        BindingOrder::HighToLow,
-                    );
+                    let val_evals = ps
+                        .combined_val_polynomial
+                        .as_ref()
+                        .unwrap()
+                        .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
 
-                    std::array::from_fn(|i| eq_evals[i] * ra_evals[i] * val_evals[i])
+                    std::array::from_fn(|i| eq_ra_evals[i] * val_evals[i])
                 })
                 .reduce(
                     || [F::zero(); DEGREE],

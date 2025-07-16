@@ -537,6 +537,7 @@ mod tests {
     #[test]
     fn identity_poly() {
         const NUM_VARS: usize = 10;
+        const DEGREE: usize = 3;
 
         let mut rng = test_rng();
         let mut identity_poly: IdentityPolynomial<Fr> = IdentityPolynomial::new(NUM_VARS);
@@ -544,8 +545,10 @@ mod tests {
             MultilinearPolynomial::from((0..(1 << NUM_VARS)).map(|i| i as u32).collect::<Vec<_>>());
 
         for j in 0..reference_poly.len() / 2 {
-            let identity_poly_evals = identity_poly.sumcheck_evals(j, 3, BindingOrder::LowToHigh);
-            let reference_poly_evals = reference_poly.sumcheck_evals(j, 3, BindingOrder::LowToHigh);
+            let identity_poly_evals =
+                identity_poly.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+            let reference_poly_evals =
+                reference_poly.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
             assert_eq!(identity_poly_evals, reference_poly_evals);
         }
 
@@ -555,9 +558,9 @@ mod tests {
             reference_poly.bind(r, BindingOrder::LowToHigh);
             for j in 0..reference_poly.len() / 2 {
                 let identity_poly_evals =
-                    identity_poly.sumcheck_evals(j, 3, BindingOrder::LowToHigh);
+                    identity_poly.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
                 let reference_poly_evals =
-                    reference_poly.sumcheck_evals(j, 3, BindingOrder::LowToHigh);
+                    reference_poly.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
                 assert_eq!(identity_poly_evals, reference_poly_evals);
             }
         }

@@ -557,36 +557,34 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for InnerSumcheck<F> {
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
-        let degree = <Self as BatchableSumcheckInstance<F>>::degree(self);
+        const DEGREE: usize = 2;
 
-        let univariate_poly_evals: Vec<F> = (0..prover_state.poly_abc_small.len() / 2)
+        let univariate_poly_evals: [F; DEGREE] = (0..prover_state.poly_abc_small.len() / 2)
             .into_par_iter()
             .map(|i| {
-                let abc_evals =
-                    prover_state
-                        .poly_abc_small
-                        .sumcheck_evals(i, degree, BindingOrder::HighToLow);
-                let z_evals =
-                    prover_state
-                        .poly_z
-                        .sumcheck_evals(i, degree, BindingOrder::HighToLow);
+                let abc_evals = prover_state
+                    .poly_abc_small
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
+                let z_evals = prover_state
+                    .poly_z
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
 
-                vec![
+                [
                     abc_evals[0] * z_evals[0], // eval at 0
                     abc_evals[1] * z_evals[1], // eval at 2
                 ]
             })
             .reduce(
-                || vec![F::zero(); degree],
+                || [F::zero(); DEGREE],
                 |mut running, new| {
-                    for i in 0..degree {
+                    for i in 0..DEGREE {
                         running[i] += new[i];
                     }
                     running
                 },
             );
 
-        univariate_poly_evals
+        univariate_poly_evals.into()
     }
 
     #[tracing::instrument(skip_all, name = "InnerSumcheck::bind")]
@@ -769,42 +767,37 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for PCSumcheck<F> {
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
-        let degree = <Self as BatchableSumcheckInstance<F>>::degree(self);
+        const DEGREE: usize = 2;
 
-        let univariate_poly_evals: Vec<F> = (0..prover_state.unexpanded_pc_poly.len() / 2)
+        let univariate_poly_evals: [F; DEGREE] = (0..prover_state.unexpanded_pc_poly.len() / 2)
             .into_par_iter()
             .map(|i| {
-                let unexpanded_pc_evals = prover_state.unexpanded_pc_poly.sumcheck_evals(
-                    i,
-                    degree,
-                    BindingOrder::HighToLow,
-                );
-                let pc_evals =
-                    prover_state
-                        .pc_poly
-                        .sumcheck_evals(i, degree, BindingOrder::HighToLow);
-                let eq_evals = prover_state.eq_plus_one_poly.sumcheck_evals(
-                    i,
-                    degree,
-                    BindingOrder::HighToLow,
-                );
+                let unexpanded_pc_evals = prover_state
+                    .unexpanded_pc_poly
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
+                let pc_evals = prover_state
+                    .pc_poly
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
+                let eq_evals = prover_state
+                    .eq_plus_one_poly
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
 
-                vec![
+                [
                     (unexpanded_pc_evals[0] + prover_state.r * pc_evals[0]) * eq_evals[0], // eval at 0
                     (unexpanded_pc_evals[1] + prover_state.r * pc_evals[1]) * eq_evals[1], // eval at 2
                 ]
             })
             .reduce(
-                || vec![F::zero(); degree],
+                || [F::zero(); DEGREE],
                 |mut running, new| {
-                    for i in 0..degree {
+                    for i in 0..DEGREE {
                         running[i] += new[i];
                     }
                     running
                 },
             );
 
-        univariate_poly_evals
+        univariate_poly_evals.into()
     }
 
     #[tracing::instrument(skip_all, name = "PCSumcheck::bind")]

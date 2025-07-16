@@ -233,10 +233,13 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for OutputSumcheck<F> {
         let univariate_poly_evals: [F; DEGREE] = (0..eq_poly.len() / 2)
             .into_par_iter()
             .map(|k| {
-                let eq_evals = eq_poly.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
-                let io_mask_evals = io_mask.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
-                let val_final_evals = val_final.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
-                let val_io_evals = val_io.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
+                let eq_evals = eq_poly.sumcheck_evals_array::<DEGREE>(k, BindingOrder::HighToLow);
+                let io_mask_evals =
+                    io_mask.sumcheck_evals_array::<DEGREE>(k, BindingOrder::HighToLow);
+                let val_final_evals =
+                    val_final.sumcheck_evals_array::<DEGREE>(k, BindingOrder::HighToLow);
+                let val_io_evals =
+                    val_io.sumcheck_evals_array::<DEGREE>(k, BindingOrder::HighToLow);
                 [
                     eq_evals[0] * io_mask_evals[0] * (val_final_evals[0] - val_io_evals[0]),
                     eq_evals[1] * io_mask_evals[1] * (val_final_evals[1] - val_io_evals[1]),
@@ -554,8 +557,8 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for ValFinalSumcheck<F> {
         let univariate_poly_evals: [F; DEGREE] = (0..inc.len() / 2)
             .into_par_iter()
             .map(|j| {
-                let inc_evals = inc.sumcheck_evals(j, DEGREE, BindingOrder::HighToLow);
-                let wa_evals = wa.sumcheck_evals(j, DEGREE, BindingOrder::HighToLow);
+                let inc_evals = inc.sumcheck_evals_array::<DEGREE>(j, BindingOrder::HighToLow);
+                let wa_evals = wa.sumcheck_evals_array::<DEGREE>(j, BindingOrder::HighToLow);
                 [inc_evals[0] * wa_evals[0], inc_evals[1] * wa_evals[1]]
             })
             .reduce(

@@ -12,9 +12,7 @@ use crate::{
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
-        multilinear_polynomial::{
-            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-        },
+        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
             OpeningPoint, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
             BIG_ENDIAN,
@@ -443,10 +441,9 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         (0..prover_state.B.len() / 2)
             .into_par_iter()
             .map(|k_prime| {
-                let B_evals =
-                    prover_state
-                        .B
-                        .sumcheck_evals(k_prime, DEGREE, BindingOrder::LowToHigh);
+                let B_evals = prover_state
+                    .B
+                    .sumcheck_evals_array::<DEGREE>(k_prime, BindingOrder::LowToHigh);
 
                 let mut evals = [F::zero(); DEGREE];
 
@@ -540,13 +537,14 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             .map(|i| {
                 let D_evals = prover_state
                     .D
-                    .sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
 
                 let mut evals = [F::zero(); DEGREE];
 
                 // For each polynomial in the batch
                 for j in 0..d {
-                    let H_j_evals = h_polys[j].sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
+                    let H_j_evals =
+                        h_polys[j].sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
 
                     // For each evaluation point
                     for k in 0..DEGREE {
