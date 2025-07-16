@@ -1,12 +1,14 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
+    dag::{stage::StagedSumcheck, state_manager::StateManager},
     field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
-        opening_proof::{OpeningPoint, ProverOpeningAccumulator, BIG_ENDIAN},
+        opening_proof::{OpeningPoint, OpeningsKeys, ProverOpeningAccumulator, BIG_ENDIAN},
     },
+    r1cs::inputs::JoltR1CSInputs,
     subprotocols::sumcheck::{
         BatchableSumcheckInstance, CacheSumcheckOpenings, SumcheckInstanceProof,
     },
@@ -16,32 +18,55 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 
 pub struct HammingWeightProverState<F: JoltField> {
-    ra_poly: MultilinearPolynomial<F>,
+    ra: MultilinearPolynomial<F>,
+    unbound_ra_poly: Option<MultilinearPolynomial<F>>,
 }
 
 pub struct HammingWeightSumcheck<F: JoltField> {
-    /// K value shared by prover and verifier
-    K: usize,
-    /// Prover state
+    log_K: usize,
     prover_state: Option<HammingWeightProverState<F>>,
-    /// Cached ra claim after sumcheck completes
     ra_claim: Option<F>,
+    r_cycle: Vec<F>,
 }
 
 impl<F: JoltField> HammingWeightSumcheck<F> {
-    pub fn new(ra_poly: MultilinearPolynomial<F>, K: usize) -> Self {
+    pub fn new_prover(
+        sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
+        F: Vec<F>,
+        unbound_ra_poly: MultilinearPolynomial<F>,
+    ) -> Self {
+        let log_K = sm.get_bytecode().len().log_2();
+        let r_cycle = sm
+            .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
+            .unwrap()
+            .r
+            .clone();
         Self {
-            K,
-            prover_state: Some(HammingWeightProverState { ra_poly }),
+            log_K,
+            prover_state: Some(HammingWeightProverState {
+                ra: MultilinearPolynomial::from(F),
+                unbound_ra_poly: Some(unbound_ra_poly),
+            }),
             ra_claim: None,
+            r_cycle,
         }
     }
 
-    pub fn new_verifier(K: usize) -> Self {
+    pub fn new_verifier(
+        sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
+    ) -> Self {
+        let log_K = sm.get_bytecode().len().log_2();
+        let ra_claim = sm.get_opening(OpeningsKeys::BytecodeHammingWeightRa);
+        let r_cycle = sm
+            .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
+            .unwrap()
+            .r
+            .clone();
         Self {
-            K,
+            log_K,
             prover_state: None,
-            ra_claim: None,
+            ra_claim: Some(ra_claim),
+            r_cycle,
         }
     }
 }
@@ -52,7 +77,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for HammingWeightSumcheck<F> {
     }
 
     fn num_rounds(&self) -> usize {
-        self.K.log_2()
+        self.log_K
     }
 
     fn input_claim(&self) -> F {
@@ -65,9 +90,9 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for HammingWeightSumcheck<F> {
             .as_ref()
             .expect("Prover state not initialized");
 
-        let univariate_poly_eval: F = (0..prover_state.ra_poly.len() / 2)
+        let univariate_poly_eval: F = (0..prover_state.ra.len() / 2)
             .into_par_iter()
-            .map(|i| prover_state.ra_poly.get_bound_coeff(2 * i))
+            .map(|i| prover_state.ra.get_bound_coeff(2 * i))
             .sum();
 
         vec![univariate_poly_eval]
@@ -79,9 +104,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for HammingWeightSumcheck<F> {
             .as_mut()
             .expect("Prover state not initialized");
 
-        prover_state
-            .ra_poly
-            .bind_parallel(r_j, BindingOrder::LowToHigh)
+        prover_state.ra.bind_parallel(r_j, BindingOrder::LowToHigh)
     }
 
     fn expected_output_claim(&self, _: &[F]) -> F {
@@ -96,17 +119,47 @@ where
 {
     fn cache_openings_prover(
         &mut self,
-        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        debug_assert!(self.ra_claim.is_none());
-        let prover_state = self
+        let ps = self
             .prover_state
-            .as_ref()
+            .as_mut()
             .expect("Prover state not initialized");
+        let accumulator = accumulator.expect("accumulator is needed");
 
-        self.ra_claim = Some(prover_state.ra_poly.final_sumcheck_claim());
+        let ra_claim = ps.ra.final_sumcheck_claim();
+        accumulator.borrow_mut().append_sparse(
+            vec![ps.unbound_ra_poly.take().unwrap()],
+            opening_point.r,
+            self.r_cycle.clone(),
+            vec![ra_claim],
+            Some(vec![OpeningsKeys::BytecodeHammingWeightRa]),
+        );
     }
+
+    fn cache_openings_verifier(
+        &mut self,
+        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) {
+        let r = opening_point
+            .r
+            .iter()
+            .cloned()
+            .chain(self.r_cycle.iter().cloned())
+            .collect::<Vec<_>>();
+        let accumulator = accumulator.expect("accumulator is needed");
+        accumulator.borrow_mut().populate_claim_opening(
+            OpeningsKeys::BytecodeHammingWeightRa,
+            OpeningPoint::new(r.clone()),
+        );
+    }
+}
+
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS>
+    for HammingWeightSumcheck<F>
+{
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
@@ -117,35 +170,37 @@ pub struct HammingWeightProof<F: JoltField, ProofTranscript: Transcript> {
 
 impl<F: JoltField, ProofTranscript: Transcript> HammingWeightProof<F, ProofTranscript> {
     #[tracing::instrument(skip_all, name = "HammingWeightProof::prove")]
-    pub fn prove(F: Vec<F>, K: usize, transcript: &mut ProofTranscript) -> (Self, Vec<F>) {
-        let ra_poly = MultilinearPolynomial::from(F);
-        let mut core_piop_sumcheck = HammingWeightSumcheck::new(ra_poly, K);
-
-        let (sumcheck_proof, r_address) = core_piop_sumcheck.prove_single(transcript);
-        // BatchedSumcheck::cache_openings(vec![&mut core_piop_sumcheck], openings, accumulator);
-
-        let ra_claim = core_piop_sumcheck
-            .ra_claim
-            .expect("ra_claim should be set after prove_single");
-
-        let proof = Self {
-            sumcheck_proof,
-            ra_claim,
-        };
-
-        (proof, r_address)
+    pub fn prove(_F: Vec<F>, _K: usize, _transcript: &mut ProofTranscript) -> (Self, Vec<F>) {
+        todo!()
+        // let ra_poly = MultilinearPolynomial::from(F);
+        // let mut core_piop_sumcheck = HammingWeightSumcheck::new_prover(ra_poly, K);
+        //
+        // let (sumcheck_proof, r_address) = core_piop_sumcheck.prove_single(transcript);
+        // // BatchedSumcheck::cache_openings(vec![&mut core_piop_sumcheck], openings, accumulator);
+        //
+        // let ra_claim = core_piop_sumcheck
+        //     .ra_claim
+        //     .expect("ra_claim should be set after prove_single");
+        //
+        // let proof = Self {
+        //     sumcheck_proof,
+        //     ra_claim,
+        // };
+        //
+        // (proof, r_address)
     }
 
     pub fn verify(
         &self,
-        K: usize,
-        transcript: &mut ProofTranscript,
+        _K: usize,
+        _transcript: &mut ProofTranscript,
     ) -> Result<Vec<F>, ProofVerifyError> {
-        let mut core_piop_sumcheck = HammingWeightSumcheck::new_verifier(K);
-        core_piop_sumcheck.ra_claim = Some(self.ra_claim);
-
-        let r_address = core_piop_sumcheck.verify_single(&self.sumcheck_proof, transcript)?;
-
-        Ok(r_address)
+        todo!()
+        // let mut core_piop_sumcheck = HammingWeightSumcheck::new_verifier(K);
+        // core_piop_sumcheck.ra_claim = Some(self.ra_claim);
+        //
+        // let r_address = core_piop_sumcheck.verify_single(&self.sumcheck_proof, transcript)?;
+        //
+        // Ok(r_address)
     }
 }

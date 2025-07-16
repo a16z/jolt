@@ -159,6 +159,7 @@ pub enum OpeningsKeys {
     BytecodeStage2Ra,
     BytecodeStage3Ra,
     BytecodeBooleanityRa,
+    BytecodeHammingWeightRa,
     OpeningReduction(usize),        // claims from the opening proof reduction sumcheck
 }
 

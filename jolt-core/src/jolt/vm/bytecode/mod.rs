@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use crate::dag::stage::{StagedSumcheck, SumcheckStages};
 use crate::dag::state_manager::StateManager;
 use crate::jolt::vm::bytecode::booleanity::{BooleanityProof, BooleanitySumcheck};
+use crate::jolt::vm::bytecode::hamming_weight::HammingWeightSumcheck;
 use crate::jolt::vm::bytecode::raf::{RafBytecode, RafEvaluationProof};
 use crate::jolt::vm::bytecode::read_checking::{ReadCheckingSumcheck, ReadCheckingValTypes};
 use crate::poly::opening_proof::OpeningsKeys;
@@ -212,7 +213,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             MultilinearPolynomial::from(F.clone()),
             MultilinearPolynomial::from(F_shift),
         );
-        let booleanity = BooleanitySumcheck::new_prover(sm, E, F, unbound_ra_poly.clone());
+        let booleanity = BooleanitySumcheck::new_prover(sm, E, F.clone(), unbound_ra_poly.clone());
+        let hamming_weight = HammingWeightSumcheck::new_prover(sm, F, unbound_ra_poly);
 
         vec![
             Box::new(read_checking_1),
@@ -220,6 +222,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             // Box::new(read_checking_3),
             Box::new(raf),
             Box::new(booleanity),
+            Box::new(hamming_weight),
         ]
     }
 
@@ -232,6 +235,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         // let read_checking_3 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValTypes::Stage3);
         let raf = RafBytecode::new_verifier(sm);
         let booleanity = BooleanitySumcheck::new_verifier(sm);
+        let hamming_weight = HammingWeightSumcheck::new_verifier(sm);
 
         vec![
             Box::new(read_checking_1),
@@ -239,6 +243,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             // Box::new(read_checking_3),
             Box::new(raf),
             Box::new(booleanity),
+            Box::new(hamming_weight),
         ]
     }
 }

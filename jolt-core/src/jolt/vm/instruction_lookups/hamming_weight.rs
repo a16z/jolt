@@ -182,9 +182,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
     fn cache_openings_verifier(
         &mut self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
-        r_sumcheck: OpeningPoint<BIG_ENDIAN, F>,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        let r = r_sumcheck
+        let r = opening_point
             .r
             .iter()
             .cloned()
