@@ -29,12 +29,12 @@ fn bench_all(c: &mut Criterion) {
         let (poly, eval_point) = setup_inputs(num_vars as u64);
 
         let id_dot = format!("dot-product-{}", exp);
-        group.bench_function(&id_dot, |b| b.iter(|| poly.evaluate(eval_point.as_slice())));
+        group.bench_function(&id_dot, |b| {
+            b.iter(|| poly.evaluate_dot_product(eval_point.as_slice()))
+        });
 
         let id_opt = format!("inside-out-{}", exp);
-        group.bench_function(&id_opt, |b| {
-            b.iter(|| poly.optimised_evaluate(eval_point.as_slice()))
-        });
+        group.bench_function(&id_opt, |b| b.iter(|| poly.evaluate(eval_point.as_slice())));
     }
 
     group.finish();
