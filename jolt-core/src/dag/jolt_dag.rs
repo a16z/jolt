@@ -13,6 +13,7 @@ use crate::r1cs::spartan::SpartanDag;
 use crate::subprotocols::sumcheck::{BatchableSumcheckInstance, BatchedSumcheck};
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::Transcript;
+use anyhow::Context;
 use rayon::prelude::*;
 pub struct JoltDAG<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
 {
@@ -90,7 +91,9 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         let mut registers_dag = RegistersDag::default();
         let mut ram_dag = RamDag::new_prover(&self.prover_state_manager);
         let mut bytecode_dag = BytecodeDag::default();
-        spartan_dag.stage1_prove(&mut self.prover_state_manager)?;
+        spartan_dag
+            .stage1_prove(&mut self.prover_state_manager)
+            .context("Stage 1")?;
 
         drop(_guard);
         drop(span);
@@ -233,7 +236,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         }
 
         // Receive opening claims from prover's accumulator
-        self.receive_claims()?;
+        self.receive_claims().context("Receive claims")?;
 
         // Stage 1:
         let (preprocessing, _, trace_length) = self.verifier_state_manager.get_verifier_data();
@@ -243,7 +246,9 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         let mut registers_dag = RegistersDag::default();
         let mut ram_dag = RamDag::new_verifier(&self.verifier_state_manager);
         let mut bytecode_dag = BytecodeDag::default();
-        spartan_dag.stage1_verify(&mut self.verifier_state_manager)?;
+        spartan_dag
+            .stage1_verify(&mut self.verifier_state_manager)
+            .context("Stage 1")?;
 
         // Stage 2:
         let mut stage2_instances: Vec<_> = std::iter::empty()
@@ -271,7 +276,8 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             stage2_proof,
             stage2_instances_ref,
             &mut *transcript.borrow_mut(),
-        )?;
+        )
+        .context("Stage 2")?;
 
         drop(proofs);
 
@@ -307,7 +313,8 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             stage3_proof,
             stage3_instances_ref,
             &mut *transcript.borrow_mut(),
-        )?;
+        )
+        .context("Stage 3")?;
         drop(proofs);
 
         let stage3_instances_mut: Vec<&mut dyn StagedSumcheck<F, PCS>> = stage3_instances
@@ -340,7 +347,8 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             stage4_proof,
             stage4_instances_ref,
             &mut *transcript.borrow_mut(),
-        )?;
+        )
+        .context("Stage 4")?;
 
         let stage4_instances_mut: Vec<&mut dyn StagedSumcheck<F, PCS>> = stage4_instances
             .iter_mut()

@@ -39,7 +39,6 @@ struct BooleanityProverState<F: JoltField> {
     eq_km_c_squared: [[F; 3]; 2],
     /// For the opening proofs
     unbound_ra_polys: Vec<MultilinearPolynomial<F>>,
-    r: Vec<F>,
 }
 
 pub struct BooleanitySumcheck<F: JoltField> {
@@ -171,7 +170,6 @@ impl<F: JoltField> BooleanityProverState<F> {
             eq_km_c,
             eq_km_c_squared,
             unbound_ra_polys,
-            r: Vec::with_capacity(LOG_K_CHUNK + trace.len().log_2()),
         }
     }
 }
@@ -206,7 +204,6 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for BooleanitySumcheck<F> {
     #[tracing::instrument(skip_all, name = "InstructionBooleanitySumcheck::bind")]
     fn bind(&mut self, r_j: F, round: usize) {
         let ps = self.prover_state.as_mut().unwrap();
-        ps.r.push(r_j);
 
         if round < LOG_K_CHUNK {
             // Phase 1: Bind B and update F
@@ -385,7 +382,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
     fn cache_openings_prover(
         &mut self,
         accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let ps = self.prover_state.as_mut().unwrap();
         let ra_claims =
@@ -401,8 +398,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
         let accumulator = accumulator.expect("accumulator is needed");
         accumulator.borrow_mut().append_sparse(
             std::mem::take(&mut ps.unbound_ra_polys),
-            ps.r[..LOG_K_CHUNK].to_vec(),
-            ps.r[LOG_K_CHUNK..].to_vec(),
+            opening_point.r[..LOG_K_CHUNK].to_vec(),
+            opening_point.r[LOG_K_CHUNK..].to_vec(),
             ra_claims,
             Some(ra_keys),
         );
@@ -411,13 +408,13 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
     fn cache_openings_verifier(
         &mut self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
-        r_sumcheck: OpeningPoint<BIG_ENDIAN, F>,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let accumulator = accumulator.expect("accumulator is needed");
         (0..D).for_each(|i| {
             accumulator.borrow_mut().populate_claim_opening(
                 OpeningsKeys::InstructionBooleanityRa(i),
-                r_sumcheck.clone(),
+                opening_point.clone(),
             );
         });
     }

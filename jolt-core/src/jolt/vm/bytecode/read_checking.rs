@@ -230,14 +230,21 @@ impl<F: JoltField> ReadCheckingSumcheck<F> {
             .r;
         let r_register = &r_register[0..r_register.len() - log_T];
         let eq_r_register = EqPolynomial::evals(r_register);
+        debug_assert_eq!(eq_r_register.len(), REGISTER_COUNT as usize);
         sm.get_bytecode()
             .par_iter()
             .map(|instruction| {
                 let instr = instruction.normalize();
                 let unexpanded_pc = instr.address;
 
-                let mut linear_combination = F::zero();
-                linear_combination += F::from_u64(unexpanded_pc as u64);
+                let mut linear_combination: F = std::iter::empty()
+                    .chain(once(F::from_u64(unexpanded_pc as u64)))
+                    // .chain(once(eq_r_register[instr.operands.rd]))
+                    // .chain(once(eq_r_register[instr.operands.rs1]))
+                    // .chain(once(eq_r_register[instr.operands.rs2]))
+                    .zip(gamma_powers)
+                    .map(|(claim, gamma)| claim * gamma)
+                    .sum();
 
                 // linear_combination += eq_r_register[instr.operands.rd] * gamma_powers[1];
                 // linear_combination += eq_r_register[instr.operands.rs1] * gamma_powers[2];
@@ -282,6 +289,7 @@ impl<F: JoltField> ReadCheckingSumcheck<F> {
             .get_opening_point(OpeningsKeys::RegistersValEvaluationWa)
             .unwrap()
             .r;
+        let r_register: Vec<_> = r_register[..(REGISTER_COUNT as usize).log_2()].to_vec();
         let eq_r_register = EqPolynomial::evals(&r_register);
         debug_assert_eq!(eq_r_register.len(), REGISTER_COUNT as usize);
         sm.get_bytecode()
@@ -296,7 +304,7 @@ impl<F: JoltField> ReadCheckingSumcheck<F> {
     pub fn compute_rv_claim_3(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> F {
-        sm.get_opening(OpeningsKeys::RegistersReadWriteVal)
+        sm.get_opening(OpeningsKeys::RegistersValEvaluationWa)
     }
 }
 

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::dag::stage::{StagedSumcheck, SumcheckStages};
 use crate::dag::state_manager::StateManager;
-use crate::jolt::vm::bytecode::booleanity::BooleanityProof;
+use crate::jolt::vm::bytecode::booleanity::{BooleanityProof, BooleanitySumcheck};
 use crate::jolt::vm::bytecode::raf::{RafBytecode, RafEvaluationProof};
 use crate::jolt::vm::bytecode::read_checking::{ReadCheckingSumcheck, ReadCheckingValTypes};
 use crate::poly::opening_proof::OpeningsKeys;
@@ -28,7 +28,7 @@ use crate::{
     },
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
+use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
 use rayon::prelude::*;
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
 
@@ -120,19 +120,19 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             .get_opening_point(OpeningsKeys::PCSumcheckUnexpandedPC)
             .unwrap()
             .r;
-        let r_register = sm
-            .get_opening_point(OpeningsKeys::RegistersReadWriteRdWa)
-            .unwrap()
-            .r;
-        assert_eq!(&r_shift, &r_register[r_register.len() - r_shift.len()..]);
+        // let r_register = sm
+        //     .get_opening_point(OpeningsKeys::RegistersReadWriteRdWa)
+        //     .unwrap()
+        //     .r;
+        // assert_eq!(&r_shift, &r_register[r_register.len() - r_shift.len()..]);
         let r_register = sm
             .get_opening_point(OpeningsKeys::RegistersValEvaluationWa)
             .unwrap()
             .r;
-
+        let r_register = &r_register[(REGISTER_COUNT as usize).log_2()..];
         let E: Vec<F> = EqPolynomial::evals(&r_cycle);
         let E_shift: Vec<F> = EqPolynomial::evals(&r_shift);
-        let E_register: Vec<F> = EqPolynomial::evals(&r_register);
+        let E_register: Vec<F> = EqPolynomial::evals(r_register);
 
         let span = tracing::span!(tracing::Level::INFO, "compute F");
         let _guard = span.enter();
@@ -207,17 +207,19 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         //     unbound_ra_poly,
         //     ReadCheckingValTypes::Stage3,
         // );
-        // let raf = RafBytecode::new_prover(
-        //     sm,
-        //     MultilinearPolynomial::from(F),
-        //     MultilinearPolynomial::from(F_shift),
-        // );
+        let raf = RafBytecode::new_prover(
+            sm,
+            MultilinearPolynomial::from(F.clone()),
+            MultilinearPolynomial::from(F_shift),
+        );
+        let booleanity = BooleanitySumcheck::new_prover(sm, E, F, unbound_ra_poly.clone());
 
         vec![
             Box::new(read_checking_1),
             Box::new(read_checking_2),
             // Box::new(read_checking_3),
-            // Box::new(raf),
+            Box::new(raf),
+            Box::new(booleanity),
         ]
     }
 
@@ -228,13 +230,15 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         let read_checking_1 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValTypes::Stage1);
         let read_checking_2 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValTypes::Stage2);
         // let read_checking_3 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValTypes::Stage3);
-        // let raf = RafBytecode::new_verifier(sm);
+        let raf = RafBytecode::new_verifier(sm);
+        let booleanity = BooleanitySumcheck::new_verifier(sm);
 
         vec![
             Box::new(read_checking_1),
             Box::new(read_checking_2),
             // Box::new(read_checking_3),
-            // Box::new(raf),
+            Box::new(raf),
+            Box::new(booleanity),
         ]
     }
 }
