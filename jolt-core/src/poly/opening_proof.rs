@@ -4,6 +4,7 @@
 //! can use a sumcheck to reduce multiple opening proofs (multiple polynomials, not
 //! necessarily of the same size, each opened at a different point) into a single opening.
 
+use rayon::prelude::*;
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -203,27 +204,32 @@ pub struct DensePolynomialProverOpening<F: JoltField> {
 }
 
 impl<F: JoltField> DensePolynomialProverOpening<F> {
+    #[tracing::instrument(
+        skip_all,
+        name = "DensePolynomialProverOpening::compute_prover_message"
+    )]
     fn compute_prover_message(&mut self, _: usize) -> Vec<F> {
-        let shared_eq = self.eq_poly.borrow();
+        let eq_poly = &self.eq_poly.borrow().eq_poly;
         let polynomial = &self.polynomial;
         let mle_half = polynomial.len() / 2;
         let eval_0: F = (0..mle_half)
-            .map(|i| polynomial.get_bound_coeff(i) * shared_eq.eq_poly[i])
+            .into_par_iter()
+            .map(|i| polynomial.get_bound_coeff(i) * eq_poly[i])
             .sum();
         let eval_2: F = (0..mle_half)
+            .into_par_iter()
             .map(|i| {
                 let poly_bound_point = polynomial.get_bound_coeff(i + mle_half)
                     + polynomial.get_bound_coeff(i + mle_half)
                     - polynomial.get_bound_coeff(i);
-                let eq_bound_point = shared_eq.eq_poly[i + mle_half]
-                    + shared_eq.eq_poly[i + mle_half]
-                    - shared_eq.eq_poly[i];
+                let eq_bound_point = eq_poly[i + mle_half] + eq_poly[i + mle_half] - eq_poly[i];
                 poly_bound_point * eq_bound_point
             })
             .sum();
         vec![eval_0, eval_2]
     }
 
+    #[tracing::instrument(skip_all, name = "DensePolynomialProverOpening::bind")]
     fn bind(&mut self, r_j: F, round: usize) {
         let mut shared_eq = self.eq_poly.borrow_mut();
         if shared_eq.num_variables_bound <= round {

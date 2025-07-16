@@ -214,13 +214,13 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for ValEvaluationSumcheck<F> {
             .map(|i| {
                 let inc_evals = prover_state
                     .inc
-                    .sumcheck_evals(i, DEGREE, BindingOrder::HighToLow);
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
                 let wa_evals = prover_state
                     .wa
-                    .sumcheck_evals(i, DEGREE, BindingOrder::HighToLow);
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
                 let lt_evals = prover_state
                     .lt
-                    .sumcheck_evals(i, DEGREE, BindingOrder::HighToLow);
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
 
                 [
                     inc_evals[0] * wa_evals[0] * lt_evals[0],

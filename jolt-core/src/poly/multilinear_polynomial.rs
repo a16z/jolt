@@ -377,6 +377,45 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
+
+    #[inline]
+    pub fn sumcheck_evals_array<const DEGREE: usize>(
+        &self,
+        index: usize,
+        order: BindingOrder,
+    ) -> [F; DEGREE] {
+        debug_assert!(DEGREE > 0);
+        debug_assert!(index < self.len() / 2);
+
+        let mut evals = [F::zero(); DEGREE];
+        match order {
+            BindingOrder::HighToLow => {
+                evals[0] = self.get_bound_coeff(index);
+                if DEGREE == 1 {
+                    return evals;
+                }
+                let mut eval = self.get_bound_coeff(index + self.len() / 2);
+                let m = eval - evals[0];
+                for i in 1..DEGREE {
+                    eval += m;
+                    evals[i] = eval;
+                }
+            }
+            BindingOrder::LowToHigh => {
+                evals[0] = self.get_bound_coeff(2 * index);
+                if DEGREE == 1 {
+                    return evals;
+                }
+                let mut eval = self.get_bound_coeff(2 * index + 1);
+                let m = eval - evals[0];
+                for i in 1..DEGREE {
+                    eval += m;
+                    evals[i] = eval;
+                }
+            }
+        };
+        evals
+    }
 }
 
 impl<F: JoltField> From<Vec<F>> for MultilinearPolynomial<F> {

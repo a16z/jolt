@@ -15,9 +15,7 @@ use crate::{
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
-        multilinear_polynomial::{
-            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-        },
+        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
             OpeningPoint, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
             BIG_ENDIAN,
@@ -136,13 +134,13 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for ValEvaluationSumcheck<F> {
             .map(|i| {
                 let inc_evals = prover_state
                     .inc
-                    .sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
                 let wa_evals = prover_state
                     .wa
-                    .sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
                 let lt_evals = prover_state
                     .lt
-                    .sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
 
                 [
                     inc_evals[0] * wa_evals[0] * lt_evals[0],

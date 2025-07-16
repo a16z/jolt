@@ -176,7 +176,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for RafEvaluationSumcheck<F> {
             .map(|i| {
                 let ra_evals = prover_state
                     .ra
-                    .sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
                 let unmap_evals =
                     prover_state
                         .unmap

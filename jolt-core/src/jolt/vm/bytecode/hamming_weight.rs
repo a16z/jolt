@@ -4,9 +4,7 @@ use crate::{
     field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
-        multilinear_polynomial::{
-            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-        },
+        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{OpeningPoint, ProverOpeningAccumulator, BIG_ENDIAN},
     },
     subprotocols::sumcheck::{
@@ -66,17 +64,10 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for HammingWeightSumcheck<F> {
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
-        let degree = <Self as BatchableSumcheckInstance<F>>::degree(self);
 
         let univariate_poly_eval: F = (0..prover_state.ra_poly.len() / 2)
             .into_par_iter()
-            .map(|i| {
-                let ra_evals =
-                    prover_state
-                        .ra_poly
-                        .sumcheck_evals(i, degree, BindingOrder::LowToHigh);
-                ra_evals[0]
-            })
+            .map(|i| prover_state.ra_poly.get_bound_coeff(2 * i))
             .sum();
 
         vec![univariate_poly_eval]

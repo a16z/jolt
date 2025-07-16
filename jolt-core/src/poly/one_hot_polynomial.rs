@@ -150,7 +150,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             let univariate_poly_evals: [F; 2] = (0..B.len() / 2)
                 .into_par_iter()
                 .map(|k_prime| {
-                    let B_evals = B.sumcheck_evals(k_prime, 2, BindingOrder::HighToLow);
+                    let B_evals = B.sumcheck_evals_array::<2>(k_prime, BindingOrder::HighToLow);
                     let inner_sum = G
                         .par_iter()
                         .enumerate()
@@ -205,7 +205,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                 .into_par_iter()
                 .map(|j| {
                     let H_evals = H.sumcheck_evals(j, 2, BindingOrder::HighToLow);
-                    let D_evals = D.sumcheck_evals(j, 2, BindingOrder::HighToLow);
+                    let D_evals = D.sumcheck_evals_array::<2>(j, BindingOrder::HighToLow);
                     [H_evals[0] * D_evals[0], H_evals[1] * D_evals[1]]
                 })
                 .reduce(
@@ -307,34 +307,63 @@ impl<F: JoltField> OneHotPolynomial<F> {
         let row_len = DoryGlobals::get_num_columns();
         let T = DoryGlobals::get_T();
 
-        let num_chunks = rayon::current_num_threads().next_power_of_two();
-        let chunk_size = std::cmp::max(1, num_rows / num_chunks);
+        let rows_per_k = T / row_len;
+        if rows_per_k >= rayon::current_num_threads() {
+            // This is the typical case (T >> K)
 
-        // Iterate over chunks of contiguous rows in parallel
-        // TODO(moodlezoup): Optimize this
-        let mut result: Vec<JoltGroupWrapper<G>> = vec![JoltGroupWrapper(G::zero()); num_rows];
-        result
-            .par_chunks_mut(chunk_size)
-            .enumerate()
-            .for_each(|(chunk_index, chunk)| {
-                let min_row_index = chunk_index * chunk_size;
-                let max_row_index = min_row_index + chunk_size;
-
-                for (t, k) in self.nonzero_indices.iter().enumerate() {
-                    let global_index = *k as u128 * T as u128 + t as u128;
-                    let row_index = (global_index / row_len as u128) as usize;
-
-                    // If this coefficient falls in the chunk of rows corresponding
-                    // to `chunk_index`, add its contribution to the result
-                    if row_index >= min_row_index && row_index < max_row_index {
-                        let col_index = global_index % row_len as u128;
+            let chunk_commitments: Vec<Vec<_>> = self
+                .nonzero_indices
+                .par_chunks(row_len)
+                .map(|chunk| {
+                    let mut row_commitments = vec![JoltGroupWrapper(G::zero()); self.K];
+                    for (col_index, k) in chunk.iter().enumerate() {
                         // All the nonzero coefficients are 1, so we simply add
                         // the associated base to the result.
-                        chunk[row_index % chunk_size].0 += bases[col_index as usize];
+                        row_commitments[*k].0 += bases[col_index];
                     }
-                }
-            });
-        result
+                    row_commitments
+                })
+                .collect();
+            let mut result = vec![JoltGroupWrapper(G::zero()); num_rows];
+            for (chunk_index, commitments) in chunk_commitments.iter().enumerate() {
+                result
+                    .par_iter_mut()
+                    .skip(chunk_index)
+                    .step_by(rows_per_k)
+                    .zip(commitments.into_par_iter())
+                    .for_each(|(dest, src)| *dest = *src);
+            }
+
+            result
+        } else {
+            let num_chunks = rayon::current_num_threads().next_power_of_two();
+            let chunk_size = std::cmp::max(1, num_rows / num_chunks);
+
+            // Iterate over chunks of contiguous rows in parallel
+            let mut result: Vec<JoltGroupWrapper<G>> = vec![JoltGroupWrapper(G::zero()); num_rows];
+            result
+                .par_chunks_mut(chunk_size)
+                .enumerate()
+                .for_each(|(chunk_index, chunk)| {
+                    let min_row_index = chunk_index * chunk_size;
+                    let max_row_index = min_row_index + chunk_size;
+
+                    for (t, k) in self.nonzero_indices.iter().enumerate() {
+                        let global_index = *k as u64 * T as u64 + t as u64;
+                        let row_index = (global_index / row_len as u64) as usize;
+
+                        // If this coefficient falls in the chunk of rows corresponding
+                        // to `chunk_index`, add its contribution to the result
+                        if row_index >= min_row_index && row_index < max_row_index {
+                            let col_index = global_index % row_len as u64;
+                            // All the nonzero coefficients are 1, so we simply add
+                            // the associated base to the result.
+                            chunk[row_index % chunk_size].0 += bases[col_index as usize];
+                        }
+                    }
+                });
+            result
+        }
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPolynomial::vector_matrix_product")]

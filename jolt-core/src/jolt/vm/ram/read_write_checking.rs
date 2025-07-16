@@ -7,9 +7,7 @@ use crate::{
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
-        multilinear_polynomial::{
-            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-        },
+        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
             OpeningPoint, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
             BIG_ENDIAN, LITTLE_ENDIAN,
@@ -495,10 +493,10 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                             val_j_0[col] += inc;
                         }
 
-                        let eq_r_prime_evals =
-                            eq_r_prime.sumcheck_evals(j_prime / 2, DEGREE, BindingOrder::LowToHigh);
-                        let inc_cycle_evals =
-                            inc_cycle.sumcheck_evals(j_prime / 2, DEGREE, BindingOrder::LowToHigh);
+                        let eq_r_prime_evals = eq_r_prime
+                            .sumcheck_evals_array::<DEGREE>(j_prime / 2, BindingOrder::LowToHigh);
+                        let inc_cycle_evals = inc_cycle
+                            .sumcheck_evals_array::<DEGREE>(j_prime / 2, BindingOrder::LowToHigh);
 
                         let mut inner_sum_evals = [F::zero(); DEGREE];
                         for k in dirty_indices.drain(..) {
@@ -566,15 +564,18 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             .into_par_iter()
             .map(|j| {
                 let eq_r_prime_evals =
-                    eq_r_prime.sumcheck_evals(j, DEGREE, BindingOrder::HighToLow);
-                let inc_evals = inc_cycle.sumcheck_evals(j, DEGREE, BindingOrder::HighToLow);
+                    eq_r_prime.sumcheck_evals_array::<DEGREE>(j, BindingOrder::HighToLow);
+                let inc_evals =
+                    inc_cycle.sumcheck_evals_array::<DEGREE>(j, BindingOrder::HighToLow);
 
                 let inner_sum_evals: [F; DEGREE] = (0..self.K)
                     .into_par_iter()
                     .map(|k| {
                         let index = j * self.K + k;
-                        let ra_evals = ra.sumcheck_evals(index, DEGREE, BindingOrder::HighToLow);
-                        let val_evals = val.sumcheck_evals(index, DEGREE, BindingOrder::HighToLow);
+                        let ra_evals =
+                            ra.sumcheck_evals_array::<DEGREE>(index, BindingOrder::HighToLow);
+                        let val_evals =
+                            val.sumcheck_evals_array::<DEGREE>(index, BindingOrder::HighToLow);
 
                         [
                             ra_evals[0].mul_0_optimized(
@@ -640,8 +641,8 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         let evals = (0..ra.len() / 2)
             .into_par_iter()
             .map(|k| {
-                let ra_evals = ra.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
-                let val_evals = val.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
+                let ra_evals = ra.sumcheck_evals_array::<DEGREE>(k, BindingOrder::HighToLow);
+                let val_evals = val.sumcheck_evals_array::<DEGREE>(k, BindingOrder::HighToLow);
                 let inc_cycle_eval = inc_cycle.final_sumcheck_claim();
 
                 [
