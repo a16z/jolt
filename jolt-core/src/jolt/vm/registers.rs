@@ -64,8 +64,6 @@ pub struct ValEvaluationProverState<F: JoltField> {
     pub wa: MultilinearPolynomial<F>,
     /// LT polynomial
     pub lt: MultilinearPolynomial<F>,
-    /// r_cycle_prime
-    pub r_sumcheck: Vec<F>,
 }
 
 /// Verifier state for the Val-evaluation sumcheck
@@ -165,15 +163,13 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for ValEvaluationSumcheck<F> {
     #[tracing::instrument(skip_all, name = "RegistersValEvaluationSumcheck::bind")]
     fn bind(&mut self, r_j: F, _round: usize) {
         if let Some(prover_state) = &mut self.prover_state {
-            prover_state.r_sumcheck.push(r_j);
-
             [
                 &mut prover_state.inc,
                 &mut prover_state.wa,
                 &mut prover_state.lt,
             ]
             .par_iter_mut()
-            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
+            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
         }
     }
 
@@ -185,7 +181,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for ValEvaluationSumcheck<F> {
         let claims = self.claims.as_ref().expect("Claims not cached");
 
         // r contains r_cycle_prime in low-to-high order
-        let r_cycle_prime: Vec<F> = r.iter().rev().copied().collect();
+        let r_cycle_prime: Vec<F> = r.iter().copied().collect();
 
         // Compute LT(r_cycle', r_cycle)
         let mut lt_eval = F::zero();
@@ -205,60 +201,64 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
+    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+        OpeningPoint::new(opening_point.to_vec())
+    }
+
     fn cache_openings_prover(
         &mut self,
         accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        r_cycle_prime: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        debug_assert!(self.claims.is_none());
-        let prover_state = self
-            .prover_state
-            .as_ref()
-            .expect("Prover state not initialized");
+        if let Some(prover_state) = &self.prover_state {
+            self.claims = Some(ValEvaluationSumcheckClaims {
+                inc_claim: prover_state.inc.final_sumcheck_claim(),
+                wa_claim: prover_state.wa.final_sumcheck_claim(),
+            });
 
-        let inc_claim = prover_state.inc.final_sumcheck_claim();
-        let wa_claim = prover_state.wa.final_sumcheck_claim();
+            let accumulator = accumulator.expect("accumulator is needed");
+            let mut r_address = accumulator
+                .borrow()
+                .get_opening_point(OpeningsKeys::RegistersReadWriteVal)
+                .unwrap();
+            let _r_cycle = r_address.split_off(r_address.len() - r_cycle_prime.len());
+            let wa_opening_point =
+                OpeningPoint::new([r_address.r.as_slice(), r_cycle_prime.r.as_slice()].concat());
 
-        self.claims = Some(ValEvaluationSumcheckClaims {
-            inc_claim,
-            wa_claim,
-        });
-
-        // Append claims to accumulator
-        if let Some(accumulator) = accumulator {
-            // Get the sumcheck opening point during the batchable prove (r_cycle_prime)
-            // The sumcheck binds in low-to-high order, so we reverse to get r_cycle_prime
-            let mut r_cycle_prime = prover_state.r_sumcheck.clone();
-            r_cycle_prime.reverse();
+            accumulator.borrow_mut().append_virtual(
+                OpeningsKeys::RegistersValEvaluationWa,
+                wa_opening_point,
+                prover_state.wa.final_sumcheck_claim(),
+            );
 
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersValEvaluationInc,
-                OpeningPoint::new(r_cycle_prime.clone()),
-                inc_claim,
-            );
-            accumulator.borrow_mut().append_virtual(
-                OpeningsKeys::RegistersValEvaluationWa,
-                OpeningPoint::new(r_cycle_prime),
-                wa_claim,
+                r_cycle_prime,
+                prover_state.inc.final_sumcheck_claim(),
             );
         }
     }
-    //@TODO(markosg04) verifier side for the bytecode claims
 
     fn cache_openings_verifier(
         &mut self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        r_cycle_prime: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let accumulator = accumulator.expect("accumulator is needed");
+        let mut r_address = accumulator
+            .borrow()
+            .get_opening_point(OpeningsKeys::RegistersReadWriteVal)
+            .unwrap();
+        let _r_cycle = r_address.split_off(r_address.len() - r_cycle_prime.len());
+        let wa_opening_point =
+            OpeningPoint::new([r_address.r.as_slice(), r_cycle_prime.r.as_slice()].concat());
 
-        accumulator.borrow_mut().populate_claim_opening(
-            OpeningsKeys::RegistersValEvaluationInc,
-            opening_point.clone(),
-        );
         accumulator
             .borrow_mut()
-            .populate_claim_opening(OpeningsKeys::RegistersValEvaluationWa, opening_point);
+            .populate_claim_opening(OpeningsKeys::RegistersValEvaluationInc, r_cycle_prime);
+        accumulator
+            .borrow_mut()
+            .populate_claim_opening(OpeningsKeys::RegistersValEvaluationWa, wa_opening_point);
     }
 }
 
@@ -423,12 +423,7 @@ pub fn prove_val_evaluation<
 
     let mut sumcheck_instance: ValEvaluationSumcheck<F> = ValEvaluationSumcheck {
         claimed_evaluation,
-        prover_state: Some(ValEvaluationProverState {
-            inc,
-            wa,
-            lt,
-            r_sumcheck: Vec::new(),
-        }),
+        prover_state: Some(ValEvaluationProverState { inc, wa, lt }),
         verifier_state: None,
         claims: None,
     };
