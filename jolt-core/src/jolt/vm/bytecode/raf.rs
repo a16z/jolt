@@ -235,32 +235,6 @@ impl<F: JoltField, ProofTranscript: Transcript> RafEvaluationProof<F, ProofTrans
         _transcript: &mut ProofTranscript,
     ) -> Self {
         todo!()
-        // let K = preprocessing.bytecode.len().next_power_of_two();
-        // let int_poly = IdentityPolynomial::new(K.log_2());
-        //
-        // // TODO: Propagate raf claim from Spartan
-        // let raf_evals = preprocessing.map_trace_to_pc(trace).collect::<Vec<u64>>();
-        // let raf_poly = MultilinearPolynomial::from(raf_evals);
-        // let raf_claim = raf_poly.evaluate(r_cycle);
-        // let raf_claim_shift = raf_poly.evaluate(r_shift);
-        // let input_claim = raf_claim + challenge * raf_claim_shift;
-        //
-        // let mut raf_sumcheck =
-        //     RafBytecode::new_prover(input_claim, ra_poly, ra_poly_shift, challenge, K);
-        //
-        // let (sumcheck_proof, _r_address) = raf_sumcheck.prove_single(transcript);
-        //
-        // let (ra_claim, ra_claim_shift) = raf_sumcheck
-        //     .ra_claims
-        //     .expect("ra_claims should be set after prove_single");
-        //
-        // Self {
-        //     sumcheck_proof,
-        //     ra_claim,
-        //     ra_claim_shift,
-        //     raf_claim,
-        //     raf_claim_shift,
-        // }
     }
 
     pub fn verify(
@@ -270,14 +244,5 @@ impl<F: JoltField, ProofTranscript: Transcript> RafEvaluationProof<F, ProofTrans
         _transcript: &mut ProofTranscript,
     ) -> Result<Vec<F>, ProofVerifyError> {
         todo!()
-        // let input_claim = self.raf_claim + challenge * self.raf_claim_shift;
-        //
-        // let mut raf_sumcheck = RafBytecode::new_verifier(input_claim, challenge, K);
-        //
-        // raf_sumcheck.ra_claims = Some((self.ra_claim, self.ra_claim_shift));
-        //
-        // let r_raf_sumcheck = raf_sumcheck.verify_single(&self.sumcheck_proof, transcript)?;
-        //
-        // Ok(r_raf_sumcheck)
     }
 }

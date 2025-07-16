@@ -453,60 +453,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadCheckingProof<F, ProofTransc
         _transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>, MultilinearPolynomial<F>) {
         todo!()
-        // Used to combine the various fields in each instruction into a single
-        // // field element.
-        // let gamma_1: F = transcript.challenge_scalar();
-        // let compute_val_1 = Self::compute_val_1(gamma_1);
-        //
-        // // TODO: Get r_register from the registers read/write checking and/or
-        // // Val-evaluation sumcheck
-        // let r_register: Vec<F> = transcript.challenge_vector((REGISTER_COUNT as usize).log_2());
-        // let eq_r_register = EqPolynomial::evals(&r_register);
-        //
-        // let gamma_2: F = transcript.challenge_scalar();
-        // let compute_val_2 = Self::compute_val_2(gamma_2, eq_r_register.clone());
-        //
-        // let compute_val_3 = Self::compute_val_3(eq_r_register);
-        //
-        // let (mut read_checking_sumcheck_1, rv_claim_1) =
-        //     ReadCheckingSumcheck::new_prover(bytecode, F.clone(), K, compute_val_1);
-        //
-        // let (mut read_checking_sumcheck_2, rv_claim_2) =
-        //     ReadCheckingSumcheck::new_prover(bytecode, F.clone(), K, compute_val_2);
-        //
-        // let (mut read_checking_sumcheck_3, rv_claim_3) =
-        //     ReadCheckingSumcheck::new_prover(bytecode, F.clone(), K, compute_val_3);
-        //
-        // let (sumcheck_proof, r_address) = BatchedSumcheck::prove(
-        //     vec![
-        //         &mut read_checking_sumcheck_1,
-        //         &mut read_checking_sumcheck_2,
-        //         &mut read_checking_sumcheck_3,
-        //     ],
-        //     transcript,
-        // );
-        // // BatchedSumcheck::cache_openings(
-        // //     vec![
-        // //         &mut read_checking_sumcheck_1,
-        // //         &mut read_checking_sumcheck_2,
-        // //         &mut read_checking_sumcheck_3,
-        // //     ],
-        // //     openings,
-        // //     accumulator,
-        // // );
-        //
-        // let ra_claim = read_checking_sumcheck_1
-        //     .ra_claim
-        //     .expect("ra_claim should be set after prove_single");
-        //
-        // let proof = Self {
-        //     sumcheck_proof,
-        //     ra_claim,
-        //     rv_claims: [rv_claim_1, rv_claim_2, rv_claim_3],
-        // };
-        //
-        // let raf_ra = MultilinearPolynomial::from(F);
-        // (proof, r_address, raf_ra)
     }
 
     pub fn verify(
@@ -516,35 +462,5 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadCheckingProof<F, ProofTransc
         _transcript: &mut ProofTranscript,
     ) -> Result<Vec<F>, ProofVerifyError> {
         todo!()
-        // // Used to combine the various fields in each instruction into a single
-        // // field element.
-        // let gamma_1: F = transcript.challenge_scalar();
-        // let compute_val_1 = Self::compute_val_1(gamma_1);
-        //
-        // // TODO: Get r_register from the registers read/write checking and/or
-        // // Val-evaluation sumcheck
-        // let r_register: Vec<F> = transcript.challenge_vector((REGISTER_COUNT as usize).log_2());
-        // let eq_r_register = EqPolynomial::evals(&r_register);
-        //
-        // let gamma_2: F = transcript.challenge_scalar();
-        // let compute_val_2 = Self::compute_val_2(gamma_2, eq_r_register.clone());
-        //
-        // let compute_val_3 = Self::compute_val_3(eq_r_register);
-        //
-        // read_checking_sumcheck_1.ra_claim = Some(self.ra_claim);
-        // read_checking_sumcheck_2.ra_claim = Some(self.ra_claim);
-        // read_checking_sumcheck_3.ra_claim = Some(self.ra_claim);
-        //
-        // let r_address = BatchedSumcheck::verify(
-        //     &self.sumcheck_proof,
-        //     vec![
-        //         &read_checking_sumcheck_1,
-        //         &read_checking_sumcheck_2,
-        //         &read_checking_sumcheck_3,
-        //     ],
-        //     transcript,
-        // )?;
-        //
-        // Ok(r_address)
     }
 }

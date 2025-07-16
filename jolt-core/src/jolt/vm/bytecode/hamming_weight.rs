@@ -172,22 +172,6 @@ impl<F: JoltField, ProofTranscript: Transcript> HammingWeightProof<F, ProofTrans
     #[tracing::instrument(skip_all, name = "HammingWeightProof::prove")]
     pub fn prove(_F: Vec<F>, _K: usize, _transcript: &mut ProofTranscript) -> (Self, Vec<F>) {
         todo!()
-        // let ra_poly = MultilinearPolynomial::from(F);
-        // let mut core_piop_sumcheck = HammingWeightSumcheck::new_prover(ra_poly, K);
-        //
-        // let (sumcheck_proof, r_address) = core_piop_sumcheck.prove_single(transcript);
-        // // BatchedSumcheck::cache_openings(vec![&mut core_piop_sumcheck], openings, accumulator);
-        //
-        // let ra_claim = core_piop_sumcheck
-        //     .ra_claim
-        //     .expect("ra_claim should be set after prove_single");
-        //
-        // let proof = Self {
-        //     sumcheck_proof,
-        //     ra_claim,
-        // };
-        //
-        // (proof, r_address)
     }
 
     pub fn verify(
@@ -196,11 +180,5 @@ impl<F: JoltField, ProofTranscript: Transcript> HammingWeightProof<F, ProofTrans
         _transcript: &mut ProofTranscript,
     ) -> Result<Vec<F>, ProofVerifyError> {
         todo!()
-        // let mut core_piop_sumcheck = HammingWeightSumcheck::new_verifier(K);
-        // core_piop_sumcheck.ra_claim = Some(self.ra_claim);
-        //
-        // let r_address = core_piop_sumcheck.verify_single(&self.sumcheck_proof, transcript)?;
-        //
-        // Ok(r_address)
     }
 }

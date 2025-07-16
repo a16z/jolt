@@ -414,26 +414,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BooleanityProof<F, ProofTranscri
         _transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>, Vec<F>) {
         todo!()
-        // let K = r.len().pow2();
-        // let T = trace.len();
-        //
-        // let mut booleanity_sumcheck =
-        //     BooleanitySumcheck::new_prover(preprocessing, trace, r, D, G, K, T);
-        //
-        // let (sumcheck_proof, r_combined) = booleanity_sumcheck.prove_single(transcript);
-        //
-        // let (r_address_prime, r_cycle_prime) = r_combined.split_at(K.log_2());
-        //
-        // let ra_claim_prime = booleanity_sumcheck
-        //     .ra_claim_prime
-        //     .expect("ra_claim_prime should be set after prove_single");
-        //
-        // let proof = Self {
-        //     sumcheck_proof,
-        //     ra_claim_prime,
-        // };
-        //
-        // (proof, r_address_prime.to_vec(), r_cycle_prime.to_vec())
     }
 
     pub fn verify(
@@ -445,16 +425,5 @@ impl<F: JoltField, ProofTranscript: Transcript> BooleanityProof<F, ProofTranscri
         _transcript: &mut ProofTranscript,
     ) -> Result<(Vec<F>, F), ProofVerifyError> {
         todo!()
-        // let booleanity_sumcheck = BooleanitySumcheck::new_verifier(
-        //     K,
-        //     T,
-        //     r_address.to_vec(),
-        //     r_cycle.to_vec(),
-        //     self.ra_claim_prime,
-        // );
-        //
-        // let r_combined = booleanity_sumcheck.verify_single(&self.sumcheck_proof, transcript)?;
-        //
-        // Ok((r_combined, self.ra_claim_prime))
     }
 }
