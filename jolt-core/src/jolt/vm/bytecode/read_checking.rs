@@ -21,16 +21,13 @@ use crate::{
         },
     },
     r1cs::inputs::JoltR1CSInputs,
-    subprotocols::sumcheck::{
-        BatchableSumcheckInstance, CacheSumcheckOpenings, SumcheckInstanceProof,
-    },
-    utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
+    subprotocols::sumcheck::{BatchableSumcheckInstance, CacheSumcheckOpenings},
+    utils::{math::Math, transcript::Transcript},
 };
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::REGISTER_COUNT;
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
-use tracer::instruction::{NormalizedInstruction, RV32IMInstruction};
+use tracer::instruction::NormalizedInstruction;
 
 struct ReadCheckingProverState<F: JoltField> {
     r: Vec<F>,
@@ -39,13 +36,9 @@ struct ReadCheckingProverState<F: JoltField> {
 }
 
 pub struct ReadCheckingSumcheck<F: JoltField> {
-    /// Input claim = rv(r_cycle)
     rv_claim: F,
-    /// K value shared by prover and verifier
     K: usize,
-    /// Prover state
     prover_state: Option<ReadCheckingProverState<F>>,
-    /// Cached ra claim after sumcheck completes
     ra_claim: Option<F>,
     val_poly: MultilinearPolynomial<F>,
     op_key: OpeningsKeys,
@@ -53,12 +46,12 @@ pub struct ReadCheckingSumcheck<F: JoltField> {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum ReadCheckingValTypes {
+pub enum ReadCheckingValType {
     /// Spartan outer sumcheck
     Stage1,
-    /// Spartan shift sumcheck, instructions, registers
+    /// Registers read-write sumcheck
     Stage2,
-    /// Registers val sumcheck wa
+    /// Registers val sumcheck wa, PCSumcheck, Instruction Lookups
     Stage3,
 }
 
@@ -67,7 +60,7 @@ impl<F: JoltField> ReadCheckingSumcheck<F> {
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         F: Vec<F>,
         unbound_ra_poly: MultilinearPolynomial<F>,
-        val_type: ReadCheckingValTypes,
+        val_type: ReadCheckingValType,
     ) -> Self {
         let K = sm.get_bytecode().len();
         let (val, rv_claim, r_cycle, op_key) = Self::compute_val_rv(sm, val_type);
@@ -95,7 +88,7 @@ impl<F: JoltField> ReadCheckingSumcheck<F> {
 
     pub fn new_verifier(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
-        val_type: ReadCheckingValTypes,
+        val_type: ReadCheckingValType,
     ) -> Self {
         let K = sm.get_bytecode().len();
         let (val, rv_claim, r_cycle, op_key) = Self::compute_val_rv(sm, val_type);
@@ -115,10 +108,10 @@ impl<F: JoltField> ReadCheckingSumcheck<F> {
 
     pub fn compute_val_rv(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
-        val_type: ReadCheckingValTypes,
+        val_type: ReadCheckingValType,
     ) -> (Vec<F>, F, Vec<F>, OpeningsKeys) {
         match val_type {
-            ReadCheckingValTypes::Stage1 => {
+            ReadCheckingValType::Stage1 => {
                 let gamma: F = sm.get_transcript().borrow_mut().challenge_scalar();
                 let mut gamma_powers = vec![F::one()];
                 for _ in 0..NUM_CIRCUIT_FLAGS + 1 {
@@ -133,7 +126,7 @@ impl<F: JoltField> ReadCheckingSumcheck<F> {
                     OpeningsKeys::BytecodeStage1Ra,
                 )
             }
-            ReadCheckingValTypes::Stage2 => {
+            ReadCheckingValType::Stage2 => {
                 let gamma: F = sm.get_transcript().borrow_mut().challenge_scalar();
                 let mut gamma_powers = vec![F::one()];
                 for _ in 0..2 {
@@ -148,7 +141,7 @@ impl<F: JoltField> ReadCheckingSumcheck<F> {
                     OpeningsKeys::BytecodeStage2Ra,
                 )
             }
-            ReadCheckingValTypes::Stage3 => {
+            ReadCheckingValType::Stage3 => {
                 let gamma: F = sm.get_transcript().borrow_mut().challenge_scalar();
                 let mut gamma_powers = vec![F::one()];
                 for _ in 0..NUM_LOOKUP_TABLES + 1 {
@@ -435,32 +428,4 @@ where
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS>
     for ReadCheckingSumcheck<F>
 {
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct ReadCheckingProof<F: JoltField, ProofTranscript: Transcript> {
-    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    pub ra_claim: F,
-    rv_claims: [F; 3],
-}
-
-impl<F: JoltField, ProofTranscript: Transcript> ReadCheckingProof<F, ProofTranscript> {
-    #[tracing::instrument(skip_all, name = "ReadCheckingProof::prove")]
-    pub fn prove(
-        _bytecode: &[RV32IMInstruction],
-        _F: Vec<F>,
-        _K: usize,
-        _transcript: &mut ProofTranscript,
-    ) -> (Self, Vec<F>, MultilinearPolynomial<F>) {
-        todo!()
-    }
-
-    pub fn verify(
-        &self,
-        _bytecode: &[RV32IMInstruction],
-        _K: usize,
-        _transcript: &mut ProofTranscript,
-    ) -> Result<Vec<F>, ProofVerifyError> {
-        todo!()
-    }
 }

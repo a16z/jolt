@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 use crate::field::JoltField;
+use crate::jolt::vm::bytecode::BytecodePreprocessing;
 use crate::jolt::vm::ram::remap_address;
 use crate::jolt::vm::rv32i_vm::Serializable;
 use crate::jolt::witness::ALL_COMMITTED_POLYNOMIALS;
@@ -16,7 +17,6 @@ use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 use crate::utils::transcript::Transcript;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use bytecode::{BytecodePreprocessing, BytecodeShoutProof};
 use common::jolt_device::MemoryLayout;
 use instruction_lookups::LookupsProof;
 use ram::RAMPreprocessing;
@@ -152,7 +152,6 @@ where
     ProofTranscript: Transcript,
 {
     pub trace_length: usize,
-    pub bytecode: BytecodeShoutProof<F, ProofTranscript>,
     pub instruction_lookups: LookupsProof<WORD_SIZE, F, PCS, ProofTranscript>,
     // pub ram: RAMTwistProof<F, ProofTranscript>,
     pub registers: RegistersTwistProof<F, ProofTranscript>,
@@ -350,12 +349,12 @@ where
         //     &mut transcript,
         // );
 
-        let bytecode_proof = BytecodeShoutProof::prove(
-            &preprocessing,
-            &trace,
-            &mut opening_accumulator,
-            &mut transcript,
-        );
+        // let bytecode_proof = BytecodeShoutProof::prove(
+        //     &preprocessing,
+        //     &trace,
+        //     &mut opening_accumulator,
+        //     &mut transcript,
+        // );
 
         // Batch-prove all openings
         let opening_proof =
@@ -363,7 +362,6 @@ where
 
         let jolt_proof = JoltProof {
             trace_length,
-            bytecode: bytecode_proof,
             instruction_lookups: instruction_proof,
             // ram: ram_proof,
             registers: registers_proof,
@@ -481,13 +479,13 @@ where
         //     &mut opening_accumulator,
         // )?;
 
-        proof.bytecode.verify(
-            &preprocessing.shared.bytecode,
-            &proof.commitments,
-            padded_trace_length,
-            &mut transcript,
-            &mut opening_accumulator,
-        )?;
+        // proof.bytecode.verify(
+        //     &preprocessing.shared.bytecode,
+        //     &proof.commitments,
+        //     padded_trace_length,
+        //     &mut transcript,
+        //     &mut opening_accumulator,
+        // )?;
 
         // Batch-verify all openings
         opening_accumulator.reduce_and_verify(

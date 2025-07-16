@@ -9,7 +9,6 @@ use crate::poly::opening_proof::{
 };
 use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::subprotocols::sumcheck::CacheSumcheckOpenings;
-use crate::utils::errors::ProofVerifyError;
 use crate::{
     field::JoltField,
     poly::{
@@ -20,10 +19,9 @@ use crate::{
         },
         opening_proof::ProverOpeningAccumulator,
     },
-    subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof},
+    subprotocols::sumcheck::BatchableSumcheckInstance,
     utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 use tracer::instruction::RV32IMCycle;
 
@@ -395,35 +393,4 @@ impl<F: JoltField> BooleanitySumcheck<F> {
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS>
     for BooleanitySumcheck<F>
 {
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct BooleanityProof<F: JoltField, ProofTranscript: Transcript> {
-    pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    pub ra_claim_prime: F,
-}
-
-impl<F: JoltField, ProofTranscript: Transcript> BooleanityProof<F, ProofTranscript> {
-    #[tracing::instrument(skip_all, name = "BooleanityProof::prove")]
-    pub fn prove(
-        _preprocessing: &BytecodePreprocessing,
-        _trace: &[RV32IMCycle],
-        _r: &[F],
-        _D: Vec<F>,
-        _G: Vec<F>,
-        _transcript: &mut ProofTranscript,
-    ) -> (Self, Vec<F>, Vec<F>) {
-        todo!()
-    }
-
-    pub fn verify(
-        &self,
-        _r_address: &[F],
-        _r_cycle: &[F],
-        _K: usize,
-        _T: usize,
-        _transcript: &mut ProofTranscript,
-    ) -> Result<(Vec<F>, F), ProofVerifyError> {
-        todo!()
-    }
 }

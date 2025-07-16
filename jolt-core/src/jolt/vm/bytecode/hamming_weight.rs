@@ -9,12 +9,9 @@ use crate::{
         opening_proof::{OpeningPoint, OpeningsKeys, ProverOpeningAccumulator, BIG_ENDIAN},
     },
     r1cs::inputs::JoltR1CSInputs,
-    subprotocols::sumcheck::{
-        BatchableSumcheckInstance, CacheSumcheckOpenings, SumcheckInstanceProof,
-    },
-    utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
+    subprotocols::sumcheck::{BatchableSumcheckInstance, CacheSumcheckOpenings},
+    utils::{math::Math, transcript::Transcript},
 };
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 
 pub struct HammingWeightProverState<F: JoltField> {
@@ -160,25 +157,4 @@ where
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS>
     for HammingWeightSumcheck<F>
 {
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct HammingWeightProof<F: JoltField, ProofTranscript: Transcript> {
-    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    ra_claim: F,
-}
-
-impl<F: JoltField, ProofTranscript: Transcript> HammingWeightProof<F, ProofTranscript> {
-    #[tracing::instrument(skip_all, name = "HammingWeightProof::prove")]
-    pub fn prove(_F: Vec<F>, _K: usize, _transcript: &mut ProofTranscript) -> (Self, Vec<F>) {
-        todo!()
-    }
-
-    pub fn verify(
-        &self,
-        _K: usize,
-        _transcript: &mut ProofTranscript,
-    ) -> Result<Vec<F>, ProofVerifyError> {
-        todo!()
-    }
 }
