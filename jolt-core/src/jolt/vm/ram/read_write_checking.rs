@@ -1,5 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
+use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
+
 use crate::{
     dag::state_manager::{ProofData, ProofKeys, StateManager},
     field::{JoltField, OptimizedMul},
@@ -55,6 +57,7 @@ struct ReadWriteCheckingProverState<F: JoltField> {
     I: Vec<Vec<(usize, usize, F, F)>>,
     A: Vec<F>,
     eq_r_prime: MultilinearPolynomial<F>,
+    gruens_eq_r_prime: GruenSplitEqPolynomial<F>,
     inc_cycle: MultilinearPolynomial<F>,
     ra: Option<MultilinearPolynomial<F>>,
     val: Option<MultilinearPolynomial<F>>,
@@ -257,6 +260,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         drop(span);
 
         let eq_r_prime = MultilinearPolynomial::from(EqPolynomial::evals(&r_prime.r));
+        let gruens_eq_r_prime = GruenSplitEqPolynomial::new(&r_prime.r);
         let inc_cycle = CommittedPolynomial::RamInc.generate_witness(preprocessing, trace);
 
         let data_buffers: Vec<DataBuffers<F>> = (0..num_chunks)
@@ -277,6 +281,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
             I,
             A,
             eq_r_prime,
+            gruens_eq_r_prime,
             inc_cycle,
             ra: None,
             val: None,
@@ -305,6 +310,7 @@ pub struct RamReadWriteChecking<F: JoltField> {
     memory_layout: MemoryLayout,
     rv_claim: F,
     wv_claim: F,
+    previous_claim: F,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
@@ -352,6 +358,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             memory_layout,
             rv_claim,
             wv_claim,
+            previous_claim: F::zero(),
         }
     }
 
@@ -410,9 +417,11 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             memory_layout,
             rv_claim,
             wv_claim,
+            previous_claim: F::zero(),
         }
     }
 
+    #[tracing::instrument(skip_all, name = "RamReadWriteChecking::phase1_compute_prover_message")]
     fn phase1_compute_prover_message(&mut self, round: usize) -> Vec<F> {
         const DEGREE: usize = 3;
         let ReadWriteCheckingProverState {
@@ -422,138 +431,283 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             A,
             val_checkpoints,
             inc_cycle,
-            eq_r_prime,
+            gruens_eq_r_prime,
             ..
         } = self.prover_state.as_mut().unwrap();
 
-        let univariate_poly_evals: [F; DEGREE] = I
-            .par_iter()
-            .zip(data_buffers.par_iter_mut())
-            .zip(val_checkpoints.par_chunks(self.K))
-            .map(|((I_chunk, buffers), checkpoint)| {
-                let mut evals = [F::zero(), F::zero(), F::zero()];
+        let previous_claim = self.previous_claim;
 
-                let DataBuffers {
-                    val_j_0,
-                    val_j_r,
-                    ra,
-                    dirty_indices,
-                } = buffers;
-                *val_j_0 = checkpoint.to_vec();
+        // Compute quadratic coefficients using Gruen's optimization
+        let quadratic_coeffs: [F; DEGREE - 1] = if gruens_eq_r_prime.E_in_current_len() == 1 {
+            // E_in is fully bound, use only E_out evaluations
+            I.par_iter()
+                .zip(data_buffers.par_iter_mut())
+                .zip(val_checkpoints.par_chunks(self.K))
+                .map(|((I_chunk, buffers), checkpoint)| {
+                    let mut evals = [F::zero(), F::zero()];
 
-                // Iterate over I_chunk, two rows at a time.
-                I_chunk
-                    .chunk_by(|a, b| a.0 / 2 == b.0 / 2)
-                    .for_each(|inc_chunk| {
-                        let j_prime = inc_chunk[0].0; // row index
+                    let DataBuffers {
+                        val_j_0,
+                        val_j_r,
+                        ra,
+                        dirty_indices,
+                    } = buffers;
+                    *val_j_0 = checkpoint.to_vec();
 
-                        for j in j_prime << round..(j_prime + 1) << round {
-                            if let Some(k) = remap_address(
-                                trace[j].ram_access().address() as u64,
-                                &self.memory_layout,
-                            ) {
-                                let k = k as usize;
+                    // Iterate over I_chunk, two rows at a time.
+                    I_chunk
+                        .chunk_by(|a, b| a.0 / 2 == b.0 / 2)
+                        .for_each(|inc_chunk| {
+                            let j_prime = inc_chunk[0].0; // row index
+
+                            for j in j_prime << round..(j_prime + 1) << round {
                                 let j_bound = j % (1 << round);
+                                let k = remap_address(
+                                    trace[j].ram_access().address() as u64,
+                                    &self.memory_layout,
+                                ) as usize;
                                 if ra[0][k].is_zero() {
                                     dirty_indices.push(k);
                                 }
                                 ra[0][k] += A[j_bound];
                             }
-                        }
 
-                        for j in (j_prime + 1) << round..(j_prime + 2) << round {
-                            if let Some(k) = remap_address(
-                                trace[j].ram_access().address() as u64,
-                                &self.memory_layout,
-                            ) {
-                                let k = k as usize;
+                            for j in (j_prime + 1) << round..(j_prime + 2) << round {
                                 let j_bound = j % (1 << round);
+                                let k = remap_address(
+                                    trace[j].ram_access().address() as u64,
+                                    &self.memory_layout,
+                                ) as usize;
                                 if ra[0][k].is_zero() && ra[1][k].is_zero() {
                                     dirty_indices.push(k);
                                 }
                                 ra[1][k] += A[j_bound];
                             }
-                        }
 
-                        for &k in dirty_indices.iter() {
-                            val_j_r[0][k] = val_j_0[k];
-                        }
-                        let mut inc_iter = inc_chunk.iter().peekable();
-
-                        // First of the two rows
-                        loop {
-                            let (row, col, inc_lt, inc) = inc_iter.next().unwrap();
-                            debug_assert_eq!(*row, j_prime);
-                            val_j_r[0][*col] += *inc_lt;
-                            val_j_0[*col] += *inc;
-                            if inc_iter.peek().unwrap().0 != j_prime {
-                                break;
+                            for &k in dirty_indices.iter() {
+                                val_j_r[0][k] = val_j_0[k];
                             }
-                        }
-                        for &k in dirty_indices.iter() {
-                            val_j_r[1][k] = val_j_0[k];
-                        }
+                            let mut inc_iter = inc_chunk.iter().peekable();
 
-                        // Second of the two rows
-                        for inc in inc_iter {
-                            let (row, col, inc_lt, inc) = *inc;
-                            debug_assert_eq!(row, j_prime + 1);
-                            val_j_r[1][col] += inc_lt;
-                            val_j_0[col] += inc;
-                        }
-
-                        let eq_r_prime_evals = eq_r_prime
-                            .sumcheck_evals_array::<DEGREE>(j_prime / 2, BindingOrder::LowToHigh);
-                        let inc_cycle_evals = inc_cycle
-                            .sumcheck_evals_array::<DEGREE>(j_prime / 2, BindingOrder::LowToHigh);
-
-                        let mut inner_sum_evals = [F::zero(); DEGREE];
-                        for k in dirty_indices.drain(..) {
-                            if !ra[0][k].is_zero() || !ra[1][k].is_zero() {
-                                // let kj = k * (T >> (round - 1)) + j_prime / 2;
-                                let m_ra = ra[1][k] - ra[0][k];
-                                let ra_eval_2 = ra[1][k] + m_ra;
-                                let ra_eval_3 = ra_eval_2 + m_ra;
-
-                                let m_val = val_j_r[1][k] - val_j_r[0][k];
-                                let val_eval_2 = val_j_r[1][k] + m_val;
-                                let val_eval_3 = val_eval_2 + m_val;
-
-                                inner_sum_evals[0] += ra[0][k].mul_0_optimized(
-                                    val_j_r[0][k] + self.z * (inc_cycle_evals[0] + val_j_r[0][k]),
-                                );
-                                inner_sum_evals[1] += ra_eval_2
-                                    * (val_eval_2 + self.z * (inc_cycle_evals[1] + val_eval_2));
-                                inner_sum_evals[2] += ra_eval_3
-                                    * (val_eval_3 + self.z * (inc_cycle_evals[2] + val_eval_3));
-
-                                ra[0][k] = F::zero();
-                                ra[1][k] = F::zero();
+                            // First of the two rows
+                            loop {
+                                let (row, col, inc_lt, inc) = inc_iter.next().unwrap();
+                                debug_assert_eq!(*row, j_prime);
+                                val_j_r[0][*col] += *inc_lt;
+                                val_j_0[*col] += *inc;
+                                if inc_iter.peek().unwrap().0 != j_prime {
+                                    break;
+                                }
+                            }
+                            for &k in dirty_indices.iter() {
+                                val_j_r[1][k] = val_j_0[k];
                             }
 
-                            val_j_r[0][k] = F::zero();
-                            val_j_r[1][k] = F::zero();
-                        }
+                            // Second of the two rows
+                            for inc in inc_iter {
+                                let (row, col, inc_lt, inc) = *inc;
+                                debug_assert_eq!(row, j_prime + 1);
+                                val_j_r[1][col] += inc_lt;
+                                val_j_0[col] += inc;
+                            }
 
-                        evals[0] += eq_r_prime_evals[0] * inner_sum_evals[0];
-                        evals[1] += eq_r_prime_evals[1] * inner_sum_evals[1];
-                        evals[2] += eq_r_prime_evals[2] * inner_sum_evals[2];
-                    });
+                            let eq_r_prime_eval = gruens_eq_r_prime.E_out_current()[j_prime / 2];
+                            let inc_cycle_evals = {
+                                let inc_cycle_0 = inc_cycle.get_bound_coeff(j_prime);
+                                let inc_cycle_1 = inc_cycle.get_bound_coeff(j_prime + 1);
+                                let inc_cycle_infty = inc_cycle_1 - inc_cycle_0;
+                                [inc_cycle_0, inc_cycle_infty]
+                            };
 
-                evals
-            })
-            .reduce(
-                || [F::zero(); DEGREE],
-                |running, new| {
-                    [
-                        running[0] + new[0],
-                        running[1] + new[1],
-                        running[2] + new[2],
-                    ]
-                },
-            );
+                            let mut inner_sum_evals = [F::zero(); DEGREE - 1];
+                            for k in dirty_indices.drain(..) {
+                                if !ra[0][k].is_zero() || !ra[1][k].is_zero() {
+                                    let ra_evals = [ra[0][k], ra[1][k] - ra[0][k]];
+                                    let val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
 
-        univariate_poly_evals.into()
+                                    inner_sum_evals[0] += ra_evals[0].mul_0_optimized(
+                                        val_evals[0] + self.z * (inc_cycle_evals[0] + val_evals[0]),
+                                    );
+                                    inner_sum_evals[1] += ra_evals[1]
+                                        * (val_evals[1]
+                                            + self.z * (inc_cycle_evals[1] + val_evals[1]));
+
+                                    ra[0][k] = F::zero();
+                                    ra[1][k] = F::zero();
+                                }
+
+                                val_j_r[0][k] = F::zero();
+                                val_j_r[1][k] = F::zero();
+                            }
+
+                            evals[0] += eq_r_prime_eval * inner_sum_evals[0];
+                            evals[1] += eq_r_prime_eval * inner_sum_evals[1];
+                        });
+
+                    evals
+                })
+                .reduce(
+                    || [F::zero(); DEGREE - 1],
+                    |running, new| [running[0] + new[0], running[1] + new[1]],
+                )
+        } else {
+            // E_in is not fully bound, handle E_in and E_out separately
+            let num_x_in_bits = gruens_eq_r_prime.E_in_current_len().log_2();
+            let x_bitmask = (1 << num_x_in_bits) - 1;
+
+            I.par_iter()
+                .zip(data_buffers.par_iter_mut())
+                .zip(val_checkpoints.par_chunks(self.K))
+                .map(|((I_chunk, buffers), checkpoint)| {
+                    let mut evals = [F::zero(), F::zero()];
+
+                    let mut evals_for_current_E_out = [F::zero(), F::zero()];
+                    let mut x_out_prev: Option<usize> = None;
+
+                    let DataBuffers {
+                        val_j_0,
+                        val_j_r,
+                        ra,
+                        dirty_indices,
+                    } = buffers;
+                    *val_j_0 = checkpoint.to_vec();
+
+                    // Iterate over I_chunk, two rows at a time.
+                    I_chunk
+                        .chunk_by(|a, b| a.0 / 2 == b.0 / 2)
+                        .for_each(|inc_chunk| {
+                            let j_prime = inc_chunk[0].0; // row index
+
+                            for j in j_prime << round..(j_prime + 1) << round {
+                                let j_bound = j % (1 << round);
+                                let k = remap_address(
+                                    trace[j].ram_access().address() as u64,
+                                    &self.memory_layout,
+                                ) as usize;
+                                if ra[0][k].is_zero() {
+                                    dirty_indices.push(k);
+                                }
+                                ra[0][k] += A[j_bound];
+                            }
+
+                            for j in (j_prime + 1) << round..(j_prime + 2) << round {
+                                let j_bound = j % (1 << round);
+                                let k = remap_address(
+                                    trace[j].ram_access().address() as u64,
+                                    &self.memory_layout,
+                                ) as usize;
+                                if ra[0][k].is_zero() && ra[1][k].is_zero() {
+                                    dirty_indices.push(k);
+                                }
+                                ra[1][k] += A[j_bound];
+                            }
+
+                            for &k in dirty_indices.iter() {
+                                val_j_r[0][k] = val_j_0[k];
+                            }
+                            let mut inc_iter = inc_chunk.iter().peekable();
+
+                            // First of the two rows
+                            loop {
+                                let (row, col, inc_lt, inc) = inc_iter.next().unwrap();
+                                debug_assert_eq!(*row, j_prime);
+                                val_j_r[0][*col] += *inc_lt;
+                                val_j_0[*col] += *inc;
+                                if inc_iter.peek().unwrap().0 != j_prime {
+                                    break;
+                                }
+                            }
+                            for &k in dirty_indices.iter() {
+                                val_j_r[1][k] = val_j_0[k];
+                            }
+
+                            // Second of the two rows
+                            for inc in inc_iter {
+                                let (row, col, inc_lt, inc) = *inc;
+                                debug_assert_eq!(row, j_prime + 1);
+                                val_j_r[1][col] += inc_lt;
+                                val_j_0[col] += inc;
+                            }
+
+                            let x_in = (j_prime / 2) & x_bitmask;
+                            let x_out = (j_prime / 2) >> num_x_in_bits;
+                            let E_in_eval = gruens_eq_r_prime.E_in_current()[x_in];
+
+                            let inc_cycle_evals = {
+                                let inc_cycle_0 = inc_cycle.get_bound_coeff(j_prime);
+                                let inc_cycle_1 = inc_cycle.get_bound_coeff(j_prime + 1);
+                                let inc_cycle_infty = inc_cycle_1 - inc_cycle_0;
+                                [inc_cycle_0, inc_cycle_infty]
+                            };
+
+                            // Multiply the running sum by the previous value of E_out_eval when
+                            // its value changes and add the result to the total.
+                            match x_out_prev {
+                                None => {
+                                    x_out_prev = Some(x_out);
+                                }
+                                Some(x) if x_out != x => {
+                                    x_out_prev = Some(x_out);
+
+                                    let E_out_eval = gruens_eq_r_prime.E_out_current()[x];
+                                    evals[0] += E_out_eval * evals_for_current_E_out[0];
+                                    evals[1] += E_out_eval * evals_for_current_E_out[1];
+
+                                    evals_for_current_E_out = [F::zero(), F::zero()];
+                                }
+                                _ => (),
+                            }
+
+                            let mut inner_sum_evals = [F::zero(); DEGREE - 1];
+                            for k in dirty_indices.drain(..) {
+                                if !ra[0][k].is_zero() || !ra[1][k].is_zero() {
+                                    let ra_evals = [ra[0][k], ra[1][k] - ra[0][k]];
+                                    let val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
+
+                                    inner_sum_evals[0] += ra_evals[0].mul_0_optimized(
+                                        val_evals[0] + self.z * (inc_cycle_evals[0] + val_evals[0]),
+                                    );
+                                    inner_sum_evals[1] += ra_evals[1]
+                                        * (val_evals[1]
+                                            + self.z * (inc_cycle_evals[1] + val_evals[1]));
+
+                                    ra[0][k] = F::zero();
+                                    ra[1][k] = F::zero();
+                                }
+
+                                val_j_r[0][k] = F::zero();
+                                val_j_r[1][k] = F::zero();
+                            }
+
+                            evals_for_current_E_out[0] += E_in_eval * inner_sum_evals[0];
+                            evals_for_current_E_out[1] += E_in_eval * inner_sum_evals[1];
+                        });
+
+                    // Multiply the final running sum by the final value of E_out_eval and add the
+                    // result to the total.
+                    if let Some(x) = x_out_prev {
+                        let E_out_eval = gruens_eq_r_prime.E_out_current()[x];
+                        evals[0] += E_out_eval * evals_for_current_E_out[0];
+                        evals[1] += E_out_eval * evals_for_current_E_out[1];
+                    }
+                    evals
+                })
+                .reduce(
+                    || [F::zero(); DEGREE - 1],
+                    |running, new| [running[0] + new[0], running[1] + new[1]],
+                )
+        };
+
+        // Convert quadratic coefficients to cubic evaluations
+        let cubic_evals = gruens_eq_r_prime
+            .sumcheck_evals_from_quadratic_coeffs(
+                quadratic_coeffs[0],
+                quadratic_coeffs[1],
+                previous_claim,
+            )
+            .to_vec();
+
+        cubic_evals
     }
 
     fn phase2_compute_prover_message(&self) -> Vec<F> {
@@ -684,6 +838,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             A,
             inc_cycle,
             eq_r_prime,
+            gruens_eq_r_prime,
             chunk_size,
             val_checkpoints,
             trace,
@@ -731,6 +886,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         drop(inner_span);
 
         eq_r_prime.bind_parallel(r_j, BindingOrder::LowToHigh);
+        gruens_eq_r_prime.bind(r_j);
         inc_cycle.bind_parallel(r_j, BindingOrder::LowToHigh);
 
         let inner_span = tracing::span!(tracing::Level::INFO, "Update A");
@@ -899,6 +1055,15 @@ impl<F: JoltField> SumcheckInstance<F> for RamReadWriteChecking<F> {
         );
         eq_eval_cycle * ra_claim * (val_claim + self.z * (val_claim + inc_claim))
     }
+
+    fn previous_claim(&self) -> F {
+        self.previous_claim
+    }
+
+    fn set_previous_claim(&mut self, claim: F) {
+        self.previous_claim = claim;
+    }
+}
 
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
         let sumcheck_switch_index = if let Some(state) = &self.verifier_state {

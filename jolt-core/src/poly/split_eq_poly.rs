@@ -183,6 +183,56 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         }
     }
 
+    /// Compute the sumcheck cubic sumcheck evaluations (i.e., the evaluations at {0, 2, 3}) of a
+    /// polynomial s(X) = l(X) * q(X), where l(X) is the current (linear) eq polynomial and
+    /// q(X) = c + dX + eX^2, given the following:
+    /// - c, the constant term of q
+    /// - e, the quadratic term of q
+    /// - the previous round claim, s(0) + s(1)
+    pub fn sumcheck_evals_from_quadratic_coeffs(
+        &self,
+        q_constant: F,
+        q_quadratic_coeff: F,
+        s_0_plus_s_1: F,
+    ) -> [F; 3] {
+        // We want to compute the evaluations of the cubic polynomial s(X) = l(X) * q(X), where
+        // l is linear, and q is quadratic, at the points {0, 2, 3}.
+        //
+        // At this point, we have
+        // - the linear polynomial, l(X) = a + bX
+        // - the quadratic polynomial, q(X) = c + dX + eX^2
+        // - the previous round's claim s(0) + s(1) = a * c + (a + b) * (c + d + e)
+        //
+        // Both l and q are represented by their evaluations at 0 and infinity. I.e., we have a, b, c,
+        // and e, but not d. We compute s by first computing l and q at points 2 and 3.
+
+        // Evaluations of the linear polynomial
+        let eq_eval_1 = self.current_scalar * self.w[self.current_index - 1];
+        let eq_eval_0 = self.current_scalar - eq_eval_1;
+        let eq_m = eq_eval_1 - eq_eval_0;
+        let eq_eval_2 = eq_eval_1 + eq_m;
+        let eq_eval_3 = eq_eval_2 + eq_m;
+
+        // Evaluations of the quadratic polynomial
+        let quadratic_eval_0 = q_constant;
+        let cubic_eval_0 = eq_eval_0 * quadratic_eval_0;
+        let cubic_eval_1 = s_0_plus_s_1 - cubic_eval_0;
+        // q(1) = c + d + e
+        let quadratic_eval_1 = cubic_eval_1 / eq_eval_1;
+        // q(2) = c + 2d + 4e = q(1) + q(1) - q(0) + 2e
+        let e_times_2 = q_quadratic_coeff + q_quadratic_coeff;
+        let quadratic_eval_2 = quadratic_eval_1 + quadratic_eval_1 - quadratic_eval_0 + e_times_2;
+        // q(3) = c + 3d + 9e = q(2) + q(1) - q(0) + 4e
+        let quadratic_eval_3 =
+            quadratic_eval_2 + quadratic_eval_1 - quadratic_eval_0 + e_times_2 + e_times_2;
+
+        [
+            cubic_eval_0,
+            eq_eval_2 * quadratic_eval_2,
+            eq_eval_3 * quadratic_eval_3,
+        ]
+    }
+
     #[cfg(test)]
     fn to_E1_old(&self) -> Vec<F> {
         if self.current_index > self.w.len() / 2 {

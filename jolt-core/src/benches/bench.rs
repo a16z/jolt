@@ -222,7 +222,7 @@ where
     PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 {
-    prove_example_dag::<u32, PCS, F, ProofTranscript>("fibonacci-guest", &600000u32)
+    prove_example_dag::<u32, PCS, F, ProofTranscript>("fibonacci-guest", &40000u32)
 }
 
 fn sha2<F, PCS, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
@@ -342,10 +342,9 @@ where
             init_memory_state,
             1 << 18,
             1 << 18,
-            1 << 24,
+            1 << 19,
         );
 
-        // Setup trace length and padding (similar to DAG test)
         let trace_length = trace.len();
         let padded_trace_length = trace_length.next_power_of_two();
         trace.resize(padded_trace_length, RV32IMCycle::NoOp);
