@@ -79,7 +79,7 @@ impl<F: JoltField> RafBytecode<F> {
         let K = sm.get_verifier_data().0.shared.bytecode.bytecode.len();
         let ra_claims = (
             sm.get_opening(OpeningsKeys::BytecodeStage1Ra),
-            sm.get_opening(OpeningsKeys::BytecodeStage2Ra),
+            sm.get_opening(OpeningsKeys::BytecodeStage3Ra),
         );
         Self {
             raf_claim,

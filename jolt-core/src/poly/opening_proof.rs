@@ -160,7 +160,7 @@ pub enum OpeningsKeys {
     BytecodeStage3Ra,
     BytecodeBooleanityRa,
     BytecodeHammingWeightRa,
-    OpeningReduction(usize),        // claims from the opening proof reduction sumcheck
+    OpeningReduction(usize), // claims from the opening proof reduction sumcheck
 }
 
 pub type Openings<F> = HashMap<OpeningsKeys, (OpeningPoint<BIG_ENDIAN, F>, F)>;

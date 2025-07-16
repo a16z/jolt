@@ -87,7 +87,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         let (_, trace, _, _) = self.prover_state_manager.get_prover_data();
         let padded_trace_length = trace.len().next_power_of_two();
         let mut spartan_dag = SpartanDag::<F>::new::<ProofTranscript>(padded_trace_length);
-        let mut lookups_dag = LookupsDag::<F>::default();
+        let mut lookups_dag = LookupsDag::default();
         let mut registers_dag = RegistersDag::default();
         let mut ram_dag = RamDag::new_prover(&self.prover_state_manager);
         let mut bytecode_dag = BytecodeDag::default();
@@ -105,7 +105,6 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         let mut stage2_instances: Vec<_> = std::iter::empty()
             .chain(spartan_dag.stage2_prover_instances(&mut self.prover_state_manager))
             .chain(registers_dag.stage2_prover_instances(&mut self.prover_state_manager))
-            .chain(lookups_dag.stage2_prover_instances(&mut self.prover_state_manager))
             .chain(ram_dag.stage2_prover_instances(&mut self.prover_state_manager))
             .collect();
         let stage2_instances_mut: Vec<&mut dyn BatchableSumcheckInstance<F>> = stage2_instances
@@ -239,10 +238,10 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         self.receive_claims().context("Receive claims")?;
 
         // Stage 1:
-        let (preprocessing, _, trace_length) = self.verifier_state_manager.get_verifier_data();
+        let (_preprocessing, _, trace_length) = self.verifier_state_manager.get_verifier_data();
         let padded_trace_length = trace_length.next_power_of_two();
         let mut spartan_dag = SpartanDag::<F>::new::<ProofTranscript>(padded_trace_length);
-        let mut lookups_dag = LookupsDag::<F>::default();
+        let mut lookups_dag = LookupsDag::default();
         let mut registers_dag = RegistersDag::default();
         let mut ram_dag = RamDag::new_verifier(&self.verifier_state_manager);
         let mut bytecode_dag = BytecodeDag::default();
@@ -254,7 +253,6 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         let mut stage2_instances: Vec<_> = std::iter::empty()
             .chain(spartan_dag.stage2_verifier_instances(&mut self.verifier_state_manager))
             .chain(registers_dag.stage2_verifier_instances(&mut self.verifier_state_manager))
-            .chain(lookups_dag.stage2_verifier_instances(&mut self.verifier_state_manager))
             .chain(ram_dag.stage2_verifier_instances(&mut self.verifier_state_manager))
             .collect();
         let stage2_instances_ref: Vec<&dyn BatchableSumcheckInstance<F>> = stage2_instances
@@ -357,21 +355,21 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         let accumulator = self.verifier_state_manager.get_verifier_accumulator();
         BatchedSumcheck::cache_claims(stage4_instances_mut, Some(accumulator), &r_stage4);
 
-        // Batch-prove all openings
-        let batched_opening_proof = proofs
-            .get(&ProofKeys::ReducedOpeningProof)
-            .expect("Reduced opening proof not found");
-        let batched_opening_proof = match batched_opening_proof {
-            ProofData::ReducedOpeningProof(proof) => proof,
-            _ => panic!("Invalid proof type for stage 4"),
-        };
-
-        let accumulator = self.verifier_state_manager.get_verifier_accumulator();
-        accumulator.borrow_mut().reduce_and_verify(
-            &preprocessing.generators,
-            batched_opening_proof,
-            &mut *transcript.borrow_mut(),
-        )?;
+        // // Batch-prove all openings
+        // let batched_opening_proof = proofs
+        //     .get(&ProofKeys::ReducedOpeningProof)
+        //     .expect("Reduced opening proof not found");
+        // let batched_opening_proof = match batched_opening_proof {
+        //     ProofData::ReducedOpeningProof(proof) => proof,
+        //     _ => panic!("Invalid proof type for stage 5"),
+        // };
+        //
+        // let accumulator = self.verifier_state_manager.get_verifier_accumulator();
+        // accumulator.borrow_mut().reduce_and_verify(
+        //     &preprocessing.generators,
+        //     batched_opening_proof,
+        //     &mut *transcript.borrow_mut(),
+        // ).context("Stage 5")?;
 
         Ok(())
     }

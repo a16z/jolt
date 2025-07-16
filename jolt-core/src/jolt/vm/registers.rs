@@ -104,7 +104,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for ValEvaluationSumcheck<F> {
 
     fn num_rounds(&self) -> usize {
         if let Some(prover_state) = &self.prover_state {
-            prover_state.inc.len().log_2()
+            prover_state.inc.original_len().log_2()
         } else if let Some(verifier_state) = &self.verifier_state {
             verifier_state.num_rounds
         } else {
@@ -181,7 +181,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for ValEvaluationSumcheck<F> {
         let claims = self.claims.as_ref().expect("Claims not cached");
 
         // r contains r_cycle_prime in low-to-high order
-        let r_cycle_prime: Vec<F> = r.iter().copied().collect();
+        let r_cycle_prime: Vec<F> = r.to_vec();
 
         // Compute LT(r_cycle', r_cycle)
         let mut lt_eval = F::zero();

@@ -29,7 +29,7 @@ use crate::{
     },
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
+use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
 use rayon::prelude::*;
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
 
@@ -113,27 +113,21 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         let bytecode_preprocessing = &preprocessing.shared.bytecode;
         let K = bytecode_preprocessing.bytecode.len().next_power_of_two();
 
-        let r_cycle: Vec<F> = sm
+        let r_cycle_1: Vec<F> = sm
             .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::UnexpandedPC))
             .unwrap()
             .r;
-        let r_shift = sm
-            .get_opening_point(OpeningsKeys::PCSumcheckUnexpandedPC)
+        let r_cycle_2 = sm
+            .get_opening_point(OpeningsKeys::RegistersReadWriteInc)
             .unwrap()
             .r;
-        // let r_register = sm
-        //     .get_opening_point(OpeningsKeys::RegistersReadWriteRdWa)
-        //     .unwrap()
-        //     .r;
-        // assert_eq!(&r_shift, &r_register[r_register.len() - r_shift.len()..]);
-        let r_register = sm
-            .get_opening_point(OpeningsKeys::RegistersValEvaluationWa)
+        let r_cycle_3 = sm
+            .get_opening_point(OpeningsKeys::RegistersValEvaluationInc)
             .unwrap()
             .r;
-        let r_register = &r_register[(REGISTER_COUNT as usize).log_2()..];
-        let E: Vec<F> = EqPolynomial::evals(&r_cycle);
-        let E_shift: Vec<F> = EqPolynomial::evals(&r_shift);
-        let E_register: Vec<F> = EqPolynomial::evals(r_register);
+        let E_1: Vec<F> = EqPolynomial::evals(&r_cycle_1);
+        let E_2: Vec<F> = EqPolynomial::evals(&r_cycle_2);
+        let E_3: Vec<F> = EqPolynomial::evals(&r_cycle_3);
 
         let span = tracing::span!(tracing::Level::INFO, "compute F");
         let _guard = span.enter();
@@ -142,22 +136,22 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             .next_power_of_two()
             .min(trace.len());
         let chunk_size = (trace.len() / num_chunks).max(1);
-        let (F, F_shift, F_register): (Vec<_>, Vec<_>, Vec<_>) = trace
+        let (F_1, F_2, F_3): (Vec<_>, Vec<_>, Vec<_>) = trace
             .par_chunks(chunk_size)
             .enumerate()
             .map(|(chunk_index, trace_chunk)| {
-                let mut result: Vec<F> = unsafe_allocate_zero_vec(K);
-                let mut result_shift: Vec<F> = unsafe_allocate_zero_vec(K);
-                let mut result_register: Vec<F> = unsafe_allocate_zero_vec(K);
+                let mut result_1: Vec<F> = unsafe_allocate_zero_vec(K);
+                let mut result_2: Vec<F> = unsafe_allocate_zero_vec(K);
+                let mut result_3: Vec<F> = unsafe_allocate_zero_vec(K);
                 let mut j = chunk_index * chunk_size;
                 for cycle in trace_chunk {
                     let k = bytecode_preprocessing.get_pc(cycle);
-                    result[k] += E[j];
-                    result_shift[k] += E_shift[j];
-                    result_register[k] += E_register[j];
+                    result_1[k] += E_1[j];
+                    result_2[k] += E_2[j];
+                    result_3[k] += E_3[j];
                     j += 1;
                 }
-                (result, result_shift, result_register)
+                (result_1, result_2, result_3)
             })
             .reduce(
                 || {
@@ -167,21 +161,20 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
                         unsafe_allocate_zero_vec(K),
                     )
                 },
-                |(mut running, mut running_shift, mut running_register),
-                 (new, new_shift, new_register)| {
-                    running
+                |(mut running_1, mut running_2, mut running_3), (new_1, new_2, new_3)| {
+                    running_1
                         .par_iter_mut()
-                        .zip(new.into_par_iter())
+                        .zip(new_1.into_par_iter())
                         .for_each(|(x, y)| *x += y);
-                    running_shift
+                    running_2
                         .par_iter_mut()
-                        .zip(new_shift.into_par_iter())
+                        .zip(new_2.into_par_iter())
                         .for_each(|(x, y)| *x += y);
-                    running_register
+                    running_3
                         .par_iter_mut()
-                        .zip(new_register.into_par_iter())
+                        .zip(new_3.into_par_iter())
                         .for_each(|(x, y)| *x += y);
-                    (running, running_shift, running_register)
+                    (running_1, running_2, running_3)
                 },
             );
         drop(_guard);
@@ -192,34 +185,35 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
 
         let read_checking_1 = ReadCheckingSumcheck::new_prover(
             sm,
-            F.clone(),
+            F_1.clone(),
             unbound_ra_poly.clone(),
             ReadCheckingValTypes::Stage1,
         );
         let read_checking_2 = ReadCheckingSumcheck::new_prover(
             sm,
-            F_shift.clone(),
+            F_2,
             unbound_ra_poly.clone(),
             ReadCheckingValTypes::Stage2,
         );
-        // let read_checking_3 = ReadCheckingSumcheck::new_prover(
-        //     sm,
-        //     F_register,
-        //     unbound_ra_poly,
-        //     ReadCheckingValTypes::Stage3,
-        // );
+        let read_checking_3 = ReadCheckingSumcheck::new_prover(
+            sm,
+            F_3.clone(),
+            unbound_ra_poly.clone(),
+            ReadCheckingValTypes::Stage3,
+        );
         let raf = RafBytecode::new_prover(
             sm,
-            MultilinearPolynomial::from(F.clone()),
-            MultilinearPolynomial::from(F_shift),
+            MultilinearPolynomial::from(F_1.clone()),
+            MultilinearPolynomial::from(F_3),
         );
-        let booleanity = BooleanitySumcheck::new_prover(sm, E, F.clone(), unbound_ra_poly.clone());
-        let hamming_weight = HammingWeightSumcheck::new_prover(sm, F, unbound_ra_poly);
+        let booleanity =
+            BooleanitySumcheck::new_prover(sm, E_1, F_1.clone(), unbound_ra_poly.clone());
+        let hamming_weight = HammingWeightSumcheck::new_prover(sm, F_1, unbound_ra_poly);
 
         vec![
             Box::new(read_checking_1),
             Box::new(read_checking_2),
-            // Box::new(read_checking_3),
+            Box::new(read_checking_3),
             Box::new(raf),
             Box::new(booleanity),
             Box::new(hamming_weight),
@@ -232,7 +226,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
         let read_checking_1 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValTypes::Stage1);
         let read_checking_2 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValTypes::Stage2);
-        // let read_checking_3 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValTypes::Stage3);
+        let read_checking_3 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValTypes::Stage3);
         let raf = RafBytecode::new_verifier(sm);
         let booleanity = BooleanitySumcheck::new_verifier(sm);
         let hamming_weight = HammingWeightSumcheck::new_verifier(sm);
@@ -240,7 +234,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         vec![
             Box::new(read_checking_1),
             Box::new(read_checking_2),
-            // Box::new(read_checking_3),
+            Box::new(read_checking_3),
             Box::new(raf),
             Box::new(booleanity),
             Box::new(hamming_weight),
