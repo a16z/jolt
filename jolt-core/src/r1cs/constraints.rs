@@ -241,20 +241,20 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::UnexpandedPC + JoltR1CSInputs::Imm,
         );
 
-        // if !(ShouldBranch || Jump || IsNoop) {
+        // if !(ShouldBranch || Jump) {
         //     if DoNotUpdatePC {
         //         assert!(NextUnexpandedPC == UnexpandedPC)
         //     } else {
         //         assert!(NextUnexpandedPC == UnexpandedPC + 4)
         //     }
         // }
-        // Note that Branch and Jump instructions are mutually exclusive
-        // cs.constrain_eq_conditional(
-        //     1 - JoltR1CSInputs::ShouldBranch - JoltR1CSInputs::ShouldJump,
-        //     JoltR1CSInputs::NextUnexpandedPC,
-        //     JoltR1CSInputs::UnexpandedPC + 4
-        //         - 4 * JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC),
-        // );
+        // Note that ShouldBranch and Jump instructions are mutually exclusive
+        cs.constrain_eq_conditional(
+            1 - JoltR1CSInputs::ShouldBranch - JoltR1CSInputs::OpFlags(CircuitFlags::Jump),
+            JoltR1CSInputs::NextUnexpandedPC,
+            JoltR1CSInputs::UnexpandedPC + 4
+                - 4 * JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC),
+        );
 
         // if Inline {
         //     assert!(NextPC == PC + 1)
