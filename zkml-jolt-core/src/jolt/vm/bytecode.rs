@@ -141,8 +141,12 @@ where
     }
 }
 
-pub fn prove_booleanity<F, ProofTranscript>(r: &[F], D: Vec<F>, transcript: &mut ProofTranscript)
-where
+pub fn prove_booleanity<F, ProofTranscript>(
+    r: &[F],
+    D: Vec<F>,
+    G: Vec<F>,
+    transcript: &mut ProofTranscript,
+) where
     ProofTranscript: Transcript,
     F: JoltField,
 {

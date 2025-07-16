@@ -14,9 +14,7 @@ pub struct ONNXCycle {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 /// Represents a single ONNX instruction parsed from the model.
-/// The ONNX model is converted into a sequence of [`ONNXInstr`]s, forming the program code.
-/// During runtime, the program counter (PC) is used to fetch the next instruction from this sequence.
-/// Represents a single ONNX instruction in the bytecode sequence.
+/// Represents a single ONNX instruction in the program code.
 ///
 /// Each `ONNXInstr` contains the program counter address, the operation code,
 /// and up to two input tensor operands that specify the sources
@@ -28,6 +26,9 @@ pub struct ONNXCycle {
 /// - `opcode`: The operation code (opcode) that defines the instruction's function.
 /// - `ts1`: The first input tensor operand, specified as an `Option<usize>`, representing the index of a node in the computation graph. Analogous to the `rs1` register in RISC-V.
 /// - `ts2`: The second input tensor operand, specified as an `Option<usize>`, representing the index of a node in the computation graph. Analogous to the `rs2` register in RISC-V.
+///
+/// The ONNX model is converted into a sequence of [`ONNXInstr`]s, forming the program code.
+/// During runtime, the program counter (PC) is used to fetch the next instruction from this read-only memory storing the program bytecode.
 pub struct ONNXInstr {
     /// The program counter (PC) address of this instruction in the bytecode.
     pub address: usize,
