@@ -1,7 +1,7 @@
 //! Implements the Dao-Thaler optimization for EQ polynomial evaluations
 //! https://eprint.iacr.org/2024/1210.pdf
-use super::dense_mlpoly::DensePolynomial;
-use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
+use super::{dense_mlpoly::DensePolynomial, multilinear_polynomial::BindingOrder};
+use crate::{field::JoltField, poly::eq_poly::EqPolynomial, utils::math::Math as _};
 
 #[derive(Debug, Clone, PartialEq)]
 /// A struct holding the equality polynomial evaluations for use in sum-check, when incorporating
@@ -15,14 +15,15 @@ use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
 /// - If `i < n/2`, then `E_in_vec.last().unwrap() = [eq(w[n/2..(n/2 + i + 1)], x) for all x in {0,
 ///   1}^{n/2 - i - 1}]`; else `E_in_vec` is empty
 ///
-/// Note: all current applications of `SplitEqPolynomial` use the `LowToHigh` binding order. This
-/// means that we are iterating over `w` in the reverse order: `w.len()` down to `0`.
+/// Note: If the binding order is `LowToHigh` we iterate over `w` in the reverse order:
+/// `w.len()` down to `0`. Otherwise, we iterate over it from `0` to `w.len()`.
 pub struct GruenSplitEqPolynomial<F> {
     pub(crate) current_index: usize,
     pub(crate) current_scalar: F,
     pub(crate) w: Vec<F>,
     pub(crate) E_in_vec: Vec<Vec<F>>,
     pub(crate) E_out_vec: Vec<Vec<F>>,
+    pub(crate) order: BindingOrder,
 }
 
 /// Old struct for split equality polynomial, without Gruen's optimization
@@ -38,25 +39,53 @@ pub struct SplitEqPolynomial<F> {
 impl<F: JoltField> GruenSplitEqPolynomial<F> {
     #[tracing::instrument(skip_all, name = "GruenSplitEqPolynomial::new")]
     pub fn new(w: &[F]) -> Self {
+        Self::new_with_order(w, BindingOrder::LowToHigh)
+    }
+
+    #[tracing::instrument(skip_all, name = "GruenSplitEqPolynomial::new_with_order")]
+    pub fn new_with_order(w: &[F], order: BindingOrder) -> Self {
         let m = w.len() / 2;
-        //   w = [w_out, w_in, w_last]
-        //         ↑      ↑      ↑
-        //         |      |      |
-        //         |      |      last element
-        //         |      second half of remaining elements (for E_in)
-        //         first half of remaining elements (for E_out)
-        let (_, wprime) = w.split_last().unwrap();
-        let (w_out, w_in) = wprime.split_at(m);
-        let (E_out_vec, E_in_vec) = rayon::join(
-            || EqPolynomial::evals_cached(w_out),
-            || EqPolynomial::evals_cached(w_in),
-        );
+        let (E_out_vec, E_in_vec) = match order {
+            BindingOrder::LowToHigh => {
+                //   w = [w_out, w_in, w_last]
+                //         ↑      ↑      ↑
+                //         |      |      |
+                //         |      |      last element
+                //         |      second half of remaining elements (for E_in)
+                //         first half of remaining elements (for E_out)
+                let (_, wprime) = w.split_last().unwrap();
+                let (w_out, w_in) = wprime.split_at(m);
+                rayon::join(
+                    || EqPolynomial::evals_cached(w_out),
+                    || EqPolynomial::evals_cached(w_in),
+                )
+            },
+            BindingOrder::HighToLow => {
+                //   w = [w_first, w_in, w_out]
+                //        ↑        ↑     ↑
+                //        |        |     |
+                //        |        |     last element
+                //        |        second half of remaining elements (for E_in)
+                //        first half of remaining elements (for E_out)
+                let (_, wprime) = w.split_first().unwrap();
+                let (w_in, w_out) = wprime.split_at(m + 1);
+                rayon::join(
+                    || EqPolynomial::evals_cached_rev(w_out),
+                    || EqPolynomial::evals_cached_rev(w_in),
+                )
+            },
+        };
+        let current_index = match order {
+            BindingOrder::LowToHigh => w.len(),
+            BindingOrder::HighToLow => 0,
+        };
         Self {
-            current_index: w.len(),
+            current_index,
             current_scalar: F::one(),
             w: w.to_vec(),
             E_in_vec,
             E_out_vec,
+            order,
         }
     }
 
@@ -137,6 +166,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
             w: w.to_vec(),
             E_in_vec: vec![E_in],
             E_out_vec,
+            order: BindingOrder::LowToHigh,
         }
     }
 
@@ -144,8 +174,16 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         self.w.len()
     }
 
+    /// Returns the round number `i`, regardless of binding order
+    pub fn current_round(&self) -> usize {
+        match self.order {
+            BindingOrder::LowToHigh => self.get_num_vars() - self.current_index,
+            BindingOrder::HighToLow => self.current_index,
+        }
+    }
+
     pub fn len(&self) -> usize {
-        1 << self.current_index
+        1 << (self.get_num_vars() - self.current_round())
     }
 
     pub fn E_in_current_len(&self) -> usize {
@@ -166,18 +204,37 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         self.E_out_vec.last().unwrap()
     }
 
+    /// Returns the `i`th element of `w` from either the low or the high end, depending on binding
+    /// order
+    pub fn current_w_val(&self) -> F {
+        match self.order {
+            BindingOrder::LowToHigh => self.w[self.current_index - 1],
+            BindingOrder::HighToLow => self.w[self.current_index],
+        }
+    }
+
     #[tracing::instrument(skip_all, name = "GruenSplitEqPolynomial::bind")]
     pub fn bind(&mut self, r: F) {
+        debug_assert!(self.current_round() < self.get_num_vars());
+
         // multiply `current_scalar` by `eq(w[i], r) = (1 - w[i]) * (1 - r) + w[i] * r`
         // which is the same as `1 - w[i] - r + 2 * w[i] * r`
-        let prod_w_r = self.w[self.current_index - 1] * r;
-        self.current_scalar *= F::one() - self.w[self.current_index - 1] - r + prod_w_r + prod_w_r;
-        // decrement `current_index`
-        self.current_index -= 1;
+        let prod_w_r = self.current_w_val() * r;
+        self.current_scalar *= F::one() - self.current_w_val() - r + prod_w_r + prod_w_r;
+        match self.order {
+            BindingOrder::LowToHigh => {
+                // decrement `current_index`
+                self.current_index -= 1;
+            }
+            BindingOrder::HighToLow => {
+                // increment `current_index`
+                self.current_index += 1;
+            }
+        }
         // pop the last vector from `E_in_vec` or `E_out_vec` (since we don't need it anymore)
-        if self.w.len() / 2 < self.current_index {
+        if self.current_round() < self.get_num_vars().div_ceil(2) {
             self.E_in_vec.pop();
-        } else if 0 < self.current_index {
+        } else if self.current_round() < self.get_num_vars() {
             self.E_out_vec.pop();
         }
     }
@@ -206,8 +263,8 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         // and e, but not d. We compute s by first computing l and q at points 2 and 3.
 
         // Evaluations of the linear polynomial
-        let eq_eval_1 = if self.current_index > 0 {
-            self.current_scalar * self.w[self.current_index - 1]
+        let eq_eval_1 = if self.current_round() < self.get_num_vars() {
+            self.current_scalar * self.current_w_val()
         } else {
             F::zero()
         };
@@ -236,26 +293,49 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         ]
     }
 
-    #[cfg(test)]
-    fn get_bound_coeff(&self, j: usize) -> F {
-        use crate::utils::math::Math as _;
-
+    /// Return the evaluations of `E_out` and (possibly) `E_in` at index `j`. If `E_in` is fully
+    /// bound, return `None`.
+    fn out_and_in_evals(&self, j: usize) -> (F, Option<F>) {
         let index = j / 2;
 
-        let eval = if self.E_in_current_len() == 1 {
-            self.E_out_current()[index]
+        if self.E_in_current_len() == 1 {
+            (self.E_out_current()[index], None)
         } else {
-            let num_x_in_bits = self.E_in_current_len().log_2();
-            let x_bitmask = (1 << num_x_in_bits) - 1;
+            let (x_out, x_in) = match self.order {
+                BindingOrder::LowToHigh => {
+                    let num_x_in_bits = self.E_in_current_len().log_2();
+                    let x_bitmask = (1 << num_x_in_bits) - 1;
 
-            let x_in = index & x_bitmask;
-            let x_out = index >> num_x_in_bits;
+                    let x_in = index & x_bitmask;
+                    let x_out = index >> num_x_in_bits;
 
-            self.E_in_current()[x_in] * self.E_out_current()[x_out]
+                    (x_out, x_in)
+                }
+                BindingOrder::HighToLow => {
+                    let num_x_out_bits = self.E_out_current_len().log_2();
+                    let x_bitmask = (1 << num_x_out_bits) - 1;
+
+                    let x_out = index & x_bitmask;
+                    let x_in = index >> num_x_out_bits;
+
+                    (x_out, x_in)
+                }
+            };
+
+            (self.E_out_current()[x_out], Some(self.E_in_current()[x_in]))
+        }
+    }
+
+    #[cfg(test)]
+    fn get_bound_coeff(&self, j: usize) -> F {
+        let (E_out_eval, E_in_eval) = self.out_and_in_evals(j);
+        let eval = match E_in_eval {
+            Some(x) => x * E_out_eval,
+            None => E_out_eval,
         };
 
         let eval_at_1 = if self.current_index > 0 {
-            self.current_scalar * self.w[self.current_index - 1]
+            self.current_scalar * self.current_w_val()
         } else {
             F::zero()
         };
@@ -299,7 +379,11 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     }
 
     pub fn merge(&self) -> DensePolynomial<F> {
-        let evals = EqPolynomial::evals(&self.w[..self.current_index])
+        let w_remaining = match self.order {
+            BindingOrder::LowToHigh => &self.w[..self.current_index],
+            BindingOrder::HighToLow => &self.w[self.current_index..],
+        };
+        let evals = EqPolynomial::evals(w_remaining)
             .iter()
             .map(|x| *x * self.current_scalar)
             .collect();
@@ -386,7 +470,7 @@ mod tests {
     use ark_std::test_rng;
 
     #[test]
-    fn bind() {
+    fn bind_low_to_high() {
         const NUM_VARS: usize = 10;
         let mut rng = test_rng();
         let w: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
@@ -404,6 +488,33 @@ mod tests {
 
             let merged = split_eq.merge();
             assert_eq!(regular_eq.Z[..regular_eq.len()], merged.Z[..merged.len()]);
+
+            assert_eq!(split_eq.len(), regular_eq.len(), "Failed at round {round}");
+            for j in 0..regular_eq.len() {
+                assert_eq!(split_eq.get_bound_coeff(j), regular_eq[j], "Failed at round {round}, index {j}");
+            }
+        }
+    }
+
+    #[test]
+    fn bind_high_to_low() {
+        const NUM_VARS: usize = 10;
+        let mut rng = test_rng();
+        let w: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
+            .take(NUM_VARS)
+            .collect();
+
+        let mut regular_eq = DensePolynomial::new(EqPolynomial::evals(&w));
+        let mut split_eq = GruenSplitEqPolynomial::new_with_order(&w, BindingOrder::HighToLow);
+        assert_eq!(regular_eq, split_eq.merge());
+
+        for round in 0..NUM_VARS {
+            let r = Fr::random(&mut rng);
+            regular_eq.bound_poly_var_top(&r);
+            split_eq.bind(r);
+
+            let merged = split_eq.merge();
+            assert_eq!(regular_eq.Z[..regular_eq.len()], merged.Z[..merged.len()], "Failed at round {round}");
 
             assert_eq!(split_eq.len(), regular_eq.len(), "Failed at round {round}");
             for j in 0..regular_eq.len() {

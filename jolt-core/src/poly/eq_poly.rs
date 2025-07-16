@@ -76,6 +76,16 @@ impl<F: JoltField> EqPolynomial<F> {
         evals
     }
 
+    #[tracing::instrument(skip_all, name = "EqPolynomial::evals_cached_rev")]
+    /// Computes the table of coefficients like `evals`, but also caches the intermediate results
+    ///
+    /// In other words, computes `{eq(r[i..], x) for all x in {0, 1}^{n - i}}` and for all `i in
+    /// 0..r.len()`.
+    pub fn evals_cached_rev(r: &[F]) -> Vec<Vec<F>> {
+        // TODO: implement parallel version & determine switchover point
+        Self::evals_serial_cached_rev(r, None)
+    }
+
     /// Computes the table of coefficients like `evals_serial`, but also caches the intermediate
     /// results. This binds `r` in the reverse order compared to `evals_serial_cached`.
     ///
@@ -83,7 +93,6 @@ impl<F: JoltField> EqPolynomial<F> {
     /// coefficients for the polynomial `eq(r[j..], x)` for all `x in {0, 1}^{n - j}`.
     ///
     /// Performance seems at most 10% worse than `evals_serial`
-    #[allow(dead_code)]
     fn evals_serial_cached_rev(r: &[F], scaling_factor: Option<F>) -> Vec<Vec<F>> {
         let rev_r = r.iter().rev().collect::<Vec<_>>();
         let mut evals: Vec<Vec<F>> = (0..r.len() + 1)
@@ -267,6 +276,21 @@ mod tests {
             let evals_serial_cached = EqPolynomial::evals_serial_cached(&r, None);
             for i in 0..len {
                 let evals = EqPolynomial::evals(&r[..i]);
+                assert_eq!(evals_serial_cached[i], evals);
+            }
+        }
+    }
+
+    #[test]
+    /// Test that the `i`th vector of `evals_serial_cached_rev` is equivalent to
+    /// `evals(&r[r.len() - i..])`, for all `i`.
+    fn test_evals_cached_rev() {
+        let mut rng = test_rng();
+        for len in 2..22 {
+            let r = (0..len).map(|_| Fr::random(&mut rng)).collect::<Vec<_>>();
+            let evals_serial_cached = EqPolynomial::evals_cached_rev(&r);
+            for i in 0..len {
+                let evals = EqPolynomial::evals(&r[r.len() - i..]);
                 assert_eq!(evals_serial_cached[i], evals);
             }
         }
