@@ -1,5 +1,5 @@
 use crate::jolt::vm::registers::RegistersDag;
-use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
+use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN, LITTLE_ENDIAN};
 use crate::{
     dag::stage::{StagedSumcheck, SumcheckStages},
     field::{JoltField, OptimizedMul},
@@ -413,7 +413,6 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
     ) -> Self {
         let T = trace_length;
         let z = transcript.challenge_scalar();
-
         let verifier_state = ReadWriteCheckingVerifierState {
             sumcheck_switch_index: chunk_size.log_2(),
             r_prime: r_prime.to_vec(),
@@ -1020,16 +1019,6 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for RegistersReadWriteChecking<F
 
     #[tracing::instrument(skip_all, name = "RegistersReadWriteChecking::bind")]
     fn bind(&mut self, r_j: F, round: usize) {
-        // Track the sumcheck rounds for prover
-        if let Some(prover_state) = self.prover_state.as_mut() {
-            prover_state.r_sumcheck.push(r_j);
-        }
-
-        // Track the sumcheck rounds for verifier
-        if let Some(verifier_state) = self.verifier_state.as_mut() {
-            verifier_state.r_sumcheck.push(r_j);
-        }
-
         if let Some(prover_state) = self.prover_state.as_ref() {
             if round < prover_state.chunk_size.log_2() {
                 self.phase1_bind(r_j, round);
@@ -1048,13 +1037,15 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for RegistersReadWriteChecking<F
             ..
         } = self.verifier_state.as_ref().unwrap();
 
-        // The high-order cycle variables are bound after the switch
-        let mut r_cycle = r[*sumcheck_switch_index..self.T.log_2()].to_vec();
         // First `sumcheck_switch_index` rounds bind cycle variables from low to high
-        r_cycle.extend(r[..*sumcheck_switch_index].iter().rev());
+        let mut r_cycle = r[..*sumcheck_switch_index].to_vec();
+        // The high-order cycle variables are bound after the switch
+        r_cycle.extend(r[*sumcheck_switch_index..self.T.log_2()].iter().rev());
+        let r_cycle = OpeningPoint::<LITTLE_ENDIAN, F>::new(r_cycle);
+        let r_prime_point = OpeningPoint::<BIG_ENDIAN, F>::new(r_prime.clone());
 
         // eq(r', r_cycle)
-        let eq_eval_cycle = EqPolynomial::mle(r_prime, &r_cycle);
+        let eq_eval_cycle = EqPolynomial::mle_endian(&r_prime_point, &r_cycle);
 
         let claims = self.claims.as_ref().unwrap();
 
@@ -1070,10 +1061,27 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
+    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+        let sumcheck_switch_index = if let Some(state) = &self.verifier_state {
+            state.sumcheck_switch_index
+        } else {
+            self.prover_state.as_ref().unwrap().chunk_size.log_2()
+        };
+
+        // The high-order cycle variables are bound after the switch
+        let mut r_cycle = opening_point[sumcheck_switch_index..self.T.log_2()].to_vec();
+        // First `sumcheck_switch_index` rounds bind cycle variables from low to high
+        r_cycle.extend(opening_point[..sumcheck_switch_index].iter().rev());
+        // Address variables are bound high-to-low
+        let r_address = opening_point[self.T.log_2()..].to_vec();
+
+        [r_address, r_cycle].concat().into()
+    }
+
     fn cache_openings_prover(
         &mut self,
         accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         debug_assert!(self.claims.is_none());
         let prover_state = self
@@ -1097,43 +1105,34 @@ where
 
         // Append claims to accumulator
         if let Some(accumulator) = accumulator {
-            let r_sumcheck = &prover_state.r_sumcheck;
-            let sumcheck_switch_index = prover_state.chunk_size.log_2();
-
-            // Transform r_sumcheck to r_address || r_cycle
-            // The high-order cycle variables are bound after the switch
-            let mut r_cycle = r_sumcheck[sumcheck_switch_index..self.T.log_2()].to_vec();
-            // First `sumcheck_switch_index` rounds bind cycle variables from low to high
-            r_cycle.extend(r_sumcheck[..sumcheck_switch_index].iter().rev());
-            let r_address = r_sumcheck[self.T.log_2()..].to_vec();
-
-            // The final opening point is r_address || r_cycle
-            let mut final_opening_point = r_address.clone();
-            final_opening_point.extend(r_cycle.clone());
-
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersReadWriteVal,
-                OpeningPoint::new(final_opening_point.clone()),
+                opening_point.clone(),
                 val_claim,
             );
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersReadWriteRs1Ra,
-                OpeningPoint::new(final_opening_point.clone()),
+                opening_point.clone(),
                 rs1_ra_claim,
             );
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersReadWriteRs2Ra,
-                OpeningPoint::new(final_opening_point.clone()),
+                opening_point.clone(),
                 rs2_ra_claim,
             );
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersReadWriteRdWa,
-                OpeningPoint::new(final_opening_point.clone()),
+                opening_point.clone(),
                 rd_wa_claim,
             );
+
+            // Split opening point for inc_cycle which is only over cycle variables
+            let mut r_address = opening_point;
+            let r_cycle = r_address.split_off(K.log_2());
+
             accumulator.borrow_mut().append_virtual(
                 OpeningsKeys::RegistersReadWriteInc,
-                OpeningPoint::new(final_opening_point.clone()),
+                r_cycle,
                 inc_claim,
             );
         }
@@ -1142,60 +1141,27 @@ where
     fn cache_openings_verifier(
         &mut self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
-        r_sumcheck: OpeningPoint<BIG_ENDIAN, F>,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        // TODO(moodlezoup): Replace with proper `normalize_opening_point`
-        let r_sumcheck = r_sumcheck.r;
         if let Some(accumulator) = accumulator {
-            if let Some(_claims) = &self.claims {
-                // Get the sumcheck opening point
-                let verifier_state = self
-                    .verifier_state
-                    .as_ref()
-                    .expect("Verifier state not initialized");
-                let sumcheck_switch_index = verifier_state.sumcheck_switch_index;
-                let T_log = self.T.log_2();
-
-                // For batched sumcheck, we need to use the correct slice of r_sumcheck
-                // based on the number of rounds for this instance
-                let num_rounds = self.num_rounds();
-                let offset = r_sumcheck.len() - num_rounds;
-                let r_slice = &r_sumcheck[offset..];
-
-                // Transform r_sumcheck to r_address || r_cycle
-                // The high-order cycle variables are bound after the switch
-                let mut r_cycle = r_slice[sumcheck_switch_index..T_log].to_vec();
-                // First `sumcheck_switch_index` rounds bind cycle variables from low to high
-                r_cycle.extend(r_slice[..sumcheck_switch_index].iter().rev());
-                let r_address = r_slice[T_log..].to_vec();
-
-                // The final opening point is r_address || r_cycle
-                let mut final_opening_point = r_address;
-                final_opening_point.extend(r_cycle);
-                let final_opening_point = OpeningPoint::new(final_opening_point);
-
-                // Populate opening points for all claims
-                accumulator.borrow_mut().populate_claim_opening(
-                    OpeningsKeys::RegistersReadWriteVal,
-                    final_opening_point.clone(),
-                );
-                accumulator.borrow_mut().populate_claim_opening(
-                    OpeningsKeys::RegistersReadWriteRs1Ra,
-                    final_opening_point.clone(),
-                );
-                accumulator.borrow_mut().populate_claim_opening(
-                    OpeningsKeys::RegistersReadWriteRs2Ra,
-                    final_opening_point.clone(),
-                );
-                accumulator.borrow_mut().populate_claim_opening(
-                    OpeningsKeys::RegistersReadWriteRdWa,
-                    final_opening_point.clone(),
-                );
-                accumulator.borrow_mut().populate_claim_opening(
-                    OpeningsKeys::RegistersReadWriteInc,
-                    final_opening_point,
-                );
-            }
+            accumulator
+                .borrow_mut()
+                .populate_claim_opening(OpeningsKeys::RegistersReadWriteVal, opening_point.clone());
+            accumulator.borrow_mut().populate_claim_opening(
+                OpeningsKeys::RegistersReadWriteRs1Ra,
+                opening_point.clone(),
+            );
+            accumulator.borrow_mut().populate_claim_opening(
+                OpeningsKeys::RegistersReadWriteRs2Ra,
+                opening_point.clone(),
+            );
+            accumulator.borrow_mut().populate_claim_opening(
+                OpeningsKeys::RegistersReadWriteRdWa,
+                opening_point.clone(),
+            );
+            accumulator
+                .borrow_mut()
+                .populate_claim_opening(OpeningsKeys::RegistersReadWriteInc, opening_point);
         }
     }
 }
@@ -1414,7 +1380,6 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
                 inc,
                 wa,
                 lt,
-                r_sumcheck: Vec::new(),
             }),
             verifier_state: None,
             claims: None,

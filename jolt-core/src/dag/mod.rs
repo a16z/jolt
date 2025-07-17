@@ -14,6 +14,7 @@ mod tests {
     use std::collections::HashMap;
     use std::rc::Rc;
     use tracer;
+    use tracer::instruction::RV32IMCycle;
 
     #[test]
     fn test_dag_fib_e2e() {
@@ -34,26 +35,8 @@ mod tests {
             );
 
         // Setup trace length and padding
-        let trace_length = trace.len();
-        let padded_trace_length = trace_length.next_power_of_two();
-        let padding = padded_trace_length - trace_length;
-
-        let last_address = trace.last().unwrap().instruction().normalize().address;
-        if padding != 0 {
-            trace.extend(
-                (0..padding - 1)
-                    .map(|i| tracer::instruction::RV32IMCycle::NoOp(last_address + 4 * i)),
-            );
-            trace.push(tracer::instruction::RV32IMCycle::last_jalr(
-                last_address + 4 * (padding - 1),
-            ));
-        } else {
-            assert!(matches!(
-                trace.last().unwrap(),
-                tracer::instruction::RV32IMCycle::JAL(_)
-            ));
-            *trace.last_mut().unwrap() = tracer::instruction::RV32IMCycle::last_jalr(last_address);
-        }
+        let padded_trace_length = (trace.len() + 1).next_power_of_two();
+        trace.resize(padded_trace_length, RV32IMCycle::NoOp);
 
         // truncate trailing zeros on device outputs
         io_device.outputs.truncate(

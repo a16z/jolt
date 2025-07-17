@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 use crate::field::JoltField;
+use crate::jolt::vm::bytecode::BytecodePreprocessing;
 use crate::jolt::vm::ram::remap_address;
 use crate::jolt::vm::rv32i_vm::Serializable;
 use crate::jolt::witness::ALL_COMMITTED_POLYNOMIALS;
@@ -16,7 +17,6 @@ use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 use crate::utils::transcript::Transcript;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use bytecode::{BytecodePreprocessing, BytecodeShoutProof};
 use common::jolt_device::MemoryLayout;
 use instruction_lookups::LookupsProof;
 use ram::RAMPreprocessing;
@@ -152,7 +152,6 @@ where
     ProofTranscript: Transcript,
 {
     pub trace_length: usize,
-    pub bytecode: BytecodeShoutProof<F, ProofTranscript>,
     pub instruction_lookups: LookupsProof<WORD_SIZE, F, PCS, ProofTranscript>,
     // pub ram: RAMTwistProof<F, ProofTranscript>,
     pub registers: RegistersTwistProof<F, ProofTranscript>,
@@ -258,19 +257,8 @@ where
         // TODO(moodlezoup): Truncate generators
 
         // TODO(JP): Drop padding on number of steps
-        let padded_trace_length = trace_length.next_power_of_two();
-        let padding = padded_trace_length - trace_length;
-        let last_address = trace.last().unwrap().instruction().normalize().address;
-        if padding != 0 {
-            // Pad with NoOps (with sequential addresses) followed by a final JALR
-            trace.extend((0..padding - 1).map(|i| RV32IMCycle::NoOp(last_address + 4 * i)));
-            // Final JALR sets NextUnexpandedPC = 0
-            trace.push(RV32IMCycle::last_jalr(last_address + 4 * (padding - 1)));
-        } else {
-            // Replace last JAL with JALR to set NextUnexpandedPC = 0
-            assert!(matches!(trace.last().unwrap(), RV32IMCycle::JAL(_)));
-            *trace.last_mut().unwrap() = RV32IMCycle::last_jalr(last_address);
-        }
+        let padded_trace_length = (trace_length + 1).next_power_of_two();
+        trace.resize(padded_trace_length, RV32IMCycle::NoOp);
 
         let ram_addresses: Vec<usize> = trace
             .par_iter()
@@ -361,12 +349,12 @@ where
         //     &mut transcript,
         // );
 
-        let bytecode_proof = BytecodeShoutProof::prove(
-            &preprocessing,
-            &trace,
-            &mut opening_accumulator,
-            &mut transcript,
-        );
+        // let bytecode_proof = BytecodeShoutProof::prove(
+        //     &preprocessing,
+        //     &trace,
+        //     &mut opening_accumulator,
+        //     &mut transcript,
+        // );
 
         // Batch-prove all openings
         let opening_proof =
@@ -374,7 +362,6 @@ where
 
         let jolt_proof = JoltProof {
             trace_length,
-            bytecode: bytecode_proof,
             instruction_lookups: instruction_proof,
             // ram: ram_proof,
             registers: registers_proof,
@@ -492,13 +479,13 @@ where
         //     &mut opening_accumulator,
         // )?;
 
-        proof.bytecode.verify(
-            &preprocessing.shared.bytecode,
-            &proof.commitments,
-            padded_trace_length,
-            &mut transcript,
-            &mut opening_accumulator,
-        )?;
+        // proof.bytecode.verify(
+        //     &preprocessing.shared.bytecode,
+        //     &proof.commitments,
+        //     padded_trace_length,
+        //     &mut transcript,
+        //     &mut opening_accumulator,
+        // )?;
 
         // Batch-verify all openings
         opening_accumulator.reduce_and_verify(

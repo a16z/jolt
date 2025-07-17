@@ -32,6 +32,8 @@ pub enum CommittedPolynomials {
     WritePCtoRD,
     /// Whether the current instruction triggers a branch
     ShouldBranch,
+    /// Whether the current instruction triggers a jump
+    ShouldJump,
     /*  Twist/Shout witnesses */
     /// One-hot ra polynomial for the bytecode instance of Shout
     BytecodeRa,
@@ -49,14 +51,15 @@ pub enum CommittedPolynomials {
     InstructionRa(usize),
 }
 
-pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 17] = [
+pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 19] = [
     CommittedPolynomials::LeftInstructionInput,
     CommittedPolynomials::RightInstructionInput,
     CommittedPolynomials::Product,
     CommittedPolynomials::WriteLookupOutputToRD,
     CommittedPolynomials::WritePCtoRD,
     CommittedPolynomials::ShouldBranch,
-    // CommittedPolynomials::BytecodeRa,
+    CommittedPolynomials::ShouldJump,
+    CommittedPolynomials::BytecodeRa,
     CommittedPolynomials::RamRa(0),
     CommittedPolynomials::RdInc,
     CommittedPolynomials::RamInc,
@@ -154,12 +157,28 @@ impl CommittedPolynomials {
                     .collect();
                 coeffs.into()
             }
+            CommittedPolynomials::ShouldJump => {
+                let coeffs: Vec<u8> = trace
+                    .par_iter()
+                    .zip(
+                        trace
+                            .par_iter()
+                            .skip(1)
+                            .chain(rayon::iter::once(&RV32IMCycle::NoOp)),
+                    )
+                    .map(|(cycle, next_cycle)| {
+                        let is_jump = cycle.instruction().circuit_flags()[CircuitFlags::Jump];
+                        let is_next_noop =
+                            next_cycle.instruction().circuit_flags()[CircuitFlags::IsNoop];
+                        is_jump as u8 * (1 - is_next_noop as u8)
+                    })
+                    .collect();
+                coeffs.into()
+            }
             CommittedPolynomials::BytecodeRa => {
-                let addresses: Vec<usize> = preprocessing
-                    .shared
-                    .bytecode
-                    .map_trace_to_pc(trace)
-                    .map(|k| k as usize)
+                let addresses: Vec<usize> = trace
+                    .par_iter()
+                    .map(|cycle| preprocessing.shared.bytecode.get_pc(cycle))
                     .collect();
                 MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
                     addresses,

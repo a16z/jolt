@@ -25,7 +25,6 @@ use crate::{
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
-        multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator},
     },
     r1cs::inputs::JoltR1CSInputs,
@@ -61,72 +60,55 @@ where
 }
 
 #[derive(Default)]
-pub struct LookupsDag<F: JoltField> {
-    eq_r_cycle: Option<Vec<F>>,
-    unbound_ra_polys: Option<Vec<MultilinearPolynomial<F>>>,
-}
+pub struct LookupsDag {}
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStages<F, T, PCS>
-    for LookupsDag<F>
+    for LookupsDag
 {
-    fn stage2_prover_instances(
+    fn stage3_prover_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
+        let (preprocessing, trace, _, _) = sm.get_prover_data();
+        let unbound_ra_polys = (0..D)
+            .map(|i| CommittedPolynomials::InstructionRa(i).generate_witness(preprocessing, trace))
+            .collect::<Vec<_>>();
         let r_cycle = sm
             .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
             .unwrap()
             .r
             .clone();
-        let (preprocessing, trace, _, _) = sm.get_prover_data();
-        let unbound_ra_polys = (0..D)
-            .map(|i| CommittedPolynomials::InstructionRa(i).generate_witness(preprocessing, trace))
-            .collect::<Vec<_>>();
-        self.eq_r_cycle = Some(EqPolynomial::evals(&r_cycle));
-        self.unbound_ra_polys = Some(unbound_ra_polys);
+        let eq_r_cycle = EqPolynomial::evals(&r_cycle);
+        let F = compute_ra_evals(trace, &eq_r_cycle);
 
-        let read_raf = ReadRafSumcheck::new_prover(
-            sm,
-            self.eq_r_cycle.clone().unwrap(),
-            self.unbound_ra_polys.clone().unwrap(),
-        );
-        vec![Box::new(read_raf)]
-    }
+        let read_raf =
+            ReadRafSumcheck::new_prover(sm, eq_r_cycle.clone(), unbound_ra_polys.clone());
 
-    fn stage2_verifier_instances(
-        &mut self,
-        sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
-        let read_raf = ReadRafSumcheck::new_verifier(sm);
-        vec![Box::new(read_raf)]
-    }
+        let booleanity =
+            BooleanitySumcheck::new_prover(sm, eq_r_cycle, F.clone(), unbound_ra_polys.clone());
 
-    fn stage3_prover_instances(
-        &mut self,
-        sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
-        let (_, trace, _, _) = sm.get_prover_data();
-        let F = compute_ra_evals(trace, self.eq_r_cycle.as_ref().unwrap());
-        let booleanity = BooleanitySumcheck::new_prover(
-            sm,
-            self.eq_r_cycle.clone().unwrap(),
-            F.clone(),
-            self.unbound_ra_polys.clone().unwrap(),
-        );
-        let hamming_weight =
-            HammingWeightSumcheck::new_prover(sm, F, self.unbound_ra_polys.clone().unwrap());
+        let hamming_weight = HammingWeightSumcheck::new_prover(sm, F, unbound_ra_polys.clone());
 
-        vec![Box::new(booleanity), Box::new(hamming_weight)]
+        vec![
+            Box::new(read_raf),
+            Box::new(booleanity),
+            Box::new(hamming_weight),
+        ]
     }
 
     fn stage3_verifier_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
+        let read_raf = ReadRafSumcheck::new_verifier(sm);
         let booleanity = BooleanitySumcheck::new_verifier(sm);
         let hamming_weight = HammingWeightSumcheck::new_verifier(sm);
 
-        vec![Box::new(booleanity), Box::new(hamming_weight)]
+        vec![
+            Box::new(read_raf),
+            Box::new(booleanity),
+            Box::new(hamming_weight),
+        ]
     }
 }
 
@@ -147,52 +129,6 @@ where
         _transcript: &mut ProofTranscript,
     ) -> Self {
         todo!();
-        // let log_T = trace.len().log_2();
-        // let r_cycle: Vec<F> = transcript.challenge_vector(log_T);
-        // let eq_r_cycle: Vec<F> = EqPolynomial::evals(&r_cycle);
-        // let r_address: Vec<F> = transcript.challenge_vector(LOG_K_CHUNK);
-        // let F = compute_ra_evals(trace, &eq_r_cycle);
-        // let mut sm = StateManager::<F, ProofTranscript, PCS>::new_prover(
-        //     Rc::new(RefCell::new(HashMap::new())),
-        //     Rc::new(RefCell::new(todo!())),
-        //     transcript,
-        //     Rc::new(RefCell::new(HashMap::new())),
-        // );
-        // // HACK: this should be populated by sapratan
-        // sm.temp_populate_openings(trace, r_cycle.clone());
-        //
-        // let mut read_checking = ReadRafSumcheck::new_prover(&mut sm, trace, &eq_r_cycle);
-        // let (read_checking_sumcheck, _) = read_checking.prove_single(*sm.transcript.borrow_mut());
-        // let read_checking_proof =
-        //     ReadCheckingProof::new(read_checking_sumcheck, &sm.openings.borrow());
-        //
-        // let mut booleanity = BooleanitySumcheck::new_prover(&mut sm, trace, &eq_r_cycle, F.clone());
-        // let (booleanity_proof, _) = booleanity.prove_single(*sm.transcript.borrow_mut());
-        //
-        // // TODO(moodlezoup): Openings
-        // let booleanity_proof = BooleanityProof::new(booleanity_proof, &sm.openings.borrow());
-        //
-        // let mut hamming_weight = HammingWeightSumcheck::new_prover(&mut sm, F);
-        // let (hamming_weight_sumcheck, r_hamming_weight) =
-        //     hamming_weight.prove_single(*sm.transcript.borrow_mut());
-        //
-        // // TODO(moodlezoup): Openings
-        // let hamming_weight_proof =
-        //     HammingWeightProof::new(hamming_weight_sumcheck, &sm.openings.borrow());
-        //
-        // let unbound_ra_polys = (0..D)
-        //     .map(|i| CommittedPolynomials::InstructionRa(i).generate_witness(preprocessing, trace))
-        //     .collect::<Vec<_>>();
-        //
-        // let r_hamming_weight_rev = r_hamming_weight.iter().copied().rev().collect::<Vec<_>>();
-        //
-        // Self {
-        //     read_checking_proof,
-        //     booleanity_proof,
-        //     hamming_weight_proof,
-        //     log_T,
-        //     _marker: PhantomData,
-        // }
     }
 
     pub fn verify(
@@ -201,60 +137,7 @@ where
         _opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
         _transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        Ok(())
-        // let r_cycle: Vec<F> = transcript.challenge_vector(self.log_T);
-        //
-        // let r_address: Vec<F> = transcript.challenge_vector(LOG_K_CHUNK);
-        // let mut sm = StateManager::<F, ProofTranscript, PCS>::new_verifier(
-        //     Rc::new(RefCell::new(HashMap::new())),
-        //     Rc::new(RefCell::new(todo!())),
-        //     transcript,
-        //     Rc::new(RefCell::new(HashMap::new())),
-        // );
-        // // HACK: plug in the r_cycle
-        // sm.openings.borrow_mut().insert(
-        //     OpeningsKeys::SpartanZ(JoltR1CSInputs::Imm),
-        //     (r_cycle.clone().into(), F::zero()),
-        // );
-        //
-        // self.read_checking_proof
-        //     .populate_openings(&mut sm.openings.borrow_mut());
-        // self.booleanity_proof
-        //     .populate_openings(&mut sm.openings.borrow_mut());
-        // self.hamming_weight_proof
-        //     .populate_openings(&mut sm.openings.borrow_mut());
-        //
-        // let read_checking = ReadRafSumcheck::new_verifier(&mut sm);
-        // let _r_read_checking = read_checking.verify_single(
-        //     &self.read_checking_proof.sumcheck_proof,
-        //     &mut *sm.transcript.borrow_mut(),
-        // )?;
-        //
-        // let booleanity = BooleanitySumcheck::new_verifier(&mut sm);
-        // let _r_booleanity = booleanity.verify_single(
-        //     &self.booleanity_proof.sumcheck_proof,
-        //     *sm.transcript.borrow_mut(),
-        // )?;
-        //
-        // let hamming_weight = HammingWeightSumcheck::new_verifier(&mut sm);
-        // let r_hamming_weight = hamming_weight
-        //     .verify_single(
-        //         &self.hamming_weight_proof.sumcheck_proof,
-        //         &mut *sm.transcript.borrow_mut(),
-        //     )
-        //     .unwrap();
-        //
-        // let r_hamming_weight: Vec<_> = r_hamming_weight.iter().copied().rev().collect();
-        // // for i in 0..D {
-        // //     opening_accumulator.append(
-        // //         &[&commitments.commitments[CommittedPolynomials::InstructionRa(i).to_index()]],
-        // //         [r_hamming_weight.as_slice(), r_cycle.as_slice()].concat(),
-        // //         &[self.hamming_weight_proof.ra_claims[i]],
-        // //         transcript,
-        // //     );
-        // // }
-        //
-        // Ok(())
+        todo!()
     }
 }
 
