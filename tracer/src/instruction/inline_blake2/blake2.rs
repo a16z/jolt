@@ -1,3 +1,5 @@
+use core::ops::{Shl, Shr};
+
 use common::constants::virtual_register_index;
 use serde::{Deserialize, Serialize};
 
@@ -6,7 +8,7 @@ use crate::emulator::cpu::Cpu;
 use crate::instruction::format::format_r::FormatR;
 use crate::instruction::format::InstructionFormat;
 use crate::instruction::inline_blake2::{
-    execute_blake2b_256, Blake2SequenceBuilder, NEEDED_REGISTERS,
+    execute_blake2b_compression, Blake2SequenceBuilder, NEEDED_REGISTERS
 };
 use crate::instruction::{
     RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
@@ -47,12 +49,25 @@ impl BLAKE2 {
                 .0;
         }
 
-        // 3. Execute Blake2b compression function on the state with the message block.
-        // For simplicity, we assume single-block operation
-        let compressed_state = execute_blake2b_single_block(&state, &message_words);
+        // 3. Load counter value (t) from memory at offset 128 bytes after message block
+        let counter = cpu
+            .mmu
+            .load_doubleword(block_addr.wrapping_add(128))
+            .expect("BLAKE2: Failed to load counter from memory")
+            .0;
 
-        // 4. Write the compressed state back to memory.
-        for (i, &word) in compressed_state.iter().enumerate() {
+        // 4. Load final block flag (is_final) from memory at offset 136 bytes after message block  
+        let is_final = cpu
+            .mmu
+            .load_doubleword(block_addr.wrapping_add(136))
+            .expect("BLAKE2: Failed to load is_final flag from memory")
+            .0 != 0; // Convert to boolean
+
+        // 5. Execute Blake2b compression function with all parameters
+        execute_blake2b_compression(&mut state, &message_words, counter, is_final);
+
+        // 6. Write the compressed state back to memory.
+        for (i, &word) in state.iter().enumerate() {
             cpu.mmu
                 .store_doubleword(state_addr.wrapping_add((i * 8) as u64), word)
                 .expect("BLAKE2: Failed to store state to memory");
@@ -91,58 +106,145 @@ impl RISCVTrace for BLAKE2 {
     }
 }
 
-/// Execute Blake2b compression for a single block (simplified version for instruction emulation)
-fn execute_blake2b_single_block(state: &[u64; 8], message_words: &[u64; 16]) -> [u64; 8] {
-    // Use the host implementation for compression
-    let mut h = *state;
-    compress_single_block(&mut h, message_words);
-    h
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::emulator::{cpu::Cpu, default_terminal::DefaultTerminal, mmu::DRAM_BASE};
+    use crate::instruction::format::format_r::FormatR;
 
-/// Simplified Blake2b compression for single block
-fn compress_single_block(h: &mut [u64; 8], m: &[u64; 16]) {
-    use crate::instruction::inline_blake2::{BLAKE2B_IV, SIGMA};
-    
-    // Initialize working variables
-    let mut v = [0u64; 16];
-    v[0..8].copy_from_slice(h);
-    v[8..16].copy_from_slice(&BLAKE2B_IV);
-    
-    // Assume single block operation for simplicity
-    v[12] ^= 128; // Block size
-    v[14] = !v[14]; // Final block flag
-    
-    // 12 rounds of mixing
-    for round in 0..12 {
-        let s = &SIGMA[round];
-        
-        // Column step
-        g(&mut v, 0, 4, 8, 12, m[s[0]], m[s[1]]);
-        g(&mut v, 1, 5, 9, 13, m[s[2]], m[s[3]]);
-        g(&mut v, 2, 6, 10, 14, m[s[4]], m[s[5]]);
-        g(&mut v, 3, 7, 11, 15, m[s[6]], m[s[7]]);
-        
-        // Diagonal step  
-        g(&mut v, 0, 5, 10, 15, m[s[8]], m[s[9]]);
-        g(&mut v, 1, 6, 11, 12, m[s[10]], m[s[11]]);
-        g(&mut v, 2, 7, 8, 13, m[s[12]], m[s[13]]);
-        g(&mut v, 3, 4, 9, 14, m[s[14]], m[s[15]]);
-    }
-    
-    // Finalize hash state
-    for i in 0..8 {
-        h[i] ^= v[i] ^ v[i + 8];
-    }
-}
+    const TEST_MEMORY_CAPACITY: u64 = 1024 * 1024; // 1MB
 
-/// Blake2b G function
-fn g(v: &mut [u64; 16], a: usize, b: usize, c: usize, d: usize, x: u64, y: u64) {
-    v[a] = v[a].wrapping_add(v[b]).wrapping_add(x);
-    v[d] = (v[d] ^ v[a]).rotate_right(32);
-    v[c] = v[c].wrapping_add(v[d]);
-    v[b] = (v[b] ^ v[c]).rotate_right(24);
-    v[a] = v[a].wrapping_add(v[b]).wrapping_add(y);
-    v[d] = (v[d] ^ v[a]).rotate_right(16);
-    v[c] = v[c].wrapping_add(v[d]);
-    v[b] = (v[b] ^ v[c]).rotate_right(63);
+    fn store_words_to_memory(cpu: &mut Cpu, base_addr: u64, values: &[u64]) {
+        for (i, &value) in values.iter().enumerate() {
+            cpu.mmu
+                .store_doubleword(base_addr + (i * 8) as u64, value)
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn test_exec_correctness() {
+        // This is from RFC 7693
+        let expected_blake2b_512_abc = [
+            0x0D4D1C983FA580BAu64, // BA 80 A5 3F 98 1C 4D 0D (little-endian)
+            0xE9F6129FB697276Au64, // 6A 27 97 B6 9F 12 F6 E9
+            0xB7C45A68142F214Cu64, // 4C 21 2F 14 68 5A C4 B7
+            0xD1A2FFDB6FBB124Bu64, // 4B 12 BB 6F DB FF A2 D1
+            0x2D79AB2A39C5877Du64, // 7D 87 C5 39 2A AB 79 2D
+            0x95CC3345DED552C2u64, // C2 52 D5 DE 45 33 CC 95
+            0x5A92F1DBA88AD318u64, // 18 D3 8A A8 DB F1 92 5A
+            0x239900D4ED8623B9u64, // B9 23 86 ED D4 00 99 23
+        ];
+        let mut initial_state = [
+            0x6a09e667f3bcc908, 0xbb67ae8584caa73b, 0x3c6ef372fe94f82b, 0xa54ff53a5f1d36f1,
+            0x510e527fade682d1, 0x9b05688c2b3e6c1f, 0x1f83d9abfb41bd6b, 0x5be0cd19137e2179,
+        ];
+        initial_state[0] ^= 0x01010000 ^ (0u64 << 8) ^ 64u64;
+        let message_block = {
+            let mut msg = [0u64; 16];
+            msg[0] = 0x0000000000636261u64; // "abc" in little-endian
+            msg
+        };
+        let (counter, is_final) = (3u64, true);
+        let instruction = BLAKE2 {
+            address: 0,
+            operands: FormatR {
+                rs1: 10, // Points to state
+                rs2: 11, // Points to message block + counter + final flag
+                rd: 0,
+            },
+            virtual_sequence_remaining: None,
+        };
+        // Set up the "exec" path CPU
+        let mut cpu_exec = Cpu::new(Box::new(DefaultTerminal::new()));
+        cpu_exec.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
+        let state_addr = DRAM_BASE;
+        let message_addr = DRAM_BASE + 1024; // Separate address for message block
+        cpu_exec.x[10] = state_addr as i64; // rs1 points to state
+        cpu_exec.x[11] = message_addr as i64; // rs2 points to message block
+
+        // Store initial state (8 words = 64 bytes) at rs1
+        store_words_to_memory(&mut cpu_exec, state_addr, &initial_state);
+        // Store message block (16 words = 128 bytes) at rs2
+        store_words_to_memory(&mut cpu_exec, message_addr, &message_block);
+        // Store counter at rs2 + 128 (8 bytes)
+        store_words_to_memory(&mut cpu_exec, message_addr + 128, &[counter]);
+        // Store final flag at rs2 + 136 (8 bytes)
+        store_words_to_memory(&mut cpu_exec, message_addr + 136, &[if is_final { 1 } else { 0 }]);
+
+        instruction.exec(&mut cpu_exec, &mut ());
+
+        println!("=== VERIFYING BLAKE2B-512('abc') RESULT ===");
+        let mut actual_result = [0u64; 8];
+        for i in 0..8 {
+            let addr = state_addr + (i * 8) as u64;
+            actual_result[i] = cpu_exec.mmu.load_doubleword(addr).unwrap().0;
+            assert_eq!(actual_result[i], expected_blake2b_512_abc[i]);
+            println!("h[{}] = 0x{:016x} (expected: 0x{:016x})", 
+                    i, actual_result[i], expected_blake2b_512_abc[i]);
+        }
+    }
+
+    #[test]
+    fn test_trace_correctness() {
+        // This is from RFC 7693
+        let expected_blake2b_512_abc = [
+            0x0D4D1C983FA580BAu64, // BA 80 A5 3F 98 1C 4D 0D (little-endian)
+            0xE9F6129FB697276Au64, // 6A 27 97 B6 9F 12 F6 E9
+            0xB7C45A68142F214Cu64, // 4C 21 2F 14 68 5A C4 B7
+            0xD1A2FFDB6FBB124Bu64, // 4B 12 BB 6F DB FF A2 D1
+            0x2D79AB2A39C5877Du64, // 7D 87 C5 39 2A AB 79 2D
+            0x95CC3345DED552C2u64, // C2 52 D5 DE 45 33 CC 95
+            0x5A92F1DBA88AD318u64, // 18 D3 8A A8 DB F1 92 5A
+            0x239900D4ED8623B9u64, // B9 23 86 ED D4 00 99 23
+        ];
+        let mut initial_state = [
+            0x6a09e667f3bcc908, 0xbb67ae8584caa73b, 0x3c6ef372fe94f82b, 0xa54ff53a5f1d36f1,
+            0x510e527fade682d1, 0x9b05688c2b3e6c1f, 0x1f83d9abfb41bd6b, 0x5be0cd19137e2179,
+        ];
+        initial_state[0] ^= 0x01010000 ^ (0u64 << 8) ^ 64u64;
+        let message_block = {
+            let mut msg = [0u64; 16];
+            msg[0] = 0x0000000000636261u64; // "abc" in little-endian
+            msg
+        };
+        let (counter, is_final) = (3u64, true);
+        let instruction = BLAKE2 {
+            address: 0,
+            operands: FormatR {
+                rs1: 10, // Points to state
+                rs2: 11, // Points to message block + counter + final flag
+                rd: 0,
+            },
+            virtual_sequence_remaining: None,
+        };
+        // Set up the "trace" path CPU
+        let mut cpu_trace = Cpu::new(Box::new(DefaultTerminal::new()));
+        cpu_trace.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
+        let state_addr = DRAM_BASE;
+        let message_addr = DRAM_BASE + 1024; // Separate address for message block
+        cpu_trace.x[10] = state_addr as i64; // rs1 points to state
+        cpu_trace.x[11] = message_addr as i64; // rs2 points to message block
+
+        // Store initial state (8 words = 64 bytes) at rs1
+        store_words_to_memory(&mut cpu_trace, state_addr, &initial_state);
+        // Store message block (16 words = 128 bytes) at rs2
+        store_words_to_memory(&mut cpu_trace, message_addr, &message_block);
+        // Store counter at rs2 + 128 (8 bytes)
+        store_words_to_memory(&mut cpu_trace, message_addr + 128, &[counter]);
+        // Store final flag at rs2 + 136 (8 bytes)
+        store_words_to_memory(&mut cpu_trace, message_addr + 136, &[if is_final { 1 } else { 0 }]);
+
+        instruction.trace(&mut cpu_trace, None);
+
+        println!("=== VERIFYING BLAKE2B-512('abc') RESULT ===");
+        let mut actual_result = [0u64; 8];
+        for i in 0..8 {
+            let addr = state_addr + (i * 8) as u64;
+            actual_result[i] = cpu_trace.mmu.load_doubleword(addr).unwrap().0;
+            assert_eq!(actual_result[i], expected_blake2b_512_abc[i]);
+            println!("h[{}] = 0x{:016x} (expected: 0x{:016x})", 
+                    i, actual_result[i], expected_blake2b_512_abc[i]);
+        }
+    }
 }

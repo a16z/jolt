@@ -1,3 +1,5 @@
+use core::ops::Shr;
+
 /// This file contains Blake2-specific logic to be used in the Blake2 inline:
 /// 1) Prover: Blake2SequenceBuilder expands the inline to a list of RV instructions.
 /// 2) Host: Rust reference implementation to be called by jolt-sdk.
@@ -11,8 +13,6 @@
 /// Blake2b-256 refers to Blake2b with 256-bit (32-byte) output.
 
 use crate::instruction::addi::ADDI;
-use crate::instruction::and::AND;
-use crate::instruction::andi::ANDI;
 use crate::instruction::format::format_i::FormatI;
 use crate::instruction::format::format_r::FormatR;
 use crate::instruction::format::format_s::FormatS;
@@ -23,7 +23,6 @@ use crate::instruction::lui::LUI;
 use crate::instruction::or::OR;
 use crate::instruction::sd::SD;
 use crate::instruction::slli::SLLI;
-use crate::instruction::srli::SRLI;
 use crate::instruction::virtual_rotri::VirtualROTRI;
 use crate::instruction::xor::XOR;
 use crate::instruction::xori::XORI;
@@ -118,38 +117,50 @@ impl Blake2SequenceBuilder {
     }
 
     fn build(mut self) -> Vec<RV32IMInstruction> {
-        // 1. Initialize the Blake2 state from memory
-        self.load_state();
-        self.load_message();
+        // 1. Load all required data from memory
+        self.load_state();         // Load hash state (8 words) 
+        self.load_message();       // Load message block (16 words)
+        self.load_t();            // Load counter value (1 word)
+        self.load_is_final();     // Load final block flag (1 word)
+        
+        // 2. Initialize the working state v[0..15]
         self.initialize_working_state();
 
-        // 2. Main loop: 12 rounds of Blake2b compression
+        // 3. Main loop: 12 rounds of Blake2b compression
         for round in 0..12 {
             self.round = round;
             self.blake2_round();
         }
 
-        // 3. Finalize the hash state
+        // 4. Finalize the hash state: h[i] ^= v[i] ^ v[i+8]
         self.finalize_state();
+        
+        // 5. Store the final hash state back to memory
         self.store_state();
 
-        // 4. Finalize the sequence by setting instruction indices
+        // 6. Finalize the sequence by setting instruction indices
         self.enumerate_sequence();
         self.sequence
     }
 
     /// Load the current hash state (8 words) from memory into virtual registers
     fn load_state(&mut self) {
-        for i in 0..8 {
-            self.ld(self.operand_rs1, i as i64, self.vr[32 + i]);
-        }
+        (0..8).for_each(|i| self.ld(self.operand_rs1, i as i64, self.vr[32 + i]));
     }
 
     /// Load the message block (16 words) from memory into virtual registers
     fn load_message(&mut self) {
-        for i in 0..16 {
-            self.ld(self.operand_rs2, i as i64, self.vr[16 + i]);
-        }
+        (0..16).for_each(|i| self.ld(self.operand_rs2, i as i64, self.vr[16 + i]));
+    }
+
+    /// Load the counter value (t) from memory - stored after the message block
+    fn load_t(&mut self) {
+        self.ld(self.operand_rs2, 17, self.vr[48]);
+    }
+
+    /// Load the final block flag (is_final) from memory - stored after the counter
+    fn load_is_final(&mut self) {
+        self.ld(self.operand_rs2, 18, self.vr[49]);
     }
 
     /// Initialize the working state v[0..15] according to Blake2b specification
@@ -164,8 +175,19 @@ impl Blake2SequenceBuilder {
             self.load_64bit_immediate(BLAKE2B_IV[i], self.vr[8 + i]);
         }
 
-        // Note: In full Blake2b, v[12] and v[13] would be XORed with counter values
-        // For simplicity, we assume single-block operation here
+        // Blake2b counter handling: XOR counter with v[12] and extract high part for v[13]
+        // v[12] = IV[4] ^ t (counter low)
+        self.xor64(Reg(self.vr[12]), Reg(self.vr[48]), self.vr[12]);
+        
+        // v[13] = IV[5] ^ (t >> 64) (counter high) - for 64-bit counter, high part is 0
+        // Since we're using 64-bit counter, the high part is always 0, so v[13] remains unchanged
+        
+        // Handle final block flag: if is_final != 0, invert all bits of v[14]
+        // Negate is_final using two's complement: -is_final = ~is_final + 1
+        self.xor64(Reg(self.vr[49]), Imm(u32::MAX as u64), self.vr[49]);
+        
+        // XOR v[14] with negated is_final: inverts v[14] if is_final=1, leaves unchanged if is_final=0
+        self.xor64(Reg(self.vr[14]), Reg(self.vr[49]), self.vr[14]);
     }
 
     /// Execute one round of Blake2b compression
@@ -481,55 +503,71 @@ impl Blake2SequenceBuilder {
 /// Rust implementation of Blake2b-256 on the host.
 /// ------------------------------------------------------------------------------------------------
 
-/// Execute Blake2b-256 hash function
-pub fn execute_blake2b_256(input: &[u8]) -> [u8; 32] {
-    const BLOCK_SIZE: usize = 128;
+/// High-level Blake2 function following RFC specification
+/// 
+/// Parameters:
+/// - data_blocks: Array of data blocks d[0..dd-1]
+/// - ll: Length of input in bytes
+/// - kk: Key length (0 for unkeyed)  
+/// - nn: Output length in bytes
+fn blake2(data_blocks: &[[u64; 16]], ll: u64, kk: u64, nn: u64) -> Vec<u8> {
+    const BB: u64 = 128; // Block size in bytes
     
-    // Initialize hash state with IV and parameters
+    // h[0..7] := IV[0..7] (Initialization Vector)
     let mut h = BLAKE2B_IV;
-    h[0] ^= 0x01010020; // Parameter block: output size = 32 bytes
-
-    let mut offset = 0;
     
-    // Process full blocks
-    while offset + BLOCK_SIZE <= input.len() {
-        let block = &input[offset..offset + BLOCK_SIZE];
-        compress(&mut h, block, offset as u64 + BLOCK_SIZE as u64, false);
-        offset += BLOCK_SIZE;
+    // Parameter block p[0]: h[0] := h[0] ^ 0x01010000 ^ (kk << 8) ^ nn
+    h[0] ^= 0x01010000 ^ (kk << 8) ^ nn;
+    
+    let dd = data_blocks.len();
+    
+    // Process padded key and data blocks
+    if dd > 1 {
+        for i in 0..(dd - 1) {
+            let counter = (i as u64 + 1) * BB;
+            execute_blake2b_compression(&mut h, &data_blocks[i], counter, false);
+        }
     }
     
-    // Process final block with padding
-    let mut final_block = [0u8; BLOCK_SIZE];
-    let remaining = &input[offset..];
-    final_block[..remaining.len()].copy_from_slice(remaining);
+    // Final block
+    let final_counter = if kk == 0 { ll } else { ll + BB };
+    execute_blake2b_compression(&mut h, &data_blocks[dd - 1], final_counter, true);
     
-    compress(&mut h, &final_block, input.len() as u64, true);
-    
-    // Return first 32 bytes of hash state
-    let mut result = [0u8; 32];
-    for (i, &word) in h.iter().take(4).enumerate() {
-        result[i * 8..(i + 1) * 8].copy_from_slice(&word.to_le_bytes());
+    // Return first "nn" bytes from little-endian word array h[]
+    let mut result = Vec::with_capacity(nn as usize);
+    for &word in h.iter() {
+        let bytes = word.to_le_bytes();
+        for &byte in bytes.iter() {
+            if result.len() < nn as usize {
+                result.push(byte);
+            }
+        }
     }
     result
 }
 
-/// Blake2b compression function
-fn compress(h: &mut [u64; 8], block: &[u8], counter: u64, is_final: bool) {
-    // Convert block to 16 64-bit words
-    let mut m = [0u64; 16];
-    for (i, chunk) in block.chunks_exact(8).enumerate() {
-        m[i] = u64::from_le_bytes(chunk.try_into().unwrap());
-    }
+/// Execute Blake2b compression with explicit counter values
+fn execute_blake2b_compression(
+    state: &mut [u64; 8], 
+    message_words: &[u64; 16],
+    counter: u64,
+    is_final: bool
+) -> [u64; 16] {
+    // Use the host implementation for compression
+    use crate::instruction::inline_blake2::{BLAKE2B_IV, SIGMA};
     
     // Initialize working variables
     let mut v = [0u64; 16];
-    v[0..8].copy_from_slice(h);
+    v[0..8].copy_from_slice(state);
     v[8..16].copy_from_slice(&BLAKE2B_IV);
     
-    // XOR counter and final flag
-    v[12] ^= counter;
+    // Blake2b counter handling: XOR counter values with v[12] and v[13]
+    v[12] ^= counter;   // counter_low
+    // v[13] ^= counter.shr(64) as u64;  // counter_high
+    
+    // Set final block flag if this is the last block
     if is_final {
-        v[14] = !v[14];
+        v[14] = !v[14]; // Invert v[14] for final block
     }
     
     // 12 rounds of mixing
@@ -537,22 +575,23 @@ fn compress(h: &mut [u64; 8], block: &[u8], counter: u64, is_final: bool) {
         let s = &SIGMA[round];
         
         // Column step
-        g(&mut v, 0, 4, 8, 12, m[s[0]], m[s[1]]);
-        g(&mut v, 1, 5, 9, 13, m[s[2]], m[s[3]]);
-        g(&mut v, 2, 6, 10, 14, m[s[4]], m[s[5]]);
-        g(&mut v, 3, 7, 11, 15, m[s[6]], m[s[7]]);
+        g(&mut v, 0, 4, 8, 12, message_words[s[0]], message_words[s[1]]);
+        g(&mut v, 1, 5, 9, 13, message_words[s[2]], message_words[s[3]]);
+        g(&mut v, 2, 6, 10, 14, message_words[s[4]], message_words[s[5]]);
+        g(&mut v, 3, 7, 11, 15, message_words[s[6]], message_words[s[7]]);
         
         // Diagonal step  
-        g(&mut v, 0, 5, 10, 15, m[s[8]], m[s[9]]);
-        g(&mut v, 1, 6, 11, 12, m[s[10]], m[s[11]]);
-        g(&mut v, 2, 7, 8, 13, m[s[12]], m[s[13]]);
-        g(&mut v, 3, 4, 9, 14, m[s[14]], m[s[15]]);
+        g(&mut v, 0, 5, 10, 15, message_words[s[8]], message_words[s[9]]);
+        g(&mut v, 1, 6, 11, 12, message_words[s[10]], message_words[s[11]]);
+        g(&mut v, 2, 7, 8, 13, message_words[s[12]], message_words[s[13]]);
+        g(&mut v, 3, 4, 9, 14, message_words[s[14]], message_words[s[15]]);
     }
     
     // Finalize hash state
     for i in 0..8 {
-        h[i] ^= v[i] ^ v[i + 8];
+        state[i] ^= v[i] ^ v[i + 8];
     }
+    v
 }
 
 /// Blake2b G function
@@ -572,23 +611,32 @@ mod tests {
     use super::*;
     
     #[test]
-    fn test_blake2b_256_empty() {
-        let result = execute_blake2b_256(b"");
-        // Expected hash for empty input with Blake2b-256
+    fn test_blake2_rfc_abc() {
+        // Test case from Blake2 RFC for "abc"
+        let mut message_block = [0u64; 16];
+        message_block[0] = 0x0000000000636261u64; // "abc" in little-endian
+        // All other words remain 0 (padding)
+        
+        let data_blocks = [message_block];
+        let ll = 3u64;   // Length of "abc" in bytes
+        let kk = 0u64;   // Key length (unkeyed)
+        let nn = 64u64;  // Output length (Blake2b-512)
+        
+        // Execute Blake2 function following RFC specification
+        let result = blake2(&data_blocks, ll, kk, nn);
+
+        assert_eq!(result.len(), 64);
         let expected = [
-            0x0e, 0x57, 0x51, 0xc0, 0x26, 0xe5, 0x43, 0xb2,
-            0xe8, 0xab, 0x2e, 0xb0, 0x60, 0x99, 0xda, 0xa1,
-            0xd1, 0xe5, 0xdf, 0x47, 0x77, 0x8f, 0x77, 0x87,
-            0xfa, 0xab, 0x45, 0xcd, 0xf1, 0x2f, 0xe3, 0xa8,
-        ];
-        assert_eq!(result, expected);
-    }
-    
-    #[test]
-    fn test_blake2b_256_abc() {
-        let result = execute_blake2b_256(b"abc");
-        // This would need to be verified against a reference implementation
-        assert_eq!(result.len(), 32);
+            0xba, 0x80, 0xa5, 0x3f, 0x98, 0x1c, 0x4d, 0x0d,
+            0x6a, 0x27, 0x97, 0xb6, 0x9f, 0x12, 0xf6, 0xe9,
+            0x4c, 0x21, 0x2f, 0x14, 0x68, 0x5a, 0xc4, 0xb7,
+            0x4b, 0x12, 0xbb, 0x6f, 0xdb, 0xff, 0xa2, 0xd1,
+            0x7d, 0x87, 0xc5, 0x39, 0x2a, 0xab, 0x79, 0x2d,
+            0xc2, 0x52, 0xd5, 0xde, 0x45, 0x33, 0xcc, 0x95,
+            0x18, 0xd3, 0x8a, 0xa8, 0xdb, 0xf1, 0x92, 0x5a,
+            0xb9, 0x23, 0x86, 0xed, 0xd4, 0x00, 0x99, 0x23
+        ];        
+        assert_eq!(result.as_slice(), &expected);
     }
 }
 
