@@ -55,6 +55,16 @@ impl<F: JoltField> EqPolynomial<F> {
         Self::evals_serial_cached(r, None)
     }
 
+    #[tracing::instrument(skip_all, name = "EqPolynomial::evals_cached_rev")]
+    /// Computes the table of coefficients like `evals_cached`, but binds `r` in reverse order
+    ///
+    /// In other words, computes `{eq(r[j..], x) for all x in {0, 1}^{n - j}}` and for all `j in
+    /// 0..r.len()`, where variables are bound from MSB to LSB (reverse of standard order).
+    pub fn evals_cached_rev(r: &[F]) -> Vec<Vec<F>> {
+        // TODO: implement parallel version & determine switchover point
+        Self::evals_serial_cached_rev(r, None)
+    }
+
     /// Computes the table of coefficients:
     ///     scaling_factor * eq(r, x) for all x in {0, 1}^n
     /// serially. More efficient for short `r`.
@@ -103,7 +113,6 @@ impl<F: JoltField> EqPolynomial<F> {
     /// coefficients for the polynomial `eq(r[j..], x)` for all `x in {0, 1}^{n - j}`.
     ///
     /// Performance seems at most 10% worse than `evals_serial`
-    #[allow(dead_code)]
     fn evals_serial_cached_rev(r: &[F], scaling_factor: Option<F>) -> Vec<Vec<F>> {
         let rev_r = r.iter().rev().collect::<Vec<_>>();
         let mut evals: Vec<Vec<F>> = (0..r.len() + 1)

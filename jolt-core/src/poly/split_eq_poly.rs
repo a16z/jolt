@@ -61,6 +61,33 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "GruenSplitEqPolynomial::new_rev")]
+    pub fn new_rev(w: &[F]) -> Self {
+        let mut w_rev = w.to_vec();
+        w_rev.reverse();
+        let w = &w_rev;
+        let m = w.len() / 2;
+        //   w = [w_out, w_in, w_last]
+        //         ↑      ↑      ↑
+        //         |      |      |
+        //         |      |      last element
+        //         |      second half of remaining elements (for E_in)
+        //         first half of remaining elements (for E_out)
+        let (_, wprime) = w.split_last().unwrap();
+        let (w_out, w_in) = wprime.split_at(m);
+        let (E_out_vec, E_in_vec) = rayon::join(
+            || EqPolynomial::evals_cached(w_out),
+            || EqPolynomial::evals_cached(w_in),
+        );
+        Self {
+            current_index: w.len(),
+            current_scalar: F::one(),
+            w: w_rev,
+            E_in_vec,
+            E_out_vec,
+        }
+    }
+
     /// Compute the split equality polynomial for the small value optimization
     ///
     /// The split is done as follows: (here `l = num_small_value_rounds`)
@@ -181,6 +208,44 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         } else if 0 < self.current_index {
             self.E_out_vec.pop();
         }
+    }
+
+    /// Compute the sumcheck quadratic evaluations (i.e., the evaluations at {0, 2}) of a
+    /// polynomial s(X) = l(X) * q(X), where both l(X) and q(X) are linear polynomials.
+    /// Given:
+    /// - c, the constant term of q
+    /// - d, the linear coefficient of q  
+    /// 
+    /// Returns evaluations at {0, 2}. With these two evaluations and the constraint 
+    /// s(0) + s(1) = previous_claim from sumcheck, the quadratic polynomial is fully determined.
+    pub fn sumcheck_quadratic_evals_from_linear(
+        &self,
+        q_constant: F,
+        q_linear_coeff: F,
+    ) -> [F; 2] {
+        // We want to compute the evaluations of the quadratic polynomial s(X) = l(X) * q(X), where
+        // both l and q are linear, at the points {0, 2}.
+        //
+        // We have:
+        // - the linear polynomial l(X) = a + bX (current eq polynomial)
+        // - the linear polynomial q(X) = c + dX
+        // - the previous round's claim s(0) + s(1) = previous_claim
+        
+        // Evaluations of the linear polynomial l(X)
+        let eq_eval_1 = self.current_scalar * self.w[self.current_index - 1];
+        let eq_eval_0 = self.current_scalar - eq_eval_1;
+        let eq_m = eq_eval_1 - eq_eval_0; // This is b, the slope
+        let eq_eval_2 = eq_eval_1 + eq_m; // l(2) = l(1) + b
+        
+        // Evaluations of the linear polynomial q(X)
+        let q_eval_0 = q_constant;
+        let q_eval_2 = q_constant + q_linear_coeff + q_linear_coeff; // q(2) = c + 2d
+        
+        // Evaluations of the quadratic polynomial s(X) = l(X) * q(X)
+        [
+            eq_eval_0 * q_eval_0, // s(0)
+            eq_eval_2 * q_eval_2, // s(2)
+        ]
     }
 
     /// Compute the sumcheck cubic sumcheck evaluations (i.e., the evaluations at {0, 2, 3}) of a
@@ -350,6 +415,7 @@ impl<F: JoltField> SplitEqPolynomial<F> {
 mod tests {
     use super::*;
     use ark_bn254::Fr;
+    use ark_ff::AdditiveGroup;
     use ark_std::test_rng;
 
     #[test]
@@ -370,6 +436,38 @@ mod tests {
             split_eq.bind(r);
 
             let merged = split_eq.merge();
+            assert_eq!(regular_eq.Z[..regular_eq.len()], merged.Z[..merged.len()]);
+        }
+    }
+
+    #[test]
+    fn bind_rev() {
+        const NUM_VARS: usize = 10;
+        let mut rng = test_rng();
+        let w: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
+            .take(NUM_VARS)
+            .collect();
+
+        // Create reversed w
+        let mut w_rev = w.clone();
+        w_rev.reverse();
+
+        // Create regular polynomial with reversed w
+        let mut regular_eq = DensePolynomial::new(EqPolynomial::evals(&w_rev));
+
+        // Create split eq polynomial using new_rev with original w
+        let mut split_eq_rev = GruenSplitEqPolynomial::new_rev(&w);
+
+        // Verify they start equal
+        assert_eq!(regular_eq, split_eq_rev.merge());
+
+        // Bind with same random values
+        for _ in 0..NUM_VARS {
+            let r = Fr::random(&mut rng);
+            regular_eq.bound_poly_var_bot(&r);
+            split_eq_rev.bind(r);
+
+            let merged = split_eq_rev.merge();
             assert_eq!(regular_eq.Z[..regular_eq.len()], merged.Z[..merged.len()]);
         }
     }

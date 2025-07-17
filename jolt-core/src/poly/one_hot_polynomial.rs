@@ -14,6 +14,7 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{
     MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
+use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::subprotocols::sparse_dense_shout::ExpandingTable;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
@@ -53,10 +54,14 @@ pub struct OneHotPolynomial<F: JoltField> {
 /// Booleanity sumcheck described in Section 6.3 of the Twist/Shout paper.
 #[derive(Clone, Debug)]
 pub struct OneHotSumcheckState<F: JoltField> {
-    /// B stores eq(r, k), see Equation (53)
-    pub B: MultilinearPolynomial<F>,
-    /// D stores eq(r', j), see Equation (54)
-    pub D: MultilinearPolynomial<F>,
+    /// B stores eq(r, k) using Gruen optimization, see Equation (53)
+    pub B: GruenSplitEqPolynomial<F>,
+    /// D stores eq(r', j) using Gruen optimization, see Equation (54)
+    pub D: GruenSplitEqPolynomial<F>,
+    /// Original B stores eq(r, k), see Equation (53)
+    pub B_org: MultilinearPolynomial<F>,
+    /// Original D stores eq(r', j), see Equation (54)
+    pub D_org: MultilinearPolynomial<F>,
     /// F will maintain an array that, at the end of sumcheck round m, has size 2^m
     /// and stores all 2^m values eq((k_1, ..., k_m), (r_1, ..., r_m))
     pub F: ExpandingTable<F>,
@@ -74,8 +79,10 @@ impl<F: JoltField> OneHotSumcheckState<F> {
         let mut F = ExpandingTable::new(K);
         F.reset(F::one());
         Self {
-            B: MultilinearPolynomial::from(EqPolynomial::evals(r_address)), // Equation (53)
-            D: MultilinearPolynomial::from(EqPolynomial::evals(r_cycle)),   // Equation (54)
+            B: GruenSplitEqPolynomial::new_rev(r_address), // Equation (53)
+            D: GruenSplitEqPolynomial::new_rev(r_cycle),   // Equation (54)
+            B_org: MultilinearPolynomial::from(EqPolynomial::evals(r_address)), // Original B
+            D_org: MultilinearPolynomial::from(EqPolynomial::evals(r_cycle)), // Original D
             F,
             num_variables_bound: 0,
         }
@@ -101,7 +108,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
         let T = polynomial.nonzero_indices.len();
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = (T / num_chunks).max(1);
-        let D = &self.eq_state.lock().unwrap().D;
+        let D_org = &self.eq_state.lock().unwrap().D_org;
 
         // Compute G as described in Section 6.3
         let G = polynomial
@@ -113,7 +120,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                 let mut j = chunk_index * chunk_size;
                 for k in chunk {
                     if let Some(k) = k {
-                        result[*k] += D.get_bound_coeff(j);
+                        result[*k] += D_org.get_bound_coeff(j);
                     }
                     j += 1;
                 }
@@ -148,15 +155,15 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             let F = &shared_eq.F;
             let G = polynomial.G.as_ref().unwrap();
 
-            let univariate_poly_evals: [F; 2] = (0..B.len() / 2)
+            // Compute quadratic coefficients from linear polynomials
+            let quadratic_coeffs: [F; 2] = (0..B.E_out_current_len() / 2)
                 .into_par_iter()
                 .map(|k_prime| {
-                    let B_evals = B.sumcheck_evals(k_prime, 2, BindingOrder::HighToLow);
                     let inner_sum = G
                         .par_iter()
                         .enumerate()
                         .skip(k_prime)
-                        .step_by(B.len() / 2)
+                        .step_by(B.E_out_current_len() / 2)
                         .map(|(k, &G_k)| {
                             // k_m is the bit corresponding to the variable we'll be binding next
                             let k_m = (k >> (num_unbound_address_variables - 1)) & 1;
@@ -166,58 +173,68 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                             // G_times_F := G[k] * F[k_1, ...., k_{m-1}]
                             let G_times_F = G_k * F_k;
 
-                            // For c \in {0, 2} compute:
-                            //    G[k] * F[k_1, ...., k_{m-1}, c]
-                            //    = G[k] * F[k_1, ...., k_{m-1}] * eq(k_m, c)
-                            //    = G_times_F * eq(k_m, c)
-                            let eval_c0 = match k_m {
-                                0 => G_times_F, // eq(0, 0) = 0 * 0 + (1 - 0) * (1 - 0) = 1,
-                                1 => F::zero(), // eq(1, 0) = 1 * 0 + (1 - 1) * (1 - 0) = 0
+                            // Compute linear coefficients for eq(k_m, X)
+                            let eq_constant = match k_m {
+                                0 => F::one(),  // eq(0, 0) = 1
+                                1 => F::zero(), // eq(1, 0) = 0
                                 _ => unreachable!(),
                             };
 
-                            let eval_c2 = match k_m {
-                                0 => -G_times_F,            // eq(0, 2) = 0 * 2 + (1 - 0) * (1 - 2) = -1,
-                                1 => G_times_F + G_times_F, // eq(1, 2) = 1 * 2 + (1 - 1) * (1 - 2) = 2
+                            let eq_linear = match k_m {
+                                0 => -F::one(), // eq(0, X) = 1 - X, so linear coeff is -1
+                                1 => F::one(),  // eq(1, X) = X, so linear coeff is 1
                                 _ => unreachable!(),
                             };
-                            [eval_c0, eval_c2]
+
+                            [G_times_F * eq_constant, G_times_F * eq_linear]
                         })
                         .reduce(
                             || [F::zero(); 2],
                             |running, new| [running[0] + new[0], running[1] + new[1]],
                         );
 
-                    [B_evals[0] * inner_sum[0], B_evals[1] * inner_sum[1]]
+                    inner_sum
                 })
                 .reduce(
                     || [F::zero(); 2],
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 );
 
-            univariate_poly_evals.to_vec()
+            // Use sumcheck_quadratic_evals_from_linear to get evaluations at {0, 2}
+            let quadratic_evals =
+                B.sumcheck_quadratic_evals_from_linear(quadratic_coeffs[0], quadratic_coeffs[1]);
+
+            quadratic_evals.to_vec()
         } else {
             let H = polynomial.H.as_ref().unwrap();
             let B = &shared_eq.B;
             let D = &shared_eq.D;
             let n = H.len() / 2;
 
-            let univariate_poly_evals: [F; 2] = (0..n)
+            // Compute quadratic coefficients from H and D
+            let quadratic_coeffs: [F; 2] = (0..n)
                 .into_par_iter()
                 .map(|j| {
                     let H_evals = H.sumcheck_evals(j, 2, BindingOrder::HighToLow);
-                    let D_evals = D.sumcheck_evals(j, 2, BindingOrder::HighToLow);
-                    [H_evals[0] * D_evals[0], H_evals[1] * D_evals[1]]
+                    // H is linear: H(X) = H[j] + (H[j+n] - H[j]) * X
+                    let h_constant = H_evals[0];
+                    let h_linear = H_evals[1] - H_evals[0]; // This is the slope
+
+                    [h_constant, h_linear]
                 })
                 .reduce(
                     || [F::zero(); 2],
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 );
 
-            let eq_r_address_claim = B.final_sumcheck_claim();
+            // Use sumcheck_quadratic_evals_from_linear on D with H's coefficients
+            let quadratic_evals =
+                D.sumcheck_quadratic_evals_from_linear(quadratic_coeffs[0], quadratic_coeffs[1]);
+
+            let eq_r_address_claim = B.current_scalar;
             vec![
-                eq_r_address_claim * univariate_poly_evals[0],
-                eq_r_address_claim * univariate_poly_evals[1],
+                eq_r_address_claim * quadratic_evals[0],
+                eq_r_address_claim * quadratic_evals[1],
             ]
         }
     }
@@ -229,7 +246,8 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
         let num_variables_bound = shared_eq.num_variables_bound;
         if round < polynomial.K.log_2() {
             if num_variables_bound <= round {
-                shared_eq.B.bind_parallel(r, BindingOrder::HighToLow);
+                shared_eq.B.bind(r);
+                shared_eq.B_org.bind_parallel(r, BindingOrder::HighToLow);
                 // Update F for this round (see Equation 55)
                 shared_eq.F.update(r);
 
@@ -251,7 +269,8 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             // Last log(T) rounds of sumcheck
 
             if num_variables_bound <= round {
-                shared_eq.D.bind_parallel(r, BindingOrder::HighToLow);
+                shared_eq.D.bind(r);
+                shared_eq.D_org.bind_parallel(r, BindingOrder::HighToLow);
                 shared_eq.num_variables_bound += 1;
             }
 
