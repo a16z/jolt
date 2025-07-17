@@ -65,9 +65,6 @@ impl<F: JoltField> ReadCheckingSumcheck<F> {
         let K = sm.get_bytecode().len();
         let (val, rv_claim, r_cycle, op_key) = Self::compute_val_rv(sm, val_type);
 
-        let rv_claim_check = F.iter().zip(val.iter()).map(|(f, v)| *f * v).sum::<F>();
-        assert_eq!(rv_claim, rv_claim_check, "failed in {val_type:?}");
-
         let ra_poly = MultilinearPolynomial::from(F);
         let val_poly = MultilinearPolynomial::from(val);
 

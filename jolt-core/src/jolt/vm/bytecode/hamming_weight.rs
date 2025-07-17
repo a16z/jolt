@@ -6,7 +6,10 @@ use crate::{
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
-        opening_proof::{OpeningPoint, OpeningsKeys, ProverOpeningAccumulator, BIG_ENDIAN},
+        opening_proof::{
+            OpeningPoint, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
+            BIG_ENDIAN,
+        },
     },
     r1cs::inputs::JoltR1CSInputs,
     subprotocols::sumcheck::{BatchableSumcheckInstance, CacheSumcheckOpenings},
