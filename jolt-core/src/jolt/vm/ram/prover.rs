@@ -12,7 +12,7 @@ use crate::{
     field::JoltField,
     jolt::{
         vm::{
-            output_check::OutputSumcheck, ram_read_write_checking::RamReadWriteChecking,
+            output_check::OutputSumcheck, ram::read_write_checking::RamReadWriteChecking,
             JoltProverPreprocessing,
         },
         witness::CommittedPolynomials,

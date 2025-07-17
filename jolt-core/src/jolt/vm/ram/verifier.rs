@@ -2,9 +2,9 @@ use crate::jolt::vm::output_check::OutputSumcheck;
 use crate::jolt::vm::ram::{
     remap_address, BooleanitySumcheck, BooleanityVerifierState, HammingWeightSumcheck,
     HammingWeightVerifierState, RafEvaluationSumcheck, RafEvaluationVerifierState,
-    ValEvaluationSumcheck, ValEvaluationSumcheckClaims, ValEvaluationVerifierState,
+    RamReadWriteChecking, ValEvaluationSumcheck, ValEvaluationSumcheckClaims,
+    ValEvaluationVerifierState,
 };
-use crate::jolt::vm::ram_read_write_checking::RamReadWriteChecking;
 use crate::jolt::vm::JoltCommitments;
 use crate::jolt::witness::CommittedPolynomials;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;

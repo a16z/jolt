@@ -1,3 +1,7 @@
+use crate::jolt::vm::ram::read_write_checking::{
+    DataBuffers, RamReadWriteChecking, RamReadWriteCheckingProof, ReadWriteCheckingProverState,
+    ReadWriteCheckingVerifierState, ReadWriteSumcheckClaims,
+};
 use crate::{
     field::{JoltField, OptimizedMul},
     jolt::{
@@ -13,56 +17,14 @@ use crate::{
         split_eq_poly::GruenSplitEqPolynomial,
     },
     r1cs::inputs::JoltR1CSInputs,
-    subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof},
-    utils::{
-        errors::ProofVerifyError, math::Math, thread::unsafe_allocate_zero_vec,
-        transcript::Transcript,
-    },
+    subprotocols::sumcheck::BatchableSumcheckInstance,
+    utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::jolt_device::MemoryLayout;
 use rayon::prelude::*;
 use tracer::{
     instruction::{RAMAccess, RV32IMCycle},
     JoltDevice,
 };
-
-/// A collection of vectors that are used in each of the first log(T / num_chunks)
-/// rounds of sumcheck. There is one `DataBuffers` struct per thread/chunk, reused
-/// across all log(T / num_chunks) rounds.
-struct DataBuffers<F: JoltField> {
-    /// Contains
-    ///     Val(k, j', 0, ..., 0)
-    /// as we iterate over rows j' \in {0, 1}^(log(T) - i)
-    val_j_0: Vec<F>,
-    /// `val_j_r[0]` contains
-    ///     Val(k, j'', 0, r_i, ..., r_1)
-    /// `val_j_r[1]` contains
-    ///     Val(k, j'', 1, r_i, ..., r_1)
-    /// as we iterate over rows j' \in {0, 1}^(log(T) - i)
-    val_j_r: [Vec<F>; 2],
-    /// `ra[0]` contains
-    ///     ra(k, j'', 0, r_i, ..., r_1)
-    /// `ra[1]` contains
-    ///     ra(k, j'', 1, r_i, ..., r_1)
-    /// as we iterate over rows j' \in {0, 1}^(log(T) - i),
-    ra: [Vec<F>; 2],
-    dirty_indices: Vec<usize>,
-}
-
-struct ReadWriteCheckingProverState<F: JoltField> {
-    trace: Vec<RV32IMCycle>,
-    chunk_size: usize,
-    val_checkpoints: Vec<F>,
-    data_buffers: Vec<DataBuffers<F>>,
-    I: Vec<Vec<(usize, usize, F, F)>>,
-    A: Vec<F>,
-    eq_r_prime: MultilinearPolynomial<F>,
-    gruens_eq_r_prime: GruenSplitEqPolynomial<F>,
-    inc_cycle: MultilinearPolynomial<F>,
-    ra: Option<MultilinearPolynomial<F>>,
-    val: Option<MultilinearPolynomial<F>>,
-}
 
 impl<F: JoltField> ReadWriteCheckingProverState<F> {
     fn initialize<
@@ -278,41 +240,6 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
     }
 }
 
-struct ReadWriteCheckingVerifierState<F: JoltField> {
-    r_prime: Vec<F>,
-    sumcheck_switch_index: usize,
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone, Default)]
-pub struct ReadWriteSumcheckClaims<F: JoltField> {
-    pub val_claim: F,
-    ra_claim: F,
-    inc_claim: F,
-}
-
-pub struct RamReadWriteChecking<F: JoltField> {
-    K: usize,
-    T: usize,
-    z: F,
-    prover_state: Option<ReadWriteCheckingProverState<F>>,
-    verifier_state: Option<ReadWriteCheckingVerifierState<F>>,
-    claims: Option<ReadWriteSumcheckClaims<F>>,
-    memory_layout: MemoryLayout,
-    // TODO(moodlezoup): Wire these claims in from Spartan
-    rv_claim: F,
-    wv_claim: F,
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct RamReadWriteCheckingProof<F: JoltField, ProofTranscript: Transcript> {
-    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    sumcheck_switch_index: usize,
-    pub claims: ReadWriteSumcheckClaims<F>,
-    // TODO(moodlezoup): Wire these claims in from Spartan
-    rv_claim: F,
-    wv_claim: F,
-}
-
 impl<F: JoltField> RamReadWriteChecking<F> {
     pub fn prove<ProofTranscript: Transcript, PCS: CommitmentScheme<ProofTranscript, Field = F>>(
         preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
@@ -361,27 +288,6 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         (proof, r_address, r_cycle)
     }
 
-    pub fn verify<ProofTranscript: Transcript>(
-        proof: &RamReadWriteCheckingProof<F, ProofTranscript>,
-        program_io: &JoltDevice,
-        K: usize,
-        r_prime: &[F],
-        transcript: &mut ProofTranscript,
-    ) -> Result<(Vec<F>, Vec<F>), ProofVerifyError> {
-        let sumcheck_instance = Self::new_verifier(proof, program_io, K, r_prime, transcript);
-        let r_sumcheck = sumcheck_instance.verify_single(&proof.sumcheck_proof, transcript)?;
-        let sumcheck_switch_index = proof.sumcheck_switch_index;
-        let T = 1 << r_prime.len();
-
-        // The high-order cycle variables are bound after the switch
-        let mut r_cycle = r_sumcheck[sumcheck_switch_index..T.log_2()].to_vec();
-        // First `sumcheck_switch_index` rounds bind cycle variables from low to high
-        r_cycle.extend(r_sumcheck[..sumcheck_switch_index].iter().rev());
-        let r_address = r_sumcheck[T.log_2()..].to_vec();
-
-        Ok((r_address, r_cycle))
-    }
-
     fn new_prover<
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
@@ -421,34 +327,6 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             memory_layout: program_io.memory_layout.clone(),
             rv_claim,
             wv_claim,
-        }
-    }
-
-    fn new_verifier<ProofTranscript: Transcript>(
-        proof: &RamReadWriteCheckingProof<F, ProofTranscript>,
-        program_io: &JoltDevice,
-        K: usize,
-        r_prime: &[F],
-        transcript: &mut ProofTranscript,
-    ) -> Self {
-        let T = 1 << r_prime.len();
-        let z = transcript.challenge_scalar();
-
-        let verifier_state = ReadWriteCheckingVerifierState {
-            sumcheck_switch_index: proof.sumcheck_switch_index,
-            r_prime: r_prime.to_vec(),
-        };
-
-        Self {
-            K,
-            T,
-            z,
-            prover_state: None,
-            verifier_state: Some(verifier_state),
-            claims: Some(proof.claims.clone()),
-            memory_layout: program_io.memory_layout.clone(),
-            rv_claim: proof.rv_claim,
-            wv_claim: proof.wv_claim,
         }
     }
 

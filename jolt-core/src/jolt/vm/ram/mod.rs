@@ -2,11 +2,12 @@
 mod prover;
 #[cfg(feature = "prover")]
 pub use prover::*;
+mod read_write_checking;
 mod verifier;
+pub use read_write_checking::*;
 
 use crate::field::JoltField;
 use crate::jolt::vm::output_check::OutputProof;
-use crate::jolt::vm::ram_read_write_checking::RamReadWriteCheckingProof;
 use crate::poly::identity_poly::UnmapRamAddressPolynomial;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::subprotocols::ra_virtual::RAProof;
