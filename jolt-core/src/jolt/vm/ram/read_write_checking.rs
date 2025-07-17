@@ -3,20 +3,20 @@ use std::{cell::RefCell, rc::Rc};
 use crate::{
     dag::state_manager::{ProofData, ProofKeys, StateManager},
     field::{JoltField, OptimizedMul},
-    jolt::{vm::ram::remap_address, witness::CommittedPolynomials},
+    jolt::{
+        vm::ram::remap_address,
+        witness::{CommittedPolynomial, VirtualPolynomial},
+    },
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningPoint, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
+            OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
             BIG_ENDIAN, LITTLE_ENDIAN,
         },
     },
-    r1cs::inputs::JoltR1CSInputs,
-    subprotocols::sumcheck::{
-        BatchableSumcheckInstance, CacheSumcheckOpenings, SumcheckInstanceProof,
-    },
+    subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
     utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -72,8 +72,11 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         let r_prime = state_manager
             .get_prover_accumulator()
             .borrow()
-            .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::RamReadValue))
-            .unwrap();
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::RamReadValue,
+                SumcheckId::SpartanOuter,
+            )
+            .0;
 
         let T = trace.len();
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
@@ -254,7 +257,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         drop(span);
 
         let eq_r_prime = MultilinearPolynomial::from(EqPolynomial::evals(&r_prime.r));
-        let inc_cycle = CommittedPolynomials::RamInc.generate_witness(preprocessing, trace);
+        let inc_cycle = CommittedPolynomial::RamInc.generate_witness(preprocessing, trace);
 
         let data_buffers: Vec<DataBuffers<F>> = (0..num_chunks)
             .into_par_iter()
@@ -299,7 +302,6 @@ pub struct RamReadWriteChecking<F: JoltField> {
     z: F,
     prover_state: Option<ReadWriteCheckingProverState<F>>,
     verifier_state: Option<ReadWriteCheckingVerifierState<F>>,
-    claims: Option<ReadWriteSumcheckClaims<F>>,
     memory_layout: MemoryLayout,
     rv_claim: F,
     wv_claim: F,
@@ -323,14 +325,20 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         let (_, _, program_io, _) = state_manager.get_prover_data();
         let memory_layout = program_io.memory_layout.clone();
 
-        let rv_claim = state_manager
+        let (_, rv_claim) = state_manager
             .get_prover_accumulator()
             .borrow()
-            .get_opening(OpeningsKeys::SpartanZ(JoltR1CSInputs::RamReadValue));
-        let wv_claim = state_manager
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::RamReadValue,
+                SumcheckId::SpartanOuter,
+            );
+        let (_, wv_claim) = state_manager
             .get_prover_accumulator()
             .borrow()
-            .get_opening(OpeningsKeys::SpartanZ(JoltR1CSInputs::RamWriteValue));
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::RamWriteValue,
+                SumcheckId::SpartanOuter,
+            );
 
         let prover_state =
             ReadWriteCheckingProverState::initialize(initial_memory_state, K, state_manager);
@@ -341,7 +349,6 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             z,
             prover_state: Some(prover_state),
             verifier_state: None,
-            claims: None,
             memory_layout,
             rv_claim,
             wv_claim,
@@ -355,12 +362,15 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         let z = state_manager.transcript.borrow_mut().challenge_scalar();
         let (_, program_io, T) = state_manager.get_verifier_data();
         let memory_layout = program_io.memory_layout.clone();
-        let openings = state_manager.get_verifier_accumulator();
 
-        let r_prime = openings
+        let r_prime = state_manager
+            .get_verifier_accumulator()
             .borrow()
-            .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::RamReadValue))
-            .unwrap();
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::RamReadValue,
+                SumcheckId::SpartanOuter,
+            )
+            .0;
 
         let sumcheck_switch_index = match state_manager
             .proofs
@@ -376,24 +386,20 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             r_prime,
         };
 
-        let rv_claim = openings
+        let (_, rv_claim) = state_manager
+            .get_verifier_accumulator()
             .borrow()
-            .get_opening(OpeningsKeys::SpartanZ(JoltR1CSInputs::RamReadValue));
-        let wv_claim = openings
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::RamReadValue,
+                SumcheckId::SpartanOuter,
+            );
+        let (_, wv_claim) = state_manager
+            .get_verifier_accumulator()
             .borrow()
-            .get_opening(OpeningsKeys::SpartanZ(JoltR1CSInputs::RamWriteValue));
-
-        let output_claims = ReadWriteSumcheckClaims {
-            val_claim: openings
-                .borrow()
-                .get_opening(OpeningsKeys::RamReadWriteCheckingVal),
-            ra_claim: openings
-                .borrow()
-                .get_opening(OpeningsKeys::RamReadWriteCheckingRa),
-            inc_claim: openings
-                .borrow()
-                .get_opening(OpeningsKeys::RamReadWriteCheckingInc),
-        };
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::RamWriteValue,
+                SumcheckId::SpartanOuter,
+            );
 
         Self {
             K,
@@ -401,7 +407,6 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             z,
             prover_state: None,
             verifier_state: Some(verifier_state),
-            claims: Some(output_claims),
             memory_layout,
             rv_claim,
             wv_claim,
@@ -817,7 +822,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
     }
 }
 
-impl<F: JoltField> BatchableSumcheckInstance<F> for RamReadWriteChecking<F> {
+impl<F: JoltField> SumcheckInstance<F> for RamReadWriteChecking<F> {
     fn degree(&self) -> usize {
         3
     }
@@ -854,7 +859,11 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for RamReadWriteChecking<F> {
         }
     }
 
-    fn expected_output_claim(&self, r: &[F]) -> F {
+    fn expected_output_claim(
+        &self,
+        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+        r: &[F],
+    ) -> F {
         let ReadWriteCheckingVerifierState {
             sumcheck_switch_index,
             r_prime,
@@ -870,18 +879,22 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for RamReadWriteChecking<F> {
         // eq(r', r_cycle)
         let eq_eval_cycle = EqPolynomial::mle_endian(r_prime, &r_cycle);
 
-        let claims = self.claims.as_ref().unwrap();
-        eq_eval_cycle
-            * claims.ra_claim
-            * (claims.val_claim + self.z * (claims.val_claim + claims.inc_claim))
+        let accumulator = accumulator.unwrap();
+        let (_, ra_claim) = accumulator.borrow().get_virtual_polynomial_opening(
+            VirtualPolynomial::RamRa,
+            SumcheckId::RamReadWriteChecking,
+        );
+        let (_, val_claim) = accumulator.borrow().get_virtual_polynomial_opening(
+            VirtualPolynomial::RamVal,
+            SumcheckId::RamReadWriteChecking,
+        );
+        let (_, inc_claim) = accumulator.borrow().get_committed_polynomial_opening(
+            CommittedPolynomial::RamInc,
+            SumcheckId::RamReadWriteChecking,
+        );
+        eq_eval_cycle * ra_claim * (val_claim + self.z * (val_claim + inc_claim))
     }
-}
 
-impl<F, PCS> CacheSumcheckOpenings<F, PCS> for RamReadWriteChecking<F>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-{
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
         let sumcheck_switch_index = if let Some(state) = &self.verifier_state {
             state.sumcheck_switch_index
@@ -900,54 +913,62 @@ where
     }
 
     fn cache_openings_prover(
-        &mut self,
-        accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        &self,
+        accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        debug_assert!(self.claims.is_none());
         let prover_state = self
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
 
-        accumulator.as_ref().unwrap().borrow_mut().append_virtual(
-            OpeningsKeys::RamReadWriteCheckingVal,
+        accumulator.borrow_mut().append_virtual(
+            VirtualPolynomial::RamVal,
+            SumcheckId::RamReadWriteChecking,
             opening_point.clone(),
             prover_state.val.as_ref().unwrap().final_sumcheck_claim(),
         );
 
-        accumulator.as_ref().unwrap().borrow_mut().append_virtual(
-            OpeningsKeys::RamReadWriteCheckingRa,
+        accumulator.borrow_mut().append_virtual(
+            VirtualPolynomial::RamRa,
+            SumcheckId::RamReadWriteChecking,
             opening_point.clone(),
             prover_state.ra.as_ref().unwrap().final_sumcheck_claim(),
         );
 
-        let mut r_address = opening_point;
-        let r_cycle = r_address.split_off(self.K.log_2());
+        let (_, r_cycle) = opening_point.split_at(self.K.log_2());
 
-        // TODO(moodlezoup): append_dense
-        accumulator.as_ref().unwrap().borrow_mut().append_virtual(
-            OpeningsKeys::RamReadWriteCheckingInc,
-            r_cycle,
-            prover_state.inc_cycle.final_sumcheck_claim(),
+        accumulator.borrow_mut().append_dense(
+            vec![CommittedPolynomial::RamInc],
+            SumcheckId::RamReadWriteChecking,
+            r_cycle.r,
+            &[prover_state.inc_cycle.final_sumcheck_claim()],
         );
-
-        // TODO(moodlezoup): Remove this
-        self.claims = Some(ReadWriteSumcheckClaims {
-            val_claim: prover_state.val.as_ref().unwrap().final_sumcheck_claim(),
-            ra_claim: prover_state.ra.as_ref().unwrap().final_sumcheck_claim(),
-            inc_claim: prover_state.inc_cycle.final_sumcheck_claim(),
-        });
     }
 
     fn cache_openings_verifier(
-        &mut self,
-        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
+        &self,
+        accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        accumulator
-            .unwrap()
-            .borrow_mut()
-            .populate_claim_opening(OpeningsKeys::RamReadWriteCheckingVal, opening_point);
+        accumulator.borrow_mut().append_virtual(
+            VirtualPolynomial::RamVal,
+            SumcheckId::RamReadWriteChecking,
+            opening_point.clone(),
+        );
+
+        accumulator.borrow_mut().append_virtual(
+            VirtualPolynomial::RamRa,
+            SumcheckId::RamReadWriteChecking,
+            opening_point.clone(),
+        );
+
+        let (_, r_cycle) = opening_point.split_at(self.K.log_2());
+
+        accumulator.borrow_mut().append_dense(
+            vec![CommittedPolynomial::RamInc],
+            SumcheckId::RamReadWriteChecking,
+            r_cycle.r,
+        );
     }
 }

@@ -6,19 +6,17 @@ use rayon::prelude::*;
 use crate::{
     dag::state_manager::StateManager,
     field::JoltField,
-    jolt::vm::ram::remap_address,
+    jolt::{vm::ram::remap_address, witness::CommittedPolynomial},
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningPoint, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
+            OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
             BIG_ENDIAN,
         },
     },
-    subprotocols::sumcheck::{
-        BatchableSumcheckInstance, CacheSumcheckOpenings, SumcheckInstanceProof,
-    },
+    subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
     utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
 
@@ -58,8 +56,6 @@ pub struct HammingWeightSumcheck<F: JoltField> {
     prover_state: Option<HammingWeightProverState<F>>,
     /// Verifier state
     verifier_state: Option<HammingWeightVerifierState<F>>,
-    /// Cached claims for all d polynomials
-    cached_claims: Option<Vec<F>>,
     /// D parameter
     d: usize,
 }
@@ -170,7 +166,6 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
             input_claim,
             prover_state: Some(HammingWeightProverState { ra, z_powers, d }),
             verifier_state: None,
-            cached_claims: None,
             r_cycle,
             d,
         }
@@ -201,22 +196,17 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
         // Compute input claim as sum of z powers
         let input_claim = z_powers.iter().sum();
 
-        let ra_claims = (0..d)
-            .map(|i| state_manager.get_opening(OpeningsKeys::RamHammingRa(i)))
-            .collect();
-
         Self {
             input_claim,
             prover_state: None,
             verifier_state: Some(HammingWeightVerifierState { log_K, d, z_powers }),
-            cached_claims: Some(ra_claims),
             r_cycle,
             d,
         }
     }
 }
 
-impl<F: JoltField> BatchableSumcheckInstance<F> for HammingWeightSumcheck<F> {
+impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
     fn degree(&self) -> usize {
         1
     }
@@ -268,12 +258,29 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for HammingWeightSumcheck<F> {
         }
     }
 
-    fn expected_output_claim(&self, _r: &[F]) -> F {
+    fn expected_output_claim(
+        &self,
+        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+        _r: &[F],
+    ) -> F {
         let verifier_state = self
             .verifier_state
             .as_ref()
             .expect("Verifier state not initialized");
-        let ra_claims = self.cached_claims.as_ref().expect("RA claims not cached");
+
+        let ra_claims: Vec<_> = (0..self.d)
+            .map(|i| {
+                accumulator
+                    .as_ref()
+                    .unwrap()
+                    .borrow()
+                    .get_committed_polynomial_opening(
+                        CommittedPolynomial::RamRa(i),
+                        SumcheckId::RamHammingWeight,
+                    )
+                    .1
+            })
+            .collect();
 
         // Compute batched claim: sum_{i=0}^{d-1} z^i * ra_i
         ra_claims
@@ -282,23 +289,16 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for HammingWeightSumcheck<F> {
             .map(|(ra_claim, z_power)| *ra_claim * z_power)
             .sum()
     }
-}
 
-impl<F, PCS> CacheSumcheckOpenings<F, PCS> for HammingWeightSumcheck<F>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-{
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.iter().copied().rev().collect())
     }
 
     fn cache_openings_prover(
-        &mut self,
-        accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        &self,
+        accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
         r_address: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        debug_assert!(self.cached_claims.is_none());
         let prover_state = self
             .prover_state
             .as_ref()
@@ -307,36 +307,31 @@ where
         let claims: Vec<F> = prover_state
             .ra
             .iter()
-            .map(|ra_poly| ra_poly.final_sumcheck_claim())
+            .map(|ra_i| ra_i.final_sumcheck_claim())
             .collect();
-        self.cached_claims = Some(claims);
 
-        let opening_point =
-            OpeningPoint::new([r_address.r.as_slice(), self.r_cycle.as_slice()].concat());
-
-        let accumulator = accumulator.expect("accumulator is needed");
-        prover_state.ra.iter().enumerate().for_each(|(i, ra_i)| {
-            accumulator.borrow_mut().append_virtual(
-                OpeningsKeys::RamHammingRa(i),
-                opening_point.clone(),
-                ra_i.final_sumcheck_claim(),
-            );
-        });
+        // TODO
+        // accumulator.borrow_mut().append_sparse(
+        //     (0..self.d).map(CommittedPolynomial::RamRa).collect(),
+        //     SumcheckId::RamBooleanity,
+        //     r_address.r,
+        //     self.r_cycle.clone(),
+        //     claims,
+        // );
     }
 
     fn cache_openings_verifier(
-        &mut self,
-        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
+        &self,
+        accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
         r_address: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        let opening_point =
+        let opening_point: OpeningPoint<BIG_ENDIAN, F> =
             OpeningPoint::new([r_address.r.as_slice(), self.r_cycle.as_slice()].concat());
 
-        let accumulator = accumulator.expect("accumulator is needed");
-        (0..self.d).for_each(|i| {
-            accumulator
-                .borrow_mut()
-                .populate_claim_opening(OpeningsKeys::RamHammingRa(i), opening_point.clone())
-        });
+        accumulator.borrow_mut().append_sparse(
+            (0..self.d).map(CommittedPolynomial::RamRa).collect(),
+            SumcheckId::RamHammingWeight,
+            opening_point.r,
+        );
     }
 }

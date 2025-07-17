@@ -1,15 +1,13 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::dag::stage::StagedSumcheck;
 use crate::dag::state_manager::StateManager;
 use crate::jolt::vm::bytecode::BytecodePreprocessing;
+use crate::jolt::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::poly::identity_poly::IdentityPolynomial;
 use crate::poly::opening_proof::{
-    OpeningPoint, OpeningsKeys, VerifierOpeningAccumulator, BIG_ENDIAN,
+    OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
-use crate::r1cs::inputs::JoltR1CSInputs;
-use crate::subprotocols::sumcheck::CacheSumcheckOpenings;
 use crate::utils::errors::ProofVerifyError;
 use crate::{
     field::JoltField,
@@ -20,7 +18,7 @@ use crate::{
         },
         opening_proof::ProverOpeningAccumulator,
     },
-    subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof},
+    subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
     utils::{math::Math, transcript::Transcript},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -41,8 +39,6 @@ pub struct RafBytecode<F: JoltField> {
     K: usize,
     /// Prover state
     prover_state: Option<RafBytecodeProverState<F>>,
-    /// Ra claims, set only by verifier
-    ra_claims: Option<(F, F)>,
 }
 
 impl<F: JoltField> RafBytecode<F> {
@@ -54,8 +50,10 @@ impl<F: JoltField> RafBytecode<F> {
         let K = sm.get_prover_data().0.shared.bytecode.bytecode.len();
         let int_poly = IdentityPolynomial::new(K.log_2());
         let gamma: F = sm.get_transcript().borrow_mut().challenge_scalar();
-        let raf_claim = sm.get_spartan_z(JoltR1CSInputs::PC);
-        let raf_shift_claim = sm.get_opening(OpeningsKeys::PCSumcheckPC);
+        let (_, raf_claim) =
+            sm.get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanOuter);
+        let (_, raf_shift_claim) =
+            sm.get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanShift);
         Self {
             raf_claim,
             raf_shift_claim,
@@ -66,33 +64,29 @@ impl<F: JoltField> RafBytecode<F> {
                 ra_poly_shift,
                 int_poly,
             }),
-            ra_claims: None,
         }
     }
 
     pub fn new_verifier(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
-        let raf_claim = sm.get_spartan_z(JoltR1CSInputs::PC);
-        let raf_shift_claim = sm.get_opening(OpeningsKeys::PCSumcheckPC);
+        let (_, raf_claim) =
+            sm.get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanOuter);
+        let (_, raf_shift_claim) =
+            sm.get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanShift);
         let gamma = sm.get_transcript().borrow_mut().challenge_scalar();
         let K = sm.get_verifier_data().0.shared.bytecode.bytecode.len();
-        let ra_claims = (
-            sm.get_opening(OpeningsKeys::BytecodeStage1Ra),
-            sm.get_opening(OpeningsKeys::BytecodeStage3Ra),
-        );
         Self {
             raf_claim,
             raf_shift_claim,
             gamma,
             K,
             prover_state: None,
-            ra_claims: Some(ra_claims),
         }
     }
 }
 
-impl<F: JoltField> BatchableSumcheckInstance<F> for RafBytecode<F> {
+impl<F: JoltField> SumcheckInstance<F> for RafBytecode<F> {
     fn degree(&self) -> usize {
         2
     }
@@ -173,24 +167,34 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for RafBytecode<F> {
         );
     }
 
-    fn expected_output_claim(&self, r: &[F]) -> F {
-        let (ra_claim, ra_claim_shift) = self.ra_claims.as_ref().expect("ra_claims not set");
+    fn expected_output_claim(
+        &self,
+        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+        r: &[F],
+    ) -> F {
+        let accumulator = accumulator.as_ref().unwrap();
+        let (_, ra_claim) = accumulator.borrow().get_committed_polynomial_opening(
+            CommittedPolynomial::BytecodeRa,
+            SumcheckId::BytecodeReadChecking(0),
+        );
+        let (_, ra_claim_shift) = accumulator.borrow().get_committed_polynomial_opening(
+            CommittedPolynomial::BytecodeRa,
+            SumcheckId::BytecodeReadChecking(2),
+        );
 
         let int_eval = IdentityPolynomial::new(self.K.log_2()).evaluate(r);
 
-        int_eval * (*ra_claim + self.gamma * *ra_claim_shift)
+        int_eval * (ra_claim + self.gamma * ra_claim_shift)
     }
-}
 
-impl<F, PCS> CacheSumcheckOpenings<F, PCS> for RafBytecode<F>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-{
+    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+        todo!()
+    }
+
     fn cache_openings_prover(
-        &mut self,
-        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        &self,
+        accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         // We don't need to cache claims since the read-checking sumcheck
         // already cached them, and since we are in the same batch,
@@ -199,9 +203,9 @@ where
     }
 
     fn cache_openings_verifier(
-        &mut self,
-        _accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        &self,
+        accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         // We don't need to cache claims since the read-checking sumcheck
         // already cached them, and since we are in the same batch,
@@ -209,8 +213,6 @@ where
         // TODO: Add asserts
     }
 }
-
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS> for RafBytecode<F> {}
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct RafEvaluationProof<F: JoltField, ProofTranscript: Transcript> {

@@ -71,8 +71,8 @@ where
             .collect()
     }
 
-    fn combine_commitments(
-        _commitments: &[&Self::Commitment],
+    fn combine_commitments<C: Borrow<Self::Commitment>>(
+        _commitments: &[C],
         _coeffs: &[Self::Field],
     ) -> Self::Commitment {
         MockCommitment::default()

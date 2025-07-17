@@ -6,7 +6,7 @@ use rayon::prelude::*;
 use crate::{
     dag::state_manager::StateManager,
     field::JoltField,
-    jolt::vm::ram::remap_address,
+    jolt::{vm::ram::remap_address, witness::VirtualPolynomial},
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
@@ -14,12 +14,12 @@ use crate::{
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
-        opening_proof::{OpeningPoint, OpeningsKeys, ProverOpeningAccumulator, BIG_ENDIAN},
+        opening_proof::{
+            OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
+            BIG_ENDIAN,
+        },
     },
-    r1cs::inputs::JoltR1CSInputs,
-    subprotocols::sumcheck::{
-        BatchableSumcheckInstance, CacheSumcheckOpenings, SumcheckInstanceProof,
-    },
+    subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
     utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
 
@@ -69,15 +69,10 @@ impl<F: JoltField> RafEvaluationSumcheck<F> {
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = (T / num_chunks).max(1);
 
-        let r_cycle = state_manager
-            .get_prover_accumulator()
-            .borrow()
-            .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::RamAddress))
-            .unwrap();
-        let raf_claim = state_manager
-            .get_prover_accumulator()
-            .borrow()
-            .get_opening(OpeningsKeys::SpartanZ(JoltR1CSInputs::RamAddress));
+        let (r_cycle, raf_claim) = state_manager.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamAddress,
+            SumcheckId::SpartanOuter,
+        );
 
         // TODO(moodlezoup): reuse
         let eq_r_cycle: Vec<F> = EqPolynomial::evals(&r_cycle.r);
@@ -124,13 +119,11 @@ impl<F: JoltField> RafEvaluationSumcheck<F> {
     ) -> Self {
         let (_, program_io, _) = state_manager.get_verifier_data();
         let raf_claim = state_manager
-            .get_verifier_accumulator()
-            .borrow()
-            .get_opening(OpeningsKeys::SpartanZ(JoltR1CSInputs::RamAddress));
+            .get_virtual_polynomial_opening(VirtualPolynomial::RamAddress, SumcheckId::SpartanOuter)
+            .1;
         let ra_claim = state_manager
-            .get_verifier_accumulator()
-            .borrow()
-            .get_opening(OpeningsKeys::RamRafEvaluationRa);
+            .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation)
+            .1;
 
         Self {
             input_claim: raf_claim,
@@ -144,7 +137,7 @@ impl<F: JoltField> RafEvaluationSumcheck<F> {
     }
 }
 
-impl<F: JoltField> BatchableSumcheckInstance<F> for RafEvaluationSumcheck<F> {
+impl<F: JoltField> SumcheckInstance<F> for RafEvaluationSumcheck<F> {
     fn degree(&self) -> usize {
         2
     }
@@ -207,7 +200,11 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for RafEvaluationSumcheck<F> {
         }
     }
 
-    fn expected_output_claim(&self, r: &[F]) -> F {
+    fn expected_output_claim(
+        &self,
+        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+        r: &[F],
+    ) -> F {
         let verifier_state = self
             .verifier_state
             .as_ref()
@@ -222,30 +219,37 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for RafEvaluationSumcheck<F> {
         let ra_claim = self.cached_claim.expect("ra_claim not cached");
         unmap_eval * ra_claim
     }
-}
 
-impl<F, PCS> CacheSumcheckOpenings<F, PCS> for RafEvaluationSumcheck<F>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-{
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.iter().cloned().rev().collect())
     }
 
     fn cache_openings_prover(
-        &mut self,
-        accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        &self,
+        accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let prover_state = self
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
-        accumulator.unwrap().borrow_mut().append_virtual(
-            OpeningsKeys::RamRafEvaluationRa,
+        accumulator.borrow_mut().append_virtual(
+            VirtualPolynomial::RamRa,
+            SumcheckId::RamRafEvaluation,
             opening_point,
             prover_state.ra.final_sumcheck_claim(),
+        );
+    }
+
+    fn cache_openings_verifier(
+        &self,
+        accumulator: Rc<RefCell<crate::poly::opening_proof::VerifierOpeningAccumulator<F>>>,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) {
+        accumulator.borrow_mut().append_virtual(
+            VirtualPolynomial::RamRa,
+            SumcheckId::RamRafEvaluation,
+            opening_point,
         );
     }
 }

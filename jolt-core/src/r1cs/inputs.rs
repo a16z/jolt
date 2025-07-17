@@ -7,7 +7,7 @@
 use crate::impl_r1cs_input_lc_conversions;
 use crate::jolt::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
 use crate::jolt::vm::JoltProverPreprocessing;
-use crate::jolt::witness::CommittedPolynomials;
+use crate::jolt::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::transcript::Transcript;
@@ -31,16 +31,16 @@ pub struct R1CSProof<F: JoltField, ProofTranscript: Transcript> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum JoltR1CSInputs {
-    PC,           // Virtual (bytecode raf)
-    UnexpandedPC, // Virtual (bytecode rv)
-    Rd,           // Virtual (bytecode rv)
-    Imm,          // Virtual (bytecode rv)
-    RamAddress,   // Virtual (RAM raf)
-    Rs1Value,     // Virtual (registers rv)
-    Rs2Value,     // Virtual (registers rv)
-    RdWriteValue,
-    RamReadValue, // Virtual (RAM rv)
-    RamWriteValue,
+    PC,                    // Virtual (bytecode raf)
+    UnexpandedPC,          // Virtual (bytecode rv)
+    Rd,                    // Virtual (bytecode rv)
+    Imm,                   // Virtual (bytecode rv)
+    RamAddress,            // Virtual (RAM raf)
+    Rs1Value,              // Virtual (registers rv)
+    Rs2Value,              // Virtual (registers rv)
+    RdWriteValue,          // Virtual (registers wv)
+    RamReadValue,          // Virtual (RAM rv)
+    RamWriteValue,         // Virtual (RAM wv)
     LeftInstructionInput,  // to_lookup_query -> to_instruction_operands
     RightInstructionInput, // to_lookup_query -> to_instruction_operands
     LeftLookupOperand,     // Virtual (instruction raf)
@@ -55,6 +55,48 @@ pub enum JoltR1CSInputs {
     NextIsNoop,       // Virtual (spartan shift sumcheck)
     ShouldJump,
     OpFlags(CircuitFlags),
+}
+
+impl TryFrom<JoltR1CSInputs> for CommittedPolynomial {
+    type Error = &'static str;
+
+    fn try_from(value: JoltR1CSInputs) -> Result<Self, Self::Error> {
+        match value {
+            JoltR1CSInputs::LeftInstructionInput => Ok(CommittedPolynomial::LeftInstructionInput),
+            JoltR1CSInputs::RightInstructionInput => Ok(CommittedPolynomial::RightInstructionInput),
+            JoltR1CSInputs::Product => Ok(CommittedPolynomial::Product),
+            JoltR1CSInputs::WriteLookupOutputToRD => Ok(CommittedPolynomial::WriteLookupOutputToRD),
+            JoltR1CSInputs::WritePCtoRD => Ok(CommittedPolynomial::WritePCtoRD),
+            JoltR1CSInputs::ShouldBranch => Ok(CommittedPolynomial::ShouldBranch),
+            _ => Err("{value} is not a committed polynomial"),
+        }
+    }
+}
+
+impl TryFrom<JoltR1CSInputs> for VirtualPolynomial {
+    type Error = &'static str;
+
+    fn try_from(value: JoltR1CSInputs) -> Result<Self, Self::Error> {
+        match value {
+            JoltR1CSInputs::PC => Ok(VirtualPolynomial::PC),
+            JoltR1CSInputs::UnexpandedPC => Ok(VirtualPolynomial::UnexpandedPC),
+            JoltR1CSInputs::Rd => Ok(VirtualPolynomial::Rd),
+            JoltR1CSInputs::Imm => Ok(VirtualPolynomial::Imm),
+            JoltR1CSInputs::RamAddress => Ok(VirtualPolynomial::RamAddress),
+            JoltR1CSInputs::Rs1Value => Ok(VirtualPolynomial::Rs1Value),
+            JoltR1CSInputs::Rs2Value => Ok(VirtualPolynomial::Rs2Value),
+            JoltR1CSInputs::RdWriteValue => Ok(VirtualPolynomial::RdWriteValue),
+            JoltR1CSInputs::RamReadValue => Ok(VirtualPolynomial::RamReadValue),
+            JoltR1CSInputs::RamWriteValue => Ok(VirtualPolynomial::RamWriteValue),
+            JoltR1CSInputs::LeftLookupOperand => Ok(VirtualPolynomial::LeftLookupOperand),
+            JoltR1CSInputs::RightLookupOperand => Ok(VirtualPolynomial::RightLookupOperand),
+            JoltR1CSInputs::NextUnexpandedPC => Ok(VirtualPolynomial::NextUnexpandedPC),
+            JoltR1CSInputs::NextPC => Ok(VirtualPolynomial::NextPC),
+            JoltR1CSInputs::LookupOutput => Ok(VirtualPolynomial::LookupOutput),
+            JoltR1CSInputs::OpFlags(flag) => Ok(VirtualPolynomial::OpFlags(flag)),
+            _ => Err("{value} is not a virtual polynomial"),
+        }
+    }
 }
 
 /// This const serves to define a canonical ordering over inputs (and thus indices
@@ -223,10 +265,10 @@ impl JoltR1CSInputs {
                 coeffs.into()
             }
             JoltR1CSInputs::LeftInstructionInput => {
-                CommittedPolynomials::LeftInstructionInput.generate_witness(preprocessing, trace)
+                CommittedPolynomial::LeftInstructionInput.generate_witness(preprocessing, trace)
             }
             JoltR1CSInputs::RightInstructionInput => {
-                CommittedPolynomials::RightInstructionInput.generate_witness(preprocessing, trace)
+                CommittedPolynomial::RightInstructionInput.generate_witness(preprocessing, trace)
             }
             JoltR1CSInputs::LeftLookupOperand => {
                 let coeffs: Vec<u64> = trace
@@ -243,13 +285,13 @@ impl JoltR1CSInputs {
                 coeffs.into()
             }
             JoltR1CSInputs::Product => {
-                CommittedPolynomials::Product.generate_witness(preprocessing, trace)
+                CommittedPolynomial::Product.generate_witness(preprocessing, trace)
             }
             JoltR1CSInputs::WriteLookupOutputToRD => {
-                CommittedPolynomials::WriteLookupOutputToRD.generate_witness(preprocessing, trace)
+                CommittedPolynomial::WriteLookupOutputToRD.generate_witness(preprocessing, trace)
             }
             JoltR1CSInputs::WritePCtoRD => {
-                CommittedPolynomials::WritePCtoRD.generate_witness(preprocessing, trace)
+                CommittedPolynomial::WritePCtoRD.generate_witness(preprocessing, trace)
             }
             JoltR1CSInputs::LookupOutput => {
                 let coeffs: Vec<u64> = trace
@@ -296,10 +338,10 @@ impl JoltR1CSInputs {
                 coeffs.into()
             }
             JoltR1CSInputs::ShouldBranch => {
-                CommittedPolynomials::ShouldBranch.generate_witness(preprocessing, trace)
+                CommittedPolynomial::ShouldBranch.generate_witness(preprocessing, trace)
             }
             JoltR1CSInputs::ShouldJump => {
-                CommittedPolynomials::ShouldJump.generate_witness(preprocessing, trace)
+                CommittedPolynomial::ShouldJump.generate_witness(preprocessing, trace)
             }
             JoltR1CSInputs::NextIsNoop => {
                 // TODO(moodlezoup): Boolean polynomial

@@ -3,19 +3,19 @@ use std::rc::Rc;
 
 use crate::dag::state_manager::StateManager;
 use crate::jolt::vm::ram::remap_address;
+use crate::jolt::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::{
-    OpeningPoint, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator, BIG_ENDIAN,
+    OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
-use crate::subprotocols::sumcheck::CacheSumcheckOpenings;
 use crate::{
     field::JoltField,
     poly::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
     },
-    subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof},
+    subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
     utils::{math::Math, transcript::Transcript},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -62,25 +62,25 @@ impl<F: JoltField> RASumcheck<F> {
         let (preprocessing, trace, _, _) = state_manager.get_prover_data();
         let T = trace.len();
 
-        let r = state_manager
-            .get_opening_point(OpeningsKeys::ValFinalWa)
-            .unwrap();
-        let (r_address, r_cycle) = r.split_at(log_K);
-        let ra_claim = state_manager.get_opening(OpeningsKeys::ValFinalWa);
+        let (r, ra_claim) = state_manager.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamRa,
+            SumcheckId::RamValFinalEvaluation,
+        );
+        let (r_address, r_cycle) = r.split_at_r(log_K);
 
-        #[cfg(test)]
-        {
-            assert_eq!(
-                r,
-                state_manager
-                    .get_opening_point(OpeningsKeys::RamValEvaluationWa)
-                    .unwrap()
-            );
-            assert_eq!(
-                ra_claim,
-                state_manager.get_opening(OpeningsKeys::RamValEvaluationWa)
-            );
-        }
+        // #[cfg(test)]
+        // {
+        //     assert_eq!(
+        //         r,
+        //         state_manager
+        //             .get_opening_point(OpeningId::RamValEvaluationWa)
+        //             .unwrap()
+        //     );
+        //     assert_eq!(
+        //         ra_claim,
+        //         state_manager.get_opening(OpeningId::RamValEvaluationWa)
+        //     );
+        // }
 
         let base_chunk_size = log_K / d;
         let remainder = log_K % d;
@@ -159,41 +159,42 @@ impl<F: JoltField> RASumcheck<F> {
         K: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        // Calculate D dynamically such that 2^8 = K^(1/D)
-        let log_K = K.log_2();
-        let d = (log_K / 8).max(1);
+        todo!()
+        // // Calculate D dynamically such that 2^8 = K^(1/D)
+        // let log_K = K.log_2();
+        // let d = (log_K / 8).max(1);
 
-        let (_, _, T) = state_manager.get_verifier_data();
+        // let (_, _, T) = state_manager.get_verifier_data();
 
-        let r = state_manager
-            .get_opening_point(OpeningsKeys::ValFinalWa)
-            .unwrap();
-        let (_r_address, r_cycle) = r.split_at(log_K);
-        let ra_claim = state_manager.get_opening(OpeningsKeys::ValFinalWa);
+        // let r = state_manager
+        //     .get_opening_point(OpeningId::ValFinalWa)
+        //     .unwrap();
+        // let (_r_address, r_cycle) = r.split_at(log_K);
+        // let ra_claim = state_manager.get_opening(OpeningId::ValFinalWa);
 
-        assert_eq!(
-            r,
-            state_manager
-                .get_opening_point(OpeningsKeys::RamValEvaluationWa)
-                .unwrap()
-        );
-        assert_eq!(
-            ra_claim,
-            state_manager.get_opening(OpeningsKeys::RamValEvaluationWa)
-        );
+        // assert_eq!(
+        //     r,
+        //     state_manager
+        //         .get_opening_point(OpeningId::RamValEvaluationWa)
+        //         .unwrap()
+        // );
+        // assert_eq!(
+        //     ra_claim,
+        //     state_manager.get_opening(OpeningId::RamValEvaluationWa)
+        // );
 
-        let ra_i_claims = (0..d)
-            .map(|i| state_manager.get_opening(OpeningsKeys::RamRaVirtualization(i)))
-            .collect();
+        // let ra_i_claims = (0..d)
+        //     .map(|i| state_manager.get_opening(OpeningId::RamRaVirtualization(i)))
+        //     .collect();
 
-        Self {
-            ra_claim,
-            d,
-            r_cycle: r_cycle.to_vec(),
-            T,
-            prover_state: None,
-            ra_i_claims: Some(ra_i_claims),
-        }
+        // Self {
+        //     ra_claim,
+        //     d,
+        //     r_cycle: r_cycle.to_vec(),
+        //     T,
+        //     prover_state: None,
+        //     ra_i_claims: Some(ra_i_claims),
+        // }
     }
 
     #[tracing::instrument(skip_all, name = "ra virtualization")]
@@ -217,7 +218,7 @@ impl<F: JoltField> RASumcheck<F> {
     }
 }
 
-impl<F: JoltField> BatchableSumcheckInstance<F> for RASumcheck<F> {
+impl<F: JoltField> SumcheckInstance<F> for RASumcheck<F> {
     fn degree(&self) -> usize {
         self.d + 1
     }
@@ -245,7 +246,11 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for RASumcheck<F> {
         self.ra_claim
     }
 
-    fn expected_output_claim(&self, r: &[F]) -> F {
+    fn expected_output_claim(
+        &self,
+        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+        r: &[F],
+    ) -> F {
         let ra_i_claims = self.ra_i_claims.as_ref().expect("ra_i_claims not set");
 
         // we need opposite endian-ness here
@@ -267,7 +272,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for RASumcheck<F> {
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
-        let degree = <Self as BatchableSumcheckInstance<F>>::degree(self);
+        let degree = <Self as SumcheckInstance<F>>::degree(self);
         let ra_i_polys = &prover_state.ra_i_polys;
         let eq_poly = &prover_state.eq_poly;
 
@@ -310,70 +315,54 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for RASumcheck<F> {
 
         univariate_poly_evals
     }
-}
 
-impl<F, PCS> CacheSumcheckOpenings<F, PCS> for RASumcheck<F>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-{
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.iter().copied().rev().collect())
     }
 
     fn cache_openings_prover(
-        &mut self,
-        accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        &self,
+        accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        r_cycle: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        debug_assert!(self.ra_i_claims.is_none());
         let prover_state = self
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
 
-        let mut openings = vec![F::zero(); self.d];
         for i in 0..self.d {
-            openings[i] = prover_state.ra_i_polys[i].final_sumcheck_claim();
+            // TODO()
+            let claim = prover_state.ra_i_polys[i].final_sumcheck_claim();
+            // accumulator.borrow_mut().append_sparse(
+            //     vec![CommittedPolynomial::RamRa(i)],
+            //     SumcheckId::RamRaVirtualization,
+            //     todo!(),
+            //     r_cycle.r,
+            //     vec![claim],
+            // );
         }
-
-        self.ra_i_claims = Some(openings);
-
-        let accumulator = accumulator.expect("accumulator is needed");
-        prover_state
-            .ra_i_polys
-            .iter()
-            .enumerate()
-            .for_each(|(i, ra_i)| {
-                accumulator.borrow_mut().append_virtual(
-                    OpeningsKeys::RamRaVirtualization(i),
-                    opening_point.clone(),
-                    ra_i.final_sumcheck_claim(),
-                );
-            });
     }
 
     fn cache_openings_verifier(
-        &mut self,
-        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
+        &self,
+        accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
         r_cycle_prime: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        let accumulator = accumulator.expect("accumulator is needed");
-        let mut r_address = accumulator
-            .borrow()
-            .get_opening_point(OpeningsKeys::ValFinalWa)
-            .unwrap();
-        let _r_cycle = r_address.split_off(r_address.len() - r_cycle_prime.len());
+        todo!()
+        // let mut r_address = accumulator
+        //     .borrow()
+        //     .get_opening_point(OpeningId::ValFinalWa)
+        //     .unwrap();
+        // let _r_cycle = r_address.split_off(r_address.len() - r_cycle_prime.len());
 
-        let ra_opening_point =
-            OpeningPoint::new([r_address.r.as_slice(), r_cycle_prime.r.as_slice()].concat());
+        // let ra_opening_point =
+        //     OpeningPoint::new([r_address.r.as_slice(), r_cycle_prime.r.as_slice()].concat());
 
-        for i in 0..self.d {
-            accumulator.borrow_mut().populate_claim_opening(
-                OpeningsKeys::RamRaVirtualization(i),
-                ra_opening_point.clone(),
-            );
-        }
+        // for i in 0..self.d {
+        //     accumulator
+        //         .borrow_mut()
+        //         .append_virtual(OpeningId::RamRaVirtualization(i), ra_opening_point.clone());
+        // }
     }
 }
 

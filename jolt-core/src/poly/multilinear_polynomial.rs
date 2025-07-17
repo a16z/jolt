@@ -78,6 +78,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.get_num_vars(),
             MultilinearPolynomial::U64Scalars(poly) => poly.get_num_vars(),
             MultilinearPolynomial::I64Scalars(poly) => poly.get_num_vars(),
+            MultilinearPolynomial::OneHot(poly) => poly.get_num_vars(),
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }

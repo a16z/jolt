@@ -22,6 +22,7 @@ use instruction_lookups::LookupsProof;
 use ram::RAMPreprocessing;
 use rayon::prelude::*;
 use registers::RegistersTwistProof;
+use std::collections::HashMap;
 use std::{
     fs::File,
     io::{Read, Write},
@@ -140,7 +141,7 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     pub(crate) transcript: ProofTranscript,
-    pub(crate) opening_accumulator: ProverOpeningAccumulator<F, PCS>,
+    pub(crate) opening_accumulator: ProverOpeningAccumulator<F>,
     pub(crate) prover_setup: PCS::ProverSetup,
 }
 
@@ -208,9 +209,9 @@ where
         let shared = Self::shared_preprocess(bytecode, memory_layout, memory_init);
 
         let max_K = [
-            shared.bytecode.code_size.next_power_of_two(),
-            max_memory_size.next_power_of_two(),
-            1 << 16, // instruction lookups Shout
+            // shared.bytecode.code_size.next_power_of_two(),
+            // max_memory_size.next_power_of_two(),
+            1 << 8, // instruction lookups Shout
         ]
         .into_iter()
         .max()
@@ -284,8 +285,7 @@ where
         let _guard = DoryGlobals::initialize(K, padded_trace_length);
 
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
-        let mut opening_accumulator: ProverOpeningAccumulator<F, PCS> =
-            ProverOpeningAccumulator::new();
+        let mut opening_accumulator: ProverOpeningAccumulator<F> = ProverOpeningAccumulator::new();
 
         Self::fiat_shamir_preamble(
             &mut transcript,
@@ -357,8 +357,18 @@ where
         // );
 
         // Batch-prove all openings
-        let opening_proof =
-            opening_accumulator.reduce_and_prove(&preprocessing.generators, &mut transcript);
+        let mut polynomials_map = HashMap::new();
+        for polynomial in ALL_COMMITTED_POLYNOMIALS.iter() {
+            polynomials_map.insert(
+                *polynomial,
+                polynomial.generate_witness(&preprocessing, &trace),
+            );
+        }
+        let opening_proof = opening_accumulator.reduce_and_prove(
+            polynomials_map,
+            &preprocessing.generators,
+            &mut transcript,
+        );
 
         let jolt_proof = JoltProof {
             trace_length,
@@ -390,7 +400,7 @@ where
         _debug_info: Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
     ) -> Result<(), ProofVerifyError> {
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
-        let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS> =
+        let mut opening_accumulator: VerifierOpeningAccumulator<F> =
             VerifierOpeningAccumulator::new();
 
         // truncate trailing zeros on device outputs
@@ -406,8 +416,7 @@ where
         {
             if let Some(debug_info) = _debug_info {
                 transcript.compare_to(debug_info.transcript);
-                opening_accumulator
-                    .compare_to(debug_info.opening_accumulator, &debug_info.prover_setup);
+                opening_accumulator.compare_to(debug_info.opening_accumulator);
             }
         }
 
@@ -488,8 +497,16 @@ where
         // )?;
 
         // Batch-verify all openings
+        let mut commitments_map = HashMap::new();
+        for polynomial in ALL_COMMITTED_POLYNOMIALS.iter() {
+            commitments_map.insert(
+                *polynomial,
+                proof.commitments.commitments[polynomial.to_index()].clone(),
+            );
+        }
         opening_accumulator.reduce_and_verify(
             &preprocessing.generators,
+            &mut commitments_map,
             &proof.opening_proof,
             &mut transcript,
         )?;
@@ -519,5 +536,4 @@ pub mod bytecode;
 pub mod instruction_lookups;
 pub mod ram;
 pub mod registers;
-pub mod registers_read_write_checking;
 pub mod rv32i_vm;

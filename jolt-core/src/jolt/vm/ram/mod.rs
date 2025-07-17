@@ -4,7 +4,7 @@ use std::vec;
 
 use crate::{
     dag::{
-        stage::{StagedSumcheck, SumcheckStages},
+        stage::SumcheckStages,
         state_manager::{ProofData, ProofKeys, StateManager},
     },
     field::JoltField,
@@ -12,12 +12,13 @@ use crate::{
         booleanity::{BooleanityProof, BooleanitySumcheck},
         hamming_weight::{HammingWeightProof, HammingWeightSumcheck},
         output_check::{OutputProof, OutputSumcheck, ValFinalSumcheck},
+        ra_virtual::{RAProof, RASumcheck},
         raf_evaluation::{RafEvaluationProof, RafEvaluationSumcheck},
         read_write_checking::{RamReadWriteChecking, RamReadWriteCheckingProof},
         val_evaluation::{ValEvaluationProof, ValEvaluationSumcheck},
     },
     poly::commitment::commitment_scheme::CommitmentScheme,
-    subprotocols::ra_virtual::{RAProof, RASumcheck},
+    subprotocols::sumcheck::SumcheckInstance,
     utils::transcript::Transcript,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -30,6 +31,7 @@ use rayon::prelude::*;
 pub mod booleanity;
 pub mod hamming_weight;
 pub mod output_check;
+pub mod ra_virtual;
 pub mod raf_evaluation;
 pub mod read_write_checking;
 pub mod val_evaluation;
@@ -207,13 +209,13 @@ impl RamDag {
 
         #[cfg(test)]
         {
-            use crate::jolt::witness::CommittedPolynomials;
+            use crate::jolt::witness::CommittedPolynomial;
 
             let mut expected_final_memory_state: Vec<_> = initial_memory_state
                 .iter()
                 .map(|word| *word as i64)
                 .collect();
-            let inc = CommittedPolynomials::RamInc.generate_witness(preprocessing, trace);
+            let inc = CommittedPolynomial::RamInc.generate_witness(preprocessing, trace);
             for (j, cycle) in trace.iter().enumerate() {
                 use tracer::instruction::RAMAccess;
 
@@ -288,42 +290,13 @@ impl RamDag {
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS>
-    for RamReadWriteChecking<F>
-{
-}
-
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS>
-    for RafEvaluationSumcheck<F>
-{
-}
-
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS> for OutputSumcheck<F> {}
-
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS>
-    for ValFinalSumcheck<F>
-{
-}
-
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS>
-    for HammingWeightSumcheck<F>
-{
-}
-
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS>
-    for BooleanitySumcheck<F>
-{
-}
-
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS> for RASumcheck<F> {}
-
 impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
     SumcheckStages<F, ProofTranscript, PCS> for RamDag
 {
     fn stage2_prover_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let raf_evaluation = RafEvaluationSumcheck::new_prover(self.K, self.T, state_manager);
 
         let read_write_checking = RamReadWriteChecking::new_prover(
@@ -349,7 +322,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     fn stage2_verifier_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let raf_evaluation = RafEvaluationSumcheck::new_verifier(self.K, state_manager);
         let read_write_checking = RamReadWriteChecking::new_verifier(self.K, state_manager);
         let output_check = OutputSumcheck::new_verifier(self.K, state_manager);
@@ -364,7 +337,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     fn stage3_prover_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let val_evaluation = ValEvaluationSumcheck::new_prover(
             self.K,
             self.initial_memory_state.as_ref().unwrap(),
@@ -378,7 +351,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     fn stage3_verifier_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let val_evaluation = ValEvaluationSumcheck::new_verifier(
             self.K,
             self.initial_memory_state.as_ref().unwrap(),
@@ -395,7 +368,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     fn stage4_prover_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let hamming_weight = HammingWeightSumcheck::new_prover(self.K, state_manager);
         let booleanity = BooleanitySumcheck::new_prover(self.K, state_manager);
         let ra_virtual = RASumcheck::new_prover(self.K, state_manager);
@@ -410,7 +383,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     fn stage4_verifier_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let hamming_weight = HammingWeightSumcheck::new_verifier(self.K, state_manager);
         let booleanity = BooleanitySumcheck::new_verifier(self.K, state_manager);
         let ra_virtual = RASumcheck::new_verifier(self.K, state_manager);

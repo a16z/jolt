@@ -107,19 +107,11 @@ name = "iai"
 harness = false
 
 [[bench]]
-name = "grand_product"
-harness = false
-
-[[bench]]
 name = "commit"
 harness = false
 
 [[bench]]
 name = "binding"
-harness = false
-
-[[bench]]
-name = "compute_cubic"
 harness = false
 
 [[bench]]

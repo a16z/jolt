@@ -1,20 +1,20 @@
 use std::collections::BTreeMap;
 
-use crate::dag::stage::{StagedSumcheck, SumcheckStages};
+use crate::dag::stage::SumcheckStages;
 use crate::dag::state_manager::StateManager;
 use crate::jolt::vm::bytecode::booleanity::BooleanitySumcheck;
 use crate::jolt::vm::bytecode::hamming_weight::HammingWeightSumcheck;
 use crate::jolt::vm::bytecode::raf::RafBytecode;
 use crate::jolt::vm::bytecode::read_checking::{ReadCheckingSumcheck, ReadCheckingValType};
-use crate::poly::opening_proof::OpeningsKeys;
-use crate::r1cs::inputs::JoltR1CSInputs;
+use crate::jolt::witness::{CommittedPolynomial, VirtualPolynomial};
+use crate::poly::opening_proof::SumcheckId;
 use crate::{
     field::JoltField,
-    jolt::witness::CommittedPolynomials,
     poly::{
         commitment::commitment_scheme::CommitmentScheme, eq_poly::EqPolynomial,
         multilinear_polynomial::MultilinearPolynomial,
     },
+    subprotocols::sumcheck::SumcheckInstance,
     utils::{thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -97,22 +97,31 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
     fn stage4_prover_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let (preprocessing, trace, _, _) = sm.get_prover_data();
         let bytecode_preprocessing = &preprocessing.shared.bytecode;
         let K = bytecode_preprocessing.bytecode.len().next_power_of_two();
 
         let r_cycle_1: Vec<F> = sm
-            .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::UnexpandedPC))
-            .unwrap()
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::UnexpandedPC,
+                SumcheckId::SpartanOuter,
+            )
+            .0
             .r;
         let r_cycle_2 = sm
-            .get_opening_point(OpeningsKeys::RegistersReadWriteInc)
-            .unwrap()
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::Rs1Ra,
+                SumcheckId::RegistersReadWriteChecking,
+            )
+            .0
             .r;
         let r_cycle_3 = sm
-            .get_opening_point(OpeningsKeys::RegistersValEvaluationInc)
-            .unwrap()
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::RdWa,
+                SumcheckId::RegistersValEvaluation,
+            )
+            .0
             .r;
         let E_1: Vec<F> = EqPolynomial::evals(&r_cycle_1);
         let E_2: Vec<F> = EqPolynomial::evals(&r_cycle_2);
@@ -170,7 +179,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         drop(span);
 
         let unbound_ra_poly =
-            CommittedPolynomials::BytecodeRa.generate_witness(preprocessing, trace);
+            CommittedPolynomial::BytecodeRa.generate_witness(preprocessing, trace);
 
         let read_checking_1 = ReadCheckingSumcheck::new_prover(
             sm,
@@ -195,9 +204,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             MultilinearPolynomial::from(F_1.clone()),
             MultilinearPolynomial::from(F_3),
         );
-        let booleanity =
-            BooleanitySumcheck::new_prover(sm, E_1, F_1.clone(), unbound_ra_poly.clone());
-        let hamming_weight = HammingWeightSumcheck::new_prover(sm, F_1, unbound_ra_poly);
+        let booleanity = BooleanitySumcheck::new_prover(sm, E_1, F_1.clone());
+        let hamming_weight = HammingWeightSumcheck::new_prover(unbound_ra_poly, K);
 
         vec![
             Box::new(read_checking_1),
@@ -212,7 +220,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
     fn stage4_verifier_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let read_checking_1 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValType::Stage1);
         let read_checking_2 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValType::Stage2);
         let read_checking_3 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValType::Stage3);
