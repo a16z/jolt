@@ -315,18 +315,6 @@ impl Keccak256SequenceBuilder {
         // To do this without overwriting the A lanes we need for the calculation,
         // we first copy the row into a temporary buffer (vr[60..64]).
         for y in 0..5 {
-            // 1. Copy the current row from state A into the temporary row buffer.
-            // for x in 0..5 {
-            //     // For each lane A[x,y] in the current row,
-            //     // copy its value from self.lane(x, y) to the temp row register self.vr[60 + x].
-
-            //     // let a_reg = self.lane(x, y);
-            //     let b_reg = 25 + self.lane(x, y);
-            //     let temp_row_reg = self.vr[60 + x];
-            //     // A no-op XOR (xor with 0) is a good way to copy a register value.
-            //     self.xor64(Reg(b_reg), Imm(0), temp_row_reg);
-            // }
-
             // 2. Calculate the new lane values using the temporary buffer.
             for x in 0..5 {
                 // Get the registers for the three input values from the temp buffer.
@@ -334,10 +322,6 @@ impl Keccak256SequenceBuilder {
                 let current = 25 + self.lane(x, y);
                 let next = 25 + self.lane((x + 1) % 5, y);
                 let two_next = 25 + self.lane((x + 2) % 5, y);
-                // let current = self.vr[60 + x];
-                // let next = self.vr[60 + (x + 1) % 5];
-                // let two_next = self.vr[60 + (x + 2) % 5];
-
                 // Define scratch registers for intermediate results.
                 let not_next = self.vr[65];
                 let not_next_and_two_next = self.vr[66];

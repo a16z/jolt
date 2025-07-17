@@ -92,6 +92,7 @@ use sw::SW;
 use xor::XOR;
 use xori::XORI;
 
+use inline_blake2::blake2::BLAKE2;
 use inline_keccak256::keccak256::KECCAK256;
 use inline_sha256::sha256::SHA256;
 use inline_sha256::sha256init::SHA256INIT;
@@ -160,6 +161,7 @@ pub mod div;
 pub mod divu;
 pub mod ecall;
 pub mod fence;
+pub mod inline_blake2;
 pub mod inline_keccak256;
 pub mod inline_sha256;
 pub mod jal;
@@ -511,7 +513,7 @@ define_rv32im_enums! {
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
         // Extension
         SHA256, SHA256INIT,
-        KECCAK256,
+        KECCAK256, BLAKE2
     ]
 }
 
@@ -798,6 +800,7 @@ impl RV32IMInstruction {
             // funct7:
             // - 0x00: SHA256
             // - 0x01: Keccak
+            // - 0x02: Blake2
             0b0001011 => {
                 // Custom-0 opcode: SHA256 compression instructions
                 let funct3 = (instr >> 12) & 0x7;
@@ -816,6 +819,13 @@ impl RV32IMInstruction {
                         match funct3 {
                             0x0 => Ok(KECCAK256::new(instr, address, true).into()),
                             _ => Err("Unknown funct3 for custom Keccak instruction"),
+                        }
+                    }
+                    0x02 => {
+                        // Blake2
+                        match funct3 {
+                            0x0 => Ok(BLAKE2::new(instr, address, true).into()),
+                            _ => Err("Unknown funct3 for custom Blake2 instruction"),
                         }
                     }
                     _ => Err("Unknown funct7 for custom-0 opcode"),
