@@ -159,7 +159,7 @@ impl<F: JoltField> ReadCheckingSumcheck<F> {
         }
     }
 
-    /// Returns a boxed closure that computes:
+    /// Returns a vec of evaluations:
     ///    Val(k) = unexpanded_pc(k) + gamma * imm(k)
     ///             + gamma^2 * circuit_flags[0](k) + gamma^3 * circuit_flags[1](k) + ...
     /// This particular Val virtualizes claims output by Spartan's "outer" sumcheck
@@ -178,7 +178,6 @@ impl<F: JoltField> ReadCheckingSumcheck<F> {
 
                 let mut linear_combination = F::zero();
                 linear_combination += F::from_u64(unexpanded_pc as u64);
-                // TODO: Check if this is in fact correct and not failing because imm is i64
                 linear_combination += operands.imm.field_mul(gamma_powers[1]);
                 for (flag, gamma_power) in instruction
                     .circuit_flags()
@@ -207,15 +206,11 @@ impl<F: JoltField> ReadCheckingSumcheck<F> {
             .sum()
     }
 
-    /// Returns a boxed closure that computes:
-    ///    Val(k) = unexpanded_pc(k) + gamma * rd(k, r_register) + gamma^2 * rs1(k, r_register)
-    ///             + gamma^3 * rs2(k, r_register) + gamma^4 * lookup_table_flags[0](k)
-    ///             + gamma^5 * lookup_table_flags[1](k)...
+    /// Returns a vec of evaluations:
+    ///    Val(k) = rd(k, r_register) + gamma * rs1(k, r_register) + gamma^2 * rs2(k, r_register)
     /// where rd(k, k') = 1 if the k'th instruction in the bytecode has rd = k'
     /// and analogously for rs1(k, k') and rs2(k, k').
-    /// This particular Val virtualizes claims output by Spartan's "shift" sumcheck,
-    /// the instruction execution raf-evaluation sumcheck, the instruction execution
-    /// read checking sumcheck, and the registers read/write checking sumcheck.
+    /// This particular Val virtualizes claims output by the registers read/write checking sumcheck.
     pub fn compute_val_2(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         gamma_powers: &[F],
@@ -257,11 +252,12 @@ impl<F: JoltField> ReadCheckingSumcheck<F> {
             .sum()
     }
 
-    /// Returns a boxed closure that computes:
-    ///    Val(k) = rd(k, r_register)
+    /// Returns a vec of evaluations:
+    ///    Val(k) = unexpanded_pc(k) + gamma * rd(k, r_register) + gamma^2 * lookup_table_flag[0](k)
+    ///             + gamma^3 * lookup_table_flag[1](k) + ...
     /// where rd(k, k') = 1 if the k'th instruction in the bytecode has rd = k'
-    /// This particular Val virtualizes claims output by the Val-evaluation sumcheck
-    /// for registers, which outputs a claim of the form rd_wa(r_register, r_cycle)
+    /// This particular Val virtualizes claims output by the PCSumcheck,
+    /// the registers val-evaluation sumcheck, and the instruction lookups sumcheck.
     pub fn compute_val_3(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         gamma_powers: &[F],

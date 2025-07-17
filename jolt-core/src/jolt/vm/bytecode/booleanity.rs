@@ -206,7 +206,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for BooleanitySumcheck<F> {
             if round == self.log_K - 1 {
                 ps.eq_r_r = Some(ps.B.final_sumcheck_claim());
                 let H_vec: Vec<F> = std::mem::take(&mut ps.pc_by_cycle)
-                    .into_iter()
+                    .into_par_iter()
                     .map(|pc| ps.F[pc])
                     .collect();
                 ps.H = Some(MultilinearPolynomial::from(H_vec));
