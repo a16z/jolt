@@ -78,7 +78,7 @@ impl VirtualInstructionSequence for AMOXORW {
         let v_rs2 = virtual_register_index(16) as usize;
 
         let mut sequence = vec![];
-        let mut remaining = 16;
+        let mut remaining = 17;
         remaining = amo_pre(
             &mut sequence,
             self.address,

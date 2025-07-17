@@ -24,6 +24,8 @@ use super::RV32IMInstruction;
 use super::VirtualInstructionSequence;
 use common::constants::virtual_register_index;
 
+use crate::instruction::ori::ORI;
+use crate::instruction::srli::SRLI;
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
@@ -95,7 +97,7 @@ impl VirtualInstructionSequence for AMOSWAPW {
         let v_rd = virtual_register_index(15) as usize;
 
         let mut sequence = vec![];
-        let mut remaining = 15;
+        let mut remaining = 16;
         remaining = amo_pre(
             &mut sequence,
             self.address,
@@ -206,15 +208,28 @@ pub fn amo_post(
     v_rd: usize,
     mut remaining: usize,
 ) {
-    let lui = LUI {
+    let ori = ORI {
         address,
-        operands: FormatU {
+        operands: FormatI {
             rd: v_mask,
-            imm: 0xffff_ffff,
+            rs1: 0,
+            imm: -1i64 as u64,
         },
-        virtual_sequence_remaining: Some(remaining),
+        virtual_sequence_remaining: Some(8),
     };
-    sequence.push(lui.into());
+    sequence.push(ori.into()); // v_mask gets 0xFFFFFFFF_FFFFFFFF
+    remaining -= 1;
+
+    let srli = SRLI {
+        address,
+        operands: FormatI {
+            rd: v_mask,
+            rs1: v_mask,
+            imm: 32, // Logical right shift by 32 bits
+        },
+        virtual_sequence_remaining: Some(7),
+    };
+    sequence.push(srli.into()); // v_mask gets 0x00000000_FFFFFFFF
     remaining -= 1;
 
     let sll_mask = SLL {

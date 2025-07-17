@@ -90,7 +90,7 @@ impl VirtualInstructionSequence for AMOMAXUW {
         let v_tmp = virtual_register_index(19) as usize;
 
         let mut sequence = vec![];
-        let mut remaining = 22;
+        let mut remaining = 23;
         remaining = amo_pre(
             &mut sequence,
             self.address,

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
+    instruction::{ori::ORI, srli::SRLI},
 };
 
 use super::addi::ADDI;
@@ -155,15 +156,27 @@ impl SW {
         };
         sequence.extend(slli.virtual_sequence(false));
 
-        let lui = LUI {
+        let ori = ORI {
             address: self.address,
-            operands: FormatU {
+            operands: FormatI {
                 rd: v_mask,
-                imm: 0xffff_ffff,
+                rs1: 0,
+                imm: -1i64 as u64,
             },
             virtual_sequence_remaining: Some(8),
         };
-        sequence.push(lui.into());
+        sequence.push(ori.into()); // v_mask gets 0xFFFFFFFF_FFFFFFFF
+
+        let srli = SRLI {
+            address: self.address,
+            operands: FormatI {
+                rd: v_mask,
+                rs1: v_mask,
+                imm: 32, // Logical right shift by 32 bits
+            },
+            virtual_sequence_remaining: Some(7),
+        };
+        sequence.push(srli.into()); // v_mask gets 0x00000000_FFFFFFFF
 
         let sll_mask = SLL {
             address: self.address,
@@ -172,7 +185,7 @@ impl SW {
                 rs1: v_mask,
                 rs2: v_shift,
             },
-            virtual_sequence_remaining: Some(7),
+            virtual_sequence_remaining: Some(6),
         };
         sequence.extend(sll_mask.virtual_sequence(false));
 
