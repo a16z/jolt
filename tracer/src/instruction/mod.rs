@@ -70,8 +70,8 @@ use sw::SW;
 use xor::XOR;
 use xori::XORI;
 
-use inline_keccak256::keccak256::KECCAK256;
 use inline_blake2::blake2::BLAKE2;
+use inline_keccak256::keccak256::KECCAK256;
 use inline_sha256::sha256::SHA256;
 use inline_sha256::sha256init::SHA256INIT;
 
