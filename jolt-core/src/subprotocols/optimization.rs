@@ -10,7 +10,11 @@ use crate::{
         unipoly::{CompressedUniPoly, UniPoly},
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::{errors::ProofVerifyError, math::Math, transcript::{AppendToTranscript, Transcript}},
+    utils::{
+        errors::ProofVerifyError,
+        math::Math,
+        transcript::{AppendToTranscript, Transcript},
+    },
 };
 
 /// Contains the proof for a generic sumcheck of the form
@@ -38,7 +42,8 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
         let T = r_cycle.len().pow2();
         let mut previous_claim = previous_claim;
 
-        let eval_points = [0,2].into_iter()
+        let eval_points = [0, 2]
+            .into_iter()
             .map(|x| F::from_u32(x))
             .collect::<Vec<_>>();
 
@@ -96,7 +101,7 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
                         .map(|poly| poly.get_bound_coeff(j))
                         .product::<F>();
 
-                    let after_idx_evals =  funcs
+                    let after_idx_evals = funcs
                         .iter()
                         .take(D - d - 1)
                         .map(|poly| {
@@ -112,18 +117,21 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
                         .zip(at_idx_evals.iter())
                         .map(|((c_eq_eval_0, c_eq_eval_1), at_idx_eval)| {
                             let factor = *at_idx_eval * before_idx_evals * eq_eval_after_idx * C;
-                            let eval_0 = if after_idx_evals.is_some() {*c_eq_eval_0 * factor * after_idx_evals.unwrap().0} else {
+                            let eval_0 = if after_idx_evals.is_some() {
+                                *c_eq_eval_0 * factor * after_idx_evals.unwrap().0
+                            } else {
                                 *c_eq_eval_0 * factor
                             };
 
-                            let eval_1 = if after_idx_evals.is_some() { *c_eq_eval_1 * factor * after_idx_evals.unwrap().1 } else {
+                            let eval_1 = if after_idx_evals.is_some() {
+                                *c_eq_eval_1 * factor * after_idx_evals.unwrap().1
+                            } else {
                                 *c_eq_eval_1 * factor
                             };
 
                             eval_0 + eval_1
                         })
                         .collect::<Vec<_>>()
-                     
                 })
                 .reduce(
                     || vec![F::zero(); eval_points.len()],
@@ -145,7 +153,6 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
             compressed_poly.append_to_transcript(transcript);
             compressed_polys.push(compressed_poly);
 
-
             let w_j = transcript.challenge_scalar::<F>();
             previous_claim = univariate_poly.evaluate(&w_j);
             w.push(w_j);
@@ -160,15 +167,17 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
         }
         C *= C_summands[0] + C_summands[1];
 
-        (Self {
-            sumcheck_proof: SumcheckInstanceProof::new(compressed_polys),
-            eq_claim: C,
-            func_claims: funcs
-                .iter()
-                .map(|func| func.final_sumcheck_claim())
-                .collect(),
-        },
-        w)
+        (
+            Self {
+                sumcheck_proof: SumcheckInstanceProof::new(compressed_polys),
+                eq_claim: C,
+                func_claims: funcs
+                    .iter()
+                    .map(|func| func.final_sumcheck_claim())
+                    .collect(),
+            },
+            w,
+        )
     }
 
     pub fn verify(
@@ -176,7 +185,6 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
         r_prime: Vec<F>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-
         let (_sumcheck_claim, _r_sumcheck) = self.sumcheck_proof.verify(
             self.eq_claim * self.func_claims.iter().product::<F>(),
             r_prime.len(),
@@ -217,9 +225,6 @@ mod test {
 
     fn multi_eq<F: JoltField>(D: u32, T: u32) -> Vec<F> {
         // Compute the polynomial eq(j, j_1, ..., j_d) = 1 if j = j_1 = ... = j_d and 0 otherwise.
-
-        // Otherwise the memory requirement is too large.
-        assert!(D < 4, "D must be less than 4");
 
         let mut eq: Vec<F> = unsafe_allocate_zero_vec(T.pow(D + 1) as usize);
         let num_bits = (T as usize).log_2() * ((D + 1) as usize);
@@ -305,13 +310,19 @@ mod test {
 
     #[test]
     fn test_large_d_optimization_sumcheck() {
-        /// Compute the sum-check
-        /// ra(k_1, ..., k_d, j) = \sum_{j_1, ..., j_d} eq(j, j_1, ..., j_d) \prod_{i=1}^d ra(k_i, j_i)
-        /// where eq(j, j_1, ..., j_d) = 1 if j = j_1 = ... = j_d and 0 otherwise.
-        const K: usize = 16;
-        const T: usize = 1 << 3;
-        const D: usize = 3;
+        large_d_optimization_sumcheck(3, 1 << 3, 16);
+        large_d_optimization_sumcheck(2, 1 << 4, 4);
+        large_d_optimization_sumcheck(5, 1 << 3, 8);
+        large_d_optimization_sumcheck(10, 1 << 2, 4);
+    }
 
+    fn large_d_optimization_sumcheck(D: usize, T: usize, K: usize) {
+        assert!(T.is_power_of_two());
+        assert!(K.is_power_of_two());
+
+        // Compute the sum-check
+        // ra(k_1, ..., k_d, j) = \sum_{j_1, ..., j_d} eq(j, j_1, ..., j_d) \prod_{i=1}^d ra(k_i, j_i)
+        // where eq(j, j_1, ..., j_d) = 1 if j = j_1 = ... = j_d and 0 otherwise.
         let mut rng = test_rng();
         let mut read_addresses: Vec<Vec<usize>> = vec![Vec::with_capacity(T); D];
 
@@ -352,7 +363,7 @@ mod test {
             assert_eq!(bits_f.len(), num_bits);
 
             let mut j_bit_vec: Vec<Vec<_>> = bits_f
-                .chunks(T.log_2())
+                .chunks(D)
                 .map(|chunk| chunk.to_owned())
                 .collect::<Vec<_>>();
 
@@ -435,7 +446,10 @@ mod test {
 
         let verification_result = proof.verify(r_prime, &mut verifier_transcript);
 
-        assert!(verification_result.is_ok(), "Verification failed: {verification_result:?}");
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed: {verification_result:?}"
+        );
     }
 
     #[test]
