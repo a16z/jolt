@@ -565,7 +565,7 @@ fn blake2(data_blocks: &[[u64; 16]], ll: u64, kk: u64, nn: u64) -> Vec<u8> {
 }
 
 /// Execute Blake2b compression with explicit counter values
-fn execute_blake2b_compression(
+pub fn execute_blake2b_compression(
     state: &mut [u64; 8],
     message_words: &[u64; 16],
     counter: u64,

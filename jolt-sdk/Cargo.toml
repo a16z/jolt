@@ -13,7 +13,7 @@ repository = "https://github.com/a16z/jolt"
 edition = "2021"
 
 [features]
-default = ["sha256", "keccak256"]
+default = ["sha256", "keccak256", "blake2"]
 host = [
     "dep:tracer",
     "dep:common",
@@ -27,6 +27,7 @@ guest-std = ["postcard/use-std", "jolt-sdk-macros/guest-std"]
 icicle = ["host", "jolt-core?/icicle"]
 sha256 = []
 keccak256 = []
+blake2 = []
 
 [dependencies]
 postcard = { version = "1.0.8", default-features = false }
