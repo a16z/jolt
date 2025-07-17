@@ -233,8 +233,6 @@ mod test {
             })
             .sum::<Fr>();
 
-        println!("previous_claim: {:?}", previous_claim);
-
         let mut C = Fr::from_u32(1);
         let mut C_summands = [Fr::from_u32(1), Fr::from_u32(1)];
 
@@ -295,8 +293,6 @@ mod test {
                     } else {
                         Fr::from_u32(1)
                     };
-                    // TODO: check eq_eval_after_idx is correct.
-                    assert_eq!(E_table[j_idx].len(), (T.log_2() - j_idx - 1).pow2());
 
                     let before_idx_evals = ra
                         .iter()
@@ -305,18 +301,7 @@ mod test {
                         .map(|poly| poly.get_bound_coeff(j))
                         .product::<Fr>();
 
-                    let after_idx_evals = ra
-                        .iter()
-                        .take(D - d - 1)
-                        .map(|poly| {
-                            (
-                                poly.get_bound_coeff(j),
-                                poly.get_bound_coeff(j + poly.len() / 2),
-                            )
-                        })
-                        .reduce(|running, new| (running.0 * new.0, running.1 * new.1))
-                        .unwrap();
-
+                  
                     // Check that eq(r_cycle, (w_1, ..., w_{j_idx - 1}, c, j)) is computed correctly.
                     // Recall that here we're implicitly summing over d copies j_d of the cycle variables,
                     // where for each possible index we have a term obtained from binding some variables in
@@ -331,10 +316,10 @@ mod test {
                     let bits = bits.iter().flatten().map(|x| *x).collect::<Vec<_>>();
 
                     let mut index_bits_0 = bits.to_owned();
-                    index_bits_0.extend_from_slice(&vec![0; D - j_idx]);
+                    index_bits_0.extend_from_slice(&vec![0; D - d]);
 
                     let mut index_bits_1 = bits.to_owned();
-                    index_bits_1.extend_from_slice(&vec![1; D - j_idx]);
+                    index_bits_1.extend_from_slice(&vec![1; D - d]);
 
                     let index_0 = index_bits_0
                         .iter()
@@ -366,17 +351,35 @@ mod test {
                         "j: {j}, j_idx: {j_idx}, round {round}, index_1: {index_1}, index 1 bits: {index_bits_1:?}"
                     );
 
+
+                    let after_idx_evals =  ra
+                        .iter()
+                        .take(D - d - 1)
+                        .map(|poly| {
+                            (
+                                poly.get_bound_coeff(j),
+                                poly.get_bound_coeff(j + poly.len() / 2),
+                            )
+                        })
+                        .reduce(|running, new| (running.0 * new.0, running.1 * new.1));
+
                     eq_evals_at_idx
                         .iter()
                         .zip(at_idx_evals.iter())
                         .map(|((c_eq_eval_0, c_eq_eval_1), at_idx_eval)| {
                             let factor = *at_idx_eval * before_idx_evals * eq_eval_after_idx * C;
-                            let eval_0 = *c_eq_eval_0 * factor * after_idx_evals.0;
-                            let eval_1 = *c_eq_eval_1 * factor * after_idx_evals.1;
+                            let eval_0 = if after_idx_evals.is_some() {*c_eq_eval_0 * factor * after_idx_evals.unwrap().0} else {
+                                *c_eq_eval_0 * factor
+                            };
+
+                            let eval_1 = if after_idx_evals.is_some() { *c_eq_eval_1 * factor * after_idx_evals.unwrap().1 } else {
+                                *c_eq_eval_1 * factor
+                            };
 
                             eval_0 + eval_1
                         })
                         .collect::<Vec<_>>()
+                     
                 })
                 .reduce(
                     || vec![Fr::from_u32(0); eval_points.len()],
@@ -394,21 +397,27 @@ mod test {
                 univariate_poly_evals[0] + univariate_poly_evals[1],
                 "round: {round}",
             );
-            panic!("Success");
 
             let univariate_poly = UniPoly::from_evals(&[
                 univariate_poly_evals[0],
                 previous_claim - univariate_poly_evals[0],
-                univariate_poly_evals[1],
                 univariate_poly_evals[2],
+                univariate_poly_evals[3],
             ]);
 
             let w_j = prove_transcript.challenge_scalar::<Fr>();
             previous_claim = univariate_poly.evaluate(&w_j);
 
+            rayon::join(
+                || eq.bind_parallel(w_j, BindingOrder::HighToLow),
+                || ra[D - 1 - d].bind_parallel(w_j, BindingOrder::HighToLow),
+            );
+
             C_summands[0] *= w_j;
             C_summands[1] *= Fr::from_u32(1) - w_j;
         }
+        C *= C_summands[0] + C_summands[1];
+        assert_eq!(C, eq.final_sumcheck_claim());
 
         let mut verify_transcript = KeccakTranscript::new(b"test_transcript");
 
