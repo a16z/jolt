@@ -30,7 +30,6 @@ pub struct LargeDSumCheckProof<F: JoltField, ProofTranscript: Transcript> {
 
 impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTranscript> {
     pub fn prove(
-        eq: &mut MultilinearPolynomial<F>,
         funcs: &mut Vec<&mut MultilinearPolynomial<F>>,
         r_cycle: &Vec<F>,
         previous_claim: F,
@@ -157,10 +156,7 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
             previous_claim = univariate_poly.evaluate(&w_j);
             w.push(w_j);
 
-            rayon::join(
-                || eq.bind_parallel(w_j, BindingOrder::HighToLow),
-                || funcs[D - 1 - d].bind_parallel(w_j, BindingOrder::HighToLow),
-            );
+            funcs[D - 1 - d].bind_parallel(w_j, BindingOrder::HighToLow);
 
             C_summands[0] *= w_j;
             C_summands[1] *= F::one() - w_j;
@@ -433,7 +429,6 @@ mod test {
             .sum::<Fr>();
 
         let (proof, r_prime) = LargeDSumCheckProof::<Fr, KeccakTranscript>::prove(
-            &mut eq,
             &mut ra.iter_mut().collect::<Vec<_>>(),
             &r_cycle,
             previous_claim,
