@@ -19,7 +19,7 @@ use crate::{
         commitment::commitment_scheme::CommitmentScheme,
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
-        identity_poly::{Endianness, IdentityPolynomial, OperandPolynomial, OperandSide},
+        identity_poly::{IdentityPolynomial, OperandPolynomial, OperandSide},
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
@@ -159,7 +159,7 @@ impl<'a, F: JoltField> ReadRafProverState<F> {
         let log_T = trace.len().log_2();
         let right_operand_poly = OperandPolynomial::new(LOG_K, OperandSide::Right);
         let left_operand_poly = OperandPolynomial::new(LOG_K, OperandSide::Left);
-        let identity_poly = IdentityPolynomial::new_with_endianness(LOG_K, Endianness::Big);
+        let identity_poly = IdentityPolynomial::new(LOG_K);
         let right_operand_ps =
             PrefixSuffixDecomposition::new(Box::new(right_operand_poly), LOG_M, LOG_K);
         let left_operand_ps =
@@ -385,8 +385,7 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for ReadRafSumcheck<F> {
             OperandPolynomial::new(LOG_K, OperandSide::Left).evaluate(r_address_prime);
         let right_operand_eval =
             OperandPolynomial::new(LOG_K, OperandSide::Right).evaluate(r_address_prime);
-        let identity_poly_eval = IdentityPolynomial::new_with_endianness(LOG_K, Endianness::Big)
-            .evaluate(r_address_prime);
+        let identity_poly_eval = IdentityPolynomial::new(LOG_K).evaluate(r_address_prime);
         let val_evals: Vec<_> = LookupTables::<WORD_SIZE>::iter()
             .map(|table| table.evaluate_mle(r_address_prime))
             .collect();
@@ -414,10 +413,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
     fn cache_openings_prover(
         &mut self,
         accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let ps = self.prover_state.as_mut().unwrap();
-        let r_cycle_prime = &ps.r[ps.r.len() - self.log_T..];
+        let r_cycle_prime = &opening_point.r[LOG_K..];
         let eq_r_cycle_prime = EqPolynomial::evals(r_cycle_prime);
 
         let flag_claims = std::mem::take(&mut ps.lookup_indices_by_table)
@@ -452,8 +451,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
             .for_each(|(i, ((ra, claim), key))| {
                 accumulator.borrow_mut().append_sparse(
                     vec![std::mem::take(ra)],
-                    ps.r[LOG_K_CHUNK * i..LOG_K_CHUNK * (i + 1)].to_vec(),
-                    ps.r[LOG_K..].to_vec(),
+                    opening_point.r[LOG_K_CHUNK * i..LOG_K_CHUNK * (i + 1)].to_vec(),
+                    opening_point.r[LOG_K..].to_vec(),
                     vec![claim],
                     Some(vec![key]),
                 );
@@ -477,10 +476,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
     ) {
         let accumulator = accumulator.expect("accumulator is needed");
         (0..D).for_each(|i| {
-            accumulator.borrow_mut().populate_claim_opening(
-                OpeningsKeys::InstructionBooleanityRa(i),
-                r_sumcheck.clone(),
-            )
+            accumulator
+                .borrow_mut()
+                // TODO: this point is incorrect
+                .populate_claim_opening(OpeningsKeys::InstructionRa(i), r_sumcheck.clone())
         });
         let r_cycle_prime = r_sumcheck.split_off(LOG_K_CHUNK);
         accumulator

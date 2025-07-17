@@ -18,36 +18,52 @@ use crate::{
 use rayon::prelude::*;
 
 pub struct HammingWeightProverState<F: JoltField> {
-    ra: MultilinearPolynomial<F>,
-    unbound_ra_poly: Option<MultilinearPolynomial<F>>,
+    ra: Vec<MultilinearPolynomial<F>>,
+    unbound_ra_polys: Vec<MultilinearPolynomial<F>>,
 }
 
 pub struct HammingWeightSumcheck<F: JoltField> {
-    log_K: usize,
+    gamma: Vec<F>,
+    log_K_chunk: usize,
+    d: usize,
     prover_state: Option<HammingWeightProverState<F>>,
-    ra_claim: Option<F>,
+    ra_claims: Option<Vec<F>>,
     r_cycle: Vec<F>,
 }
 
 impl<F: JoltField> HammingWeightSumcheck<F> {
+    #[tracing::instrument(skip_all, name = "BytecodeHammingWeightSumcheck::new_prover")]
     pub fn new_prover(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
-        F: Vec<F>,
-        unbound_ra_poly: MultilinearPolynomial<F>,
+        F: Vec<Vec<F>>,
+        unbound_ra_polys: Vec<MultilinearPolynomial<F>>,
     ) -> Self {
+        let d = sm.get_prover_data().0.shared.bytecode.d;
+        let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
+        let mut gamma_powers = vec![F::one(); d];
+        for i in 1..d {
+            gamma_powers[i] = gamma_powers[i - 1] * gamma;
+        }
         let log_K = sm.get_bytecode().len().log_2();
+        let log_K_chunk = log_K.div_ceil(d);
         let r_cycle = sm
             .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
             .unwrap()
             .r
             .clone();
+        let ra = F
+            .into_iter()
+            .map(MultilinearPolynomial::from)
+            .collect::<Vec<_>>();
         Self {
-            log_K,
+            gamma: gamma_powers,
+            log_K_chunk,
+            d,
             prover_state: Some(HammingWeightProverState {
-                ra: MultilinearPolynomial::from(F),
-                unbound_ra_poly: Some(unbound_ra_poly),
+                ra,
+                unbound_ra_polys,
             }),
-            ra_claim: None,
+            ra_claims: None,
             r_cycle,
         }
     }
@@ -55,17 +71,28 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
     pub fn new_verifier(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
+        let d = sm.get_verifier_data().0.shared.bytecode.d;
+        let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
+        let mut gamma_powers = vec![F::one(); d];
+        for i in 1..d {
+            gamma_powers[i] = gamma_powers[i - 1] * gamma;
+        }
         let log_K = sm.get_bytecode().len().log_2();
-        let ra_claim = sm.get_opening(OpeningsKeys::BytecodeHammingWeightRa);
+        let log_K_chunk = log_K.div_ceil(d);
+        let ra_claims = (0..d)
+            .map(|i| sm.get_opening(OpeningsKeys::BytecodeHammingWeightRa(i)))
+            .collect::<Vec<F>>();
         let r_cycle = sm
             .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
             .unwrap()
             .r
             .clone();
         Self {
-            log_K,
+            gamma: gamma_powers,
+            log_K_chunk,
+            d,
             prover_state: None,
-            ra_claim: Some(ra_claim),
+            ra_claims: Some(ra_claims),
             r_cycle,
         }
     }
@@ -77,38 +104,50 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for HammingWeightSumcheck<F> {
     }
 
     fn num_rounds(&self) -> usize {
-        self.log_K
+        self.log_K_chunk
     }
 
     fn input_claim(&self) -> F {
-        F::one()
+        self.gamma.iter().sum()
     }
 
+    #[tracing::instrument(skip_all, name = "BytecodeHammingWeight::compute_prover_message")]
     fn compute_prover_message(&mut self, _round: usize) -> Vec<F> {
         let prover_state = self
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
 
-        let univariate_poly_eval: F = (0..prover_state.ra.len() / 2)
-            .into_par_iter()
-            .map(|i| prover_state.ra.get_bound_coeff(2 * i))
-            .sum();
-
-        vec![univariate_poly_eval]
+        vec![prover_state
+            .ra
+            .iter()
+            .zip(self.gamma.iter())
+            .map(|(ra, gamma)| {
+                (0..ra.len() / 2)
+                    .into_par_iter()
+                    .map(|i| ra.get_bound_coeff(2 * i))
+                    .sum::<F>()
+                    * gamma
+            })
+            .sum()]
     }
 
+    #[tracing::instrument(skip_all, name = "BytecodeHammingWeight::bind")]
     fn bind(&mut self, r_j: F, _round: usize) {
-        let prover_state = self
-            .prover_state
+        self.prover_state
             .as_mut()
-            .expect("Prover state not initialized");
-
-        prover_state.ra.bind_parallel(r_j, BindingOrder::LowToHigh)
+            .unwrap()
+            .ra
+            .par_iter_mut()
+            .for_each(|ra| ra.bind_parallel(r_j, BindingOrder::LowToHigh))
     }
 
     fn expected_output_claim(&self, _: &[F]) -> F {
-        self.ra_claim.expect("ra_claim not set")
+        self.gamma
+            .iter()
+            .zip(self.ra_claims.as_ref().unwrap())
+            .map(|(gamma, ra)| *ra * gamma)
+            .sum()
     }
 }
 
@@ -117,25 +156,40 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
+    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+        let mut opening_point = opening_point.to_vec();
+        opening_point.reverse();
+        opening_point.into()
+    }
+
     fn cache_openings_prover(
         &mut self,
         accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        let ps = self
-            .prover_state
-            .as_mut()
-            .expect("Prover state not initialized");
+        let ps = self.prover_state.as_mut().unwrap();
+        let ra_claims = ps
+            .ra
+            .iter()
+            .map(|ra| ra.final_sumcheck_claim())
+            .collect::<Vec<F>>();
+        let ra_keys = (0..self.d)
+            .map(OpeningsKeys::BytecodeHammingWeightRa)
+            .collect::<Vec<_>>();
         let accumulator = accumulator.expect("accumulator is needed");
-
-        let ra_claim = ps.ra.final_sumcheck_claim();
-        accumulator.borrow_mut().append_sparse(
-            vec![ps.unbound_ra_poly.take().unwrap()],
-            opening_point.r,
-            self.r_cycle.clone(),
-            vec![ra_claim],
-            Some(vec![OpeningsKeys::BytecodeHammingWeightRa]),
-        );
+        ps.unbound_ra_polys
+            .iter_mut()
+            .zip(ra_claims)
+            .zip(ra_keys)
+            .for_each(|((ra, claim), key)| {
+                accumulator.borrow_mut().append_sparse(
+                    vec![std::mem::take(ra)],
+                    opening_point.r.clone(),
+                    self.r_cycle.clone(),
+                    vec![claim],
+                    Some(vec![key]),
+                );
+            });
     }
 
     fn cache_openings_verifier(
@@ -143,17 +197,18 @@ where
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
+        let accumulator = accumulator.expect("accumulator is needed");
         let r = opening_point
             .r
             .iter()
             .cloned()
             .chain(self.r_cycle.iter().cloned())
             .collect::<Vec<_>>();
-        let accumulator = accumulator.expect("accumulator is needed");
-        accumulator.borrow_mut().populate_claim_opening(
-            OpeningsKeys::BytecodeHammingWeightRa,
-            OpeningPoint::new(r.clone()),
-        );
+        (0..self.d).for_each(|i| {
+            accumulator
+                .borrow_mut()
+                .populate_claim_opening(OpeningsKeys::BytecodeHammingWeightRa(i), r.clone().into())
+        });
     }
 }
 

@@ -23,7 +23,6 @@ use crate::{
 const DEGREE: usize = 1;
 
 struct HammingProverState<F: JoltField> {
-    r: Vec<F>,
     /// ra_i polynomials
     ra: [MultilinearPolynomial<F>; D],
     /// For the opening proofs
@@ -63,7 +62,6 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
         Self {
             gamma: gamma_powers,
             prover_state: Some(HammingProverState {
-                r: Vec::with_capacity(LOG_K_CHUNK),
                 ra,
                 unbound_ra_polys,
             }),
@@ -131,7 +129,6 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for HammingWeightSumcheck<F> {
 
     #[tracing::instrument(skip_all, name = "InstructionHammingWeight::bind")]
     fn bind(&mut self, r_j: F, _round: usize) {
-        self.prover_state.as_mut().unwrap().r.push(r_j);
         self.prover_state
             .as_mut()
             .unwrap()
@@ -155,7 +152,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
     fn cache_openings_prover(
         &mut self,
         accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let ps = self.prover_state.as_mut().unwrap();
         let ra_claims = ps
@@ -169,7 +166,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
         let accumulator = accumulator.expect("accumulator is needed");
         accumulator.borrow_mut().append_sparse(
             std::mem::take(&mut ps.unbound_ra_polys),
-            ps.r.to_vec(),
+            opening_point.r.clone(),
             self.r_cycle.clone(),
             ra_claims,
             Some(ra_keys),

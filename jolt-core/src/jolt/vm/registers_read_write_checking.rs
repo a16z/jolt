@@ -1159,9 +1159,10 @@ where
                 OpeningsKeys::RegistersReadWriteRdWa,
                 opening_point.clone(),
             );
+            let r_cycle_prime = opening_point.clone().split_off(K.log_2());
             accumulator
                 .borrow_mut()
-                .populate_claim_opening(OpeningsKeys::RegistersReadWriteInc, opening_point);
+                .populate_claim_opening(OpeningsKeys::RegistersReadWriteInc, r_cycle_prime);
         }
     }
 }

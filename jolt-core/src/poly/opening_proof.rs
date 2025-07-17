@@ -134,33 +134,31 @@ pub enum OpeningsKeys {
     OuterSumcheckCz,                // Cz claim from outer sumcheck
     PCSumcheckUnexpandedPC,         // UnexpandedPC evaluation from PC sumcheck
     PCSumcheckPC,                   // PC evaluation from PC sumcheck
-    PCSumcheckIsNoop,
-    RegistersReadWriteVal,      // Val claim from registers read/write checking
-    RegistersReadWriteRs1Ra,    // Rs1 claim from registers read/write checking
-    RegistersReadWriteRs2Ra,    // Rs2 claim from registers read/write checking
-    RegistersReadWriteRdWa,     // Rd claim from registers read/write checking
-    RegistersReadWriteInc,      // Inc claim from registers read/write checking
-    RegistersValEvaluationInc,  // Inc claim from registers Val evaluation sumcheck
-    RegistersValEvaluationWa,   // Wa claim from registers Val evaluation sumcheck
-    RamReadWriteCheckingVal,    // Val claim from RAM read/write checking
-    RamReadWriteCheckingRa,     // ra claim from RAM read/write checking
-    RamReadWriteCheckingInc,    // Inc claim from RAM read/write checking
-    RamRafEvaluationRa,         // ra claim from RAM raf-evaluation
-    RamValInit,                 // Val_init claim from RAM output sumcheck
-    RamValFinal,                // Val_final claim from RAM output sumcheck
-    RamValEvaluationInc,        // Inc claim from RAM Val evaluation
-    RamValEvaluationWa,         // wa claim from RAM Val evaluation
-    ValFinalInc,                // Inc claim from RAM Val_final evaluation
-    ValFinalWa,                 // wa claim from RAM Val_final evaluation
-    RamHammingRa(usize),        // ra_i openings for RAM Hamming weight
-    RamBooleanityRa(usize),     // ra_i openings for RAM booleanity
-    RamRaVirtualization(usize), // ra_i openings for RAM ra virtualization
-    BytecodeStage1Ra,
-    BytecodeStage2Ra,
-    BytecodeStage3Ra,
-    BytecodeBooleanityRa,
-    BytecodeHammingWeightRa,
-    OpeningReduction(usize), // claims from the opening proof reduction sumcheck
+    PCSumcheckIsNoop,               // IsNoop evaluation from PC sumcheck
+    RegistersReadWriteVal,          // Val claim from registers read/write checking
+    RegistersReadWriteRs1Ra,        // Rs1 claim from registers read/write checking
+    RegistersReadWriteRs2Ra,        // Rs2 claim from registers read/write checking
+    RegistersReadWriteRdWa,         // Rd claim from registers read/write checking
+    RegistersReadWriteInc,          // Inc claim from registers read/write checking
+    RegistersValEvaluationInc,      // Inc claim from registers Val evaluation sumcheck
+    RegistersValEvaluationWa,       // Wa claim from registers Val evaluation sumcheck
+    RamReadWriteCheckingVal,        // Val claim from RAM read/write checking
+    RamReadWriteCheckingRa,         // ra claim from RAM read/write checking
+    RamReadWriteCheckingInc,        // Inc claim from RAM read/write checking
+    RamRafEvaluationRa,             // ra claim from RAM raf-evaluation
+    RamValInit,                     // Val_init claim from RAM output sumcheck
+    RamValFinal,                    // Val_final claim from RAM output sumcheck
+    RamValEvaluationInc,            // Inc claim from RAM Val evaluation
+    RamValEvaluationWa,             // wa claim from RAM Val evaluation
+    ValFinalInc,                    // Inc claim from RAM Val_final evaluation
+    ValFinalWa,                     // wa claim from RAM Val_final evaluation
+    RamHammingRa(usize),            // ra_i openings for RAM Hamming weight
+    RamBooleanityRa(usize),         // ra_i openings for RAM booleanity
+    RamRaVirtualization(usize),     // ra_i openings for RAM ra virtualization
+    BytecodeRa(usize),              // ra_i openings for bytecode
+    BytecodeBooleanityRa(usize),    // ra_i openings for bytecode booleanity
+    BytecodeHammingWeightRa(usize), // ra_i openings for bytecode hamming weight
+    OpeningReduction(usize),        // claims from the opening proof reduction sumcheck
 }
 
 pub type Openings<F> = HashMap<OpeningsKeys, (OpeningPoint<BIG_ENDIAN, F>, F)>;
