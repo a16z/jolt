@@ -171,7 +171,7 @@ struct RafEvaluationSumcheck<F: JoltField> {
 
 pub(crate) fn remap_address(address: u64, memory_layout: &MemoryLayout) -> u64 {
     if address == 0 {
-        return 0; // TODO(moodlezoup): Better handling for no-ops
+        return 0; // [JOLT-135]: Better handling for no-ops
     }
     if address >= memory_layout.input_start {
         (address - memory_layout.input_start) / 4 + 1
@@ -305,12 +305,11 @@ mod tests {
     use crate::utils::math::Math;
     use crate::utils::transcript::KeccakTranscript;
     use ark_bn254::Fr;
-    use tracer::instruction::RV32IMCycle;
 
     #[test]
     fn test_raf_evaluation_no_ops() {
-        const K: usize = 1 << 8;
-        const T: usize = 1 << 6;
+        const K: usize = 1 << 16;
+        const T: usize = 1 << 8;
 
         let memory_layout = MemoryLayout {
             max_input_size: 256,

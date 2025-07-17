@@ -318,7 +318,8 @@ mod tests {
 
         // Prover setup
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
-        let mut prover_accumulator = ProverOpeningAccumulator::<Fr, KeccakTranscript>::new();
+        let mut prover_accumulator =
+            ProverOpeningAccumulator::<Fr, Zeromorph<_, _>, KeccakTranscript>::new();
         let (proof, r_prover) = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProductProver<
             Fr,
             Zeromorph<Bn254, KeccakTranscript>,

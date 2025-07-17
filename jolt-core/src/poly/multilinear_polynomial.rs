@@ -2,9 +2,9 @@ use crate::{
     poly::{one_hot_polynomial::OneHotPolynomial, rlc_polynomial::RLCPolynomial},
     utils::{compute_dotproduct, math::Math},
 };
-use num_traits::MulAdd;
 #[cfg(not(feature = "parallel"))]
 use itertools::Itertools;
+use num_traits::MulAdd;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use strum_macros::EnumIter;

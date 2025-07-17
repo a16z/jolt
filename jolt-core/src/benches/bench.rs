@@ -305,12 +305,13 @@ where
                 1 << 20,
             );
 
-        let (jolt_proof, program_io, _) = <RV32IJoltVM as Jolt<32, _, PCS, ProofTranscript>>::prove(
-            io_device,
-            trace,
-            final_memory_state,
-            preprocessing.clone(),
-        );
+        let (jolt_proof, program_io, _) =
+            <RV32IMJoltVM as JoltProver<32, _, PCS, ProofTranscript>>::prove(
+                io_device,
+                trace,
+                final_memory_state,
+                preprocessing.clone(),
+            );
 
         let verifier_preprocessing =
             JoltVerifierPreprocessing::<F, PCS, ProofTranscript>::from(&preprocessing);
@@ -372,12 +373,13 @@ where
                 1 << 24,
             );
 
-        let (jolt_proof, program_io, _) = <RV32IJoltVM as Jolt<32, _, PCS, ProofTranscript>>::prove(
-            io_device,
-            trace,
-            final_memory_state,
-            preprocessing.clone(),
-        );
+        let (jolt_proof, program_io, _) =
+            <RV32IMJoltVM as JoltProver<32, _, PCS, ProofTranscript>>::prove(
+                io_device,
+                trace,
+                final_memory_state,
+                preprocessing.clone(),
+            );
 
         let verifier_preprocessing =
             JoltVerifierPreprocessing::<F, PCS, ProofTranscript>::from(&preprocessing);

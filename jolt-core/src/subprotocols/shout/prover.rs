@@ -1,10 +1,7 @@
 use crate::subprotocols::shout::{
-    BooleanityProverState, BooleanitySumcheck, BooleanityVerifierState, ShoutProof,
-    ShoutProverState, ShoutSumcheck, ShoutSumcheckClaims, ShoutVerifierState,
+    BooleanityProverState, BooleanitySumcheck, ShoutProof, ShoutProverState, ShoutSumcheck,
 };
-use crate::subprotocols::sumcheck::{
-    BatchableSumcheckInstance, BatchedSumcheck, SumcheckInstanceProof,
-};
+use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstanceProof};
 use crate::{
     field::JoltField,
     poly::{

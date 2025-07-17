@@ -6,7 +6,9 @@ use crate::jolt::vm::rv32im_vm::Serializable;
 #[cfg(feature = "prover")]
 use crate::msm::icicle;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::opening_proof::VerifierOpeningAccumulator;
+#[cfg(all(test, feature = "prover"))]
+use crate::poly::commitment::dory::DoryGlobals;
+use crate::poly::opening_proof::{ReducedOpeningProof, VerifierOpeningAccumulator};
 use crate::r1cs::constraints::R1CSConstraints;
 use crate::r1cs::spartan::UniformSpartanProof;
 use crate::utils::errors::ProofVerifyError;
@@ -146,7 +148,6 @@ where
         #[cfg(feature = "prover")]
         icicle::icicle_init();
 
-        // let read_write_memory_preprocessing = ReadWriteMemoryPreprocessing::preprocess(memory_init);
         let bytecode_preprocessing = BytecodePreprocessing::preprocess(bytecode);
         let ram_preprocessing = RAMPreprocessing::preprocess(memory_init);
 
@@ -162,10 +163,11 @@ where
         program_io: &JoltDevice,
         memory_layout: &MemoryLayout,
         trace_length: usize,
+        ram_K: usize,
     ) {
         transcript.append_u64(trace_length as u64);
+        transcript.append_u64(ram_K as u64);
         transcript.append_u64(WORD_SIZE as u64);
-        // transcript.append_u64(Self::InstructionSet::COUNT as u64);
         transcript.append_u64(memory_layout.max_input_size);
         transcript.append_u64(memory_layout.max_output_size);
         transcript.append_bytes(&program_io.inputs);
@@ -187,27 +189,58 @@ where
     fn verify(
         preprocessing: JoltVerifierPreprocessing<F, PCS, ProofTranscript>,
         proof: JoltProof<WORD_SIZE, F, PCS, ProofTranscript>,
-        // commitments: JoltCommitments<PCS, ProofTranscript>,
-        program_io: JoltDevice,
+        mut program_io: JoltDevice,
         #[cfg(feature = "prover")] _debug_info: Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
     ) -> Result<(), ProofVerifyError> {
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
         let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS, ProofTranscript> =
             VerifierOpeningAccumulator::new();
 
+        // truncate trailing zeros on device outputs
+        program_io.outputs.truncate(
+            program_io
+                .outputs
+                .iter()
+                .rposition(|&b| b != 0)
+                .map_or(0, |pos| pos + 1),
+        );
+
         #[cfg(all(test, feature = "prover"))]
-        if let Some(debug_info) = _debug_info {
-            transcript.compare_to(debug_info.transcript);
-            opening_accumulator
-                .compare_to(debug_info.opening_accumulator, &debug_info.prover_setup);
+        {
+            if let Some(debug_info) = _debug_info {
+                transcript.compare_to(debug_info.transcript);
+                opening_accumulator
+                    .compare_to(debug_info.opening_accumulator, &debug_info.prover_setup);
+            }
         }
+
+        #[cfg(all(test, feature = "prover"))]
+        let K = [
+            preprocessing.shared.bytecode.code_size,
+            proof.ram.K,
+            1 << 16, // K for instruction lookups Shout
+        ]
+        .into_iter()
+        .max()
+        .unwrap();
+        #[cfg(all(test, feature = "prover"))]
+        let T = proof.trace_length.next_power_of_two();
+        // Need to initialize globals because the verifier computes commitments
+        // in `VerifierOpeningAccumulator::append` inside of a `#[cfg(test)]` block
+        #[cfg(all(test, feature = "prover"))]
+        let _guard = DoryGlobals::initialize(K, T);
 
         Self::fiat_shamir_preamble(
             &mut transcript,
             &program_io,
             &preprocessing.shared.memory_layout,
             proof.trace_length,
+            proof.ram.K,
         );
+
+        for commitment in proof.commitments.commitments.iter() {
+            transcript.append_serializable(commitment);
+        }
 
         // Regenerate the uniform Spartan key
         let padded_trace_length = proof.trace_length.next_power_of_two();
@@ -218,33 +251,50 @@ where
 
         proof
             .r1cs
-            .verify(&spartan_key, &mut opening_accumulator, &mut transcript)
+            .verify(
+                &spartan_key,
+                &proof.commitments,
+                &mut opening_accumulator,
+                &mut transcript,
+            )
             .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))?;
-        proof
-            .instruction_lookups
-            .verify(&mut opening_accumulator, &mut transcript)?;
-        proof
-            .registers
-            .verify(padded_trace_length, &mut transcript)?;
-        proof.ram.verify(
-            1 << 16,
-            padded_trace_length,
-            &preprocessing.shared.ram,
-            &program_io,
-            &mut transcript,
-        )?;
-        proof.bytecode.verify(
-            &preprocessing.shared.bytecode,
-            padded_trace_length,
+
+        proof.instruction_lookups.verify(
+            &proof.commitments,
+            &mut opening_accumulator,
             &mut transcript,
         )?;
 
+        proof.registers.verify(
+            &proof.commitments,
+            padded_trace_length,
+            &mut opening_accumulator,
+            &mut transcript,
+        )?;
+
+        proof.ram.verify(
+            padded_trace_length,
+            &preprocessing.shared.ram,
+            &proof.commitments,
+            &program_io,
+            &mut transcript,
+            &mut opening_accumulator,
+        )?;
+
+        proof.bytecode.verify(
+            &preprocessing.shared.bytecode,
+            &proof.commitments,
+            padded_trace_length,
+            &mut transcript,
+            &mut opening_accumulator,
+        )?;
+
         // Batch-verify all openings
-        // opening_accumulator.reduce_and_verify(
-        //     &preprocessing.generators,
-        //     &proof.opening_proof,
-        //     &mut transcript,
-        // )?;
+        opening_accumulator.reduce_and_verify(
+            &preprocessing.generators,
+            &proof.opening_proof,
+            &mut transcript,
+        )?;
 
         Ok(())
     }

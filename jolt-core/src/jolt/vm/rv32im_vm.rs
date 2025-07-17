@@ -188,7 +188,7 @@ mod tests {
             1 << 16,
         );
         let (jolt_proof, jolt_commitments, debug_info) =
-            <RV32IJoltVM as Jolt<
+            <RV32IMJoltVM as JoltProver<
                 32,
                 Fr,
                 DoryCommitmentScheme<KeccakTranscript>,
@@ -229,7 +229,7 @@ mod tests {
             1 << 16,
         );
         let (jolt_proof, jolt_commitments, debug_info) =
-            <RV32IMJoltVM as Jolt<
+            <RV32IMJoltVM as JoltProver<
                 32,
                 Fr,
                 DoryCommitmentScheme<KeccakTranscript>,
@@ -272,7 +272,7 @@ mod tests {
             1 << 16,
         );
         let (proof, commitments, debug_info) =
-            <RV32IMJoltVM as Jolt<
+            <RV32IMJoltVM as JoltProver<
                 32,
                 Fr,
                 DoryCommitmentScheme<KeccakTranscript>,
@@ -311,7 +311,7 @@ mod tests {
             1 << 16,
         );
         let (proof, commitments, debug_info) =
-            <RV32IMJoltVM as Jolt<
+            <RV32IMJoltVM as JoltProver<
                 32,
                 Fr,
                 DoryCommitmentScheme<KeccakTranscript>,

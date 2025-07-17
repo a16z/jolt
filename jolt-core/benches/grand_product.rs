@@ -4,10 +4,10 @@ use jolt_core::field::JoltField;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::hyperkzg::HyperKZG;
 use jolt_core::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
+use jolt_core::subprotocols::grand_product::quark::{QuarkGrandProduct, QuarkGrandProductConfig};
 use jolt_core::subprotocols::grand_product::{
     BatchedDenseGrandProduct, BatchedGrandProductProof, BatchedGrandProductProver,
 };
-use jolt_core::subprotocols::grand_product_quarks::{QuarkGrandProduct, QuarkGrandProductConfig};
 use jolt_core::subprotocols::QuarkHybridLayerDepth;
 use jolt_core::utils::transcript::{KeccakTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;

@@ -378,7 +378,7 @@ impl MacroBuilder {
         let inputs = &self.func.sig.inputs;
         let imports = self.make_imports();
 
-        let prove_fn_name = syn::Ident::new(&format!("prove_{fn_name}"), fn_name.span());
+        let prove_fn_name = Ident::new(&format!("prove_{fn_name}"), fn_name.span());
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #prove_fn_name(

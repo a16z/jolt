@@ -6,7 +6,7 @@ pub use prover::*;
 use super::sumcheck::SumcheckInstanceProof;
 use crate::{
     field::JoltField,
-    poly::{eq_poly::EqPolynomial, multilinear_polynomial::PolynomialBinding},
+    poly::eq_poly::EqPolynomial,
     utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
 };
 

@@ -1,8 +1,8 @@
 use crate::jolt::vm::output_check::OutputSumcheck;
 use crate::jolt::vm::ram::{
     remap_address, BooleanitySumcheck, BooleanityVerifierState, HammingWeightSumcheck,
-    HammingWeightVerifierState, ValEvaluationSumcheck, ValEvaluationSumcheckClaims,
-    ValEvaluationVerifierState,
+    HammingWeightVerifierState, RafEvaluationSumcheck, RafEvaluationVerifierState,
+    ValEvaluationSumcheck, ValEvaluationSumcheckClaims, ValEvaluationVerifierState,
 };
 use crate::jolt::vm::ram_read_write_checking::RamReadWriteChecking;
 use crate::jolt::vm::JoltCommitments;
@@ -13,12 +13,8 @@ use crate::subprotocols::ra_virtual::RASumcheck;
 use crate::subprotocols::sumcheck::BatchableSumcheckInstance;
 use crate::{
     field::JoltField,
-    jolt::vm::ram::{RAMPreprocessing, RAMTwistProof, RafEvaluationProof, ReadWriteCheckingProof},
-    poly::{
-        eq_poly::EqPolynomial,
-        identity_poly::UnmapRamAddressPolynomial,
-        multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
-    },
+    jolt::vm::ram::{RAMPreprocessing, RAMTwistProof, RafEvaluationProof},
+    poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
 };
 use common::jolt_device::MemoryLayout;
@@ -31,21 +27,14 @@ impl<F: JoltField, ProofTranscript: Transcript> RafEvaluationProof<F, ProofTrans
         transcript: &mut ProofTranscript,
         memory_layout: &MemoryLayout,
     ) -> Result<Vec<F>, ProofVerifyError> {
-        const DEGREE: usize = 2;
+        let sumcheck_instance = RafEvaluationSumcheck::new_verifier(
+            self.raf_claim,
+            K.log_2(),
+            memory_layout.input_start,
+            self.ra_claim,
+        );
 
-        // Verify the sumcheck proof
-        let (sumcheck_claim, r_raf_sumcheck) =
-            self.sumcheck_proof
-                .verify(self.raf_claim, K.log_2(), DEGREE, transcript)?;
-
-        let unmap_eval = UnmapRamAddressPolynomial::new(K.log_2(), memory_layout.input_start)
-            .evaluate(&r_raf_sumcheck);
-
-        // Verify sumcheck_claim = unmap(r_raf_sumcheck) * ra(r_raf_sumcheck, r_cycle)
-        let expected_product = unmap_eval * self.ra_claim;
-        if expected_product != sumcheck_claim {
-            return Err(ProofVerifyError::InternalError);
-        }
+        let r_raf_sumcheck = sumcheck_instance.verify_single(&self.sumcheck_proof, transcript)?;
 
         Ok(r_raf_sumcheck)
     }
@@ -62,6 +51,21 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
             verifier_state: Some(HammingWeightVerifierState { log_K, d, z_powers }),
             cached_claims: Some(ra_claims),
             d,
+        }
+    }
+}
+
+impl<F: JoltField> RafEvaluationSumcheck<F> {
+    /// Create a new verifier instance
+    fn new_verifier(raf_claim: F, log_K: usize, start_address: u64, ra_claim: F) -> Self {
+        Self {
+            input_claim: raf_claim,
+            prover_state: None,
+            verifier_state: Some(RafEvaluationVerifierState {
+                log_K,
+                start_address,
+            }),
+            cached_claim: Some(ra_claim),
         }
     }
 }
@@ -190,7 +194,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             memory_layout: None,
         };
 
-        let r_booleanity = <ValEvaluationSumcheck<F> as BatchableSumcheckInstance<
+        let r_booleanity = <BooleanitySumcheck<F> as BatchableSumcheckInstance<
             F,
             ProofTranscript,
         >>::verify_single(
@@ -241,14 +245,8 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             d,
         );
 
-        let _r_hamming_weight = <ValEvaluationSumcheck<F> as BatchableSumcheckInstance<
-            F,
-            ProofTranscript,
-        >>::verify_single(
-            &sumcheck_instance,
-            &self.hamming_weight_proof.sumcheck_proof,
-            transcript,
-        )?;
+        let _r_hamming_weight = sumcheck_instance
+            .verify_single(&self.hamming_weight_proof.sumcheck_proof, transcript)?;
 
         let _r_address_raf =
             self.raf_evaluation_proof
@@ -266,52 +264,5 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         // TODO: Append to opening proof accumulator
 
         Ok(())
-    }
-}
-
-impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofTranscript> {
-    pub fn verify(
-        &self,
-        r: Vec<F>,
-        r_prime: Vec<F>,
-        transcript: &mut ProofTranscript,
-    ) -> (Vec<F>, Vec<F>) {
-        let K = r.len().pow2();
-        let T = r_prime.len().pow2();
-        let z: F = transcript.challenge_scalar();
-
-        let (sumcheck_claim, r_sumcheck) = self
-            .sumcheck_proof
-            .verify(
-                self.rv_claim + z * self.inc_claim,
-                T.log_2() + K.log_2(),
-                3,
-                transcript,
-            )
-            .unwrap();
-
-        // The high-order cycle variables are bound after the switch
-        let mut r_cycle = r_sumcheck[self.sumcheck_switch_index..T.log_2()].to_vec();
-        // First `sumcheck_switch_index` rounds bind cycle variables from low to high
-        r_cycle.extend(r_sumcheck[..self.sumcheck_switch_index].iter().rev());
-        // Final log(K) rounds bind address variables
-        let r_address = r_sumcheck[T.log_2()..].to_vec();
-
-        // eq(r', r_cycle)
-        let eq_eval_cycle = EqPolynomial::new(r_prime).evaluate(&r_cycle);
-        // eq(r, r_address)
-        let eq_eval_address = EqPolynomial::new(r).evaluate(&r_address);
-
-        assert_eq!(
-            eq_eval_cycle * self.ra_claim * self.val_claim
-                + z * eq_eval_address
-                    * eq_eval_cycle
-                    * self.ra_claim
-                    * (self.wv_claim - self.val_claim),
-            sumcheck_claim,
-            "Read/write-checking sumcheck failed"
-        );
-
-        (r_address, r_cycle)
     }
 }

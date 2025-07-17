@@ -21,7 +21,7 @@ use crate::utils::math::Math;
 use crate::utils::transcript::Transcript;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
-use rayon::iter::IntoParallelRefIterator;
+use rayon::prelude::*;
 use std::{
     fs::File,
     io::{Read, Write},
@@ -150,7 +150,7 @@ where
     ) -> (
         JoltProof<WORD_SIZE, F, PCS, ProofTranscript>,
         JoltDevice,
-        Option<crate::jolt::vm::ProverDebugInfo<F, ProofTranscript, PCS>>,
+        Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
     ) {
         icicle::icicle_init();
         let trace_length = trace.len();
@@ -296,7 +296,7 @@ where
         };
 
         #[cfg(test)]
-        let debug_info = Some(crate::jolt::vm::ProverDebugInfo {
+        let debug_info = Some(ProverDebugInfo {
             transcript,
             opening_accumulator,
             prover_setup: preprocessing.generators.clone(),

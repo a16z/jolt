@@ -14,7 +14,7 @@ use crate::{
         range_mask_polynomial::RangeMaskPolynomial,
     },
     subprotocols::{
-        sparse_dense_shout::ExpandingTable,
+        shout::sparse_dense::ExpandingTable,
         sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof},
     },
     utils::{

@@ -11,7 +11,7 @@ use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::r1cs::builder::Constraint;
 use crate::subprotocols::sumcheck::{
-    BatchableSumcheckInstance, BatchedSumcheck, Bindable, SumcheckInstanceProof,
+    BatchableSumcheckInstance, BatchedSumcheck, SumcheckInstanceProof,
 };
 use crate::utils::mul_0_optimized;
 use crate::utils::small_value::svo_helpers::process_svo_sumcheck_rounds;

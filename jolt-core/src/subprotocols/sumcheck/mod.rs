@@ -2,7 +2,6 @@
 mod prover;
 
 use crate::field::JoltField;
-use crate::poly::multilinear_polynomial::{PolynomialBinding, PolynomialEvaluation};
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 #[cfg(feature = "prover")]
 use crate::poly::split_eq_poly::SplitEqPolynomial;

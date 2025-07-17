@@ -8,9 +8,7 @@ use crate::jolt::vm::instruction_lookups::{
 use crate::{
     field::JoltField,
     jolt::{
-        instruction::LookupQuery,
-        lookup_table::LookupTables,
-        vm::{JoltCommitments, JoltProverPreprocessing},
+        instruction::LookupQuery, lookup_table::LookupTables, vm::JoltProverPreprocessing,
         witness::CommittedPolynomials,
     },
     poly::{

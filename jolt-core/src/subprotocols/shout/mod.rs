@@ -1,13 +1,13 @@
+mod lookup_bits;
 #[cfg(feature = "prover")]
 pub mod prover;
 #[cfg(feature = "prover")]
 pub mod sparse_dense;
-mod lookup_bits;
 pub use lookup_bits::*;
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 #[cfg(feature = "prover")]
 pub use prover::*;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 use strum::IntoEnumIterator;
 
 use crate::jolt::lookup_table::LookupTables;
@@ -15,8 +15,15 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::identity_poly::{Endianness, IdentityPolynomial, OperandPolynomial, OperandSide};
 use crate::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding, PolynomialEvaluation};
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
-use crate::subprotocols::sumcheck::{BatchableSumcheckInstance, BatchedSumcheck, SumcheckInstanceProof};
-use crate::{field::JoltField, into_optimal_iter, join_if_rayon, optimal_chunk_by, optimal_iter, optimal_iter_mut, optimal_reduce, poly::multilinear_polynomial::MultilinearPolynomial, utils::{errors::ProofVerifyError, math::Math, transcript::Transcript}};
+use crate::subprotocols::sumcheck::{
+    BatchableSumcheckInstance, BatchedSumcheck, SumcheckInstanceProof,
+};
+use crate::{
+    field::JoltField,
+    into_optimal_iter, join_if_rayon, optimal_chunk_by, optimal_iter, optimal_reduce,
+    poly::multilinear_polynomial::MultilinearPolynomial,
+    utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
+};
 
 pub struct ShoutProof<F: JoltField, ProofTranscript: Transcript> {
     sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
@@ -327,40 +334,41 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                 into_optimal_iter!(0..B.len() / 2)
                     .map(|k_prime| {
                         let B_eval = B.E_out_current()[k_prime];
-                        let inner_sum = optimal_reduce!(optimal_iter!(G[k_prime << m..(k_prime + 1) << m])
-                            .enumerate()
-                            .map(|(k, &G_k)| {
-                                // Since we're binding variables from low to high, k_m is the high bit
-                                let k_m = k >> (m - 1);
-                                // We then index into F using (k_{m-1}, ..., k_1)
-                                let F_k = F[k % (1 << (m - 1))];
-                                // G_times_F := G[k] * F[k_1, ...., k_{m-1}]
-                                let G_times_F = G_k * F_k;
-                                // For c \in {0, infty} compute:
-                                //    G[k] * (F[k_1, ...., k_{m-1}, c]^2 - F[k_1, ...., k_{m-1}, c])
-                                //    = G_times_F * (eq(k_m, c)^2 * F[k_1, ...., k_{m-1}] - eq(k_m, c))
-                                //
-                                // We want the following values, for k_m \in {0, 1}
-                                //   - s(0) = G_times_F * (eq(k_m, 0)^2 * F_k - eq(k_m, 0))
-                                //   - s(infty) = G_times_F * eq(k_m, infty)^2 * F_k
-                                // But note that
-                                //   - eq(0, 0)^2 = eq(0, 0) = 1
-                                //   - eq(1, 0)^2 = eq(1, 0) = 0
-                                //   - eq(0, infty)^2 = eq(1, infty)^2 = 1
-                                // So we can instead compute
-                                //   - s(0) = k_m == 0 ? G_times_F * (F_k - 1) : 0
-                                //   - s(1) = G_times_F * F_k
-                                let eval_0 = if k_m == 0 {
-                                    G_times_F * (F_k - F::one())
-                                } else {
-                                    F::zero()
-                                };
-                                let eval_infty = G_times_F * F_k;
-                                [eval_0, eval_infty]
-                            }),
-                                || [F::zero(); DEGREE - 1],
-                                |running, new| [running[0] + new[0], running[1] + new[1]]
-                            );
+                        let inner_sum = optimal_reduce!(
+                            optimal_iter!(G[k_prime << m..(k_prime + 1) << m])
+                                .enumerate()
+                                .map(|(k, &G_k)| {
+                                    // Since we're binding variables from low to high, k_m is the high bit
+                                    let k_m = k >> (m - 1);
+                                    // We then index into F using (k_{m-1}, ..., k_1)
+                                    let F_k = F[k % (1 << (m - 1))];
+                                    // G_times_F := G[k] * F[k_1, ...., k_{m-1}]
+                                    let G_times_F = G_k * F_k;
+                                    // For c \in {0, infty} compute:
+                                    //    G[k] * (F[k_1, ...., k_{m-1}, c]^2 - F[k_1, ...., k_{m-1}, c])
+                                    //    = G_times_F * (eq(k_m, c)^2 * F[k_1, ...., k_{m-1}] - eq(k_m, c))
+                                    //
+                                    // We want the following values, for k_m \in {0, 1}
+                                    //   - s(0) = G_times_F * (eq(k_m, 0)^2 * F_k - eq(k_m, 0))
+                                    //   - s(infty) = G_times_F * eq(k_m, infty)^2 * F_k
+                                    // But note that
+                                    //   - eq(0, 0)^2 = eq(0, 0) = 1
+                                    //   - eq(1, 0)^2 = eq(1, 0) = 0
+                                    //   - eq(0, infty)^2 = eq(1, infty)^2 = 1
+                                    // So we can instead compute
+                                    //   - s(0) = k_m == 0 ? G_times_F * (F_k - 1) : 0
+                                    //   - s(1) = G_times_F * F_k
+                                    let eval_0 = if k_m == 0 {
+                                        G_times_F * (F_k - F::one())
+                                    } else {
+                                        F::zero()
+                                    };
+                                    let eval_infty = G_times_F * F_k;
+                                    [eval_0, eval_infty]
+                                }),
+                            || [F::zero(); DEGREE - 1],
+                            |running, new| [running[0] + new[0], running[1] + new[1]]
+                        );
 
                         [B_eval * inner_sum[0], B_eval * inner_sum[1]]
                     })
@@ -375,64 +383,67 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                 let num_x_in_bits = B.E_in_current_len().log_2();
                 let x_bitmask = (1 << num_x_in_bits) - 1;
 
-                optimal_reduce!(optimal_chunk_by!((0..B.len() / 2)
-                    .collect::<Vec<_>>(), |k1, k2| k1 >> num_x_in_bits == k2 >> num_x_in_bits)
+                optimal_reduce!(
+                    optimal_chunk_by!((0..B.len() / 2).collect::<Vec<_>>(), |k1, k2| k1
+                        >> num_x_in_bits
+                        == k2 >> num_x_in_bits)
                     .map(|chunk| {
                         let x_out = chunk[0] >> num_x_in_bits;
                         let B_E_out_eval = B.E_out_current()[x_out];
 
-                        let chunk_evals = optimal_reduce!(optimal_iter!(chunk)
-                            .map(|k_prime| {
+                        let chunk_evals = optimal_reduce!(
+                            optimal_iter!(chunk).map(|k_prime| {
                                 let x_in = k_prime & x_bitmask;
                                 let B_E_in_eval = B.E_in_current()[x_in];
 
-                                let inner_sum = optimal_reduce!(optimal_iter!(G[k_prime << m..(k_prime + 1) << m])
-                                    .enumerate()
-                                    .map(|(k, &G_k)| {
-                                        // Since we're binding variables from low to high, k_m is the high bit
-                                        let k_m = k >> (m - 1);
-                                        // We then index into F using (k_{m-1}, ..., k_1)
-                                        let F_k = F[k % (1 << (m - 1))];
-                                        // G_times_F := G[k] * F[k_1, ...., k_{m-1}]
-                                        let G_times_F = G_k * F_k;
-                                        // For c \in {0, infty} compute:
-                                        //    G[k] * (F[k_1, ...., k_{m-1}, c]^2 - F[k_1, ...., k_{m-1}, c])
-                                        //    = G_times_F * (eq(k_m, c)^2 * F[k_1, ...., k_{m-1}] - eq(k_m, c))
-                                        //
-                                        // We want the following values, for k_m \in {0, 1}
-                                        //   - s(0) = G_times_F * (eq(k_m, 0)^2 * F_k - eq(k_m, 0))
-                                        //   - s(infty) = G_times_F * eq(k_m, infty)^2 * F_k
-                                        // But note that all of the above values of eq(., .) and
-                                        // eq(., .)^2 are either 0 or 1. Namely:
-                                        //   - eq(0, 0)^2 = eq(0, 0) = 1
-                                        //   - eq(1, 0)^2 = eq(1, 0) = 0
-                                        //   - eq(0, infty)^2 = eq(1, infty)^2 = 1
-                                        // So we can instead compute
-                                        //   - s(0) = k_m == 0 ? G_times_F * (F_k - 1) : 0
-                                        //   - s(1) = G_times_F * F_k
-                                        let eval_0 = if k_m == 0 {
-                                            G_times_F * (F_k - F::one())
-                                        } else {
-                                            F::zero()
-                                        };
-                                        let eval_infty = G_times_F * F_k;
-                                        [eval_0, eval_infty]
-                                    }),
-                                        || [F::zero(); DEGREE - 1],
-                                        |running, new| [running[0] + new[0], running[1] + new[1]],
-                                    );
+                                let inner_sum = optimal_reduce!(
+                                    optimal_iter!(G[k_prime << m..(k_prime + 1) << m])
+                                        .enumerate()
+                                        .map(|(k, &G_k)| {
+                                            // Since we're binding variables from low to high, k_m is the high bit
+                                            let k_m = k >> (m - 1);
+                                            // We then index into F using (k_{m-1}, ..., k_1)
+                                            let F_k = F[k % (1 << (m - 1))];
+                                            // G_times_F := G[k] * F[k_1, ...., k_{m-1}]
+                                            let G_times_F = G_k * F_k;
+                                            // For c \in {0, infty} compute:
+                                            //    G[k] * (F[k_1, ...., k_{m-1}, c]^2 - F[k_1, ...., k_{m-1}, c])
+                                            //    = G_times_F * (eq(k_m, c)^2 * F[k_1, ...., k_{m-1}] - eq(k_m, c))
+                                            //
+                                            // We want the following values, for k_m \in {0, 1}
+                                            //   - s(0) = G_times_F * (eq(k_m, 0)^2 * F_k - eq(k_m, 0))
+                                            //   - s(infty) = G_times_F * eq(k_m, infty)^2 * F_k
+                                            // But note that all of the above values of eq(., .) and
+                                            // eq(., .)^2 are either 0 or 1. Namely:
+                                            //   - eq(0, 0)^2 = eq(0, 0) = 1
+                                            //   - eq(1, 0)^2 = eq(1, 0) = 0
+                                            //   - eq(0, infty)^2 = eq(1, infty)^2 = 1
+                                            // So we can instead compute
+                                            //   - s(0) = k_m == 0 ? G_times_F * (F_k - 1) : 0
+                                            //   - s(1) = G_times_F * F_k
+                                            let eval_0 = if k_m == 0 {
+                                                G_times_F * (F_k - F::one())
+                                            } else {
+                                                F::zero()
+                                            };
+                                            let eval_infty = G_times_F * F_k;
+                                            [eval_0, eval_infty]
+                                        }),
+                                    || [F::zero(); DEGREE - 1],
+                                    |running, new| [running[0] + new[0], running[1] + new[1]]
+                                );
 
                                 [B_E_in_eval * inner_sum[0], B_E_in_eval * inner_sum[1]]
                             }),
-                                || [F::zero(); DEGREE - 1],
-                                |running, new| [running[0] + new[0], running[1] + new[1]]
-                            );
+                            || [F::zero(); DEGREE - 1],
+                            |running, new| [running[0] + new[0], running[1] + new[1]]
+                        );
 
                         [B_E_out_eval * chunk_evals[0], B_E_out_eval * chunk_evals[1]]
                     }),
-                        || [F::zero(); DEGREE - 1],
-                        |running, new| [running[0] + new[0], running[1] + new[1]]
-                    )
+                    || [F::zero(); DEGREE - 1],
+                    |running, new| [running[0] + new[0], running[1] + new[1]]
+                )
             };
 
             B.sumcheck_evals_from_quadratic_coeffs(
@@ -440,12 +451,12 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                 quadratic_coeffs[1],
                 previous_claim,
             )
-                .to_vec()
+            .to_vec()
         } else {
             // Last log(T) rounds of sumcheck
 
-            let mut univariate_poly_evals: [F; 3] = optimal_reduce!(into_optimal_iter!(0..D.len() / 2)
-                .map(|i| {
+            let mut univariate_poly_evals: [F; 3] = optimal_reduce!(
+                into_optimal_iter!(0..D.len() / 2).map(|i| {
                     let D_evals = D.sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
                     let H_evals =
                         H.as_ref()
@@ -458,15 +469,15 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                         D_evals[2] * (H_evals[2] * H_evals[2] - H_evals[2]),
                     ]
                 }),
-                    || [F::zero(); 3],
-                    |running, new| {
-                        [
-                            running[0] + new[0],
-                            running[1] + new[1],
-                            running[2] + new[2],
-                        ]
-                    },
-                );
+                || [F::zero(); 3],
+                |running, new| {
+                    [
+                        running[0] + new[0],
+                        running[1] + new[1],
+                        running[2] + new[2],
+                    ]
+                }
+            );
 
             let eq_r_r = B.current_scalar;
             univariate_poly_evals = [

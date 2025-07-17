@@ -278,8 +278,11 @@ mod quark_grand_product_tests {
                 Zeromorph<Bn254, KeccakTranscript>,
                 KeccakTranscript,
             >>::construct_with_config((v, 2), config);
-        let mut prover_accumulator: ProverOpeningAccumulator<Fr, KeccakTranscript> =
-            ProverOpeningAccumulator::new();
+        let mut prover_accumulator: ProverOpeningAccumulator<
+            Fr,
+            Zeromorph<_, _>,
+            KeccakTranscript,
+        > = ProverOpeningAccumulator::new();
         let proof: BatchedGrandProductProof<Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript> =
             hybrid_grand_product
                 .prove_grand_product(
