@@ -72,7 +72,7 @@ impl Blake2b {
         }
 
         // Process complete blocks directly from input
-        // Using 2*BLOCK_SIZE, we do not need to compress at this step for dd = 1
+        // We should not compress if input.len() = BLOCK_SIZE
         while offset + BLOCK_SIZE < input.len() {
             self.counter += BLOCK_SIZE as u64;
             self.compress_slice(&input[offset..offset + BLOCK_SIZE]);
