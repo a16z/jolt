@@ -211,40 +211,52 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     }
 
     /// Compute the sumcheck quadratic evaluations (i.e., the evaluations at {0, 2}) of a
-    /// polynomial s(X) = l(X) * q(X), where both l(X) and q(X) are linear polynomials.
-    /// Given:
+    /// polynomial s(X) = l(X) * q(X), where l(X) is the current (linear) eq polynomial and
+    /// q(X) is a linear polynomial, given the following:
     /// - c, the constant term of q
-    /// - d, the linear coefficient of q  
+    /// - the previous round claim, s(0) + s(1)
     /// 
-    /// Returns evaluations at {0, 2}. With these two evaluations and the constraint 
-    /// s(0) + s(1) = previous_claim from sumcheck, the quadratic polynomial is fully determined.
+    /// We derive the linear coefficient d of q(X) from the constraint s(0) + s(1) = previous_claim
     pub fn sumcheck_quadratic_evals_from_linear(
         &self,
         q_constant: F,
-        q_linear_coeff: F,
+        previous_claim: F,
     ) -> [F; 2] {
         // We want to compute the evaluations of the quadratic polynomial s(X) = l(X) * q(X), where
         // both l and q are linear, at the points {0, 2}.
         //
         // We have:
         // - the linear polynomial l(X) = a + bX (current eq polynomial)
-        // - the linear polynomial q(X) = c + dX
+        // - the linear polynomial q(X) = c + dX where c is given
         // - the previous round's claim s(0) + s(1) = previous_claim
+        //
+        // From s(0) + s(1) = l(0)*q(0) + l(1)*q(1) = a*c + (a+b)*(c+d) = previous_claim
+        // We can solve for d
         
         // Evaluations of the linear polynomial l(X)
         let eq_eval_1 = self.current_scalar * self.w[self.current_index - 1];
         let eq_eval_0 = self.current_scalar - eq_eval_1;
-        let eq_m = eq_eval_1 - eq_eval_0; // This is b, the slope
+        
+        // s(0) = l(0) * q(0) = eq_eval_0 * q_constant
+        let s_0 = eq_eval_0 * q_constant;
+        
+        // From s(0) + s(1) = previous_claim, we get s(1) = previous_claim - s(0)
+        let s_1 = previous_claim - s_0;
+        
+        // Since s(1) = l(1) * q(1) = eq_eval_1 * (c + d), we can solve for d
+        // s(1) = eq_eval_1 * (q_constant + d)
+        // d = s(1) / eq_eval_1 - q_constant
+        let q_linear_coeff = s_1 / eq_eval_1 - q_constant;
+        
+        // Now compute the evaluations at 0 and 2
+        let eq_m = eq_eval_1 - eq_eval_0; // This is b, the slope of l(X)
         let eq_eval_2 = eq_eval_1 + eq_m; // l(2) = l(1) + b
         
-        // Evaluations of the linear polynomial q(X)
-        let q_eval_0 = q_constant;
         let q_eval_2 = q_constant + q_linear_coeff + q_linear_coeff; // q(2) = c + 2d
         
-        // Evaluations of the quadratic polynomial s(X) = l(X) * q(X)
         [
-            eq_eval_0 * q_eval_0, // s(0)
-            eq_eval_2 * q_eval_2, // s(2)
+            s_0,                      // s(0) = l(0) * q(0)
+            eq_eval_2 * q_eval_2,     // s(2) = l(2) * q(2)
         ]
     }
 

@@ -93,6 +93,7 @@ impl<F: JoltField> OneHotSumcheckState<F> {
 pub struct OneHotPolynomialProverOpening<F: JoltField> {
     pub polynomial: Option<OneHotPolynomial<F>>,
     pub eq_state: Arc<Mutex<OneHotSumcheckState<F>>>,
+    pub previous_claim: F,
 }
 
 impl<F: JoltField> OneHotPolynomialProverOpening<F> {
@@ -101,6 +102,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
         Self {
             polynomial: None,
             eq_state,
+            previous_claim: F::zero(),
         }
     }
 
@@ -155,8 +157,8 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             let F = &shared_eq.F;
             let G = polynomial.G.as_ref().unwrap();
 
-            // Compute quadratic coefficients from linear polynomials
-            let quadratic_coeffs: [F; 2] = (0..B.E_out_current_len() / 2)
+            // Compute constant coefficient of the quadratic polynomial
+            let quadratic_constant: F = (0..B.E_out_current_len() / 2)
                 .into_par_iter()
                 .map(|k_prime| {
                     let inner_sum = G
@@ -173,36 +175,22 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                             // G_times_F := G[k] * F[k_1, ...., k_{m-1}]
                             let G_times_F = G_k * F_k;
 
-                            // Compute linear coefficients for eq(k_m, X)
-                            let eq_constant = match k_m {
-                                0 => F::one(),  // eq(0, 0) = 1
+                            // Compute constant coefficient: eq(k_m, 0) * G_times_F
+                            match k_m {
+                                0 => G_times_F, // eq(0, 0) = 1
                                 1 => F::zero(), // eq(1, 0) = 0
                                 _ => unreachable!(),
-                            };
-
-                            let eq_linear = match k_m {
-                                0 => -F::one(), // eq(0, X) = 1 - X, so linear coeff is -1
-                                1 => F::one(),  // eq(1, X) = X, so linear coeff is 1
-                                _ => unreachable!(),
-                            };
-
-                            [G_times_F * eq_constant, G_times_F * eq_linear]
+                            }
                         })
-                        .reduce(
-                            || [F::zero(); 2],
-                            |running, new| [running[0] + new[0], running[1] + new[1]],
-                        );
+                        .sum::<F>();
 
                     inner_sum
                 })
-                .reduce(
-                    || [F::zero(); 2],
-                    |running, new| [running[0] + new[0], running[1] + new[1]],
-                );
+                .sum::<F>();
 
             // Use sumcheck_quadratic_evals_from_linear to get evaluations at {0, 2}
             let quadratic_evals =
-                B.sumcheck_quadratic_evals_from_linear(quadratic_coeffs[0], quadratic_coeffs[1]);
+                B.sumcheck_quadratic_evals_from_linear(quadratic_constant, self.previous_claim);
 
             quadratic_evals.to_vec()
         } else {
@@ -211,25 +199,20 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             let D = &shared_eq.D;
             let n = H.len() / 2;
 
-            // Compute quadratic coefficients from H and D
-            let quadratic_coeffs: [F; 2] = (0..n)
+            // Compute constant coefficient from H
+            let quadratic_constant: F = (0..n)
                 .into_par_iter()
                 .map(|j| {
                     let H_evals = H.sumcheck_evals(j, 2, BindingOrder::HighToLow);
                     // H is linear: H(X) = H[j] + (H[j+n] - H[j]) * X
-                    let h_constant = H_evals[0];
-                    let h_linear = H_evals[1] - H_evals[0]; // This is the slope
-
-                    [h_constant, h_linear]
+                    // We only need the constant term H(0) = H[j]
+                    H_evals[0]
                 })
-                .reduce(
-                    || [F::zero(); 2],
-                    |running, new| [running[0] + new[0], running[1] + new[1]],
-                );
+                .sum::<F>();
 
-            // Use sumcheck_quadratic_evals_from_linear on D with H's coefficients
+            // Use sumcheck_quadratic_evals_from_linear on D with H's constant coefficient
             let quadratic_evals =
-                D.sumcheck_quadratic_evals_from_linear(quadratic_coeffs[0], quadratic_coeffs[1]);
+                D.sumcheck_quadratic_evals_from_linear(quadratic_constant, self.previous_claim);
 
             let eq_r_address_claim = B.current_scalar;
             vec![
@@ -284,6 +267,10 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
 
     pub fn final_sumcheck_claim(&self) -> F {
         self.polynomial.as_ref().unwrap().H.as_ref().unwrap().Z[0]
+    }
+
+    pub fn set_previous_claim(&mut self, claim: F) {
+        self.previous_claim = claim;
     }
 }
 
