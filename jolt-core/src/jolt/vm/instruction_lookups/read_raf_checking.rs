@@ -1,4 +1,3 @@
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
 use strum::{EnumCount, IntoEnumIterator};
@@ -25,15 +24,15 @@ use crate::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         opening_proof::{
-            OpeningPoint, Openings, OpeningsKeys, ProverOpeningAccumulator,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            OpeningPoint, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
+            BIG_ENDIAN,
         },
         prefix_suffix::{Prefix, PrefixRegistry, PrefixSuffixDecomposition},
     },
     r1cs::inputs::JoltR1CSInputs,
     subprotocols::{
         sparse_dense_shout::{compute_prefix_suffix_prover_message, ExpandingTable, LookupBits},
-        sumcheck::{BatchableSumcheckInstance, CacheSumcheckOpenings, SumcheckInstanceProof},
+        sumcheck::{BatchableSumcheckInstance, CacheSumcheckOpenings},
     },
     utils::{
         math::Math,
@@ -631,69 +630,5 @@ impl<F: JoltField> ReadRafProverState<F> {
                 }
             });
         self.combined_val_polynomial = Some(MultilinearPolynomial::from(combined_val_poly));
-    }
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct ReadCheckingProof<F, ProofTranscript>
-where
-    F: JoltField,
-    ProofTranscript: Transcript,
-{
-    pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    rv_claim: F,
-    right_operand_claim: F,
-    left_operand_claim: F,
-    ra_claims: [F; D],
-    flag_claims: Vec<F>,
-    raf_flag_claim: F,
-}
-
-impl<F: JoltField, T: Transcript> ReadCheckingProof<F, T> {
-    pub fn new(sumcheck_proof: SumcheckInstanceProof<F, T>, openings: &Openings<F>) -> Self {
-        Self {
-            sumcheck_proof,
-            rv_claim: openings[&OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput)].1,
-            right_operand_claim: openings
-                [&OpeningsKeys::SpartanZ(JoltR1CSInputs::RightLookupOperand)]
-                .1,
-            left_operand_claim: openings
-                [&OpeningsKeys::SpartanZ(JoltR1CSInputs::LeftLookupOperand)]
-                .1,
-            ra_claims: (0..D)
-                .map(|i| openings[&OpeningsKeys::InstructionRa(i)].1)
-                .collect::<Vec<F>>()
-                .try_into()
-                .unwrap(),
-            flag_claims: (0..LookupTables::<WORD_SIZE>::COUNT)
-                .map(|i| openings[&OpeningsKeys::LookupTableFlag(i)].1)
-                .collect(),
-            raf_flag_claim: openings[&OpeningsKeys::InstructionRafFlag].1,
-        }
-    }
-
-    pub fn populate_openings(&self, openings: &mut Openings<F>) {
-        openings.insert(
-            OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput),
-            (vec![].into(), self.rv_claim),
-        );
-        openings.insert(
-            OpeningsKeys::SpartanZ(JoltR1CSInputs::RightLookupOperand),
-            (vec![].into(), self.right_operand_claim),
-        );
-        openings.insert(
-            OpeningsKeys::SpartanZ(JoltR1CSInputs::LeftLookupOperand),
-            (vec![].into(), self.left_operand_claim),
-        );
-        for (i, claim) in self.ra_claims.iter().enumerate() {
-            openings.insert(OpeningsKeys::InstructionRa(i), (vec![].into(), *claim));
-        }
-        for (i, claim) in self.flag_claims.iter().enumerate() {
-            openings.insert(OpeningsKeys::LookupTableFlag(i), (vec![].into(), *claim));
-        }
-        openings.insert(
-            OpeningsKeys::InstructionRafFlag,
-            (vec![].into(), self.raf_flag_claim),
-        );
     }
 }

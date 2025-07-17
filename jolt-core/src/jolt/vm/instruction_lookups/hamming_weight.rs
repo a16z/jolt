@@ -1,6 +1,5 @@
 use std::{cell::RefCell, rc::Rc};
 
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 
 use super::{D, LOG_K_CHUNK};
@@ -12,14 +11,12 @@ use crate::{
         commitment::commitment_scheme::CommitmentScheme,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningPoint, Openings, OpeningsKeys, ProverOpeningAccumulator,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            OpeningPoint, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
+            BIG_ENDIAN,
         },
     },
     r1cs::inputs::JoltR1CSInputs,
-    subprotocols::sumcheck::{
-        BatchableSumcheckInstance, CacheSumcheckOpenings, SumcheckInstanceProof,
-    },
+    subprotocols::sumcheck::{BatchableSumcheckInstance, CacheSumcheckOpenings},
     utils::transcript::Transcript,
 };
 
@@ -203,36 +200,4 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> CacheSumcheckOpenings<F, PC
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS>
     for HammingWeightSumcheck<F>
 {
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct HammingWeightProof<F, ProofTranscript>
-where
-    F: JoltField,
-    ProofTranscript: Transcript,
-{
-    pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    ra_claims: [F; D],
-}
-
-impl<F: JoltField, T: Transcript> HammingWeightProof<F, T> {
-    pub fn new(sumcheck_proof: SumcheckInstanceProof<F, T>, openings: &Openings<F>) -> Self {
-        Self {
-            sumcheck_proof,
-            ra_claims: (0..D)
-                .map(|i| openings[&OpeningsKeys::InstructionHammingRa(i)].1)
-                .collect::<Vec<F>>()
-                .try_into()
-                .unwrap(),
-        }
-    }
-
-    pub fn populate_openings(&self, openings: &mut Openings<F>) {
-        for (i, claim) in self.ra_claims.iter().enumerate() {
-            openings.insert(
-                OpeningsKeys::InstructionHammingRa(i),
-                (vec![].into(), *claim),
-            );
-        }
-    }
 }
