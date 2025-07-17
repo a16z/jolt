@@ -302,12 +302,13 @@ where
 
 pub mod bytecode;
 pub mod instruction_lookups;
+
 pub mod output_check;
 #[cfg(feature = "prover")]
 mod prover;
 pub mod ram;
 pub mod registers;
-pub mod registers_read_write_checking;
 pub mod rv32im_vm;
+
 #[cfg(feature = "prover")]
 pub use prover::*;

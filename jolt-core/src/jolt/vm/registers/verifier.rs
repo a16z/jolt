@@ -1,8 +1,8 @@
+use crate::jolt::vm::registers::RegistersReadWriteChecking;
 use crate::jolt::vm::registers::{
     RegistersTwistProof, ValEvaluationSumcheck, ValEvaluationSumcheckClaims,
     ValEvaluationVerifierState,
 };
-use crate::jolt::vm::registers_read_write_checking::RegistersReadWriteChecking;
 use crate::jolt::vm::JoltCommitments;
 use crate::jolt::witness::CommittedPolynomials;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;

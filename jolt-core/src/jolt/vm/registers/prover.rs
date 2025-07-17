@@ -5,7 +5,7 @@ use crate::jolt::vm::registers::{
 use crate::{
     field::JoltField,
     jolt::{
-        vm::{registers_read_write_checking::RegistersReadWriteChecking, JoltProverPreprocessing},
+        vm::{registers::RegistersReadWriteChecking, JoltProverPreprocessing},
         witness::CommittedPolynomials,
     },
     poly::{

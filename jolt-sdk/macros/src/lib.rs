@@ -551,7 +551,7 @@ impl MacroBuilder {
                 JoltVerifier,
                 ProofTranscript,
                 RV32IMJoltVM,
-                RV32IJoltProof,
+                RV32IMJoltProof,
                 MemoryConfig,
                 MemoryLayout,
                 tracer,
