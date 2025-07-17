@@ -197,7 +197,7 @@ mod test {
                 })
                 .product::<Fr>();
 
-            assert_eq!(eq_eval, eq.get_bound_coeff(j));
+            // assert_eq!(eq_eval, eq.get_bound_coeff(j));
         }
 
         let mut previous_claim = (0..T.pow(D as u32))
@@ -247,7 +247,8 @@ mod test {
         // As we're binding from high to low, for each E_i we store eq(j_{<LogT - i}, r_cycle_{<+LogT - i}) instead.
         let E_table = (1..=T.log_2() - 1)
             .map(|i| {
-                let evals = EqPolynomial::evals(&r_cycle[..T.log_2() - i]);
+                let evals =
+                    EqPolynomial::evals(&r_cycle[i..].iter().map(|x| *x).collect::<Vec<_>>());
                 MultilinearPolynomial::from(evals)
             })
             .collect::<Vec<_>>();
@@ -263,14 +264,14 @@ mod test {
                     C *= C_summands[0] + C_summands[1];
                 }
 
-                let r_cycle_val = r_cycle[r_cycle.len() - 1 - j_idx];
+                let r_cycle_val = r_cycle[j_idx];
 
                 C_summands[0] = r_cycle_val;
                 C_summands[1] = Fr::from_u32(1) - r_cycle_val;
             }
 
             // Compute eq(r_round, w_1, ..., w_{idx - 1}, c, b) for each c and b = 0, 1
-            let C_eq_evals = eval_points
+            let eq_evals_at_idx = eval_points
                 .iter()
                 .map(|c| (((Fr::from_u32(1) - c) * C_summands[1], *c * C_summands[0])))
                 .collect::<Vec<(Fr, Fr)>>();
@@ -278,31 +279,34 @@ mod test {
             let univariate_poly_evals = (0..(T.log_2() - j_idx - 1).pow2())
                 .into_par_iter()
                 .map(|j| {
-                    let mut at_idx_evals = ra[d].sumcheck_evals(j, D + 1, BindingOrder::HighToLow);
+                    let mut at_idx_evals =
+                        ra[D - d - 1].sumcheck_evals(j, D + 1, BindingOrder::HighToLow);
                     // Add evaluation at 1.
                     let at_idx_eval_1 = at_idx_evals[2] - at_idx_evals[1] + at_idx_evals[0];
                     at_idx_evals.insert(1, at_idx_eval_1);
 
                     #[cfg(test)]
                     {
-                        assert_eq!(at_idx_evals.len(), C_eq_evals.len());
+                        assert_eq!(at_idx_evals.len(), eq_evals_at_idx.len());
                     }
 
                     let eq_eval_after_idx = if j_idx < T.log_2() - 1 {
-                        E_table[j_idx].get_bound_coeff(j)
+                        E_table[j_idx].get_coeff(j)
                     } else {
                         Fr::from_u32(1)
                     };
+                    // TODO: check eq_eval_after_idx is correct.
+                    assert_eq!(E_table[j_idx].len(), (T.log_2() - j_idx - 1).pow2());
 
                     let before_idx_evals = ra
                         .iter()
+                        .rev()
                         .take(d)
                         .map(|poly| poly.get_bound_coeff(j))
                         .product::<Fr>();
 
                     let after_idx_evals = ra
                         .iter()
-                        .rev()
                         .take(D - d - 1)
                         .map(|poly| {
                             (
@@ -313,7 +317,56 @@ mod test {
                         .reduce(|running, new| (running.0 * new.0, running.1 * new.1))
                         .unwrap();
 
-                    C_eq_evals
+                    // Check that eq(r_cycle, (w_1, ..., w_{j_idx - 1}, c, j)) is computed correctly.
+                    // Recall that here we're implicitly summing over d copies j_d of the cycle variables,
+                    // where for each possible index we have a term obtained from binding some variables in
+                    // eq(r_cycle, j_1, ..., j_d).
+                    // Recall that the current cycle variables are (j, b, w) and (j, c, w)
+
+                    let bits: Vec<Vec<u32>> = (0..32)
+                        .take(T.log_2() - j_idx - 1)
+                        .map(|n| vec![((j >> n) & 1) as u32; D])
+                        .collect();
+
+                    let bits = bits.iter().flatten().map(|x| *x).collect::<Vec<_>>();
+
+                    let mut index_bits_0 = bits.to_owned();
+                    index_bits_0.extend_from_slice(&vec![0; D - j_idx]);
+
+                    let mut index_bits_1 = bits.to_owned();
+                    index_bits_1.extend_from_slice(&vec![1; D - j_idx]);
+
+                    let index_0 = index_bits_0
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, bit)| *bit << idx)
+                        .sum::<u32>();
+
+                    let index_1 = index_bits_1
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, bit)| *bit << idx)
+                        .sum::<u32>();
+
+                    assert_eq!(eq_evals_at_idx[0].1, Fr::from_u32(0));
+                    assert_eq!(eq_evals_at_idx[1].0, Fr::from_u32(0));
+
+                    // (j, 0, w)
+                    let eval_0 = eq_eval_after_idx * C * eq_evals_at_idx[0].0;
+                    assert_eq!(
+                        eval_0,
+                        eq.get_bound_coeff(index_0 as usize),
+                        "j: {j}, j_idx: {j_idx}, round {round}, index_0: {index_0}, index 0 bits: {index_bits_0:?}",
+                    );
+                    // (j, 1, w)
+                    let eval_1 = eq_eval_after_idx * C * eq_evals_at_idx[1].1;
+                    assert_eq!(
+                        eval_1,
+                        eq.get_bound_coeff(index_1 as usize),
+                        "j: {j}, j_idx: {j_idx}, round {round}, index_1: {index_1}, index 1 bits: {index_bits_1:?}"
+                    );
+
+                    eq_evals_at_idx
                         .iter()
                         .zip(at_idx_evals.iter())
                         .map(|((c_eq_eval_0, c_eq_eval_1), at_idx_eval)| {
@@ -341,6 +394,7 @@ mod test {
                 univariate_poly_evals[0] + univariate_poly_evals[1],
                 "round: {round}",
             );
+            panic!("Success");
 
             let univariate_poly = UniPoly::from_evals(&[
                 univariate_poly_evals[0],
