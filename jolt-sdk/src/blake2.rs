@@ -1,6 +1,5 @@
 //! Blake2b hash function implementation optimized for Jolt zkVM.
 //!
-//! This module provides Blake2b-256 and Blake2b-512 hash functions.
 //! On the host, it calls the tracer implementation. On the guest (zkVM),
 //! it uses a custom RISC-V instruction for efficient proving.
 
@@ -9,6 +8,15 @@ const BLOCK_SIZE_U64: usize = BLOCK_SIZE / 8; // 16 words
 const STATE_SIZE: usize = 64; // Blake2b state size in bytes
 const STATE_SIZE_U64: usize = STATE_SIZE / 8; // 8 words
 const OUTPUT_SIZE: usize = 64;
+
+/// Blake2b initialization vector (IV)
+#[rustfmt::skip]
+const BLAKE2B_IV: [u64; 8] = [
+    0x6a09e667f3bcc908, 0xbb67ae8584caa73b,
+    0x3c6ef372fe94f82b, 0xa54ff53a5f1d36f1,
+    0x510e527fade682d1, 0x9b05688c2b3e6c1f,
+    0x1f83d9abfb41bd6b, 0x5be0cd19137e2179,
+];
 
 /// Blake2b hasher state for variable output lengths.
 pub struct Blake2b {
@@ -29,15 +37,11 @@ impl Blake2b {
         assert!(output_len > 0 && output_len <= 64, "Invalid output length");
         
         // Blake2b initialization vector
-        let mut h = [
-            0x6a09e667f3bcc908, 0xbb67ae8584caa73b, 0x3c6ef372fe94f82b, 0xa54ff53a5f1d36f1,
-            0x510e527fade682d1, 0x9b05688c2b3e6c1f, 0x1f83d9abfb41bd6b, 0x5be0cd19137e2179,
-        ];
+        let mut h = BLAKE2B_IV;
         
         // XOR h[0] with parameter block: 0x01010000 ^ (kk << 8) ^ nn
         // where kk=0 (unkeyed) and nn=output_len
         h[0] ^= 0x01010000 ^ (output_len as u64);
-        
         Self {
             h,
             buffer: [0; BLOCK_SIZE],
@@ -52,34 +56,44 @@ impl Blake2b {
         if input.len() == 0 {
             return;
         }
-        let mut offset = 0;
+        // If the buffer was filled to exactly BLOCK_SIZE in a previous update() call,
+        // we deferred compression to determine if it was the final block. Since we're
+        // receiving more data, we can now safely compress it as a non-final block.
+        if self.buffer_len == BLOCK_SIZE {
+            self.counter += BLOCK_SIZE as u64;
+            compression_caller(&mut self.h, &self.buffer, self.counter, false);
+            self.buffer_len = 0;
+        }
 
-        // If there's existing data in buffer, try to fill it
+
+        // Track the current position in the input data which is not compressed or stored to buffer
+        let mut offset = 0;
+        // If there is existing data in the buffer, fill it first before processing complete blocks
         if self.buffer_len > 0 {
             let space_available = BLOCK_SIZE - self.buffer_len;
             let bytes_to_copy = space_available.min(input.len());
-            
             self.buffer[self.buffer_len..self.buffer_len + bytes_to_copy]
                 .copy_from_slice(&input[..bytes_to_copy]);
             self.buffer_len += bytes_to_copy;
             offset = bytes_to_copy;
-
-            // If buffer is now full, process it
-            if self.buffer_len == BLOCK_SIZE {
-                self.counter += BLOCK_SIZE as u64;
-                self.compress_buffer();
-            }
         }
 
-        // Process complete blocks directly from input
-        // We should not compress if input.len() = BLOCK_SIZE
+        // If the buffer is now full and there is more input data to process,
+        // compress the buffer as a non-final block since we know more data follows
+        if self.buffer_len == BLOCK_SIZE && offset < input.len() {
+            self.counter += BLOCK_SIZE as u64;
+            compression_caller(&mut self.h, &self.buffer, self.counter, false);
+            self.buffer_len = 0;
+        }
+
+        // Process complete blocks directly from the input data for efficiency
         while offset + BLOCK_SIZE < input.len() {
             self.counter += BLOCK_SIZE as u64;
-            self.compress_slice(&input[offset..offset + BLOCK_SIZE]);
+            compression_caller(&mut self.h, &input[offset..offset + BLOCK_SIZE], self.counter, false);
             offset += BLOCK_SIZE;
         }
 
-        // Store any remaining bytes in buffer
+        // Store any remaining bytes in the buffer for processing later
         let remaining = input.len() - offset;
         if remaining > 0 {
             self.buffer[..remaining].copy_from_slice(&input[offset..]);
@@ -92,12 +106,10 @@ impl Blake2b {
     pub fn finalize(mut self) -> [u8; OUTPUT_SIZE] {
         // Add remaining bytes to counter
         self.counter += self.buffer_len as u64;
-        
         // Pad buffer with zeros
-        self.buffer[self.buffer_len..].fill(0);
-        
+        self.buffer[self.buffer_len..].fill(0);        
         // Process final block
-        self.compress_final_buffer();
+        compression_caller(&mut self.h, &self.buffer, self.counter, true);
         
         // Extract hash bytes
         let mut hash = [0u8; OUTPUT_SIZE];
@@ -115,69 +127,26 @@ impl Blake2b {
         hasher.update(input);
         hasher.finalize()
     }
-
-    /// Compresses the internal buffer.
-    fn compress_buffer(&mut self) {
-        // Convert buffer to u64 words
-        let mut message = [0u64; BLOCK_SIZE_U64];
-        for i in 0..BLOCK_SIZE_U64 {
-            message[i] = u64::from_le_bytes(
-                self.buffer[i * 8..(i + 1) * 8].try_into().unwrap()
-            );
-        }
-        
-        unsafe {
-            blake2b_compress(
-                self.h.as_mut_ptr(),
-                message.as_ptr(),
-                self.counter,
-                0, // not final
-            );
-        }
-        self.buffer_len = 0;
-    }
-
-    /// Compresses a slice directly.
-    fn compress_slice(&mut self, block: &[u8]) {
-        // Convert block to u64 words
-        let mut message = [0u64; BLOCK_SIZE_U64];
-        for i in 0..BLOCK_SIZE_U64 {
-            message[i] = u64::from_le_bytes(
-                block[i * 8..(i + 1) * 8].try_into().unwrap()
-            );
-        }
-        
-        unsafe {
-            blake2b_compress(
-                self.h.as_mut_ptr(),
-                message.as_ptr(),
-                self.counter,
-                0, // not final
-            );
-        }
-    }
-
-    /// Compresses the final buffer.
-    fn compress_final_buffer(&mut self) {
-        // Convert buffer to u64 words
-        let mut message = [0u64; BLOCK_SIZE_U64];
-        for i in 0..BLOCK_SIZE_U64 {
-            message[i] = u64::from_le_bytes(
-                self.buffer[i * 8..(i + 1) * 8].try_into().unwrap()
-            );
-        }
-        
-        unsafe {
-            blake2b_compress(
-                self.h.as_mut_ptr(),
-                message.as_ptr(),
-                self.counter,
-                1, // final
-            );
-        }
-    }
 }
 
+fn compression_caller(hash_state: &mut [u64; STATE_SIZE_U64], message_block: &[u8], counter: u64, is_final: bool) {
+    // Convert buffer to u64 words
+    let mut message = [0u64; BLOCK_SIZE_U64];
+    for i in 0..BLOCK_SIZE_U64 {
+        message[i] = u64::from_le_bytes(
+            message_block[i * 8..(i + 1) * 8].try_into().unwrap()
+        );
+    }
+    
+    unsafe {
+        blake2b_compress(
+            hash_state.as_mut_ptr(),
+            message.as_ptr(),
+            counter,
+            is_final as u64, // final
+        );
+    }
+}
 
 
 impl Default for Blake2b {
@@ -249,52 +218,370 @@ pub unsafe fn blake2b_compress(
 }
 
 #[cfg(test)]
-mod tests {
+mod digest_tests {
     use super::*;
     use hex_literal::hex;
 
     #[test]
-    fn test_blake2b_empty() {
-        let hash = Blake2b::digest(b"");
+    fn test_blake2b_digest() {
+        let test_cases: [(&'static str, &[u8], [u8; 64]); 5] = [
+            (
+                "empty",
+                b"",
+                hex!("786a02f742015903c6c6fd852552d272912f4740e15847618a86e217f71f5419d25e1031afee585313896444934eb04b903a685b1448b755d56f701afe9be2ce")
+            ),
+            (
+                "lt_128_bytes",
+                b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456",
+                hex!("2d95bd8dfdf8c4077f9bf54fe1a622e8bff985727a1f937f05c19608b93afbde331cc949d67cf29f3cbe081f2a853c13131b7f8f5d162810eec2e0001df9199f")
+            ),
+            (
+                "exactly_128_bytes",
+                b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                hex!("687222a8b7e18fe2351529741f9f377dbfe57ccc40ffacd7dad6457eb0f5434b308c25eeb85f2c434889877eae9cfcda86e2220bbedb5ddeeef1db1b76113997")
+            ),
+            (
+                "gt_128_bytes",
+                b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef456789abcdef0123456789abcdef0123456789abcdef",
+                hex!("eec6581ca2d51e7f8bff0cb9e0742b454bad4d28bb5078737a6bce318bb29902ca6c2fd4c412d9ed6bb2940692b39012b69ab81ca33cca4d292f3a095cd84007")
+            ),
+            (
+                "exactly_256_bytes",
+                b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                hex!("342949a83f4809037dcb71d5d527ef9c8060c20cda8a7e4414bcca487e9bc5726e0d4646b7f869b3f3decb362508ec4672c3314ad345d1c36377fc1f3020585c")
+            ),
+        ];
+        for (test_name, input, expected) in test_cases {
+            let hash = Blake2b::digest(input);
+            assert_eq!(
+                hash, expected,
+                "Blake2b test failed for case: {test_name} (input length: {} bytes)",
+                input.len()
+            );
+        }
+    }
+
+    #[test]
+    fn test_blake2b_against_reference_implementation() {        
+        for pattern_id in 0..4 {
+            let (pattern_name, pattern_fn): (&str, fn(usize) -> u8) = match pattern_id {
+                0 => ("sequential", |i| (i) as u8),
+                1 => ("zeros", |_| 0u8),
+                2 => ("ones", |_| 255u8),
+                3 => ("random_pattern", |i| ((i * 7 + 13) % 256) as u8),
+                _ => unreachable!(),
+            };
+            let mut input = [0u8; 1200];
+            for i in 0..1200 {
+                input[i] = pattern_fn(i);
+            }
+            for length in 0..=1200 {
+                use blake2::Digest as RefDigest;
+                assert_eq!(
+                    Blake2b::digest(&input),
+                    Into::<[u8; 64]>::into(blake2::Blake2b512::digest(&input)), 
+                    "Blake2b mismatch with {pattern_name} pattern at length {length}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_blake2b_variable_input_lengths() {        
+        const MAX_LENGTH: usize = 1200;
+        // Pre-generate a large input buffer with a repeating pattern
+        let input_buffer: [u8; MAX_LENGTH] = std::array::from_fn(|i| {
+            // Create a more complex pattern that changes based on position
+            let base = (i % 256) as u8;
+            let modifier = ((i / 256) * 17 + (i % 7) * 31) as u8;
+            base.wrapping_add(modifier)
+        });
+        
+        // Test every length from 0 to MAX_LENGTH
+        for length in 0..=MAX_LENGTH {
+            let input = &input_buffer[..length];
+            use blake2::Digest as RefDigest;
+            assert_eq!(
+                Blake2b::digest(input),
+                Into::<[u8; 64]>::into(blake2::Blake2b512::digest(input)),
+                "Blake2b mismatch at input length {length}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_blake2b_edge_case_lengths() {
+        use blake2::{Blake2b512, Digest as RefDigest};
+        
+        // Test specific edge case lengths that are important for Blake2b
+        let critical_lengths = [
+            0, 1, 2, 3, 4, 5, 6, 7, 8,           // Very small
+            15, 16, 17,                           // Around 16-byte boundary
+            31, 32, 33,                           // Around 32-byte boundary  
+            55, 56, 57,                           // Just before block size
+            63, 64, 65,                           // Around 64-byte boundary
+            111, 112, 113,                        // Random mid-range
+            127, 128, 129,                        // Around 128-byte boundary (2 blocks)
+            191, 192, 193,                        // 3 blocks
+            255, 256, 257,                        // Around 256-byte boundary
+            511, 512, 513,                        // Around 512-byte boundary
+            1023, 1024, 1025,                     // Around 1024-byte boundary
+            1199, 1200                            // At max length
+        ];
+        
+        const MAX_TEST_LENGTH: usize = 1200;
+        let input_buffer: [u8; MAX_TEST_LENGTH] = std::array::from_fn(|i| {
+            // Create a pseudo-random but deterministic pattern
+            ((i * 213 + 17) % 256) as u8
+        });
+        
+        for &length in &critical_lengths {
+            if length <= MAX_TEST_LENGTH {
+                let input = &input_buffer[..length];
+                assert_eq!(
+                    Blake2b::digest(input),
+                    Into::<[u8; 64]>::into(Blake2b512::digest(input)),
+                    "Blake2b mismatch at critical length {length}"
+                );
+            }
+        }
+    }
+}
+
+
+#[cfg(test)]
+mod streaming_tests {
+    use super::*;
+    use hex_literal::hex;
+
+    const OUTPUT_LEN: usize = 64;
+    #[test]
+    fn test_blake2b_streaming_digest() {
+        let test_cases: [(&'static str, &[u8], [u8; 64]); 5] = [
+            (
+                "empty",
+                b"",
+                hex!("786a02f742015903c6c6fd852552d272912f4740e15847618a86e217f71f5419d25e1031afee585313896444934eb04b903a685b1448b755d56f701afe9be2ce")
+            ),
+            (
+                "lt_128_bytes",
+                b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456",
+                hex!("2d95bd8dfdf8c4077f9bf54fe1a622e8bff985727a1f937f05c19608b93afbde331cc949d67cf29f3cbe081f2a853c13131b7f8f5d162810eec2e0001df9199f")
+            ),
+            (
+                "exactly_128_bytes",
+                b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                hex!("687222a8b7e18fe2351529741f9f377dbfe57ccc40ffacd7dad6457eb0f5434b308c25eeb85f2c434889877eae9cfcda86e2220bbedb5ddeeef1db1b76113997")
+            ),
+            (
+                "gt_128_bytes",
+                b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef456789abcdef0123456789abcdef0123456789abcdef",
+                hex!("eec6581ca2d51e7f8bff0cb9e0742b454bad4d28bb5078737a6bce318bb29902ca6c2fd4c412d9ed6bb2940692b39012b69ab81ca33cca4d292f3a095cd84007")
+            ),
+            (
+                "exactly_256_bytes",
+                b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                hex!("342949a83f4809037dcb71d5d527ef9c8060c20cda8a7e4414bcca487e9bc5726e0d4646b7f869b3f3decb362508ec4672c3314ad345d1c36377fc1f3020585c")
+            ),
+        ];
+
+        for (test_name, input, expected) in test_cases {
+            let mut hasher = Blake2b::new(OUTPUT_LEN);
+            hasher.update(input);
+            let hash = hasher.finalize();
+            assert_eq!(
+                hash, expected,
+                "Blake2b streaming test failed for case: {test_name} (input length: {} bytes)",
+                input.len()
+            );
+        }
+    }
+
+    #[test]
+    fn test_blake2b_streaming_against_reference() {
+        for pattern_id in 0..4 {
+            let (pattern_name, pattern_fn): (&str, fn(usize) -> u8) = match pattern_id {
+                0 => ("sequential", |i| i as u8),
+                1 => ("zeros", |_| 0u8),
+                2 => ("ones", |_| 255u8),
+                3 => ("random_pattern", |i| ((i * 7 + 13) % 256) as u8),
+                _ => unreachable!(),
+            };
+
+            let mut input = [0u8; 1200];
+            for i in 0..1200 {
+                input[i] = pattern_fn(i);
+            }
+
+            for length in 0..=1200 {
+                let test_input = &input[..length];
+                let mut hasher = Blake2b::new(OUTPUT_LEN);
+                hasher.update(test_input);
+                
+                use blake2::Digest as RefDigest;                
+                assert_eq!(
+                    hasher.finalize(),
+                    Into::<[u8; 64]>::into(blake2::Blake2b512::digest(test_input)),
+                    "Blake2b streaming mismatch with {pattern_name} pattern at length {length}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_blake2b_streaming_variable_lengths() {
+        const MAX_LENGTH: usize = 1200;
+        
+        let input_buffer: [u8; MAX_LENGTH] = std::array::from_fn(|i| {
+            let base = (i % 256) as u8;
+            let modifier = ((i / 256) * 17 + (i % 7) * 31) as u8;
+            base.wrapping_add(modifier)
+        });
+        
+        for length in 0..=MAX_LENGTH {
+            let input = &input_buffer[..length];
+            let mut hasher = Blake2b::new(OUTPUT_LEN);
+            hasher.update(input);
+            
+            use blake2::Digest as RefDigest;            
+            assert_eq!(
+                hasher.finalize(),
+                Into::<[u8; 64]>::into(blake2::Blake2b512::digest(input)),
+                "Blake2b streaming mismatch at input length {length}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_blake2b_streaming_incremental_updates() {
+        use blake2::Digest as RefDigest;
+        
+        const MAX_LENGTH: usize = 512;
+        let input_buffer: [u8; MAX_LENGTH] = std::array::from_fn(|i| ((i * 137 + 42) % 256) as u8);
+        // println!("Input buffer: {:?}", &input_buffer);
+        // [42, 179, 60, 197, 78, 215, 96, 233, 114, 251, 132, 13, 150, 31, 168, 49, 186, 67, 204, 85, 222, 103, 240, 121, 2, 139, 20, 157, 38, 175, 56, 193, 74, 211, 92, 229, 110, 247, 128, 9, 146, 27, 164, 45, 182, 63, 200, 81, 218, 99, 236, 117, 254, 135, 16, 153, 34, 171, 52, 189, 70, 207, 88, 225, 106, 243, 124, 5, 142, 23, 160, 41, 178, 59, 196, 77, 214, 95, 232, 113, 250, 131, 12, 149, 30, 167, 48, 185, 66, 203, 84, 221, 102, 239, 120, 1, 138, 19, 156, 37, 174, 55, 192, 73, 210, 91, 228, 109, 246, 127, 8, 145, 26, 163, 44, 181, 62, 199, 80, 217, 98, 235, 116, 253, 134, 15, 152, 33, 170, 51, 188, 69, 206, 87, 224, 105, 242, 123, 4, 141, 22, 159, 40, 177, 58, 195, 76, 213, 94, 231, 112, 249, 130, 11, 148, 29, 166, 47, 184, 65, 202, 83, 220, 101, 238, 119, 0, 137, 18, 155, 36, 173, 54, 191, 72, 209, 90, 227, 108, 245, 126, 7, 144, 25, 162, 43, 180, 61, 198, 79, 216, 97, 234, 115, 252, 133, 14, 151, 32, 169, 50, 187, 68, 205, 86, 223, 104, 241, 122, 3, 140, 21, 158, 39, 176, 57, 194, 75, 212, 93, 230, 111, 248, 129, 10, 147, 28, 165, 46, 183, 64, 201, 82, 219, 100, 237, 118, 255, 136, 17, 154, 35, 172, 53, 190, 71, 208, 89, 226, 107, 244, 125, 6, 143, 24, 161, 42, 179, 60, 197, 78, 215, 96, 233, 114, 251, 132, 13, 150, 31, 168, 49, 186, 67, 204, 85, 222, 103, 240, 121, 2, 139, 20, 157, 38, 175, 56, 193, 74, 211, 92, 229, 110, 247, 128, 9, 146, 27, 164, 45, 182, 63, 200, 81, 218, 99, 236, 117, 254, 135, 16, 153, 34, 171, 52, 189, 70, 207, 88, 225, 106, 243, 124, 5, 142, 23, 160, 41, 178, 59, 196, 77, 214, 95, 232, 113, 250, 131, 12, 149, 30, 167, 48, 185, 66, 203, 84, 221, 102, 239, 120, 1, 138, 19, 156, 37, 174, 55, 192, 73, 210, 91, 228, 109, 246, 127, 8, 145, 26, 163, 44, 181, 62, 199, 80, 217, 98, 235, 116, 253, 134, 15, 152, 33, 170, 51, 188, 69, 206, 87, 224, 105, 242, 123, 4, 141, 22, 159, 40, 177, 58, 195, 76, 213, 94, 231, 112, 249, 130, 11, 148, 29, 166, 47, 184, 65, 202, 83, 220, 101, 238, 119, 0, 137, 18, 155, 36, 173, 54, 191, 72, 209, 90, 227, 108, 245, 126, 7, 144, 25, 162, 43, 180, 61, 198, 79, 216, 97, 234, 115, 252, 133, 14, 151, 32, 169, 50, 187, 68, 205, 86, 223, 104, 241, 122, 3, 140, 21, 158, 39, 176, 57, 194, 75, 212, 93, 230, 111, 248, 129, 10, 147, 28, 165, 46, 183, 64, 201, 82, 219, 100, 237, 118, 255, 136, 17, 154, 35, 172, 53, 190, 71, 208, 89, 226, 107, 244, 125, 6, 143, 24, 161]
+        // [42, 179, 60, 197, 78, 215, 96, 233, 114, 251, 132, 13, 150, 31, 168, 49, 186, 67, 204, 85, 222, 103, 240, 121, 2, 139, 20, 157, 38, 175, 56, 193, 74, 211, 92, 229, 110, 247, 128, 9, 146, 27, 164, 45, 182, 63, 200, 81, 218, 99, 236, 117, 254, 135, 16, 153, 34, 171, 52, 189, 70, 207, 88, 225, 106, 243, 124, 5, 142, 23, 160, 41, 178, 59, 196, 77, 214, 95, 232, 113, 250, 131, 12, 149, 30, 167, 48, 185, 66, 203, 84, 221, 102, 239, 120, 1, 138, 19, 156, 37, 174, 55, 192, 73, 210, 91, 228, 109, 246, 127, 8, 145, 26, 163, 44, 181, 62, 199, 80, 217, 98, 235, 116, 253, 134, 15, 152, 33]
+
+        // Test different chunk sizes
+        let chunk_sizes = [1, 3, 7, 16, 32, 63, 64, 65, 128];
+        let test_lengths = [0, 1, 63, 64, 65, 127, 128, 129, 255, 256, 257, MAX_LENGTH];
+        
+        for &chunk_size in &chunk_sizes {
+            for total_length in test_lengths {
+                let input = &input_buffer[..total_length];
+                // Feed data incrementally
+                let mut hasher = Blake2b::new(OUTPUT_LEN);
+                let mut expected_hasher = blake2::Blake2b512::new();
+                let mut offset = 0;
+                while offset < total_length {
+                    let end = std::cmp::min(offset + chunk_size, total_length);
+                    hasher.update(&input[offset..end]);
+                    expected_hasher.update(&input[offset..end]);
+                    offset = end;
+                }                                
+                assert_eq!(
+                    hasher.finalize(),
+                    Into::<[u8; 64]>::into(expected_hasher.finalize()),
+                    "Incremental update mismatch: chunk_size={chunk_size}, total_length={total_length}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_blake2b_streaming_edge_cases() {
+        use blake2::Digest as RefDigest;
+        
+        let critical_lengths = [
+            0, 1, 2, 3, 4, 5, 6, 7, 8,
+            15, 16, 17,
+            31, 32, 33,
+            55, 56, 57,
+            63, 64, 65,
+            111, 112, 113,
+            127, 128, 129,
+            191, 192, 193,
+            255, 256, 257,
+            511, 512, 513,
+            1023, 1024, 1025,
+            1199, 1200
+        ];
+        
+        const MAX_TEST_LENGTH: usize = 1200;
+        let input_buffer: [u8; MAX_TEST_LENGTH] = std::array::from_fn(|i| {
+            ((i * 213 + 17) % 256) as u8
+        });
+        
+        for &length in &critical_lengths {
+            if length <= MAX_TEST_LENGTH {
+                let input = &input_buffer[..length];
+                let mut hasher = Blake2b::new(OUTPUT_LEN);
+                hasher.update(input);                
+                assert_eq!(
+                    hasher.finalize(),
+                    Into::<[u8; 64]>::into(blake2::Blake2b512::digest(input)),
+                    "Blake2b streaming mismatch at critical length {length}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_blake2b_streaming_multiple_updates() {
+        use blake2::Digest as RefDigest;
+        
+        // Test that multiple small updates produce the same result as one large update
+        let data_parts: &[&[u8]] = &[
+            b"Hello, ",
+            b"this is ",
+            b"a test of ",
+            b"multiple ",
+            b"updates to ",
+            b"the Blake2b ",
+            b"streaming ",
+            b"interface!"
+        ];
+        
+        // Pre-calculated: total is 73 bytes
+        const TOTAL_LEN: usize = 77;
+        let mut full_data = [0u8; TOTAL_LEN];
+        let mut offset = 0;
+        
+        for part in data_parts {
+            full_data[offset..offset + part.len()].copy_from_slice(part);
+            offset += part.len();
+        }
+        
+        // Our streaming implementation with multiple updates
+        let mut hasher = Blake2b::new(OUTPUT_LEN);
+        for part in data_parts {
+            hasher.update(part);
+        }        
         assert_eq!(
-            hash,
-            hex!("786a02f742015903c6c6fd852552d272912f4740e15847618a86e217f71f5419d25e1031afee585313896444934eb04b903a685b1448b755d56f701afe9be2ce")
+            hasher.finalize(),
+            Into::<[u8; 64]>::into(blake2::Blake2b512::digest(&full_data)),
+            "Multiple updates should produce same result as single update"
         );
     }
 
     #[test]
-    fn test_blake2b_with_lt_128_byte_input() {
-        let hash = Blake2b::digest(b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456");
+    fn test_blake2b_streaming_empty_updates() {
+        use blake2::Digest as RefDigest;
+        
+        let test_data = b"Some test data for empty update testing";
+        
+        // Test with empty updates mixed in
+        let mut hasher = Blake2b::new(OUTPUT_LEN);
+        hasher.update(b""); // Empty update at start
+        hasher.update(&test_data[..10]);
+        hasher.update(b""); // Empty update in middle
+        hasher.update(&test_data[10..]);
+        hasher.update(b""); // Empty update at end
+                
         assert_eq!(
-            hash,
-            hex!("2d95bd8dfdf8c4077f9bf54fe1a622e8bff985727a1f937f05c19608b93afbde331cc949d67cf29f3cbe081f2a853c13131b7f8f5d162810eec2e0001df9199f")
-        );
-    }
-
-    #[test]
-    fn test_blake2b_with_128_byte_input() {
-        let hash = Blake2b::digest(b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
-        assert_eq!(
-            hash,
-            hex!("687222a8b7e18fe2351529741f9f377dbfe57ccc40ffacd7dad6457eb0f5434b308c25eeb85f2c434889877eae9cfcda86e2220bbedb5ddeeef1db1b76113997")
-        );
-    }
-
-    #[test]
-    fn test_blake2b_with_gt_128_byte_input() {
-        let hash = Blake2b::digest(b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef456789abcdef0123456789abcdef0123456789abcdef");
-        assert_eq!(
-            hash,
-            hex!("eec6581ca2d51e7f8bff0cb9e0742b454bad4d28bb5078737a6bce318bb29902ca6c2fd4c412d9ed6bb2940692b39012b69ab81ca33cca4d292f3a095cd84007")
-        );
-    }
-
-    #[test]
-    fn test_blake2b_with_256_byte_input() {
-        let hash = Blake2b::digest(b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
-        assert_eq!(
-            hash,
-            hex!("342949a83f4809037dcb71d5d527ef9c8060c20cda8a7e4414bcca487e9bc5726e0d4646b7f869b3f3decb362508ec4672c3314ad345d1c36377fc1f3020585c")
+            hasher.finalize(),
+            Into::<[u8; 64]>::into(blake2::Blake2b512::digest(test_data)),
+            "Empty updates should not affect the result"
         );
     }
 }

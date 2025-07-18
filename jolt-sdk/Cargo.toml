@@ -44,3 +44,4 @@ tracer = { path = "../tracer", optional = true }
 
 [dev-dependencies]
 hex-literal = "0.4.1"
+blake2 = "0.10"
