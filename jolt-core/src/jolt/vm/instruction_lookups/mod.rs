@@ -98,7 +98,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         let hamming_weight = HammingWeightSumcheck::new_verifier(sm);
 
         vec![
-            Box::new(read_raf), // FIXME
+            Box::new(read_raf),
             Box::new(booleanity),
             Box::new(hamming_weight),
         ]

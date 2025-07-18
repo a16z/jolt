@@ -107,7 +107,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         let _guard = span.enter();
 
         let mut stage2_instances: Vec<_> = std::iter::empty()
-            // .chain(spartan_dag.stage2_prover_instances(&mut self.prover_state_manager)) // FIX
+            .chain(spartan_dag.stage2_prover_instances(&mut self.prover_state_manager))
             .chain(registers_dag.stage2_prover_instances(&mut self.prover_state_manager))
             .chain(ram_dag.stage2_prover_instances(&mut self.prover_state_manager))
             .collect();
@@ -255,7 +255,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
 
         // Stage 2:
         let stage2_instances: Vec<_> = std::iter::empty()
-            // .chain(spartan_dag.stage2_verifier_instances(&mut self.verifier_state_manager)) // FIX
+            .chain(spartan_dag.stage2_verifier_instances(&mut self.verifier_state_manager))
             .chain(registers_dag.stage2_verifier_instances(&mut self.verifier_state_manager))
             .chain(ram_dag.stage2_verifier_instances(&mut self.verifier_state_manager))
             .collect();
@@ -289,7 +289,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         let stage3_instances: Vec<_> = std::iter::empty()
             .chain(spartan_dag.stage3_verifier_instances(&mut self.verifier_state_manager))
             .chain(registers_dag.stage3_verifier_instances(&mut self.verifier_state_manager))
-            .chain(lookups_dag.stage3_verifier_instances(&mut self.verifier_state_manager)) // FIX
+            .chain(lookups_dag.stage3_verifier_instances(&mut self.verifier_state_manager))
             .chain(ram_dag.stage3_verifier_instances(&mut self.verifier_state_manager))
             .collect();
         let stage3_instances_ref: Vec<&dyn SumcheckInstance<F>> = stage3_instances
