@@ -17,6 +17,101 @@ use crate::{
     },
 };
 
+/// Contains proof for a generic sumcheck of the form
+/// val = \sum_{j' \in \{0, 1\}^T} eq(j, j') \prod_{i=1}^d func(j),
+/// which is the un-optimized form of the sumcheck in Appendix C of the Twist + Shout paper.
+#[cfg(test)]
+struct NaiveSumCheckProof<F: JoltField, ProofTranscript: Transcript> {
+    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
+    eq_claim: F,
+    mle_claims: Vec<F>,
+}
+
+#[cfg(test)]
+impl<F: JoltField, ProofTranscript: Transcript> NaiveSumCheckProof<F, ProofTranscript> {
+    pub fn prove(
+        mle_vec: &mut Vec<&mut MultilinearPolynomial<F>>,
+        r_cycle: &Vec<F>,
+        previous_claim: F,
+        transcript: &mut ProofTranscript,
+    ) -> (Self, Vec<F>) {
+        let mut eq = MultilinearPolynomial::from(EqPolynomial::evals(&r_cycle));
+        let log_T = r_cycle.len().log_2();
+        let mut previous_claim = previous_claim;
+        let mut r: Vec<F> = Vec::with_capacity(r_cycle.len());
+        let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(r_cycle.len());
+
+        for round in 0..r_cycle.len() {
+            let evals = (0..(log_T - round - 1).pow2())
+                .into_par_iter()
+                .map(|j| {
+                    let res = &mut eq.sumcheck_evals(j, 2, BindingOrder::HighToLow);
+                    let mle_evals = mle_vec
+                        .iter()
+                        .map(|poly| poly.sumcheck_evals(j, 2, BindingOrder::HighToLow))
+                        .collect::<Vec<_>>();
+
+                    mle_evals.iter().for_each(|mle_eval| {
+                        res[0] *= mle_eval[0];
+                        res[1] *= mle_eval[1];
+                    });
+
+                    [res[0], res[1]]
+                })
+                .reduce(
+                    || [F::zero(), F::zero()],
+                    |running, new| [running[0] * new[0], running[1] * new[1]],
+                );
+
+            let univariate_poly =
+                UniPoly::from_evals(&[evals[0], previous_claim - evals[0], evals[1]]);
+            let compressed_poly = univariate_poly.compress();
+            compressed_poly.append_to_transcript(transcript);
+            compressed_polys.push(compressed_poly);
+
+            let r_j = transcript.challenge_scalar::<F>();
+            previous_claim = univariate_poly.evaluate(&r_j);
+            r.push(r_j);
+
+            rayon::join(
+                || eq.bind_parallel(r_j, BindingOrder::HighToLow),
+                || {
+                    mle_vec
+                        .iter_mut()
+                        .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow))
+                },
+            );
+        }
+
+        (
+            Self {
+                sumcheck_proof: SumcheckInstanceProof::new(compressed_polys),
+                eq_claim: eq.final_sumcheck_claim(),
+                mle_claims: mle_vec
+                    .iter()
+                    .map(|func| func.final_sumcheck_claim())
+                    .collect(),
+            },
+            r,
+        )
+    }
+
+    pub fn verify(
+        &self,
+        r_prime: Vec<F>,
+        transcript: &mut ProofTranscript,
+    ) -> Result<(), ProofVerifyError> {
+        let (_sumcheck_claim, _r_sumcheck) = self.sumcheck_proof.verify(
+            self.eq_claim * self.mle_claims.iter().product::<F>(),
+            r_prime.len(),
+            2,
+            transcript,
+        )?;
+
+        Ok(())
+    }
+}
+
 /// Contains the proof for a generic sumcheck of the form
 /// val = \sum_{j_1, ..., j_d \in \{0, 1\}^T} eq(j, j_1, ..., j_d) \prod_{i=1}^d func(j_i),
 /// where eq(j, j_1, ..., j_d) = 1 if j = j_1 = ... = j_d and 0 otherwise.
@@ -29,6 +124,23 @@ pub struct LargeDSumCheckProof<F: JoltField, ProofTranscript: Transcript> {
 }
 
 impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTranscript> {
+    // Compute the initial claim for the sumcheck
+    // val = \sum_{j_1, ..., j_d \in \{0, 1\}^T} eq(j, j_1, ..., j_d) \prod_{i=1}^d func(j_i)
+    //     = \sum_{j' \in \{0, 1\}^T} eq(j, j', ..., j') \prod_{i=1}^d func(j)
+    fn compute_initial_eval_claim(mle_vec: &Vec<&MultilinearPolynomial<F>>, r_cycle: &Vec<F>) -> F {
+        let eq = MultilinearPolynomial::from(EqPolynomial::evals(&r_cycle));
+        (0..r_cycle.len().pow2())
+            .into_par_iter()
+            .map(|j| {
+                mle_vec
+                    .iter()
+                    .map(|poly| poly.get_bound_coeff(j))
+                    .product::<F>()
+                    * eq.get_bound_coeff(j)
+            })
+            .reduce(|| F::zero(), |running, new| running + new)
+    }
+
     pub fn prove(
         mle_vec: &mut Vec<&mut MultilinearPolynomial<F>>,
         r_cycle: &Vec<F>,
@@ -48,6 +160,7 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
 
         // Each table E_i stores the evaluations of eq(j_{>i}, r_cycle_{>i}) for each j_{>i}.
         // As we're binding from high to low, for each E_i we store eq(j_{<LogT - i}, r_cycle_{<+LogT - i}) instead.
+        // TODO: not sure how much saving we get from batch computing this, maybe too small?.
         let E_table = (1..=T.log_2() - 1)
             .map(|i| {
                 let evals =
@@ -310,6 +423,131 @@ mod test {
         large_d_optimization_ra_virtualization(2, 1 << 4, 4);
         large_d_optimization_ra_virtualization(5, 1 << 3, 8);
         large_d_optimization_ra_virtualization(10, 1 << 2, 4);
+    }
+
+    fn test_ra_data(D: usize, T: usize, K: usize) -> Vec<MultilinearPolynomial<Fr>> {
+        let mut rng = test_rng();
+        let mut read_addresses: Vec<Vec<usize>> = vec![Vec::with_capacity(T); D];
+
+        for _ in 0..T {
+            for i in 0..D {
+                let read_address = rng.next_u32() as usize % K;
+                read_addresses[i].push(read_address);
+            }
+        }
+        let mut ra = read_addresses
+            .iter()
+            .map(|r| {
+                let ra_vec = read_addresses_to_ra_vec::<Fr>(r, K, T);
+                MultilinearPolynomial::from(ra_vec)
+            })
+            .collect::<Vec<_>>();
+
+        let mut dummy_transcript = KeccakTranscript::new(b"dummy");
+        let _r_address = (0..D)
+            .map(|idx| {
+                let r_address = dummy_transcript.challenge_vector::<Fr>(K.log_2());
+                r_address.iter().for_each(|r| {
+                    ra[idx].bind_parallel(*r, BindingOrder::HighToLow);
+                });
+                r_address
+            })
+            .collect::<Vec<_>>();
+        ra
+    }
+
+    fn check_initial_eval_claim(
+        D: usize,
+        T: usize,
+        r_cycle: &Vec<Fr>,
+        ra: &Vec<MultilinearPolynomial<Fr>>,
+    ) {
+        assert!(T.is_power_of_two());
+        assert!(K.is_power_of_two());
+        let eq = multi_eq::<Fr>(D as u32, T as u32);
+        let mut eq = MultilinearPolynomial::from(eq);
+
+        r_cycle
+            .iter()
+            .for_each(|r| eq.bind_parallel(*r, BindingOrder::HighToLow));
+
+        // Sanity check that eq is computed correctly.
+        for j in 0..T.pow(D as u32) {
+            let num_bits = D * T.log_2();
+            // Lower index correspond to lower bits.
+            let bits_f = (0..32)
+                .take(num_bits)
+                .map(|n| ((j >> n) & 1) as u32)
+                .map(|bit| Fr::from_u32(bit))
+                .map(|val| (val, Fr::from_u32(1) - val))
+                .collect::<Vec<_>>();
+            assert_eq!(bits_f.len(), num_bits);
+
+            let mut j_bit_vec: Vec<Vec<_>> = bits_f
+                .chunks(D)
+                .map(|chunk| chunk.to_owned())
+                .collect::<Vec<_>>();
+
+            j_bit_vec
+                .iter_mut()
+                .zip(r_cycle.iter().rev())
+                .for_each(|(chunk, digit)| {
+                    chunk.push((*digit, Fr::from_u32(1) - *digit));
+                });
+            assert_eq!(j_bit_vec[0].len(), D + 1);
+
+            let _eq_eval = j_bit_vec
+                .into_iter()
+                .map(|chunk| {
+                    let res = chunk
+                        .into_iter()
+                        .reduce(|running, new| (running.0 * new.0, running.1 * new.1))
+                        .unwrap();
+                    res.0 + res.1
+                })
+                .product::<Fr>();
+            // assert_eq!(eq_eval, eq.get_bound_coeff(j));
+        }
+
+        let previous_claim_bench = (0..T.pow(D as u32))
+            .map(|j| {
+                let num_bits = D * T.log_2();
+                // Lower index correspond to lower bits.
+                let bits = (0..32)
+                    .take(num_bits)
+                    .map(|n| ((j >> n) & 1) as u32)
+                    .collect::<Vec<u32>>();
+                assert_eq!(bits.len(), num_bits);
+
+                let j_vec = (0..D)
+                    .map(|d| {
+                        let res: u32 = bits
+                            .iter()
+                            .enumerate()
+                            .filter(|(idx, _)| idx % (D as usize) == d as usize)
+                            .map(|(_, bit)| *bit)
+                            .enumerate()
+                            .map(|(idx, bit)| bit << idx)
+                            .sum();
+                        res
+                    })
+                    .collect::<Vec<_>>();
+
+                j_vec
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, j_d)| ra[idx].get_bound_coeff(*j_d as usize))
+                    .product::<Fr>()
+                    * eq.get_bound_coeff(j)
+            })
+            .sum::<Fr>();
+
+        let previous_claim =
+            LargeDSumCheckProof::<Fr, KeccakTranscript>::compute_initial_eval_claim(
+                &ra.iter().collect::<Vec<_>>(),
+                r_cycle,
+            );
+        assert_eq!(previous_claim, previous_claim_bench);
     }
 
     fn large_d_optimization_ra_virtualization(D: usize, T: usize, K: usize) {
