@@ -1,5 +1,3 @@
-use std::ops::Deref;
-
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use crate::{
@@ -19,27 +17,43 @@ use crate::{
     },
 };
 
+#[inline]
+fn compute_initial_eval_claim<F: JoltField>(
+    mle_vec: &Vec<&MultilinearPolynomial<F>>,
+    r_cycle: &Vec<F>,
+) -> F {
+    let eq = MultilinearPolynomial::from(EqPolynomial::evals(&r_cycle));
+    (0..r_cycle.len().pow2())
+        .into_par_iter()
+        .map(|j| {
+            mle_vec
+                .iter()
+                .map(|poly| poly.get_bound_coeff(j))
+                .product::<F>()
+                * eq.get_bound_coeff(j)
+        })
+        .reduce(|| F::zero(), |running, new| running + new)
+}
+
 /// Contains proof for a generic sumcheck of the form
 /// val = \sum_{j' \in \{0, 1\}^T} eq(j, j') \prod_{i=1}^d func(j),
 /// which is the un-optimized form of the sumcheck in Appendix C of the Twist + Shout paper.
-#[cfg(test)]
 struct NaiveSumCheckProof<F: JoltField, ProofTranscript: Transcript> {
     sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     eq_claim: F,
     mle_claims: Vec<F>,
 }
 
-#[cfg(test)]
 impl<F: JoltField, ProofTranscript: Transcript> NaiveSumCheckProof<F, ProofTranscript> {
     pub fn prove(
         mle_vec: &mut Vec<&mut MultilinearPolynomial<F>>,
         r_cycle: &Vec<F>,
-        previous_claim: F,
         transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>) {
         let mut eq = MultilinearPolynomial::from(EqPolynomial::evals(&r_cycle));
-        let log_T = r_cycle.len().log_2();
-        let mut previous_claim = previous_claim;
+        let log_T = r_cycle.len();
+        let mut previous_claim =
+            compute_initial_eval_claim(&mle_vec.iter().map(|x| &**x).collect::<Vec<_>>(), r_cycle);
         let mut r: Vec<F> = Vec::with_capacity(r_cycle.len());
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(r_cycle.len());
 
@@ -129,20 +143,6 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
     // Compute the initial claim for the sumcheck
     // val = \sum_{j_1, ..., j_d \in \{0, 1\}^T} eq(j, j_1, ..., j_d) \prod_{i=1}^d func(j_i)
     //     = \sum_{j' \in \{0, 1\}^T} eq(j, j', ..., j') \prod_{i=1}^d func(j)
-    #[inline]
-    fn compute_initial_eval_claim(mle_vec: &Vec<&MultilinearPolynomial<F>>, r_cycle: &Vec<F>) -> F {
-        let eq = MultilinearPolynomial::from(EqPolynomial::evals(&r_cycle));
-        (0..r_cycle.len().pow2())
-            .into_par_iter()
-            .map(|j| {
-                mle_vec
-                    .iter()
-                    .map(|poly| poly.get_bound_coeff(j))
-                    .product::<F>()
-                    * eq.get_bound_coeff(j)
-            })
-            .reduce(|| F::zero(), |running, new| running + new)
-    }
 
     pub fn prove(
         mle_vec: &mut Vec<&mut MultilinearPolynomial<F>>,
@@ -153,10 +153,8 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
         let mut C_summands = [F::one(), F::one()];
         let D = mle_vec.len();
         let T = r_cycle.len().pow2();
-        let mut previous_claim = Self::compute_initial_eval_claim(
-            &mle_vec.iter().map(|x| &**x).collect::<Vec<_>>(),
-            r_cycle,
-        );
+        let mut previous_claim =
+            compute_initial_eval_claim(&mle_vec.iter().map(|x| &**x).collect::<Vec<_>>(), r_cycle);
 
         let eval_points = [0, 2]
             .into_iter()
@@ -331,7 +329,7 @@ mod test {
             },
             unipoly::UniPoly,
         },
-        subprotocols::optimization::LargeDSumCheckProof,
+        subprotocols::optimization::{compute_initial_eval_claim, LargeDSumCheckProof, NaiveSumCheckProof},
         utils::{
             math::Math,
             thread::unsafe_allocate_zero_vec,
@@ -566,11 +564,7 @@ mod test {
             })
             .sum::<Fr>();
 
-        let previous_claim =
-            LargeDSumCheckProof::<Fr, KeccakTranscript>::compute_initial_eval_claim(
-                &ra.iter().collect::<Vec<_>>(),
-                r_cycle,
-            );
+        let previous_claim = compute_initial_eval_claim(&ra.iter().collect::<Vec<_>>(), r_cycle);
         assert_eq!(previous_claim, previous_claim_bench);
     }
 
@@ -613,7 +607,7 @@ mod test {
         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
 
         let start_time = Instant::now();
-        let (proof, r_prime) = LargeDSumCheckProof::<Fr, KeccakTranscript>::prove(
+        let (proof, r_prime) = NaiveSumCheckProof::<Fr, KeccakTranscript>::prove(
             &mut ra_copy.iter_mut().collect::<Vec<_>>(),
             &r_cycle,
             &mut prover_transcript,
