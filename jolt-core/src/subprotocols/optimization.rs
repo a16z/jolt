@@ -25,19 +25,19 @@ use crate::{
 pub struct LargeDSumCheckProof<F: JoltField, ProofTranscript: Transcript> {
     sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     eq_claim: F,
-    func_claims: Vec<F>,
+    mle_claims: Vec<F>,
 }
 
 impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTranscript> {
     pub fn prove(
-        funcs: &mut Vec<&mut MultilinearPolynomial<F>>,
+        mle_vec: &mut Vec<&mut MultilinearPolynomial<F>>,
         r_cycle: &Vec<F>,
         previous_claim: F,
         transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>) {
         let mut C = F::one();
         let mut C_summands = [F::one(), F::one()];
-        let D = funcs.len();
+        let D = mle_vec.len();
         let T = r_cycle.len().pow2();
         let mut previous_claim = previous_claim;
 
@@ -85,7 +85,7 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
                 .into_par_iter()
                 .map(|j| {
                     let at_idx_evals =
-                        funcs[D - d - 1].sumcheck_evals(j, 2, BindingOrder::HighToLow);
+                        mle_vec[D - d - 1].sumcheck_evals(j, 2, BindingOrder::HighToLow);
 
                     let eq_eval_after_idx = if j_idx < T.log_2() - 1 {
                         E_table[j_idx].get_coeff(j)
@@ -93,14 +93,14 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
                         F::one()
                     };
 
-                    let before_idx_evals = funcs
+                    let before_idx_evals = mle_vec
                         .iter()
                         .rev()
                         .take(d)
                         .map(|poly| poly.get_bound_coeff(j))
                         .product::<F>();
 
-                    let after_idx_evals = funcs
+                    let after_idx_evals = mle_vec
                         .iter()
                         .take(D - d - 1)
                         .map(|poly| {
@@ -156,7 +156,7 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
             previous_claim = univariate_poly.evaluate(&w_j);
             w.push(w_j);
 
-            funcs[D - 1 - d].bind_parallel(w_j, BindingOrder::HighToLow);
+            mle_vec[D - 1 - d].bind_parallel(w_j, BindingOrder::HighToLow);
 
             C_summands[0] *= w_j;
             C_summands[1] *= F::one() - w_j;
@@ -167,7 +167,7 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
             Self {
                 sumcheck_proof: SumcheckInstanceProof::new(compressed_polys),
                 eq_claim: C,
-                func_claims: funcs
+                mle_claims: mle_vec
                     .iter()
                     .map(|func| func.final_sumcheck_claim())
                     .collect(),
@@ -182,7 +182,7 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let (_sumcheck_claim, _r_sumcheck) = self.sumcheck_proof.verify(
-            self.eq_claim * self.func_claims.iter().product::<F>(),
+            self.eq_claim * self.mle_claims.iter().product::<F>(),
             r_prime.len(),
             2,
             transcript,
