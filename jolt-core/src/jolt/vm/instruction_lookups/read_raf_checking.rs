@@ -10,9 +10,7 @@ use crate::{
     dag::state_manager::StateManager,
     field::JoltField,
     jolt::{
-        instruction::{
-            CircuitFlags, InstructionFlags, InstructionLookup, InterleavedBitsMarker, LookupQuery,
-        },
+        instruction::{InstructionFlags, InstructionLookup, InterleavedBitsMarker, LookupQuery},
         lookup_table::{
             prefixes::{PrefixCheckpoint, PrefixEval, Prefixes},
             LookupTables,
@@ -75,9 +73,6 @@ pub struct ReadRafSumcheck<F: JoltField> {
     gamma: F,
     gamma_squared: F,
     prover_state: Option<ReadRafProverState<F>>,
-    prod_ra_claims: Option<F>,
-    table_flag_claims: Option<Vec<F>>,
-    raf_flag_claim: Option<F>,
 
     r_cycle: Vec<F>,
     rv_claim: F,
@@ -121,9 +116,6 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
             gamma,
             gamma_squared: gamma.square(),
             prover_state: Some(ps),
-            prod_ra_claims: None,
-            table_flag_claims: None,
-            raf_flag_claim: None,
             r_cycle,
             rv_claim,
             raf_claim: left_operand_claim + gamma * right_operand_claim,
@@ -136,39 +128,6 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
     ) -> Self {
         let log_T = sm.get_verifier_data().2.log_2();
         let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
-        let prod_ra_claims: F = (0..D)
-            .map(|i| {
-                sm.get_committed_polynomial_opening(
-                    CommittedPolynomial::InstructionRa(i),
-                    SumcheckId::InstructionReadRaf,
-                )
-                .1
-            })
-            .product();
-        let table_flag_claims: Vec<F> = (0..LookupTables::<WORD_SIZE>::COUNT)
-            .map(|i| {
-                sm.get_virtual_polynomial_opening(
-                    VirtualPolynomial::LookupTableFlag(i),
-                    SumcheckId::InstructionReadRaf,
-                )
-                .1
-            })
-            .collect();
-        let raf_flag_claim = [
-            CircuitFlags::AddOperands,
-            CircuitFlags::SubtractOperands,
-            CircuitFlags::MultiplyOperands,
-            CircuitFlags::Advice,
-        ]
-        .into_iter()
-        .map(|flag| {
-            sm.get_virtual_polynomial_opening(
-                VirtualPolynomial::OpFlags(flag),
-                SumcheckId::SpartanOuter,
-            )
-            .1
-        })
-        .sum();
         let (r_cycle, rv_claim) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
             SumcheckId::SpartanOuter,
@@ -186,9 +145,6 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
             gamma,
             gamma_squared: gamma * gamma,
             prover_state: None,
-            prod_ra_claims: Some(prod_ra_claims),
-            table_flag_claims: Some(table_flag_claims),
-            raf_flag_claim: Some(raf_flag_claim),
             r_cycle: r_cycle.r.clone(),
             rv_claim,
             raf_claim: left_operand_claim + gamma * right_operand_claim,
@@ -438,19 +394,67 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
             .collect();
         let eq_eval_cycle = EqPolynomial::mle(&self.r_cycle, r_cycle_prime);
 
+        let accumulator = accumulator.as_ref().unwrap();
+        let prod_ra_claims: F = (0..D)
+            .map(|i| {
+                let accumulator = accumulator.borrow();
+                accumulator
+                    .get_committed_polynomial_opening(
+                        CommittedPolynomial::InstructionRa(i),
+                        SumcheckId::InstructionReadRaf,
+                    )
+                    .1
+            })
+            .product();
+        let table_flag_claims: Vec<F> = (0..LookupTables::<WORD_SIZE>::COUNT)
+            .map(|i| {
+                let accumulator = accumulator.borrow();
+                accumulator
+                    .get_virtual_polynomial_opening(
+                        VirtualPolynomial::LookupTableFlag(i),
+                        SumcheckId::InstructionReadRaf,
+                    )
+                    .1
+            })
+            .collect();
+
+        let accumulator = accumulator.borrow();
+        let raf_flag_claim = accumulator
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::InstructionRafFlag,
+                SumcheckId::InstructionReadRaf,
+            )
+            .1;
+
+        // let raf_flag_claim: F = [
+        //     CircuitFlags::AddOperands,
+        //     CircuitFlags::SubtractOperands,
+        //     CircuitFlags::MultiplyOperands,
+        //     CircuitFlags::Advice,
+        // ]
+        // .into_iter()
+        // .map(|flag| {
+        // let accumulator = accumulator.borrow();
+        // accumulator
+        //     .get_virtual_polynomial_opening(
+        //         VirtualPolynomial::OpFlags(flag),
+        //         SumcheckId::InstructionReadRaf,
+        //     )
+        //     .1
+        // })
+        // .sum();
+
         let rv_val_claim = val_evals
             .into_iter()
-            .zip(self.table_flag_claims.as_ref().unwrap())
+            .zip(table_flag_claims)
             .map(|(claim, val)| claim * val)
             .sum::<F>();
-        let raf_flag_claim = self.raf_flag_claim.unwrap();
-        let ra_claims = self.prod_ra_claims.unwrap();
 
         let val_eval = rv_val_claim
             + (F::one() - raf_flag_claim)
                 * (self.gamma * left_operand_eval + self.gamma_squared * right_operand_eval)
             + raf_flag_claim * self.gamma_squared * identity_poly_eval;
-        eq_eval_cycle * ra_claims * val_eval
+        eq_eval_cycle * prod_ra_claims * val_eval
     }
 
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
@@ -501,7 +505,28 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
             .par_iter()
             .map(|(j, _)| eq_r_cycle_prime[*j])
             .sum::<F>();
-        // TODO(moodlezoup): Append individual circuit flag claims corresponding to raf_flag_claim
+        accumulator.borrow_mut().append_virtual(
+            VirtualPolynomial::InstructionRafFlag,
+            SumcheckId::InstructionReadRaf,
+            r_cycle.clone(),
+            raf_flag_claim,
+        );
+
+        // for flag in [
+        //     CircuitFlags::AddOperands,
+        //     CircuitFlags::SubtractOperands,
+        //     CircuitFlags::MultiplyOperands,
+        //     CircuitFlags::Advice,
+        // ] {
+        //     let claim = todo!();
+        // accumulator.borrow_mut().append_virtual(
+        //     VirtualPolynomial::OpFlags(flag),
+        //     SumcheckId::InstructionReadRaf,
+        //     r_cycle.clone(),
+        //     claim,
+        // );
+        // }
+        // FIXME(moodlezoup): Prove these in bytecode read-checking
     }
 
     fn cache_openings_verifier(
@@ -509,7 +534,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
         r_sumcheck: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        let (r_address, r_cycle) = r_sumcheck.clone().split_at(LOG_K);
+        let (r_address, r_cycle) = r_sumcheck.split_at(LOG_K);
 
         (0..LookupTables::<WORD_SIZE>::COUNT).for_each(|i| {
             accumulator.borrow_mut().append_virtual(

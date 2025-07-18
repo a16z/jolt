@@ -43,7 +43,6 @@ pub struct BooleanitySumcheck<F: JoltField> {
     /// Precomputed powers of gamma - batching chgallenge
     gamma: [F; D],
     prover_state: Option<BooleanityProverState<F>>,
-    ra_claims: Option<[F; D]>,
     r_address: Vec<F>,
     r_cycle: Vec<F>,
     log_T: usize,
@@ -75,7 +74,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         Self {
             gamma: gamma_powers,
             prover_state: Some(BooleanityProverState::new(trace, eq_r_cycle, G, &r_address)),
-            ra_claims: None,
             r_address,
             r_cycle,
             log_T: trace.len().log_2(),
@@ -100,21 +98,9 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
         let r_address: Vec<F> = sm.transcript.borrow_mut().challenge_vector(LOG_K_CHUNK);
-        let ra_claims = (0..D)
-            .map(|i| {
-                sm.get_committed_polynomial_opening(
-                    CommittedPolynomial::InstructionRa(i),
-                    SumcheckId::InstructionBooleanity,
-                )
-                .1
-            })
-            .collect::<Vec<F>>()
-            .try_into()
-            .unwrap();
         Self {
             gamma: gamma_powers,
             prover_state: None,
-            ra_claims: Some(ra_claims),
             r_address,
             r_cycle,
             log_T,
@@ -238,6 +224,16 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         r_prime: &[F],
     ) -> F {
+        let ra_claims = (0..D).map(|i| {
+            let accumulator = accumulator.as_ref().unwrap();
+            let accumulator = accumulator.borrow();
+            accumulator
+                .get_committed_polynomial_opening(
+                    CommittedPolynomial::InstructionRa(i),
+                    SumcheckId::InstructionBooleanity,
+                )
+                .1
+        });
         EqPolynomial::mle(
             r_prime,
             &self
@@ -250,7 +246,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
         ) * self
             .gamma
             .iter()
-            .zip(self.ra_claims.as_ref().unwrap())
+            .zip(ra_claims)
             .fold(F::zero(), |acc, (gamma, ra)| {
                 (ra.square() - ra) * gamma + acc
             })

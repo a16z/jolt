@@ -107,7 +107,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         let _guard = span.enter();
 
         let mut stage2_instances: Vec<_> = std::iter::empty()
-            .chain(spartan_dag.stage2_prover_instances(&mut self.prover_state_manager))
+            // .chain(spartan_dag.stage2_prover_instances(&mut self.prover_state_manager)) // FIX
             .chain(registers_dag.stage2_prover_instances(&mut self.prover_state_manager))
             .chain(ram_dag.stage2_prover_instances(&mut self.prover_state_manager))
             .collect();
@@ -161,52 +161,52 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         drop(_guard);
         drop(span);
 
-        // Stage 4:
-        let span = tracing::span!(tracing::Level::INFO, "Stage 4 sumchecks");
-        let _guard = span.enter();
+        // // Stage 4:
+        // let span = tracing::span!(tracing::Level::INFO, "Stage 4 sumchecks");
+        // let _guard = span.enter();
 
-        let mut stage4_instances: Vec<_> = std::iter::empty()
-            .chain(ram_dag.stage4_prover_instances(&mut self.prover_state_manager))
-            .chain(bytecode_dag.stage4_prover_instances(&mut self.prover_state_manager))
-            .collect();
-        let stage4_instances_mut: Vec<&mut dyn SumcheckInstance<F>> = stage4_instances
-            .iter_mut()
-            .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F>)
-            .collect();
+        // let mut stage4_instances: Vec<_> = std::iter::empty()
+        //     .chain(ram_dag.stage4_prover_instances(&mut self.prover_state_manager))
+        //     .chain(bytecode_dag.stage4_prover_instances(&mut self.prover_state_manager))
+        //     .collect();
+        // let stage4_instances_mut: Vec<&mut dyn SumcheckInstance<F>> = stage4_instances
+        //     .iter_mut()
+        //     .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F>)
+        //     .collect();
 
-        let (stage4_proof, _r_stage4) = BatchedSumcheck::prove(
-            stage4_instances_mut,
-            Some(accumulator.clone()),
-            &mut *transcript.borrow_mut(),
-        );
+        // let (stage4_proof, _r_stage4) = BatchedSumcheck::prove(
+        //     stage4_instances_mut,
+        //     Some(accumulator.clone()),
+        //     &mut *transcript.borrow_mut(),
+        // );
 
-        self.prover_state_manager.proofs.borrow_mut().insert(
-            ProofKeys::Stage4Sumcheck,
-            ProofData::BatchableSumcheckData(stage4_proof),
-        );
+        // self.prover_state_manager.proofs.borrow_mut().insert(
+        //     ProofKeys::Stage4Sumcheck,
+        //     ProofData::BatchableSumcheckData(stage4_proof),
+        // );
 
-        drop(_guard);
-        drop(span);
+        // drop(_guard);
+        // drop(span);
 
-        // Batch-prove all openings
-        let (_, trace, _, _) = self.prover_state_manager.get_prover_data();
-        let mut polynomials_map = HashMap::new();
-        for polynomial in ALL_COMMITTED_POLYNOMIALS.iter() {
-            polynomials_map.insert(
-                *polynomial,
-                polynomial.generate_witness(&preprocessing, &trace),
-            );
-        }
-        let opening_proof = accumulator.borrow_mut().reduce_and_prove(
-            polynomials_map,
-            &preprocessing.generators,
-            &mut *transcript.borrow_mut(),
-        );
+        // // Batch-prove all openings
+        // let (_, trace, _, _) = self.prover_state_manager.get_prover_data();
+        // let mut polynomials_map = HashMap::new();
+        // for polynomial in ALL_COMMITTED_POLYNOMIALS.iter() {
+        //     polynomials_map.insert(
+        //         *polynomial,
+        //         polynomial.generate_witness(&preprocessing, &trace),
+        //     );
+        // }
+        // let opening_proof = accumulator.borrow_mut().reduce_and_prove(
+        //     polynomials_map,
+        //     &preprocessing.generators,
+        //     &mut *transcript.borrow_mut(),
+        // );
 
-        self.prover_state_manager.proofs.borrow_mut().insert(
-            ProofKeys::ReducedOpeningProof,
-            ProofData::ReducedOpeningProof(opening_proof),
-        );
+        // self.prover_state_manager.proofs.borrow_mut().insert(
+        //     ProofKeys::ReducedOpeningProof,
+        //     ProofData::ReducedOpeningProof(opening_proof),
+        // );
 
         Ok(())
     }
@@ -255,7 +255,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
 
         // Stage 2:
         let stage2_instances: Vec<_> = std::iter::empty()
-            .chain(spartan_dag.stage2_verifier_instances(&mut self.verifier_state_manager))
+            // .chain(spartan_dag.stage2_verifier_instances(&mut self.verifier_state_manager)) // FIX
             .chain(registers_dag.stage2_verifier_instances(&mut self.verifier_state_manager))
             .chain(ram_dag.stage2_verifier_instances(&mut self.verifier_state_manager))
             .collect();
@@ -289,7 +289,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         let stage3_instances: Vec<_> = std::iter::empty()
             .chain(spartan_dag.stage3_verifier_instances(&mut self.verifier_state_manager))
             .chain(registers_dag.stage3_verifier_instances(&mut self.verifier_state_manager))
-            .chain(lookups_dag.stage3_verifier_instances(&mut self.verifier_state_manager))
+            .chain(lookups_dag.stage3_verifier_instances(&mut self.verifier_state_manager)) // FIX
             .chain(ram_dag.stage3_verifier_instances(&mut self.verifier_state_manager))
             .collect();
         let stage3_instances_ref: Vec<&dyn SumcheckInstance<F>> = stage3_instances
@@ -316,58 +316,58 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
 
         drop(proofs);
 
-        // Stage 4:
-        let stage4_instances: Vec<_> = std::iter::empty()
-            .chain(ram_dag.stage4_verifier_instances(&mut self.verifier_state_manager))
-            .chain(bytecode_dag.stage4_verifier_instances(&mut self.verifier_state_manager))
-            .collect();
-        let stage4_instances_ref: Vec<&dyn SumcheckInstance<F>> = stage4_instances
-            .iter()
-            .map(|instance| &**instance as &dyn SumcheckInstance<F>)
-            .collect();
+        // // Stage 4:
+        // let stage4_instances: Vec<_> = std::iter::empty()
+        //     .chain(ram_dag.stage4_verifier_instances(&mut self.verifier_state_manager))
+        //     .chain(bytecode_dag.stage4_verifier_instances(&mut self.verifier_state_manager))
+        //     .collect();
+        // let stage4_instances_ref: Vec<&dyn SumcheckInstance<F>> = stage4_instances
+        //     .iter()
+        //     .map(|instance| &**instance as &dyn SumcheckInstance<F>)
+        //     .collect();
 
-        let proofs = self.verifier_state_manager.proofs.borrow();
-        let stage4_proof_data = proofs
-            .get(&ProofKeys::Stage4Sumcheck)
-            .expect("Stage 4 sumcheck proof not found");
-        let stage4_proof = match stage4_proof_data {
-            ProofData::BatchableSumcheckData(proof) => proof,
-            _ => panic!("Invalid proof type for stage 4"),
-        };
+        // let proofs = self.verifier_state_manager.proofs.borrow();
+        // let stage4_proof_data = proofs
+        //     .get(&ProofKeys::Stage4Sumcheck)
+        //     .expect("Stage 4 sumcheck proof not found");
+        // let stage4_proof = match stage4_proof_data {
+        //     ProofData::BatchableSumcheckData(proof) => proof,
+        //     _ => panic!("Invalid proof type for stage 4"),
+        // };
 
-        let _r_stage4 = BatchedSumcheck::verify(
-            stage4_proof,
-            stage4_instances_ref,
-            Some(opening_accumulator.clone()),
-            &mut *transcript.borrow_mut(),
-        )
-        .context("Stage 4")?;
+        // let _r_stage4 = BatchedSumcheck::verify(
+        //     stage4_proof,
+        //     stage4_instances_ref,
+        //     Some(opening_accumulator.clone()),
+        //     &mut *transcript.borrow_mut(),
+        // )
+        // .context("Stage 4")?;
 
-        // Batch-prove all openings
-        let batched_opening_proof = proofs
-            .get(&ProofKeys::ReducedOpeningProof)
-            .expect("Reduced opening proof not found");
-        let batched_opening_proof = match batched_opening_proof {
-            ProofData::ReducedOpeningProof(proof) => proof,
-            _ => panic!("Invalid proof type for stage 4"),
-        };
+        // // Batch-prove all openings
+        // let batched_opening_proof = proofs
+        //     .get(&ProofKeys::ReducedOpeningProof)
+        //     .expect("Reduced opening proof not found");
+        // let batched_opening_proof = match batched_opening_proof {
+        //     ProofData::ReducedOpeningProof(proof) => proof,
+        //     _ => panic!("Invalid proof type for stage 4"),
+        // };
 
-        let mut commitments_map = HashMap::new();
-        for polynomial in ALL_COMMITTED_POLYNOMIALS.iter() {
-            commitments_map.insert(
-                *polynomial,
-                commitments.commitments[polynomial.to_index()].clone(),
-            );
-        }
-        let accumulator = self.verifier_state_manager.get_verifier_accumulator();
-        accumulator.borrow_mut().reduce_and_verify(
-            &preprocessing.generators,
-            &mut commitments_map,
-            batched_opening_proof,
-            &mut *transcript.borrow_mut(),
-        )?;
+        // let mut commitments_map = HashMap::new();
+        // for polynomial in ALL_COMMITTED_POLYNOMIALS.iter() {
+        //     commitments_map.insert(
+        //         *polynomial,
+        //         commitments.commitments[polynomial.to_index()].clone(),
+        //     );
+        // }
+        // let accumulator = self.verifier_state_manager.get_verifier_accumulator();
+        // accumulator.borrow_mut().reduce_and_verify(
+        //     &preprocessing.generators,
+        //     &mut commitments_map,
+        //     batched_opening_proof,
+        //     &mut *transcript.borrow_mut(),
+        // )?;
 
-        println!("Stage 5 verified");
+        // println!("Stage 5 verified");
 
         Ok(())
     }

@@ -814,7 +814,7 @@ where
         let (point, claim) = self
             .openings
             .get(&OpeningId::Committed(polynomial, sumcheck))
-            .unwrap();
+            .unwrap_or_else(|| panic!("No opening found for {sumcheck:?} {polynomial:?}"));
         (point.clone(), *claim)
     }
 

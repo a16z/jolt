@@ -149,7 +149,6 @@ impl<F: JoltField> ReadCheckingSumcheck<F> {
                     VirtualPolynomial::RdWa,
                     SumcheckId::RegistersValEvaluation,
                 );
-                println!("r.len() = {}", r.len());
                 let (_, r_cycle) = r.split_at((REGISTER_COUNT as usize).log_2());
                 (
                     Self::compute_val_3(sm, &gamma_powers),

@@ -61,8 +61,6 @@ pub struct ValEvaluationProverState<F: JoltField> {
 pub(crate) struct ValEvaluationVerifierState<F: JoltField> {
     /// The number of rounds (log T)
     pub num_rounds: usize,
-    /// r_address used to compute LT evaluation
-    pub r_address: Vec<F>,
     /// r_cycle used to compute LT evaluation
     pub r_cycle: Vec<F>,
 }
@@ -229,9 +227,21 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        r_cycle: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        todo!()
+        // Append claims to accumulator
+        accumulator.borrow_mut().append_dense(
+            vec![CommittedPolynomial::RdInc],
+            SumcheckId::RegistersValEvaluation,
+            r_cycle.r.clone(),
+        );
+
+        let r = [self.r_address.as_slice(), r_cycle.r.as_slice()].concat();
+        accumulator.borrow_mut().append_virtual(
+            VirtualPolynomial::RdWa,
+            SumcheckId::RegistersValEvaluation,
+            OpeningPoint::new(r),
+        );
     }
 }
 

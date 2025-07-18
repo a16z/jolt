@@ -257,18 +257,26 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
             .verifier_state
             .as_ref()
             .expect("Verifier state not initialized");
-        todo!();
 
-        // // Compute LT(r_cycle', r_cycle)
-        // let mut lt_eval = F::zero();
-        // let mut eq_term = F::one();
-        // for (x, y) in r.iter().zip(verifier_state.r_cycle.iter()) {
-        //     lt_eval += (F::one() - x) * y * eq_term;
-        //     eq_term *= F::one() - x - y + *x * y + *x * y;
-        // }
+        // Compute LT(r_cycle', r_cycle)
+        let mut lt_eval = F::zero();
+        let mut eq_term = F::one();
+        for (x, y) in r.iter().zip(verifier_state.r_cycle.iter()) {
+            lt_eval += (F::one() - x) * y * eq_term;
+            eq_term *= F::one() - x - y + *x * y + *x * y;
+        }
 
-        // // Return inc_claim * wa_claim * lt_eval
-        // claims.inc_claim * claims.wa_claim * lt_eval
+        let accumulator = accumulator.as_ref().unwrap();
+        let (_, inc_claim) = accumulator.borrow().get_committed_polynomial_opening(
+            CommittedPolynomial::RamInc,
+            SumcheckId::RamValEvaluation,
+        );
+        let (_, wa_claim) = accumulator
+            .borrow()
+            .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamValEvaluation);
+
+        // Return inc_claim * wa_claim * lt_eval
+        inc_claim * wa_claim * lt_eval
     }
 
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
