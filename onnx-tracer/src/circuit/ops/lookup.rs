@@ -5,6 +5,7 @@ use crate::{
     fieldutils::{felt_to_i128, i128_to_felt},
     graph::utilities::{multiplier_to_scale, scale_to_multiplier},
     tensor::{self, Tensor, TensorError, TensorType},
+    trace_types::ONNXOpcode,
 };
 use halo2curves::ff::PrimeField;
 use serde::{Deserialize, Serialize};
@@ -13,7 +14,7 @@ use std::error::Error;
 #[allow(missing_docs)]
 /// An enum representing the operations that can be used to express more complex
 /// operations via accumulation
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
 pub enum LookupOp {
     Abs,
     Div { denom: utils::F32 },
@@ -52,6 +53,20 @@ pub enum LookupOp {
     Sign,
     KroneckerDelta,
     Pow { scale: utils::F32, a: utils::F32 },
+}
+
+impl From<&LookupOp> for ONNXOpcode {
+    fn from(value: &LookupOp) -> Self {
+        match value {
+            LookupOp::ReLU => ONNXOpcode::Relu,
+            LookupOp::Sigmoid { .. } => ONNXOpcode::Sigmoid,
+            LookupOp::Rsqrt { .. } => ONNXOpcode::Sqrt,
+            LookupOp::Div { .. } => ONNXOpcode::Div,
+            _ => {
+                panic!("LookupOp {value:?} cannot be converted to ONNXOpcode",);
+            }
+        }
+    }
 }
 
 impl LookupOp {
@@ -159,42 +174,42 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for LookupOp {
     fn as_string(&self) -> String {
         match self {
             LookupOp::Abs => "ABS".into(),
-            LookupOp::Ceil { scale } => format!("CEIL(scale={})", scale),
-            LookupOp::Floor { scale } => format!("FLOOR(scale={})", scale),
-            LookupOp::Round { scale } => format!("ROUND(scale={})", scale),
-            LookupOp::RoundHalfToEven { scale } => format!("ROUND_HALF_TO_EVEN(scale={})", scale),
-            LookupOp::Pow { a, scale } => format!("POW(scale={}, exponent={})", scale, a),
+            LookupOp::Ceil { scale } => format!("CEIL(scale={scale})"),
+            LookupOp::Floor { scale } => format!("FLOOR(scale={scale})"),
+            LookupOp::Round { scale } => format!("ROUND(scale={scale})"),
+            LookupOp::RoundHalfToEven { scale } => format!("ROUND_HALF_TO_EVEN(scale={scale})"),
+            LookupOp::Pow { a, scale } => format!("POW(scale={scale}, exponent={a})"),
             LookupOp::KroneckerDelta => "K_DELTA".into(),
-            LookupOp::Max { scale, a } => format!("MAX(scale={}, a={})", scale, a),
-            LookupOp::Min { scale, a } => format!("MIN(scale={}, a={})", scale, a),
+            LookupOp::Max { scale, a } => format!("MAX(scale={scale}, a={a})"),
+            LookupOp::Min { scale, a } => format!("MIN(scale={scale}, a={a})"),
             LookupOp::Sign => "SIGN".into(),
             LookupOp::GreaterThan { .. } => "GREATER_THAN".into(),
             LookupOp::GreaterThanEqual { .. } => "GREATER_THAN_EQUAL".into(),
             LookupOp::LessThan { .. } => "LESS_THAN".into(),
             LookupOp::LessThanEqual { .. } => "LESS_THAN_EQUAL".into(),
-            LookupOp::Recip { scale, .. } => format!("RECIP(scale={})", scale),
-            LookupOp::Div { denom, .. } => format!("DIV(denom={})", denom),
-            LookupOp::Cast { scale } => format!("CAST(scale={})", scale),
-            LookupOp::Ln { scale } => format!("LN(scale={})", scale),
+            LookupOp::Recip { scale, .. } => format!("RECIP(scale={scale})"),
+            LookupOp::Div { denom, .. } => format!("DIV(denom={denom})"),
+            LookupOp::Cast { scale } => format!("CAST(scale={scale})"),
+            LookupOp::Ln { scale } => format!("LN(scale={scale})"),
             LookupOp::ReLU => "RELU".to_string(),
-            LookupOp::LeakyReLU { slope: a } => format!("L_RELU(slope={})", a),
-            LookupOp::Sigmoid { scale } => format!("SIGMOID(scale={})", scale),
-            LookupOp::Sqrt { scale } => format!("SQRT(scale={})", scale),
-            LookupOp::Erf { scale } => format!("ERF(scale={})", scale),
-            LookupOp::Rsqrt { scale } => format!("RSQRT(scale={})", scale),
-            LookupOp::Exp { scale } => format!("EXP(scale={})", scale),
-            LookupOp::Tan { scale } => format!("TAN(scale={})", scale),
-            LookupOp::ATan { scale } => format!("ATAN(scale={})", scale),
-            LookupOp::Tanh { scale } => format!("TANH(scale={})", scale),
-            LookupOp::ATanh { scale } => format!("ATANH(scale={})", scale),
-            LookupOp::Cos { scale } => format!("COS(scale={})", scale),
-            LookupOp::ACos { scale } => format!("ACOS(scale={})", scale),
-            LookupOp::Cosh { scale } => format!("COSH(scale={})", scale),
-            LookupOp::ACosh { scale } => format!("ACOSH(scale={})", scale),
-            LookupOp::Sin { scale } => format!("SIN(scale={})", scale),
-            LookupOp::ASin { scale } => format!("ASIN(scale={})", scale),
-            LookupOp::Sinh { scale } => format!("SINH(scale={})", scale),
-            LookupOp::ASinh { scale } => format!("ASINH(scale={})", scale),
+            LookupOp::LeakyReLU { slope: a } => format!("L_RELU(slope={a})"),
+            LookupOp::Sigmoid { scale } => format!("SIGMOID(scale={scale})"),
+            LookupOp::Sqrt { scale } => format!("SQRT(scale={scale})"),
+            LookupOp::Erf { scale } => format!("ERF(scale={scale})"),
+            LookupOp::Rsqrt { scale } => format!("RSQRT(scale={scale})"),
+            LookupOp::Exp { scale } => format!("EXP(scale={scale})"),
+            LookupOp::Tan { scale } => format!("TAN(scale={scale})"),
+            LookupOp::ATan { scale } => format!("ATAN(scale={scale})"),
+            LookupOp::Tanh { scale } => format!("TANH(scale={scale})"),
+            LookupOp::ATanh { scale } => format!("ATANH(scale={scale})"),
+            LookupOp::Cos { scale } => format!("COS(scale={scale})"),
+            LookupOp::ACos { scale } => format!("ACOS(scale={scale})"),
+            LookupOp::Cosh { scale } => format!("COSH(scale={scale})"),
+            LookupOp::ACosh { scale } => format!("ACOSH(scale={scale})"),
+            LookupOp::Sin { scale } => format!("SIN(scale={scale})"),
+            LookupOp::ASin { scale } => format!("ASIN(scale={scale})"),
+            LookupOp::Sinh { scale } => format!("SINH(scale={scale})"),
+            LookupOp::ASinh { scale } => format!("ASINH(scale={scale})"),
         }
     }
 
@@ -241,10 +256,10 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for LookupOp {
     }
 
     fn required_lookups(&self) -> Vec<LookupOp> {
-        vec![self.clone()]
+        vec![*self]
     }
 
     fn clone_dyn(&self) -> Box<dyn Op<F>> {
-        Box::new(self.clone()) // Forward to the derive(Clone) impl
+        Box::new(*self) // Forward to the derive(Clone) impl
     }
 }

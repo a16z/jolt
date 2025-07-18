@@ -3,11 +3,15 @@
 
 // we allow this for our dynamic range based indexing scheme
 #![allow(clippy::single_range_in_vec_init)]
-// #![feature(round_ties_even)]
 #![allow(clippy::empty_docs)]
 
+use crate::{
+    graph::model::{Model, NodeType},
+    trace_types::ONNXInstr,
+};
 use clap::Args;
 use serde::{Deserialize, Serialize};
+use std::{fs::File, path::PathBuf};
 
 /// Methods for configuring tensor operations and assigning values to them in a Halo2
 /// circuit.
@@ -18,13 +22,48 @@ pub mod fieldutils;
 /// a Halo2 circuit.
 pub mod graph;
 // /// An implementation of multi-dimensional tensors.
+pub mod constants;
 pub mod logger;
 pub mod tensor;
+pub mod trace_types;
 
 /// The denominator in the fixed point representation used when quantizing inputs
 pub type Scale = i32;
 
-pub fn decode() {}
+/// Given a file path decode the binary into [ONNXInstr] format
+/// (i.e., the program code we will be reading into, in the zkVM)
+///
+/// # Returns
+/// A vector of [`ONNXInstr`] representing the program code.
+pub fn decode(model_path: &PathBuf) -> Vec<ONNXInstr> {
+    model(model_path)
+        .graph
+        .nodes
+        .iter()
+        .map(decode_node)
+        .collect()
+}
+
+/// Given a file path, load the ONNX model and return a [`Model`].
+/// This function is used to initialize the model for further processing.
+fn model(model_path: &PathBuf) -> Model {
+    let mut file = File::open(model_path).expect("Failed to open ONNX model");
+    // Default RunArgs (batch_size=1 by default)
+    let run_args = RunArgs::default();
+    // Load the model
+    Model::new(&mut file, &run_args)
+}
+
+/// Converts a [`NodeType`] and its program counter into an [`ONNXInstr`].
+/// This helper keeps the [decode] function concise and focused.
+fn decode_node((pc, node): (&usize, &NodeType)) -> ONNXInstr {
+    match node {
+        NodeType::Node(node) => node.decode(*pc),
+        NodeType::SubGraph { .. } => {
+            todo!()
+        }
+    }
+}
 
 /// Parameters specific to a proving run
 #[derive(Debug, Args, Deserialize, Serialize, Clone, PartialEq, PartialOrd)]
@@ -48,7 +87,6 @@ pub struct RunArgs {
     //     // /// The tolerance for error on model outputs
     //     // #[arg(short = 'T', long, default_value = "0")]
     //     // pub tolerance: Tolerance,
-
     //     /// The min and max elements in the lookup table input column
     //     #[arg(short = 'B', long, value_parser = parse_tuple::<i128>, default_value =
     // "(-32768,32768)")]     pub lookup_range: (i128, i128),
@@ -58,31 +96,19 @@ pub struct RunArgs {
     //     /// The log_2 number of rows
     //     #[arg(short = 'N', long, default_value = "2")]
     //     pub num_inner_cols: usize,
-    //     // /// Flags whether inputs are public, private, hashed
-    //     // #[arg(long, default_value = "private")]
-    //     // pub input_visibility: Visibility,
-    //     // /// Flags whether outputs are public, private, hashed
-    //     // #[arg(long, default_value = "public")]
-    //     // pub output_visibility: Visibility,
-    //     // /// Flags whether params are public, private, hashed
-    //     // #[arg(long, default_value = "private")]
-    //     // pub param_visibility: Visibility,
 }
 
 impl Default for RunArgs {
     fn default() -> Self {
         Self {
-            // tolerance: Tolerance::default(),
             input_scale: 7,
             param_scale: 7,
             scale_rebase_multiplier: 1,
+            variables: vec![("batch_size".to_string(), 1)],
+            // tolerance: Tolerance::default(),
             // lookup_range: (-32768, 32768),
             // logrows: 17,
             // num_inner_cols: 2,
-            variables: vec![("batch_size".to_string(), 1)],
-            // input_visibility: Visibility::Private,
-            // output_visibility: Visibility::Public,
-            // param_visibility: Visibility::Private,
         }
     }
 }

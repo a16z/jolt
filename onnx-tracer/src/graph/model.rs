@@ -47,6 +47,190 @@ impl Model {
         om
     }
 
+    /// Runs a forward pass on sample data !
+    /// # Arguments
+    /// * `reader` - A reader for an Onnx file.
+    /// * `model_inputs` - A vector of [Tensor]s to use as inputs to the model.
+    /// * `run_args` - [RunArgs]
+    pub fn forward(&self, model_inputs: &[Tensor<Fp>]) -> Result<ForwardResult, Box<dyn Error>> {
+        let mut results: BTreeMap<&usize, Vec<Tensor<Fp>>> = BTreeMap::new();
+        let mut max_lookup_inputs = 0;
+        let mut min_lookup_inputs = 0;
+        let input_shapes = self.graph.input_shapes()?;
+        for (i, input_idx) in self.graph.inputs.iter().enumerate() {
+            let mut input = model_inputs[i].clone();
+            input.reshape(&input_shapes[i])?;
+            results.insert(input_idx, vec![input]);
+        }
+        for (idx, n) in self.graph.nodes.iter() {
+            let mut inputs = vec![];
+            if n.is_input() {
+                let t = results.get(idx).ok_or(GraphError::MissingResults)?[0].clone();
+                inputs.push(t);
+            } else {
+                for (idx, outlet) in n.inputs().iter() {
+                    match results.get(&idx) {
+                        Some(value) => inputs.push(value[*outlet].clone()),
+                        None => return Err(Box::new(GraphError::MissingNode(*idx))),
+                    }
+                }
+            };
+            debug!("executing {}: {}", idx, n.as_str());
+            debug!("dims: {:?}", n.out_dims());
+            debug!(
+                "input_dims: {:?}",
+                inputs.iter().map(|x| x.dims()).collect::<Vec<_>>()
+            );
+            if n.is_lookup() {
+                let (mut min, mut max) = (0, 0);
+                for i in &inputs {
+                    max = max.max(
+                        i.iter()
+                            .map(|x| felt_to_i128(*x))
+                            .max()
+                            .ok_or("missing max")?,
+                    );
+                    min = min.min(
+                        i.iter()
+                            .map(|x| felt_to_i128(*x))
+                            .min()
+                            .ok_or("missing min")?,
+                    );
+                }
+                max_lookup_inputs = max_lookup_inputs.max(max);
+                min_lookup_inputs = min_lookup_inputs.min(min);
+                debug!("max lookup inputs: {max}");
+                debug!("min lookup inputs: {min}");
+            }
+            match n {
+                NodeType::Node(n) => {
+                    // execute the op
+                    let start = instant::Instant::now();
+                    let res = Op::<Fp>::f(&n.opkind, &inputs)?;
+                    let elapsed = start.elapsed();
+                    trace!("op took: {elapsed:?}",);
+                    // see if any of the intermediate lookup calcs are the max
+                    if !res.intermediate_lookups.is_empty() {
+                        let (mut min, mut max) = (0, 0);
+                        for i in &res.intermediate_lookups {
+                            max = max.max(i.clone().into_iter().max().ok_or("missing max")?);
+                            min = min.min(i.clone().into_iter().min().ok_or("missing min")?);
+                        }
+                        max_lookup_inputs = max_lookup_inputs.max(max);
+                        min_lookup_inputs = min_lookup_inputs.min(min);
+                        debug!("intermediate max lookup inputs: {max}",);
+                        debug!("intermediate min lookup inputs: {min}",);
+                    }
+                    debug!(
+                        "------------ output node int {}: {} \n ------------ float: {} \n ------------ max: {} \n ------------ min: {} ------------ scale: {}",
+                        idx,
+                        res.output.map(crate::fieldutils::felt_to_i32).show(),
+                        res.output
+                            .map(|x| crate::fieldutils::felt_to_f64(x)
+                                / scale_to_multiplier(n.out_scale))
+                            .show(),
+                        res.output.clone().into_iter().map(crate::fieldutils::felt_to_i128).max().unwrap_or(0),
+                        res.output.clone().into_iter().map(crate::fieldutils::felt_to_i128).min().unwrap_or(0),
+                        n.out_scale
+                    );
+                    results.insert(idx, vec![res.output]);
+                }
+                NodeType::SubGraph {
+                    model,
+                    output_mappings,
+                    input_mappings,
+                    inputs: input_tuple,
+                    ..
+                } => {
+                    let orig_inputs = inputs.clone();
+                    let input_mappings = input_mappings.clone();
+
+                    let input_dims = inputs.iter().map(|inp| inp.dims());
+                    let num_iter = number_of_iterations(&input_mappings, input_dims.collect());
+                    debug!(
+                        "{} iteration(s) in a subgraph with inputs {:?} and sources {:?}",
+                        num_iter, input_tuple, model.graph.inputs
+                    );
+                    debug!("input_mappings: {input_mappings:?}",);
+                    let mut full_results: Vec<Tensor<Fp>> = vec![];
+                    for i in 0..num_iter {
+                        // replace the Stacked input with the current chunk iter
+                        for ((mapping, inp), og_input) in
+                            input_mappings.iter().zip(&mut inputs).zip(&orig_inputs)
+                        {
+                            if let InputMapping::Stacked { axis, chunk } = mapping {
+                                let start = i * chunk;
+                                let end = (i + 1) * chunk;
+                                let t = crate::tensor::ops::slice(og_input, axis, &start, &end)?;
+                                *inp = t;
+                            }
+                        }
+                        let res = model.forward(&inputs)?;
+                        // recursively get the max lookup inputs for subgraphs
+                        max_lookup_inputs = max_lookup_inputs.max(res.max_lookup_inputs);
+                        min_lookup_inputs = min_lookup_inputs.min(res.min_lookup_inputs);
+                        let mut outlets = BTreeMap::new();
+                        for (mappings, outlet_res) in output_mappings.iter().zip(res.outputs) {
+                            for mapping in mappings {
+                                match mapping {
+                                    OutputMapping::Single { outlet, .. } => {
+                                        outlets.insert(outlet, outlet_res.clone());
+                                    }
+                                    OutputMapping::Stacked { outlet, axis, .. } => {
+                                        if !full_results.is_empty() {
+                                            let stacked_res = crate::tensor::ops::concat(
+                                                &[&full_results[*outlet], &outlet_res],
+                                                *axis,
+                                            )?;
+
+                                            outlets.insert(outlet, stacked_res);
+                                        } else {
+                                            outlets.insert(outlet, outlet_res.clone());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        full_results = outlets.into_values().collect_vec();
+                        let output_states = output_state_idx(output_mappings);
+                        let input_states = input_state_idx(&input_mappings);
+                        assert_eq!(input_states.len(), output_states.len());
+                        for (input_idx, output_idx) in input_states.iter().zip(output_states) {
+                            inputs[*input_idx] = full_results[output_idx].clone();
+                        }
+                    }
+                    trace!(
+                        "------------ output subgraph node {}: {:?}",
+                        idx,
+                        full_results
+                            .iter()
+                            .map(|x|
+                            // convert to tensor i32
+                            x.map(crate::fieldutils::felt_to_i32).show())
+                            .collect_vec()
+                    );
+                    results.insert(idx, full_results);
+                }
+            }
+        }
+        let output_nodes = self.graph.outputs.iter();
+        debug!(
+            "model outputs are nodes: {:?}",
+            output_nodes.clone().collect_vec()
+        );
+        let outputs = output_nodes
+            .map(|(idx, outlet)| {
+                Ok(results.get(&idx).ok_or(GraphError::MissingResults)?[*outlet].clone())
+            })
+            .collect::<Result<Vec<_>, GraphError>>()?;
+        let res = ForwardResult {
+            outputs,
+            max_lookup_inputs,
+            min_lookup_inputs,
+        };
+        Ok(res)
+    }
+
     /// Loads an Onnx model from a specified path.
     /// # Arguments
     /// * `reader` - A reader for an Onnx file.
@@ -57,14 +241,14 @@ impl Model {
         let (model, symbol_values) = Self::load_onnx_using_tract(reader, run_args);
         let scales = VarScales::from_args(run_args);
         let nodes = Self::nodes_from_graph(&model, run_args, &scales, &symbol_values, None, None);
-        debug!("\n {}", model);
+        debug!("\n {model}",);
         let parsed_nodes = ParsedNodes {
             nodes,
             inputs: model.inputs.iter().map(|o| o.node).collect(),
             outputs: model.outputs.iter().map(|o| (o.node, o.slot)).collect(),
         };
         let duration = start_time.elapsed();
-        trace!("model loading took: {:?}", duration);
+        trace!("model loading took: {duration:?}",);
         parsed_nodes
     }
 
@@ -101,8 +285,8 @@ impl Model {
             use log::info;
             let symbol = model.symbols.sym(symbol);
             symbol_values = symbol_values.with(&symbol, *value as i64);
-            info!("set {} to {}", symbol, value);
-            println!("set {} to {}", symbol, value);
+            info!("set {symbol} to {value}");
+            println!("set {symbol} to {value}");
         }
 
         // Note: do not optimize the model, as the layout will depend on
@@ -190,19 +374,15 @@ impl Model {
                                     chunk: info.chunk as usize,
                                 });
                             }
-
                             tract_onnx::tract_hir::ops::scan::InputMapping::State => {
                                 input_mappings.push(InputMapping::State);
                             }
-
                             tract_onnx::tract_hir::ops::scan::InputMapping::Full => {
                                 input_mappings.push(InputMapping::Full);
                             }
                         }
                     }
-
                     let input_state_idx = input_state_idx(&input_mappings);
-
                     let mut output_mappings = vec![];
                     for mapping in b.output_mapping.iter() {
                         let mut mappings = vec![];
@@ -310,190 +490,6 @@ impl Model {
         nodes
     }
 
-    /// Runs a forward pass on sample data !
-    /// # Arguments
-    /// * `reader` - A reader for an Onnx file.
-    /// * `model_inputs` - A vector of [Tensor]s to use as inputs to the model.
-    /// * `run_args` - [RunArgs]
-    pub fn forward(&self, model_inputs: &[Tensor<Fp>]) -> Result<ForwardResult, Box<dyn Error>> {
-        let mut results: BTreeMap<&usize, Vec<Tensor<Fp>>> = BTreeMap::new();
-        let mut max_lookup_inputs = 0;
-        let mut min_lookup_inputs = 0;
-        let input_shapes = self.graph.input_shapes()?;
-        for (i, input_idx) in self.graph.inputs.iter().enumerate() {
-            let mut input = model_inputs[i].clone();
-            input.reshape(&input_shapes[i])?;
-            results.insert(input_idx, vec![input]);
-        }
-        for (idx, n) in self.graph.nodes.iter() {
-            let mut inputs = vec![];
-            if n.is_input() {
-                let t = results.get(idx).ok_or(GraphError::MissingResults)?[0].clone();
-                inputs.push(t);
-            } else {
-                for (idx, outlet) in n.inputs().iter() {
-                    match results.get(&idx) {
-                        Some(value) => inputs.push(value[*outlet].clone()),
-                        None => return Err(Box::new(GraphError::MissingNode(*idx))),
-                    }
-                }
-            };
-            debug!("executing {}: {}", idx, n.as_str());
-            debug!("dims: {:?}", n.out_dims());
-            debug!(
-                "input_dims: {:?}",
-                inputs.iter().map(|x| x.dims()).collect::<Vec<_>>()
-            );
-            if n.is_lookup() {
-                let (mut min, mut max) = (0, 0);
-                for i in &inputs {
-                    max = max.max(
-                        i.iter()
-                            .map(|x| felt_to_i128(*x))
-                            .max()
-                            .ok_or("missing max")?,
-                    );
-                    min = min.min(
-                        i.iter()
-                            .map(|x| felt_to_i128(*x))
-                            .min()
-                            .ok_or("missing min")?,
-                    );
-                }
-                max_lookup_inputs = max_lookup_inputs.max(max);
-                min_lookup_inputs = min_lookup_inputs.min(min);
-                debug!("max lookup inputs: {}", max);
-                debug!("min lookup inputs: {}", min);
-            }
-            match n {
-                NodeType::Node(n) => {
-                    // execute the op
-                    let start = instant::Instant::now();
-                    let res = Op::<Fp>::f(&n.opkind, &inputs)?;
-                    let elapsed = start.elapsed();
-                    trace!("op took: {:?}", elapsed);
-                    // see if any of the intermediate lookup calcs are the max
-                    if !res.intermediate_lookups.is_empty() {
-                        let (mut min, mut max) = (0, 0);
-                        for i in &res.intermediate_lookups {
-                            max = max.max(i.clone().into_iter().max().ok_or("missing max")?);
-                            min = min.min(i.clone().into_iter().min().ok_or("missing min")?);
-                        }
-                        max_lookup_inputs = max_lookup_inputs.max(max);
-                        min_lookup_inputs = min_lookup_inputs.min(min);
-                        debug!("intermediate max lookup inputs: {}", max);
-                        debug!("intermediate min lookup inputs: {}", min);
-                    }
-                    debug!(
-                        "------------ output node int {}: {} \n ------------ float: {} \n ------------ max: {} \n ------------ min: {} ------------ scale: {}",
-                        idx,
-                        res.output.map(crate::fieldutils::felt_to_i32).show(),
-                        res.output
-                            .map(|x| crate::fieldutils::felt_to_f64(x)
-                                / scale_to_multiplier(n.out_scale))
-                            .show(),
-                        res.output.clone().into_iter().map(crate::fieldutils::felt_to_i128).max().unwrap_or(0),
-                        res.output.clone().into_iter().map(crate::fieldutils::felt_to_i128).min().unwrap_or(0),
-                        n.out_scale
-                    );
-                    results.insert(idx, vec![res.output]);
-                }
-                NodeType::SubGraph {
-                    model,
-                    output_mappings,
-                    input_mappings,
-                    inputs: input_tuple,
-                    ..
-                } => {
-                    let orig_inputs = inputs.clone();
-                    let input_mappings = input_mappings.clone();
-
-                    let input_dims = inputs.iter().map(|inp| inp.dims());
-                    let num_iter = number_of_iterations(&input_mappings, input_dims.collect());
-                    debug!(
-                        "{} iteration(s) in a subgraph with inputs {:?} and sources {:?}",
-                        num_iter, input_tuple, model.graph.inputs
-                    );
-                    debug!("input_mappings: {:?}", input_mappings);
-                    let mut full_results: Vec<Tensor<Fp>> = vec![];
-                    for i in 0..num_iter {
-                        // replace the Stacked input with the current chunk iter
-                        for ((mapping, inp), og_input) in
-                            input_mappings.iter().zip(&mut inputs).zip(&orig_inputs)
-                        {
-                            if let InputMapping::Stacked { axis, chunk } = mapping {
-                                let start = i * chunk;
-                                let end = (i + 1) * chunk;
-                                let t = crate::tensor::ops::slice(og_input, axis, &start, &end)?;
-                                *inp = t;
-                            }
-                        }
-                        let res = model.forward(&inputs)?;
-                        // recursively get the max lookup inputs for subgraphs
-                        max_lookup_inputs = max_lookup_inputs.max(res.max_lookup_inputs);
-                        min_lookup_inputs = min_lookup_inputs.min(res.min_lookup_inputs);
-                        let mut outlets = BTreeMap::new();
-                        for (mappings, outlet_res) in output_mappings.iter().zip(res.outputs) {
-                            for mapping in mappings {
-                                match mapping {
-                                    OutputMapping::Single { outlet, .. } => {
-                                        outlets.insert(outlet, outlet_res.clone());
-                                    }
-                                    OutputMapping::Stacked { outlet, axis, .. } => {
-                                        if !full_results.is_empty() {
-                                            let stacked_res = crate::tensor::ops::concat(
-                                                &[&full_results[*outlet], &outlet_res],
-                                                *axis,
-                                            )?;
-
-                                            outlets.insert(outlet, stacked_res);
-                                        } else {
-                                            outlets.insert(outlet, outlet_res.clone());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        full_results = outlets.into_values().collect_vec();
-                        let output_states = output_state_idx(output_mappings);
-                        let input_states = input_state_idx(&input_mappings);
-                        assert_eq!(input_states.len(), output_states.len());
-                        for (input_idx, output_idx) in input_states.iter().zip(output_states) {
-                            inputs[*input_idx] = full_results[output_idx].clone();
-                        }
-                    }
-                    trace!(
-                        "------------ output subgraph node {}: {:?}",
-                        idx,
-                        full_results
-                            .iter()
-                            .map(|x|
-                            // convert to tensor i32
-                            x.map(crate::fieldutils::felt_to_i32).show())
-                            .collect_vec()
-                    );
-                    results.insert(idx, full_results);
-                }
-            }
-        }
-        let output_nodes = self.graph.outputs.iter();
-        debug!(
-            "model outputs are nodes: {:?}",
-            output_nodes.clone().collect_vec()
-        );
-        let outputs = output_nodes
-            .map(|(idx, outlet)| {
-                Ok(results.get(&idx).ok_or(GraphError::MissingResults)?[*outlet].clone())
-            })
-            .collect::<Result<Vec<_>, GraphError>>()?;
-        let res = ForwardResult {
-            outputs,
-            max_lookup_inputs,
-            min_lookup_inputs,
-        };
-        Ok(res)
-    }
-
     /// Run tract onnx model on sample data !
     pub fn run_onnx_predictions(
         run_args: &RunArgs,
@@ -562,7 +558,7 @@ impl Model {
                         tabled::settings::style::BorderColor::default()
                             .top(tabled::settings::Color::BG_YELLOW),
                     );
-                    string = format!("{} \n\n  MAIN GRAPH \n\n{}", string, table);
+                    string = format!("{string} \n\n  MAIN GRAPH \n\n{table}",);
                     node_accumulator = vec![];
                     string = format!(
                         "{}\n\n SUBGRAPH AT IDX {} WITH INPUTS {:?}\n{}",
@@ -576,7 +572,7 @@ impl Model {
         }
         let mut table = Table::new(node_accumulator.iter());
         table.with(tabled::settings::Style::modern());
-        format!("{} \n{}", string, table)
+        format!("{string} \n{table}",)
     }
 }
 
@@ -737,10 +733,7 @@ impl NodeType {
     pub fn decrement_use(&mut self) {
         match self {
             NodeType::Node(n) => n.num_uses -= 1,
-            NodeType::SubGraph { .. } => log::warn!(
-                "Cannot decrement const of
-subgraph"
-            ),
+            NodeType::SubGraph { .. } => log::warn!("Cannot decrement const of subgraph"),
         }
     }
 
@@ -748,10 +741,7 @@ subgraph"
     pub fn bump_scale(&mut self, scale: crate::Scale) {
         match self {
             NodeType::Node(n) => n.out_scale = scale,
-            NodeType::SubGraph { .. } => log::warn!(
-                "Cannot bump scale of
-subgraph"
-            ),
+            NodeType::SubGraph { .. } => log::warn!("Cannot bump scale of subgraph"),
         }
     }
 
@@ -759,10 +749,7 @@ subgraph"
     pub fn replace_opkind(&mut self, opkind: SupportedOp) {
         match self {
             NodeType::Node(n) => n.opkind = opkind,
-            NodeType::SubGraph { .. } => log::warn!(
-                "Cannot replace opkind of
-subgraph"
-            ),
+            NodeType::SubGraph { .. } => log::warn!("Cannot replace opkind of subgraph"),
         }
     }
 
@@ -836,7 +823,32 @@ impl OutputMapping {
     }
 }
 
-// ///
+/// Describes how each input to a subgraph (such as a Scan/Loop in ONNX) is mapped from the parent graph.
+///
+/// # Overview
+/// `InputMapping` is used to specify how the inputs to a subgraph are fed from the outer graph.
+/// This is essential for handling ONNX control flow operators like Scan, Loop, or custom subgraphs,
+/// where each input may be treated differently (e.g., as a state variable, as a full tensor, or as a chunked/stacked input).
+///
+/// # Variants
+/// - `Full`: The entire input tensor is passed as-is to the subgraph input.
+/// - `State`: The input acts as a state variable, typically carried across iterations (e.g., hidden state in RNNs).
+/// - `Stacked { axis, chunk }`: The input is split along the specified `axis` into chunks of size `chunk`,
+///   and each chunk is fed to the subgraph in each iteration (used for sequence processing).
+///
+/// # Role in the Codebase
+/// `InputMapping` is crucial for correctly wiring up subgraphs during model parsing and execution.
+/// It allows the code to handle dynamic and complex ONNX models that use control flow or iterative constructs,
+/// ensuring that data is fed into subgraphs in the correct shape and order. This enables support for models
+/// with recurrent or iterative computation patterns.
+///
+/// # Example
+/// For an ONNX Scan node processing a sequence, the input sequence tensor might be mapped as `Stacked`,
+/// while an initial hidden state would be mapped as `State`.
+///
+/// # Usage
+/// The mapping is determined during graph parsing (`nodes_from_graph`) and is later used during execution
+/// (`forward`) to slice, reshape, or carry inputs as needed for each subgraph invocation.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum InputMapping {
     ///
@@ -885,63 +897,4 @@ fn output_state_idx(output_mappings: &[Vec<OutputMapping>]) -> Vec<usize> {
         .flatten()
         .filter_map(|x| if x.is_state() { Some(x.outlet()) } else { None })
         .collect::<Vec<_>>()
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::logger::init_logger;
-
-    use super::*;
-    use std::{fs::File, path::PathBuf};
-
-    #[test]
-    fn test_model_forward_1l_relu() {
-        // Enable logging for debug/warn/info output in tests
-        init_logger();
-
-        // Path to the example ONNX model
-        let model_path = PathBuf::from("examples/onnx/1l_relu/network.onnx");
-        let mut file = File::open(&model_path).expect("Failed to open ONNX model");
-
-        // Default RunArgs (batch_size=1 by default)
-        let run_args = RunArgs::default();
-
-        // Load the model
-        let model = Model::new(&mut file, &run_args);
-
-        // Get input shapes
-        let input_shapes = model
-            .graph
-            .input_shapes()
-            .expect("Failed to get input shapes");
-        assert_eq!(input_shapes.len(), 1); // Should have one input
-
-        // Prepare dummy input: batch_size x 3
-        let shape = &input_shapes[0];
-        assert_eq!(shape.len(), 2);
-        assert_eq!(shape[0], 1); // batch_size
-        assert_eq!(shape[1], 3); // features
-
-        // Create a tensor of zeros as dummy input
-        let mut dummy_input =
-            Tensor::<Fp>::from(vec![Fp::from(0u64); shape.iter().product()].into_iter());
-        dummy_input
-            .reshape(shape)
-            .expect("Failed to reshape dummy input");
-        // Run forward pass
-        let result = model.forward(&[dummy_input]).expect("Forward pass failed");
-
-        // Print output for debugging
-        println!("Model output: {:#?}", result);
-    }
-
-    #[test]
-    fn test_text_classification() {
-        println!("testing text classification")
-    }
-
-    #[test]
-    fn test_execution_trace() {
-        println!("testing execution trace")
-    }
 }

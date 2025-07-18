@@ -5742,6 +5742,9 @@ dependencies = [
 [[package]]
 name = "zkml-jolt-core"
 version = "0.1.0"
+dependencies = [
+ "onnx-tracer",
+]
 
 [[patch.unused]]
 name = "ark-bn254"

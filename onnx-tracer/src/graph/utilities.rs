@@ -237,7 +237,7 @@ pub fn new_op_from_onnx(
     inputs: &mut [NodeType],
     symbol_values: &SymbolValues,
 ) -> Result<(SupportedOp, Vec<usize>), Box<dyn std::error::Error>> {
-    debug!("Loading node: {:?}", node);
+    debug!("Loading node: {node:?}",);
     let mut deleted_indices = vec![];
     let node = match node.op().name().as_ref() {
         "MultiBroadcastTo" => {
@@ -255,31 +255,25 @@ pub fn new_op_from_onnx(
 
             for (i, input) in inputs.iter_mut().enumerate() {
                 if !input.opkind().is_constant() {
-                    return Err("Range only supports constant inputs in a zk
-circuit"
-                        .into());
+                    return Err("Range only supports constant inputs in a zk circuit".into());
                 } else {
                     input.decrement_use();
                     deleted_indices.push(i);
                     input_ops.push(input.opkind().clone());
                 }
             }
-
             assert_eq!(input_ops.len(), 3, "Range requires 3 inputs");
             let input_ops = input_ops
                 .iter()
                 .map(|x| x.get_constant().ok_or("Range requires constant inputs"))
                 .collect::<Result<Vec<_>, _>>()?;
-
             let start = input_ops[0].raw_values.map(|x| x as usize)[0];
             let end = input_ops[1].raw_values.map(|x| x as usize)[0];
             let delta = input_ops[2].raw_values.map(|x| x as usize)[0];
-
             let range = (start..end).step_by(delta).collect::<Vec<_>>();
             let raw_value = range.iter().map(|x| *x as f32).collect::<Tensor<_>>();
             // Quantize the raw value (integers)
             let quantized_value = quantize_tensor(raw_value.clone(), 0)?;
-
             let c = crate::circuit::ops::Constant::new(quantized_value, raw_value);
             // Create a constant op
             SupportedOp::Constant(c)
@@ -291,7 +285,6 @@ circuit"
             };
             let op = load_op::<Gather>(node.op(), idx, node.op().name().to_string())?;
             let axis = op.axis;
-
             let mut op = SupportedOp::Hybrid(crate::circuit::ops::hybrid::HybridOp::Gather {
                 dim: axis,
                 constant_idx: None,
@@ -312,8 +305,6 @@ circuit"
                     })),
                 });
             }
-            //   }
-
             if inputs[1].opkind().is_input() {
                 inputs[1].replace_opkind(SupportedOp::Input(crate::circuit::ops::Input {
                     scale: 0,
@@ -321,9 +312,7 @@ circuit"
                 }));
                 inputs[1].bump_scale(0);
             }
-
             op
-
             // Extract the max value
         }
 
@@ -338,7 +327,6 @@ circuit"
             } else {
                 op.fallback_k.to_i64()? as usize
             };
-
             SupportedOp::Hybrid(crate::circuit::ops::hybrid::HybridOp::TopK {
                 dim: axis,
                 k,
@@ -349,7 +337,6 @@ circuit"
             let op = load_op::<OneHot>(node.op(), idx, node.op().name().to_string())?;
             let axis = op.axis;
             let num_classes = op.dim;
-
             SupportedOp::Hybrid(crate::circuit::ops::hybrid::HybridOp::OneHot {
                 dim: axis,
                 num_classes,
@@ -364,13 +351,11 @@ circuit"
             };
             let op = load_op::<ScatterElements>(node.op(), idx, node.op().name().to_string())?;
             let axis = op.axis;
-
             let mut op =
                 SupportedOp::Hybrid(crate::circuit::ops::hybrid::HybridOp::ScatterElements {
                     dim: axis,
                     constant_idx: None,
                 });
-
             //   if param_visibility.is_public() {
             if let Some(c) = inputs[1].opkind().get_mutable_constant() {
                 inputs[1].decrement_use();
@@ -381,7 +366,6 @@ circuit"
                 })
             }
             //   }
-
             if inputs[1].opkind().is_input() {
                 inputs[1].replace_opkind(SupportedOp::Input(crate::circuit::ops::Input {
                     scale: 0,
@@ -389,9 +373,7 @@ circuit"
                 }));
                 inputs[1].bump_scale(0);
             }
-
             op
-
             // Extract the max value
         }
         "GatherElements" => {
@@ -409,7 +391,6 @@ circuit"
                     dim: axis,
                     constant_idx: None,
                 });
-
             // if param_visibility.is_public() {
             if let Some(c) = inputs[1].opkind().get_mutable_constant() {
                 inputs[1].decrement_use();
@@ -420,7 +401,6 @@ circuit"
                 })
             }
             // }
-
             if inputs[1].opkind().is_input() {
                 inputs[1].replace_opkind(SupportedOp::Input(crate::circuit::ops::Input {
                     scale: 0,
@@ -428,9 +408,7 @@ circuit"
                 }));
                 inputs[1].bump_scale(0);
             }
-
             op
-
             // Extract the max value
         }
         "MoveAxis" => {
@@ -444,7 +422,6 @@ circuit"
                         destination,
                     })
                 }
-
                 _ => {
                     return Err(Box::new(GraphError::OpMismatch(
                         idx,
@@ -571,7 +548,6 @@ circuit"
             if const_inputs.len() != 1 {
                 return Err(Box::new(GraphError::OpMismatch(idx, "Max".to_string())));
             }
-
             let const_idx = const_inputs[0];
             let boxed_op = inputs[const_idx].opkind();
             let unit = if let Some(c) = extract_const_raw_values(boxed_op) {
@@ -583,7 +559,6 @@ circuit"
             } else {
                 return Err(Box::new(GraphError::OpMismatch(idx, "Max".to_string())));
             };
-
             if inputs.len() == 2 {
                 if let Some(node) = inputs.get_mut(const_idx) {
                     node.decrement_use();
@@ -656,7 +631,6 @@ circuit"
                 scale: (scale_to_multiplier(in_scale).powf(2.0) * additional_scale).into(),
             })
         }
-
         "LeakyRelu" => {
             // Extract the slope layer hyperparams
             let leaky_op = load_op::<ElementWiseOp>(node.op(), idx, node.op().name().to_string())?;
@@ -989,7 +963,6 @@ circuit"
         "Sign" => SupportedOp::Nonlinear(LookupOp::Sign),
         "Pow" => {
             // Extract the slope layer hyperparams from a const
-
             // if param_visibility.is_public() {
             if let Some(c) = inputs[1].opkind().get_mutable_constant() {
                 inputs[1].decrement_use();
@@ -1187,7 +1160,7 @@ circuit"
             // and this is the only way I can think of
             // see https://github.com/sonos/tract/issues/324
 
-            let resize_node = format!("{:?}", node);
+            let resize_node = format!("{node:?}",);
 
             if !resize_node.contains("interpolator: Nearest")
                 && !resize_node.contains("nearest: Floor")
@@ -1373,7 +1346,7 @@ dimensions"
             SupportedOp::Linear(PolyOp::Flatten(new_dims))
         }
         c => {
-            warn!("Unknown op: {}", c);
+            warn!("Unknown op: {c}");
             SupportedOp::Unknown(crate::circuit::ops::Unknown)
         }
     };
@@ -1449,9 +1422,7 @@ pub fn homogenize_input_scales(
     if relevant_input_scales.windows(2).all(|w| w[0] == w[1]) {
         return Ok(op);
     }
-
     let mut multipliers: Vec<u128> = vec![1; input_scales.len()];
-
     let max_scale = input_scales.iter().max().ok_or("no max scale")?;
     let _ = input_scales
         .iter()
@@ -1467,7 +1438,6 @@ pub fn homogenize_input_scales(
             }
         })
         .collect_vec();
-
     // only rescale if need to
     if multipliers.iter().any(|&x| x > 1) {
         Ok(Box::new(Rescaled {

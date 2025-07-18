@@ -1,0 +1,69 @@
+//! Type library used to build the execution trace.
+//! Used to format the bytecode and define each instr flags and memory access patterns.
+//! Used by the runtime to generate an execution trace for ONNX runtime execution.
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+/// Represents a single ONNX instruction parsed from the model.
+/// The ONNX model is converted into a sequence of [`ONNXInstr`]s, forming the program code.
+/// During runtime, the program counter (PC) is used to fetch the next instruction from this sequence.
+/// Represents a single ONNX instruction in the bytecode sequence.
+///
+/// Each `ONNXInstr` contains the program counter address, the operation code,
+/// and up to two input tensor operands that specify the sources
+/// of tensor data in the computation graph. The operands are optional and may
+/// be `None` if the instruction requires fewer than two inputs.
+///
+/// # Fields
+/// - `address`: The program counter (PC) address of this instruction in the bytecode.
+/// - `opcode`: The operation code (opcode) that defines the instruction's function.
+/// - `ts1`: The first input tensor operand, specified as an `Option<usize>`, representing the index of a node in the computation graph. Analogous to the `rs1` register in RISC-V.
+/// - `ts2`: The second input tensor operand, specified as an `Option<usize>`, representing the index of a node in the computation graph. Analogous to the `rs2` register in RISC-V.
+pub struct ONNXInstr {
+    /// The program counter (PC) address of this instruction in the bytecode.
+    pub address: usize,
+    /// The operation code (opcode) that defines the instruction's function.
+    pub opcode: ONNXOpcode,
+    /// The first input tensor operand, specified as the index of a node in the computation graph.
+    /// This index (`node_idx`) identifies which node's output tensor will be used as input for this instruction.
+    /// Since each node produces only one output tensor in this simplified ISA, the index is sufficient.
+    /// If the instruction requires fewer than two inputs, this will be `None`.
+    /// Conceptually, `ts1` is analogous to the `rs1` register specifier in RISC-V,
+    /// as both indicate the source location (address or index) of an operand.
+    pub ts1: Option<usize>,
+    /// The second input tensor operand, also specified as the index of a node in the computation graph.
+    /// Like `ts1`, this index identifies another node whose output tensor will be used as input.
+    /// If the instruction requires only one or zero inputs, this will be `None`.
+    /// This field is analogous to the `rs2` register specifier in RISC-V,
+    /// serving to specify the address or index of the second operand.
+    pub ts2: Option<usize>,
+}
+
+// TODO: Expand the instruction set architecture (ISA):
+//       For phase 1, we focus on supporting text-classification models.
+//       This reduced ISA currently includes only the opcodes commonly used in such models.
+//       Future phases should extend this set to support a broader range of ONNX operations.
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+/// Operation code uniquely identifying each ONNX instruction's function
+pub enum ONNXOpcode {
+    Noop,
+    Constant,
+    Input,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Pow,
+    Relu,
+    MatMult,
+    Gather,
+    Transpose,
+    Sqrt,
+    /// Used for the ReduceMean operator, which is internally converted to a
+    /// combination of Sum and Div operations.
+    Sum,
+    Sigmoid,
+    Softmax,
+}
