@@ -1,3 +1,5 @@
+use std::ops::Deref;
+
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use crate::{
@@ -127,6 +129,7 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
     // Compute the initial claim for the sumcheck
     // val = \sum_{j_1, ..., j_d \in \{0, 1\}^T} eq(j, j_1, ..., j_d) \prod_{i=1}^d func(j_i)
     //     = \sum_{j' \in \{0, 1\}^T} eq(j, j', ..., j') \prod_{i=1}^d func(j)
+    #[inline]
     fn compute_initial_eval_claim(mle_vec: &Vec<&MultilinearPolynomial<F>>, r_cycle: &Vec<F>) -> F {
         let eq = MultilinearPolynomial::from(EqPolynomial::evals(&r_cycle));
         (0..r_cycle.len().pow2())
@@ -144,14 +147,16 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
     pub fn prove(
         mle_vec: &mut Vec<&mut MultilinearPolynomial<F>>,
         r_cycle: &Vec<F>,
-        previous_claim: F,
         transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>) {
         let mut C = F::one();
         let mut C_summands = [F::one(), F::one()];
         let D = mle_vec.len();
         let T = r_cycle.len().pow2();
-        let mut previous_claim = previous_claim;
+        let mut previous_claim = Self::compute_initial_eval_claim(
+            &mle_vec.iter().map(|x| &**x).collect::<Vec<_>>(),
+            r_cycle,
+        );
 
         let eval_points = [0, 2]
             .into_iter()
@@ -463,7 +468,6 @@ mod test {
         ra: &Vec<MultilinearPolynomial<Fr>>,
     ) {
         assert!(T.is_power_of_two());
-        assert!(K.is_power_of_two());
         let eq = multi_eq::<Fr>(D as u32, T as u32);
         let mut eq = MultilinearPolynomial::from(eq);
 
@@ -557,119 +561,15 @@ mod test {
         // Compute the sum-check
         // ra(k_1, ..., k_d, j) = \sum_{j_1, ..., j_d} eq(j, j_1, ..., j_d) \prod_{i=1}^d ra(k_i, j_i)
         // where eq(j, j_1, ..., j_d) = 1 if j = j_1 = ... = j_d and 0 otherwise.
-        let mut rng = test_rng();
-        let mut read_addresses: Vec<Vec<usize>> = vec![Vec::with_capacity(T); D];
-
-        for _ in 0..T {
-            for i in 0..D {
-                let read_address = rng.next_u32() as usize % K;
-                read_addresses[i].push(read_address);
-            }
-        }
-        let mut ra = read_addresses
-            .iter()
-            .map(|r| {
-                let ra_vec = read_addresses_to_ra_vec::<Fr>(r, K, T);
-                MultilinearPolynomial::from(ra_vec)
-            })
-            .collect::<Vec<_>>();
-
-        let eq = multi_eq::<Fr>(D as u32, T as u32);
-        let mut eq = MultilinearPolynomial::from(eq);
-
+        let mut ra = test_ra_data(D, T, K);
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
 
-        r_cycle
-            .iter()
-            .for_each(|r| eq.bind_parallel(*r, BindingOrder::HighToLow));
-
-        // Sanity check that eq is computed correctly.
-        for j in 0..T.pow(D as u32) {
-            let num_bits = D * T.log_2();
-            // Lower index correspond to lower bits.
-            let bits_f = (0..32)
-                .take(num_bits)
-                .map(|n| ((j >> n) & 1) as u32)
-                .map(|bit| Fr::from_u32(bit))
-                .map(|val| (val, Fr::from_u32(1) - val))
-                .collect::<Vec<_>>();
-            assert_eq!(bits_f.len(), num_bits);
-
-            let mut j_bit_vec: Vec<Vec<_>> = bits_f
-                .chunks(D)
-                .map(|chunk| chunk.to_owned())
-                .collect::<Vec<_>>();
-
-            j_bit_vec
-                .iter_mut()
-                .zip(r_cycle.iter().rev())
-                .for_each(|(chunk, digit)| {
-                    chunk.push((*digit, Fr::from_u32(1) - *digit));
-                });
-            assert_eq!(j_bit_vec[0].len(), D + 1);
-
-            let _eq_eval = j_bit_vec
-                .into_iter()
-                .map(|chunk| {
-                    let res = chunk
-                        .into_iter()
-                        .reduce(|running, new| (running.0 * new.0, running.1 * new.1))
-                        .unwrap();
-                    res.0 + res.1
-                })
-                .product::<Fr>();
-
-            // assert_eq!(eq_eval, eq.get_bound_coeff(j));
-        }
-
-        let mut dummy_transcript = KeccakTranscript::new(b"dummy");
-        let _r_address = (0..D)
-            .map(|idx| {
-                let r_address = dummy_transcript.challenge_vector::<Fr>(K.log_2());
-                r_address.iter().for_each(|r| {
-                    ra[idx].bind_parallel(*r, BindingOrder::HighToLow);
-                });
-                r_address
-            })
-            .collect::<Vec<_>>();
-        let previous_claim = (0..T.pow(D as u32))
-            .map(|j| {
-                let num_bits = D * T.log_2();
-                // Lower index correspond to lower bits.
-                let bits = (0..32)
-                    .take(num_bits)
-                    .map(|n| ((j >> n) & 1) as u32)
-                    .collect::<Vec<u32>>();
-                assert_eq!(bits.len(), num_bits);
-
-                let j_vec = (0..D)
-                    .map(|d| {
-                        let res: u32 = bits
-                            .iter()
-                            .enumerate()
-                            .filter(|(idx, _)| idx % (D as usize) == d as usize)
-                            .map(|(_, bit)| *bit)
-                            .enumerate()
-                            .map(|(idx, bit)| bit << idx)
-                            .sum();
-                        res
-                    })
-                    .collect::<Vec<_>>();
-
-                j_vec
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, j_d)| ra[idx].get_bound_coeff(*j_d as usize))
-                    .product::<Fr>()
-                    * eq.get_bound_coeff(j)
-            })
-            .sum::<Fr>();
+        check_initial_eval_claim(D, T, &r_cycle, &ra);
 
         let (proof, r_prime) = LargeDSumCheckProof::<Fr, KeccakTranscript>::prove(
             &mut ra.iter_mut().collect::<Vec<_>>(),
             &r_cycle,
-            previous_claim,
             &mut prover_transcript,
         );
 
