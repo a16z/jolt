@@ -105,7 +105,7 @@ where
     }
 
     #[tracing::instrument(skip_all)]
-    fn verify(
+    pub fn verify(
         &self,
         preprocessing: JoltVerifierPreprocessing<F, ProofTranscript>,
     ) -> Result<(), ProofVerifyError> {

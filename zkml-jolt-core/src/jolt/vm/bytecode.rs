@@ -20,7 +20,6 @@ use jolt_core::{
 use onnx_tracer::trace_types::{ONNXCycle, ONNXInstr};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::marker::PhantomData;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BytecodePreprocessing {
@@ -142,7 +141,7 @@ where
     fn bytecode_to_val(program_bytecode: &[ONNXInstr], gamma: &F) -> Vec<F> {
         let mut gamma_pows = [F::one(); 4];
         for i in 1..4 {
-            gamma_pows[i] *= gamma_pows[i - 1];
+            gamma_pows[i] *= *gamma * gamma_pows[i - 1];
         }
         program_bytecode
             .iter()
