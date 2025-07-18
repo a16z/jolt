@@ -49,7 +49,11 @@ where
     ProofTranscript: Transcript,
     F: JoltField,
 {
-    _p: PhantomData<(F, ProofTranscript)>,
+    core_piop_sumcheck: SumcheckInstanceProof<F, ProofTranscript>,
+    booleanity_sumcheck: SumcheckInstanceProof<F, ProofTranscript>,
+    ra_claim: F,
+    ra_claim_prime: F,
+    rv_claim: F,
 }
 
 impl<F, ProofTranscript> BytecodeProof<F, ProofTranscript>
@@ -65,8 +69,11 @@ where
         let K = preprocessing.code_size;
         let T = trace.len();
 
-        // --- Shout PIOP ---
+        // --- Shout PIOP & Hamming weight check ---
         let r_cycle: Vec<F> = transcript.challenge_vector(T.log_2());
+        // Used to batch the core PIOP sumcheck and Hamming weight sumcheck
+        // (see Section 4.2.1)
+        let z: F = transcript.challenge_scalar();
         let E = EqPolynomial::evals(&r_cycle);
         let mut F = vec![F::zero(); K];
         for (j, cycle) in trace.iter().enumerate() {
@@ -76,8 +83,9 @@ where
         let gamma: F = transcript.challenge_scalar();
         let val = Self::bytecode_to_val(&preprocessing.bytecode, &gamma);
         // sum-check setup
-        let sumcheck_claim: F = F.iter().zip_eq(val.iter()).map(|(f, v)| *f * v).sum();
-        let mut prev_claim = sumcheck_claim;
+        let rv_claim: F = F.iter().zip_eq(val.iter()).map(|(f, v)| *f * v).sum();
+        // random linear combination of core piop claim and hamming weight claim
+        let mut prev_claim = rv_claim + z/* .mul(1)*/; // where 1 is hamming weight sumcheck claim
         let mut ra = MultilinearPolynomial::from(F.clone());
         let mut val = MultilinearPolynomial::from(val);
         const DEGREE: usize = 2;
@@ -88,9 +96,12 @@ where
             let uni_poly_evals: [F; 2] = (0..ra.len() / 2)
                 .into_par_iter()
                 .map(|index| {
-                    let ra_evals = ra.sumcheck_evals(index, DEGREE, BindingOrder::HighToLow);
-                    let val_evals = val.sumcheck_evals(index, DEGREE, BindingOrder::HighToLow);
-                    [ra_evals[0] * val_evals[0], ra_evals[1] * val_evals[1]]
+                    let ra_evals = ra.sumcheck_evals(index, DEGREE, BindingOrder::LowToHigh);
+                    let val_evals = val.sumcheck_evals(index, DEGREE, BindingOrder::LowToHigh);
+                    [
+                        ra_evals[0] * (z + val_evals[0]),
+                        ra_evals[1] * (z * val_evals[1]),
+                    ]
                 })
                 .reduce(
                     || [F::zero(); 2],
@@ -105,39 +116,26 @@ where
             compressed_poly.append_to_transcript(transcript);
             sumcheck_proof.push(compressed_poly);
             let r: F = transcript.challenge_scalar();
-            ra.bind_parallel(r, BindingOrder::HighToLow);
-            val.bind_parallel(r, BindingOrder::HighToLow);
+            ra.bind_parallel(r, BindingOrder::LowToHigh);
+            val.bind_parallel(r, BindingOrder::LowToHigh);
             prev_claim = uni_poly.evaluate(&r);
             r_address.push(r);
         }
+        let ra_claim = ra.final_sumcheck_claim();
         let core_piop_shout_proof: SumcheckInstanceProof<F, ProofTranscript> =
             SumcheckInstanceProof::new(sumcheck_proof);
-
-        // --- Hamming weight check ---
-        // sum-check setup
-        let sumcheck_claim = F::one();
-        let mut prev_claim = sumcheck_claim;
-        let mut ra = MultilinearPolynomial::from(F);
-        let mut r_address_prime: Vec<F> = Vec::with_capacity(num_rounds);
-        let mut sumcheck_proof: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
-        for _ in 0..num_rounds {
-            let uni_poly_eval: F = (0..ra.len() / 2)
-                .into_par_iter()
-                .map(|b| ra.get_bound_coeff(b))
-                .sum();
-            let uni_poly = UniPoly::from_evals(&[uni_poly_eval, prev_claim - uni_poly_eval]);
-            let compressed_poly = uni_poly.compress();
-            compressed_poly.append_to_transcript(transcript);
-            sumcheck_proof.push(compressed_poly);
-            let r_j = transcript.challenge_scalar::<F>();
-            r_address_prime.push(r_j);
-            prev_claim = uni_poly.evaluate(&r_j);
-            ra.bind_parallel(r_j, BindingOrder::HighToLow);
-        }
-
         // --- Booleanity check ---
+        let (booleanity_sumcheck_proof, _r_address_prime, _r_cycle_prime, ra_claim_prime) =
+            prove_booleanity(trace, &r_address, E, F, transcript);
+
         // --- raf evaluation ---
-        BytecodeProof { _p: PhantomData }
+        BytecodeProof {
+            core_piop_sumcheck: core_piop_shout_proof,
+            booleanity_sumcheck: booleanity_sumcheck_proof,
+            ra_claim,
+            ra_claim_prime,
+            rv_claim,
+        }
     }
 
     /// Reed-solomon fingerprint each instr in the program bytecode
@@ -162,13 +160,19 @@ where
     }
 }
 
+/// # Returns
+/// - `SumcheckInstanceProof<F, ProofTranscript>`: The proof for the booleanity check.
+/// - `Vec<F>`: r_address_prime.
+/// - `Vec<F>`: r_cycle_prime.
+/// - `F`: ra_claim_prime.
 pub fn prove_booleanity<F, ProofTranscript>(
     trace: &[ONNXCycle],
     r: &[F],
     D: Vec<F>,
     G: Vec<F>,
     transcript: &mut ProofTranscript,
-) where
+) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, Vec<F>, F)
+where
     ProofTranscript: Transcript,
     F: JoltField,
 {
@@ -347,6 +351,13 @@ pub fn prove_booleanity<F, ProofTranscript>(
             || H.bind_parallel(r_j, BindingOrder::LowToHigh),
         );
     }
+    let ra_claim = H.final_sumcheck_claim();
+    (
+        SumcheckInstanceProof::new(compressed_polys),
+        r_address_prime,
+        r_cycle_prime,
+        ra_claim,
+    )
 }
 
 pub fn prove_raf_eval<F, ProofTranscript>(y: F, F: Vec<F>, transcript: &mut ProofTranscript)
@@ -393,7 +404,7 @@ where
             || int.bind_parallel(r_j, BindingOrder::HighToLow),
         );
     }
-    let sc: SumcheckInstanceProof<F, ProofTranscript> =
+    let _sc: SumcheckInstanceProof<F, ProofTranscript> =
         SumcheckInstanceProof::new(compressed_polys);
 }
 
@@ -405,8 +416,40 @@ where
     pub fn verify(
         &self,
         preprocessing: &BytecodePreprocessing,
+        T: usize,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
+        let K = preprocessing.bytecode.len();
+        let r_cycle: Vec<F> = transcript.challenge_vector(T.log_2());
+        let z: F = transcript.challenge_scalar();
+        let gamma: F = transcript.challenge_scalar();
+        let (sumcheck_claim, mut r_address) =
+            self.core_piop_sumcheck
+                .verify(self.rv_claim + z, K.log_2(), 2, transcript)?;
+        // r_address = r_address.into_iter().rev().collect();
+        // Used to combine the various fields in each instruction into a single
+        // field element.
+        let val: Vec<F> = Self::bytecode_to_val(&preprocessing.bytecode, &gamma);
+        let val = MultilinearPolynomial::from(val);
+
+        assert_eq!(
+            self.ra_claim * (z + val.evaluate(&r_address)),
+            sumcheck_claim,
+            "Core PIOP + Hamming weight sumcheck failed"
+        );
+
+        // let (sumcheck_claim, r_booleanity) =
+        //     self.booleanity_sumcheck
+        //         .verify(F::zero(), K.log_2() + T.log_2(), 3, transcript)?;
+        // let (r_address_prime, r_cycle_prime) = r_booleanity.split_at(K.log_2());
+        // let eq_eval_address = EqPolynomial::mle(&r_address, r_address_prime);
+        // let r_cycle: Vec<_> = r_cycle.iter().copied().rev().collect();
+        // let eq_eval_cycle = EqPolynomial::mle(&r_cycle, r_cycle_prime);
+        // assert_eq!(
+        //     eq_eval_address * eq_eval_cycle * (self.ra_claim_prime.square() - self.ra_claim_prime),
+        //     sumcheck_claim,
+        //     "Booleanity sumcheck failed"
+        // );
         Ok(())
     }
 }

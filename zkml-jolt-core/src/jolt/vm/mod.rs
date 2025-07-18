@@ -110,8 +110,11 @@ where
         preprocessing: JoltVerifierPreprocessing<F, ProofTranscript>,
     ) -> Result<(), ProofVerifyError> {
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
-        self.bytecode
-            .verify(&preprocessing.shared.bytecode, &mut transcript)?;
+        self.bytecode.verify(
+            &preprocessing.shared.bytecode,
+            self.trace_length,
+            &mut transcript,
+        )?;
         Ok(())
     }
 }

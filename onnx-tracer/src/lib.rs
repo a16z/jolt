@@ -6,6 +6,7 @@
 #![allow(clippy::empty_docs)]
 
 use crate::{
+    constants::BYTECODE_PREPEND_NOOP,
     fieldutils::i128_to_felt,
     graph::model::{Model, NodeType},
     tensor::Tensor,
@@ -79,9 +80,12 @@ fn model(model_path: &PathBuf) -> Model {
 
 /// Converts a [`NodeType`] and its program counter into an [`ONNXInstr`].
 /// This helper keeps the [decode] function concise and focused.
+///
+/// # NOTE:
+/// Adds 1 to pc to account for prepended no-op
 pub fn decode_node((pc, node): (&usize, &NodeType)) -> ONNXInstr {
     match node {
-        NodeType::Node(node) => node.decode(*pc),
+        NodeType::Node(node) => node.decode(*pc + BYTECODE_PREPEND_NOOP),
         NodeType::SubGraph { .. } => {
             todo!()
         }
