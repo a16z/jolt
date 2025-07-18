@@ -12,17 +12,36 @@ use jolt_core::{
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{
+        errors::ProofVerifyError,
         math::Math,
         transcript::{AppendToTranscript, Transcript},
     },
 };
 use onnx_tracer::trace_types::{ONNXCycle, ONNXInstr};
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BytecodePreprocessing {
     code_size: usize,
     bytecode: Vec<ONNXInstr>,
+}
+
+impl BytecodePreprocessing {
+    #[tracing::instrument(skip_all, name = "BytecodePreprocessing::preprocess")]
+    pub fn preprocess(mut bytecode: Vec<ONNXInstr>) -> Self {
+        // Bytecode: Prepend a single no-op instruction
+        bytecode.insert(0, ONNXInstr::no_op());
+
+        // Bytecode: Pad to nearest power of 2
+        let code_size = bytecode.len().next_power_of_two();
+        bytecode.resize(code_size, ONNXInstr::no_op());
+        Self {
+            code_size,
+            bytecode,
+        }
+    }
 }
 
 pub struct BytecodeProof<F, ProofTranscript>
@@ -42,7 +61,7 @@ where
         preprocessing: &BytecodePreprocessing,
         trace: &[ONNXCycle],
         transcript: &mut ProofTranscript,
-    ) {
+    ) -> Self {
         let K = preprocessing.code_size;
         let T = trace.len();
 
@@ -118,6 +137,7 @@ where
 
         // --- Booleanity check ---
         // --- raf evaluation ---
+        BytecodeProof { _p: PhantomData }
     }
 
     /// Reed-solomon fingerprint each instr in the program bytecode
@@ -375,4 +395,18 @@ where
     }
     let sc: SumcheckInstanceProof<F, ProofTranscript> =
         SumcheckInstanceProof::new(compressed_polys);
+}
+
+impl<F, ProofTranscript> BytecodeProof<F, ProofTranscript>
+where
+    ProofTranscript: Transcript,
+    F: JoltField,
+{
+    pub fn verify(
+        &self,
+        preprocessing: &BytecodePreprocessing,
+        transcript: &mut ProofTranscript,
+    ) -> Result<(), ProofVerifyError> {
+        Ok(())
+    }
 }

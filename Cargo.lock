@@ -5747,6 +5747,9 @@ dependencies = [
  "jolt-core",
  "onnx-tracer",
  "rayon",
+ "serde",
+ "serde_json",
+ "tracing",
 ]
 
 [[patch.unused]]

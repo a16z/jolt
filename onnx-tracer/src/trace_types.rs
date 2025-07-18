@@ -12,6 +12,14 @@ pub struct ONNXCycle {
     pub instr: ONNXInstr,
 }
 
+impl ONNXCycle {
+    pub fn no_op() -> Self {
+        ONNXCycle {
+            instr: ONNXInstr::no_op(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 /// Represents a single ONNX instruction parsed from the model.
 /// Represents a single ONNX instruction in the program code.
@@ -47,6 +55,17 @@ pub struct ONNXInstr {
     /// This field is analogous to the `rs2` register specifier in RISC-V,
     /// serving to specify the address or index of the second operand.
     pub ts2: Option<usize>,
+}
+
+impl ONNXInstr {
+    pub fn no_op() -> Self {
+        ONNXInstr {
+            address: 0,
+            opcode: ONNXOpcode::Noop,
+            ts1: None,
+            ts2: None,
+        }
+    }
 }
 
 // TODO: Expand the instruction set architecture (ISA):
