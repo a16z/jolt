@@ -310,14 +310,13 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
             .map(|ra_i| ra_i.final_sumcheck_claim())
             .collect();
 
-        // TODO
-        // accumulator.borrow_mut().append_sparse(
-        //     (0..self.d).map(CommittedPolynomial::RamRa).collect(),
-        //     SumcheckId::RamBooleanity,
-        //     r_address.r,
-        //     self.r_cycle.clone(),
-        //     claims,
-        // );
+        accumulator.borrow_mut().append_sparse(
+            (0..self.d).map(CommittedPolynomial::RamRa).collect(),
+            SumcheckId::RamHammingWeight,
+            r_address.r,
+            self.r_cycle.clone(),
+            claims,
+        );
     }
 
     fn cache_openings_verifier(

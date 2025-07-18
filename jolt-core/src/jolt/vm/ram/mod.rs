@@ -369,14 +369,14 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        let hamming_weight = HammingWeightSumcheck::new_prover(self.K, state_manager);
+        // let hamming_weight = HammingWeightSumcheck::new_prover(self.K, state_manager);
         let booleanity = BooleanitySumcheck::new_prover(self.K, state_manager);
         let ra_virtual = RASumcheck::new_prover(self.K, state_manager);
 
         vec![
-            Box::new(hamming_weight),
+            // Box::new(hamming_weight),
             Box::new(booleanity),
-            Box::new(ra_virtual),
+            // Box::new(ra_virtual),
         ]
     }
 
@@ -384,14 +384,14 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        let hamming_weight = HammingWeightSumcheck::new_verifier(self.K, state_manager);
+        // let hamming_weight = HammingWeightSumcheck::new_verifier(self.K, state_manager);
         let booleanity = BooleanitySumcheck::new_verifier(self.K, state_manager);
         let ra_virtual = RASumcheck::new_verifier(self.K, state_manager);
 
         vec![
-            Box::new(hamming_weight),
+            // Box::new(hamming_weight),
             Box::new(booleanity),
-            Box::new(ra_virtual),
+            // Box::new(ra_virtual),
         ]
     }
 }

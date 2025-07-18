@@ -45,8 +45,6 @@ pub struct RASumcheck<F: JoltField> {
     T: usize,
     /// Prover state
     prover_state: Option<RAProverState<F>>,
-    /// ra_i claims to be later queried by verifier
-    ra_i_claims: Option<Vec<F>>,
 }
 
 impl<F: JoltField> RASumcheck<F> {
@@ -67,20 +65,6 @@ impl<F: JoltField> RASumcheck<F> {
             SumcheckId::RamValFinalEvaluation,
         );
         let (r_address, r_cycle) = r.split_at_r(log_K);
-
-        // #[cfg(test)]
-        // {
-        //     assert_eq!(
-        //         r,
-        //         state_manager
-        //             .get_opening_point(OpeningId::RamValEvaluationWa)
-        //             .unwrap()
-        //     );
-        //     assert_eq!(
-        //         ra_claim,
-        //         state_manager.get_opening(OpeningId::RamValEvaluationWa)
-        //     );
-        // }
 
         let base_chunk_size = log_K / d;
         let remainder = log_K % d;
@@ -151,7 +135,6 @@ impl<F: JoltField> RASumcheck<F> {
             }),
             T,
             r_cycle: r_cycle.to_vec(),
-            ra_i_claims: None,
         }
     }
 
@@ -159,62 +142,36 @@ impl<F: JoltField> RASumcheck<F> {
         K: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        todo!()
-        // // Calculate D dynamically such that 2^8 = K^(1/D)
-        // let log_K = K.log_2();
-        // let d = (log_K / 8).max(1);
+        // Calculate D dynamically such that 2^8 = K^(1/D)
+        let log_K = K.log_2();
+        let d = (log_K / 8).max(1);
 
-        // let (_, _, T) = state_manager.get_verifier_data();
+        let (_, _, T) = state_manager.get_verifier_data();
 
-        // let r = state_manager
-        //     .get_opening_point(OpeningId::ValFinalWa)
-        //     .unwrap();
-        // let (_r_address, r_cycle) = r.split_at(log_K);
-        // let ra_claim = state_manager.get_opening(OpeningId::ValFinalWa);
+        assert_eq!(
+            state_manager.get_virtual_polynomial_opening(
+                VirtualPolynomial::RamRa,
+                SumcheckId::RamValFinalEvaluation,
+            ),
+            state_manager.get_virtual_polynomial_opening(
+                VirtualPolynomial::RamRa,
+                SumcheckId::RamValEvaluation,
+            )
+        );
 
-        // assert_eq!(
-        //     r,
-        //     state_manager
-        //         .get_opening_point(OpeningId::RamValEvaluationWa)
-        //         .unwrap()
-        // );
-        // assert_eq!(
-        //     ra_claim,
-        //     state_manager.get_opening(OpeningId::RamValEvaluationWa)
-        // );
+        let (r, ra_claim) = state_manager.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamRa,
+            SumcheckId::RamValFinalEvaluation,
+        );
+        let (_r_address, r_cycle) = r.split_at(log_K);
 
-        // let ra_i_claims = (0..d)
-        //     .map(|i| state_manager.get_opening(OpeningId::RamRaVirtualization(i)))
-        //     .collect();
-
-        // Self {
-        //     ra_claim,
-        //     d,
-        //     r_cycle: r_cycle.to_vec(),
-        //     T,
-        //     prover_state: None,
-        //     ra_i_claims: Some(ra_i_claims),
-        // }
-    }
-
-    #[tracing::instrument(skip_all, name = "ra virtualization")]
-    pub fn prove<ProofTranscript: Transcript>(
-        mut self,
-        transcript: &mut ProofTranscript,
-    ) -> (RAProof<F, ProofTranscript>, Vec<F>) {
-        let (sumcheck_proof, r_cycle_bound) = self.prove_single(transcript);
-
-        let ra_i_claims = self
-            .ra_i_claims
-            .expect("ra_i_claims were not set after prove")
-            .to_vec();
-
-        let proof = RAProof {
-            sumcheck_proof,
-            ra_i_claims,
-        };
-
-        (proof, r_cycle_bound)
+        Self {
+            ra_claim,
+            d,
+            r_cycle: r_cycle.into(),
+            T,
+            prover_state: None,
+        }
     }
 }
 
@@ -251,18 +208,21 @@ impl<F: JoltField> SumcheckInstance<F> for RASumcheck<F> {
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         r: &[F],
     ) -> F {
-        let ra_i_claims = self.ra_i_claims.as_ref().expect("ra_i_claims not set");
-
         // we need opposite endian-ness here
         let r_rev: Vec<_> = r.iter().cloned().rev().collect();
         let eq_eval = EqPolynomial::mle(&self.r_cycle, &r_rev);
 
         // Compute the product of all ra_i evaluations
         let mut product = F::one();
-        for ra_i_claim in ra_i_claims.iter() {
-            product *= *ra_i_claim;
+        for i in 0..self.d {
+            let accumulator = accumulator.as_ref().unwrap();
+            let accumulator = accumulator.borrow();
+            let (_, ra_i_claim) = accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::RamRa(i),
+                SumcheckId::RamRaVirtualization(1),
+            );
+            product *= ra_i_claim;
         }
-
         eq_eval * product
     }
 

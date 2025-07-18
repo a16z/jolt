@@ -187,31 +187,31 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             unbound_ra_poly.clone(),
             ReadCheckingValType::Stage1,
         );
-        let read_checking_2 = ReadCheckingSumcheck::new_prover(
-            sm,
-            F_2,
-            unbound_ra_poly.clone(),
-            ReadCheckingValType::Stage2,
-        );
-        let read_checking_3 = ReadCheckingSumcheck::new_prover(
-            sm,
-            F_3.clone(),
-            unbound_ra_poly.clone(),
-            ReadCheckingValType::Stage3,
-        );
-        let raf = RafBytecode::new_prover(
-            sm,
-            MultilinearPolynomial::from(F_1.clone()),
-            MultilinearPolynomial::from(F_3),
-        );
+        // let read_checking_2 = ReadCheckingSumcheck::new_prover(
+        //     sm,
+        //     F_2,
+        //     unbound_ra_poly.clone(),
+        //     ReadCheckingValType::Stage2,
+        // );
+        // let read_checking_3 = ReadCheckingSumcheck::new_prover(
+        //     sm,
+        //     F_3.clone(),
+        //     unbound_ra_poly.clone(),
+        //     ReadCheckingValType::Stage3,
+        // );
+        // let raf = RafBytecode::new_prover(
+        //     sm,
+        //     MultilinearPolynomial::from(F_1.clone()),
+        //     MultilinearPolynomial::from(F_3),
+        // );
         let booleanity = BooleanitySumcheck::new_prover(sm, E_1, F_1.clone());
         let hamming_weight = HammingWeightSumcheck::new_prover(F_1, K);
 
         vec![
             Box::new(read_checking_1),
-            Box::new(read_checking_2),
-            Box::new(read_checking_3),
-            Box::new(raf),
+            // Box::new(read_checking_2),
+            // Box::new(read_checking_3),
+            // Box::new(raf),
             Box::new(booleanity),
             Box::new(hamming_weight),
         ]
@@ -222,17 +222,17 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let read_checking_1 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValType::Stage1);
-        let read_checking_2 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValType::Stage2);
-        let read_checking_3 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValType::Stage3);
-        let raf = RafBytecode::new_verifier(sm);
+        // let read_checking_2 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValType::Stage2);
+        // let read_checking_3 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValType::Stage3);
+        // let raf = RafBytecode::new_verifier(sm);
         let booleanity = BooleanitySumcheck::new_verifier(sm);
         let hamming_weight = HammingWeightSumcheck::new_verifier(sm);
 
         vec![
             Box::new(read_checking_1),
-            Box::new(read_checking_2),
-            Box::new(read_checking_3),
-            Box::new(raf),
+            // Box::new(read_checking_2),
+            // Box::new(read_checking_3),
+            // Box::new(raf),
             Box::new(booleanity),
             Box::new(hamming_weight),
         ]

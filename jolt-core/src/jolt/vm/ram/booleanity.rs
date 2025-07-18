@@ -397,15 +397,14 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
             .map(|h_poly| h_poly.final_sumcheck_claim())
             .collect();
 
-        // TODO
-        // let (r_address, r_cycle) = opening_point.split_at(self.K.log_2());
-        // accumulator.borrow_mut().append_sparse(
-        //     (0..self.d).map(CommittedPolynomial::RamRa).collect(),
-        //     SumcheckId::RamBooleanity,
-        //     r_address.r,
-        //     r_cycle.r,
-        //     claims,
-        // );
+        let (r_address, r_cycle) = opening_point.split_at(self.K.log_2());
+        accumulator.borrow_mut().append_sparse(
+            (0..self.d).map(CommittedPolynomial::RamRa).collect(),
+            SumcheckId::RamBooleanity,
+            r_address.r,
+            r_cycle.r,
+            claims,
+        );
     }
 
     fn cache_openings_verifier(

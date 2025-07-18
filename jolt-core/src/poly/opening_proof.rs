@@ -888,10 +888,19 @@ where
                 let prover_opening = &self.prover_opening_accumulator.as_ref().unwrap().sumchecks
                     [self.sumchecks.len()];
                 assert_eq!(
-                    prover_opening.opening_point, opening_point,
-                    "opening point mismatch"
+                    (prover_opening.polynomials[0], prover_opening.sumcheck_id),
+                    (label, sumcheck),
+                    "Polynomial mismatch"
                 );
-                assert_eq!(prover_opening.polynomials.len(), 1, "batch size mismatch");
+                assert_eq!(
+                    prover_opening.polynomials.len(),
+                    1,
+                    "batch size mismatch for {sumcheck:?} {label:?}"
+                );
+                assert_eq!(
+                    prover_opening.opening_point, opening_point,
+                    "opening point mismatch for {sumcheck:?} {label:?}"
+                );
             }
 
             let claim = self
