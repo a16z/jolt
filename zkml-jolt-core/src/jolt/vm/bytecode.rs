@@ -1,3 +1,5 @@
+//! Implements the fetch-decode portion of the zkVM.
+
 use itertools::Itertools;
 use jolt_core::{
     field::JoltField,

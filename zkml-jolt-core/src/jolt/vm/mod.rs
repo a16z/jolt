@@ -1,3 +1,6 @@
+//! A state-of-the-art zkVM, called Jolt, which turns almost everything a VM does into reads and writes to memory.
+//! This includes the “fetch-decode-execute” logic of the VM.
+
 use crate::jolt::vm::bytecode::{BytecodePreprocessing, BytecodeProof};
 use jolt_core::{
     field::JoltField,
