@@ -60,6 +60,8 @@ pub struct HammingWeightSumcheck<F: JoltField> {
     d: usize,
 }
 
+const NUM_RA_I_VARS: usize = 8;
+
 impl<F: JoltField> HammingWeightSumcheck<F> {
     #[tracing::instrument(skip_all, name = "RamHammingWeightSumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
@@ -68,7 +70,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
     ) -> Self {
         // Calculate D dynamically such that 2^8 = K^(1/D)
         let log_K = K.log_2();
-        let d = (log_K / 8).max(1);
+        let d = (log_K + NUM_RA_I_VARS - 1) / NUM_RA_I_VARS;
 
         let (_, trace, program_io, _) = state_manager.get_prover_data();
         let memory_layout = &program_io.memory_layout;
@@ -90,68 +92,40 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
             .challenge_vector(T.log_2());
         let eq_r_cycle = EqPolynomial::evals(&r_cycle);
 
-        // Calculate variable chunk sizes for address decomposition
-        let log_k = K.log_2();
-        let base_chunk_size = log_k / d;
-        let remainder = log_k % d;
-        let chunk_sizes: Vec<usize> = (0..d)
-            .map(|i| {
-                if i < remainder {
-                    base_chunk_size + 1
-                } else {
-                    base_chunk_size
-                }
-            })
-            .collect();
+        let mut F_arrays = Vec::with_capacity(d);
+        for i in 0..d {
+            let F: Vec<F> = trace
+                .par_chunks(chunk_size)
+                .enumerate()
+                .map(|(chunk_index, trace_chunk)| {
+                    let mut local_array = unsafe_allocate_zero_vec(1 << NUM_RA_I_VARS);
+                    let mut j = chunk_index * chunk_size;
+                    for cycle in trace_chunk {
+                        let address =
+                            remap_address(cycle.ram_access().address() as u64, memory_layout)
+                                as usize;
 
-        // Compute F arrays for each decomposed part
-        let F_arrays: Vec<Vec<F>> = trace
-            .par_chunks(chunk_size)
-            .enumerate()
-            .map(|(chunk_index, trace_chunk)| {
-                // TODO(moodlezoup): Can be K^(1/d)-sized vectors
-                let mut local_arrays: Vec<Vec<F>> = vec![unsafe_allocate_zero_vec(K); d];
-                let mut j = chunk_index * chunk_size;
-                for cycle in trace_chunk {
-                    let address =
-                        remap_address(cycle.ram_access().address() as u64, memory_layout) as usize;
-
-                    // For each address, add eq_r_cycle[j] to each corresponding chunk
-                    // This maintains the property that sum of all ra values for an address equals 1
-                    let mut remaining_address = address;
-                    let mut chunk_values = Vec::with_capacity(d);
-
-                    // Decompose address into chunks
-                    for i in 0..d {
-                        let chunk_size = chunk_sizes[d - 1 - i];
-                        let chunk_modulo = 1 << chunk_size;
-                        let chunk_value = remaining_address % chunk_modulo;
-                        chunk_values.push(chunk_value);
-                        remaining_address /= chunk_modulo;
+                        // For each address, add eq_r_cycle[j] to each corresponding chunk
+                        // This maintains the property that sum of all ra values for an address equals 1
+                        let address_i =
+                            (address >> (NUM_RA_I_VARS * (d - 1 - i))) % (1 << NUM_RA_I_VARS);
+                        local_array[address_i] += eq_r_cycle[j];
+                        j += 1;
                     }
-
-                    // Add eq_r_cycle contribution to each ra polynomial
-                    for (i, &chunk_value) in chunk_values.iter().enumerate() {
-                        local_arrays[d - 1 - i][chunk_value] += eq_r_cycle[j];
-                    }
-                    j += 1;
-                }
-                local_arrays
-            })
-            .reduce(
-                || vec![unsafe_allocate_zero_vec(K); d],
-                |mut running, new| {
-                    running.par_iter_mut().zip(new.into_par_iter()).for_each(
-                        |(running_arr, new_arr)| {
-                            running_arr
-                                .par_iter_mut()
-                                .zip(new_arr.into_par_iter())
-                                .for_each(|(x, y)| *x += y);
-                        },
-                    );
-                    running
-                },
-            );
+                    local_array
+                })
+                .reduce(
+                    || unsafe_allocate_zero_vec(1 << NUM_RA_I_VARS),
+                    |mut running, new| {
+                        running
+                            .par_iter_mut()
+                            .zip(new.into_par_iter())
+                            .for_each(|(x, y)| *x += y);
+                        running
+                    },
+                );
+            F_arrays.push(F);
+        }
 
         // Create MultilinearPolynomials from F arrays
         let ra: Vec<MultilinearPolynomial<F>> = F_arrays
@@ -179,7 +153,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
 
         // Calculate D dynamically such that 2^8 = K^(1/D)
         let log_K = K.log_2();
-        let d = (log_K / 8).max(1);
+        let d = (log_K + NUM_RA_I_VARS - 1) / NUM_RA_I_VARS;
 
         // Get z challenges for batching
         let z_challenges: Vec<F> = state_manager.transcript.borrow_mut().challenge_vector(d);
@@ -212,13 +186,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
     }
 
     fn num_rounds(&self) -> usize {
-        if let Some(prover_state) = &self.prover_state {
-            prover_state.ra[0].get_num_vars()
-        } else if let Some(verifier_state) = &self.verifier_state {
-            verifier_state.log_K / self.d
-        } else {
-            panic!("Neither prover state nor verifier state is initialized")
-        }
+        NUM_RA_I_VARS
     }
 
     fn input_claim(&self) -> F {
