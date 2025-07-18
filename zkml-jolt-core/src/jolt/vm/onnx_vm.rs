@@ -1,8 +1,12 @@
 #[cfg(test)]
 mod e2e_tests {
-    use crate::program::ONNXProgram;
+    use crate::{
+        jolt::vm::{JoltProverPreprocessing, JoltSNARK},
+        program::ONNXProgram,
+    };
+    use ark_bn254::Fr;
+    use jolt_core::utils::transcript::KeccakTranscript;
     use onnx_tracer::{logger::init_logger, tensor::Tensor};
-
     // TODO(Forpee): refactor duplicate code in these tests
     #[test]
     fn test_simple_classification() {
@@ -14,7 +18,11 @@ mod e2e_tests {
         let program_bytecode = text_classification.decode();
         println!("Program code: {program_bytecode:#?}",);
         let execution_trace = text_classification.trace();
-        println!("Execution trace: {execution_trace:#?}",);
+        println!("Execution trace: {execution_trace:#?}");
+        let pp: JoltProverPreprocessing<Fr, KeccakTranscript> =
+            JoltSNARK::prover_preprocess(program_bytecode);
+        let snark: JoltSNARK<Fr, KeccakTranscript> = JoltSNARK::prove(pp.clone(), execution_trace);
+        snark.verify((&pp).into()).unwrap();
     }
 
     #[test]

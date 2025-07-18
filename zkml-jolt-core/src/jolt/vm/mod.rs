@@ -36,6 +36,20 @@ where
     _p: PhantomData<(F, ProofTranscript)>,
 }
 
+impl<F, ProofTranscript> From<&JoltProverPreprocessing<F, ProofTranscript>>
+    for JoltVerifierPreprocessing<F, ProofTranscript>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+{
+    fn from(preprocessing: &JoltProverPreprocessing<F, ProofTranscript>) -> Self {
+        JoltVerifierPreprocessing {
+            shared: preprocessing.shared.clone(),
+            _p: PhantomData,
+        }
+    }
+}
+
 pub struct JoltSNARK<F, ProofTranscript>
 where
     ProofTranscript: Transcript,
@@ -72,8 +86,8 @@ where
 
     #[tracing::instrument(skip_all, name = "Jolt::prove")]
     pub fn prove(
-        mut trace: Vec<ONNXCycle>,
         mut preprocessing: JoltProverPreprocessing<F, ProofTranscript>,
+        mut trace: Vec<ONNXCycle>,
     ) -> Self {
         let trace_length = trace.len();
         println!("Trace length: {trace_length}");

@@ -4,9 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-onnx-tracer = { path = "../onnx-tracer" }
-jolt-core = { path = "../jolt-core" }
+ark-bn254 = "0.5.0"
 itertools = "0.10.0"
+jolt-core = { path = "../jolt-core" }
+onnx-tracer = { path = "../onnx-tracer" }
 rayon = { version = "^1.8.0" }
 serde = { version = "1.0.193", features = ["derive"] }
 serde_json = "1.0.108"

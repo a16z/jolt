@@ -5743,6 +5743,7 @@ dependencies = [
 name = "zkml-jolt-core"
 version = "0.1.0"
 dependencies = [
+ "ark-bn254",
  "itertools 0.10.5",
  "jolt-core",
  "onnx-tracer",
