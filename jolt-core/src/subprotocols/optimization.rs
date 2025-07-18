@@ -1,7 +1,9 @@
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rayon::iter::{
+    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefMutIterator, ParallelIterator,
+};
 
 use crate::{
-    field::JoltField,
+    field::{JoltField, OptimizedMul},
     poly::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{
@@ -174,108 +176,123 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(D * T.log_2());
         let mut w: Vec<F> = Vec::with_capacity(D * T.log_2());
 
-        for round in 0..D * T.log_2() {
-            let d = round % D;
-            // j_idx is the index (counting backwards as we're binding from high to low) of the cycle variable vector
-            // that we're binding for the corresponding lookup ra.
-            let j_idx = round / D;
+        for j_idx in 0..T.log_2() {
+            let size = (T.log_2() - j_idx - 1).pow2();
+            let mut before_idx_evals = vec![F::one(); size];
+            let mut after_idx_evals = vec![Vec::with_capacity(D - 1); size];
+            after_idx_evals
+                .par_iter_mut()
+                .enumerate()
+                .for_each(|(j, x)| {
+                    let mut cur = (
+                        mle_vec[D - 1].get_bound_coeff(j),
+                        mle_vec[D - 1].get_bound_coeff(j + mle_vec[D - 1].len() / 2),
+                    );
+                    for i in 0..D - 1 {
+                        x.push(cur);
+                        if i < D - 2 {
+                            cur = (
+                                cur.0 * mle_vec[D - 2 - i].get_bound_coeff(j),
+                                cur.1
+                                    * mle_vec[D - 2 - i]
+                                        .get_bound_coeff(j + mle_vec[D - 2 - i].len() / 2),
+                            );
+                        }
+                    }
+                });
 
-            if round % D == 0 {
-                if round > 0 {
-                    C *= C_summands[0] + C_summands[1];
+            for d in 0..D {
+                let round = j_idx * D + d;
+
+                if d == 0 {
+                    if round > 0 {
+                        C *= C_summands[0] + C_summands[1];
+                    }
+
+                    let r_cycle_val = r_cycle[j_idx];
+
+                    C_summands[0] = r_cycle_val;
+                    C_summands[1] = F::one() - r_cycle_val;
                 }
 
-                let r_cycle_val = r_cycle[j_idx];
+                // Compute eq(r_round, w_1, ..., w_{idx - 1}, c, b) for each c and b = 0, 1
+                let eq_evals_at_idx = eval_points
+                    .iter()
+                    .map(|c| (((F::one() - c) * C_summands[1], *c * C_summands[0])))
+                    .collect::<Vec<(F, F)>>();
 
-                C_summands[0] = r_cycle_val;
-                C_summands[1] = F::one() - r_cycle_val;
-            }
+                let univariate_poly_evals = before_idx_evals
+                    .par_iter_mut()
+                    .take(size)
+                    .zip(after_idx_evals.par_iter_mut().take(size))
+                    .enumerate()
+                    .map(|(j, (before_idx_eval, after_idx_evals))| {
+                        let at_idx_evals =
+                            mle_vec[D - d - 1].sumcheck_evals(j, 2, BindingOrder::HighToLow);
 
-            // Compute eq(r_round, w_1, ..., w_{idx - 1}, c, b) for each c and b = 0, 1
-            let eq_evals_at_idx = eval_points
-                .iter()
-                .map(|c| (((F::one() - c) * C_summands[1], *c * C_summands[0])))
-                .collect::<Vec<(F, F)>>();
+                        let eq_eval_after_idx = if j_idx < T.log_2() - 1 {
+                            E_table[j_idx].get_coeff(j)
+                        } else {
+                            F::one()
+                        };
 
-            let univariate_poly_evals = (0..(T.log_2() - j_idx - 1).pow2())
-                .into_par_iter()
-                .map(|j| {
-                    let at_idx_evals =
-                        mle_vec[D - d - 1].sumcheck_evals(j, 2, BindingOrder::HighToLow);
+                        if d > 0 {
+                            *before_idx_eval = before_idx_eval
+                                .mul_1_optimized(mle_vec[D - d - 1].get_bound_coeff(j));
+                        }
 
-                    let eq_eval_after_idx = if j_idx < T.log_2() - 1 {
-                        E_table[j_idx].get_coeff(j)
-                    } else {
-                        F::one()
-                    };
-
-                    let before_idx_evals = mle_vec
-                        .iter()
-                        .rev()
-                        .take(d)
-                        .map(|poly| poly.get_bound_coeff(j))
-                        .product::<F>();
-
-                    let after_idx_evals = mle_vec
-                        .iter()
-                        .take(D - d - 1)
-                        .map(|poly| {
-                            (
-                                poly.get_bound_coeff(j),
-                                poly.get_bound_coeff(j + poly.len() / 2),
-                            )
-                        })
-                        .reduce(|running, new| (running.0 * new.0, running.1 * new.1));
-
-                    eq_evals_at_idx
-                        .iter()
-                        .zip(at_idx_evals.iter())
-                        .map(|((c_eq_eval_0, c_eq_eval_1), at_idx_eval)| {
-                            let factor = *at_idx_eval * before_idx_evals * eq_eval_after_idx * C;
-                            let eval_0 = if after_idx_evals.is_some() {
-                                *c_eq_eval_0 * factor * after_idx_evals.unwrap().0
-                            } else {
-                                *c_eq_eval_0 * factor
-                            };
-
-                            let eval_1 = if after_idx_evals.is_some() {
-                                *c_eq_eval_1 * factor * after_idx_evals.unwrap().1
-                            } else {
-                                *c_eq_eval_1 * factor
-                            };
-
-                            eval_0 + eval_1
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .reduce(
-                    || vec![F::zero(); eval_points.len()],
-                    |running, new| {
-                        running
+                        eq_evals_at_idx
                             .iter()
-                            .zip(new.iter())
-                            .map(|(a, b)| *a + b)
+                            .zip(at_idx_evals.iter())
+                            .map(|((c_eq_eval_0, c_eq_eval_1), at_idx_eval)| {
+                                let factor =
+                                    *at_idx_eval * *before_idx_eval * eq_eval_after_idx * C;
+
+                                let eval_0 = if d < D - 1 {
+                                    *c_eq_eval_0 * factor * after_idx_evals[D - d - 2].0
+                                } else {
+                                    *c_eq_eval_0 * factor
+                                };
+
+                                let eval_1 = if d < D - 1 {
+                                    *c_eq_eval_1 * factor * after_idx_evals[D - d - 2].1
+                                } else {
+                                    *c_eq_eval_1 * factor
+                                };
+
+                                eval_0 + eval_1
+                            })
                             .collect::<Vec<_>>()
-                    },
-                );
+                    })
+                    .reduce(
+                        || vec![F::zero(); eval_points.len()],
+                        |running, new| {
+                            running
+                                .iter()
+                                .zip(new.iter())
+                                .map(|(a, b)| *a + b)
+                                .collect::<Vec<_>>()
+                        },
+                    );
 
-            let univariate_poly = UniPoly::from_evals(&[
-                univariate_poly_evals[0],
-                previous_claim - univariate_poly_evals[0],
-                univariate_poly_evals[1],
-            ]);
-            let compressed_poly = univariate_poly.compress();
-            compressed_poly.append_to_transcript(transcript);
-            compressed_polys.push(compressed_poly);
+                let univariate_poly = UniPoly::from_evals(&[
+                    univariate_poly_evals[0],
+                    previous_claim - univariate_poly_evals[0],
+                    univariate_poly_evals[1],
+                ]);
+                let compressed_poly = univariate_poly.compress();
+                compressed_poly.append_to_transcript(transcript);
+                compressed_polys.push(compressed_poly);
 
-            let w_j = transcript.challenge_scalar::<F>();
-            previous_claim = univariate_poly.evaluate(&w_j);
-            w.push(w_j);
+                let w_j = transcript.challenge_scalar::<F>();
+                previous_claim = univariate_poly.evaluate(&w_j);
+                w.push(w_j);
 
-            mle_vec[D - 1 - d].bind_parallel(w_j, BindingOrder::HighToLow);
+                mle_vec[D - 1 - d].bind_parallel(w_j, BindingOrder::HighToLow);
 
-            C_summands[0] *= w_j;
-            C_summands[1] *= F::one() - w_j;
+                C_summands[0] *= w_j;
+                C_summands[1] *= F::one() - w_j;
+            }
         }
         C *= C_summands[0] + C_summands[1];
 
@@ -329,7 +346,9 @@ mod test {
             },
             unipoly::UniPoly,
         },
-        subprotocols::optimization::{compute_initial_eval_claim, LargeDSumCheckProof, NaiveSumCheckProof},
+        subprotocols::optimization::{
+            compute_initial_eval_claim, LargeDSumCheckProof, NaiveSumCheckProof,
+        },
         utils::{
             math::Math,
             thread::unsafe_allocate_zero_vec,
@@ -435,8 +454,8 @@ mod test {
             (3, 1 << 3, 16),
             (2, 1 << 4, 4),
             (5, 1 << 3, 8),
-            (6, 1 << 10, 16),
-            (10, 1 << 10, 16),
+            (6, 1 << 2, 64),
+            (10, 1 << 2, 64),
         ];
 
         for (D, T, K) in test_inputs {
