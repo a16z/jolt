@@ -257,6 +257,8 @@ where
     /// Represents the polynomial(s) opened. May be a random linear combination
     /// of multiple polynomials, all being opened at the same point.
     polynomials: Vec<CommittedPolynomial>,
+    /// The ID of the sumcheck these openings originated from
+    sumcheck_id: SumcheckId,
     rlc_coeffs: Vec<F>,
     input_claims: Vec<F>,
     opening_point: Vec<F>,
@@ -269,6 +271,7 @@ where
 {
     fn new_prover_instance_dense(
         polynomials: Vec<CommittedPolynomial>,
+        sumcheck_id: SumcheckId,
         eq_poly: Rc<RefCell<SharedEqPolynomial<F>>>,
         opening_point: Vec<F>,
         claims: Vec<F>,
@@ -279,6 +282,7 @@ where
         };
         Self {
             polynomials,
+            sumcheck_id,
             input_claims: claims,
             rlc_coeffs: vec![], // Populated later
             prover_state: Some(opening.into()),
@@ -289,6 +293,7 @@ where
 
     fn new_prover_instance_one_hot(
         polynomial: CommittedPolynomial,
+        sumcheck_id: SumcheckId,
         eq_state: Rc<RefCell<OneHotSumcheckState<F>>>,
         opening_point: Vec<F>,
         claim: F,
@@ -296,6 +301,7 @@ where
         let opening = OneHotPolynomialProverOpening::new(eq_state);
         Self {
             polynomials: vec![polynomial],
+            sumcheck_id,
             input_claims: vec![claim],
             rlc_coeffs: vec![F::one()],
             prover_state: Some(opening.into()),
@@ -306,6 +312,7 @@ where
 
     fn new_verifier_instance(
         polynomials: Vec<CommittedPolynomial>,
+        sumcheck_id: SumcheckId,
         opening_point: Vec<F>,
         claims: Vec<F>,
     ) -> Self {
@@ -316,6 +323,7 @@ where
         };
         Self {
             polynomials,
+            sumcheck_id,
             input_claims: claims,
             rlc_coeffs,
             prover_state: None,
@@ -353,13 +361,14 @@ where
                     .collect();
                 let rlc_poly =
                     MultilinearPolynomial::linear_combination(&polynomials, &self.rlc_coeffs);
+                let num_vars = rlc_poly.get_num_vars();
+                let opening_point_len = self.opening_point.len();
                 debug_assert_eq!(
-                    rlc_poly.get_num_vars(),
-                    self.opening_point.len(),
-                    "{:?} have {} variables each but opening point has legnth {}",
+                    num_vars,
+                    opening_point_len,
+                    "{:?} have {num_vars} variables each but opening point from {:?} has length {opening_point_len}",
                     self.polynomials,
-                    rlc_poly.get_num_vars(),
-                    self.opening_point.len(),
+                    self.sumcheck_id,
                 );
                 match prover_state {
                     ProverOpening::Dense(opening) => opening.polynomial = Some(rlc_poly),
@@ -372,13 +381,14 @@ where
             if let Some(prover_state) = self.prover_state.as_mut() {
                 let polynomials_map = polynomials_map.unwrap();
                 let poly = polynomials_map.get(&self.polynomials[0]).unwrap();
+                let num_vars = poly.get_num_vars();
+                let opening_point_len = self.opening_point.len();
                 debug_assert_eq!(
-                    poly.get_num_vars(),
-                    self.opening_point.len(),
-                    "{:?} has {} variables but opening point has legnth {}",
+                    num_vars,
+                    opening_point_len,
+                    "{:?} has {num_vars} variables but opening point from {:?} has length {opening_point_len}",
                     self.polynomials[0],
-                    poly.get_num_vars(),
-                    self.opening_point.len(),
+                    self.sumcheck_id,
                 );
 
                 match prover_state {
@@ -608,6 +618,7 @@ where
 
         let sumcheck = OpeningProofReductionSumcheck::new_prover_instance_dense(
             polynomials,
+            sumcheck,
             Rc::new(RefCell::new(eq_evals.into())),
             opening_point,
             claims.to_vec(),
@@ -638,6 +649,7 @@ where
         for (label, claim) in polynomials.into_iter().zip(claims.into_iter()) {
             let sumcheck = OpeningProofReductionSumcheck::new_prover_instance_one_hot(
                 label,
+                sumcheck,
                 shared_eq.clone(),
                 r_concat.clone(),
                 claim,
@@ -850,6 +862,7 @@ where
         self.sumchecks
             .push(OpeningProofReductionSumcheck::new_verifier_instance(
                 polynomials,
+                sumcheck,
                 opening_point,
                 claims,
             ));
@@ -890,6 +903,7 @@ where
             self.sumchecks
                 .push(OpeningProofReductionSumcheck::new_verifier_instance(
                     vec![label],
+                    sumcheck,
                     opening_point.clone(),
                     vec![claim],
                 ));

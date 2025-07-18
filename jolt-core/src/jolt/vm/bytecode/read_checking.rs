@@ -127,10 +127,11 @@ impl<F: JoltField> ReadCheckingSumcheck<F> {
                 for _ in 0..2 {
                     gamma_powers.push(gamma * gamma_powers.last().unwrap());
                 }
-                let (r_cycle, _) = sm.get_virtual_polynomial_opening(
+                let (r, _) = sm.get_virtual_polynomial_opening(
                     VirtualPolynomial::Rs1Ra,
                     SumcheckId::RegistersReadWriteChecking,
                 );
+                let (_, r_cycle) = r.split_at((REGISTER_COUNT as usize).log_2());
                 (
                     Self::compute_val_2(sm, &gamma_powers),
                     Self::compute_rv_claim_2(sm, &gamma_powers),
@@ -144,10 +145,12 @@ impl<F: JoltField> ReadCheckingSumcheck<F> {
                 for _ in 0..NUM_LOOKUP_TABLES + 1 {
                     gamma_powers.push(gamma * gamma_powers.last().unwrap());
                 }
-                let (r_cycle, _) = sm.get_virtual_polynomial_opening(
+                let (r, _) = sm.get_virtual_polynomial_opening(
                     VirtualPolynomial::RdWa,
                     SumcheckId::RegistersValEvaluation,
                 );
+                println!("r.len() = {}", r.len());
+                let (_, r_cycle) = r.split_at((REGISTER_COUNT as usize).log_2());
                 (
                     Self::compute_val_3(sm, &gamma_powers),
                     Self::compute_rv_claim_3(sm, &gamma_powers),
@@ -428,7 +431,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadCheckingSumcheck<F> {
     }
 
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
-        todo!()
+        OpeningPoint::new(opening_point.iter().copied().rev().collect())
     }
 
     fn cache_openings_prover(

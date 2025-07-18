@@ -78,6 +78,8 @@ pub(crate) struct ValEvaluationSumcheckClaims<F: JoltField> {
 
 /// Val-evaluation sumcheck instance implementing SumcheckInstance
 pub(crate) struct ValEvaluationSumcheck<F: JoltField> {
+    // The `r_address` at in the claimed `Val(r_address, r_cycle)`
+    r_address: Vec<F>,
     /// Initial claim value
     pub claimed_evaluation: F,
     /// Prover state
@@ -215,10 +217,11 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
             &[inc_claim],
         );
 
+        let r = [self.r_address.as_slice(), r_cycle.r.as_slice()].concat();
         accumulator.borrow_mut().append_virtual(
             VirtualPolynomial::RdWa,
             SumcheckId::RegistersValEvaluation,
-            r_cycle, // TODO
+            OpeningPoint::new(r),
             wa_claim,
         );
     }

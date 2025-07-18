@@ -188,7 +188,7 @@ impl<F: JoltField> SumcheckInstance<F> for RafBytecode<F> {
     }
 
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
-        todo!()
+        OpeningPoint::new(opening_point.iter().copied().rev().collect())
     }
 
     fn cache_openings_prover(

@@ -238,7 +238,10 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
     }
 
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
-        todo!()
+        let (r_address, r_cycle) = opening_point.split_at(self.log_K);
+        let mut r_big_endian: Vec<F> = r_address.iter().rev().copied().collect();
+        r_big_endian.extend(r_cycle.iter().copied().rev());
+        OpeningPoint::new(r_big_endian)
     }
 
     fn cache_openings_prover(

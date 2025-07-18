@@ -1363,6 +1363,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 
         let instance = ValEvaluationSumcheck {
             claimed_evaluation: val_claim,
+            r_address,
             prover_state: Some(ValEvaluationProverState { inc, wa, lt }),
             verifier_state: None,
             claims: None,

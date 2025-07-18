@@ -205,7 +205,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             MultilinearPolynomial::from(F_3),
         );
         let booleanity = BooleanitySumcheck::new_prover(sm, E_1, F_1.clone());
-        let hamming_weight = HammingWeightSumcheck::new_prover(unbound_ra_poly, K);
+        let hamming_weight = HammingWeightSumcheck::new_prover(F_1, K);
 
         vec![
             Box::new(read_checking_1),

@@ -10,6 +10,7 @@ use crate::jolt::vm::JoltProverPreprocessing;
 use crate::jolt::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+use crate::poly::opening_proof::{OpeningId, SumcheckId};
 use crate::utils::transcript::Transcript;
 
 use super::key::UniformSpartanKey;
@@ -68,6 +69,7 @@ impl TryFrom<JoltR1CSInputs> for CommittedPolynomial {
             JoltR1CSInputs::WriteLookupOutputToRD => Ok(CommittedPolynomial::WriteLookupOutputToRD),
             JoltR1CSInputs::WritePCtoRD => Ok(CommittedPolynomial::WritePCtoRD),
             JoltR1CSInputs::ShouldBranch => Ok(CommittedPolynomial::ShouldBranch),
+            JoltR1CSInputs::ShouldJump => Ok(CommittedPolynomial::ShouldJump),
             _ => Err("{value} is not a committed polynomial"),
         }
     }
@@ -92,9 +94,24 @@ impl TryFrom<JoltR1CSInputs> for VirtualPolynomial {
             JoltR1CSInputs::RightLookupOperand => Ok(VirtualPolynomial::RightLookupOperand),
             JoltR1CSInputs::NextUnexpandedPC => Ok(VirtualPolynomial::NextUnexpandedPC),
             JoltR1CSInputs::NextPC => Ok(VirtualPolynomial::NextPC),
+            JoltR1CSInputs::NextIsNoop => Ok(VirtualPolynomial::NextIsNoop),
             JoltR1CSInputs::LookupOutput => Ok(VirtualPolynomial::LookupOutput),
             JoltR1CSInputs::OpFlags(flag) => Ok(VirtualPolynomial::OpFlags(flag)),
             _ => Err("{value} is not a virtual polynomial"),
+        }
+    }
+}
+
+impl TryFrom<JoltR1CSInputs> for OpeningId {
+    type Error = &'static str;
+
+    fn try_from(value: JoltR1CSInputs) -> Result<Self, Self::Error> {
+        if let Ok(poly) = VirtualPolynomial::try_from(value) {
+            Ok(OpeningId::Virtual(poly, SumcheckId::SpartanOuter))
+        } else if let Ok(poly) = CommittedPolynomial::try_from(value) {
+            Ok(OpeningId::Committed(poly, SumcheckId::SpartanOuter))
+        } else {
+            Err("Could not map {value} to an OpeningId")
         }
     }
 }

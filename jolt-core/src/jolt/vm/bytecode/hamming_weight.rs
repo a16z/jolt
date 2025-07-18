@@ -27,10 +27,12 @@ pub struct HammingWeightSumcheck<F: JoltField> {
 }
 
 impl<F: JoltField> HammingWeightSumcheck<F> {
-    pub fn new_prover(ra: MultilinearPolynomial<F>, K: usize) -> Self {
+    pub fn new_prover(F: Vec<F>, K: usize) -> Self {
         Self {
             log_K: K.log_2(),
-            prover_state: Some(HammingWeightProverState { ra }),
+            prover_state: Some(HammingWeightProverState {
+                ra: MultilinearPolynomial::from(F),
+            }),
         }
     }
 
