@@ -2,16 +2,19 @@
 mod prover;
 
 use crate::field::JoltField;
+use crate::jolt::vm::ram::remap_address;
+use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
-use crate::subprotocols::shout::sparse_dense::ExpandingTable;
-use crate::subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof};
+use crate::poly::program_io_polynomial::ProgramIOPolynomial;
+use crate::poly::range_mask_polynomial::RangeMaskPolynomial;
+use crate::subprotocols::shout::ExpandingTable;
+use crate::subprotocols::sumcheck::{BatchableSumcheckVerifierInstance, SumcheckInstanceProof};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 use crate::utils::transcript::Transcript;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use common::constants::RAM_START_ADDRESS;
 use common::jolt_device::JoltDevice;
-#[cfg(feature = "prover")]
-pub use prover::*;
 
 struct OutputSumcheckProverState<F: JoltField> {
     /// Val(k, 0)
@@ -117,6 +120,49 @@ impl<F: JoltField> OutputSumcheck<F> {
     }
 }
 
+impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckVerifierInstance<F, ProofTranscript>
+for OutputSumcheck<F>
+{
+    fn degree(&self) -> usize {
+        3
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.K.log_2()
+    }
+
+    fn input_claim(&self) -> F {
+        F::zero()
+    }
+
+    fn expected_output_claim(&self, r: &[F]) -> F {
+        let OutputSumcheckVerifierState {
+            r_address,
+            program_io,
+        } = self.verifier_state.as_ref().unwrap();
+        let val_final_claim = self.val_final_claim.as_ref().unwrap();
+
+        let r_address_prime = &r[..r_address.len()];
+
+        let io_mask = RangeMaskPolynomial::new(
+            remap_address(
+                program_io.memory_layout.input_start,
+                &program_io.memory_layout,
+            ),
+            remap_address(RAM_START_ADDRESS, &program_io.memory_layout),
+        );
+        let val_io = ProgramIOPolynomial::new(program_io);
+
+        let eq_eval = EqPolynomial::mle(r_address, r_address_prime);
+        let io_mask_eval = io_mask.evaluate_mle(r_address_prime);
+        let val_io_eval = val_io.evaluate(r_address_prime);
+
+        // Recall that the sumcheck expression is:
+        //   0 = \sum_k eq(r_address, k) * io_range(k) * (Val_final(k) - Val_io(k))
+        eq_eval * io_mask_eval * (*val_final_claim - val_io_eval)
+    }
+}
+
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone, Default)]
 pub struct ValFinalSumcheckClaims<F: JoltField> {
     inc_claim: F,
@@ -142,4 +188,27 @@ pub struct ValFinalSumcheck<F: JoltField> {
     val_init_eval: F,
     val_final_claim: F,
     output_claims: Option<ValFinalSumcheckClaims<F>>,
+}
+
+impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckVerifierInstance<F, ProofTranscript>
+for ValFinalSumcheck<F>
+{
+    fn degree(&self) -> usize {
+        2
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.T.log_2()
+    }
+
+    fn input_claim(&self) -> F {
+        self.val_final_claim - self.val_init_eval
+    }
+    fn expected_output_claim(&self, _: &[F]) -> F {
+        let ValFinalSumcheckClaims {
+            inc_claim,
+            wa_claim,
+        } = self.output_claims.as_ref().unwrap();
+        *inc_claim * wa_claim
+    }
 }

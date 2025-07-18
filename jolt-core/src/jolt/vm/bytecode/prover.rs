@@ -22,6 +22,7 @@ use crate::{
 };
 use rayon::prelude::*;
 use tracer::instruction::RV32IMCycle;
+use crate::subprotocols::sumcheck::BatchableSumcheckVerifierInstance;
 
 impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTranscript> {
     #[tracing::instrument(skip_all, name = "BytecodeShoutProof::prove")]
@@ -174,24 +175,12 @@ impl<F: JoltField> CorePIOPHammingSumcheck<F> {
 impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
     for CorePIOPHammingSumcheck<F>
 {
-    fn degree(&self) -> usize {
-        2
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.K.log_2()
-    }
-
-    fn input_claim(&self) -> F {
-        self.input_claim
-    }
-
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
         let prover_state = self
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
-        let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript>>::degree(self);
+        let degree = <Self as BatchableSumcheckVerifierInstance<F, ProofTranscript>>::degree(self);
 
         let univariate_poly_evals: [F; 2] = (0..prover_state.ra_poly.len() / 2)
             .into_par_iter()
@@ -254,14 +243,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
 
         self.ra_claim = Some(prover_state.ra_poly.final_sumcheck_claim());
         self.val_eval = Some(prover_state.val_poly.final_sumcheck_claim());
-    }
-
-    fn expected_output_claim(&self, _r: &[F]) -> F {
-        let ra_claim = self.ra_claim.as_ref().expect("ra_claim not set");
-        let val_eval = self.val_eval.as_ref().expect("val_eval not set");
-
-        // Verify sumcheck_claim = ra_claim * (z + val_eval)
-        *ra_claim * (self.z + *val_eval)
     }
 }
 
@@ -375,18 +356,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
 impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
     for BooleanitySumcheck<F>
 {
-    fn degree(&self) -> usize {
-        3
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.K.log_2() + self.T.log_2()
-    }
-
-    fn input_claim(&self) -> F {
-        self.input_claim
-    }
-
     fn compute_prover_message(&mut self, round: usize, _previous_claim: F) -> Vec<F> {
         let K_log = self.K.log_2();
 
@@ -452,28 +421,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             .expect("Prover state not initialized");
 
         self.ra_claim_prime = Some(prover_state.H.final_sumcheck_claim());
-    }
-
-    fn expected_output_claim(&self, r: &[F]) -> F {
-        let ra_claim_prime = self.ra_claim_prime.expect("ra_claim_prime not set");
-        let verifier_state = self
-            .verifier_state
-            .as_ref()
-            .expect("Verifier state not initialized");
-
-        // Split r into r_address_prime and r_cycle_prime
-        let (r_address_prime, r_cycle_prime) = r.split_at(self.K.log_2());
-
-        let r_address = verifier_state
-            .r_address
-            .as_ref()
-            .expect("r_address not set");
-        let r_cycle = verifier_state.r_cycle.as_ref().expect("r_cycle not set");
-
-        let eq_eval_address = EqPolynomial::mle(r_address, r_address_prime);
-        let eq_eval_cycle = EqPolynomial::mle(r_cycle, r_cycle_prime);
-
-        eq_eval_address * eq_eval_cycle * (ra_claim_prime.square() - ra_claim_prime)
     }
 }
 
@@ -646,24 +593,12 @@ impl<F: JoltField> RafBytecode<F> {
 impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
     for RafBytecode<F>
 {
-    fn degree(&self) -> usize {
-        2
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.K.log_2()
-    }
-
-    fn input_claim(&self) -> F {
-        self.input_claim
-    }
-
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
         let prover_state = self
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
-        let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript>>::degree(self);
+        let degree = <Self as BatchableSumcheckVerifierInstance<F, ProofTranscript>>::degree(self);
 
         let univariate_poly_evals: [F; 2] = (0..prover_state.ra_poly.len() / 2)
             .into_par_iter()
@@ -739,15 +674,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         let ra_claim_shift = prover_state.ra_poly_shift.final_sumcheck_claim();
 
         self.ra_claims = Some((ra_claim, ra_claim_shift));
-    }
-
-    fn expected_output_claim(&self, r: &[F]) -> F {
-        let (ra_claim, ra_claim_shift) = self.ra_claims.as_ref().expect("ra_claims not set");
-
-        let int_eval = IdentityPolynomial::new(self.K.log_2()).evaluate(r);
-
-        // Verify sumcheck_claim = int(r) * (ra_claim + challenge * ra_claim_shift)
-        int_eval * (*ra_claim + self.challenge * *ra_claim_shift)
     }
 }
 

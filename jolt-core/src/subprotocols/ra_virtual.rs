@@ -1,15 +1,25 @@
-use crate::poly::multilinear_polynomial::PolynomialEvaluation;
+
 use crate::{
     field::JoltField,
     poly::{
         eq_poly::EqPolynomial,
-        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
+        multilinear_polynomial::MultilinearPolynomial,
     },
-    subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof},
+    subprotocols::sumcheck::{BatchableSumcheckVerifierInstance, SumcheckInstanceProof},
     utils::{math::Math, transcript::Transcript},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+
+#[cfg(feature = "prover")]
+use crate::poly::multilinear_polynomial::PolynomialEvaluation;
+#[cfg(feature = "prover")]
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
+#[cfg(feature = "prover")]
+use crate::subprotocols::sumcheck::BatchableSumcheckInstance;
+#[cfg(feature = "prover")]
+use crate::poly::{
+multilinear_polynomial::{BindingOrder, PolynomialBinding},
+};
 
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct RAProof<F: JoltField, ProofTranscript: Transcript> {
@@ -136,6 +146,7 @@ impl<F: JoltField> RASumcheck<F> {
     }
 
     #[tracing::instrument(skip_all, name = "ra virtualization")]
+    #[cfg(feature = "prover")]
     pub fn prove<ProofTranscript: Transcript>(
         mut self,
         transcript: &mut ProofTranscript,
@@ -174,8 +185,8 @@ impl<F: JoltField> RASumcheck<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
-    for RASumcheck<F>
+impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckVerifierInstance<F, ProofTranscript>
+for RASumcheck<F>
 {
     fn degree(&self) -> usize {
         self.d + 1
@@ -191,37 +202,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         }
     }
 
-    fn bind(&mut self, r_j: F, _: usize) {
-        let prover_state = self
-            .prover_state
-            .as_mut()
-            .expect("Prover state not initialized");
-
-        for ra_i in prover_state.ra_i_polys.iter_mut() {
-            ra_i.bind_parallel(r_j, BindingOrder::LowToHigh);
-        }
-        prover_state
-            .eq_poly
-            .bind_parallel(r_j, BindingOrder::LowToHigh);
-    }
-
     fn input_claim(&self) -> F {
         self.ra_claim
-    }
-
-    fn cache_openings(&mut self) {
-        debug_assert!(self.ra_i_claims.is_none());
-        let prover_state = self
-            .prover_state
-            .as_ref()
-            .expect("Prover state not initialized");
-
-        let mut openings = vec![F::zero(); self.d];
-        for i in 0..self.d {
-            openings[i] = prover_state.ra_i_polys[i].final_sumcheck_claim();
-        }
-
-        self.ra_i_claims = Some(openings);
     }
 
     fn expected_output_claim(&self, r: &[F]) -> F {
@@ -243,13 +225,18 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
 
         eq_eval * product
     }
+}
 
+#[cfg(feature = "prover")]
+impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
+    for RASumcheck<F>
+{
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
         let prover_state = self
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
-        let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript>>::degree(self);
+        let degree = <Self as BatchableSumcheckVerifierInstance<F, ProofTranscript>>::degree(self);
         let ra_i_polys = &prover_state.ra_i_polys;
         let eq_poly = &prover_state.eq_poly;
 
@@ -291,6 +278,35 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             );
 
         univariate_poly_evals
+    }
+
+    fn bind(&mut self, r_j: F, _: usize) {
+        let prover_state = self
+            .prover_state
+            .as_mut()
+            .expect("Prover state not initialized");
+
+        for ra_i in prover_state.ra_i_polys.iter_mut() {
+            ra_i.bind_parallel(r_j, BindingOrder::LowToHigh);
+        }
+        prover_state
+            .eq_poly
+            .bind_parallel(r_j, BindingOrder::LowToHigh);
+    }
+
+    fn cache_openings(&mut self) {
+        debug_assert!(self.ra_i_claims.is_none());
+        let prover_state = self
+            .prover_state
+            .as_ref()
+            .expect("Prover state not initialized");
+
+        let mut openings = vec![F::zero(); self.d];
+        for i in 0..self.d {
+            openings[i] = prover_state.ra_i_polys[i].final_sumcheck_claim();
+        }
+
+        self.ra_i_claims = Some(openings);
     }
 }
 

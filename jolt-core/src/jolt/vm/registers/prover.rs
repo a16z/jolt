@@ -29,24 +29,6 @@ use tracer::instruction::RV32IMCycle;
 impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
     for ValEvaluationSumcheck<F>
 {
-    fn degree(&self) -> usize {
-        3
-    }
-
-    fn num_rounds(&self) -> usize {
-        if let Some(prover_state) = &self.prover_state {
-            prover_state.inc.len().log_2()
-        } else if let Some(verifier_state) = &self.verifier_state {
-            verifier_state.num_rounds
-        } else {
-            panic!("Neither prover state nor verifier state is initialized");
-        }
-    }
-
-    fn input_claim(&self) -> F {
-        self.claimed_evaluation
-    }
-
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
         let prover_state = self
             .prover_state
@@ -106,28 +88,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                 wa_claim: prover_state.wa.final_sumcheck_claim(),
             });
         }
-    }
-
-    fn expected_output_claim(&self, r: &[F]) -> F {
-        let verifier_state = self
-            .verifier_state
-            .as_ref()
-            .expect("Verifier state not initialized");
-        let claims = self.claims.as_ref().expect("Claims not cached");
-
-        // r contains r_cycle_prime in low-to-high order
-        let r_cycle_prime: Vec<F> = r.iter().rev().copied().collect();
-
-        // Compute LT(r_cycle', r_cycle)
-        let mut lt_eval = F::zero();
-        let mut eq_term = F::one();
-        for (x, y) in r_cycle_prime.iter().zip(verifier_state.r_cycle.iter()) {
-            lt_eval += (F::one() - x) * y * eq_term;
-            eq_term *= F::one() - x - y + *x * y + *x * y;
-        }
-
-        // Return inc_claim * wa_claim * lt_eval
-        claims.inc_claim * claims.wa_claim * lt_eval
     }
 }
 

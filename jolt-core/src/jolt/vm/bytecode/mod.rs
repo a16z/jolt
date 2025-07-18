@@ -1,14 +1,14 @@
 #[cfg(feature = "prover")]
 mod prover;
-#[cfg(feature = "prover")]
-pub use prover::*;
 
 use crate::jolt::vm::JoltCommitments;
 use crate::jolt::witness::CommittedPolynomials;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::identity_poly::IdentityPolynomial;
+use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
-use crate::subprotocols::sumcheck::BatchableSumcheckInstance;
+use crate::subprotocols::sumcheck::BatchableSumcheckVerifierInstance;
 use crate::{
     field::JoltField,
     poly::{compact_polynomial::SmallScalar, multilinear_polynomial::MultilinearPolynomial},
@@ -78,7 +78,7 @@ impl BytecodePreprocessing {
 
     pub fn get_pc(&self, cycle: &RV32IMCycle, is_last: bool) -> usize {
         let instr = cycle.instruction().normalize();
-        if matches!(cycle, tracer::instruction::RV32IMCycle::NoOp(_)) || is_last {
+        if matches!(cycle, RV32IMCycle::NoOp(_)) || is_last {
             return 0;
         }
         *self
@@ -231,6 +231,29 @@ impl<F: JoltField> CorePIOPHammingSumcheck<F> {
     }
 }
 
+impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckVerifierInstance<F, ProofTranscript>
+for CorePIOPHammingSumcheck<F>
+{
+    fn degree(&self) -> usize {
+        2
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.K.log_2()
+    }
+
+    fn input_claim(&self) -> F {
+        self.input_claim
+    }
+    fn expected_output_claim(&self, _r: &[F]) -> F {
+        let ra_claim = self.ra_claim.as_ref().expect("ra_claim not set");
+        let val_eval = self.val_eval.as_ref().expect("val_eval not set");
+
+        // Verify sumcheck_claim = ra_claim * (z + val_eval)
+        *ra_claim * (self.z + *val_eval)
+    }
+}
+
 impl<F: JoltField, ProofTranscript: Transcript> CorePIOPHammingProof<F, ProofTranscript> {
     pub fn verify(
         &self,
@@ -250,6 +273,7 @@ impl<F: JoltField, ProofTranscript: Transcript> CorePIOPHammingProof<F, ProofTra
         Ok(r_address)
     }
 }
+
 
 struct BooleanityProverState<F: JoltField> {
     B: MultilinearPolynomial<F>,
@@ -310,6 +334,43 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             preprocessing: None,
             trace: None,
         }
+    }
+}
+
+impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckVerifierInstance<F, ProofTranscript>
+for BooleanitySumcheck<F>
+{
+    fn degree(&self) -> usize {
+        3
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.K.log_2() + self.T.log_2()
+    }
+
+    fn input_claim(&self) -> F {
+        self.input_claim
+    }
+    fn expected_output_claim(&self, r: &[F]) -> F {
+        let ra_claim_prime = self.ra_claim_prime.expect("ra_claim_prime not set");
+        let verifier_state = self
+            .verifier_state
+            .as_ref()
+            .expect("Verifier state not initialized");
+
+        // Split r into r_address_prime and r_cycle_prime
+        let (r_address_prime, r_cycle_prime) = r.split_at(self.K.log_2());
+
+        let r_address = verifier_state
+            .r_address
+            .as_ref()
+            .expect("r_address not set");
+        let r_cycle = verifier_state.r_cycle.as_ref().expect("r_cycle not set");
+
+        let eq_eval_address = EqPolynomial::mle(r_address, r_address_prime);
+        let eq_eval_cycle = EqPolynomial::mle(r_cycle, r_cycle_prime);
+
+        eq_eval_address * eq_eval_cycle * (ra_claim_prime.square() - ra_claim_prime)
     }
 }
 
@@ -406,5 +467,29 @@ impl<F: JoltField, ProofTranscript: Transcript> RafEvaluationProof<F, ProofTrans
         let r_raf_sumcheck = raf_sumcheck.verify_single(&self.sumcheck_proof, transcript)?;
 
         Ok(r_raf_sumcheck)
+    }
+}
+
+impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckVerifierInstance<F, ProofTranscript>
+for RafBytecode<F>
+{
+    fn degree(&self) -> usize {
+        2
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.K.log_2()
+    }
+
+    fn input_claim(&self) -> F {
+        self.input_claim
+    }
+    fn expected_output_claim(&self, r: &[F]) -> F {
+        let (ra_claim, ra_claim_shift) = self.ra_claims.as_ref().expect("ra_claims not set");
+
+        let int_eval = IdentityPolynomial::new(self.K.log_2()).evaluate(r);
+
+        // Verify sumcheck_claim = int(r) * (ra_claim + challenge * ra_claim_shift)
+        int_eval * (*ra_claim + self.challenge * *ra_claim_shift)
     }
 }

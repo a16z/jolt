@@ -3,7 +3,6 @@
 //! For additively homomorphic commitment schemes (including Zeromorph, HyperKZG) we
 //! can use a sumcheck to reduce multiple opening proofs (multiple polynomials, not
 //! necessarily of the same size, each opened at a different point) into a single opening.
-
 use std::{cell::RefCell, rc::Rc};
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -21,9 +20,11 @@ use crate::{
             OneHotPolynomial, OneHotPolynomialProverOpening, OneHotSumcheckState,
         },
     },
-    subprotocols::sumcheck::{BatchableSumcheckInstance, BatchedSumcheck, SumcheckInstanceProof},
+    subprotocols::sumcheck::{BatchableSumcheckVerifierInstance, BatchedSumcheck, SumcheckInstanceProof},
     utils::{errors::ProofVerifyError, transcript::Transcript},
 };
+#[cfg(feature = "prover")]
+use crate::subprotocols::sumcheck::BatchableSumcheckInstance;
 
 pub struct SharedEqPolynomial<F: JoltField> {
     num_variables_bound: usize,
@@ -187,6 +188,7 @@ where
     }
 }
 
+#[cfg(feature = "prover")]
 impl<F, PCS, ProofTranscript> BatchableSumcheckInstance<F, ProofTranscript>
     for OpeningProofReductionSumcheck<F, PCS, ProofTranscript>
 where
@@ -194,18 +196,6 @@ where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
-    fn degree(&self) -> usize {
-        2
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.opening_point.len()
-    }
-
-    fn input_claim(&self) -> F {
-        self.input_claim
-    }
-
     fn compute_prover_message(&mut self, round: usize, _previous_claim: F) -> Vec<F> {
         debug_assert!(round < self.num_rounds());
         let prover_state = self.prover_state.as_mut().unwrap();
@@ -236,7 +226,26 @@ where
             }
         };
     }
+}
 
+impl<F, PCS, ProofTranscript> BatchableSumcheckVerifierInstance<F, ProofTranscript>
+for OpeningProofReductionSumcheck<F, PCS, ProofTranscript>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
+    fn degree(&self) -> usize {
+        2
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.opening_point.len()
+    }
+
+    fn input_claim(&self) -> F {
+        self.input_claim
+    }
     fn expected_output_claim(&self, r: &[F]) -> F {
         let eq_eval = EqPolynomial::mle(&self.opening_point, r);
         eq_eval * self.sumcheck_claim.unwrap()
@@ -479,6 +488,7 @@ where
     /// Reduces the multiple openings accumulated into a single opening proof,
     /// using a single sumcheck.
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::reduce_and_prove")]
+    #[cfg(feature = "prover")]
     pub fn reduce_and_prove(
         &mut self,
         pcs_setup: &PCS::ProverSetup,
@@ -532,6 +542,7 @@ where
 
     /// Proves the sumcheck used to prove the reduction of many openings into one.
     #[tracing::instrument(skip_all)]
+    #[cfg(feature = "prover")]
     pub fn prove_batch_opening_reduction(
         &mut self,
         transcript: &mut ProofTranscript,
@@ -758,11 +769,11 @@ where
         sumcheck_proof: &SumcheckInstanceProof<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<Vec<F>, ProofVerifyError> {
-        let instances: Vec<&dyn BatchableSumcheckInstance<F, ProofTranscript>> = self
+        let instances: Vec<&dyn BatchableSumcheckVerifierInstance<F, ProofTranscript>> = self
             .openings
             .iter()
             .map(|opening| {
-                let instance: &dyn BatchableSumcheckInstance<F, ProofTranscript> = opening;
+                let instance: &dyn BatchableSumcheckVerifierInstance<F, ProofTranscript> = opening;
                 instance
             })
             .collect();

@@ -14,6 +14,7 @@ pub mod benches;
 #[cfg(feature = "host")]
 pub mod host;
 
+#[cfg(feature = "parallel")]
 pub mod fast_msm;
 pub mod field;
 pub mod jolt;

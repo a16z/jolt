@@ -1,5 +1,5 @@
 use crate::jolt::vm::output_check::{
-    OutputProof, OutputSumcheck, OutputSumcheckProverState, OutputSumcheckVerifierState,
+    OutputProof, OutputSumcheck, OutputSumcheckProverState,
     ValFinalSumcheck, ValFinalSumcheckClaims, ValFinalSumcheckProverState,
 };
 use crate::{
@@ -12,11 +12,9 @@ use crate::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, PolynomialBinding, PolynomialEvaluation},
-        program_io_polynomial::ProgramIOPolynomial,
-        range_mask_polynomial::RangeMaskPolynomial,
     },
-    subprotocols::{shout::sparse_dense::ExpandingTable, sumcheck::BatchableSumcheckInstance},
-    utils::{math::Math, thread::drop_in_background_thread, transcript::Transcript},
+    subprotocols::{shout::ExpandingTable, sumcheck::BatchableSumcheckInstance},
+    utils::{thread::drop_in_background_thread, transcript::Transcript},
 };
 use common::constants::RAM_START_ADDRESS;
 use rayon::prelude::*;
@@ -129,18 +127,6 @@ impl<F: JoltField> OutputSumcheck<F> {
 impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
     for OutputSumcheck<F>
 {
-    fn degree(&self) -> usize {
-        3
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.K.log_2()
-    }
-
-    fn input_claim(&self) -> F {
-        F::zero()
-    }
-
     #[tracing::instrument(skip_all, name = "OutputSumcheck::compute_prover_message")]
     fn compute_prover_message(&mut self, _: usize, _previous_claim: F) -> Vec<F> {
         const DEGREE: usize = 3;
@@ -205,33 +191,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         let OutputSumcheckProverState { val_final, .. } = self.prover_state.as_ref().unwrap();
         self.val_final_claim = Some(val_final.final_sumcheck_claim());
     }
-
-    fn expected_output_claim(&self, r: &[F]) -> F {
-        let OutputSumcheckVerifierState {
-            r_address,
-            program_io,
-        } = self.verifier_state.as_ref().unwrap();
-        let val_final_claim = self.val_final_claim.as_ref().unwrap();
-
-        let r_address_prime = &r[..r_address.len()];
-
-        let io_mask = RangeMaskPolynomial::new(
-            remap_address(
-                program_io.memory_layout.input_start,
-                &program_io.memory_layout,
-            ),
-            remap_address(RAM_START_ADDRESS, &program_io.memory_layout),
-        );
-        let val_io = ProgramIOPolynomial::new(program_io);
-
-        let eq_eval = EqPolynomial::mle(r_address, r_address_prime);
-        let io_mask_eval = io_mask.evaluate_mle(r_address_prime);
-        let val_io_eval = val_io.evaluate(r_address_prime);
-
-        // Recall that the sumcheck expression is:
-        //   0 = \sum_k eq(r_address, k) * io_range(k) * (Val_final(k) - Val_io(k))
-        eq_eval * io_mask_eval * (*val_final_claim - val_io_eval)
-    }
 }
 
 impl<F: JoltField> ValFinalSumcheckProverState<F> {
@@ -292,18 +251,6 @@ impl<F: JoltField> ValFinalSumcheckProverState<F> {
 impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
     for ValFinalSumcheck<F>
 {
-    fn degree(&self) -> usize {
-        2
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.T.log_2()
-    }
-
-    fn input_claim(&self) -> F {
-        self.val_final_claim - self.val_init_eval
-    }
-
     #[tracing::instrument(skip_all, name = "ValFinalSumcheck::compute_prover_message")]
     fn compute_prover_message(&mut self, _: usize, _previous_claim: F) -> Vec<F> {
         const DEGREE: usize = 2;
@@ -341,13 +288,5 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             inc_claim: inc.final_sumcheck_claim(),
             wa_claim: wa.final_sumcheck_claim(),
         });
-    }
-
-    fn expected_output_claim(&self, _: &[F]) -> F {
-        let ValFinalSumcheckClaims {
-            inc_claim,
-            wa_claim,
-        } = self.output_claims.as_ref().unwrap();
-        *inc_claim * wa_claim
     }
 }

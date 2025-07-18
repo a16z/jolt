@@ -1,6 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 
 pub mod grand_product;
+#[allow(dead_code)]
 pub mod ra_virtual;
 pub mod shout;
 pub mod sumcheck;

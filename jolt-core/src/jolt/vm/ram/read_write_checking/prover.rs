@@ -1,6 +1,6 @@
 use crate::jolt::vm::ram::read_write_checking::{
     DataBuffers, RamReadWriteChecking, RamReadWriteCheckingProof, ReadWriteCheckingProverState,
-    ReadWriteCheckingVerifierState, ReadWriteSumcheckClaims,
+    ReadWriteSumcheckClaims,
 };
 use crate::{
     field::{JoltField, OptimizedMul},
@@ -1056,18 +1056,6 @@ impl<F: JoltField> RamReadWriteChecking<F> {
 impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
     for RamReadWriteChecking<F>
 {
-    fn degree(&self) -> usize {
-        3
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.K.log_2() + self.T.log_2()
-    }
-
-    fn input_claim(&self) -> F {
-        self.rv_claim + self.z * self.wv_claim
-    }
-
     fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         let prover_state = self.prover_state.as_ref().unwrap();
         if round < prover_state.chunk_size.log_2() {
@@ -1097,26 +1085,5 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             ra_claim: prover_state.ra.as_ref().unwrap().final_sumcheck_claim(),
             inc_claim: prover_state.inc_cycle.final_sumcheck_claim(),
         });
-    }
-
-    fn expected_output_claim(&self, r: &[F]) -> F {
-        let ReadWriteCheckingVerifierState {
-            sumcheck_switch_index,
-            r_prime,
-            ..
-        } = self.verifier_state.as_ref().unwrap();
-
-        // The high-order cycle variables are bound after the switch
-        let mut r_cycle = r[*sumcheck_switch_index..self.T.log_2()].to_vec();
-        // First `sumcheck_switch_index` rounds bind cycle variables from low to high
-        r_cycle.extend(r[..*sumcheck_switch_index].iter().rev());
-
-        // eq(r', r_cycle)
-        let eq_eval_cycle = EqPolynomial::mle(r_prime, &r_cycle);
-
-        let claims = self.claims.as_ref().unwrap();
-        eq_eval_cycle
-            * claims.ra_claim
-            * (claims.val_claim + self.z * (claims.val_claim + claims.inc_claim))
     }
 }

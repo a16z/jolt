@@ -113,4 +113,5 @@ where
 }
 
 // Implement VariableBaseMSM For any type G (like G1Projective) that implements the CurveGroup trait.
+#[cfg(feature = "parallel")]
 impl<F: JoltField, G: CurveGroup<ScalarField = F>> VariableBaseMSM for G {}

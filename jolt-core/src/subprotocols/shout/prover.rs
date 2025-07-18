@@ -1,24 +1,18 @@
-use crate::subprotocols::shout::{
-    BooleanityProverState, BooleanitySumcheck, ShoutProof, ShoutProverState, ShoutSumcheck,
-};
-use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstanceProof};
-use crate::{
-    field::JoltField,
-    poly::{
-        eq_poly::EqPolynomial,
-        identity_poly::IdentityPolynomial,
-        multilinear_polynomial::{
-            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-        },
-        split_eq_poly::GruenSplitEqPolynomial,
-        unipoly::{CompressedUniPoly, UniPoly},
+use crate::subprotocols::shout::{BooleanityProverState, BooleanitySumcheck, ShoutProof, ShoutProverState, ShoutSumcheck, ShoutSumcheckClaims};
+use crate::subprotocols::sumcheck::{BatchableSumcheckInstance, BatchableSumcheckVerifierInstance, BatchedSumcheck, SumcheckInstanceProof};
+use crate::{field::JoltField, into_optimal_iter, join_if_rayon, optimal_chunk_by, optimal_iter, optimal_reduce, poly::{
+    eq_poly::EqPolynomial,
+    identity_poly::IdentityPolynomial,
+    multilinear_polynomial::{
+        BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
     },
-    utils::{
-        math::Math,
-        thread::unsafe_allocate_zero_vec,
-        transcript::{AppendToTranscript, Transcript},
-    },
-};
+    split_eq_poly::GruenSplitEqPolynomial,
+    unipoly::{CompressedUniPoly, UniPoly},
+}, utils::{
+    math::Math,
+    thread::unsafe_allocate_zero_vec,
+    transcript::{AppendToTranscript, Transcript},
+}};
 use rayon::prelude::*;
 
 impl<F: JoltField> ShoutProverState<F> {
@@ -761,6 +755,298 @@ pub fn prove_raf_evaluation<F: JoltField, ProofTranscript: Transcript>(
 
     let ra_claim = ra.final_sumcheck_claim();
     (SumcheckInstanceProof::new(compressed_polys), ra_claim)
+}
+
+impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
+for ShoutSumcheck<F>
+{
+    #[tracing::instrument(skip_all)]
+    fn compute_prover_message(&mut self, _: usize, _previous_claim: F) -> Vec<F> {
+        let ShoutProverState { ra, val, z, .. } = self.prover_state.as_ref().unwrap();
+
+        let degree =
+            <ShoutSumcheck<F> as BatchableSumcheckVerifierInstance<F, ProofTranscript>>::degree(self);
+
+        let univariate_poly_evals: [F; 2] = optimal_reduce!(
+            into_optimal_iter!((0..ra.len() / 2)).map(|i| {
+                let ra_evals = ra.sumcheck_evals(i, degree, BindingOrder::LowToHigh);
+                let val_evals = val.sumcheck_evals(i, degree, BindingOrder::LowToHigh);
+
+                [
+                    ra_evals[0] * (*z + val_evals[0]),
+                    ra_evals[1] * (*z + val_evals[1]),
+                ]
+            }),
+            || [F::zero(); 2],
+            |running, new| [running[0] + new[0], running[1] + new[1]]
+        );
+        univariate_poly_evals.to_vec()
+    }
+
+    #[tracing::instrument(skip_all)]
+    fn bind(&mut self, r_j: F, _: usize) {
+        let ShoutProverState { ra, val, .. } = self.prover_state.as_mut().unwrap();
+        join_if_rayon!(|| ra.bind_parallel(r_j, BindingOrder::LowToHigh), || val
+            .bind_parallel(r_j, BindingOrder::LowToHigh));
+    }
+
+    fn cache_openings(&mut self) {
+        debug_assert!(self.claims.is_none());
+        let ShoutProverState { rv_claim, ra, .. } = self.prover_state.as_ref().unwrap();
+        self.claims = Some(ShoutSumcheckClaims {
+            ra_claim: ra.final_sumcheck_claim(),
+            rv_claim: *rv_claim,
+        });
+    }
+}
+
+impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
+for BooleanitySumcheck<F>
+{
+    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
+        const DEGREE: usize = 3;
+        let BooleanityProverState {
+            K, B, F, G, D, H, ..
+        } = self.prover_state.as_ref().unwrap();
+
+        let evals = if round < K.log_2() {
+            // First log(K) rounds of sumcheck
+            let m = round + 1;
+
+            // We use both Dao-Thaler and Gruen's optimizations here. See "Our optimization on top of
+            // Gruen's" from Sec. 3 of https://eprint.iacr.org/2024/1210.pdf.
+            //
+            // We compute the evaluations of the cubic polynomial s(X) = l(X) * q(X) at {0, 2, 3} by
+            // first computing the evaluations of the quadratic polynomial q(X) at 0 and infinity.
+            // Moreover, we split the evaluations of the eq polynomial into two groups, E_in and E_out.
+            // We use the GruenSplitEqPolynomial data structure to do this.
+            //
+            // Since E_in is bound first, we have two cases to handle: one where E_in is fully bound
+            // and one where it is not.
+            let quadratic_coeffs: [F; DEGREE - 1] = if B.E_in_current_len() == 1 {
+                // Here E_in is fully bound, so we can ignore it and use the evaluations from E_out.
+                into_optimal_iter!(0..B.len() / 2)
+                    .map(|k_prime| {
+                        let B_eval = B.E_out_current()[k_prime];
+                        let inner_sum = optimal_reduce!(
+                            optimal_iter!(G[k_prime << m..(k_prime + 1) << m])
+                                .enumerate()
+                                .map(|(k, &G_k)| {
+                                    // Since we're binding variables from low to high, k_m is the high bit
+                                    let k_m = k >> (m - 1);
+                                    // We then index into F using (k_{m-1}, ..., k_1)
+                                    let F_k = F[k % (1 << (m - 1))];
+                                    // G_times_F := G[k] * F[k_1, ...., k_{m-1}]
+                                    let G_times_F = G_k * F_k;
+                                    // For c \in {0, infty} compute:
+                                    //    G[k] * (F[k_1, ...., k_{m-1}, c]^2 - F[k_1, ...., k_{m-1}, c])
+                                    //    = G_times_F * (eq(k_m, c)^2 * F[k_1, ...., k_{m-1}] - eq(k_m, c))
+                                    //
+                                    // We want the following values, for k_m \in {0, 1}
+                                    //   - s(0) = G_times_F * (eq(k_m, 0)^2 * F_k - eq(k_m, 0))
+                                    //   - s(infty) = G_times_F * eq(k_m, infty)^2 * F_k
+                                    // But note that
+                                    //   - eq(0, 0)^2 = eq(0, 0) = 1
+                                    //   - eq(1, 0)^2 = eq(1, 0) = 0
+                                    //   - eq(0, infty)^2 = eq(1, infty)^2 = 1
+                                    // So we can instead compute
+                                    //   - s(0) = k_m == 0 ? G_times_F * (F_k - 1) : 0
+                                    //   - s(1) = G_times_F * F_k
+                                    let eval_0 = if k_m == 0 {
+                                        G_times_F * (F_k - F::one())
+                                    } else {
+                                        F::zero()
+                                    };
+                                    let eval_infty = G_times_F * F_k;
+                                    [eval_0, eval_infty]
+                                }),
+                            || [F::zero(); DEGREE - 1],
+                            |running, new| [running[0] + new[0], running[1] + new[1]]
+                        );
+
+                        [B_eval * inner_sum[0], B_eval * inner_sum[1]]
+                    })
+                    .reduce(
+                        || [F::zero(); DEGREE - 1],
+                        |running, new| [running[0] + new[0], running[1] + new[1]],
+                    )
+            } else {
+                // Here E_in has not been fully bound, so the correct evaluation of eq is
+                // E_in_eval * E_out_eval. We group the terms with the same value of E_out_eval in
+                // order to decrease the total number of multiplications.
+                let num_x_in_bits = B.E_in_current_len().log_2();
+                let x_bitmask = (1 << num_x_in_bits) - 1;
+
+                optimal_reduce!(
+                    optimal_chunk_by!((0..B.len() / 2).collect::<Vec<_>>(), |k1, k2| k1
+                        >> num_x_in_bits
+                        == k2 >> num_x_in_bits)
+                    .map(|chunk| {
+                        let x_out = chunk[0] >> num_x_in_bits;
+                        let B_E_out_eval = B.E_out_current()[x_out];
+
+                        let chunk_evals = optimal_reduce!(
+                            optimal_iter!(chunk).map(|k_prime| {
+                                let x_in = k_prime & x_bitmask;
+                                let B_E_in_eval = B.E_in_current()[x_in];
+
+                                let inner_sum = optimal_reduce!(
+                                    optimal_iter!(G[k_prime << m..(k_prime + 1) << m])
+                                        .enumerate()
+                                        .map(|(k, &G_k)| {
+                                            // Since we're binding variables from low to high, k_m is the high bit
+                                            let k_m = k >> (m - 1);
+                                            // We then index into F using (k_{m-1}, ..., k_1)
+                                            let F_k = F[k % (1 << (m - 1))];
+                                            // G_times_F := G[k] * F[k_1, ...., k_{m-1}]
+                                            let G_times_F = G_k * F_k;
+                                            // For c \in {0, infty} compute:
+                                            //    G[k] * (F[k_1, ...., k_{m-1}, c]^2 - F[k_1, ...., k_{m-1}, c])
+                                            //    = G_times_F * (eq(k_m, c)^2 * F[k_1, ...., k_{m-1}] - eq(k_m, c))
+                                            //
+                                            // We want the following values, for k_m \in {0, 1}
+                                            //   - s(0) = G_times_F * (eq(k_m, 0)^2 * F_k - eq(k_m, 0))
+                                            //   - s(infty) = G_times_F * eq(k_m, infty)^2 * F_k
+                                            // But note that all of the above values of eq(., .) and
+                                            // eq(., .)^2 are either 0 or 1. Namely:
+                                            //   - eq(0, 0)^2 = eq(0, 0) = 1
+                                            //   - eq(1, 0)^2 = eq(1, 0) = 0
+                                            //   - eq(0, infty)^2 = eq(1, infty)^2 = 1
+                                            // So we can instead compute
+                                            //   - s(0) = k_m == 0 ? G_times_F * (F_k - 1) : 0
+                                            //   - s(1) = G_times_F * F_k
+                                            let eval_0 = if k_m == 0 {
+                                                G_times_F * (F_k - F::one())
+                                            } else {
+                                                F::zero()
+                                            };
+                                            let eval_infty = G_times_F * F_k;
+                                            [eval_0, eval_infty]
+                                        }),
+                                    || [F::zero(); DEGREE - 1],
+                                    |running, new| [running[0] + new[0], running[1] + new[1]]
+                                );
+
+                                [B_E_in_eval * inner_sum[0], B_E_in_eval * inner_sum[1]]
+                            }),
+                            || [F::zero(); DEGREE - 1],
+                            |running, new| [running[0] + new[0], running[1] + new[1]]
+                        );
+
+                        [B_E_out_eval * chunk_evals[0], B_E_out_eval * chunk_evals[1]]
+                    }),
+                    || [F::zero(); DEGREE - 1],
+                    |running, new| [running[0] + new[0], running[1] + new[1]]
+                )
+            };
+
+            B.sumcheck_evals_from_quadratic_coeffs(
+                quadratic_coeffs[0],
+                quadratic_coeffs[1],
+                previous_claim,
+            )
+                .to_vec()
+        } else {
+            // Last log(T) rounds of sumcheck
+
+            let mut univariate_poly_evals: [F; 3] = optimal_reduce!(
+                into_optimal_iter!(0..D.len() / 2).map(|i| {
+                    let D_evals = D.sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
+                    let H_evals =
+                        H.as_ref()
+                            .unwrap()
+                            .sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
+
+                    [
+                        D_evals[0] * (H_evals[0] * H_evals[0] - H_evals[0]),
+                        D_evals[1] * (H_evals[1] * H_evals[1] - H_evals[1]),
+                        D_evals[2] * (H_evals[2] * H_evals[2] - H_evals[2]),
+                    ]
+                }),
+                || [F::zero(); 3],
+                |running, new| {
+                    [
+                        running[0] + new[0],
+                        running[1] + new[1],
+                        running[2] + new[2],
+                    ]
+                }
+            );
+
+            let eq_r_r = B.current_scalar;
+            univariate_poly_evals = [
+                eq_r_r * univariate_poly_evals[0],
+                eq_r_r * univariate_poly_evals[1],
+                eq_r_r * univariate_poly_evals[2],
+            ];
+
+            univariate_poly_evals.to_vec()
+        };
+
+        #[cfg(test)]
+        {
+            let test_evals = self.compute_prover_message_cubic(round);
+            assert_eq!(evals, test_evals);
+        }
+
+        evals
+    }
+
+    fn bind(&mut self, r_j: F, round: usize) {
+        let BooleanityProverState {
+            K,
+            B,
+            #[cfg(test)]
+            old_B,
+            F,
+            D,
+            H,
+            read_addresses,
+            ..
+        } = self.prover_state.as_mut().unwrap();
+        if round < K.log_2() {
+            // First log(K) rounds of sumcheck
+            B.bind(r_j);
+            #[cfg(test)]
+            old_B.bind_parallel(r_j, BindingOrder::LowToHigh);
+
+            let inner_span = tracing::span!(tracing::Level::INFO, "Update F");
+            let _inner_guard = inner_span.enter();
+
+            // Update F for this round (see Equation 55)
+            let (F_left, F_right) = F.split_at_mut(1 << round);
+            F_left
+                .par_iter_mut()
+                .zip(F_right.par_iter_mut())
+                .for_each(|(x, y)| {
+                    *y = *x * r_j;
+                    *x -= *y;
+                });
+
+            if round == K.log_2() - 1 {
+                // Transition point; initialize H
+                *H = Some(MultilinearPolynomial::from(
+                    optimal_iter!(read_addresses)
+                        .map(|&k| F[k])
+                        .collect::<Vec<_>>(),
+                ));
+            }
+        } else {
+            // Last log(T) rounds of sumcheck
+            join_if_rayon!(|| D.bind_parallel(r_j, BindingOrder::LowToHigh), || {
+                H.as_mut()
+                    .unwrap()
+                    .bind_parallel(r_j, BindingOrder::LowToHigh)
+            });
+        }
+    }
+
+    fn cache_openings(&mut self) {
+        debug_assert!(self.ra_claim.is_none());
+        let BooleanityProverState { H, .. } = self.prover_state.as_ref().unwrap();
+        let ra_claim = H.as_ref().unwrap().final_sumcheck_claim();
+        self.ra_claim = Some(ra_claim);
+    }
 }
 
 #[cfg(test)]

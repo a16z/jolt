@@ -1,7 +1,7 @@
 use crate::field::JoltField;
-use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+use crate::poly::multilinear_polynomial::{MultilinearPolynomial};
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
-use crate::subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof};
+use crate::subprotocols::sumcheck::{BatchableSumcheckVerifierInstance, SumcheckInstanceProof};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 use crate::utils::transcript::Transcript;
@@ -9,6 +9,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::REGISTER_COUNT;
 use fixedbitset::FixedBitSet;
 use tracer::instruction::RV32IMCycle;
+use crate::poly::eq_poly::EqPolynomial;
 
 #[cfg(feature = "prover")]
 mod prover;
@@ -145,5 +146,42 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
             rs2_rv_claim: proof.rs2_rv_claim,
             rd_wv_claim: proof.rd_wv_claim,
         }
+    }
+}
+
+impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckVerifierInstance<F, ProofTranscript>
+for RegistersReadWriteChecking<F>
+{
+    fn degree(&self) -> usize {
+        3
+    }
+
+    fn num_rounds(&self) -> usize {
+        K.log_2() + self.T.log_2()
+    }
+
+    fn input_claim(&self) -> F {
+        self.rd_wv_claim + self.z * self.rs1_rv_claim + self.z_squared * self.rs2_rv_claim
+    }
+    fn expected_output_claim(&self, r: &[F]) -> F {
+        let ReadWriteCheckingVerifierState {
+            sumcheck_switch_index,
+            r_prime,
+            ..
+        } = self.verifier_state.as_ref().unwrap();
+
+        // The high-order cycle variables are bound after the switch
+        let mut r_cycle = r[*sumcheck_switch_index..self.T.log_2()].to_vec();
+        // First `sumcheck_switch_index` rounds bind cycle variables from low to high
+        r_cycle.extend(r[..*sumcheck_switch_index].iter().rev());
+
+        // eq(r', r_cycle)
+        let eq_eval_cycle = EqPolynomial::mle(r_prime, &r_cycle);
+
+        let claims = self.claims.as_ref().unwrap();
+        eq_eval_cycle
+            * (claims.rd_wa_claim * (claims.inc_claim + claims.val_claim)
+            + self.z * claims.rs1_ra_claim * claims.val_claim
+            + self.z_squared * claims.rs2_ra_claim * claims.val_claim)
     }
 }

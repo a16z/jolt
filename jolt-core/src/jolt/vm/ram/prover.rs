@@ -47,24 +47,6 @@ use tracer::{
 impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
     for ValEvaluationSumcheck<F>
 {
-    fn degree(&self) -> usize {
-        3
-    }
-
-    fn num_rounds(&self) -> usize {
-        if let Some(prover_state) = &self.prover_state {
-            prover_state.inc.len().log_2()
-        } else if let Some(verifier_state) = &self.verifier_state {
-            verifier_state.num_rounds
-        } else {
-            panic!("Neither prover state nor verifier state is initialized");
-        }
-    }
-
-    fn input_claim(&self) -> F {
-        self.claimed_evaluation - self.init_eval
-    }
-
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
         let prover_state = self
             .prover_state
@@ -125,45 +107,11 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             });
         }
     }
-
-    fn expected_output_claim(&self, r: &[F]) -> F {
-        let verifier_state = self
-            .verifier_state
-            .as_ref()
-            .expect("Verifier state not initialized");
-        let claims = self.claims.as_ref().expect("Claims not cached");
-
-        // r contains r_cycle_prime in low-to-high order
-        let r_cycle_prime: Vec<F> = r.iter().rev().copied().collect();
-
-        // Compute LT(r_cycle', r_cycle)
-        let mut lt_eval = F::zero();
-        let mut eq_term = F::one();
-        for (x, y) in r_cycle_prime.iter().zip(verifier_state.r_cycle.iter()) {
-            lt_eval += (F::one() - x) * y * eq_term;
-            eq_term *= F::one() - x - y + *x * y + *x * y;
-        }
-
-        // Return inc_claim * wa_claim * lt_eval
-        claims.inc_claim * claims.wa_claim * lt_eval
-    }
 }
 
 impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
     for BooleanitySumcheck<F>
 {
-    fn degree(&self) -> usize {
-        3
-    }
-
-    fn num_rounds(&self) -> usize {
-        self.K.log_2() + self.T.log_2()
-    }
-
-    fn input_claim(&self) -> F {
-        F::zero() // Always zero for booleanity
-    }
-
     fn compute_prover_message(&mut self, round: usize, _previous_claim: F) -> Vec<F> {
         let K_log = self.K.log_2();
 
@@ -261,29 +209,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
                 self.ra_claims = Some(claims);
             }
         }
-    }
-
-    fn expected_output_claim(&self, r: &[F]) -> F {
-        let verifier_state = self
-            .verifier_state
-            .as_ref()
-            .expect("Verifier state not initialized");
-        let ra_claims = self.ra_claims.as_ref().expect("RA claims not cached");
-
-        let K_log = self.K.log_2();
-        let (r_address_prime, r_cycle_prime) = r.split_at(K_log);
-
-        let eq_eval_address = EqPolynomial::mle(&verifier_state.r_address, r_address_prime);
-        let r_cycle_prime: Vec<_> = r_cycle_prime.iter().copied().rev().collect();
-        let eq_eval_cycle = EqPolynomial::mle(&verifier_state.r_prime, &r_cycle_prime);
-
-        // Compute batched booleanity check: sum_{i=0}^{d-1} z^i * (ra_i^2 - ra_i)
-        let mut result = F::zero();
-        for (i, ra_claim) in ra_claims.iter().enumerate() {
-            result += verifier_state.z_powers[i] * (ra_claim.square() - *ra_claim);
-        }
-
-        eq_eval_address * eq_eval_cycle * result
     }
 }
 
@@ -455,24 +380,6 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
 impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
     for HammingWeightSumcheck<F>
 {
-    fn degree(&self) -> usize {
-        1
-    }
-
-    fn num_rounds(&self) -> usize {
-        if let Some(prover_state) = &self.prover_state {
-            prover_state.ra[0].get_num_vars()
-        } else if let Some(verifier_state) = &self.verifier_state {
-            verifier_state.log_K
-        } else {
-            panic!("Neither prover state nor verifier state is initialized")
-        }
-    }
-
-    fn input_claim(&self) -> F {
-        self.input_claim
-    }
-
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
         let prover_state = self
             .prover_state
@@ -514,21 +421,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             self.cached_claims = Some(claims);
         }
     }
-
-    fn expected_output_claim(&self, _r: &[F]) -> F {
-        let verifier_state = self
-            .verifier_state
-            .as_ref()
-            .expect("Verifier state not initialized");
-        let ra_claims = self.cached_claims.as_ref().expect("RA claims not cached");
-
-        // Compute batched claim: sum_{i=0}^{d-1} z^i * ra_i
-        ra_claims
-            .iter()
-            .zip(verifier_state.z_powers.iter())
-            .map(|(ra_claim, z_power)| *ra_claim * z_power)
-            .sum()
-    }
 }
 
 impl<F: JoltField> RafEvaluationSumcheck<F> {
@@ -550,24 +442,6 @@ impl<F: JoltField> RafEvaluationSumcheck<F> {
 impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
     for RafEvaluationSumcheck<F>
 {
-    fn degree(&self) -> usize {
-        2
-    }
-
-    fn num_rounds(&self) -> usize {
-        if let Some(prover_state) = &self.prover_state {
-            prover_state.ra.get_num_vars()
-        } else if let Some(verifier_state) = &self.verifier_state {
-            verifier_state.log_K
-        } else {
-            panic!("Neither prover state nor verifier state is initialized")
-        }
-    }
-
-    fn input_claim(&self) -> F {
-        self.input_claim
-    }
-
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
         let prover_state = self
             .prover_state
@@ -614,22 +488,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         if let Some(prover_state) = &self.prover_state {
             self.cached_claim = Some(prover_state.ra.final_sumcheck_claim());
         }
-    }
-
-    fn expected_output_claim(&self, r: &[F]) -> F {
-        let verifier_state = self
-            .verifier_state
-            .as_ref()
-            .expect("Verifier state not initialized");
-
-        // Compute unmap evaluation at r
-        let unmap_eval =
-            UnmapRamAddressPolynomial::new(verifier_state.log_K, verifier_state.start_address)
-                .evaluate(r);
-
-        // Return unmap(r) * ra(r)
-        let ra_claim = self.cached_claim.expect("ra_claim not cached");
-        unmap_eval * ra_claim
     }
 }
 

@@ -10,14 +10,43 @@ use crate::poly::spartan_interleaved_poly::SpartanInterleavedPolynomial;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::r1cs::builder::Constraint;
-use crate::subprotocols::sumcheck::{
-    BatchableSumcheckInstance, BatchedSumcheck, SumcheckInstanceProof,
-};
+use crate::subprotocols::sumcheck::{BatchableSumcheckVerifierInstance, BatchedSumcheck, SumcheckInstanceProof};
 use crate::utils::mul_0_optimized;
 use crate::utils::small_value::svo_helpers::process_svo_sumcheck_rounds;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 use rayon::prelude::*;
+
+/// Trait for a sumcheck instance that can be batched with other instances.
+///
+/// This trait defines the interface needed to participate in the `BatchedSumcheck` protocol,
+/// which reduces verifier cost and proof size by batching multiple sumcheck protocols.
+pub trait BatchableSumcheckInstance<F: JoltField, ProofTranscript: Transcript>:
+BatchableSumcheckVerifierInstance<F, ProofTranscript> {
+    /// Computes the prover's message for a specific round of the sumcheck protocol.
+    /// Returns the evaluations of the sumcheck polynomial at 0, 2, 3, ..., degree.
+    /// The point evaluation at 1 can be interpolated using the previous round's claim.
+    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F>;
+
+    /// Binds this sumcheck instance to the verifier's challenge from a specific round.
+    /// This updates the internal state to prepare for the next round.
+    fn bind(&mut self, r_j: F, round: usize);
+
+    /// Caches polynomial opening claims needed after the sumcheck protocol completes.
+    /// These openings will later be proven using either an opening proof or another sumcheck.
+    fn cache_openings(&mut self);
+
+    /// Proves a single sumcheck instance.
+    fn prove_single(
+        &mut self,
+        transcript: &mut ProofTranscript,
+    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>)
+    where
+        Self: Sized,
+    {
+        BatchedSumcheck::prove(vec![self], transcript)
+    }
+}
 
 /// Implements the standard technique for batching parallel sumchecks to reduce
 /// verifier cost and proof size.
