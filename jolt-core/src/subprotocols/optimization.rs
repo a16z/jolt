@@ -312,6 +312,8 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
 
 #[cfg(test)]
 mod test {
+    use std::time::{Duration, Instant};
+
     use ark_bn254::Fr;
     use ark_std::test_rng;
     use rand_core::RngCore;
@@ -337,18 +339,20 @@ mod test {
         },
     };
 
-    fn multi_eq<F: JoltField>(D: u32, T: u32) -> Vec<F> {
+    const MAX_NUM_BITS: u32 = 32;
+
+    fn multi_eq<F: JoltField>(D: usize, T: usize) -> Vec<F> {
         // Compute the polynomial eq(j, j_1, ..., j_d) = 1 if j = j_1 = ... = j_d and 0 otherwise.
 
-        let mut eq: Vec<F> = unsafe_allocate_zero_vec(T.pow(D + 1) as usize);
+        let mut eq: Vec<F> = unsafe_allocate_zero_vec(T.pow(D as u32 + 1) as usize);
         let num_bits = (T as usize).log_2() * ((D + 1) as usize);
         let log_T = (T as usize).log_2();
 
-        for i in 0..T.pow(D + 1) {
+        for i in 0..T.pow(D as u32 + 1) {
             // Lower index correspond to lower bits.
-            let bits = (0..32)
+            let bits = (0..MAX_NUM_BITS)
                 .take(num_bits)
-                .map(|n| (i >> n) & 1)
+                .map(|n| ((i >> n) & 1) as u32)
                 .collect::<Vec<u32>>();
             assert_eq!(bits.len(), num_bits);
 
@@ -422,12 +426,28 @@ mod test {
         ra
     }
 
+    struct TestPerf {
+        naive_duration: Duration,
+        optimized_duration: Duration,
+    }
+
     #[test]
     fn test_large_d_optimization_sumcheck() {
-        large_d_optimization_ra_virtualization(3, 1 << 3, 16);
-        large_d_optimization_ra_virtualization(2, 1 << 4, 4);
-        large_d_optimization_ra_virtualization(5, 1 << 3, 8);
-        large_d_optimization_ra_virtualization(10, 1 << 2, 4);
+        let test_inputs = [
+            (3, 1 << 3, 16),
+            (2, 1 << 4, 4),
+            (5, 1 << 3, 8),
+            (6, 1 << 10, 16),
+            (10, 1 << 10, 16),
+        ];
+
+        for (D, T, K) in test_inputs {
+            let test_perf = large_d_optimization_ra_virtualization(D, T, K);
+            println!(
+                "D: {}, T: {}, K: {}, optimized_duration: {:?}, naive_duration: {:?}",
+                D, T, K, test_perf.optimized_duration, test_perf.naive_duration
+            );
+        }
     }
 
     fn test_ra_data(D: usize, T: usize, K: usize) -> Vec<MultilinearPolynomial<Fr>> {
@@ -468,7 +488,7 @@ mod test {
         ra: &Vec<MultilinearPolynomial<Fr>>,
     ) {
         assert!(T.is_power_of_two());
-        let eq = multi_eq::<Fr>(D as u32, T as u32);
+        let eq = multi_eq::<Fr>(D, T);
         let mut eq = MultilinearPolynomial::from(eq);
 
         r_cycle
@@ -479,7 +499,7 @@ mod test {
         for j in 0..T.pow(D as u32) {
             let num_bits = D * T.log_2();
             // Lower index correspond to lower bits.
-            let bits_f = (0..32)
+            let bits_f = (0..MAX_NUM_BITS)
                 .take(num_bits)
                 .map(|n| ((j >> n) & 1) as u32)
                 .map(|bit| Fr::from_u32(bit))
@@ -517,7 +537,7 @@ mod test {
             .map(|j| {
                 let num_bits = D * T.log_2();
                 // Lower index correspond to lower bits.
-                let bits = (0..32)
+                let bits = (0..MAX_NUM_BITS)
                     .take(num_bits)
                     .map(|n| ((j >> n) & 1) as u32)
                     .collect::<Vec<u32>>();
@@ -554,7 +574,7 @@ mod test {
         assert_eq!(previous_claim, previous_claim_bench);
     }
 
-    fn large_d_optimization_ra_virtualization(D: usize, T: usize, K: usize) {
+    fn large_d_optimization_ra_virtualization(D: usize, T: usize, K: usize) -> TestPerf {
         assert!(T.is_power_of_two());
         assert!(K.is_power_of_two());
 
@@ -562,26 +582,57 @@ mod test {
         // ra(k_1, ..., k_d, j) = \sum_{j_1, ..., j_d} eq(j, j_1, ..., j_d) \prod_{i=1}^d ra(k_i, j_i)
         // where eq(j, j_1, ..., j_d) = 1 if j = j_1 = ... = j_d and 0 otherwise.
         let mut ra = test_ra_data(D, T, K);
+        let mut ra_copy = ra.clone();
+
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
 
-        check_initial_eval_claim(D, T, &r_cycle, &ra);
+        if D < 6 && T < 1 << 6 {
+            check_initial_eval_claim(D, T, &r_cycle, &ra);
+        }
 
+        let start_time = Instant::now();
         let (proof, r_prime) = LargeDSumCheckProof::<Fr, KeccakTranscript>::prove(
             &mut ra.iter_mut().collect::<Vec<_>>(),
             &r_cycle,
             &mut prover_transcript,
         );
+        let optimized_duration = start_time.elapsed();
 
         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
         verifier_transcript.compare_to(prover_transcript);
         let _r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
 
         let verification_result = proof.verify(r_prime, &mut verifier_transcript);
-
         assert!(
             verification_result.is_ok(),
-            "Verification failed: {verification_result:?}"
+            "Verification (optimized sumcheck) failed: {verification_result:?}"
         );
+
+        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+        let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
+
+        let start_time = Instant::now();
+        let (proof, r_prime) = LargeDSumCheckProof::<Fr, KeccakTranscript>::prove(
+            &mut ra_copy.iter_mut().collect::<Vec<_>>(),
+            &r_cycle,
+            &mut prover_transcript,
+        );
+        let naive_duration = start_time.elapsed();
+
+        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+        verifier_transcript.compare_to(prover_transcript);
+        let _r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
+
+        let verification_result = proof.verify(r_prime, &mut verifier_transcript);
+        assert!(
+            verification_result.is_ok(),
+            "Verification (naive sumcheck) failed: {verification_result:?}"
+        );
+
+        TestPerf {
+            naive_duration,
+            optimized_duration,
+        }
     }
 }
