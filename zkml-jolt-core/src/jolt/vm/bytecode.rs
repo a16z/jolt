@@ -100,7 +100,7 @@ where
                     let val_evals = val.sumcheck_evals(index, DEGREE, BindingOrder::LowToHigh);
                     [
                         ra_evals[0] * (z + val_evals[0]),
-                        ra_evals[1] * (z * val_evals[1]),
+                        ra_evals[1] * (z + val_evals[1]),
                     ]
                 })
                 .reduce(
@@ -426,7 +426,7 @@ where
         let (sumcheck_claim, mut r_address) =
             self.core_piop_sumcheck
                 .verify(self.rv_claim + z, K.log_2(), 2, transcript)?;
-        // r_address = r_address.into_iter().rev().collect();
+        r_address = r_address.into_iter().rev().collect();
         // Used to combine the various fields in each instruction into a single
         // field element.
         let val: Vec<F> = Self::bytecode_to_val(&preprocessing.bytecode, &gamma);
@@ -438,18 +438,18 @@ where
             "Core PIOP + Hamming weight sumcheck failed"
         );
 
-        // let (sumcheck_claim, r_booleanity) =
-        //     self.booleanity_sumcheck
-        //         .verify(F::zero(), K.log_2() + T.log_2(), 3, transcript)?;
-        // let (r_address_prime, r_cycle_prime) = r_booleanity.split_at(K.log_2());
-        // let eq_eval_address = EqPolynomial::mle(&r_address, r_address_prime);
-        // let r_cycle: Vec<_> = r_cycle.iter().copied().rev().collect();
-        // let eq_eval_cycle = EqPolynomial::mle(&r_cycle, r_cycle_prime);
-        // assert_eq!(
-        //     eq_eval_address * eq_eval_cycle * (self.ra_claim_prime.square() - self.ra_claim_prime),
-        //     sumcheck_claim,
-        //     "Booleanity sumcheck failed"
-        // );
+        let (sumcheck_claim, r_booleanity) =
+            self.booleanity_sumcheck
+                .verify(F::zero(), K.log_2() + T.log_2(), 3, transcript)?;
+        let (r_address_prime, r_cycle_prime) = r_booleanity.split_at(K.log_2());
+        let eq_eval_address = EqPolynomial::mle(&r_address, r_address_prime);
+        let r_cycle: Vec<_> = r_cycle.iter().copied().rev().collect();
+        let eq_eval_cycle = EqPolynomial::mle(&r_cycle, r_cycle_prime);
+        assert_eq!(
+            eq_eval_address * eq_eval_cycle * (self.ra_claim_prime.square() - self.ra_claim_prime),
+            sumcheck_claim,
+            "Booleanity sumcheck failed"
+        );
         Ok(())
     }
 }
