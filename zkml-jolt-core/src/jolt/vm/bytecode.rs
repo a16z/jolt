@@ -77,6 +77,7 @@ where
         let z: F = transcript.challenge_scalar();
         let E = EqPolynomial::evals(&r_cycle);
         let mut F = vec![F::zero(); K];
+        // Iterate through bytecode trace.
         for (j, cycle) in trace.iter().enumerate() {
             let k = cycle.instr.address;
             F[k] += E[j]
@@ -432,13 +433,11 @@ where
         // field element.
         let val: Vec<F> = Self::bytecode_to_val(&preprocessing.bytecode, &gamma);
         let val = MultilinearPolynomial::from(val);
-
         assert_eq!(
             self.ra_claim * (z + val.evaluate(&r_address)),
             sumcheck_claim,
             "Core PIOP + Hamming weight sumcheck failed"
         );
-
         let (sumcheck_claim, r_booleanity) =
             self.booleanity_sumcheck
                 .verify(F::zero(), K.log_2() + T.log_2(), 3, transcript)?;
