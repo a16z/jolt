@@ -1,3 +1,5 @@
+use std::iter;
+
 use rayon::iter::{
     IndexedParallelIterator, IntoParallelIterator, IntoParallelRefMutIterator, ParallelIterator,
 };
@@ -60,29 +62,44 @@ impl<F: JoltField, ProofTranscript: Transcript> NaiveSumCheckProof<F, ProofTrans
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(r_cycle.len());
 
         for round in 0..r_cycle.len() {
-            let evals = (0..(log_T - round - 1).pow2())
+            let mut evals = (0..(log_T - round - 1).pow2())
                 .into_par_iter()
                 .map(|j| {
-                    let res = &mut eq.sumcheck_evals(j, 2, BindingOrder::HighToLow);
+                    let res = eq.sumcheck_evals(j, mle_vec.len() + 1, BindingOrder::HighToLow);
                     let mle_evals = mle_vec
                         .iter()
-                        .map(|poly| poly.sumcheck_evals(j, 2, BindingOrder::HighToLow))
+                        .map(|poly| {
+                            poly.sumcheck_evals(j, mle_vec.len() + 1, BindingOrder::HighToLow)
+                        })
                         .collect::<Vec<_>>();
 
-                    mle_evals.iter().for_each(|mle_eval| {
-                        res[0] *= mle_eval[0];
-                        res[1] *= mle_eval[1];
-                    });
-
-                    [res[0], res[1]]
+                    mle_evals
+                        .into_iter()
+                        .chain(iter::once(res))
+                        .reduce(|running, new| {
+                            running
+                                .iter()
+                                .zip(new.iter())
+                                .map(|(a, b)| *a * b)
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap()
                 })
                 .reduce(
-                    || [F::zero(), F::zero()],
-                    |running, new| [running[0] * new[0], running[1] * new[1]],
+                    || vec![F::zero(); mle_vec.len() + 1],
+                    |running, new| {
+                        running
+                            .iter()
+                            .zip(new.iter())
+                            .map(|(a, b)| *a * b)
+                            .collect::<Vec<_>>()
+                    },
                 );
 
-            let univariate_poly =
-                UniPoly::from_evals(&[evals[0], previous_claim - evals[0], evals[1]]);
+            evals.insert(1, previous_claim - evals[0]);
+            assert_eq!(evals.len(), mle_vec.len() + 2);
+
+            let univariate_poly = UniPoly::from_evals(&evals);
             let compressed_poly = univariate_poly.compress();
             compressed_poly.append_to_transcript(transcript);
             compressed_polys.push(compressed_poly);
@@ -122,7 +139,7 @@ impl<F: JoltField, ProofTranscript: Transcript> NaiveSumCheckProof<F, ProofTrans
         let (_sumcheck_claim, _r_sumcheck) = self.sumcheck_proof.verify(
             self.eq_claim * self.mle_claims.iter().product::<F>(),
             r_prime.len(),
-            2,
+            self.mle_claims.len() + 1,
             transcript,
         )?;
 
@@ -160,7 +177,8 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
 
         let eval_points = [0, 2]
             .into_iter()
-            .map(|x| F::from_u32(x))
+            .filter(|x| *x != 1)
+            .map(|x| F::from_u32(x as u32))
             .collect::<Vec<_>>();
 
         // Each table E_i stores the evaluations of eq(j_{>i}, r_cycle_{>i}) for each j_{>i}.
@@ -456,6 +474,7 @@ mod test {
             (5, 1 << 3, 8),
             (6, 1 << 2, 64),
             (10, 1 << 2, 64),
+            (12, 1 << 2, 64),
         ];
 
         for (D, T, K) in test_inputs {
