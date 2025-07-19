@@ -337,6 +337,23 @@ where
         polynomials_map: Option<&HashMap<CommittedPolynomial, MultilinearPolynomial<F>>>,
         transcript: &mut ProofTranscript,
     ) {
+        #[cfg(test)]
+        {
+            use crate::poly::multilinear_polynomial::PolynomialEvaluation;
+
+            if let Some(polynomials_map) = polynomials_map {
+                for (label, claim) in self.polynomials.iter().zip(self.input_claims.iter()) {
+                    let poly = polynomials_map.get(label).unwrap();
+                    debug_assert_eq!(
+                        poly.evaluate(&self.opening_point),
+                        *claim,
+                        "Evaluation mismatch for {:?} {label:?}",
+                        self.sumcheck_id
+                    );
+                }
+            }
+        }
+
         if self.polynomials.len() > 1 {
             let gamma: F = transcript.challenge_scalar();
             self.rlc_coeffs = vec![F::one()];
@@ -359,9 +376,11 @@ where
                     .iter()
                     .map(|label| polynomials_map.get(label).unwrap())
                     .collect();
+
                 let rlc_poly =
                     MultilinearPolynomial::linear_combination(&polynomials, &self.rlc_coeffs);
                 let num_vars = rlc_poly.get_num_vars();
+
                 let opening_point_len = self.opening_point.len();
                 debug_assert_eq!(
                     num_vars,
@@ -370,6 +389,7 @@ where
                     self.polynomials,
                     self.sumcheck_id,
                 );
+
                 match prover_state {
                     ProverOpening::Dense(opening) => opening.polynomial = Some(rlc_poly),
                     ProverOpening::OneHot(_) => {
@@ -478,7 +498,7 @@ where
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        unimplemented!()
+        unimplemented!("Unused")
     }
 
     fn cache_openings_verifier(
@@ -486,7 +506,7 @@ where
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        unimplemented!()
+        unimplemented!("Unused")
     }
 }
 

@@ -19,7 +19,7 @@ use crate::{
     },
     poly::commitment::commitment_scheme::CommitmentScheme,
     subprotocols::sumcheck::SumcheckInstance,
-    utils::transcript::Transcript,
+    utils::{math::Math, transcript::Transcript},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::{
@@ -35,6 +35,13 @@ pub mod ra_virtual;
 pub mod raf_evaluation;
 pub mod read_write_checking;
 pub mod val_evaluation;
+
+const NUM_RA_I_VARS: usize = 8;
+pub fn compute_d_parameter(K: usize) -> usize {
+    // Calculate D dynamically such that 2^8 = K^(1/D)
+    let log_K = K.log_2();
+    (log_K + NUM_RA_I_VARS - 1) / NUM_RA_I_VARS
+}
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct RAMPreprocessing {

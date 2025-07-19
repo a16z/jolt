@@ -6,7 +6,10 @@ use rayon::prelude::*;
 use crate::{
     dag::state_manager::StateManager,
     field::JoltField,
-    jolt::{vm::ram::remap_address, witness::CommittedPolynomial},
+    jolt::{
+        vm::ram::{compute_d_parameter, remap_address, NUM_RA_I_VARS},
+        witness::CommittedPolynomial,
+    },
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
@@ -40,8 +43,6 @@ pub struct HammingWeightProverState<F: JoltField> {
 }
 
 pub struct HammingWeightVerifierState<F: JoltField> {
-    /// log K (number of rounds)
-    log_K: usize,
     /// D parameter as in Twist and Shout paper
     d: usize,
     /// z powers for verification
@@ -60,8 +61,6 @@ pub struct HammingWeightSumcheck<F: JoltField> {
     d: usize,
 }
 
-const NUM_RA_I_VARS: usize = 8;
-
 impl<F: JoltField> HammingWeightSumcheck<F> {
     #[tracing::instrument(skip_all, name = "RamHammingWeightSumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
@@ -69,8 +68,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         // Calculate D dynamically such that 2^8 = K^(1/D)
-        let log_K = K.log_2();
-        let d = (log_K + NUM_RA_I_VARS - 1) / NUM_RA_I_VARS;
+        let d = compute_d_parameter(K);
 
         let (_, trace, program_io, _) = state_manager.get_prover_data();
         let memory_layout = &program_io.memory_layout;
@@ -152,8 +150,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
         let (_, _, T) = state_manager.get_verifier_data();
 
         // Calculate D dynamically such that 2^8 = K^(1/D)
-        let log_K = K.log_2();
-        let d = (log_K + NUM_RA_I_VARS - 1) / NUM_RA_I_VARS;
+        let d = compute_d_parameter(K);
 
         // Get z challenges for batching
         let z_challenges: Vec<F> = state_manager.transcript.borrow_mut().challenge_vector(d);
@@ -173,7 +170,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
         Self {
             input_claim,
             prover_state: None,
-            verifier_state: Some(HammingWeightVerifierState { log_K, d, z_powers }),
+            verifier_state: Some(HammingWeightVerifierState { d, z_powers }),
             r_cycle,
             d,
         }
