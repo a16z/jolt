@@ -96,7 +96,7 @@ impl VirtualInstructionSequence for AMOMAXUD {
                 rs1: self.operands.rs1,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(6),
+            virtual_sequence_remaining: Some(7),
         };
         sequence.push(ld.into());
 
@@ -107,7 +107,7 @@ impl VirtualInstructionSequence for AMOMAXUD {
                 rs1: v_rd,
                 rs2: self.operands.rs2,
             },
-            virtual_sequence_remaining: Some(5),
+            virtual_sequence_remaining: Some(6),
         };
         sequence.push(sltu.into());
 
@@ -118,7 +118,7 @@ impl VirtualInstructionSequence for AMOMAXUD {
                 rs1: v_sel_rs2,
                 imm: 1,
             },
-            virtual_sequence_remaining: Some(4),
+            virtual_sequence_remaining: Some(5),
         };
         sequence.push(xori.into());
 
@@ -129,7 +129,7 @@ impl VirtualInstructionSequence for AMOMAXUD {
                 rs1: v_sel_rs2,
                 rs2: self.operands.rs2,
             },
-            virtual_sequence_remaining: Some(3),
+            virtual_sequence_remaining: Some(4),
         };
         sequence.push(mul.into());
 
@@ -140,7 +140,7 @@ impl VirtualInstructionSequence for AMOMAXUD {
                 rs1: v_sel_rd,
                 rs2: v_rd,
             },
-            virtual_sequence_remaining: Some(2),
+            virtual_sequence_remaining: Some(3),
         };
         sequence.push(mul.into());
 
@@ -151,7 +151,7 @@ impl VirtualInstructionSequence for AMOMAXUD {
                 rs1: v_tmp,
                 rs2: v_rs2,
             },
-            virtual_sequence_remaining: Some(1),
+            virtual_sequence_remaining: Some(2),
         };
         sequence.push(add.into());
 
