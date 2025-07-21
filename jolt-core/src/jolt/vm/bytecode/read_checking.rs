@@ -462,8 +462,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadCheckingSumcheck<F> {
             .iter()
             .cloned()
             .chain(self.r_cycle.clone())
-            .collect::<Vec<_>>()
-            .into();
+            .collect::<Vec<_>>();
         accumulator.borrow_mut().append_sparse(
             vec![CommittedPolynomial::BytecodeRa],
             self.sumcheck_id,
