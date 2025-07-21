@@ -39,6 +39,21 @@ fn store_words_to_memory(cpu: &mut Cpu, base_addr: u64, values: &[u64]) {
     }
 }
 
+fn load_working_state_from_memory(cpu: &mut Cpu, base_addr: u64) -> [u64; 16] {
+    let mut working_state = [0u64; 16];
+    // Working state is stored at base_addr with offset (MESSAGE_BLOCK_SIZE + 2 + i) * 8
+    // This matches the addressing used in store_working_state: (MESSAGE_BLOCK_SIZE + 2 + i) * 8
+    for i in 0..16 {
+        let offset = (MESSAGE_BLOCK_SIZE + 2 + i) * 8;
+        working_state[i] = cpu
+            .mmu
+            .load_doubleword(base_addr + offset as u64)
+            .expect("BLAKE2: Failed to load working state from memory")
+            .0;
+    }
+    working_state
+}
+
 impl BLAKE2 {
     // This is the "fast path" for emulation without tracing.
     // It performs the Blake2b compression using a native Rust implementation.
@@ -94,17 +109,11 @@ impl VirtualInstructionSequence for BLAKE2 {
 
 impl RISCVTrace for BLAKE2 {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        if let Some(trace) = trace {
-            // Generate the virtual instruction sequence
-            let virtual_sequence = self.virtual_sequence();
+        let virtual_sequence = self.virtual_sequence();
 
-            // Execute each instruction in the sequence and add to trace
-            for instruction in virtual_sequence {
-                instruction.trace(cpu, Some(trace));
-            }
-        } else {
-            // Fast path without tracing
-            self.exec(cpu, &mut ());
+        let mut trace = trace;
+        for instr in virtual_sequence {
+            instr.trace(cpu, trace.as_deref_mut());
         }
     }
 }
@@ -233,11 +242,34 @@ mod tests {
 
         instruction.trace(&mut cpu_trace, None);
 
+        // Check working state values (for debugging/verification)
+        let working_state = load_working_state_from_memory(&mut cpu_trace, message_addr);
+        println!("Working state after Blake2 compression:");
+        for (i, &value) in working_state.iter().enumerate() {
+            println!("  v[{}] = 0x{:016x}", i, value);
+        }
+
+        // Get expected working state from reference implementation
+        use crate::instruction::inline_blake2::execute_blake2b_compression;
+        let mut expected_working_state = initial_state.clone();
+        let expected_v = execute_blake2b_compression(&mut expected_working_state, &message_block, counter, is_final);
+        
+        println!("Expected working state from reference:");
+        for (i, &value) in expected_v.iter().enumerate() {
+            println!("  v[{}] = 0x{:016x}", i, value);
+        }
+
+        // Verify working state matches reference implementation
+        for i in 0..16 {
+            assert_eq!(working_state[i], expected_v[i], "Working state mismatch at v[{}]: expected 0x{:016x}, got 0x{:016x}", i, expected_v[i], working_state[i]);
+        }
+
+        // Check final hash state
         let mut actual_result = [0u64; 8];
         for i in 0..8 {
             let addr = state_addr + (i * 8) as u64;
             actual_result[i] = cpu_trace.mmu.load_doubleword(addr).unwrap().0;
-            assert_eq!(actual_result[i], expected_state[i]);
+            assert_eq!(actual_result[i], expected_state[i], "value: {}", i);
         }
     }
 }
