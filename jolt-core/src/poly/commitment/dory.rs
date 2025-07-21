@@ -3,9 +3,7 @@
 use super::commitment_scheme::CommitmentScheme;
 use crate::{
     field::JoltField,
-    into_optimal_iter,
     msm::{Icicle, VariableBaseMSM},
-    optimal_chunks, optimal_iter,
     poly::compact_polynomial::SmallScalar,
     poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     utils::{
@@ -26,7 +24,6 @@ use ark_ff::{Field, One, PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{rand::RngCore, Zero};
 use once_cell::sync::OnceCell;
-#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::{borrow::Borrow, marker::PhantomData};
 
@@ -447,7 +444,8 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
         // Check if we have cached GLV tables for g_fin
         if let Some(glv_tables) = g2_cache.and_then(|cache| cache.get_g_fin_glv_tables()) {
             // Use precomputed GLV tables
-            let results_proj: Vec<G2Projective> = optimal_iter!(raw_scalars)
+            let results_proj: Vec<G2Projective> = raw_scalars
+                .par_iter()
                 .map(|&scalar| {
                     // glv_four_scalar_mul returns a vector, we need the first element
                     jolt_optimizations::glv_four_scalar_mul(glv_tables, scalar)[0]
@@ -458,7 +456,8 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
         } else {
             // Fall back to online computation
             let base_proj = base.0;
-            let results_proj: Vec<G2Projective> = optimal_iter!(raw_scalars)
+            let results_proj: Vec<G2Projective> = raw_scalars
+                .par_iter()
                 .map(|&scalar| {
                     jolt_optimizations::glv_four_scalar_mul_online(scalar, &[base_proj])[0]
                 })
@@ -559,8 +558,9 @@ where
     ) -> JoltGTWrapper<P> {
         let chunk_size = (scalars.len() / rayon::current_num_threads()).max(32);
 
-        optimal_chunks!(bases, chunk_size)
-            .zip(optimal_chunks!(scalars, chunk_size))
+        bases
+            .par_chunks(chunk_size)
+            .zip(scalars.par_chunks(chunk_size))
             .map(|(base_chunk, coeff_chunk)| {
                 base_chunk
                     .iter()
@@ -680,7 +680,8 @@ where
                 };
 
                 let g2_affine = G2Projective::normalize_batch(g2_inner);
-                let g2_prepared = optimal_iter!(g2_affine)
+                let g2_prepared = g2_affine
+                    .par_iter()
                     .map(BnG2Prepared::from)
                     .collect::<Vec<_>>();
 
@@ -722,7 +723,8 @@ where
                 };
 
                 let g1_affine = G1Projective::normalize_batch(g1_inner);
-                let g1_prepared = optimal_iter!(g1_affine)
+                let g1_prepared = g1_affine
+                    .par_iter()
                     .map(BnG1Prepared::from)
                     .collect::<Vec<_>>();
 
@@ -774,14 +776,15 @@ where
                 let aff_left = E::G1::normalize_batch(g1_inner);
                 let aff_right = E::G2::normalize_batch(g2_inner);
 
-                let left: Vec<_> = optimal_iter!(aff_left).map(E::G1Prepared::from).collect();
-                let right: Vec<_> = optimal_iter!(aff_right).map(E::G2Prepared::from).collect();
+                let left: Vec<_> = aff_left.par_iter().map(E::G1Prepared::from).collect();
+                let right: Vec<_> = aff_right.par_iter().map(E::G2Prepared::from).collect();
 
                 let num_chunks = rayon::current_num_threads();
                 let chunk_size = (left.len() / num_chunks.max(1)).max(1);
 
-                let ml_result = optimal_chunks!(left, chunk_size)
-                    .zip(optimal_chunks!(right, chunk_size))
+                let ml_result = left
+                    .par_chunks(chunk_size)
+                    .zip(right.par_chunks(chunk_size))
                     .map(|(aa, bb)| E::multi_miller_loop(aa.iter().cloned(), bb.iter().cloned()).0)
                     .product();
 
@@ -826,13 +829,16 @@ where
         g1_generators: &[JoltGroupWrapper<G>],
         row_len: usize,
     ) -> Vec<JoltGroupWrapper<G>> {
-        let bases: Vec<_> = optimal_iter!(g1_generators)
+        let bases: Vec<_> = g1_generators
+            .par_iter()
             .map(|g| g.0.into_affine())
             .collect();
         debug_assert_eq!(DoryGlobals::get_num_columns(), row_len);
 
         match self {
-            MultilinearPolynomial::LargeScalars(poly) => optimal_chunks!(poly.Z, row_len)
+            MultilinearPolynomial::LargeScalars(poly) => poly
+                .Z
+                .par_chunks(row_len)
                 .map(|row| {
                     JoltGroupWrapper(
                         VariableBaseMSM::msm_field_elements(&bases, None, row, None, false)
@@ -840,31 +846,41 @@ where
                     )
                 })
                 .collect(),
-            MultilinearPolynomial::U8Scalars(poly) => optimal_chunks!(poly.coeffs, row_len)
+            MultilinearPolynomial::U8Scalars(poly) => poly
+                .coeffs
+                .par_chunks(row_len)
                 .map(|row| JoltGroupWrapper(VariableBaseMSM::msm_u8(&bases, row, None).unwrap()))
                 .collect(),
-            MultilinearPolynomial::U16Scalars(poly) => optimal_chunks!(poly.coeffs, row_len)
+            MultilinearPolynomial::U16Scalars(poly) => poly
+                .coeffs
+                .par_chunks(row_len)
                 .map(|row| {
                     JoltGroupWrapper(
                         VariableBaseMSM::msm_u16(&bases, None, row, None, false).unwrap(),
                     )
                 })
                 .collect(),
-            MultilinearPolynomial::U32Scalars(poly) => optimal_chunks!(poly.coeffs, row_len)
+            MultilinearPolynomial::U32Scalars(poly) => poly
+                .coeffs
+                .par_chunks(row_len)
                 .map(|row| {
                     JoltGroupWrapper(
                         VariableBaseMSM::msm_u32(&bases, None, row, None, false).unwrap(),
                     )
                 })
                 .collect(),
-            MultilinearPolynomial::U64Scalars(poly) => optimal_chunks!(poly.coeffs, row_len)
+            MultilinearPolynomial::U64Scalars(poly) => poly
+                .coeffs
+                .par_chunks(row_len)
                 .map(|row| {
                     JoltGroupWrapper(
                         VariableBaseMSM::msm_u64(&bases, None, row, None, false).unwrap(),
                     )
                 })
                 .collect(),
-            MultilinearPolynomial::I64Scalars(poly) => optimal_chunks!(poly.coeffs, row_len)
+            MultilinearPolynomial::I64Scalars(poly) => poly
+                .coeffs
+                .par_chunks(row_len)
                 .map(|row| {
                     // TODO(moodlezoup): This can be optimized
                     let scalars: Vec<_> = row.iter().map(|x| F::from_i64(*x)).collect();
@@ -892,7 +908,8 @@ where
         println!("num_columns: {num_columns}");
 
         match self {
-            MultilinearPolynomial::LargeScalars(poly) => into_optimal_iter!(0..num_columns)
+            MultilinearPolynomial::LargeScalars(poly) => (0..num_columns)
+                .into_par_iter()
                 .map(|col_index| {
                     JoltFieldWrapper(
                         poly.Z
@@ -905,7 +922,8 @@ where
                     )
                 })
                 .collect(),
-            MultilinearPolynomial::U8Scalars(poly) => into_optimal_iter!(0..num_columns)
+            MultilinearPolynomial::U8Scalars(poly) => (0..num_columns)
+                .into_par_iter()
                 .map(|col_index| {
                     JoltFieldWrapper(
                         poly.coeffs
@@ -918,7 +936,8 @@ where
                     )
                 })
                 .collect(),
-            MultilinearPolynomial::U16Scalars(poly) => into_optimal_iter!(0..num_columns)
+            MultilinearPolynomial::U16Scalars(poly) => (0..num_columns)
+                .into_par_iter()
                 .map(|col_index| {
                     JoltFieldWrapper(
                         poly.coeffs
@@ -931,7 +950,8 @@ where
                     )
                 })
                 .collect(),
-            MultilinearPolynomial::U32Scalars(poly) => into_optimal_iter!(0..num_columns)
+            MultilinearPolynomial::U32Scalars(poly) => (0..num_columns)
+                .into_par_iter()
                 .map(|col_index| {
                     JoltFieldWrapper(
                         poly.coeffs
@@ -944,7 +964,8 @@ where
                     )
                 })
                 .collect(),
-            MultilinearPolynomial::U64Scalars(poly) => into_optimal_iter!(0..num_columns)
+            MultilinearPolynomial::U64Scalars(poly) => (0..num_columns)
+                .into_par_iter()
                 .map(|col_index| {
                     JoltFieldWrapper(
                         poly.coeffs
@@ -957,7 +978,8 @@ where
                     )
                 })
                 .collect(),
-            MultilinearPolynomial::I64Scalars(poly) => into_optimal_iter!(0..num_columns)
+            MultilinearPolynomial::I64Scalars(poly) => (0..num_columns)
+                .into_par_iter()
                 .map(|col_index| {
                     JoltFieldWrapper(
                         poly.coeffs

@@ -3,14 +3,12 @@ use crate::msm::{use_icicle, GpuBaseType, Icicle, VariableBaseMSM};
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::utils::errors::ProofVerifyError;
-use crate::{into_optimal_iter, join_if_rayon, optimal_iter};
 use ark_ec::scalar_mul::fixed_base::FixedBase;
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, UniformRand, Zero};
 use rand_core::{CryptoRng, RngCore};
-#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::borrow::Borrow;
 use std::marker::PhantomData;
@@ -51,7 +49,7 @@ where
         let g1_table = FixedBase::get_window_table(scalar_bits, g1_window_size, g1);
         let g2_table = FixedBase::get_window_table(scalar_bits, g2_window_size, g2);
 
-        let (g1_powers_projective, g2_powers_projective) = join_if_rayon!(
+        let (g1_powers_projective, g2_powers_projective) = rayon::join(
             || {
                 let beta_powers: Vec<P::ScalarField> = (0..=num_g1_powers)
                     .scan(beta, |acc, _| {
@@ -71,18 +69,18 @@ where
                     })
                     .collect();
                 FixedBase::msm(scalar_bits, g2_window_size, &g2_table, &beta_powers)
-            }
+            },
         );
 
-        let (g1_powers, g2_powers) =
-            join_if_rayon!(|| P::G1::normalize_batch(&g1_powers_projective), || {
-                P::G2::normalize_batch(&g2_powers_projective)
-            });
+        let (g1_powers, g2_powers) = rayon::join(
+            || P::G1::normalize_batch(&g1_powers_projective),
+            || P::G2::normalize_batch(&g2_powers_projective),
+        );
 
         // Precompute a commitment to each power-of-two length vector of ones, which is just the sum of each power-of-two length prefix of the SRS
         let num_powers = (g1_powers.len() as f64).log2().floor() as usize + 1;
         let all_ones_coeffs: Vec<u8> = vec![1; num_g1_powers + 1];
-        let powers_of_2 = into_optimal_iter!((0..num_powers)).map(|i| 1usize << i);
+        let powers_of_2 = (0..num_powers).into_par_iter().map(|i| 1usize << i);
         let g_products = powers_of_2
             .map(|power| {
                 <P::G1 as VariableBaseMSM>::msm_u8(
@@ -240,7 +238,9 @@ where
         let gpu_g1 = pk.gpu_g1();
 
         // batch commit requires all batches to have the same length
-        assert!(optimal_iter!(polys).all(|s| s.borrow().len() == polys[0].borrow().len()));
+        assert!(polys
+            .par_iter()
+            .all(|s| s.borrow().len() == polys[0].borrow().len()));
         assert!(polys[0].borrow().len() <= g1_powers.len());
 
         if let Some(invalid) = polys

@@ -7,13 +7,13 @@ use common::jolt_device::{JoltDevice, MemoryLayout};
 #[cfg(feature = "prover")]
 mod prover;
 
-use crate::poly::multilinear_polynomial::{MultilinearPolynomial};
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 
-use tracer::instruction::RV32IMCycle;
 use crate::poly::eq_poly::EqPolynomial;
+use tracer::instruction::RV32IMCycle;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone, Default)]
 pub struct ReadWriteSumcheckClaims<F: JoltField> {
@@ -138,8 +138,8 @@ impl<F: JoltField> RamReadWriteChecking<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckVerifierInstance<F, ProofTranscript>
-for RamReadWriteChecking<F>
+impl<F: JoltField, ProofTranscript: Transcript>
+    BatchableSumcheckVerifierInstance<F, ProofTranscript> for RamReadWriteChecking<F>
 {
     fn degree(&self) -> usize {
         3
@@ -152,7 +152,7 @@ for RamReadWriteChecking<F>
     fn input_claim(&self) -> F {
         self.rv_claim + self.z * self.wv_claim
     }
-    
+
     fn expected_output_claim(&self, r: &[F]) -> F {
         let ReadWriteCheckingVerifierState {
             sumcheck_switch_index,

@@ -15,20 +15,15 @@ use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use crate::utils::transcript::Transcript;
 use crate::{
-    into_optimal_iter,
     msm::{Icicle, VariableBaseMSM},
-    optimal_iter, optimal_iter_mut,
     poly::{commitment::kzg::SRS, dense_mlpoly::DensePolynomial, unipoly::UniPoly},
     utils::{errors::ProofVerifyError, transcript::AppendToTranscript},
 };
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, Zero};
-#[cfg(not(feature = "parallel"))]
-use itertools::Itertools;
 use rand_chacha::ChaCha20Rng;
 use rand_core::{CryptoRng, RngCore, SeedableRng};
-#[cfg(feature = "parallel")]
 use rayon::iter::{
     IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
     IntoParallelRefMutIterator, ParallelIterator,
@@ -115,7 +110,8 @@ where
     <P as Pairing>::G1: Icicle,
 {
     let f: &DensePolynomial<P::ScalarField> = f.try_into().unwrap();
-    let h = optimal_iter!(u)
+    let h = u
+        .par_iter()
         .map(|ui| {
             let h = compute_witness_polynomial::<P>(&f.evals(), *ui);
             MultilinearPolynomial::from(h)
@@ -159,9 +155,9 @@ where
     // The verifier needs f_i(u_j), so we compute them here
     // (V will compute B(u_j) itself)
     let mut v = vec![vec!(P::ScalarField::zero(); k); t];
-    optimal_iter_mut!(v).enumerate().for_each(|(i, v_i)| {
+    v.par_iter_mut().enumerate().for_each(|(i, v_i)| {
         // for each point u
-        optimal_iter_mut!(v_i).zip_eq(f).for_each(|(v_ij, f)| {
+        v_i.par_iter_mut().zip_eq(f).for_each(|(v_ij, f)| {
             // for each poly f
             *v_ij = UniPoly::eval_as_univariate(f, &u[i]);
         });
@@ -230,16 +226,18 @@ where
 
     let q_power_multiplier: P::ScalarField = P::ScalarField::one() + d_0 + d_1;
 
-    let q_powers_multiplied: Vec<P::ScalarField> = optimal_iter!(q_powers)
+    let q_powers_multiplied: Vec<P::ScalarField> = q_powers
+        .par_iter()
         .map(|q_power| *q_power * q_power_multiplier)
         .collect();
 
     // Compute the batched openings
     // compute B(u_i) = v[i][0] + q*v[i][1] + ... + q^(t-1) * v[i][t-1]
-    let B_u = into_optimal_iter!(v)
+    let B_u = v
+        .into_par_iter()
         .map(|v_i| {
-            into_optimal_iter!(v_i)
-                .zip(optimal_iter!(q_powers))
+            v_i.into_par_iter()
+                .zip(q_powers.par_iter())
                 .map(|(a, b)| *a * *b)
                 .sum()
         })
@@ -319,7 +317,7 @@ where
             let previous_poly: &DensePolynomial<P::ScalarField> = (&polys[i]).try_into().unwrap();
             let Pi_len = previous_poly.len() / 2;
             let mut Pi = vec![P::ScalarField::zero(); Pi_len];
-            optimal_iter_mut!(Pi).enumerate().for_each(|(j, Pi_j)| {
+            Pi.par_iter_mut().enumerate().for_each(|(j, Pi_j)| {
                 *Pi_j = point[ell - i - 1] * (previous_poly[2 * j + 1] - previous_poly[2 * j])
                     + previous_poly[2 * j];
             });
@@ -461,7 +459,9 @@ where
     where
         U: Borrow<MultilinearPolynomial<Self::Field>> + Sync,
     {
-        into_optimal_iter!(UnivariateKZG::commit_batch(&gens.kzg_pk, polys).unwrap())
+        UnivariateKZG::commit_batch(&gens.kzg_pk, polys)
+            .unwrap()
+            .into_par_iter()
             .map(|c| HyperKZGCommitment(c))
             .collect()
     }

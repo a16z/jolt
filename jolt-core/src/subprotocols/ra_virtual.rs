@@ -1,10 +1,6 @@
-
 use crate::{
     field::JoltField,
-    poly::{
-        eq_poly::EqPolynomial,
-        multilinear_polynomial::MultilinearPolynomial,
-    },
+    poly::{eq_poly::EqPolynomial, multilinear_polynomial::MultilinearPolynomial},
     subprotocols::sumcheck::{BatchableSumcheckVerifierInstance, SumcheckInstanceProof},
     utils::{math::Math, transcript::Transcript},
 };
@@ -13,13 +9,11 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 #[cfg(feature = "prover")]
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 #[cfg(feature = "prover")]
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use crate::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 #[cfg(feature = "prover")]
 use crate::subprotocols::sumcheck::BatchableSumcheckInstance;
 #[cfg(feature = "prover")]
-use crate::poly::{
-multilinear_polynomial::{BindingOrder, PolynomialBinding},
-};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct RAProof<F: JoltField, ProofTranscript: Transcript> {
@@ -185,8 +179,8 @@ impl<F: JoltField> RASumcheck<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckVerifierInstance<F, ProofTranscript>
-for RASumcheck<F>
+impl<F: JoltField, ProofTranscript: Transcript>
+    BatchableSumcheckVerifierInstance<F, ProofTranscript> for RASumcheck<F>
 {
     fn degree(&self) -> usize {
         self.d + 1

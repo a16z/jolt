@@ -3,10 +3,16 @@ use itertools::Itertools;
 use rayon::prelude::*;
 use tracer::instruction::RV32IMCycle;
 
-use crate::{field::JoltField, jolt::vm::{ram::remap_address, JoltProverPreprocessing}, optimal_iter, poly::{
-    commitment::commitment_scheme::CommitmentScheme,
-    multilinear_polynomial::MultilinearPolynomial, one_hot_polynomial::OneHotPolynomial,
-}, utils::transcript::Transcript};
+use crate::{
+    field::JoltField,
+    jolt::vm::{ram::remap_address, JoltProverPreprocessing},
+    optimal_iter,
+    poly::{
+        commitment::commitment_scheme::CommitmentScheme,
+        multilinear_polynomial::MultilinearPolynomial, one_hot_polynomial::OneHotPolynomial,
+    },
+    utils::transcript::Transcript,
+};
 
 use super::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
 

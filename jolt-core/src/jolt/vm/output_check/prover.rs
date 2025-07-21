@@ -1,6 +1,6 @@
 use crate::jolt::vm::output_check::{
-    OutputProof, OutputSumcheck, OutputSumcheckProverState,
-    ValFinalSumcheck, ValFinalSumcheckClaims, ValFinalSumcheckProverState,
+    OutputProof, OutputSumcheck, OutputSumcheckProverState, ValFinalSumcheck,
+    ValFinalSumcheckClaims, ValFinalSumcheckProverState,
 };
 use crate::{
     field::JoltField,

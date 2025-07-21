@@ -120,8 +120,8 @@ impl<F: JoltField> OutputSumcheck<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckVerifierInstance<F, ProofTranscript>
-for OutputSumcheck<F>
+impl<F: JoltField, ProofTranscript: Transcript>
+    BatchableSumcheckVerifierInstance<F, ProofTranscript> for OutputSumcheck<F>
 {
     fn degree(&self) -> usize {
         3
@@ -190,8 +190,8 @@ pub struct ValFinalSumcheck<F: JoltField> {
     output_claims: Option<ValFinalSumcheckClaims<F>>,
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckVerifierInstance<F, ProofTranscript>
-for ValFinalSumcheck<F>
+impl<F: JoltField, ProofTranscript: Transcript>
+    BatchableSumcheckVerifierInstance<F, ProofTranscript> for ValFinalSumcheck<F>
 {
     fn degree(&self) -> usize {
         2

@@ -90,7 +90,7 @@ pub trait BatchableSumcheckVerifierInstance<F: JoltField, ProofTranscript: Trans
     /// Returns the initial claim of this sumcheck instance, i.e.
     /// input_claim = \sum_{x \in \{0, 1}^N} P(x)
     fn input_claim(&self) -> F;
-    
+
     /// Computes the expected output claim given the verifier's challenges.
     /// This is used to verify the final result of the sumcheck protocol.
     fn expected_output_claim(&self, r: &[F]) -> F;

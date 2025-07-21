@@ -4,24 +4,27 @@ pub mod prover;
 #[cfg(feature = "prover")]
 pub mod sparse_dense;
 
-use std::ops::Index;
-use rayon::iter::IntoParallelRefIterator;
-use rayon::prelude::ParallelSliceMut;
 pub use lookup_bits::*;
 #[cfg(feature = "prover")]
 pub use prover::*;
-use strum::IntoEnumIterator;
-#[cfg(feature = "parallel")]
 use rayon::prelude::*;
+use std::ops::Index;
+use strum::IntoEnumIterator;
 
 use crate::jolt::lookup_table::LookupTables;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::identity_poly::{Endianness, IdentityPolynomial, OperandPolynomial, OperandSide};
-use crate::poly::multilinear_polynomial::{PolynomialEvaluation};
+use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
-use crate::subprotocols::sumcheck::{BatchableSumcheckVerifierInstance, BatchedSumcheck, SumcheckInstanceProof};
-use crate::{field::JoltField, optimal_chunks_mut, optimal_iter, poly::multilinear_polynomial::MultilinearPolynomial, utils::{errors::ProofVerifyError, math::Math, transcript::Transcript}};
+use crate::subprotocols::sumcheck::{
+    BatchableSumcheckVerifierInstance, BatchedSumcheck, SumcheckInstanceProof,
+};
 use crate::utils::thread::unsafe_allocate_zero_vec;
+use crate::{
+    field::JoltField,
+    poly::multilinear_polynomial::MultilinearPolynomial,
+    utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
+};
 
 pub struct ShoutProof<F: JoltField, ProofTranscript: Transcript> {
     sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
@@ -90,7 +93,8 @@ impl<F: JoltField> BooleanityVerifierState<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckVerifierInstance<F, ProofTranscript> for ShoutSumcheck<F>
+impl<F: JoltField, ProofTranscript: Transcript>
+    BatchableSumcheckVerifierInstance<F, ProofTranscript> for ShoutSumcheck<F>
 {
     #[inline(always)]
     fn degree(&self) -> usize {
@@ -223,8 +227,9 @@ impl<F: JoltField> ExpandingTable<F> {
     /// the new random challenge `r_j`.
     #[tracing::instrument(skip_all, name = "ExpandingTable::update")]
     pub fn update(&mut self, r_j: F) {
-        optimal_iter!(self.values[..self.len])
-            .zip(optimal_chunks_mut!(self.scratch_space, 2))
+        self.values[..self.len]
+            .par_iter()
+            .zip(self.scratch_space.par_chunks_mut(2))
             .for_each(|(&v_i, dest)| {
                 let eval_1 = r_j * v_i;
                 dest[0] = v_i - eval_1;
@@ -301,8 +306,8 @@ pub fn verify_sparse_dense_shout<
     Ok(())
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckVerifierInstance<F, ProofTranscript>
-for BooleanitySumcheck<F>
+impl<F: JoltField, ProofTranscript: Transcript>
+    BatchableSumcheckVerifierInstance<F, ProofTranscript> for BooleanitySumcheck<F>
 {
     fn degree(&self) -> usize {
         3
@@ -335,5 +340,3 @@ for BooleanitySumcheck<F>
             * (ra_claim.square() - ra_claim)
     }
 }
-
-

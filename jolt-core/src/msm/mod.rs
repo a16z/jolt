@@ -23,8 +23,8 @@ pub type GpuBaseType<G: Icicle> = Affine<G::C>;
 #[cfg(not(feature = "icicle"))]
 pub type GpuBaseType<G: ScalarMul> = G::MulBase;
 
+use crate::optimal_iter;
 use crate::poly::unipoly::UniPoly;
-use crate::{into_optimal_iter, optimal_flat_map, optimal_iter, optimal_partition_map};
 use itertools::Either;
 #[cfg(not(feature = "parallel"))]
 use itertools::Itertools;
@@ -214,7 +214,9 @@ where
             }
             MultilinearPolynomial::I64Scalars(poly) => {
                 // TODO(moodlezoup): This can be optimized
-                let scalars: Vec<_> = optimal_iter!(poly.coeffs)
+                let scalars: Vec<_> = poly
+                    .coeffs
+                    .par_iter()
                     .map(|x| Self::ScalarField::from_i64(*x))
                     .collect();
                 Self::msm_field_elements(bases, gpu_bases, &scalars, max_num_bits, use_icicle)
@@ -236,9 +238,9 @@ where
     {
         // Validate input lengths
         if variable_batches {
-            assert!(optimal_iter!(polys).all(|s| s.borrow().len() <= bases.len()));
+            assert!(polys.par_iter().all(|s| s.borrow().len() <= bases.len()));
         } else {
-            assert!(optimal_iter!(polys).all(|s| s.borrow().len() == bases.len()));
+            assert!(polys.par_iter().all(|s| s.borrow().len() == bases.len()));
             assert_eq!(bases.len(), gpu_bases.map_or(bases.len(), |b| b.len()));
         }
 
@@ -251,7 +253,8 @@ where
         if !use_icicle {
             let span = tracing::span!(tracing::Level::INFO, "batch_msm_cpu_only");
             let _guard = span.enter();
-            return into_optimal_iter!(polys)
+            return polys
+                .into_par_iter()
                 .map(|poly| {
                     let poly = poly.borrow();
                     let bases_slice = &bases[..poly.len()];
@@ -264,7 +267,7 @@ where
         let span = tracing::span!(tracing::Level::INFO, "group_scalar_indices_parallel");
         let _guard = span.enter();
         let (cpu_batch, gpu_batch): (Vec<_>, Vec<_>) =
-            optimal_partition_map!(optimal_iter!(polys).enumerate(), |(i, poly)| {
+            polys.par_iter().enumerate().partition_map(|(i, poly)| {
                 let poly = poly.borrow();
                 let max_num_bits = poly.max_num_bits();
 
@@ -302,7 +305,8 @@ where
         // Handle CPU computations in parallel
         let span = tracing::span!(tracing::Level::INFO, "batch_msm_cpu");
         let _guard = span.enter();
-        let cpu_results: Vec<(usize, Self)> = into_optimal_iter!(cpu_batch)
+        let cpu_results: Vec<(usize, Self)> = cpu_batch
+            .into_par_iter()
             .map(|(i, max_num_bits, poly)| {
                 let bases_slice = &bases[..poly.len()];
                 (
@@ -405,7 +409,9 @@ where
     where
         P: Borrow<UniPoly<Self::ScalarField>> + Sync,
     {
-        assert!(optimal_iter!(polys).all(|s| s.borrow().coeffs.len() <= bases.len()));
+        assert!(polys
+            .par_iter()
+            .all(|s| s.borrow().coeffs.len() <= bases.len()));
         #[cfg(not(feature = "icicle"))]
         assert!(gpu_bases.is_none());
 
@@ -414,7 +420,8 @@ where
         if !use_icicle {
             let span = tracing::span!(tracing::Level::INFO, "batch_msm_cpu_only");
             let _guard = span.enter();
-            return into_optimal_iter!(polys)
+            return polys
+                .into_par_iter()
                 .map(|poly| {
                     Self::msm_field_elements(
                         &bases[..poly.borrow().coeffs.len()],
@@ -432,7 +439,7 @@ where
         let span = tracing::span!(tracing::Level::INFO, "group_scalar_indices_parallel");
         let _guard = span.enter();
         let (cpu_batch, gpu_batch): (Vec<_>, Vec<_>) =
-            optimal_iter!(polys).enumerate().partition_map(|(i, poly)| {
+            polys.par_iter().enumerate().partition_map(|(i, poly)| {
                 let poly = poly.borrow();
                 let max_num_bits = (*poly.coeffs.iter().max().unwrap()).num_bits() as usize;
                 if use_icicle && max_num_bits > 10 {
@@ -448,7 +455,8 @@ where
         // Handle CPU computations in parallel
         let span = tracing::span!(tracing::Level::INFO, "batch_msm_cpu");
         let _guard = span.enter();
-        let cpu_results: Vec<(usize, Self)> = into_optimal_iter!(cpu_batch)
+        let cpu_results: Vec<(usize, Self)> = cpu_batch
+            .into_par_iter()
             .map(|(i, max_num_bits, poly)| {
                 (
                     i,
@@ -513,7 +521,8 @@ pub fn use_icicle() -> bool {
 }
 
 fn map_field_elements_to_u16<F: PrimeField>(field_elements: &[F]) -> Vec<u16> {
-    optimal_iter!(field_elements)
+    field_elements
+        .par_iter()
         .map(|s| {
             let bigint = s.into_bigint();
             let limbs: &[u64] = bigint.as_ref();
@@ -523,7 +532,8 @@ fn map_field_elements_to_u16<F: PrimeField>(field_elements: &[F]) -> Vec<u16> {
 }
 
 fn map_field_elements_to_u64<F: PrimeField>(field_elements: &[F]) -> Vec<u64> {
-    optimal_iter!(field_elements)
+    field_elements
+        .par_iter()
         .map(|s| {
             let bigint = s.into_bigint();
             let limbs: &[u64] = bigint.as_ref();
@@ -552,12 +562,13 @@ where
 
     let num_bits = max_num_bits;
     let digits_count = num_bits.div_ceil(c);
-    let scalar_digits = optimal_flat_map!(into_optimal_iter!(scalars), |s| make_digits_bigint(
-        s, c, num_bits
-    ))
-    .collect::<Vec<_>>();
+    let scalar_digits = scalars
+        .into_par_iter()
+        .flat_map_iter(|s| make_digits_bigint(s, c, num_bits))
+        .collect::<Vec<_>>();
     let zero = V::zero();
-    let window_sums: Vec<_> = into_optimal_iter!((0..digits_count))
+    let window_sums: Vec<_> = (0..digits_count)
+        .into_par_iter()
         .map(|i| {
             let mut buckets = vec![zero; 1 << c];
             for (digits, base) in scalar_digits.chunks(digits_count).zip(bases) {
@@ -761,7 +772,7 @@ where
     let zero = V::zero();
 
     let scalars_and_bases_iter = scalars.iter().zip(bases).filter(|(s, _base)| !s.is_zero());
-    let window_starts = into_optimal_iter!((0..max_num_bits)).step_by(c);
+    let window_starts = (0..max_num_bits).into_par_iter().step_by(c);
 
     // Each window is of size `c`.
     // We divide up the bits 0..num_bits into windows of size `c`, and

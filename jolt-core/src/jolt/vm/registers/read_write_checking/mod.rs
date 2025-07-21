@@ -1,5 +1,6 @@
 use crate::field::JoltField;
-use crate::poly::multilinear_polynomial::{MultilinearPolynomial};
+use crate::poly::eq_poly::EqPolynomial;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::subprotocols::sumcheck::{BatchableSumcheckVerifierInstance, SumcheckInstanceProof};
 use crate::utils::errors::ProofVerifyError;
@@ -9,7 +10,6 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::REGISTER_COUNT;
 use fixedbitset::FixedBitSet;
 use tracer::instruction::RV32IMCycle;
-use crate::poly::eq_poly::EqPolynomial;
 
 #[cfg(feature = "prover")]
 mod prover;
@@ -149,8 +149,8 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckVerifierInstance<F, ProofTranscript>
-for RegistersReadWriteChecking<F>
+impl<F: JoltField, ProofTranscript: Transcript>
+    BatchableSumcheckVerifierInstance<F, ProofTranscript> for RegistersReadWriteChecking<F>
 {
     fn degree(&self) -> usize {
         3
@@ -181,7 +181,7 @@ for RegistersReadWriteChecking<F>
         let claims = self.claims.as_ref().unwrap();
         eq_eval_cycle
             * (claims.rd_wa_claim * (claims.inc_claim + claims.val_claim)
-            + self.z * claims.rs1_ra_claim * claims.val_claim
-            + self.z_squared * claims.rs2_ra_claim * claims.val_claim)
+                + self.z * claims.rs1_ra_claim * claims.val_claim
+                + self.z_squared * claims.rs2_ra_claim * claims.val_claim)
     }
 }

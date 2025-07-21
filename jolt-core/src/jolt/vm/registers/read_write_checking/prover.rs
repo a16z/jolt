@@ -1,6 +1,6 @@
 use crate::jolt::vm::registers::read_write_checking::{
-    DataBuffers, ReadWriteCheckingProverState,
-    ReadWriteSumcheckClaims, RegistersReadWriteChecking, RegistersReadWriteCheckingProof, K,
+    DataBuffers, ReadWriteCheckingProverState, ReadWriteSumcheckClaims, RegistersReadWriteChecking,
+    RegistersReadWriteCheckingProof, K,
 };
 use crate::{
     field::{JoltField, OptimizedMul},

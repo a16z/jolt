@@ -7,8 +7,6 @@ use ark_ec::{
 };
 
 use crate::msm::{use_icicle, Icicle, VariableBaseMSM};
-use crate::{optimal_chunks, optimal_iter, optimal_num_threads};
-#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 #[derive(Debug, thiserror::Error)]
@@ -47,15 +45,17 @@ fn cfg_multi_pairing<P: Pairing>(left: &[P::G1], right: &[P::G2]) -> Option<Pair
     let aff_left = P::G1::normalize_batch(left);
     let aff_right = P::G2::normalize_batch(right);
 
-    let left = optimal_iter!(aff_left)
+    let left = aff_left
+        .par_iter()
         .map(P::G1Prepared::from)
         .collect::<Vec<_>>();
-    let right = optimal_iter!(aff_right)
+    let right = aff_right
+        .par_iter()
         .map(P::G2Prepared::from)
         .collect::<Vec<_>>();
 
     // We want to process N chunks in parallel where N is the number of threads available
-    let num_chunks = optimal_num_threads!();
+    let num_chunks = rayon::current_num_threads();
 
     let chunk_size = if num_chunks <= left.len() {
         left.len() / num_chunks
@@ -64,10 +64,7 @@ fn cfg_multi_pairing<P: Pairing>(left: &[P::G1], right: &[P::G2]) -> Option<Pair
         1
     };
 
-    let (left_chunks, right_chunks) = (
-        optimal_chunks!(left, chunk_size),
-        optimal_chunks!(right, chunk_size),
-    );
+    let (left_chunks, right_chunks) = (left.par_chunks(chunk_size), right.par_chunks(chunk_size));
 
     // Compute all the (partial) pairings and take the product. We have to take the product over
     // P::TargetField because MillerLoopOutput doesn't impl Product

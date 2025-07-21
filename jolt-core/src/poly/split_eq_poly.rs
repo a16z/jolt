@@ -2,7 +2,7 @@
 //! https://eprint.iacr.org/2024/1210.pdf
 #[cfg(test)]
 use super::dense_mlpoly::DensePolynomial;
-use crate::{field::JoltField, join_if_rayon, poly::eq_poly::EqPolynomial};
+use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
 
 #[derive(Debug, Clone, PartialEq)]
 /// A struct holding the equality polynomial evaluations for use in sum-check, when incorporating
@@ -48,9 +48,10 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         //         first half of remaining elements (for E_out)
         let (_, wprime) = w.split_last().unwrap();
         let (w_out, w_in) = wprime.split_at(m);
-        let (E_out_vec, E_in_vec) = join_if_rayon!(|| EqPolynomial::evals_cached(w_out), || {
-            EqPolynomial::evals_cached(w_in)
-        });
+        let (E_out_vec, E_in_vec) = rayon::join(
+            || EqPolynomial::evals_cached(w_out),
+            || EqPolynomial::evals_cached(w_in),
+        );
         Self {
             current_index: w.len(),
             current_scalar: F::one(),
@@ -121,10 +122,10 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
             w_E_out_vars.extend_from_slice(&w[split_point_x_in..suffix_slice_end]);
         }
 
-        let (mut E_out_vec, E_in) =
-            join_if_rayon!(|| EqPolynomial::evals_cached(&w_E_out_vars), || {
-                EqPolynomial::evals(&w_E_in_vars)
-            });
+        let (mut E_out_vec, E_in) = rayon::join(
+            || EqPolynomial::evals_cached(&w_E_out_vars),
+            || EqPolynomial::evals(&w_E_in_vars),
+        );
 
         // Take only the first `num_small_value_rounds` vectors from E_out_vec (after reversing)
         // Recall that at this point, E_out_vec[0] = `eq(w[0..split_point_x_out] ++ w[split_point_x_in..n-1], x)`
@@ -278,7 +279,7 @@ impl<F: JoltField> SplitEqPolynomial<F> {
     pub fn new(w: &[F]) -> Self {
         let m = w.len() / 2;
         let (w2, w1) = w.split_at(m);
-        let (E2, E1) = join_if_rayon!(|| EqPolynomial::evals(w2), || EqPolynomial::evals(w1));
+        let (E2, E1) = rayon::join(|| EqPolynomial::evals(w2), || EqPolynomial::evals(w1));
         let E1_len = E1.len();
         let E2_len = E2.len();
         Self {

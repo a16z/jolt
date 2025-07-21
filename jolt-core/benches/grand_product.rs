@@ -7,6 +7,7 @@ use jolt_core::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAc
 use jolt_core::subprotocols::grand_product::quark::{QuarkGrandProduct, QuarkGrandProductConfig};
 use jolt_core::subprotocols::grand_product::{
     BatchedDenseGrandProduct, BatchedGrandProductProof, BatchedGrandProductProver,
+    BatchedGrandProductVerifier,
 };
 use jolt_core::subprotocols::QuarkHybridLayerDepth;
 use jolt_core::utils::transcript::{KeccakTranscript, Transcript};

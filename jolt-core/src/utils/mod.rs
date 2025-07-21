@@ -2,9 +2,6 @@
 use crate::field::JoltField;
 
 use ark_std::test_rng;
-#[cfg(not(feature = "parallel"))]
-use itertools::Itertools;
-#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 pub mod errors;
@@ -24,11 +21,11 @@ pub mod transcript;
 #[macro_export]
 macro_rules! optimal_iter {
     ($T:expr) => {{
-        #[cfg(feature = "parallel")]
+        #[cfg(feature = "icicle")]
         {
             $T.par_iter()
         }
-        #[cfg(not(feature = "parallel"))]
+        #[cfg(not(feature = "icicle"))]
         {
             $T.iter()
         }
@@ -38,155 +35,13 @@ macro_rules! optimal_iter {
 #[macro_export]
 macro_rules! into_optimal_iter {
     ($T:expr) => {{
-        #[cfg(feature = "parallel")]
+        #[cfg(feature = "icicle")]
         {
             $T.into_par_iter()
         }
-        #[cfg(not(feature = "parallel"))]
+        #[cfg(not(feature = "icicle"))]
         {
             $T.into_iter()
-        }
-    }};
-}
-
-#[macro_export]
-macro_rules! optimal_iter_mut {
-    ($T:expr) => {{
-        #[cfg(feature = "parallel")]
-        {
-            $T.par_iter_mut()
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            $T.iter_mut()
-        }
-    }};
-}
-
-#[macro_export]
-macro_rules! optimal_chunks {
-    ($T:expr, $chunk_size:expr) => {{
-        #[cfg(feature = "parallel")]
-        {
-            $T.par_chunks($chunk_size)
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            $T.chunks($chunk_size)
-        }
-    }};
-}
-
-#[macro_export]
-macro_rules! optimal_flat_map {
-    ($T:expr, $F:expr) => {{
-        #[cfg(feature = "parallel")]
-        {
-            $T.flat_map_iter($F)
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            $T.flat_map($F)
-        }
-    }};
-}
-
-#[macro_export]
-macro_rules! optimal_fold {
-    ($T:expr, $ID:expr, $OP:expr) => {{
-        #[cfg(feature = "parallel")]
-        {
-            $T.fold($ID, $OP)
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            $T.fold($ID, $OP)
-                .expect("failed to reduce, unexpected empty iterator")
-        }
-    }};
-}
-
-#[macro_export]
-macro_rules! optimal_reduce {
-    ($T:expr, $ID:expr, $OP:expr) => {{
-        #[cfg(feature = "parallel")]
-        {
-            $T.reduce($ID, $OP)
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            $T.reduce($OP)
-                .expect("failed to reduce, unexpected empty iterator")
-        }
-    }};
-}
-
-#[macro_export]
-macro_rules! optimal_num_threads {
-    () => {{
-        #[cfg(feature = "parallel")]
-        {
-            rayon::current_num_threads()
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            1usize
-        }
-    }};
-}
-
-#[macro_export]
-macro_rules! optimal_chunks_mut {
-    ($T:expr, $chunk_size:expr) => {{
-        #[cfg(feature = "parallel")]
-        {
-            $T.par_chunks_mut($chunk_size)
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            $T.chunks_mut($chunk_size)
-        }
-    }};
-}
-
-#[macro_export]
-macro_rules! optimal_chunk_by {
-    ($T:expr, $F:expr) => {{
-        #[cfg(feature = "parallel")]
-        {
-            $T.par_chunk_by($F)
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            $T.chunk_by($F)
-        }
-    }};
-}
-
-#[macro_export]
-macro_rules! join_if_rayon {
-    ($f1:expr, $f2:expr) => {{
-        #[cfg(feature = "parallel")]
-        {
-            rayon::join($f1, $f2)
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            ($f1(), $f2())
-        }
-    }};
-}
-
-#[macro_export]
-macro_rules! optimal_partition_map {
-    ($T:expr, $F:expr) => {{
-        #[cfg(feature = "parallel")]
-        {
-            $T.partition_map($F)
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            $T.partition_map($F)
         }
     }};
 }
@@ -224,8 +79,8 @@ pub fn index_to_field_bitvector<F: JoltField>(value: u64, bits: usize) -> Vec<F>
 
 #[tracing::instrument(skip_all)]
 pub fn compute_dotproduct<F: JoltField>(a: &[F], b: &[F]) -> F {
-    optimal_iter!(a)
-        .zip_eq(optimal_iter!(b))
+    a.par_iter()
+        .zip_eq(b.par_iter())
         .map(|(a_i, b_i)| *a_i * *b_i)
         .sum()
 }
@@ -233,8 +88,8 @@ pub fn compute_dotproduct<F: JoltField>(a: &[F], b: &[F]) -> F {
 /// Compute dotproduct optimized for values being 0 / 1
 #[tracing::instrument(skip_all)]
 pub fn compute_dotproduct_low_optimized<F: JoltField>(a: &[F], b: &[F]) -> F {
-    optimal_iter!(a)
-        .zip_eq(optimal_iter!(b))
+    a.par_iter()
+        .zip_eq(b.par_iter())
         .map(|(a_i, b_i)| mul_0_1_optimized(a_i, b_i))
         .sum()
 }

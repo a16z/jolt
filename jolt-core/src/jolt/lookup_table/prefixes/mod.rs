@@ -1,6 +1,6 @@
 use crate::jolt::lookup_table::prefixes::left_shift::LeftShiftPrefix;
 use crate::jolt::lookup_table::prefixes::left_shift_helper::LeftShiftHelperPrefix;
-use crate::{field::JoltField, optimal_iter_mut, subprotocols::shout::LookupBits};
+use crate::{field::JoltField, subprotocols::shout::LookupBits};
 use and::AndPrefix;
 use div_by_zero::DivByZeroPrefix;
 use eq::EqPrefix;
@@ -18,7 +18,6 @@ use or::OrPrefix;
 use positive_remainder_equals_divisor::PositiveRemainderEqualsDivisorPrefix;
 use positive_remainder_less_than_divisor::PositiveRemainderLessThanDivisorPrefix;
 use pow2::Pow2Prefix;
-#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use right_is_zero::RightOperandIsZeroPrefix;
 use right_msb::RightMsbPrefix;
@@ -239,7 +238,8 @@ impl Prefixes {
     ) {
         debug_assert_eq!(checkpoints.len(), Self::COUNT);
         let previous_checkpoints = checkpoints.to_vec();
-        optimal_iter_mut!(checkpoints)
+        checkpoints
+            .par_iter_mut()
             .enumerate()
             .for_each(|(index, new_checkpoint)| {
                 let prefix: Self = FromPrimitive::from_u8(index as u8).unwrap();

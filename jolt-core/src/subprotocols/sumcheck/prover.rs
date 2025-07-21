@@ -10,7 +10,9 @@ use crate::poly::spartan_interleaved_poly::SpartanInterleavedPolynomial;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::r1cs::builder::Constraint;
-use crate::subprotocols::sumcheck::{BatchableSumcheckVerifierInstance, BatchedSumcheck, SumcheckInstanceProof};
+use crate::subprotocols::sumcheck::{
+    BatchableSumcheckVerifierInstance, BatchedSumcheck, SumcheckInstanceProof,
+};
 use crate::utils::mul_0_optimized;
 use crate::utils::small_value::svo_helpers::process_svo_sumcheck_rounds;
 use crate::utils::thread::drop_in_background_thread;
@@ -22,7 +24,8 @@ use rayon::prelude::*;
 /// This trait defines the interface needed to participate in the `BatchedSumcheck` protocol,
 /// which reduces verifier cost and proof size by batching multiple sumcheck protocols.
 pub trait BatchableSumcheckInstance<F: JoltField, ProofTranscript: Transcript>:
-BatchableSumcheckVerifierInstance<F, ProofTranscript> {
+    BatchableSumcheckVerifierInstance<F, ProofTranscript>
+{
     /// Computes the prover's message for a specific round of the sumcheck protocol.
     /// Returns the evaluations of the sumcheck polynomial at 0, 2, 3, ..., degree.
     /// The point evaluation at 1 can be interpolated using the previous round's claim.

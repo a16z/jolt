@@ -8,11 +8,9 @@ use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized};
 use super::multilinear_polynomial::BindingOrder;
 use crate::field::JoltField;
 use crate::utils::math::Math;
-use crate::{optimal_iter, optimal_iter_mut};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use core::ops::Index;
 use rand_core::{CryptoRng, RngCore};
-#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 #[derive(Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
@@ -124,8 +122,8 @@ impl<F: JoltField> DensePolynomial<F> {
 
         let (left, right) = self.Z.split_at_mut(n);
 
-        optimal_iter_mut!(left)
-            .zip(optimal_iter!(right))
+        left.par_iter_mut()
+            .zip(right.par_iter())
             .filter(|(&mut a, &b)| a != b)
             .for_each(|(a, b)| {
                 *a += *r * (*b - *a);
@@ -222,7 +220,8 @@ impl<F: JoltField> DensePolynomial<F> {
 
         let scratch_space = self.binding_scratch_space.as_mut().unwrap();
 
-        optimal_iter_mut!(scratch_space)
+        scratch_space
+            .par_iter_mut()
             .take(n)
             .enumerate()
             .for_each(|(i, z)| {

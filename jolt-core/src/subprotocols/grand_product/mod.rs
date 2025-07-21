@@ -12,8 +12,6 @@ mod sparse_prover;
 
 use super::sumcheck::{BatchedCubicSumcheck, SumcheckInstanceProof};
 use crate::field::JoltField;
-#[cfg(feature = "prover")]
-use crate::into_optimal_iter;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_interleaved_poly::DenseInterleavedPolynomial;
 use crate::poly::dense_mlpoly::DensePolynomial;
@@ -272,7 +270,8 @@ where
         transcript.append_scalar(&left_claim);
         transcript.append_scalar(&right_claim);
 
-        into_optimal_iter!(r_sumcheck)
+        r_sumcheck
+            .into_par_iter()
             .rev()
             .collect_into_vec(r_grand_product);
 

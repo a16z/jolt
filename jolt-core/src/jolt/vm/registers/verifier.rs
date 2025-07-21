@@ -13,8 +13,8 @@ use crate::{
     utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
 };
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckVerifierInstance<F, ProofTranscript>
-for ValEvaluationSumcheck<F>
+impl<F: JoltField, ProofTranscript: Transcript>
+    BatchableSumcheckVerifierInstance<F, ProofTranscript> for ValEvaluationSumcheck<F>
 {
     fn degree(&self) -> usize {
         3

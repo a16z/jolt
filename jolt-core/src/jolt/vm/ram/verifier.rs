@@ -8,6 +8,8 @@ use crate::jolt::vm::ram::{
 use crate::jolt::vm::JoltCommitments;
 use crate::jolt::witness::CommittedPolynomials;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::eq_poly::EqPolynomial;
+use crate::poly::identity_poly::UnmapRamAddressPolynomial;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::subprotocols::ra_virtual::RASumcheck;
 use crate::subprotocols::sumcheck::BatchableSumcheckVerifierInstance;
@@ -19,11 +21,9 @@ use crate::{
 };
 use common::jolt_device::MemoryLayout;
 use tracer::JoltDevice;
-use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::identity_poly::UnmapRamAddressPolynomial;
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckVerifierInstance<F, ProofTranscript>
-for ValEvaluationSumcheck<F>
+impl<F: JoltField, ProofTranscript: Transcript>
+    BatchableSumcheckVerifierInstance<F, ProofTranscript> for ValEvaluationSumcheck<F>
 {
     fn degree(&self) -> usize {
         3
@@ -66,8 +66,8 @@ for ValEvaluationSumcheck<F>
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckVerifierInstance<F, ProofTranscript>
-for BooleanitySumcheck<F>
+impl<F: JoltField, ProofTranscript: Transcript>
+    BatchableSumcheckVerifierInstance<F, ProofTranscript> for BooleanitySumcheck<F>
 {
     fn degree(&self) -> usize {
         3
@@ -140,8 +140,8 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckVerifierInstance<F, ProofTranscript>
-for HammingWeightSumcheck<F>
+impl<F: JoltField, ProofTranscript: Transcript>
+    BatchableSumcheckVerifierInstance<F, ProofTranscript> for HammingWeightSumcheck<F>
 {
     fn degree(&self) -> usize {
         1
@@ -192,8 +192,8 @@ impl<F: JoltField> RafEvaluationSumcheck<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckVerifierInstance<F, ProofTranscript>
-for RafEvaluationSumcheck<F>
+impl<F: JoltField, ProofTranscript: Transcript>
+    BatchableSumcheckVerifierInstance<F, ProofTranscript> for RafEvaluationSumcheck<F>
 {
     fn degree(&self) -> usize {
         2

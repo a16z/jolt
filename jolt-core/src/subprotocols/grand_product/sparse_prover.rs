@@ -1,5 +1,4 @@
 use crate::field::{JoltField, OptimizedMul};
-use crate::optimal_chunks;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 #[cfg(test)]
 use crate::poly::dense_mlpoly::DensePolynomial;
@@ -957,7 +956,8 @@ where
         // If there's a quark poly, then that's the claimed output
         if let Some(quark_poly) = &self.quark_poly {
             let chunk_size = quark_poly.len() / self.batch_size;
-            optimal_chunks!(quark_poly, chunk_size)
+            quark_poly
+                .par_chunks(chunk_size)
                 .map(|chunk| chunk.iter().product())
                 .collect()
         } else {

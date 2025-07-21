@@ -5,6 +5,7 @@ use crate::jolt::vm::bytecode::{
     BytecodePreprocessing, BytecodeShoutProof, CorePIOPHammingProof, CorePIOPHammingProverState,
     CorePIOPHammingSumcheck, RafBytecode, RafBytecodeProverState, RafEvaluationProof,
 };
+use crate::subprotocols::sumcheck::BatchableSumcheckVerifierInstance;
 use crate::{
     field::JoltField,
     jolt::{vm::JoltProverPreprocessing, witness::CommittedPolynomials},
@@ -22,7 +23,6 @@ use crate::{
 };
 use rayon::prelude::*;
 use tracer::instruction::RV32IMCycle;
-use crate::subprotocols::sumcheck::BatchableSumcheckVerifierInstance;
 
 impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTranscript> {
     #[tracing::instrument(skip_all, name = "BytecodeShoutProof::prove")]

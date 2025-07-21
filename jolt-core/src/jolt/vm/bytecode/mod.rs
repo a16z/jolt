@@ -231,8 +231,8 @@ impl<F: JoltField> CorePIOPHammingSumcheck<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckVerifierInstance<F, ProofTranscript>
-for CorePIOPHammingSumcheck<F>
+impl<F: JoltField, ProofTranscript: Transcript>
+    BatchableSumcheckVerifierInstance<F, ProofTranscript> for CorePIOPHammingSumcheck<F>
 {
     fn degree(&self) -> usize {
         2
@@ -273,7 +273,6 @@ impl<F: JoltField, ProofTranscript: Transcript> CorePIOPHammingProof<F, ProofTra
         Ok(r_address)
     }
 }
-
 
 struct BooleanityProverState<F: JoltField> {
     B: MultilinearPolynomial<F>,
@@ -337,8 +336,8 @@ impl<F: JoltField> BooleanitySumcheck<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckVerifierInstance<F, ProofTranscript>
-for BooleanitySumcheck<F>
+impl<F: JoltField, ProofTranscript: Transcript>
+    BatchableSumcheckVerifierInstance<F, ProofTranscript> for BooleanitySumcheck<F>
 {
     fn degree(&self) -> usize {
         3
@@ -470,8 +469,8 @@ impl<F: JoltField, ProofTranscript: Transcript> RafEvaluationProof<F, ProofTrans
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckVerifierInstance<F, ProofTranscript>
-for RafBytecode<F>
+impl<F: JoltField, ProofTranscript: Transcript>
+    BatchableSumcheckVerifierInstance<F, ProofTranscript> for RafBytecode<F>
 {
     fn degree(&self) -> usize {
         2

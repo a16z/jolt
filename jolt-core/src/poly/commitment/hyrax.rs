@@ -18,15 +18,10 @@ use crate::utils::{compute_dotproduct, mul_0_1_optimized};
 use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use num_integer::Roots;
-#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use tracing::trace_span;
 
 use crate::msm::{Icicle, VariableBaseMSM};
-use crate::{
-    into_optimal_iter, optimal_chunks, optimal_flat_map, optimal_iter, optimal_num_threads,
-    optimal_reduce,
-};
 
 /// Hyrax commits to a multilinear polynomial by interpreting its coefficients as a
 /// matrix. Given the number of variables in the polynomial, and the desired "aspect
@@ -76,7 +71,9 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
         assert_eq!(L_size * R_size, n);
 
         let gens = CurveGroup::normalize_batch(&generators.generators[..R_size]);
-        let row_commitments = optimal_chunks!(poly.Z, R_size)
+        let row_commitments = poly
+            .Z
+            .par_chunks(R_size)
             .map(|row| PedersenCommitment::commit_vector(row, &gens))
             .collect();
         Self { row_commitments }
@@ -98,12 +95,13 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
 
         let gens = CurveGroup::normalize_batch(&generators.generators[..R_size]);
 
-        let rows = optimal_iter!(batch).flat_map(|poly| optimal_chunks!(poly, R_size));
+        let rows = batch.par_iter().flat_map(|poly| poly.par_chunks(R_size));
         let row_commitments: Vec<G> = rows
             .map(|row| PedersenCommitment::commit_vector(row, &gens))
             .collect();
 
-        optimal_chunks!(row_commitments, L_size)
+        row_commitments
+            .par_chunks(L_size)
             .map(|chunk| Self {
                 row_commitments: chunk.to_vec(),
             })
@@ -168,8 +166,7 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
             None,
             &MultilinearPolynomial::from(L),
             None,
-        )
-        .unwrap();
+        )?;
 
         let product_commitment = VariableBaseMSM::msm_field_elements(
             &G::normalize_batch(&pedersen_generators.generators[..R_size]),
@@ -177,8 +174,7 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
             &self.vector_matrix_product,
             None,
             false,
-        )
-        .unwrap();
+        )?;
 
         let dot_product = compute_dotproduct(&self.vector_matrix_product, &R);
 
@@ -196,21 +192,21 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
         ratio: usize,
     ) -> Vec<G::ScalarField> {
         let (_, R_size) = matrix_dimensions(poly.get_num_vars(), ratio);
-
-        optimal_reduce!(
-            optimal_chunks!(poly.evals_ref(), R_size)
-                .enumerate()
-                .map(|(i, row)| {
-                    row.iter()
-                        .map(|x| mul_0_1_optimized(&L[i], x))
-                        .collect::<Vec<G::ScalarField>>()
-                }),
-            || vec![G::ScalarField::zero(); R_size],
-            |mut acc: Vec<_>, row| {
-                acc.iter_mut().zip(row).for_each(|(x, y)| *x += y);
-                acc
-            }
-        )
+        poly.evals_ref()
+            .par_chunks(R_size)
+            .enumerate()
+            .map(|(i, row)| {
+                row.iter()
+                    .map(|x| mul_0_1_optimized(&L[i], x))
+                    .collect::<Vec<G::ScalarField>>()
+            })
+            .reduce(
+                || vec![G::ScalarField::zero(); R_size],
+                |mut acc: Vec<_>, row| {
+                    acc.iter_mut().zip(row).for_each(|(x, y)| *x += y);
+                    acc
+                },
+            )
     }
 }
 
@@ -241,42 +237,41 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
 
         let poly_len = polynomials[0].len();
 
-        let num_chunks = optimal_num_threads!().next_power_of_two();
+        let num_chunks = rayon::current_num_threads().next_power_of_two();
         let chunk_size = poly_len / num_chunks;
 
         let rlc_poly = if chunk_size > 0 {
-            optimal_flat_map!(into_optimal_iter!((0..num_chunks)), |chunk_index| {
-                let mut chunk = vec![G::ScalarField::zero(); chunk_size];
-                for (coeff, poly) in rlc_coefficients.iter().zip(polynomials.iter()) {
-                    for (rlc, poly_eval) in chunk
-                        .iter_mut()
-                        .zip(poly.evals_ref()[chunk_index * chunk_size..].iter())
-                    {
-                        *rlc += mul_0_1_optimized(poly_eval, coeff);
+            (0..num_chunks)
+                .into_par_iter()
+                .flat_map(|chunk_index| {
+                    let mut chunk = vec![G::ScalarField::zero(); chunk_size];
+                    for (coeff, poly) in rlc_coefficients.iter().zip(polynomials.iter()) {
+                        for (rlc, poly_eval) in chunk
+                            .iter_mut()
+                            .zip(poly.evals_ref()[chunk_index * chunk_size..].iter())
+                        {
+                            *rlc += mul_0_1_optimized(poly_eval, coeff);
+                        }
                     }
-                }
-                chunk
-            })
-            .collect::<Vec<_>>()
+                    chunk
+                })
+                .collect::<Vec<_>>()
         } else {
-            optimal_reduce!(
-                optimal_iter!(rlc_coefficients)
-                    .zip(optimal_iter!(polynomials))
-                    .map(|(coeff, poly)| poly
-                        .evals_ref()
-                        .iter()
-                        .map(|eval| *coeff * *eval)
-                        .collect()),
-                || vec![G::ScalarField::zero(); poly_len],
-                |running: Vec<_>, new: Vec<_>| {
-                    debug_assert_eq!(running.len(), new.len());
-                    running
-                        .iter()
-                        .zip(new.iter())
-                        .map(|(r, n)| *r + *n)
-                        .collect()
-                }
-            )
+            rlc_coefficients
+                .par_iter()
+                .zip(polynomials.par_iter())
+                .map(|(coeff, poly)| poly.evals_ref().iter().map(|eval| *coeff * *eval).collect())
+                .reduce(
+                    || vec![G::ScalarField::zero(); poly_len],
+                    |running: Vec<_>, new: Vec<_>| {
+                        debug_assert_eq!(running.len(), new.len());
+                        running
+                            .iter()
+                            .zip(new.iter())
+                            .map(|(r, n)| *r + *n)
+                            .collect()
+                    },
+                )
         };
 
         drop(_enter);
@@ -316,26 +311,27 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
 
         let rlc_eval = compute_dotproduct(&rlc_coefficients, openings);
 
-        let rlc_commitment = optimal_reduce!(
-            optimal_iter!(rlc_coefficients)
-                .zip(optimal_iter!(commitments))
-                .map(|(coeff, commitment)| {
-                    commitment
-                        .row_commitments
-                        .iter()
-                        .map(|row_commitment| *row_commitment * coeff)
-                        .collect()
-                }),
-            || vec![G::zero(); L_size],
-            |running: Vec<_>, new: Vec<_>| {
-                debug_assert_eq!(running.len(), new.len());
-                running
+        let rlc_commitment = rlc_coefficients
+            .par_iter()
+            .zip(commitments.par_iter())
+            .map(|(coeff, commitment)| {
+                commitment
+                    .row_commitments
                     .iter()
-                    .zip(new.iter())
-                    .map(|(r, n)| *r + n)
+                    .map(|row_commitment| *row_commitment * coeff)
                     .collect()
-            }
-        );
+            })
+            .reduce(
+                || vec![G::zero(); L_size],
+                |running: Vec<_>, new: Vec<_>| {
+                    debug_assert_eq!(running.len(), new.len());
+                    running
+                        .iter()
+                        .zip(new.iter())
+                        .map(|(r, n)| *r + n)
+                        .collect()
+                },
+            );
 
         self.joint_proof.verify(
             pedersen_generators,

@@ -24,8 +24,6 @@ use super::{
     kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG, SRS},
 };
 use crate::field::JoltField;
-use crate::{optimal_iter, optimal_iter_mut};
-#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 pub struct ZeromorphSRS<P: Pairing>(Arc<SRS<P>>)
@@ -131,14 +129,16 @@ where
             let (remainder_lo, remainder_hi) = remainder.split_at_mut(1 << (num_var - 1 - i));
             let mut quotient = vec![P::ScalarField::zero(); remainder_lo.len()];
 
-            optimal_iter_mut!(quotient)
+            quotient
+                .par_iter_mut()
                 .zip(&*remainder_lo)
                 .zip(&*remainder_hi)
                 .for_each(|((q, r_lo), r_hi)| {
                     *q = *r_hi - *r_lo;
                 });
 
-            optimal_iter_mut!(remainder_lo)
+            remainder_lo
+                .par_iter_mut()
                 .zip(remainder_hi)
                 .for_each(|(r_lo, r_hi)| {
                     *r_lo += (*r_hi - *r_lo) * *x_i;
@@ -171,7 +171,7 @@ where
     let q_hat = quotients.iter().enumerate().fold(
         vec![P::ScalarField::zero(); 1 << num_vars],
         |mut q_hat, (idx, q)| {
-            let q_hat_iter = optimal_iter_mut!(q_hat[(1 << num_vars) - (1 << idx)..]);
+            let q_hat_iter = q_hat[(1 << num_vars) - (1 << idx)..].par_iter_mut();
             q_hat_iter.zip(&q.coeffs).for_each(|(q_hat, q)| {
                 *q_hat += scalar * *q;
             });
@@ -273,9 +273,10 @@ where
                 poly.len(),
             ));
         }
-        Ok(ZeromorphCommitment(
-            UnivariateKZG::commit_as_univariate(&pp.commit_pp, poly).unwrap(),
-        ))
+        Ok(ZeromorphCommitment(UnivariateKZG::commit_as_univariate(
+            &pp.commit_pp,
+            poly,
+        )?))
     }
 
     #[tracing::instrument(skip_all, name = "Zeromorph::open")]
@@ -307,7 +308,7 @@ where
         assert_eq!(remainder, *eval);
 
         let q_k_com = UnivariateKZG::commit_variable_batch_univariate(&pp.commit_pp, &quotients)?;
-        let q_comms: Vec<P::G1> = optimal_iter!(q_k_com).map(|c| c.into_group()).collect();
+        let q_comms: Vec<P::G1> = q_k_com.par_iter().map(|c| c.into_group()).collect();
         // Compute the multilinear quotients q_k = q_k(X_0, ..., X_{k-1})
         // let quotient_slices: Vec<&[P::ScalarField]> =
         //     quotients.iter().map(|q| q.coeffs.as_slice()).collect();
@@ -791,7 +792,7 @@ mod test {
     #[test]
     fn zeromorph_commit_prove_verify() {
         for num_vars in [4, 5, 6] {
-            let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(num_vars as u64);
+            let mut rng = ChaCha20Rng::seed_from_u64(num_vars as u64);
 
             let poly =
                 MultilinearPolynomial::LargeScalars(DensePolynomial::random(num_vars, &mut rng));

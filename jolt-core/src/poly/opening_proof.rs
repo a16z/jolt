@@ -12,6 +12,8 @@ use super::{
     eq_poly::EqPolynomial,
     multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
 };
+#[cfg(feature = "prover")]
+use crate::subprotocols::sumcheck::BatchableSumcheckInstance;
 use crate::{
     field::JoltField,
     poly::{
@@ -20,11 +22,11 @@ use crate::{
             OneHotPolynomial, OneHotPolynomialProverOpening, OneHotSumcheckState,
         },
     },
-    subprotocols::sumcheck::{BatchableSumcheckVerifierInstance, BatchedSumcheck, SumcheckInstanceProof},
+    subprotocols::sumcheck::{
+        BatchableSumcheckVerifierInstance, BatchedSumcheck, SumcheckInstanceProof,
+    },
     utils::{errors::ProofVerifyError, transcript::Transcript},
 };
-#[cfg(feature = "prover")]
-use crate::subprotocols::sumcheck::BatchableSumcheckInstance;
 
 pub struct SharedEqPolynomial<F: JoltField> {
     num_variables_bound: usize,
@@ -229,7 +231,7 @@ where
 }
 
 impl<F, PCS, ProofTranscript> BatchableSumcheckVerifierInstance<F, ProofTranscript>
-for OpeningProofReductionSumcheck<F, PCS, ProofTranscript>
+    for OpeningProofReductionSumcheck<F, PCS, ProofTranscript>
 where
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,

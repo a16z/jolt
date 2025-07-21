@@ -10,8 +10,6 @@ use crate::poly::commitment::bmmtv::inner_products::MultiexponentiationInnerProd
 use crate::{field::JoltField, optimal_iter, utils::transcript::Transcript};
 use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 use tracing::Level;
 
 pub type CommitmentSteps<P> = Vec<(

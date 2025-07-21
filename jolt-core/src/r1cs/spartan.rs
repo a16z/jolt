@@ -5,9 +5,9 @@ use crate::jolt::vm::JoltCommitments;
 #[cfg(feature = "prover")]
 use crate::jolt::vm::JoltProverPreprocessing;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 #[cfg(feature = "prover")]
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
-use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 #[cfg(feature = "prover")]
 use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
@@ -17,8 +17,6 @@ use crate::r1cs::inputs::ALL_R1CS_INPUTS;
 use crate::r1cs::inputs::COMMITTED_R1CS_INPUTS;
 use crate::r1cs::key::UniformSpartanKey;
 use crate::utils::math::Math;
-#[cfg(feature = "prover")]
-use crate::utils::thread::drop_in_background_thread;
 use std::marker::PhantomData;
 #[cfg(feature = "prover")]
 use tracer::instruction::RV32IMCycle;
@@ -33,22 +31,19 @@ use ark_serialize::CanonicalSerialize;
 
 use thiserror::Error;
 
+#[cfg(feature = "prover")]
+use crate::subprotocols::sumcheck::BatchableSumcheckInstance;
+#[cfg(feature = "prover")]
+use crate::utils::small_value::NUM_SVO_ROUNDS;
 use crate::{
-    optimal_iter, optimal_iter_mut,
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::{EqPlusOnePolynomial, EqPolynomial},
     },
     subprotocols::sumcheck::{BatchableSumcheckVerifierInstance, SumcheckInstanceProof},
 };
-#[cfg(feature = "prover")]
-use crate::utils::small_value::NUM_SVO_ROUNDS;
-#[cfg(feature = "prover")]
-use crate::subprotocols::sumcheck::BatchableSumcheckInstance;
 
 use super::builder::CombinedUniformBuilder;
-
-#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 #[derive(Clone, Debug)]
@@ -151,7 +146,8 @@ where
     where
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
     {
-        let input_polys: Vec<MultilinearPolynomial<F>> = optimal_iter!(ALL_R1CS_INPUTS)
+        let input_polys: Vec<MultilinearPolynomial<F>> = ALL_R1CS_INPUTS
+            .par_iter()
             .map(|var| var.generate_witness(trace, preprocessing))
             .collect();
 
@@ -486,9 +482,10 @@ impl<'a, F: JoltField> InnerSumcheck<'a, F> {
         // Bind witness polynomials z at point r_cycle
         let mut bind_z = vec![F::zero(); num_vars_uniform];
 
-        optimal_iter!(input_polys)
+        input_polys
+            .par_iter()
             .take(num_vars_uniform)
-            .zip(optimal_iter_mut!(bind_z))
+            .zip(bind_z.par_iter_mut())
             .for_each(|(poly, eval)| {
                 *eval = poly.dot_product(&eq_r_cycle);
             });
@@ -536,8 +533,8 @@ impl<'a, F: JoltField> InnerSumcheck<'a, F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckVerifierInstance<F, ProofTranscript>
-for InnerSumcheck<'_, F>
+impl<F: JoltField, ProofTranscript: Transcript>
+    BatchableSumcheckVerifierInstance<F, ProofTranscript> for InnerSumcheck<'_, F>
 {
     fn degree(&self) -> usize {
         2
@@ -738,8 +735,8 @@ impl<F: JoltField> PCSumcheck<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckVerifierInstance<F, ProofTranscript>
-for PCSumcheck<F>
+impl<F: JoltField, ProofTranscript: Transcript>
+    BatchableSumcheckVerifierInstance<F, ProofTranscript> for PCSumcheck<F>
 {
     fn degree(&self) -> usize {
         2

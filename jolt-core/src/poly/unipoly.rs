@@ -7,10 +7,8 @@ use super::compact_polynomial::SmallScalar;
 use super::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::gaussian_elimination::gaussian_elimination;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
-use crate::{into_optimal_iter, optimal_iter_mut};
 use ark_serialize::*;
 use rand_core::{CryptoRng, RngCore};
-#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 // ax^2 + bx + c stored as vec![c,b,a]
@@ -214,7 +212,7 @@ impl<F: JoltField> UniPoly<F> {
     }
 
     pub fn shift_coefficients(&mut self, rhs: &F) {
-        optimal_iter_mut!(self.coeffs).for_each(|c| *c += *rhs);
+        self.coeffs.par_iter_mut().for_each(|c| *c += *rhs);
     }
 
     /// This function computes a cubic polynomial s(X), given the following conditions:
@@ -288,7 +286,7 @@ impl<F: JoltField> Mul<F> for UniPoly<F> {
     type Output = Self;
 
     fn mul(self, rhs: F) -> Self {
-        let iter = into_optimal_iter!(self.coeffs);
+        let iter = self.coeffs.into_par_iter();
         Self::from_coeff(iter.map(|c| c * rhs).collect::<Vec<_>>())
     }
 }
@@ -297,7 +295,7 @@ impl<F: JoltField> Mul<&F> for UniPoly<F> {
     type Output = Self;
 
     fn mul(self, rhs: &F) -> Self {
-        let iter = into_optimal_iter!(self.coeffs);
+        let iter = self.coeffs.into_par_iter();
         Self::from_coeff(iter.map(|c| c * *rhs).collect::<Vec<_>>())
     }
 }
@@ -326,7 +324,7 @@ impl<F: JoltField> IndexMut<usize> for UniPoly<F> {
 
 impl<F: JoltField> MulAssign<&F> for UniPoly<F> {
     fn mul_assign(&mut self, rhs: &F) {
-        optimal_iter_mut!(self.coeffs).for_each(|c| *c *= *rhs);
+        self.coeffs.par_iter_mut().for_each(|c| *c *= *rhs);
     }
 }
 

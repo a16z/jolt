@@ -10,8 +10,6 @@ use ark_ec::{
 use ark_ff::{Field, One};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::Itertools;
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 
 use super::{
     afgho::AfghoCommitment, gipa::CommitmentSteps, inner_products::MultiexponentiationInnerProduct,

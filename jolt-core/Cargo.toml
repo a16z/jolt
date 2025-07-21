@@ -23,7 +23,7 @@ keywords = ["SNARK", "cryptography", "proofs", "zkVM"]
 [features]
 default = ["host"]
 host = ["dep:reqwest", "dep:tokio", "prover"]
-host-verifier = ["dep:reqwest", "dep:tokio"]
+host-verifier = ["dep:reqwest", "dep:tokio", "parallel"]
 prover = ["parallel"]
 parallel = [
     "ark-ec/parallel",
