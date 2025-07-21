@@ -123,13 +123,13 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
             .map(|i| {
                 let inc_evals = prover_state
                     .inc
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
                 let wa_evals = prover_state
                     .wa
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
                 let lt_evals = prover_state
                     .lt
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
 
                 [
                     inc_evals[0] * wa_evals[0] * lt_evals[0],
@@ -160,7 +160,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
                 &mut prover_state.lt,
             ]
             .par_iter_mut()
-            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
+            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
         }
     }
 
@@ -175,13 +175,10 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
             .expect("Verifier state not initialized");
         let claims = self.claims.as_ref().expect("Claims not cached");
 
-        // r contains r_cycle_prime in low-to-high order
-        let r_cycle_prime: Vec<F> = r.iter().rev().copied().collect();
-
         // Compute LT(r_cycle', r_cycle)
         let mut lt_eval = F::zero();
         let mut eq_term = F::one();
-        for (x, y) in r_cycle_prime.iter().zip(verifier_state.r_cycle.iter()) {
+        for (x, y) in r.iter().zip(verifier_state.r_cycle.iter()) {
             lt_eval += (F::one() - x) * y * eq_term;
             eq_term *= F::one() - x - y + *x * y + *x * y;
         }
@@ -191,7 +188,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
     }
 
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
-        OpeningPoint::new(opening_point.iter().rev().copied().collect())
+        OpeningPoint::new(opening_point.to_vec())
     }
 
     fn cache_openings_prover(
