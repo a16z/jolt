@@ -9,7 +9,7 @@
 ///   - "Block" = 128 bytes (16 words) of input data.
 ///   - "Compression" = Blake2b compression function: 12 rounds of G function.
 /// Blake2b-256 refers to Blake2b with 256-bit (32-byte) output.
-use crate::instruction::addi::ADDI;
+use crate::instruction::{add::ADD, addi::ADDI, sub::SUB};
 use crate::instruction::format::format_i::FormatI;
 use crate::instruction::format::format_r::FormatR;
 use crate::instruction::format::format_s::FormatS;
@@ -68,13 +68,16 @@ use Value::{Imm, Reg};
 ///
 pub const NEEDED_REGISTERS: usize = 96;
 
+#[allow(dead_code)]
+const VR_WORKING_STATE_START: usize = 0; // vr[0..15]: Working state `v` (16 words)
 const WORKING_STATE_SIZE: usize = 16;
 const VR_MESSAGE_BLOCK_START: usize = 16; // vr[16..31]: Message block `m` (16 words)
 const MESSAGE_BLOCK_SIZE: usize = 16;
 const VR_HASH_STATE_START: usize = 32; // vr[32..39]: Hash state `h` (8 words)
 const HASH_STATE_SIZE: usize = 8;
-const VR_T: usize = 48;
-const VR_IS_FINAL: usize = 49;
+const VR_T: usize = 40;
+const VR_IS_FINAL: usize = 41;
+const VR_TEMP: usize = 42;
 // vr[40..79]: Temporary registers for G function (40 words)
 // vr[80..95]: General-purpose scratch registers (16 words)
 
@@ -137,10 +140,13 @@ impl Blake2SequenceBuilder {
         // 4. Finalize the hash state: h[i] ^= v[i] ^ v[i+8]
         self.finalize_state();
 
-        // 5. Store the final hash state back to memory
+        // 5. Store the working state for debugging/testing
+        self.store_working_state();
+
+        // 6. Store the final hash state back to memory
         self.store_state();
 
-        // 6. Finalize the sequence by setting instruction indices
+        // 7. Finalize the sequence by setting instruction indices
         self.enumerate_sequence();
         self.sequence
     }
@@ -166,7 +172,7 @@ impl Blake2SequenceBuilder {
     fn load_t(&mut self) {
         self.ld(
             self.operand_rs2,
-            MESSAGE_BLOCK_SIZE as i64 + 1,
+            MESSAGE_BLOCK_SIZE as i64,
             self.vr[VR_T],
         );
     }
@@ -175,7 +181,7 @@ impl Blake2SequenceBuilder {
     fn load_is_final(&mut self) {
         self.ld(
             self.operand_rs2,
-            MESSAGE_BLOCK_SIZE as i64 + 2,
+            MESSAGE_BLOCK_SIZE as i64 + 1,
             self.vr[VR_IS_FINAL],
         );
     }
@@ -193,22 +199,22 @@ impl Blake2SequenceBuilder {
         }
 
         // Blake2b counter handling: XOR counter with v[12] and extract high part for v[13]
-        // v[12] = IV[4] ^ t (counter low)
+        // v[12] = vr[12] ^ t (counter low)
         self.xor64(Reg(self.vr[12]), Reg(self.vr[VR_T]), self.vr[12]);
 
         // v[13] = IV[5] ^ (t >> 64) (counter high) - for 64-bit counter, high part is 0
         // Since we're using 64-bit counter, the high part is always 0, so v[13] remains unchanged
 
         // Handle final block flag: if is_final != 0, invert all bits of v[14]
-        // Negate is_final using two's complement: -is_final = ~is_final + 1
-        self.xor64(
-            Reg(self.vr[VR_IS_FINAL]),
-            Imm(u32::MAX as u64),
-            self.vr[VR_IS_FINAL],
-        );
-
-        // XOR v[14] with negated is_final: inverts v[14] if is_final=1, leaves unchanged if is_final=0
-        self.xor64(Reg(self.vr[14]), Reg(self.vr[VR_IS_FINAL]), self.vr[14]);
+        // We need to create a mask that is 0xFFFFFFFFFFFFFFFF if is_final != 0, or 0 if is_final == 0
+        // Use the formula: mask = (0 - is_final) to convert 1 to 0xFFFFFFFFFFFFFFFF and 0 to 0
+        let temp_mask = self.vr[VR_TEMP];
+        
+        // First, negate is_final (0 - is_final)
+        self.sub64(Imm(0), Reg(self.vr[VR_IS_FINAL]), temp_mask);
+        
+        // XOR v[14] with the mask: inverts all bits if is_final=1, leaves unchanged if is_final=0
+        self.xor64(Reg(self.vr[14]), Reg(temp_mask), self.vr[14]);
     }
 
     /// Execute one round of Blake2b compression
@@ -235,9 +241,9 @@ impl Blake2SequenceBuilder {
         let vb = self.vr[b];
         let vc = self.vr[c];
         let vd = self.vr[d];
-        let mx = self.vr[16 + x];
-        let my = self.vr[16 + y];
-        let temp1 = self.vr[40];
+        let mx = self.vr[VR_MESSAGE_BLOCK_START + x];
+        let my = self.vr[VR_MESSAGE_BLOCK_START + y];
+        let temp1 = self.vr[VR_TEMP];
 
         // v[a] = v[a] + v[b] + m[x]
         self.add64(Reg(va), Reg(vb), temp1);
@@ -273,10 +279,10 @@ impl Blake2SequenceBuilder {
     /// Finalize the hash state: h[i] ^= v[i] ^ v[i+8]
     fn finalize_state(&mut self) {
         for i in 0..8 {
-            let hi = self.vr[32 + i];
+            let hi = self.vr[VR_HASH_STATE_START + i];
             let vi = self.vr[i];
             let vi8 = self.vr[i + 8];
-            let temp = self.vr[80];
+            let temp = self.vr[VR_TEMP];
 
             self.xor64(Reg(vi), Reg(vi8), temp);
             self.xor64(Reg(hi), Reg(temp), hi);
@@ -290,20 +296,84 @@ impl Blake2SequenceBuilder {
         }
     }
 
+    /// Store the working state (vr[0..15]) to memory for debugging/testing
+    /// Stored after the final flag at operand_rs2 + 144 bytes (MESSAGE_BLOCK_SIZE*8 + 8 + 8)
+    fn store_working_state(&mut self) {
+        for i in 0..WORKING_STATE_SIZE {
+            // Store at rs2 + 144 + i*8 (after message block + counter + final flag)
+            self.sd(self.operand_rs2, self.vr[VR_WORKING_STATE_START + i], (MESSAGE_BLOCK_SIZE + 2 + i) as i64);
+        }
+    }
+
     // --- 64-bit Arithmetic Helpers ---
 
     /// ADD two 64-bit numbers (using lower 32 bits for RISC-V compatibility)
     fn add64(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
         match (rs1, rs2) {
             (Reg(rs1), Reg(rs2)) => {
-                // For simplicity, we use XOR for addition in this proof-of-concept
-                // In a full implementation, proper 64-bit addition would be needed
-                self.xor64(Reg(rs1), Reg(rs2), rd)
+                let add = ADD {
+                    address: self.address,
+                    operands: FormatR { rd, rs1, rs2 },
+                    virtual_sequence_remaining: Some(0),
+                };
+                self.sequence.push(add.into());
+                Reg(rd)
             }
-            (Reg(rs1), Imm(imm)) => self.xor64(Reg(rs1), Imm(imm), rd),
+            (Reg(rs1), Imm(imm)) => {
+                let addi = ADDI {
+                    address: self.address,
+                    operands: FormatI { rd, rs1, imm },
+                    virtual_sequence_remaining: Some(0),
+                };
+                self.sequence.push(addi.into());
+                Reg(rd)
+            }
             (Imm(_), Reg(_)) => self.add64(rs2, rs1, rd),
-            (Imm(imm1), Imm(imm2)) => Imm(imm1.wrapping_add(imm2)),
+            (Imm(imm1), Imm(imm2)) => Imm((imm1).wrapping_add(imm2)),
         }
+    }
+
+    /// SUB two 64-bit numbers (using lower 32 bits for RISC-V compatibility)
+    fn sub64(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
+        match (rs1, rs2) {
+            (Reg(rs1), Reg(rs2)) => {
+                let sub = SUB {
+                    address: self.address,
+                    operands: FormatR { rd, rs1, rs2 },
+                    virtual_sequence_remaining: Some(0),
+                };
+                self.sequence.push(sub.into());
+                Reg(rd)
+            }
+            (Imm(imm), Reg(rs2)) => {
+                // For immediate - register, we need to first load the immediate
+                let temp_reg = self.vr[67]; // Use a temp register
+                self.load_64bit_immediate(imm, temp_reg);
+                let sub = SUB {
+                    address: self.address,
+                    operands: FormatR { rd, rs1: temp_reg, rs2 },
+                    virtual_sequence_remaining: Some(0),
+                };
+                self.sequence.push(sub.into());
+                Reg(rd)
+            }
+            (Reg(_), Imm(_)) => {
+                // Register - immediate: convert to register + (-immediate)
+                // This is complex, so let's use the first approach with temp register
+                panic!("SUB with reg - imm not implemented, use imm - reg instead")
+            }
+            (Imm(imm1), Imm(imm2)) => Imm((imm1).wrapping_sub(imm2)),
+        }
+        // match (rs1, rs2) {
+        //     (Reg(rs1), Reg(rs2)) => {
+        //         // For simplicity, we use XOR for addition in this proof-of-concept
+        //         // In a full implementation, proper 64-bit addition would be needed
+        //         self.xor64(Reg(rs1), Reg(rs2), rd)
+        //     }
+        //     (Reg(rs1), Imm(imm)) => self.xor64(Reg(rs1), Imm(imm), rd),
+        //     (Imm(_), Reg(_)) => self.add64(rs2, rs1, rd),
+        //     (Imm(imm1), Imm(imm2)) => Imm(imm1.wrapping_add(imm2)),
+        // }
     }
 
     /// XOR two 64-bit numbers
@@ -342,44 +412,115 @@ impl Blake2SequenceBuilder {
 
     /// Load a 64-bit immediate value into a register
     fn load_64bit_immediate(&mut self, value: u64, rd: usize) {
+        // For efficiency, handle special cases
         if value == 0 {
+            // XOR with itself to get zero
             self.xor(Reg(rd), Reg(rd), rd);
             return;
         }
 
-        // For simplicity, use multiple smaller immediate loads
-        // In a full implementation, this would use LUI + ADDI + shifts
-        let lower_32 = value as u32;
-        let upper_32 = (value >> 32) as u32;
+        if value == u64::MAX {
+            // Use NOT of zero (which we'll implement as XOR with all ones)
+            // First get zero
+            self.xor(Reg(rd), Reg(rd), rd);
+            // Then XOR with all ones (which we already handle in not64)
+            self.xor(Reg(rd), Imm(u64::MAX), rd);
+            return;
+        }
 
-        if upper_32 == 0 {
-            self.load_32bit_immediate(lower_32, rd);
+        // For general 64-bit values, we need multiple instructions
+        // We'll use a sequence of LUI, ADDI, and shifts
+
+        // Break the 64-bit value into parts
+        let bits_63_32 = (value >> 32) as u32;
+        let bits_31_0 = value as u32;
+
+        if bits_63_32 == 0 {
+            // Upper 32 bits are zero, we can optimize
+            self.load_32bit_immediate(bits_31_0, rd);
+        } else if bits_31_0 == 0 {
+            // Lower 32 bits are zero
+            self.load_32bit_immediate(bits_63_32, rd);
+            self.slli(Reg(rd), 32, rd);
         } else {
-            let temp = self.vr[95]; // Use last scratch register
-            self.load_32bit_immediate(upper_32, temp);
-            self.slli(Reg(temp), 32, temp);
-            self.load_32bit_immediate(lower_32, rd);
-            self.or(Reg(temp), Reg(rd), rd);
+            // Need to load both halves
+            // First load the upper 32 bits
+            // Use vr[67] to avoid conflict with temp registers used by load_32bit_immediate
+            let temp_reg = self.vr[67];
+            self.load_32bit_immediate(bits_63_32, temp_reg);
+            self.slli(Reg(temp_reg), 32, temp_reg);
+
+            // Load lower 32 bits into rd
+            self.load_32bit_immediate(bits_31_0, rd);
+
+            // OR them together
+            self.or(Reg(temp_reg), Reg(rd), rd);
         }
     }
 
     /// Load a 32-bit immediate value into a register
     fn load_32bit_immediate(&mut self, value: u32, rd: usize) {
-        if value == 0 {
-            self.xor(Reg(rd), Reg(rd), rd);
-            return;
-        }
+        // Use LUI + ADDI to load a 32-bit value
+        // LUI loads bits 31:12, ADDI adds bits 11:0
 
-        // Use LUI + ADDI for 32-bit values
         let upper_20 = value >> 12;
         let lower_12 = value & 0xFFF;
 
         if upper_20 == 0 {
+            // Just use ADDI with zero register
             self.addi(Reg(0), lower_12 as i64, rd);
         } else {
-            self.lui(upper_20, rd);
-            if lower_12 != 0 {
+            // Need LUI + ADDI
+            // Note: if bit 11 of lower_12 is set, ADDI will sign-extend
+            // and subtract from the upper bits, so we need to adjust
+            let needs_adjustment = (lower_12 & 0x800) != 0;
+            let adjusted_upper = if needs_adjustment {
+                upper_20 + 1
+            } else {
+                upper_20
+            };
+
+            // IMPORTANT: Check if the upper 20 bits would cause sign extension
+            // If bit 19 is set (which becomes bit 31 after shifting), LUI will
+            // sign-extend the value, which we don't want for loading positive constants
+            if adjusted_upper & 0x80000 != 0 {
+                // For values that would be sign-extended by LUI, we need a different approach
+                // We'll use ADDI to load the value in parts
+
+                // First, clear the register
+                self.xor(Reg(rd), Reg(rd), rd);
+
+                // Load lower 12 bits
+                if lower_12 != 0 {
+                    self.addi(Reg(rd), lower_12 as i64, rd);
+                }
+
+                // Load bits 23:12 using another ADDI after shifting
+                let middle_12 = (value >> 12) & 0xFFF;
+                if middle_12 != 0 {
+                    // Use vr[68] to avoid conflict with rd which might be vr[65] or vr[66]
+                    let temp = self.vr[68];
+                    self.addi(Reg(0), middle_12 as i64, temp);
+                    self.slli(Reg(temp), 12, temp);
+                    self.or(Reg(rd), Reg(temp), rd);
+                }
+
+                // Load bits 31:24 if needed
+                let upper_8 = (value >> 24) & 0xFF;
+                if upper_8 != 0 {
+                    // Use vr[69] to avoid conflict
+                    let temp = self.vr[69];
+                    self.addi(Reg(0), upper_8 as i64, temp);
+                    self.slli(Reg(temp), 24, temp);
+                    self.or(Reg(rd), Reg(temp), rd);
+                }
+            } else {
+                // Normal case: LUI won't sign-extend
+                self.lui(adjusted_upper, rd);
+
+                // Add lower 12 bits with ADDI (will be sign-extended)
                 let sign_extended_lower = if lower_12 & 0x800 != 0 {
+                    // Sign extend to 64 bits
                     (lower_12 | 0xFFFFF000) as i32 as i64
                 } else {
                     lower_12 as i64
