@@ -199,6 +199,7 @@ impl Program {
                 RV32IMInstruction::SHA256(sha256) => sha256.virtual_sequence(),
                 RV32IMInstruction::SHA256INIT(sha256init) => sha256init.virtual_sequence(),
                 RV32IMInstruction::KECCAK256(keccak256) => keccak256.virtual_sequence(),
+                RV32IMInstruction::BLAKE2(blake2) => blake2.virtual_sequence(),
                 _ => vec![instr],
             })
             .collect();
