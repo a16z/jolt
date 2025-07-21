@@ -31,7 +31,7 @@ impl SLLIW {
 
 impl RISCVTrace for SLLIW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu.xlen == Xlen::Bit32);
+        let virtual_sequence = self.virtual_sequence(cpu.xlen);
         let mut trace = trace;
         for instr in virtual_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
@@ -41,20 +41,21 @@ impl RISCVTrace for SLLIW {
 }
 
 impl VirtualInstructionSequence for SLLIW {
-    fn virtual_sequence(&self, is_32: bool) -> Vec<RV32IMInstruction> {
+    fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         let virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(0);
         let mut sequence = vec![];
 
+        let mask = match xlen {
+            Xlen::Bit32 => panic!("SLLIW is invalid in 32b mode"),
+            Xlen::Bit64 => 0x1f, //low 5bits
+        };
+        let shift = self.operands.imm & mask;
         let mul = VirtualMULI {
             address: self.address,
             operands: FormatI {
                 rd: self.operands.rd,
                 rs1: self.operands.rs1,
-                imm: if is_32 {
-                    panic!("SLLIW is invalid in 32b mode")
-                } else {
-                    (1 << (self.operands.imm & 0x1F)) //low 5bits
-                },
+                imm: 1 << shift,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };

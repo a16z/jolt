@@ -38,7 +38,7 @@ impl SRA {
 
 impl RISCVTrace for SRA {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu.xlen == Xlen::Bit32);
+        let virtual_sequence = self.virtual_sequence(cpu.xlen);
         let mut trace = trace;
         for instr in virtual_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
@@ -48,7 +48,7 @@ impl RISCVTrace for SRA {
 }
 
 impl VirtualInstructionSequence for SRA {
-    fn virtual_sequence(&self, _: bool) -> Vec<RV32IMInstruction> {
+    fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         let v_bitmask = virtual_register_index(6) as usize;
 
         let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(1);

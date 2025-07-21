@@ -250,11 +250,11 @@ impl Iterator for LazyTraceIterator {
 }
 
 #[tracing::instrument(skip_all)]
-pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>, bool) {
+pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>, Xlen) {
     let obj = object::File::parse(elf).unwrap();
-    let mut is_32 = false;
+    let mut xlen = Xlen::Bit64;
     if let object::File::Elf32(_) = &obj {
-        is_32 = true;
+        xlen = Xlen::Bit32;
     }
 
     let sections = obj
@@ -288,7 +288,7 @@ pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>, bool) {
         }
     }
 
-    (instructions, data, is_32)
+    (instructions, data, xlen)
 }
 
 fn get_xlen() -> Xlen {

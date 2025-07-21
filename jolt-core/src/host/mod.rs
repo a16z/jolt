@@ -16,7 +16,7 @@ use common::{
 };
 use rayon::prelude::*;
 use tracer::{
-    emulator::memory::Memory,
+    emulator::{cpu::Xlen, memory::Memory},
     instruction::{RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence},
 };
 
@@ -162,9 +162,9 @@ impl Program {
             File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
-        let (mut instructions, raw_bytes, is_32) = tracer::decode(&elf_contents);
+        let (mut instructions, raw_bytes, xlen) = tracer::decode(&elf_contents);
         // Expand virtual sequences
-        if is_32 {
+        if xlen == Xlen::Bit32 {
             instructions = instructions
                 .into_par_iter()
                 .flat_map_iter(|instr| match instr {

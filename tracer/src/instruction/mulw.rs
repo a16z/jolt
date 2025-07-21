@@ -37,7 +37,7 @@ impl MULW {
 
 impl RISCVTrace for MULW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu.xlen == Xlen::Bit32);
+        let virtual_sequence = self.virtual_sequence(cpu.xlen);
 
         let mut trace = trace;
         for instr in virtual_sequence {
@@ -48,7 +48,7 @@ impl RISCVTrace for MULW {
 }
 
 impl VirtualInstructionSequence for MULW {
-    fn virtual_sequence(&self, _: bool) -> Vec<RV32IMInstruction> {
+    fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         let mut sequence = vec![];
 
         let mul = MUL {

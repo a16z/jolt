@@ -123,7 +123,7 @@ use virtual_srl::VirtualSRL;
 use virtual_srli::VirtualSRLI;
 use virtual_sw::VirtualSW;
 
-use crate::emulator::cpu::Cpu;
+use crate::emulator::cpu::{Cpu, Xlen};
 use derive_more::From;
 use format::{InstructionFormat, InstructionRegisterState, NormalizedOperands};
 
@@ -357,7 +357,7 @@ where
 }
 
 pub trait VirtualInstructionSequence: RISCVInstruction {
-    fn virtual_sequence(&self, is_32: bool) -> Vec<RV32IMInstruction>;
+    fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction>;
 }
 
 macro_rules! define_rv32im_enums {

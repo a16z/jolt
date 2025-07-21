@@ -35,7 +35,7 @@ impl SRAIW {
 
 impl RISCVTrace for SRAIW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu.xlen == Xlen::Bit32);
+        let virtual_sequence = self.virtual_sequence(cpu.xlen);
         let mut trace = trace;
         for instr in virtual_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
@@ -45,7 +45,7 @@ impl RISCVTrace for SRAIW {
 }
 
 impl VirtualInstructionSequence for SRAIW {
-    fn virtual_sequence(&self, is_32: bool) -> Vec<RV32IMInstruction> {
+    fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         let v_rs1 = virtual_register_index(0) as usize;
         let mut sequence = vec![];
 
@@ -60,10 +60,10 @@ impl VirtualInstructionSequence for SRAIW {
         };
         sequence.push(signext.into());
 
-        let (shift, len) = if is_32 {
-            panic!("SRAIW is invalid in 32b mode")
-        } else {
-            (self.operands.imm & 0x1f, 32)
+        let shift = self.operands.imm & 0x1f;
+        let len = match xlen {
+            Xlen::Bit32 => panic!("SRAIW is invalid in 32b mode"),
+            Xlen::Bit64 => 64,
         };
         let ones = (1u64 << (len - shift)) - 1;
         let bitmask = ones << shift;

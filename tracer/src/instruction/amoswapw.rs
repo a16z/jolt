@@ -77,7 +77,7 @@ impl AMOSWAPW {
 
 impl RISCVTrace for AMOSWAPW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu.xlen == Xlen::Bit32);
+        let virtual_sequence = self.virtual_sequence(cpu.xlen);
         let mut trace = trace;
         for instr in virtual_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
@@ -87,7 +87,7 @@ impl RISCVTrace for AMOSWAPW {
 }
 
 impl VirtualInstructionSequence for AMOSWAPW {
-    fn virtual_sequence(&self, _: bool) -> Vec<RV32IMInstruction> {
+    fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_mask = virtual_register_index(10) as usize;
         let v_dword_address = virtual_register_index(11) as usize;
@@ -177,7 +177,7 @@ pub fn amo_pre(
         },
         virtual_sequence_remaining: Some(remaining),
     };
-    sequence.extend(slli.virtual_sequence(false));
+    sequence.extend(slli.virtual_sequence(Xlen::Bit64));
     remaining -= 1;
 
     let srl = SRL {
@@ -189,7 +189,7 @@ pub fn amo_pre(
         },
         virtual_sequence_remaining: Some(remaining),
     };
-    sequence.extend(srl.virtual_sequence(false));
+    sequence.extend(srl.virtual_sequence(Xlen::Bit64));
     remaining -= 2;
 
     remaining
@@ -241,7 +241,7 @@ pub fn amo_post(
         },
         virtual_sequence_remaining: Some(remaining),
     };
-    sequence.extend(sll_mask.virtual_sequence(false));
+    sequence.extend(sll_mask.virtual_sequence(Xlen::Bit64));
     remaining -= 2;
 
     let sll_value = SLL {
@@ -253,7 +253,7 @@ pub fn amo_post(
         },
         virtual_sequence_remaining: Some(remaining),
     };
-    sequence.extend(sll_value.virtual_sequence(false));
+    sequence.extend(sll_value.virtual_sequence(Xlen::Bit64));
     remaining -= 2;
 
     let xor = XOR {

@@ -55,7 +55,7 @@ impl SH {
 
 impl RISCVTrace for SH {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu.xlen == Xlen::Bit32);
+        let virtual_sequence = self.virtual_sequence(cpu.xlen);
         let mut trace = trace;
         for instr in virtual_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
@@ -65,11 +65,10 @@ impl RISCVTrace for SH {
 }
 
 impl VirtualInstructionSequence for SH {
-    fn virtual_sequence(&self, is_32: bool) -> Vec<RV32IMInstruction> {
-        if is_32 {
-            self.virtual_sequence_32()
-        } else {
-            self.virtual_sequence_64()
+    fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+        match xlen {
+            Xlen::Bit32 => self.virtual_sequence_32(),
+            Xlen::Bit64 => self.virtual_sequence_64(),
         }
     }
 }
@@ -138,7 +137,7 @@ impl SH {
             },
             virtual_sequence_remaining: Some(9),
         };
-        sequence.extend(slli.virtual_sequence(true));
+        sequence.extend(slli.virtual_sequence(Xlen::Bit32));
 
         let lui = LUI {
             address: self.address,
@@ -159,7 +158,7 @@ impl SH {
             },
             virtual_sequence_remaining: Some(7),
         };
-        sequence.extend(sll_mask.virtual_sequence(true));
+        sequence.extend(sll_mask.virtual_sequence(Xlen::Bit32));
 
         let sll_value = SLL {
             address: self.address,
@@ -170,7 +169,7 @@ impl SH {
             },
             virtual_sequence_remaining: Some(5),
         };
-        sequence.extend(sll_value.virtual_sequence(true));
+        sequence.extend(sll_value.virtual_sequence(Xlen::Bit32));
 
         let xor = XOR {
             address: self.address,
@@ -282,7 +281,7 @@ impl SH {
             },
             virtual_sequence_remaining: Some(9),
         };
-        sequence.extend(slli.virtual_sequence(false));
+        sequence.extend(slli.virtual_sequence(Xlen::Bit64));
 
         let lui = LUI {
             address: self.address,
@@ -303,7 +302,7 @@ impl SH {
             },
             virtual_sequence_remaining: Some(7),
         };
-        sequence.extend(sll_mask.virtual_sequence(false));
+        sequence.extend(sll_mask.virtual_sequence(Xlen::Bit64));
 
         let sll_value = SLL {
             address: self.address,
@@ -314,7 +313,7 @@ impl SH {
             },
             virtual_sequence_remaining: Some(5),
         };
-        sequence.extend(sll_value.virtual_sequence(false));
+        sequence.extend(sll_value.virtual_sequence(Xlen::Bit64));
 
         let xor = XOR {
             address: self.address,
