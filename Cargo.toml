@@ -39,6 +39,8 @@ members = [
     "examples/sha2-chain/guest",
     "examples/sha3-chain",
     "examples/sha3-chain/guest",
+    "examples/blake2-inline",
+    "examples/blake2-inline/guest",
     "examples/multi-function",
     "examples/multi-function/guest",
     "examples/alloc",

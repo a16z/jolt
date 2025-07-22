@@ -605,6 +605,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "blake2-inline"
+version = "0.1.0"
+dependencies = [
+ "blake2-inline-guest",
+ "hex",
+ "jolt-sdk",
+]
+
+[[package]]
+name = "blake2-inline-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
+]
+
+[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

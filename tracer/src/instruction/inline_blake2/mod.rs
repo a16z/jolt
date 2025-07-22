@@ -140,8 +140,8 @@ impl Blake2SequenceBuilder {
         // 4. Finalize the hash state: h[i] ^= v[i] ^ v[i+8]
         self.finalize_state();
 
-        // 5. Store the working state for debugging/testing
-        self.store_working_state();
+        // // 5. Store the working state for debugging/testing
+        // self.store_working_state();
 
         // 6. Store the final hash state back to memory
         self.store_state();

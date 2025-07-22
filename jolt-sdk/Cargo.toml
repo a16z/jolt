@@ -25,6 +25,8 @@ host = [
 ]
 guest-std = ["postcard/use-std", "jolt-sdk-macros/guest-std"]
 icicle = ["host", "jolt-core?/icicle"]
+rv32 = ["jolt-core?/rv32"]
+rv64 = ["jolt-core?/rv64"]
 sha256 = []
 keccak256 = []
 blake2 = []
