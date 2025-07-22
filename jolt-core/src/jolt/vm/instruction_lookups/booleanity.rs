@@ -19,6 +19,7 @@ use crate::{
             OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
             BIG_ENDIAN,
         },
+        split_eq_poly::GruenSplitEqPolynomial,
     },
     subprotocols::sumcheck::SumcheckInstance,
     utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
@@ -27,8 +28,8 @@ use crate::{
 const DEGREE: usize = 3;
 
 struct BooleanityProverState<F: JoltField> {
-    B: MultilinearPolynomial<F>,
-    D: MultilinearPolynomial<F>,
+    B: GruenSplitEqPolynomial<F>,
+    D_poly: MultilinearPolynomial<F>,
     G: [Vec<F>; D],
     H_indices: [Vec<usize>; D],
     H: Option<[MultilinearPolynomial<F>; D]>,
@@ -36,6 +37,8 @@ struct BooleanityProverState<F: JoltField> {
     eq_r_r: Option<F>,
     eq_km_c: [[F; 3]; 2],
     eq_km_c_squared: [[F; 3]; 2],
+    /// Previous round claim for Gruen optimization
+    previous_claim: F,
 }
 
 pub struct BooleanitySumcheck<F: JoltField> {
@@ -45,6 +48,8 @@ pub struct BooleanitySumcheck<F: JoltField> {
     r_address: Vec<F>,
     r_cycle: Vec<F>,
     log_T: usize,
+    /// Previous round claim
+    previous_claim: F,
 }
 
 impl<F: JoltField> BooleanitySumcheck<F> {
@@ -76,6 +81,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             r_address,
             r_cycle,
             log_T: trace.len().log_2(),
+            previous_claim: F::zero(),
         }
     }
 
@@ -103,13 +109,15 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             r_address,
             r_cycle,
             log_T,
+            previous_claim: F::zero(),
         }
     }
 }
 
 impl<F: JoltField> BooleanityProverState<F> {
     fn new(trace: &[RV32IMCycle], eq_r_cycle: Vec<F>, G: [Vec<F>; D], r_address: &[F]) -> Self {
-        let B = MultilinearPolynomial::from(EqPolynomial::evals(r_address));
+        let B = GruenSplitEqPolynomial::new(r_address);
+        let D_poly = MultilinearPolynomial::from(eq_r_cycle);
         let mut F: Vec<F> = unsafe_allocate_zero_vec(K_CHUNK);
         F[0] = F::one();
 
@@ -143,7 +151,7 @@ impl<F: JoltField> BooleanityProverState<F> {
         ];
         BooleanityProverState {
             B,
-            D: MultilinearPolynomial::from(eq_r_cycle),
+            D_poly,
             G,
             H_indices,
             H: None,
@@ -151,6 +159,7 @@ impl<F: JoltField> BooleanityProverState<F> {
             eq_r_r: None,
             eq_km_c,
             eq_km_c_squared,
+            previous_claim: F::zero(),
         }
     }
 }
@@ -188,7 +197,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
 
         if round < LOG_K_CHUNK {
             // Phase 1: Bind B and update F
-            ps.B.bind_parallel(r_j, BindingOrder::LowToHigh);
+            ps.B.bind(r_j);
             // Update F for this round (see Equation 55)
             let (F_left, F_right) = ps.F.split_at_mut(1 << round);
             F_left
@@ -206,14 +215,14 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
                         .collect();
                     MultilinearPolynomial::from(coeffs)
                 }));
-                ps.eq_r_r = Some(ps.B.final_sumcheck_claim());
+                ps.eq_r_r = Some(ps.B.current_scalar);
             }
         } else {
             // Phase 2: Bind D and H
+            ps.D_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
             ps.H.as_mut()
                 .unwrap()
                 .into_par_iter()
-                .chain(rayon::iter::once(&mut ps.D))
                 .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
         }
     }
@@ -291,84 +300,146 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
             r_sumcheck.r,
         );
     }
+
+    fn previous_claim(&self) -> F {
+        self.previous_claim
+    }
+
+    fn set_previous_claim(&mut self, claim: F) {
+        self.previous_claim = claim;
+        if let Some(prover_state) = self.prover_state.as_mut() {
+            prover_state.previous_claim = claim;
+        }
+    }
 }
 
 impl<F: JoltField> BooleanitySumcheck<F> {
     fn compute_phase1_message(&self, round: usize) -> Vec<F> {
         let p = self.prover_state.as_ref().unwrap();
         let m = round + 1;
+        let B = &p.B;
 
         let inner_span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
         let _inner_guard = inner_span.enter();
 
-        let univariate_poly_evals: [F; 3] = (0..p.B.len() / 2)
-            .into_par_iter()
-            .map(|k_prime| {
-                let B_evals =
-                    p.B.sumcheck_evals_array::<DEGREE>(k_prime, BindingOrder::LowToHigh);
+        // Compute quadratic coefficients first
+        let quadratic_coeffs: [F; DEGREE - 1] = if B.E_in_current_len() == 1 {
+            // E_in is fully bound
+            (0..B.len() / 2)
+                .into_par_iter()
+                .map(|k_prime| {
+                    let B_eval = B.E_out_current()[k_prime];
 
-                let inner_sum = (0..1 << m)
-                    .into_par_iter()
-                    .map(|k| {
-                        // Since we're binding variables from low to high, k_m is the high bit
-                        let k_m = k >> (m - 1);
-                        // We then index into F using (k_{m-1}, ..., k_1)
-                        let F_k = p.F[k % (1 << (m - 1))];
-                        // G_times_F := G[k] * F[k_1, ...., k_{m-1}]
-                        let k_G = (k_prime << m) + k;
-                        let G_times_F =
-                            p.G.iter()
-                                .zip(self.gamma.iter())
-                                .map(|(g, gamma)| g[k_G] * gamma)
-                                .sum::<F>()
-                                * F_k;
-                        // For c \in {0, 2, 3} compute:
-                        //    G[k] * (F[k_1, ...., k_{m-1}, c]^2 - F[k_1, ...., k_{m-1}, c])
-                        //    = G_times_F * (eq(k_m, c)^2 * F[k_1, ...., k_{m-1}] - eq(k_m, c))
-                        [
-                            G_times_F * (p.eq_km_c_squared[k_m][0] * F_k - p.eq_km_c[k_m][0]),
-                            G_times_F * (p.eq_km_c_squared[k_m][1] * F_k - p.eq_km_c[k_m][1]),
-                            G_times_F * (p.eq_km_c_squared[k_m][2] * F_k - p.eq_km_c[k_m][2]),
-                        ]
-                    })
-                    .reduce(
-                        || [F::zero(); 3],
-                        |running, new| {
-                            [
-                                running[0] + new[0],
-                                running[1] + new[1],
-                                running[2] + new[2],
-                            ]
-                        },
-                    );
+                    let inner_sum = (0..1 << m)
+                        .into_par_iter()
+                        .map(|k| {
+                            let k_m = k >> (m - 1);
+                            let F_k = p.F[k % (1 << (m - 1))];
+                            let k_G = (k_prime << m) + k;
+                            let G_times_F =
+                                p.G.iter()
+                                    .zip(self.gamma.iter())
+                                    .map(|(g, gamma)| g[k_G] * gamma)
+                                    .sum::<F>()
+                                    * F_k;
 
-                [
-                    B_evals[0] * inner_sum[0],
-                    B_evals[1] * inner_sum[1],
-                    B_evals[2] * inner_sum[2],
-                ]
-            })
-            .reduce(
-                || [F::zero(); 3],
-                |running, new| {
-                    [
-                        running[0] + new[0],
-                        running[1] + new[1],
-                        running[2] + new[2],
-                    ]
-                },
-            );
+                            // For c \in {0, infty} compute:
+                            // G[k] * (F[k_1, ...., k_{m-1}, c]^2 - F[k_1, ...., k_{m-1}, c])
+                            let eval_0 = if k_m == 0 {
+                                G_times_F * (F_k - F::one())
+                            } else {
+                                F::zero()
+                            };
+                            let eval_infty = G_times_F * F_k;
+                            [eval_0, eval_infty]
+                        })
+                        .reduce(
+                            || [F::zero(); DEGREE - 1],
+                            |running, new| [running[0] + new[0], running[1] + new[1]],
+                        );
 
-        univariate_poly_evals.to_vec()
+                    [B_eval * inner_sum[0], B_eval * inner_sum[1]]
+                })
+                .reduce(
+                    || [F::zero(); DEGREE - 1],
+                    |running, new| [running[0] + new[0], running[1] + new[1]],
+                )
+        } else {
+            // E_in has not been fully bound
+            let num_x_in_bits = B.E_in_current_len().log_2();
+            let x_bitmask = (1 << num_x_in_bits) - 1;
+
+            (0..B.len() / 2)
+                .collect::<Vec<_>>()
+                .par_chunk_by(|k1, k2| k1 >> num_x_in_bits == k2 >> num_x_in_bits)
+                .map(|chunk| {
+                    let x_out = chunk[0] >> num_x_in_bits;
+                    let B_E_out_eval = B.E_out_current()[x_out];
+
+                    let chunk_evals = chunk
+                        .par_iter()
+                        .map(|k_prime| {
+                            let x_in = k_prime & x_bitmask;
+                            let B_E_in_eval = B.E_in_current()[x_in];
+
+                            let inner_sum = (0..1 << m)
+                                .into_par_iter()
+                                .map(|k| {
+                                    let k_m = k >> (m - 1);
+                                    let F_k = p.F[k % (1 << (m - 1))];
+                                    let k_G = (k_prime << m) + k;
+                                    let G_times_F =
+                                        p.G.iter()
+                                            .zip(self.gamma.iter())
+                                            .map(|(g, gamma)| g[k_G] * gamma)
+                                            .sum::<F>()
+                                            * F_k;
+
+                                    let eval_0 = if k_m == 0 {
+                                        G_times_F * (F_k - F::one())
+                                    } else {
+                                        F::zero()
+                                    };
+                                    let eval_infty = G_times_F * F_k;
+                                    [eval_0, eval_infty]
+                                })
+                                .reduce(
+                                    || [F::zero(); DEGREE - 1],
+                                    |running, new| [running[0] + new[0], running[1] + new[1]],
+                                );
+
+                            [B_E_in_eval * inner_sum[0], B_E_in_eval * inner_sum[1]]
+                        })
+                        .reduce(
+                            || [F::zero(); DEGREE - 1],
+                            |running, new| [running[0] + new[0], running[1] + new[1]],
+                        );
+
+                    [B_E_out_eval * chunk_evals[0], B_E_out_eval * chunk_evals[1]]
+                })
+                .reduce(
+                    || [F::zero(); DEGREE - 1],
+                    |running, new| [running[0] + new[0], running[1] + new[1]],
+                )
+        };
+
+        // Use Gruen optimization to get cubic evaluations from quadratic coefficients
+        B.sumcheck_evals_from_quadratic_coeffs(
+            quadratic_coeffs[0],
+            quadratic_coeffs[1],
+            p.previous_claim,
+        )
+        .to_vec()
     }
 
     fn compute_phase2_message(&self) -> Vec<F> {
         let p = self.prover_state.as_ref().unwrap();
-        let univariate_poly_evals: [F; 3] = (0..p.D.len() / 2)
+        let univariate_poly_evals: [F; 3] = (0..p.D_poly.len() / 2)
             .into_par_iter()
             .map(|i| {
-                let D_evals =
-                    p.D.sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
+                let D_evals = p
+                    .D_poly
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
                 let H = p.H.as_ref().unwrap();
                 let H_evals = H
                     .iter()
