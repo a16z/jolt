@@ -1,7 +1,8 @@
 use std::iter;
 
 use rayon::iter::{
-    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefMutIterator, ParallelIterator,
+    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
+    IntoParallelRefMutIterator, ParallelIterator,
 };
 
 use crate::{
@@ -52,12 +53,11 @@ impl<F: JoltField, ProofTranscript: Transcript> NaiveSumCheckProof<F, ProofTrans
     pub fn prove(
         mle_vec: &mut Vec<&mut MultilinearPolynomial<F>>,
         r_cycle: &Vec<F>,
+        previous_claim: &mut F,
         transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>) {
         let mut eq = MultilinearPolynomial::from(EqPolynomial::evals(&r_cycle));
         let log_T = r_cycle.len();
-        let mut previous_claim =
-            compute_initial_eval_claim(&mle_vec.iter().map(|x| &**x).collect::<Vec<_>>(), r_cycle);
         let mut r: Vec<F> = Vec::with_capacity(r_cycle.len());
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(r_cycle.len());
 
@@ -96,7 +96,7 @@ impl<F: JoltField, ProofTranscript: Transcript> NaiveSumCheckProof<F, ProofTrans
                     },
                 );
 
-            evals.insert(1, previous_claim - evals[0]);
+            evals.insert(1, *previous_claim - evals[0]);
             assert_eq!(evals.len(), mle_vec.len() + 2);
 
             let univariate_poly = UniPoly::from_evals(&evals);
@@ -105,7 +105,7 @@ impl<F: JoltField, ProofTranscript: Transcript> NaiveSumCheckProof<F, ProofTrans
             compressed_polys.push(compressed_poly);
 
             let r_j = transcript.challenge_scalar::<F>();
-            previous_claim = univariate_poly.evaluate(&r_j);
+            *previous_claim = univariate_poly.evaluate(&r_j);
             r.push(r_j);
 
             rayon::join(
@@ -162,24 +162,16 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
     // Compute the initial claim for the sumcheck
     // val = \sum_{j_1, ..., j_d \in \{0, 1\}^T} eq(j, j_1, ..., j_d) \prod_{i=1}^d func(j_i)
     //     = \sum_{j' \in \{0, 1\}^T} eq(j, j', ..., j') \prod_{i=1}^d func(j)
-
     pub fn prove(
         mle_vec: &mut Vec<&mut MultilinearPolynomial<F>>,
         r_cycle: &Vec<F>,
+        previous_claim: &mut F,
         transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>) {
         let mut C = F::one();
         let mut C_summands = [F::one(), F::one()];
         let D = mle_vec.len();
         let T = r_cycle.len().pow2();
-        let mut previous_claim =
-            compute_initial_eval_claim(&mle_vec.iter().map(|x| &**x).collect::<Vec<_>>(), r_cycle);
-
-        let eval_points = [0, 2]
-            .into_iter()
-            .filter(|x| *x != 1)
-            .map(|x| F::from_u32(x as u32))
-            .collect::<Vec<_>>();
 
         // Each table E_i stores the evaluations of eq(j_{>i}, r_cycle_{>i}) for each j_{>i}.
         // As we're binding from high to low, for each E_i we store eq(j_{<LogT - i}, r_cycle_{<+LogT - i}) instead.
@@ -193,6 +185,8 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
             .collect::<Vec<_>>();
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(D * T.log_2());
         let mut w: Vec<F> = Vec::with_capacity(D * T.log_2());
+
+        assert_eq!(r_cycle.len(), T.log_2());
 
         for j_idx in 0..T.log_2() {
             let size = (T.log_2() - j_idx - 1).pow2();
@@ -234,10 +228,16 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
                 }
 
                 // Compute eq(r_round, w_1, ..., w_{idx - 1}, c, b) for each c and b = 0, 1
-                let eq_evals_at_idx = eval_points
-                    .iter()
-                    .map(|c| (((F::one() - c) * C_summands[1], *c * C_summands[0])))
-                    .collect::<Vec<(F, F)>>();
+                // let eq_evals_at_idx = eval_points
+                //     .iter()
+                //     .map(|c| (((F::one() - c) * C_summands[1], *c * C_summands[0])))
+                //     .collect::<Vec<(F, F)>>();
+
+                // Evaluate eq(r_round, w_1, ..., w_{idx - 1}, c) at c = 0, 2
+                let eq_evals_at_idx = [
+                    (C_summands[1], F::zero()),
+                    (-C_summands[1], C_summands[0] + C_summands[0]),
+                ];
 
                 let univariate_poly_evals = before_idx_evals
                     .par_iter_mut()
@@ -245,8 +245,15 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
                     .zip(after_idx_evals.par_iter_mut().take(size))
                     .enumerate()
                     .map(|(j, (before_idx_eval, after_idx_evals))| {
-                        let at_idx_evals =
-                            mle_vec[D - d - 1].sumcheck_evals(j, 2, BindingOrder::HighToLow);
+                        // let at_idx_evals =
+                        // mle_vec[D - d - 1].sumcheck_evals(j, 2, BindingOrder::HighToLow);
+                        let at_idx_evals = [
+                            mle_vec[D - d - 1].get_bound_coeff(j),
+                            mle_vec[D - d - 1].get_bound_coeff(j + mle_vec[D - d - 1].len() / 2)
+                                + mle_vec[D - d - 1]
+                                    .get_bound_coeff(j + mle_vec[D - d - 1].len() / 2)
+                                - mle_vec[D - d - 1].get_bound_coeff(j),
+                        ];
 
                         let eq_eval_after_idx = if j_idx < T.log_2() - 1 {
                             E_table[j_idx].get_coeff(j)
@@ -259,43 +266,76 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
                                 .mul_1_optimized(mle_vec[D - d - 1].get_bound_coeff(j));
                         }
 
-                        eq_evals_at_idx
-                            .iter()
-                            .zip(at_idx_evals.iter())
-                            .map(|((c_eq_eval_0, c_eq_eval_1), at_idx_eval)| {
-                                let factor =
-                                    *at_idx_eval * *before_idx_eval * eq_eval_after_idx * C;
+                        let temp = *before_idx_eval * eq_eval_after_idx * C;
+
+                        [
+                            {
+                                let factor = at_idx_evals[0] * temp;
 
                                 let eval_0 = if d < D - 1 {
-                                    *c_eq_eval_0 * factor * after_idx_evals[D - d - 2].0
+                                    eq_evals_at_idx[0].0 * factor * after_idx_evals[D - d - 2].0
                                 } else {
-                                    *c_eq_eval_0 * factor
+                                    eq_evals_at_idx[0].0 * factor
                                 };
 
                                 let eval_1 = if d < D - 1 {
-                                    *c_eq_eval_1 * factor * after_idx_evals[D - d - 2].1
+                                    eq_evals_at_idx[0].1 * factor * after_idx_evals[D - d - 2].1
                                 } else {
-                                    *c_eq_eval_1 * factor
+                                    eq_evals_at_idx[0].1 * factor
                                 };
 
                                 eval_0 + eval_1
-                            })
-                            .collect::<Vec<_>>()
+                            },
+                            {
+                                let factor = at_idx_evals[1] * temp;
+
+                                let eval_0 = if d < D - 1 {
+                                    eq_evals_at_idx[1].0 * factor * after_idx_evals[D - d - 2].0
+                                } else {
+                                    eq_evals_at_idx[1].0 * factor
+                                };
+
+                                let eval_1 = if d < D - 1 {
+                                    eq_evals_at_idx[1].1 * factor * after_idx_evals[D - d - 2].1
+                                } else {
+                                    eq_evals_at_idx[1].1 * factor
+                                };
+
+                                eval_0 + eval_1
+                            },
+                        ]
+
+                        //     eq_evals_at_idx
+                        //         .par_iter()
+                        //         .zip(at_idx_evals.par_iter())
+                        //         .map(|((c_eq_eval_0, c_eq_eval_1), at_idx_eval)| {
+                        //             let factor =
+                        //                 *at_idx_eval * *before_idx_eval * eq_eval_after_idx * C;
+
+                        //             let eval_0 = if d < D - 1 {
+                        //                 *c_eq_eval_0 * factor * after_idx_evals[D - d - 2].0
+                        //             } else {
+                        //                 *c_eq_eval_0 * factor
+                        //             };
+
+                        //             let eval_1 = if d < D - 1 {
+                        //                 *c_eq_eval_1 * factor * after_idx_evals[D - d - 2].1
+                        //             } else {
+                        //                 *c_eq_eval_1 * factor
+                        //             };
+
+                        //             eval_0 + eval_1
+                        //         })
+                        //         .collect::<[_; 2]>()
                     })
                     .reduce(
-                        || vec![F::zero(); eval_points.len()],
-                        |running, new| {
-                            running
-                                .iter()
-                                .zip(new.iter())
-                                .map(|(a, b)| *a + b)
-                                .collect::<Vec<_>>()
-                        },
+                        || [F::zero(); 2],
+                        |running, new| [running[0] + new[0], running[1] + new[1]],
                     );
 
                 let univariate_poly = UniPoly::from_evals(&[
                     univariate_poly_evals[0],
-                    previous_claim - univariate_poly_evals[0],
+                    *previous_claim - univariate_poly_evals[0],
                     univariate_poly_evals[1],
                 ]);
                 let compressed_poly = univariate_poly.compress();
@@ -303,7 +343,7 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
                 compressed_polys.push(compressed_poly);
 
                 let w_j = transcript.challenge_scalar::<F>();
-                previous_claim = univariate_poly.evaluate(&w_j);
+                *previous_claim = univariate_poly.evaluate(&w_j);
                 w.push(w_j);
 
                 mle_vec[D - 1 - d].bind_parallel(w_j, BindingOrder::HighToLow);
@@ -351,7 +391,10 @@ mod test {
     use ark_std::test_rng;
     use rand_core::RngCore;
     use rayon::{
-        iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator},
+        iter::{
+            IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
+            ParallelIterator,
+        },
         slice::ParallelSliceMut,
     };
 
@@ -469,23 +512,41 @@ mod test {
     #[test]
     fn test_large_d_optimization_sumcheck() {
         let test_inputs = [
-            (3, 1 << 3, 16),
-            (2, 1 << 4, 4),
-            (5, 1 << 3, 8),
-            (6, 1 << 2, 64),
-            (10, 1 << 2, 64),
-            (12, 1 << 2, 64),
-            (25, 1 << 4, 64),
-            (50, 1 << 4, 64),
+            // (2, 1 << 10, 16),
+            // (8, 1 << 10, 16),
+            // (16, 1 << 10, 16),
+            // (32, 1 << 10, 16),
+            (8, 1 << 20, 1 << 16),
+            (12, 1 << 20, 1 << 16),
+            (16, 1 << 20, 1 << 16),
+            (50, 1 << 20, 1 << 16),
         ];
 
         for (D, T, K) in test_inputs {
             let test_perf = large_d_optimization_ra_virtualization(D, T, K);
             println!(
-                "D: {}, T: {}, K: {}, optimized_duration: {:?}, naive_duration: {:?}",
+                "D: {}, T: {}, K (d^th root): {}, optimized_duration: {:?}, naive_duration: {:?}",
                 D, T, K, test_perf.optimized_duration, test_perf.naive_duration
             );
         }
+    }
+
+    fn test_func_data(D: usize, T: usize) -> Vec<MultilinearPolynomial<Fr>> {
+        let mut rng = test_rng();
+        let mut val_vec: Vec<Vec<Fr>> = vec![unsafe_allocate_zero_vec(T); D];
+
+        for j in 0..T {
+            for i in 0..D {
+                val_vec[i][j] = Fr::from_u32(rng.next_u32());
+            }
+        }
+
+        let val_mle = val_vec
+            .into_par_iter()
+            .map(|val| MultilinearPolynomial::from(val))
+            .collect::<Vec<_>>();
+
+        val_mle
     }
 
     fn test_ra_data(D: usize, T: usize, K: usize) -> Vec<MultilinearPolynomial<Fr>> {
@@ -498,6 +559,9 @@ mod test {
                 read_addresses[i].push(read_address);
             }
         }
+        panic!("Success");
+
+        println!("Check point");
         let mut ra = read_addresses
             .iter()
             .map(|r| {
@@ -609,13 +673,15 @@ mod test {
     }
 
     fn large_d_optimization_ra_virtualization(D: usize, T: usize, K: usize) -> TestPerf {
-        assert!(T.is_power_of_two());
-        assert!(K.is_power_of_two());
+        assert!(T.is_power_of_two(), "T: {T}");
+        assert!(K.is_power_of_two(), "K: {K}");
 
         // Compute the sum-check
         // ra(k_1, ..., k_d, j) = \sum_{j_1, ..., j_d} eq(j, j_1, ..., j_d) \prod_{i=1}^d ra(k_i, j_i)
         // where eq(j, j_1, ..., j_d) = 1 if j = j_1 = ... = j_d and 0 otherwise.
-        let mut ra = test_ra_data(D, T, K);
+        // let mut ra = test_ra_data(D, T, K);
+        let mut ra = test_func_data(D, T);
+
         let mut ra_copy = ra.clone();
 
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
@@ -624,11 +690,15 @@ mod test {
         if D < 6 && T < 1 << 6 {
             check_initial_eval_claim(D, T, &r_cycle, &ra);
         }
+        let mut previous_claim =
+            compute_initial_eval_claim(&ra.iter().map(|x| &*x).collect::<Vec<_>>(), &r_cycle);
+        let mut previous_claim_copy = previous_claim;
 
         let start_time = Instant::now();
         let (proof, r_prime) = LargeDSumCheckProof::<Fr, KeccakTranscript>::prove(
             &mut ra.iter_mut().collect::<Vec<_>>(),
             &r_cycle,
+            &mut previous_claim,
             &mut prover_transcript,
         );
         let optimized_duration = start_time.elapsed();
@@ -650,6 +720,7 @@ mod test {
         let (proof, r_prime) = NaiveSumCheckProof::<Fr, KeccakTranscript>::prove(
             &mut ra_copy.iter_mut().collect::<Vec<_>>(),
             &r_cycle,
+            &mut previous_claim_copy,
             &mut prover_transcript,
         );
         let naive_duration = start_time.elapsed();
