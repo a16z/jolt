@@ -424,7 +424,6 @@ where
     type Commitment = ZeromorphCommitment<P>;
     type Proof = ZeromorphProof<P>;
     type BatchedProof = ZeromorphProof<P>;
-    type OpeningProofHint = ();
 
     fn setup_prover(max_len: usize) -> Self::ProverSetup
     where
@@ -450,17 +449,14 @@ where
     fn commit(
         poly: &MultilinearPolynomial<Self::Field>,
         setup: &Self::ProverSetup,
-    ) -> (Self::Commitment, Self::OpeningProofHint) {
+    ) -> Self::Commitment {
         assert!(
             setup.commit_pp.g1_powers().len() > poly.len(),
             "COMMIT KEY LENGTH ERROR {}, {}",
             setup.commit_pp.g1_powers().len(),
             poly.len()
         );
-        let commitment = ZeromorphCommitment(
-            UnivariateKZG::commit_as_univariate(&setup.commit_pp, poly).unwrap(),
-        );
-        (commitment, ())
+        ZeromorphCommitment(UnivariateKZG::commit_as_univariate(&setup.commit_pp, poly).unwrap())
     }
 
     fn batch_commit<U>(polys: &[U], gens: &Self::ProverSetup) -> Vec<Self::Commitment>

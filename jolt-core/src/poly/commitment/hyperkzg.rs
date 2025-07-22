@@ -403,7 +403,6 @@ where
     type Commitment = HyperKZGCommitment<P>;
     type Proof = HyperKZGProof<P>;
     type BatchedProof = HyperKZGProof<P>;
-    type OpeningProofHint = ();
 
     fn setup_prover(max_len: usize) -> Self::ProverSetup {
         HyperKZGSRS(Arc::new(SRS::setup(
@@ -429,16 +428,14 @@ where
     fn commit(
         poly: &MultilinearPolynomial<Self::Field>,
         setup: &Self::ProverSetup,
-    ) -> (Self::Commitment, Self::OpeningProofHint) {
+    ) -> Self::Commitment {
         assert!(
             setup.kzg_pk.g1_powers().len() >= poly.len(),
             "COMMIT KEY LENGTH ERROR {}, {}",
             setup.kzg_pk.g1_powers().len(),
             poly.len()
         );
-        let commitment =
-            HyperKZGCommitment(UnivariateKZG::commit_as_univariate(&setup.kzg_pk, poly).unwrap());
-        (commitment, ())
+        HyperKZGCommitment(UnivariateKZG::commit_as_univariate(&setup.kzg_pk, poly).unwrap())
     }
 
     #[tracing::instrument(skip_all, name = "HyperKZG::batch_commit")]

@@ -24,7 +24,6 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         + Clone;
     type Proof: Sync + Send + CanonicalSerialize + CanonicalDeserialize + Clone + Debug;
     type BatchedProof: Sync + Send + CanonicalSerialize + CanonicalDeserialize;
-    type OpeningProofHint: Sync + Send + Clone + Debug;
 
     fn setup_prover(max_len: usize) -> Self::ProverSetup;
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup;
@@ -32,7 +31,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     fn commit(
         poly: &MultilinearPolynomial<Self::Field>,
         setup: &Self::ProverSetup,
-    ) -> (Self::Commitment, Self::OpeningProofHint);
+    ) -> Self::Commitment;
     fn batch_commit<U>(polys: &[U], gens: &Self::ProverSetup) -> Vec<Self::Commitment>
     where
         U: Borrow<MultilinearPolynomial<Self::Field>> + Sync;

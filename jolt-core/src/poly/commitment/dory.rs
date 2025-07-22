@@ -5,7 +5,7 @@ use crate::{
     field::JoltField,
     msm::VariableBaseMSM,
     poly::compact_polynomial::SmallScalar,
-    poly::multilinear_polynomial::MultilinearPolynomial,
+    poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     utils::{
         errors::ProofVerifyError,
         math::Math,
@@ -811,8 +811,23 @@ where
     F: JoltField + PrimeField,
     G: CurveGroup<ScalarField = F> + VariableBaseMSM,
 {
+    fn get(&self, index: usize) -> JoltFieldWrapper<F> {
+        assert!(
+            index < self.len(),
+            "Polynomial index out of bounds: {} >= {}",
+            index,
+            self.len()
+        );
+        JoltFieldWrapper(self.get_coeff(index))
+    }
+
     fn len(&self) -> usize {
         self.len()
+    }
+
+    fn evaluate(&self, point: &[JoltFieldWrapper<F>]) -> JoltFieldWrapper<F> {
+        let point: Vec<_> = point.iter().rev().map(|x| x.0).collect();
+        JoltFieldWrapper(PolynomialEvaluation::evaluate(self, &point))
     }
 
     #[tracing::instrument(skip_all)]
@@ -1072,7 +1087,6 @@ impl CommitmentScheme for DoryCommitmentScheme {
     type Commitment = DoryCommitment;
     type Proof = DoryProofData;
     type BatchedProof = DoryBatchedProof;
-    type OpeningProofHint = Vec<JoltG1Wrapper>; // row commitments
 
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::setup_prover")]
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
@@ -1099,11 +1113,10 @@ impl CommitmentScheme for DoryCommitmentScheme {
     fn commit(
         poly: &MultilinearPolynomial<Self::Field>,
         setup: &Self::ProverSetup,
-    ) -> (Self::Commitment, Self::OpeningProofHint) {
+    ) -> Self::Commitment {
         let sigma = DoryGlobals::get_num_columns().log_2();
-        let (commitment, row_commitments) =
-            commit::<JoltBn254, JoltMsmG1, _>(poly, 0, sigma, setup);
-        (DoryCommitment(commitment), row_commitments)
+        let commitment_val = commit::<JoltBn254, JoltMsmG1, _>(poly, 0, sigma, setup);
+        DoryCommitment(commitment_val)
     }
 
     fn batch_commit<U>(_polys: &[U], _setup: &Self::ProverSetup) -> Vec<Self::Commitment>
@@ -1132,13 +1145,14 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let dory_transcript = JoltToDoryTranscriptRef::<Self::Field, _>::new(transcript);
 
         // dory evaluate returns the opening but in this case we don't use it, we pass directly the opening to verify()
-        let proof_builder = evaluate::<
-            JoltBn254,
-            JoltToDoryTranscriptRef<'_, Self::Field, ProofTranscript>,
-            JoltMsmG1,
-            JoltMsmG2,
-            _,
-        >(poly, &point_dory, sigma, setup, dory_transcript);
+        let (_claimed_evaluation, proof_builder) =
+            evaluate::<
+                JoltBn254,
+                JoltToDoryTranscriptRef<'_, Self::Field, ProofTranscript>,
+                JoltMsmG1,
+                JoltMsmG2,
+                _,
+            >(poly, &point_dory, sigma, setup, dory_transcript);
 
         let dory_proof = proof_builder.build();
 
@@ -1222,7 +1236,6 @@ mod tests {
     use super::*;
     use crate::poly::compact_polynomial::CompactPolynomial;
     use crate::poly::dense_mlpoly::DensePolynomial;
-    use crate::poly::multilinear_polynomial::PolynomialEvaluation;
     use crate::utils::transcript::KeccakTranscript;
     use ark_std::rand::thread_rng;
     use ark_std::UniformRand;
@@ -1259,7 +1272,7 @@ mod tests {
         let opening_point: Vec<Fr> = (0..num_vars).map(|_| Fr::rand(&mut rng)).collect();
 
         let commit_start = Instant::now();
-        let (commitment, row_commitments) = DoryCommitmentScheme::commit(&poly, prover_setup);
+        let commitment = DoryCommitmentScheme::commit(&poly, prover_setup);
         let commit_time = commit_start.elapsed();
 
         println!(" Commit time: {commit_time:?}");
@@ -1429,12 +1442,21 @@ mod tests {
         let prover_setup = DoryCommitmentScheme::setup_prover(max_num_vars);
         let verifier_setup = DoryCommitmentScheme::setup_verifier(&prover_setup);
 
-        let (commitment, row_commitments) = DoryCommitmentScheme::commit(&poly, &prover_setup);
+        let commitment = DoryCommitmentScheme::commit(&poly, &prover_setup);
 
         let mut prove_transcript = KeccakTranscript::new(DoryCommitmentScheme::protocol_name());
 
         // Compute the correct evaluation
-        let correct_evaluation = poly.evaluate(&opening_point);
+        let opening_point_dory: Vec<JoltFieldWrapper<Fr>> = opening_point
+            .iter()
+            .rev()
+            .map(|&p| JoltFieldWrapper(p))
+            .collect();
+        let correct_evaluation = <MultilinearPolynomial<Fr> as DoryPolynomial<
+            JoltFieldWrapper<Fr>,
+            JoltGroupWrapper<G1Projective>,
+        >>::evaluate(&poly, &opening_point_dory)
+        .0;
 
         let proof = DoryCommitmentScheme::prove(
             &prover_setup,
@@ -1494,7 +1516,7 @@ mod tests {
             let wrong_coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
             let wrong_poly =
                 MultilinearPolynomial::LargeScalars(DensePolynomial::new(wrong_coeffs));
-            let (wrong_commitment, _) = DoryCommitmentScheme::commit(&wrong_poly, &prover_setup);
+            let wrong_commitment = DoryCommitmentScheme::commit(&wrong_poly, &prover_setup);
 
             let mut verify_transcript =
                 KeccakTranscript::new(DoryCommitmentScheme::protocol_name());
