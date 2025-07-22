@@ -8,14 +8,18 @@ use crate::jolt::vm::{Jolt, JoltProverPreprocessing, JoltVerifierPreprocessing};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::DoryCommitmentScheme as Dory;
 use crate::poly::commitment::hyperkzg::HyperKZG;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+use crate::subprotocols::optimization::{compute_initial_eval_claim, LargeDSumCheckProof};
 use crate::subprotocols::shout::ShoutProof;
 use crate::subprotocols::twist::{TwistAlgorithm, TwistProof};
 use crate::utils::math::Math;
+use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::transcript::{KeccakTranscript, Transcript};
 use ark_bn254::{Bn254, Fr};
 use ark_std::test_rng;
 use rand_core::RngCore;
 use rand_distr::{Distribution, Zipf};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use serde::Serialize;
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
@@ -33,6 +37,7 @@ pub enum BenchType {
     Shout,
     SparseDenseShout,
     Twist,
+    LargeDSumCheck,
 }
 
 #[allow(unreachable_patterns)] // good errors on new BenchTypes
@@ -49,6 +54,9 @@ pub fn benchmarks(
             BenchType::Shout => shout::<Fr, KeccakTranscript>(),
             BenchType::Twist => twist::<Fr, KeccakTranscript>(),
             BenchType::SparseDenseShout => sparse_dense_shout::<Fr, KeccakTranscript>(),
+            BenchType::LargeDSumCheck => {
+                large_d_sumcheck::<Fr, Dory<KeccakTranscript>, KeccakTranscript>()
+            }
             _ => panic!("BenchType does not have a mapping"),
         },
         PCSType::HyperKZG => match bench_type {
@@ -63,6 +71,9 @@ pub fn benchmarks(
             BenchType::Shout => shout::<Fr, KeccakTranscript>(),
             BenchType::Twist => twist::<Fr, KeccakTranscript>(),
             BenchType::SparseDenseShout => sparse_dense_shout::<Fr, KeccakTranscript>(),
+            BenchType::LargeDSumCheck => {
+                large_d_sumcheck::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>()
+            }
             _ => panic!("BenchType does not have a mapping"),
         },
         _ => panic!("PCS Type does not have a mapping"),
@@ -335,6 +346,57 @@ where
 
     tasks.push((
         tracing::info_span!("Example_E2E"),
+        Box::new(task) as Box<dyn FnOnce()>,
+    ));
+
+    tasks
+}
+
+fn large_d_sumcheck<F, PCS, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
+    let mut tasks = Vec::new();
+
+    let D = 16;
+    let T = 1 << 10;
+
+    let mut ra = {
+        let mut rng = test_rng();
+        let mut val_vec: Vec<Vec<F>> = vec![unsafe_allocate_zero_vec(T); D];
+
+        for j in 0..T {
+            for i in 0..D {
+                val_vec[i][j] = F::from_u32(rng.next_u32());
+            }
+        }
+
+        let val_mle = val_vec
+            .into_par_iter()
+            .map(|val| MultilinearPolynomial::from(val))
+            .collect::<Vec<_>>();
+
+        val_mle
+    };
+
+    let mut transcript = ProofTranscript::new(b"test_transcript");
+    let r_cycle: Vec<F> = transcript.challenge_vector(T.log_2());
+    let mut previous_claim =
+        compute_initial_eval_claim(&ra.iter().map(|x| &*x).collect::<Vec<_>>(), &r_cycle);
+
+    let task = move || {
+        let _proof = LargeDSumCheckProof::<F, ProofTranscript>::prove(
+            &mut ra.iter_mut().collect::<Vec<_>>(),
+            &r_cycle,
+            &mut previous_claim,
+            &mut transcript,
+        );
+    };
+
+    tasks.push((
+        tracing::info_span!("large_d_e2e"),
         Box::new(task) as Box<dyn FnOnce()>,
     ));
 

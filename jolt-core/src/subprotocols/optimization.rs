@@ -162,6 +162,7 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
     // Compute the initial claim for the sumcheck
     // val = \sum_{j_1, ..., j_d \in \{0, 1\}^T} eq(j, j_1, ..., j_d) \prod_{i=1}^d func(j_i)
     //     = \sum_{j' \in \{0, 1\}^T} eq(j, j', ..., j') \prod_{i=1}^d func(j)
+    #[tracing::instrument(skip_all, name = "LargeDSumCheckProof::prove")]
     pub fn prove(
         mle_vec: &mut Vec<&mut MultilinearPolynomial<F>>,
         r_cycle: &Vec<F>,
@@ -173,6 +174,8 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
         let D = mle_vec.len();
         let T = r_cycle.len().pow2();
 
+        let span = tracing::span!(tracing::Level::INFO, "Initialize E_table");
+        let _guard = span.enter();
         // Each table E_i stores the evaluations of eq(j_{>i}, r_cycle_{>i}) for each j_{>i}.
         // As we're binding from high to low, for each E_i we store eq(j_{<LogT - i}, r_cycle_{<+LogT - i}) instead.
         // TODO: not sure how much saving we get from batch computing this, maybe too small?.
@@ -185,10 +188,18 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
             .collect::<Vec<_>>();
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(D * T.log_2());
         let mut w: Vec<F> = Vec::with_capacity(D * T.log_2());
+        drop(_guard);
+        drop(span);
 
         assert_eq!(r_cycle.len(), T.log_2());
 
+        let span = tracing::span!(tracing::Level::INFO, "Loop over j_idx");
+        let _guard = span.enter();
+
         for j_idx in 0..T.log_2() {
+            let inner_span = tracing::span!(tracing::Level::INFO, "j_idx auxiliary data");
+            let _guard = span.enter();
+
             let size = (T.log_2() - j_idx - 1).pow2();
             let mut before_idx_evals = vec![F::one(); size];
             let mut after_idx_evals = vec![Vec::with_capacity(D - 1); size];
@@ -212,6 +223,12 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
                         }
                     }
                 });
+
+            drop(_guard);
+            drop(inner_span);
+
+            let inner_span = tracing::span!(tracing::Level::INFO, "Loop over d");
+            let _guard = inner_span.enter();
 
             for d in 0..D {
                 let round = j_idx * D + d;
@@ -328,8 +345,14 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
                 C_summands[0] *= w_j;
                 C_summands[1] *= F::one() - w_j;
             }
+
+            drop(_guard);
+            drop(inner_span);
         }
         C *= C_summands[0] + C_summands[1];
+
+        drop(_guard);
+        drop(span);
 
         (
             Self {
@@ -667,8 +690,6 @@ mod test {
             |b| b.iter(|| criterion::black_box(large_d_optimization_ra_virtualization(D, T))),
         );
     }
-    
-
 
     fn large_d_optimization_ra_virtualization(D: usize, T: usize) -> TestPerf {
         assert!(T.is_power_of_two(), "T: {T}");
