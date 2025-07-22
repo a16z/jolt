@@ -195,7 +195,7 @@ impl Blake2SequenceBuilder {
 
         // v[8..15] = IV[0..7] (initialization vector)
         for i in 0..WORKING_STATE_SIZE - HASH_STATE_SIZE {
-            self.my_load_64bit_immediate(BLAKE2B_IV[i], self.vr[HASH_STATE_SIZE + i]);
+            self.load_64bit_immediate(BLAKE2B_IV[i], self.vr[HASH_STATE_SIZE + i]);
         }
 
         // Blake2b counter handling: XOR counter with v[12] and extract high part for v[13]
@@ -339,7 +339,7 @@ impl Blake2SequenceBuilder {
             (Imm(imm), Reg(rs2)) => {
                 // For immediate - register, we need to first load the immediate
                 let temp_reg = self.vr[67]; // Use a temp register
-                self.my_load_64bit_immediate(imm, temp_reg);
+                self.load_64bit_immediate(imm, temp_reg);
                 let sub = SUB {
                     address: self.address,
                     operands: FormatR { rd, rs1: temp_reg, rs2 },
@@ -401,7 +401,7 @@ impl Blake2SequenceBuilder {
         }
     }
 
-    fn my_load_64bit_immediate(&mut self, value: u64, rd: usize) {
+    fn load_64bit_immediate(&mut self, value: u64, rd: usize) {
         let lui = LUI {
             address: self.address,
             operands: FormatU {
