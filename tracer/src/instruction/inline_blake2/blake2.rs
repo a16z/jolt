@@ -39,21 +39,6 @@ fn store_words_to_memory(cpu: &mut Cpu, base_addr: u64, values: &[u64]) {
     }
 }
 
-fn load_working_state_from_memory(cpu: &mut Cpu, base_addr: u64) -> [u64; 16] {
-    let mut working_state = [0u64; 16];
-    // Working state is stored at base_addr with offset (MESSAGE_BLOCK_SIZE + 2 + i) * 8
-    // This matches the addressing used in store_working_state: (MESSAGE_BLOCK_SIZE + 2 + i) * 8
-    for i in 0..16 {
-        let offset = (MESSAGE_BLOCK_SIZE + 2 + i) * 8;
-        working_state[i] = cpu
-            .mmu
-            .load_doubleword(base_addr + offset as u64)
-            .expect("BLAKE2: Failed to load working state from memory")
-            .0;
-    }
-    working_state
-}
-
 impl BLAKE2 {
     // This is the "fast path" for emulation without tracing.
     // It performs the Blake2b compression using a native Rust implementation.

@@ -17,7 +17,10 @@ declare_riscv_instr!(
 
 impl LUI {
     fn exec(&self, cpu: &mut Cpu, _: &mut <LUI as RISCVInstruction>::RAMAccess) {
-        cpu.x[self.operands.rd] = normalize_imm(self.operands.imm);
+        // No normalize required for 64-bit immediate.
+        // For 32-bit imm, normalization can be done in the caller side.
+        cpu.x[self.operands.rd] = self.operands.imm as i64;
+        // cpu.x[self.operands.rd] = normalize_imm(self.operands.imm);
     }
 }
 

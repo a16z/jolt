@@ -714,7 +714,7 @@ impl Keccak256SequenceBuilder {
             operands: FormatU {
                 rd,
                 // LUI expects the immediate to be in bits 31:12
-                imm: (imm as u64) << 12,
+                imm: ((imm as u64) << 12) as i32 as u64,
             },
             virtual_sequence_remaining: Some(0),
         };
