@@ -1,4 +1,41 @@
 #[cfg(test)]
+/// Common test vectors used across multiple tests
+pub struct TestVectors;
+
+impl TestVectors {
+    /// Get standard test vectors for state testing
+    pub fn get_standard_test_vectors() -> Vec<(&'static str, [u64; 25])> {
+        vec![
+            ("zero state", [0u64; 25]),
+            ("simple pattern", Self::create_simple_pattern()),
+            (
+                "xkcp first permutation result",
+                xkcp_vectors::AFTER_ONE_PERMUTATION,
+            ),
+        ]
+    }
+
+    /// Create a simple arithmetic pattern for testing
+    pub fn create_simple_pattern() -> [u64; 25] {
+        let mut state = [0u64; 25];
+        for i in 0..25 {
+            state[i] = (i * 3 + 5) as u64;
+        }
+        state
+    }
+
+    /// Get rotation test vectors
+    pub fn get_rotation_test_vectors() -> Vec<(u64, u32, u64)> {
+        vec![
+            (0x0000000000000001u64, 1, 0x0000000000000002u64), // Simple rotation by 1
+            (0x8000000000000000u64, 1, 0x0000000000000001u64), // MSB wraps to LSB
+            (0x0123456789ABCDEFu64, 4, 0x123456789ABCDEF0u64), // Rotation by 4
+            (0x0123456789ABCDEFu64, 32, 0x89ABCDEF01234567u64), // Rotation by 32 (swap halves)
+            (0x0123456789ABCDEFu64, 36, 0x9ABCDEF012345678u64), // Rotation by 36
+        ]
+    }
+}
+
 pub mod xkcp_vectors {
     //! Test constants and vectors for Keccak256 instruction tests
     //!

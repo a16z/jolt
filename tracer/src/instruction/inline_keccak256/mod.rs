@@ -37,6 +37,8 @@ pub mod keccak256;
 #[cfg(test)]
 pub mod test_constants;
 #[cfg(test)]
+mod test_utils;
+#[cfg(test)]
 mod tests_debug;
 
 /// The 24 round constants for the Keccak-f[1600] permutation.
@@ -358,13 +360,13 @@ impl Keccak256SequenceBuilder {
         let round_constant = ROUND_CONSTANTS[self.round as usize];
         let first_lane_reg = self.lane(0, 0);
 
-        // DEBUG: Print what round and constant we're using
-        if cfg!(test) {
-            eprintln!(
-                "DEBUG iota: round={}, constant=0x{:016x}",
-                self.round, round_constant
-            );
-        }
+        // // DEBUG: Print what round and constant we're using
+        // if cfg!(test) {
+        //     eprintln!(
+        //         "DEBUG iota: round={}, constant=0x{:016x}",
+        //         self.round, round_constant
+        //     );
+        // }
 
         // IMPORTANT: XORI can only handle 12-bit immediates in RISC-V
         // For round constants that don't fit in 12 bits, we need to load them into a register first
@@ -971,5 +973,73 @@ mod tests {
             xkcp_vectors::AFTER_TWO_PERMUTATIONS,
             "Failed on second permutation of Keccak-f"
         );
+    }
+
+    #[test]
+    fn test_execute_theta() {
+        // Test theta with a known pattern
+        let mut state = [0u64; 25];
+        state[0] = 1;
+        state[5] = 2;
+        state[10] = 4;
+
+        let original_state = state;
+        execute_theta(&mut state);
+
+        // Verify theta creates the expected column parity effects
+        // This is a basic sanity check
+        assert_ne!(state, original_state, "Theta should modify the state");
+    }
+
+    #[test]
+    fn test_execute_rho_and_pi() {
+        // Test rho_and_pi - just verify it changes the state
+        let mut state = [0u64; 25];
+        state[1] = 0xFF;
+        let original_state = state;
+        execute_rho_and_pi(&mut state);
+
+        // The function should move and rotate lanes, so state should change
+        assert_ne!(state, original_state, "Rho and pi should modify the state");
+        // Original position should be cleared (or changed)
+        assert_ne!(
+            state[1], 0xFF,
+            "Original position should be different after rho_and_pi"
+        );
+    }
+
+    #[test]
+    fn test_execute_chi() {
+        // Test chi
+        let mut state = [0u64; 25];
+        state[0] = 0xFF;
+        state[1] = 0xAA;
+        state[2] = 0x55;
+
+        execute_chi(&mut state);
+
+        // Chi should apply the non-linear transformation
+        // Expected: state[0] ^= (~state[1] & state[2])
+        let expected_0 = 0xFF ^ ((!0xAA) & 0x55);
+        assert_eq!(state[0], expected_0, "Chi transformation failed");
+    }
+
+    #[test]
+    fn test_execute_iota() {
+        // Test iota
+        let mut state = [0u64; 25];
+        state[0] = 0x1234;
+
+        execute_iota(&mut state, 0x5678);
+        assert_eq!(
+            state[0],
+            0x1234 ^ 0x5678,
+            "Iota should XOR round constant into first lane"
+        );
+
+        // Verify other lanes unchanged
+        for i in 1..25 {
+            assert_eq!(state[i], 0, "Iota should only affect first lane");
+        }
     }
 }

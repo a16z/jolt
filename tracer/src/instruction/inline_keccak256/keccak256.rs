@@ -79,34 +79,18 @@ mod tests {
     use super::*;
     use crate::emulator::{cpu::Cpu, default_terminal::DefaultTerminal, mmu::DRAM_BASE};
     use crate::instruction::format::format_r::FormatR;
-    use crate::instruction::inline_keccak256::test_constants::custom_vectors;
-    use crate::instruction::inline_keccak256::test_constants::xkcp_vectors;
+    use crate::instruction::inline_keccak256::test_constants::*;
+    use crate::instruction::inline_keccak256::test_utils::*;
     use crate::instruction::inline_keccak256::{
-        execute_chi, execute_iota, execute_keccak_f, execute_rho_and_pi, execute_theta,
-        ROTATION_OFFSETS, ROUND_CONSTANTS,
+        execute_keccak_f, Keccak256SequenceBuilder, NEEDED_REGISTERS,
     };
-    use crate::instruction::{RAMRead, RAMWrite};
-    use common::constants::virtual_register_index;
 
     const TEST_MEMORY_CAPACITY: u64 = 1024 * 1024; // 1MB
 
+    // Test that the virtual sequence and direct execution paths produce the same end result
     #[test]
     fn test_keccak_state_equivalence() {
-        // Test vectors: (description, initial_state)
-        let test_vectors = vec![
-            ("zero state", [0u64; 25]),
-            ("simple pattern", {
-                let mut state = [0u64; 25];
-                for i in 0..25 {
-                    state[i] = (i * 3 + 5) as u64;
-                }
-                state
-            }),
-            (
-                "xkcp first permutation result",
-                xkcp_vectors::AFTER_ONE_PERMUTATION,
-            ),
-        ];
+        let test_vectors = TestVectors::get_standard_test_vectors();
 
         for (description, initial_state) in test_vectors {
             println!("\n=== Testing: {} ===", description);
@@ -122,283 +106,38 @@ mod tests {
             };
 
             // Set up the "exec" path CPU
-            let mut cpu_exec = Cpu::new(Box::new(DefaultTerminal::new()));
-            cpu_exec.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
-            let base_addr = DRAM_BASE;
-            cpu_exec.x[10] = base_addr as i64;
-            for (i, &lane) in initial_state.iter().enumerate() {
-                cpu_exec
-                    .mmu
-                    .store_doubleword(base_addr + (i * 8) as u64, lane)
-                    .unwrap();
-            }
+            let mut setup_exec = KeccakTestSetup::new();
+            setup_exec.load_state_to_memory(&initial_state);
 
             // Set up the "trace" path CPU (must be identical)
-            let mut cpu_trace = Cpu::new(Box::new(DefaultTerminal::new()));
-            cpu_trace.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
-            cpu_trace.x[10] = base_addr as i64;
-            for (i, &lane) in initial_state.iter().enumerate() {
-                cpu_trace
-                    .mmu
-                    .store_doubleword(base_addr + (i * 8) as u64, lane)
-                    .unwrap();
-            }
+            let mut setup_trace = KeccakTestSetup::new();
+            setup_trace.load_state_to_memory(&initial_state);
 
             // Run both paths
-            instruction.exec(&mut cpu_exec, &mut ());
-            instruction.trace(&mut cpu_trace, None);
+            instruction.exec(&mut setup_exec.cpu, &mut ());
+            instruction.trace(&mut setup_trace.cpu, None);
 
             // Assert that the final memory states are identical
-            let mut all_match = true;
-            for i in 0..25 {
-                let addr = base_addr + (i * 8) as u64;
-                let val_exec = cpu_exec.mmu.load_doubleword(addr).unwrap().0;
-                let val_trace = cpu_trace.mmu.load_doubleword(addr).unwrap().0;
-                if val_exec != val_trace {
-                    println!(
-                        "Mismatch at lane {}: exec 0x{:016x}, trace 0x{:016x}",
-                        i, val_exec, val_trace
-                    );
-                    all_match = false;
-                }
-            }
+            let state_exec = setup_exec.read_state_from_memory();
+            let state_trace = setup_trace.read_state_from_memory();
 
-            if all_match {
+            if !compare_states(&state_exec, &state_trace, description) {
+                panic!("Virtual sequence test failed for: {}", description);
+            } else {
                 println!(
                     "✓ {} - Virtual sequence matches direct execution",
                     description
                 );
-            } else {
-                panic!("Virtual sequence test failed for: {}", description);
             }
         }
     }
 
-    #[test]
-    fn test_virtual_sequence_detailed_divergence() {
-        println!("=== Finding Exact Divergence Point in Virtual Sequence ===");
-
-        // Set up CPU and memory
-        let mut cpu = Cpu::new(Box::new(DefaultTerminal::new()));
-        cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
-        let base_addr = DRAM_BASE;
-        cpu.x[10] = base_addr as i64;
-
-        // Initialize with all-zero state (same as XKCP test vectors)
-        let initial_state = [0u64; 25];
-
-        // Store initial state to memory
-        for (j, &lane) in initial_state.iter().enumerate() {
-            cpu.mmu
-                .store_doubleword(base_addr + (j * 8) as u64, lane)
-                .expect("Failed to store initial lane");
-        }
-
-        // Get virtual register mapping
-        let mut vr = [0; super::NEEDED_REGISTERS];
-        for i in 0..super::NEEDED_REGISTERS {
-            vr[i] = virtual_register_index(i as u64) as usize;
-        }
-
-        // Test each round and step
-        for round in 0..24 {
-            for step in &["theta", "rho_and_pi", "chi", "iota"] {
-                println!("\n--- Testing Round {} after {} ---", round, step);
-
-                // Create a new CPU for this test
-                let mut test_cpu = Cpu::new(Box::new(DefaultTerminal::new()));
-                test_cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
-                test_cpu.x[10] = base_addr as i64;
-
-                // Store initial state
-                for (j, &lane) in initial_state.iter().enumerate() {
-                    test_cpu
-                        .mmu
-                        .store_doubleword(base_addr + (j * 8) as u64, lane)
-                        .expect("Failed to store initial lane");
-                }
-
-                // Generate sequence up to this step
-                let builder = super::Keccak256SequenceBuilder::new(0x1000, vr, 10, 11);
-                let sequence = builder.build_up_to_step(round, step);
-
-                println!("Generated {} instructions", sequence.len());
-
-                // Execute the sequence
-                for instr in &sequence {
-                    execute_instruction(&mut test_cpu, instr);
-                }
-
-                // Read virtual registers
-                let mut virtual_state = [0u64; 25];
-                for i in 0..25 {
-                    virtual_state[i] = test_cpu.x[vr[i]] as u64;
-                }
-
-                // Compute expected state using reference implementation
-                let mut expected_state = initial_state;
-                for r in 0..=round {
-                    execute_theta(&mut expected_state);
-                    if r == round && *step == "theta" {
-                        break;
-                    }
-
-                    execute_rho_and_pi(&mut expected_state);
-                    if r == round && *step == "rho_and_pi" {
-                        break;
-                    }
-
-                    execute_chi(&mut expected_state);
-                    if r == round && *step == "chi" {
-                        break;
-                    }
-
-                    execute_iota(&mut expected_state, ROUND_CONSTANTS[r as usize]);
-                    if r == round && *step == "iota" {
-                        break;
-                    }
-                }
-
-                // Compare states
-                let mut all_match = true;
-                for i in 0..25 {
-                    if virtual_state[i] != expected_state[i] {
-                        println!(
-                            "MISMATCH at lane {}: virtual={:#018x}, expected={:#018x}",
-                            i, virtual_state[i], expected_state[i]
-                        );
-                        all_match = false;
-                    }
-                }
-
-                if all_match {
-                    println!("✓ All lanes match!");
-                } else {
-                    println!("\n❌ DIVERGENCE FOUND: Round {} after {}", round, step);
-                    println!(
-                        "This is the first point where virtual sequence diverges from expected!"
-                    );
-
-                    // Print first few mismatched lanes for debugging
-                    println!("\nFirst 5 lanes:");
-                    for i in 0..5 {
-                        println!(
-                            "  Lane {}: virtual={:#018x}, expected={:#018x}",
-                            i, virtual_state[i], expected_state[i]
-                        );
-                    }
-
-                    return; // Stop at first divergence
-                }
-            }
-        }
-    }
-
-    #[test]
-    #[ignore] // For debugging purposes only
-    fn debug_print_states() {
-        // From https://github.com/XKCP/XKCP/blob/master/tests/TestVectors/KeccakF-1600-IntermediateValues.txt
-        let initial_state_vec = vec![0u64; 25];
-        let mut expected_final_state = [0u64; 25];
-        let final_state_vec: Vec<u64> = xkcp_vectors::AFTER_ONE_PERMUTATION.to_vec();
-        expected_final_state.copy_from_slice(&final_state_vec);
-
-        let instruction = KECCAK256 {
-            address: 0,
-            operands: FormatR {
-                rs1: 10,
-                rs2: 0,
-                rd: 0,
-            },
-            virtual_sequence_remaining: None,
-        };
-
-        // EXEC PATH
-        let mut cpu_exec = Cpu::new(Box::new(DefaultTerminal::new()));
-        cpu_exec.get_mut_mmu().init_memory(1024 * 1024);
-        let base_addr = DRAM_BASE;
-        cpu_exec.x[10] = base_addr as i64;
-        for (i, &lane) in initial_state_vec.iter().enumerate() {
-            cpu_exec
-                .mmu
-                .store_doubleword(base_addr + (i * 8) as u64, lane)
-                .unwrap();
-        }
-        instruction.exec(&mut cpu_exec, &mut ());
-
-        // TRACE PATH
-        let mut cpu_trace = Cpu::new(Box::new(DefaultTerminal::new()));
-        cpu_trace.get_mut_mmu().init_memory(1024 * 1024);
-        cpu_trace.x[10] = base_addr as i64;
-        for (i, &lane) in initial_state_vec.iter().enumerate() {
-            cpu_trace
-                .mmu
-                .store_doubleword(base_addr + (i * 8) as u64, lane)
-                .unwrap();
-        }
-        instruction.trace(&mut cpu_trace, None);
-
-        println!("DEBUGGING KECCAK-F STATE MISMATCH");
-        for i in 0..25 {
-            let addr = base_addr + (i * 8) as u64;
-            let val_exec = cpu_exec.mmu.load_doubleword(addr).unwrap().0;
-            let val_trace = cpu_trace.mmu.load_doubleword(addr).unwrap().0;
-            println!(
-                "Lane {i:02}:  Exec: 0x{:016x}   Trace: 0x{:016x}   Expected: 0x{:016x}",
-                val_exec, val_trace, expected_final_state[i]
-            );
-        }
-    }
-
+    // Test that the direct execution (exec method) works correctly against known test vectors
     #[test]
     fn test_keccak256_direct_execution() {
         // Test that the direct execution (exec method) works correctly against known test vectors
         // This validates the instruction logic before testing virtual sequences
-
-        let test_cases = vec![
-            // Test case 1: All zeros input (standard test vector)
-            TestCase {
-                input: [0u64; 25],
-                expected: xkcp_vectors::AFTER_ONE_PERMUTATION,
-                description: "All zeros input (XKCP test vector)",
-            },
-            // Test case 2: Simple pattern
-            TestCase {
-                input: {
-                    let mut state = [0u64; 25];
-                    for i in 0..25 {
-                        state[i] = (i * 3 + 5) as u64;
-                    }
-                    state
-                },
-                expected: {
-                    // We'll calculate this by running the reference implementation
-                    let mut state = [0u64; 25];
-                    for i in 0..25 {
-                        state[i] = (i * 3 + 5) as u64;
-                    }
-                    execute_keccak_f(&mut state);
-                    state
-                },
-                description: "Simple arithmetic pattern",
-            },
-            // Test case 3: Single bit set
-            TestCase {
-                input: {
-                    let mut state = [0u64; 25];
-                    state[0] = 1;
-                    state
-                },
-                expected: {
-                    let mut state = [0u64; 25];
-                    state[0] = 1;
-                    execute_keccak_f(&mut state);
-                    state
-                },
-                description: "Single bit in first lane",
-            },
-        ];
-
+        let test_cases = TestCase::create_direct_execution_test_cases();
         for (i, test_case) in test_cases.iter().enumerate() {
             println!(
                 "Running Keccak256 direct execution test case {}: {}",
@@ -406,51 +145,94 @@ mod tests {
                 test_case.description
             );
 
-            // Set up CPU and memory
-            let mut cpu = Cpu::new(Box::new(DefaultTerminal::new()));
-            cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
-            let base_addr = DRAM_BASE;
-            cpu.x[10] = base_addr as i64;
-
-            // Store input state to memory
-            for (j, &lane) in test_case.input.iter().enumerate() {
-                cpu.mmu
-                    .store_doubleword(base_addr + (j * 8) as u64, lane)
-                    .expect("Failed to store input lane");
-            }
+            let mut setup_exec = KeccakTestSetup::new();
+            setup_exec.load_state_to_memory(&test_case.input);
 
             // Create and execute instruction
-            let instruction = KECCAK256 {
-                address: 0,
-                operands: FormatR {
-                    rs1: 10,
-                    rs2: 0,
-                    rd: 0,
-                },
-                virtual_sequence_remaining: None,
-            };
+            let instruction = setup_exec.create_instruction();
+            instruction.exec(&mut setup_exec.cpu, &mut ());
 
-            instruction.exec(&mut cpu, &mut ());
-
-            // Read result from memory
-            let mut result = [0u64; 25];
-            for (j, lane) in result.iter_mut().enumerate() {
-                *lane = cpu
-                    .mmu
-                    .load_doubleword(base_addr + (j * 8) as u64)
-                    .expect("Failed to load result lane")
-                    .0;
-            }
-
-            // Compare with expected result
+            let result = setup_exec.read_state_from_memory();
             assert_eq!(
                 result, test_case.expected,
                 "Keccak256 direct execution test case {} failed: {}\nInput: {:016x?}\nExpected: {:016x?}\nActual: {:016x?}",
                 i + 1, test_case.description, test_case.input, test_case.expected, result
             );
         }
+    }
 
-        println!("All Keccak256 direct execution test cases passed!");
+    // Identifies exact point at which direct execution and virtual sequence diverge
+    // (in contrast to test_keccak_state_equivalence which only tests the final state).
+    // #[ignore = "Expensive but helpful for debugging as it identifies exact point of divergence"]
+    #[test]
+    fn debug_virtual_sequence_divergence() {
+        let test_vectors = TestVectors::get_standard_test_vectors();
+        for (description, initial_state) in test_vectors {
+            println!(
+                "\nTesting debug_virtual_sequence_divergence with test case: {} ===",
+                description
+            );
+            // Test each round and step
+            for round in 0..24 {
+                for step in &["theta", "rho_and_pi", "chi", "iota"] {
+                    // For debugging, you can uncomment this to see the progress.
+                    // println!("\n--- Testing Round {} after {} ---", round, step);
+
+                    // 1. Set up a fresh CPU for this specific test case.
+                    let mut setup = KeccakTestSetup::new();
+                    setup.load_state_to_memory(&initial_state);
+
+                    // 2. Generate and execute the virtual sequence up to the current step.
+                    let builder = super::Keccak256SequenceBuilder::new(0x1000, setup.vr, 10, 11);
+                    let sequence = builder.build_up_to_step(round, step);
+                    setup.execute_virtual_sequence(&sequence);
+                    let virtual_state = setup.read_state_from_registers();
+
+                    // 3. Compute the correct, expected state using the reference implementation helper.
+                    let expected_state =
+                        execute_reference_up_to_step(&initial_state, round as usize, step);
+
+                    // 4. Assert that the states are equal. This will panic with a detailed
+                    //    error message on the first divergence, stopping the test.
+                    TestAssertions::assert_states_equal(
+                        &expected_state,
+                        &virtual_state,
+                        &format!(
+                            "debug_virtual_sequence_divergence(round={}, step={})",
+                            round, step
+                        ),
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    #[ignore] // For debugging purposes only
+    fn debug_print_states() {
+        // From https://github.com/XKCP/XKCP/blob/master/tests/TestVectors/KeccakF-1600-IntermediateValues.txt
+        let initial_state = [0u64; 25];
+        let expected_final_state = xkcp_vectors::AFTER_ONE_PERMUTATION;
+
+        // EXEC PATH
+        let mut setup_exec = KeccakTestSetup::new();
+        setup_exec.load_state_to_memory(&initial_state);
+        let instruction = setup_exec.create_instruction();
+        instruction.execute(&mut setup_exec.cpu, &mut ());
+        let exec_result = setup_exec.read_state_from_memory();
+
+        // TRACE PATH
+        let mut setup_trace = KeccakTestSetup::new();
+        setup_trace.load_state_to_memory(&initial_state);
+        instruction.trace(&mut setup_trace.cpu, None);
+        let trace_result = setup_trace.read_state_from_memory();
+
+        println!("DEBUGGING KECCAK-F STATE MISMATCH");
+        for i in 0..25 {
+            println!(
+                "Lane {i:02}:  Exec: 0x{:016x}   Trace: 0x{:016x}   Expected: 0x{:016x}",
+                exec_result[i], trace_result[i], expected_final_state[i]
+            );
+        }
     }
 
     #[test]
@@ -515,67 +297,6 @@ mod tests {
         execute_iota(&mut state, ROUND_CONSTANTS[1]);
         let expected_after_iota = xkcp_vectors::EXPECTED_AFTER_ROUND1_IOTA;
         assert_eq!(state, expected_after_iota, "Round 1: Failed after iota");
-    }
-
-    #[test]
-    fn test_individual_step_functions() {
-        // Test each step function individually to isolate any issues
-
-        // Test theta with a known pattern
-        let mut state = [0u64; 25];
-        state[0] = 1;
-        state[5] = 2;
-        state[10] = 4;
-
-        let original_state = state;
-        execute_theta(&mut state);
-
-        // Verify theta creates the expected column parity effects
-        // This is a basic sanity check
-        assert_ne!(state, original_state, "Theta should modify the state");
-
-        // Test rho_and_pi - just verify it changes the state
-        let mut state = [0u64; 25];
-        state[1] = 0xFF;
-        let original_state = state;
-        execute_rho_and_pi(&mut state);
-
-        // The function should move and rotate lanes, so state should change
-        assert_ne!(state, original_state, "Rho and pi should modify the state");
-        // Original position should be cleared (or changed)
-        assert_ne!(
-            state[1], 0xFF,
-            "Original position should be different after rho_and_pi"
-        );
-
-        // Test chi
-        let mut state = [0u64; 25];
-        state[0] = 0xFF;
-        state[1] = 0xAA;
-        state[2] = 0x55;
-
-        execute_chi(&mut state);
-
-        // Chi should apply the non-linear transformation
-        // Expected: state[0] ^= (~state[1] & state[2])
-        let expected_0 = 0xFF ^ ((!0xAA) & 0x55);
-        assert_eq!(state[0], expected_0, "Chi transformation failed");
-
-        // Test iota
-        let mut state = [0u64; 25];
-        state[0] = 0x1234;
-
-        execute_iota(&mut state, 0x5678);
-        assert_eq!(
-            state[0],
-            0x1234 ^ 0x5678,
-            "Iota should XOR round constant into first lane"
-        );
-
-        // Verify other lanes unchanged
-        for i in 1..25 {
-            assert_eq!(state[i], 0, "Iota should only affect first lane");
-        }
     }
 
     #[test]
@@ -780,7 +501,7 @@ mod tests {
     }
 
     #[test]
-    fn test_virtual_sequence_granular() {
+    fn test_debug_virtual_sequence_granular() {
         println!("=== Testing Virtual Sequence Step-by-Step (Granular) ===");
 
         // Set up CPU and memory
@@ -1352,7 +1073,7 @@ mod tests {
                     );
                 }
                 RV32IMInstruction::XOR(xor) => {
-                    println!("  Before: rd (r{}) = 0x{:016x}, rs1 (r{}) = 0x{:016x}, rs2 (r{}) = 0x{:016x}", 
+                    println!("  Before: rd (r{}) = 0x{:016x}, rs1 (r{}) = 0x{:016x}, rs2 (r{}) = 0x{:016x}",
                              xor.operands.rd, cpu.x[xor.operands.rd] as u64,
                              xor.operands.rs1, cpu.x[xor.operands.rs1] as u64,
                              xor.operands.rs2, cpu.x[xor.operands.rs2] as u64);
@@ -1580,14 +1301,8 @@ mod tests {
         println!();
     }
 
-    struct TestCase {
-        input: [u64; 25],
-        expected: [u64; 25],
-        description: &'static str,
-    }
-
     #[test]
-    fn test_find_round3_chi_value() {
+    fn test_debug_find_round3_chi_value() {
         println!("=== Finding Round 3 Chi Output Value ===");
 
         // Execute reference implementation up to round 3 chi
@@ -1909,7 +1624,7 @@ mod tests {
     }
 
     #[test]
-    fn test_rotation_offsets_indexing() {
+    fn test_debug_rotation_offsets_indexing() {
         println!("=== Testing Rotation Offsets Indexing ===");
 
         // According to the Keccak specification, the rotation offset for lane (x,y)
@@ -1965,7 +1680,7 @@ mod tests {
     }
 
     #[test]
-    fn test_virtual_rotation_implementation() {
+    fn test_debug_virtual_rotation_implementation() {
         println!("=== Testing Virtual Rotation Implementation ===");
 
         // Test if the virtual sequence correctly implements 64-bit rotations
@@ -2241,7 +1956,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fair_comparison_reference_vs_virtual() {
+    fn test_debug_fair_comparison_reference_vs_virtual() {
         println!("=== Fair Comparison: Reference Implementation vs Virtual Sequence ===");
 
         let test_cases = vec![
@@ -2328,8 +2043,9 @@ mod tests {
         }
     }
 
+    // Superseded by test_keccak_state_equivalence?
     #[test]
-    fn test_step_by_step_divergence_isolation() {
+    fn test_debug_step_by_step_divergence_isolation() {
         println!("=== Step-by-Step Divergence Isolation ===");
 
         // Use zero state for simplicity
@@ -2472,8 +2188,9 @@ mod tests {
         );
     }
 
+    // Superseded by test_keccak_state_equivalence + test_keccak256_direct_execution
     #[test]
-    fn test_trace_vs_direct_execution() {
+    fn test_debug_trace_vs_direct_execution() {
         println!("=== Trace vs Direct Execution Comparison ===");
 
         // Use zero state for simplicity
