@@ -50,7 +50,8 @@ members = [
     "examples/overflow",
     "examples/overflow/guest",
     "examples/memory-ops",
-    "examples/memory-ops/guest", "jolt-verifier",
+    "examples/memory-ops/guest",
+    "jolt-verifier",
 ]
 
 [features]
