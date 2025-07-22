@@ -6,8 +6,11 @@
 #![allow(clippy::empty_docs)]
 
 use crate::{
+    constants::BYTECODE_PREPEND_NOOP,
+    fieldutils::i128_to_felt,
     graph::model::{Model, NodeType},
-    trace_types::ONNXInstr,
+    tensor::Tensor,
+    trace_types::{ONNXCycle, ONNXInstr},
 };
 use clap::Args;
 use serde::{Deserialize, Serialize};
@@ -44,6 +47,27 @@ pub fn decode(model_path: &PathBuf) -> Vec<ONNXInstr> {
         .collect()
 }
 
+/// Provides a simple API to obtain the execution trace for an ONNX model.
+/// Use this to extract the execution trace from an ONNX model and its inference input, so it can be fed into the Jolt system.
+///
+/// An execution trace is, a step-by-step record of what the VM did over the course of its execution.
+/// Roughly speaking, the trace describes just the changes to virtual machine state at each step of its execution (this includes read operations).
+/// These state transitions are later checked & verified in the Jolt proof system, ensuring the prover possesses a valid execution trace for the given model and input.
+pub fn trace(model_path: &PathBuf, input: &Tensor<i128>) -> Vec<ONNXCycle> {
+    execution_trace(model(model_path), input)
+}
+
+/// Given a model and input extract the execution trace
+fn execution_trace(model: Model, input: &Tensor<i128>) -> Vec<ONNXCycle> {
+    // Run the model with the provided inputs.
+    // The internal model tracer will automatically capture the execution trace during the forward pass
+    let _ = model
+        .forward(&[input.map(i128_to_felt)])
+        .expect("Failed to run model");
+    let execution_trace = model.tracer.execution_trace.borrow().clone();
+    execution_trace
+}
+
 /// Given a file path, load the ONNX model and return a [`Model`].
 /// This function is used to initialize the model for further processing.
 fn model(model_path: &PathBuf) -> Model {
@@ -56,9 +80,12 @@ fn model(model_path: &PathBuf) -> Model {
 
 /// Converts a [`NodeType`] and its program counter into an [`ONNXInstr`].
 /// This helper keeps the [decode] function concise and focused.
-fn decode_node((pc, node): (&usize, &NodeType)) -> ONNXInstr {
+///
+/// # NOTE:
+/// Adds 1 to pc to account for prepended no-op
+pub fn decode_node((pc, node): (&usize, &NodeType)) -> ONNXInstr {
     match node {
-        NodeType::Node(node) => node.decode(*pc),
+        NodeType::Node(node) => node.decode(*pc + BYTECODE_PREPEND_NOOP),
         NodeType::SubGraph { .. } => {
             todo!()
         }

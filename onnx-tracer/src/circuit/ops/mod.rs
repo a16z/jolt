@@ -242,7 +242,16 @@ impl<F: PrimeField + TensorType + PartialOrd> From<&Constant<F>> for ONNXOpcode 
 
 impl<F: PrimeField + TensorType + PartialOrd> Constant<F> {
     ///
-    pub fn new(quantized_values: Tensor<F>, raw_values: Tensor<f32>) -> Self {
+    pub fn new(mut quantized_values: Tensor<F>, mut raw_values: Tensor<f32>) -> Self {
+        // dims.len == 1 for both quantized and raw values, then reshape to [1, dims[0]]
+        // HACK: We need this as currently einsum will panic if the input tensor is not 2D.
+        if quantized_values.dims().len() == 1 {
+            let mut dims = quantized_values.dims().to_vec();
+            dims.insert(0, 1);
+            quantized_values.reshape(&dims).unwrap();
+            raw_values.reshape(&dims).unwrap();
+        }
+        // Otherwise, just return the original tensors
         Self {
             quantized_values,
             raw_values,

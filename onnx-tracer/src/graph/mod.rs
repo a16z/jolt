@@ -9,6 +9,8 @@ pub mod utilities;
 /// Representations of a computational graph's variables.
 pub mod vars;
 
+pub mod tracer;
+
 use thiserror::Error;
 
 // /// The safety factor for the range of the lookup table.

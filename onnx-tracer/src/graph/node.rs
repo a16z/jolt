@@ -1,10 +1,13 @@
 //! # Node Module for ONNX Computational Graphs
 //!
-//! This module defines the core data structures and logic for representing and manipulating nodes within a computational graph, specifically tailored for ONNX model tracing and quantized execution in the zkML-Jolt framework.
+//! This module defines the core data structures and logic for representing and manipulating nodes within a computational graph,
+//! specifically tailored for ONNX model tracing and quantized execution in the zkML-Jolt framework.
 //!
 //! ## Purpose
 //!
-//! The `node` module is essential for modeling the computation graph of a neural network or other ONNX-based models. Each node encapsulates an operation (such as a layer or mathematical function), its input/output relationships, quantization scale, and metadata required for fixed-point arithmetic and zero-knowledge proof compatibility.
+//! The `node` module is essential for modeling the computation graph of a neural network or other ONNX-based models.
+//!  Each node encapsulates an operation (such as a layer or mathematical function),
+//! its input/output relationships, quantization scale, and metadata required for fixed-point arithmetic and zero-knowledge proof compatibility.
 //!
 //! ## Overview of Components
 //!

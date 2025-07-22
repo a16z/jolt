@@ -4,11 +4,25 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Represents a step in the execution trace, where an execution trace is a `Vec<ONNXCycle>`.
+/// Records what the VM did at a cycle of execution.
+/// Constructed at each step in the VM execution cycle, documenting instr, reads & state changes (writes).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ONNXCycle {
+    pub instr: ONNXInstr,
+}
+
+impl ONNXCycle {
+    pub fn no_op() -> Self {
+        ONNXCycle {
+            instr: ONNXInstr::no_op(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 /// Represents a single ONNX instruction parsed from the model.
-/// The ONNX model is converted into a sequence of [`ONNXInstr`]s, forming the program code.
-/// During runtime, the program counter (PC) is used to fetch the next instruction from this sequence.
-/// Represents a single ONNX instruction in the bytecode sequence.
+/// Represents a single ONNX instruction in the program code.
 ///
 /// Each `ONNXInstr` contains the program counter address, the operation code,
 /// and up to two input tensor operands that specify the sources
@@ -20,6 +34,9 @@ use serde::{Deserialize, Serialize};
 /// - `opcode`: The operation code (opcode) that defines the instruction's function.
 /// - `ts1`: The first input tensor operand, specified as an `Option<usize>`, representing the index of a node in the computation graph. Analogous to the `rs1` register in RISC-V.
 /// - `ts2`: The second input tensor operand, specified as an `Option<usize>`, representing the index of a node in the computation graph. Analogous to the `rs2` register in RISC-V.
+///
+/// The ONNX model is converted into a sequence of [`ONNXInstr`]s, forming the program code.
+/// During runtime, the program counter (PC) is used to fetch the next instruction from this read-only memory storing the program bytecode.
 pub struct ONNXInstr {
     /// The program counter (PC) address of this instruction in the bytecode.
     pub address: usize,
@@ -40,12 +57,23 @@ pub struct ONNXInstr {
     pub ts2: Option<usize>,
 }
 
+impl ONNXInstr {
+    pub fn no_op() -> Self {
+        ONNXInstr {
+            address: 0,
+            opcode: ONNXOpcode::Noop,
+            ts1: None,
+            ts2: None,
+        }
+    }
+}
+
 // TODO: Expand the instruction set architecture (ISA):
 //       For phase 1, we focus on supporting text-classification models.
 //       This reduced ISA currently includes only the opcodes commonly used in such models.
 //       Future phases should extend this set to support a broader range of ONNX operations.
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Hash, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 /// Operation code uniquely identifying each ONNX instruction's function
 pub enum ONNXOpcode {
     Noop,
@@ -66,4 +94,10 @@ pub enum ONNXOpcode {
     Sum,
     Sigmoid,
     Softmax,
+}
+
+impl ONNXOpcode {
+    pub fn into_bitflag(self) -> u64 {
+        1u64 << (self as u8)
+    }
 }
