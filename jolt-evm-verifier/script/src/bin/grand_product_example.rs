@@ -1,7 +1,7 @@
 use jolt_core::{
     field::JoltField,
     poly::commitment::hyperkzg::HyperKZG,
-    subprotocols::grand_product::{BatchedDenseGrandProduct, BatchedGrandProduct},
+    subprotocols::grand_product::{BatchedDenseGrandProduct, BatchedGrandProductProver},
     utils::sol_types::GrandProductProof,
 };
 use std::env;
@@ -17,12 +17,12 @@ fn get_proof_data(batched_circuit: &mut BatchedDenseGrandProduct<Fr>) {
     let mut transcript: KeccakTranscript = KeccakTranscript::new(b"test_transcript");
 
     let (proof, r_prover) =
-        <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
+        <BatchedDenseGrandProduct<Fr> as BatchedGrandProductProver<
             Fr,
             HyperKZG<Bn254, KeccakTranscript>,
             KeccakTranscript,
         >>::prove_grand_product(batched_circuit, None, &mut transcript, None);
-    let claims = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
+    let claims = <BatchedDenseGrandProduct<Fr> as BatchedGrandProductProver<
         Fr,
         HyperKZG<Bn254, KeccakTranscript>,
         KeccakTranscript,
@@ -73,7 +73,7 @@ fn main() {
     .take(BATCH_SIZE)
     .collect();
 
-    let mut batched_circuit = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
+    let mut batched_circuit = <BatchedDenseGrandProduct<Fr> as BatchedGrandProductProver<
         Fr,
         HyperKZG<Bn254, KeccakTranscript>,
         KeccakTranscript,
