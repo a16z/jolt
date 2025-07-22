@@ -23,7 +23,7 @@ use crate::{
 };
 
 #[inline]
-fn compute_initial_eval_claim<F: JoltField>(
+pub fn compute_initial_eval_claim<F: JoltField>(
     mle_vec: &Vec<&MultilinearPolynomial<F>>,
     r_cycle: &Vec<F>,
 ) -> F {
@@ -43,7 +43,7 @@ fn compute_initial_eval_claim<F: JoltField>(
 /// Contains proof for a generic sumcheck of the form
 /// val = \sum_{j' \in \{0, 1\}^T} eq(j, j') \prod_{i=1}^d func(j),
 /// which is the un-optimized form of the sumcheck in Appendix C of the Twist + Shout paper.
-struct NaiveSumCheckProof<F: JoltField, ProofTranscript: Transcript> {
+pub struct NaiveSumCheckProof<F: JoltField, ProofTranscript: Transcript> {
     sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     eq_claim: F,
     mle_claims: Vec<F>,
@@ -304,29 +304,6 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
                                 eval_0 + eval_1
                             },
                         ]
-
-                        //     eq_evals_at_idx
-                        //         .par_iter()
-                        //         .zip(at_idx_evals.par_iter())
-                        //         .map(|((c_eq_eval_0, c_eq_eval_1), at_idx_eval)| {
-                        //             let factor =
-                        //                 *at_idx_eval * *before_idx_eval * eq_eval_after_idx * C;
-
-                        //             let eval_0 = if d < D - 1 {
-                        //                 *c_eq_eval_0 * factor * after_idx_evals[D - d - 2].0
-                        //             } else {
-                        //                 *c_eq_eval_0 * factor
-                        //             };
-
-                        //             let eval_1 = if d < D - 1 {
-                        //                 *c_eq_eval_1 * factor * after_idx_evals[D - d - 2].1
-                        //             } else {
-                        //                 *c_eq_eval_1 * factor
-                        //             };
-
-                        //             eval_0 + eval_1
-                        //         })
-                        //         .collect::<[_; 2]>()
                     })
                     .reduce(
                         || [F::zero(); 2],
@@ -389,6 +366,7 @@ mod test {
 
     use ark_bn254::Fr;
     use ark_std::test_rng;
+    use criterion::Criterion;
     use rand_core::RngCore;
     use rayon::{
         iter::{
@@ -511,24 +489,30 @@ mod test {
 
     #[test]
     fn test_large_d_optimization_sumcheck() {
+        let mut criterion = Criterion::default()
+            .configure_from_args()
+            .warm_up_time(std::time::Duration::from_secs(5));
+
         let test_inputs = [
             // (2, 1 << 10, 16),
             // (8, 1 << 10, 16),
             // (16, 1 << 10, 16),
             // (32, 1 << 10, 16),
-            (8, 1 << 20, 1 << 16),
-            (12, 1 << 20, 1 << 16),
-            (16, 1 << 20, 1 << 16),
-            (50, 1 << 20, 1 << 16),
+
+            // (8, 1 << 20, 1 << 16),
+            // (12, 1 << 20, 1 << 16),
+            // (16, 1 << 20, 1 << 16),
+            // (50, 1 << 20, 1 << 16),
+            (8, 1 << 20),
+            (12, 1 << 20),
+            (16, 1 << 20),
+            (50, 1 << 20),
         ];
 
-        for (D, T, K) in test_inputs {
-            let test_perf = large_d_optimization_ra_virtualization(D, T, K);
-            println!(
-                "D: {}, T: {}, K (d^th root): {}, optimized_duration: {:?}, naive_duration: {:?}",
-                D, T, K, test_perf.optimized_duration, test_perf.naive_duration
-            );
+        for (D, T) in test_inputs {
+            benchmark_large_d_optimization_ra_virtualization(&mut criterion, D, T);
         }
+        criterion.final_summary();
     }
 
     fn test_func_data(D: usize, T: usize) -> Vec<MultilinearPolynomial<Fr>> {
@@ -672,9 +656,22 @@ mod test {
         assert_eq!(previous_claim, previous_claim_bench);
     }
 
-    fn large_d_optimization_ra_virtualization(D: usize, T: usize, K: usize) -> TestPerf {
+    fn benchmark_large_d_optimization_ra_virtualization(
+        criterion: &mut Criterion,
+        D: usize,
+        T: usize,
+    ) {
+        let test_perf = large_d_optimization_ra_virtualization(D, T);
+        criterion.bench_function(
+            &format!("large_d_optimization_ra_virtualization_{D}_{T}"),
+            |b| b.iter(|| criterion::black_box(large_d_optimization_ra_virtualization(D, T))),
+        );
+    }
+    
+
+
+    fn large_d_optimization_ra_virtualization(D: usize, T: usize) -> TestPerf {
         assert!(T.is_power_of_two(), "T: {T}");
-        assert!(K.is_power_of_two(), "K: {K}");
 
         // Compute the sum-check
         // ra(k_1, ..., k_d, j) = \sum_{j_1, ..., j_d} eq(j, j_1, ..., j_d) \prod_{i=1}^d ra(k_i, j_i)
