@@ -1,7 +1,6 @@
 use crate::field::JoltField;
-use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::r1cs::constraints::JoltRV32IMConstraints;
-use ark_bn254::{Bn254, Fr};
+use ark_bn254::Fr;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use super::{Jolt, JoltProof};
@@ -24,6 +23,7 @@ where
 
 pub type RV32IJoltProof<F, PCS, ProofTranscript> = JoltProof<WORD_SIZE, F, PCS, ProofTranscript>;
 
+use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::utils::transcript::{KeccakTranscript, Transcript};
 use eyre::Result;
 use std::fs::File;
@@ -66,14 +66,15 @@ pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
 }
 
 pub type ProofTranscript = KeccakTranscript;
-pub type PCS = HyperKZG<Bn254, ProofTranscript>;
-#[derive(CanonicalSerialize, CanonicalDeserialize, Clone)]
-pub struct JoltHyperKZGProof {
+pub type PCS = DoryCommitmentScheme<ProofTranscript>;
+
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
+pub struct JoltProofBundle {
     pub proof: RV32IJoltProof<Fr, PCS, ProofTranscript>,
     // pub commitments: JoltCommitments<PCS, ProofTranscript>,
 }
 
-impl Serializable for JoltHyperKZGProof {}
+impl Serializable for JoltProofBundle {}
 
 // ==================== TEST ====================
 
