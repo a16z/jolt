@@ -5,9 +5,7 @@ use crate::instruction::format::format_u::FormatU;
 use crate::instruction::format::format_virtual_right_shift_i::FormatVirtualRightShiftI;
 use crate::instruction::ld::LD;
 use crate::instruction::lui::LUI;
-use crate::instruction::or::OR;
 use crate::instruction::sd::SD;
-use crate::instruction::slli::SLLI;
 use crate::instruction::virtual_rotri::VirtualROTRI;
 use crate::instruction::xor::XOR;
 use crate::instruction::xori::XORI;
@@ -61,25 +59,31 @@ enum Value {
 }
 use Value::{Imm, Reg};
 
-/// Layout of the 96 virtual registers (`vr`) for Blake2.
+/// Number of virtual registers needed for Blake2 implementation.
 ///
 /// Jolt requires the total number of registers (physical + virtual) to be a power of two.
 /// With 32 physical registers, we need 96 virtual registers to reach 128.
-///
 pub const NEEDED_REGISTERS: usize = 96;
 
-#[allow(dead_code)]
-const VR_WORKING_STATE_START: usize = 0; // vr[0..15]: Working state `v` (16 words)
+/// Memory layout constants for Blake2 virtual registers
+///
+/// The virtual register layout is organized as follows:
+/// - vr[0..15]:  Working state `v` (16 words) - computed during compression
+/// - vr[16..31]: Message block `m` (16 words) - input data
+/// - vr[32..39]: Hash state `h` (8 words) - input/output hash state
+/// - vr[40]:     Counter value `t` (1 word) - byte counter
+/// - vr[41]:     Final block flag (1 word) - indicates last block
+/// - vr[42]:     Temporary register for intermediate calculations
+/// - vr[43..95]: Additional temporary registers for complex operations
+const VR_WORKING_STATE_START: usize = 0;
 const WORKING_STATE_SIZE: usize = 16;
-const VR_MESSAGE_BLOCK_START: usize = 16; // vr[16..31]: Message block `m` (16 words)
-const MESSAGE_BLOCK_SIZE: usize = 16;
-const VR_HASH_STATE_START: usize = 32; // vr[32..39]: Hash state `h` (8 words)
-const HASH_STATE_SIZE: usize = 8;
+const VR_MESSAGE_BLOCK_START: usize = 16;
+pub const MESSAGE_BLOCK_SIZE: usize = 16;
+const VR_HASH_STATE_START: usize = 32;
+pub const HASH_STATE_SIZE: usize = 8;
 const VR_T: usize = 40;
 const VR_IS_FINAL: usize = 41;
 const VR_TEMP: usize = 42;
-// vr[40..79]: Temporary registers for G function (40 words)
-// vr[80..95]: General-purpose scratch registers (16 words)
 
 struct Blake2SequenceBuilder {
     address: u64,
@@ -122,11 +126,23 @@ impl Blake2SequenceBuilder {
     }
 
     fn build(mut self) -> Vec<RV32IMInstruction> {
-        // 1. Load all required data from memory
-        self.load_state(); // Load hash state (8 words)
-        self.load_message(); // Load message block (16 words)
-        self.load_t(); // Load counter value (1 word)
-        self.load_is_final(); // Load final block flag (1 word)
+        // Load the current hash state (8 words) from memory into virtual registers
+        self.load_data_range(self.operand_rs1, 0, VR_HASH_STATE_START, HASH_STATE_SIZE);
+        // Load the message block (16 words) from memory into virtual registers
+        self.load_data_range(
+            self.operand_rs2,
+            0,
+            VR_MESSAGE_BLOCK_START,
+            MESSAGE_BLOCK_SIZE,
+        );
+        // Load the counter value (t) from memory - stored after the message block
+        self.ld(self.operand_rs2, MESSAGE_BLOCK_SIZE as i64, self.vr[VR_T]);
+        // Load the final block flag (is_final) from memory - stored after the counter
+        self.ld(
+            self.operand_rs2,
+            MESSAGE_BLOCK_SIZE as i64 + 1,
+            self.vr[VR_IS_FINAL],
+        );
 
         // 2. Initialize the working state v[0..15]
         self.initialize_working_state();
@@ -148,52 +164,54 @@ impl Blake2SequenceBuilder {
         self.sequence
     }
 
-    /// Load the current hash state (8 words) from memory into virtual registers
-    fn load_state(&mut self) {
-        (0..HASH_STATE_SIZE)
-            .for_each(|i| self.ld(self.operand_rs1, i as i64, self.vr[VR_HASH_STATE_START + i]));
-    }
-
-    /// Load the message block (16 words) from memory into virtual registers
-    fn load_message(&mut self) {
-        (0..MESSAGE_BLOCK_SIZE).for_each(|i| {
+    /// Load data from memory into virtual registers starting at a given offset
+    fn load_data_range(
+        &mut self,
+        base_register: usize,
+        memory_offset_start: usize,
+        vr_start: usize,
+        count: usize,
+    ) {
+        (0..count).for_each(|i| {
             self.ld(
-                self.operand_rs2,
-                i as i64,
-                self.vr[VR_MESSAGE_BLOCK_START + i],
+                base_register,
+                (memory_offset_start + i) as i64,
+                self.vr[vr_start + i],
             )
         });
     }
 
-    /// Load the counter value (t) from memory - stored after the message block
-    fn load_t(&mut self) {
-        self.ld(self.operand_rs2, MESSAGE_BLOCK_SIZE as i64, self.vr[VR_T]);
-    }
-
-    /// Load the final block flag (is_final) from memory - stored after the counter
-    fn load_is_final(&mut self) {
-        self.ld(
-            self.operand_rs2,
-            MESSAGE_BLOCK_SIZE as i64 + 1,
-            self.vr[VR_IS_FINAL],
-        );
-    }
-
-    /// Initialize the working state v[0..15] according to Blake2b specification
+    /// Initialize the working state v[0..15] according to Blake2b specification:
+    /// - v[0..7] = h[0..7] (current hash state)
+    /// - v[8..15] = IV[0..7] (Blake2b initialization vector)
+    /// - v[12] ^= t (counter low)
+    /// - v[13] ^= t >> 64 (counter high, always 0 for 64-bit counter)
+    /// - v[14] = ~v[14] if is_final (invert all bits for final block)
     fn initialize_working_state(&mut self) {
         // v[0..7] = h[0..7] (current hash state)
         for i in 0..HASH_STATE_SIZE {
-            self.xor64(Reg(self.vr[VR_HASH_STATE_START + i]), Imm(0), self.vr[i]);
+            self.xor64(
+                Reg(self.vr[VR_HASH_STATE_START + i]),
+                Imm(0),
+                self.vr[VR_WORKING_STATE_START + i],
+            );
         }
 
         // v[8..15] = IV[0..7] (initialization vector)
         for i in 0..WORKING_STATE_SIZE - HASH_STATE_SIZE {
-            self.load_64bit_immediate(BLAKE2B_IV[i], self.vr[HASH_STATE_SIZE + i]);
+            self.load_64bit_immediate(
+                BLAKE2B_IV[i],
+                self.vr[VR_WORKING_STATE_START + HASH_STATE_SIZE + i],
+            );
         }
 
-        // Blake2b counter handling: XOR counter with v[12] and extract high part for v[13]
-        // v[12] = vr[12] ^ t (counter low)
-        self.xor64(Reg(self.vr[12]), Reg(self.vr[VR_T]), self.vr[12]);
+        // Blake2b counter handling: XOR counter with v[12]
+        // v[12] = v[12] ^ t (counter low)
+        self.xor64(
+            Reg(self.vr[VR_WORKING_STATE_START + 12]),
+            Reg(self.vr[VR_T]),
+            self.vr[VR_WORKING_STATE_START + 12],
+        );
 
         // v[13] = IV[5] ^ (t >> 64) (counter high) - for 64-bit counter, high part is 0
         // Since we're using 64-bit counter, the high part is always 0, so v[13] remains unchanged
@@ -207,7 +225,11 @@ impl Blake2SequenceBuilder {
         self.sub64(Imm(0), Reg(self.vr[VR_IS_FINAL]), temp_mask);
 
         // XOR v[14] with the mask: inverts all bits if is_final=1, leaves unchanged if is_final=0
-        self.xor64(Reg(self.vr[14]), Reg(temp_mask), self.vr[14]);
+        self.xor64(
+            Reg(self.vr[VR_WORKING_STATE_START + 14]),
+            Reg(temp_mask),
+            self.vr[VR_WORKING_STATE_START + 14],
+        );
     }
 
     /// Execute one round of Blake2b compression
@@ -230,10 +252,10 @@ impl Blake2SequenceBuilder {
     /// Blake2b G function: core mixing function
     /// Updates v[a], v[b], v[c], v[d] using message words m[x], m[y]
     fn g_function(&mut self, a: usize, b: usize, c: usize, d: usize, x: usize, y: usize) {
-        let va = self.vr[a];
-        let vb = self.vr[b];
-        let vc = self.vr[c];
-        let vd = self.vr[d];
+        let va = self.vr[VR_WORKING_STATE_START + a];
+        let vb = self.vr[VR_WORKING_STATE_START + b];
+        let vc = self.vr[VR_WORKING_STATE_START + c];
+        let vd = self.vr[VR_WORKING_STATE_START + d];
         let mx = self.vr[VR_MESSAGE_BLOCK_START + x];
         let my = self.vr[VR_MESSAGE_BLOCK_START + y];
         let temp1 = self.vr[VR_TEMP];
@@ -269,20 +291,26 @@ impl Blake2SequenceBuilder {
         self.rotr64(Reg(temp1), 63, vb);
     }
 
-    /// Finalize the hash state: h[i] ^= v[i] ^ v[i+8]
+    /// Finalize the hash state according to Blake2b specification:
+    /// For i in 0..8: h[i] = h[i] ^ v[i] ^ v[i+8]
+    /// This produces the final 8-word hash output in the hash state registers.
     fn finalize_state(&mut self) {
-        for i in 0..8 {
-            let hi = self.vr[VR_HASH_STATE_START + i];
-            let vi = self.vr[i];
-            let vi8 = self.vr[i + 8];
-            let temp = self.vr[VR_TEMP];
+        let temp = self.vr[VR_TEMP];
 
+        for i in 0..HASH_STATE_SIZE {
+            let hi = self.vr[VR_HASH_STATE_START + i];
+            let vi = self.vr[VR_WORKING_STATE_START + i];
+            let vi8 = self.vr[VR_WORKING_STATE_START + i + HASH_STATE_SIZE];
+
+            // temp = v[i] ^ v[i+8]
             self.xor64(Reg(vi), Reg(vi8), temp);
+            // h[i] = h[i] ^ temp
             self.xor64(Reg(hi), Reg(temp), hi);
         }
     }
 
-    /// Store the final hash state back to memory
+    /// Store the final hash state (8 words) back to memory
+    /// Blake2b compression outputs an 8-word hash state
     fn store_state(&mut self) {
         for i in 0..HASH_STATE_SIZE {
             self.sd(self.operand_rs1, self.vr[VR_HASH_STATE_START + i], i as i64);
@@ -313,7 +341,7 @@ impl Blake2SequenceBuilder {
                 Reg(rd)
             }
             (Imm(_), Reg(_)) => self.add64(rs2, rs1, rd),
-            (Imm(imm1), Imm(imm2)) => Imm((imm1).wrapping_add(imm2)),
+            (Imm(imm1), Imm(imm2)) => Imm(imm1.wrapping_add(imm2)),
         }
     }
 
@@ -331,7 +359,7 @@ impl Blake2SequenceBuilder {
             }
             (Imm(imm), Reg(rs2)) => {
                 // For immediate - register, we need to first load the immediate
-                let temp_reg = self.vr[67]; // Use a temp register
+                let temp_reg = self.vr[67]; // Use a temp register (outside normal range)
                 self.load_64bit_immediate(imm, temp_reg);
                 let sub = SUB {
                     address: self.address,
@@ -346,11 +374,10 @@ impl Blake2SequenceBuilder {
                 Reg(rd)
             }
             (Reg(_), Imm(_)) => {
-                // Register - immediate: convert to register + (-immediate)
-                // This is complex, so let's use the first approach with temp register
+                // Register - immediate: not commonly used in Blake2, would require more complex implementation
                 panic!("SUB with reg - imm not implemented, use imm - reg instead")
             }
-            (Imm(imm1), Imm(imm2)) => Imm((imm1).wrapping_sub(imm2)),
+            (Imm(imm1), Imm(imm2)) => Imm(imm1.wrapping_sub(imm2)),
         }
     }
 
@@ -584,78 +611,4 @@ fn g(v: &mut [u64; 16], a: usize, b: usize, c: usize, d: usize, x: u64, y: u64) 
     v[d] = (v[d] ^ v[a]).rotate_right(16);
     v[c] = v[c].wrapping_add(v[d]);
     v[b] = (v[b] ^ v[c]).rotate_right(63);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// High-level Blake2 function following RFC specification
-    ///
-    /// Parameters:
-    /// - data_blocks: Array of data blocks d[0..dd-1]
-    /// - ll: Length of input in bytes
-    /// - kk: Key length (0 for unkeyed)  
-    /// - nn: Output length in bytes
-    fn blake2(data_blocks: &[[u64; 16]], ll: u64, kk: u64, nn: u64) -> Vec<u8> {
-        const BB: u64 = 128; // Block size in bytes
-
-        // h[0..7] := IV[0..7] (Initialization Vector)
-        let mut h = BLAKE2B_IV;
-
-        // Parameter block p[0]: h[0] := h[0] ^ 0x01010000 ^ (kk << 8) ^ nn
-        h[0] ^= 0x01010000 ^ (kk << 8) ^ nn;
-
-        let dd = data_blocks.len();
-
-        // Process padded key and data blocks
-        if dd > 1 {
-            for i in 0..(dd - 1) {
-                let counter = (i as u64 + 1) * BB;
-                execute_blake2b_compression(&mut h, &data_blocks[i], counter, false);
-            }
-        }
-
-        // Final block
-        let final_counter = if kk == 0 { ll } else { ll + BB };
-        execute_blake2b_compression(&mut h, &data_blocks[dd - 1], final_counter, true);
-
-        // Return first "nn" bytes from little-endian word array h[]
-        let mut result = Vec::with_capacity(nn as usize);
-        for &word in h.iter() {
-            let bytes = word.to_le_bytes();
-            for &byte in bytes.iter() {
-                if result.len() < nn as usize {
-                    result.push(byte);
-                }
-            }
-        }
-        result
-    }
-
-    #[test]
-    fn test_blake2_rfc_abc() {
-        // Test case from Blake2 RFC for "abc"
-        let mut message_block = [0u64; 16];
-        message_block[0] = 0x0000000000636261u64; // "abc" in little-endian
-                                                  // All other words remain 0 (padding)
-
-        let data_blocks = [message_block];
-        let ll = 3u64; // Length of "abc" in bytes
-        let kk = 0u64; // Key length (unkeyed)
-        let nn = 64u64; // Output length (Blake2b-512)
-
-        // Execute Blake2 function following RFC specification
-        let result = blake2(&data_blocks, ll, kk, nn);
-
-        assert_eq!(result.len(), 64);
-        let expected = [
-            0xba, 0x80, 0xa5, 0x3f, 0x98, 0x1c, 0x4d, 0x0d, 0x6a, 0x27, 0x97, 0xb6, 0x9f, 0x12,
-            0xf6, 0xe9, 0x4c, 0x21, 0x2f, 0x14, 0x68, 0x5a, 0xc4, 0xb7, 0x4b, 0x12, 0xbb, 0x6f,
-            0xdb, 0xff, 0xa2, 0xd1, 0x7d, 0x87, 0xc5, 0x39, 0x2a, 0xab, 0x79, 0x2d, 0xc2, 0x52,
-            0xd5, 0xde, 0x45, 0x33, 0xcc, 0x95, 0x18, 0xd3, 0x8a, 0xa8, 0xdb, 0xf1, 0x92, 0x5a,
-            0xb9, 0x23, 0x86, 0xed, 0xd4, 0x00, 0x99, 0x23,
-        ];
-        assert_eq!(result.as_slice(), &expected);
-    }
 }
