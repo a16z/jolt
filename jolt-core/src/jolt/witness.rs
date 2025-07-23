@@ -1,10 +1,17 @@
+#![allow(static_mut_refs)]
+
 use itertools::Itertools;
+use once_cell::sync::OnceCell;
 use rayon::prelude::*;
 use tracer::instruction::RV32IMCycle;
 
 use crate::{
     field::JoltField,
-    jolt::vm::{instruction_lookups, ram::remap_address, JoltProverPreprocessing},
+    jolt::vm::{
+        instruction_lookups,
+        ram::{compute_d_parameter, remap_address, NUM_RA_I_VARS},
+        JoltProverPreprocessing,
+    },
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         multilinear_polynomial::MultilinearPolynomial, one_hot_polynomial::OneHotPolynomial,
@@ -40,54 +47,109 @@ pub enum CommittedPolynomial {
     /// One-hot ra/wa polynomial for the RAM instance of Twist
     /// Note that for RAM, ra and wa are the same polynomial because
     /// there is at most one load or store per cycle.
-    /// d = 1 right now hence we only ever use RamRa(0) for now.
     RamRa(usize),
     /// Inc polynomial for the registers instance of Twist
     RdInc,
     /// Inc polynomial for the RAM instance of Twist
     RamInc,
     /// One-hot ra polynomial for the instruction lookups instance of Shout.
-    /// There are four (d=4) of these polynomials, `InstructionRa(0) .. InstructionRa(3)`
+    /// There are d=8 of these polynomials, `InstructionRa(0) .. InstructionRa(7)`
     InstructionRa(usize),
 }
 
-pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomial; 19] = [
-    CommittedPolynomial::LeftInstructionInput,
-    CommittedPolynomial::RightInstructionInput,
-    CommittedPolynomial::Product,
-    CommittedPolynomial::WriteLookupOutputToRD,
-    CommittedPolynomial::WritePCtoRD,
-    CommittedPolynomial::ShouldBranch,
-    CommittedPolynomial::ShouldJump,
-    CommittedPolynomial::BytecodeRa,
-    CommittedPolynomial::RamRa(0),
-    CommittedPolynomial::RdInc,
-    CommittedPolynomial::RamInc,
-    CommittedPolynomial::InstructionRa(0),
-    CommittedPolynomial::InstructionRa(1),
-    CommittedPolynomial::InstructionRa(2),
-    CommittedPolynomial::InstructionRa(3),
-    CommittedPolynomial::InstructionRa(4),
-    CommittedPolynomial::InstructionRa(5),
-    CommittedPolynomial::InstructionRa(6),
-    CommittedPolynomial::InstructionRa(7),
-];
+pub static mut ALL_COMMITTED_POLYNOMIALS: OnceCell<Vec<CommittedPolynomial>> = OnceCell::new();
+
+pub struct AllCommittedPolynomials();
+impl AllCommittedPolynomials {
+    pub fn initialize(ram_K: usize) -> Self {
+        let mut polynomials = vec![
+            CommittedPolynomial::LeftInstructionInput,
+            CommittedPolynomial::RightInstructionInput,
+            CommittedPolynomial::Product,
+            CommittedPolynomial::WriteLookupOutputToRD,
+            CommittedPolynomial::WritePCtoRD,
+            CommittedPolynomial::ShouldBranch,
+            CommittedPolynomial::ShouldJump,
+            CommittedPolynomial::BytecodeRa, // Will need to make this dynamic too
+        ];
+        let ram_d = compute_d_parameter(ram_K);
+        for i in 0..ram_d {
+            polynomials.push(CommittedPolynomial::RamRa(i));
+        }
+        polynomials.extend([
+            CommittedPolynomial::RdInc,
+            CommittedPolynomial::RamInc,
+            CommittedPolynomial::InstructionRa(0),
+            CommittedPolynomial::InstructionRa(1),
+            CommittedPolynomial::InstructionRa(2),
+            CommittedPolynomial::InstructionRa(3),
+            CommittedPolynomial::InstructionRa(4),
+            CommittedPolynomial::InstructionRa(5),
+            CommittedPolynomial::InstructionRa(6),
+            CommittedPolynomial::InstructionRa(7),
+        ]);
+
+        unsafe {
+            ALL_COMMITTED_POLYNOMIALS
+                .set(polynomials)
+                .expect("ALL_COMMITTED_POLYNOMIALS is already initialized");
+        }
+
+        AllCommittedPolynomials()
+    }
+
+    pub fn iter() -> impl Iterator<Item = &'static CommittedPolynomial> {
+        unsafe {
+            ALL_COMMITTED_POLYNOMIALS
+                .get()
+                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")
+                .iter()
+        }
+    }
+}
+
+impl Drop for AllCommittedPolynomials {
+    fn drop(&mut self) {
+        unsafe {
+            ALL_COMMITTED_POLYNOMIALS
+                .take()
+                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized");
+        }
+    }
+}
 
 impl CommittedPolynomial {
     pub fn len() -> usize {
-        ALL_COMMITTED_POLYNOMIALS.len()
-    }
-
-    pub fn from_index(index: usize) -> Self {
-        ALL_COMMITTED_POLYNOMIALS[index]
+        unsafe {
+            ALL_COMMITTED_POLYNOMIALS
+                .get()
+                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")
+                .len()
+        }
     }
 
     pub fn to_index(&self) -> usize {
-        ALL_COMMITTED_POLYNOMIALS
-            .iter()
-            .find_position(|poly| *poly == self)
-            .unwrap()
-            .0
+        unsafe {
+            ALL_COMMITTED_POLYNOMIALS
+                .get()
+                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")
+                .iter()
+                .find_position(|poly| *poly == self)
+                .unwrap()
+                .0
+        }
+    }
+
+    fn ram_d(&self) -> usize {
+        // this is kind of jank but fine for now ig
+        unsafe {
+            ALL_COMMITTED_POLYNOMIALS
+                .get()
+                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")
+                .iter()
+                .filter(|poly| matches!(poly, CommittedPolynomial::RamRa(_)))
+                .count()
+        }
     }
 
     pub fn generate_witness<F, PCS>(
@@ -185,23 +247,25 @@ impl CommittedPolynomial {
                     preprocessing.shared.bytecode.code_size,
                 ))
             }
-            // TODO(markosg04) logic here needs to be adjusted for when d > 1 is implemented
             CommittedPolynomial::RamRa(i) => {
-                if *i > 0 {
-                    panic!("RAM is implemented for only d=1 currently.");
-                }
+                let d = self.ram_d();
+                debug_assert!(*i < d);
                 let addresses: Vec<usize> = trace
                     .par_iter()
                     .map(|cycle| {
-                        remap_address(
+                        let address = remap_address(
                             cycle.ram_access().address() as u64,
                             &preprocessing.shared.memory_layout,
-                        ) as usize
-                            % (1 << 8)
+                        ) as usize;
+
+                        // Get i'th chunk of the address
+                        (address >> (NUM_RA_I_VARS * (d - 1 - i))) % (1 << NUM_RA_I_VARS)
                     })
                     .collect();
-                // let K = addresses.par_iter().max().unwrap().next_power_of_two();
-                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(addresses, 1 << 8))
+                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
+                    addresses,
+                    1 << NUM_RA_I_VARS,
+                ))
             }
             CommittedPolynomial::RdInc => {
                 let coeffs: Vec<i64> = trace

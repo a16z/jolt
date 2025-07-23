@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::dag::state_manager::StateManager;
-use crate::jolt::vm::ram::{remap_address, NUM_RA_I_VARS};
+use crate::jolt::vm::ram::{compute_d_parameter, remap_address, NUM_RA_I_VARS};
 use crate::jolt::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
@@ -56,8 +56,8 @@ impl<F: JoltField> RASumcheck<F> {
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         // Calculate d dynamically such that 2^8 = K^(1/D)
+        let d = compute_d_parameter(K);
         let log_K = K.log_2();
-        let d = (log_K + NUM_RA_I_VARS - 1) / NUM_RA_I_VARS;
 
         let (preprocessing, trace, _, _) = state_manager.get_prover_data();
         let T = trace.len();
@@ -180,8 +180,8 @@ impl<F: JoltField> RASumcheck<F> {
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         // Calculate D dynamically such that 2^8 = K^(1/D)
+        let d = compute_d_parameter(K);
         let log_K = K.log_2();
-        let d = (log_K + NUM_RA_I_VARS - 1) / NUM_RA_I_VARS;
 
         let (_, _, T) = state_manager.get_verifier_data();
 

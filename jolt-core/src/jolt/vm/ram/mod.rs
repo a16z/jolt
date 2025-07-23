@@ -36,7 +36,7 @@ pub mod raf_evaluation;
 pub mod read_write_checking;
 pub mod val_evaluation;
 
-const NUM_RA_I_VARS: usize = 8;
+pub const NUM_RA_I_VARS: usize = 8;
 pub fn compute_d_parameter(K: usize) -> usize {
     // Calculate D dynamically such that 2^8 = K^(1/D)
     let log_K = K.log_2();

@@ -5,7 +5,7 @@ use crate::field::JoltField;
 use crate::jolt::vm::bytecode::BytecodePreprocessing;
 use crate::jolt::vm::ram::remap_address;
 use crate::jolt::vm::rv32i_vm::Serializable;
-use crate::jolt::witness::ALL_COMMITTED_POLYNOMIALS;
+use crate::jolt::witness::{AllCommittedPolynomials, ALL_COMMITTED_POLYNOMIALS};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::opening_proof::{
@@ -295,8 +295,8 @@ where
             1 << 16, // TODO(moodlezoup)
         );
 
-        let committed_polys: Vec<_> = ALL_COMMITTED_POLYNOMIALS
-            .par_iter()
+        let committed_polys: Vec<_> = AllCommittedPolynomials::iter()
+            .par_bridge()
             .map(|poly| poly.generate_witness(&preprocessing, &trace))
             .collect();
         let commitments: Vec<_> = committed_polys
@@ -358,7 +358,7 @@ where
 
         // Batch-prove all openings
         let mut polynomials_map = HashMap::new();
-        for polynomial in ALL_COMMITTED_POLYNOMIALS.iter() {
+        for polynomial in AllCommittedPolynomials::iter() {
             polynomials_map.insert(
                 *polynomial,
                 polynomial.generate_witness(&preprocessing, &trace),
@@ -498,7 +498,7 @@ where
 
         // Batch-verify all openings
         let mut commitments_map = HashMap::new();
-        for polynomial in ALL_COMMITTED_POLYNOMIALS.iter() {
+        for polynomial in AllCommittedPolynomials::iter() {
             commitments_map.insert(
                 *polynomial,
                 proof.commitments.commitments[polynomial.to_index()].clone(),

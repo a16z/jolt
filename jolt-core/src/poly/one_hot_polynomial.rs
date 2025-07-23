@@ -289,6 +289,18 @@ impl<F: JoltField> OneHotPolynomial<F> {
         DensePolynomial::new(dense_coeffs)
     }
 
+    pub fn evaluate(&self, r: &[F]) -> F {
+        assert_eq!(r.len(), self.get_num_vars());
+        let (r_left, r_right) = r.split_at(self.num_rows().log_2());
+        let eq_left = EqPolynomial::evals(r_left);
+        let eq_right = EqPolynomial::evals(r_right);
+        self.vector_matrix_product(&eq_left)
+            .into_par_iter()
+            .zip_eq(eq_right.par_iter())
+            .map(|(l, r)| l * r)
+            .sum()
+    }
+
     pub fn from_indices(nonzero_indices: Vec<usize>, K: usize) -> Self {
         debug_assert_eq!(DoryGlobals::get_T(), nonzero_indices.len());
 
@@ -469,19 +481,57 @@ mod tests {
 
     #[test]
     #[serial]
-    fn K_less_than_T() {
+    fn sumcheck_K_less_than_T() {
         dense_polynomial_equivalence::<5, 6>();
     }
 
     #[test]
     #[serial]
-    fn K_equals_T() {
+    fn sumcheck_K_equals_T() {
         dense_polynomial_equivalence::<6, 6>();
     }
 
     #[test]
     #[serial]
-    fn K_greater_than_T() {
+    fn sumcheck_K_greater_than_T() {
         dense_polynomial_equivalence::<6, 5>();
+    }
+
+    fn evaluate_test<const LOG_K: usize, const LOG_T: usize>() {
+        let K: usize = 1 << LOG_K;
+        let T: usize = 1 << LOG_T;
+        let _guard = DoryGlobals::initialize(K, T);
+
+        let mut rng = test_rng();
+
+        let nonzero_indices: Vec<_> = std::iter::repeat_with(|| rng.next_u64() as usize % K)
+            .take(T)
+            .collect();
+        let one_hot_poly = OneHotPolynomial::<Fr>::from_indices(nonzero_indices, K);
+        let dense_poly = one_hot_poly.to_dense_poly();
+
+        let r: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
+            .take(LOG_K + LOG_T)
+            .collect();
+
+        assert_eq!(one_hot_poly.evaluate(&r), dense_poly.evaluate(&r));
+    }
+
+    #[test]
+    #[serial]
+    fn evaluate_K_less_than_T() {
+        evaluate_test::<5, 6>();
+    }
+
+    #[test]
+    #[serial]
+    fn evaluate_K_equals_T() {
+        evaluate_test::<6, 6>();
+    }
+
+    #[test]
+    #[serial]
+    fn evaluate_K_greater_than_T() {
+        evaluate_test::<6, 5>();
     }
 }

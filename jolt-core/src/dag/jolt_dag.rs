@@ -8,7 +8,7 @@ use crate::jolt::vm::instruction_lookups::LookupsDag;
 use crate::jolt::vm::ram::RamDag;
 use crate::jolt::vm::registers::RegistersDag;
 use crate::jolt::vm::JoltCommitments;
-use crate::jolt::witness::ALL_COMMITTED_POLYNOMIALS;
+use crate::jolt::witness::AllCommittedPolynomials;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
@@ -72,7 +72,10 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         .max()
         .unwrap();
 
-        let _guard = DoryGlobals::initialize(K, padded_trace_length);
+        let _guard = (
+            DoryGlobals::initialize(K, padded_trace_length),
+            AllCommittedPolynomials::initialize(ram_K),
+        );
 
         // Generate and commit to all witness polynomials
         self.generate_and_commit_polynomials()?;
@@ -188,25 +191,25 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         drop(_guard);
         drop(span);
 
-        // // Batch-prove all openings
-        // let (_, trace, _, _) = self.prover_state_manager.get_prover_data();
-        // let mut polynomials_map = HashMap::new();
-        // for polynomial in ALL_COMMITTED_POLYNOMIALS.iter() {
-        //     polynomials_map.insert(
-        //         *polynomial,
-        //         polynomial.generate_witness(&preprocessing, &trace),
-        //     );
-        // }
-        // let opening_proof = accumulator.borrow_mut().reduce_and_prove(
-        //     polynomials_map,
-        //     &preprocessing.generators,
-        //     &mut *transcript.borrow_mut(),
-        // );
+        // Batch-prove all openings
+        let (_, trace, _, _) = self.prover_state_manager.get_prover_data();
+        let mut polynomials_map = HashMap::new();
+        for polynomial in AllCommittedPolynomials::iter() {
+            polynomials_map.insert(
+                *polynomial,
+                polynomial.generate_witness(&preprocessing, &trace),
+            );
+        }
+        let opening_proof = accumulator.borrow_mut().reduce_and_prove(
+            polynomials_map,
+            &preprocessing.generators,
+            &mut *transcript.borrow_mut(),
+        );
 
-        // self.prover_state_manager.proofs.borrow_mut().insert(
-        //     ProofKeys::ReducedOpeningProof,
-        //     ProofData::ReducedOpeningProof(opening_proof),
-        // );
+        self.prover_state_manager.proofs.borrow_mut().insert(
+            ProofKeys::ReducedOpeningProof,
+            ProofData::ReducedOpeningProof(opening_proof),
+        );
 
         Ok(())
     }
@@ -230,6 +233,18 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
                 .borrow_mut()
                 .compare_to(prover_opening_accumulator);
         }
+
+        let ram_K = match self
+            .verifier_state_manager
+            .proofs
+            .borrow()
+            .get(&ProofKeys::RamK)
+            .unwrap()
+        {
+            ProofData::RamK(ram_K) => *ram_K,
+            _ => panic!("Unexpected ProofData"),
+        };
+        let _guard = AllCommittedPolynomials::initialize(ram_K);
 
         // Append commitments to transcript
         let commitments = self.verifier_state_manager.get_commitments();
@@ -343,32 +358,32 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         )
         .context("Stage 4")?;
 
-        // // Batch-prove all openings
-        // let batched_opening_proof = proofs
-        //     .get(&ProofKeys::ReducedOpeningProof)
-        //     .expect("Reduced opening proof not found");
-        // let batched_opening_proof = match batched_opening_proof {
-        //     ProofData::ReducedOpeningProof(proof) => proof,
-        //     _ => panic!("Invalid proof type for stage 4"),
-        // };
+        // Batch-prove all openings
+        let batched_opening_proof = proofs
+            .get(&ProofKeys::ReducedOpeningProof)
+            .expect("Reduced opening proof not found");
+        let batched_opening_proof = match batched_opening_proof {
+            ProofData::ReducedOpeningProof(proof) => proof,
+            _ => panic!("Invalid proof type for stage 4"),
+        };
 
-        // let mut commitments_map = HashMap::new();
-        // for polynomial in ALL_COMMITTED_POLYNOMIALS.iter() {
-        //     commitments_map.insert(
-        //         *polynomial,
-        //         commitments.commitments[polynomial.to_index()].clone(),
-        //     );
-        // }
-        // let accumulator = self.verifier_state_manager.get_verifier_accumulator();
-        // accumulator
-        //     .borrow_mut()
-        //     .reduce_and_verify(
-        //         &preprocessing.generators,
-        //         &mut commitments_map,
-        //         batched_opening_proof,
-        //         &mut *transcript.borrow_mut(),
-        //     )
-        //     .context("Stage 5")?;
+        let mut commitments_map = HashMap::new();
+        for polynomial in AllCommittedPolynomials::iter() {
+            commitments_map.insert(
+                *polynomial,
+                commitments.commitments[polynomial.to_index()].clone(),
+            );
+        }
+        let accumulator = self.verifier_state_manager.get_verifier_accumulator();
+        accumulator
+            .borrow_mut()
+            .reduce_and_verify(
+                &preprocessing.generators,
+                &mut commitments_map,
+                batched_opening_proof,
+                &mut *transcript.borrow_mut(),
+            )
+            .context("Stage 5")?;
 
         Ok(())
     }
@@ -397,8 +412,8 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         let (preprocessing, trace, _program_io, _final_memory_state) =
             self.prover_state_manager.get_prover_data();
 
-        let committed_polys: Vec<_> = ALL_COMMITTED_POLYNOMIALS
-            .par_iter()
+        let committed_polys: Vec<_> = AllCommittedPolynomials::iter()
+            .par_bridge()
             .map(|poly| poly.generate_witness(preprocessing, trace))
             .collect();
 
