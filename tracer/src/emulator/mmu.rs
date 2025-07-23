@@ -603,7 +603,7 @@ impl Mmu {
                     value_bytes[i as usize] = self.jolt_device.load(word_address + i);
                 }
                 let value = u64::from_le_bytes(value_bytes);
-                self.tracer.push_memory(MemoryState::Read {
+                let _ = self.tracer.push_memory(MemoryState::Read {
                     address: word_address,
                     value,
                 });
@@ -616,7 +616,7 @@ impl Mmu {
                 value_bytes[i as usize] = self.memory.read_byte(word_address + i);
             }
             let value = u64::from_le_bytes(value_bytes);
-            self.tracer.push_memory(MemoryState::Read {
+            let _ = self.tracer.push_memory(MemoryState::Read {
                 address: word_address,
                 value,
             });
@@ -657,7 +657,7 @@ impl Mmu {
             _ => unreachable!(),
         };
 
-        self.tracer.push_memory(MemoryState::Write {
+        let _ = self.tracer.push_memory(MemoryState::Write {
             address: word_address,
             pre_value,
             post_value,
@@ -698,7 +698,7 @@ impl Mmu {
             panic!("Unaligned store {effective_address:x}");
         };
 
-        self.tracer.push_memory(MemoryState::Write {
+        let _ = self.tracer.push_memory(MemoryState::Write {
             address: word_address,
             pre_value,
             post_value,
@@ -722,7 +722,7 @@ impl Mmu {
             }
             let pre_value = u64::from_le_bytes(pre_value_bytes);
 
-            self.tracer.push_memory(MemoryState::Write {
+            let _ = self.tracer.push_memory(MemoryState::Write {
                 address: effective_address,
                 pre_value,
                 post_value: value,
@@ -733,7 +733,7 @@ impl Mmu {
                 pre_value_bytes[i as usize] = self.memory.read_byte(effective_address + i);
             }
             let pre_value = u64::from_le_bytes(pre_value_bytes);
-            self.tracer.push_memory(MemoryState::Write {
+            let _ = self.tracer.push_memory(MemoryState::Write {
                 address: effective_address,
                 pre_value,
                 post_value: value,
