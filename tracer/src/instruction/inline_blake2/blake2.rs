@@ -229,8 +229,7 @@ mod tests {
 
         // Get expected working state from reference implementation
         use crate::instruction::inline_blake2::execute_blake2b_compression;
-        let mut expected_working_state = initial_state.clone();
-        execute_blake2b_compression(&mut expected_working_state, &message_block, counter, is_final);
+        execute_blake2b_compression(&mut initial_state, &message_block, counter, is_final);
 
         // Check final hash state
         let mut actual_result = [0u64; 8];
