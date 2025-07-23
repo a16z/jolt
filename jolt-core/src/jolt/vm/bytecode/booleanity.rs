@@ -295,16 +295,15 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
     ) {
         let ps = self.prover_state.as_ref().unwrap();
 
-        let (keys, claims): (Vec<CommittedPolynomial>, Vec<F>) =
+        let claims: Vec<F> =
             ps.H.as_ref()
                 .unwrap()
                 .iter()
-                .enumerate()
-                .map(|(i, H)| (CommittedPolynomial::BytecodeRa(i), H.final_sumcheck_claim()))
+                .map(|H| H.final_sumcheck_claim())
                 .collect();
 
         accumulator.borrow_mut().append_sparse(
-            keys,
+            (0..self.d).map(CommittedPolynomial::BytecodeRa).collect(),
             SumcheckId::BytecodeBooleanity,
             opening_point.r[..self.log_K_chunk].to_vec(),
             opening_point.r[self.log_K_chunk..].to_vec(),
@@ -317,11 +316,8 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        let keys = (0..self.d)
-            .map(|i| CommittedPolynomial::BytecodeRa(i))
-            .collect::<Vec<CommittedPolynomial>>();
         accumulator.borrow_mut().append_sparse(
-            keys,
+            (0..self.d).map(CommittedPolynomial::BytecodeRa).collect(),
             SumcheckId::BytecodeBooleanity,
             opening_point.r,
         );

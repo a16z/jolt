@@ -166,7 +166,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
 
     fn expected_output_claim(
         &self,
-        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+        _accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         r: &[F],
     ) -> F {
         let verifier_state = self
@@ -245,20 +245,20 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
 impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTranscript> {
     #[tracing::instrument(skip_all, name = "RegistersTwistProof::prove")]
     pub fn prove<PCS: CommitmentScheme<Field = F>>(
-        preprocessing: &JoltProverPreprocessing<F, PCS>,
-        trace: &[RV32IMCycle],
-        opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut ProofTranscript,
+        _preprocessing: &JoltProverPreprocessing<F, PCS>,
+        _trace: &[RV32IMCycle],
+        _opening_accumulator: &mut ProverOpeningAccumulator<F>,
+        _transcript: &mut ProofTranscript,
     ) -> RegistersTwistProof<F, ProofTranscript> {
         todo!()
     }
 
     pub fn verify<PCS: CommitmentScheme<Field = F>>(
         &self,
-        commitments: &JoltCommitments<F, PCS>,
-        T: usize,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut ProofTranscript,
+        _commitments: &JoltCommitments<F, PCS>,
+        _T: usize,
+        _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
+        _transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         todo!()
     }

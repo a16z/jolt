@@ -121,7 +121,7 @@ pub trait SumcheckInstance<F: JoltField> {
     /// Proves a single sumcheck instance.
     fn prove_single<ProofTranscript: Transcript>(
         &mut self,
-        transcript: &mut ProofTranscript,
+        _transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>)
     where
         Self: Sized,
@@ -133,8 +133,8 @@ pub trait SumcheckInstance<F: JoltField> {
     /// Verifies a single sumcheck instance.
     fn verify_single<ProofTranscript: Transcript>(
         &self,
-        proof: &SumcheckInstanceProof<F, ProofTranscript>,
-        transcript: &mut ProofTranscript,
+        _proof: &SumcheckInstanceProof<F, ProofTranscript>,
+        _transcript: &mut ProofTranscript,
     ) -> Result<Vec<F>, ProofVerifyError>
     where
         Self: Sized,

@@ -166,9 +166,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
             .map(|ra| ra.final_sumcheck_claim())
             .collect::<Vec<F>>();
         accumulator.borrow_mut().append_sparse(
-            (0..D)
-                .map(|i| CommittedPolynomial::InstructionRa(i))
-                .collect(),
+            (0..D).map(CommittedPolynomial::InstructionRa).collect(),
             SumcheckId::InstructionHammingWeight,
             opening_point.r.to_vec(),
             self.r_cycle.clone(),
@@ -188,9 +186,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
             .chain(self.r_cycle.iter().cloned())
             .collect::<Vec<_>>();
         accumulator.borrow_mut().append_sparse(
-            (0..D)
-                .map(|i| CommittedPolynomial::InstructionRa(i))
-                .collect(),
+            (0..D).map(CommittedPolynomial::InstructionRa).collect(),
             SumcheckId::InstructionHammingWeight,
             r,
         );

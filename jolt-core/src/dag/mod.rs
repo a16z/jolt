@@ -96,6 +96,5 @@ mod tests {
         }
 
         println!("DAG fib_e2e OK!");
-        println!("WE ARE PLAUSIBLY SOUND");
     }
 }

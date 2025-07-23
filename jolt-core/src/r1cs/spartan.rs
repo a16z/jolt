@@ -52,7 +52,6 @@ pub struct OuterClaims<F: JoltField> {
 
 #[derive(Clone, Debug)]
 pub struct InnerSumcheckParams<F: JoltField> {
-    r_cycle: Vec<F>,
     rx_var: Vec<F>,
 }
 
@@ -108,12 +107,12 @@ where
 
     #[tracing::instrument(skip_all, name = "Spartan::prove")]
     pub fn prove<PCS>(
-        preprocessing: &JoltProverPreprocessing<F, PCS>,
-        constraint_builder: &CombinedUniformBuilder<F>,
-        key: UniformSpartanKey<F>,
-        trace: &[RV32IMCycle],
-        opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut ProofTranscript,
+        _preprocessing: &JoltProverPreprocessing<F, PCS>,
+        _constraint_builder: &CombinedUniformBuilder<F>,
+        _key: UniformSpartanKey<F>,
+        _trace: &[RV32IMCycle],
+        _opening_accumulator: &mut ProverOpeningAccumulator<F>,
+        _transcript: &mut ProofTranscript,
     ) -> Result<Self, SpartanError>
     where
         PCS: CommitmentScheme<Field = F>,
@@ -140,35 +139,13 @@ where
         )
     }
 
-    #[tracing::instrument(skip_all)]
-    fn prove_inner_sumcheck(
-        key: Arc<UniformSpartanKey<F>>,
-        input_polys: &[MultilinearPolynomial<F>],
-        claims: &OuterClaims<F>,
-        params: &InnerSumcheckParams<F>,
-        inner_sumcheck_RLC: F,
-        transcript: &mut ProofTranscript,
-    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>) {
-        todo!()
-    }
-
-    fn prove_pc_sumcheck(
-        _input_polys: &[MultilinearPolynomial<F>],
-        _claimed_witness_evals: &[F],
-        _eq_plus_one_r_cycle: Vec<F>,
-        _r_cycle: Vec<F>,
-        _transcript: &mut ProofTranscript,
-    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>) {
-        todo!()
-    }
-
     #[tracing::instrument(skip_all, name = "Spartan::verify")]
     pub fn verify<PCS>(
         &self,
-        key: UniformSpartanKey<F>,
+        _key: UniformSpartanKey<F>,
         _commitments: &JoltCommitments<F, PCS>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut ProofTranscript,
+        _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
+        _transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError>
     where
         PCS: CommitmentScheme<Field = F>,
@@ -351,7 +328,7 @@ impl<F: JoltField> SumcheckInstance<F> for InnerSumcheck<F> {
 
     fn expected_output_claim(
         &self,
-        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+        _accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         r: &[F],
     ) -> F {
         let verifier_state = self
@@ -585,7 +562,7 @@ impl<F: JoltField> SumcheckInstance<F> for PCSumcheck<F> {
 
     fn expected_output_claim(
         &self,
-        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+        _accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         r: &[F],
     ) -> F {
         let verifier_state = self
@@ -957,7 +934,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         let (_, claim_Cz) = state_manager
             .get_virtual_polynomial_opening(VirtualPolynomial::SpartanCz, SumcheckId::SpartanOuter);
 
-        let (r_cycle, rx_var) = outer_sumcheck_r.r.split_at(num_cycles_bits);
+        let (_r_cycle, rx_var) = outer_sumcheck_r.r.split_at(num_cycles_bits);
 
         let claims = OuterClaims {
             az: claim_Az,
@@ -965,7 +942,6 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             cz: claim_Cz,
         };
         let params = InnerSumcheckParams {
-            r_cycle: r_cycle.to_vec(),
             rx_var: rx_var.to_vec(),
         };
 

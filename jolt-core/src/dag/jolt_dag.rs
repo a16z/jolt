@@ -65,7 +65,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
 
         println!("bytecode size: {}", preprocessing.shared.bytecode.code_size);
         let K = [
-            // preprocessing.shared.bytecode.code_size,
+            preprocessing.shared.bytecode.code_size,
             // ram_K,
             1 << 8, // K for instruction lookups
         ]
@@ -198,7 +198,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         for polynomial in AllCommittedPolynomials::iter() {
             polynomials_map.insert(
                 *polynomial,
-                polynomial.generate_witness(&preprocessing, &trace),
+                polynomial.generate_witness(preprocessing, trace),
             );
         }
         let opening_proof = accumulator.borrow_mut().reduce_and_prove(

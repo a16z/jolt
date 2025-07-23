@@ -199,7 +199,7 @@ where
         memory_layout: MemoryLayout,
         memory_init: Vec<(u64, u8)>,
         _max_bytecode_size: usize,
-        max_memory_size: usize,
+        _max_memory_size: usize,
         max_trace_length: usize,
     ) -> JoltProverPreprocessing<F, PCS> {
         let small_value_lookup_tables = F::compute_lookup_tables();
@@ -208,7 +208,7 @@ where
         let shared = Self::shared_preprocess(bytecode, memory_layout, memory_init);
 
         let max_K = [
-            // shared.bytecode.code_size.next_power_of_two(),
+            shared.bytecode.code_size.next_power_of_two(),
             // max_memory_size.next_power_of_two(),
             1 << 8, // instruction lookups Shout
         ]
