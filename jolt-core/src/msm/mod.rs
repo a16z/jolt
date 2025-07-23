@@ -578,7 +578,7 @@ fn msm_bigint_wnaf<F: JoltField + PrimeField, V: VariableBaseMSM<ScalarField = F
         .collect();
 
     // We store the sum for the lowest window.
-    let lowest = *window_sums.first().unwrap();
+    let lowest = *window_sums.first().expect("window_sums should not be empty in MSM algorithm");
 
     // We're traversing windows from high to low.
     lowest
@@ -672,7 +672,7 @@ fn msm_bigint<F: JoltField + PrimeField, V: VariableBaseMSM<ScalarField = F>>(
         .collect();
 
     // We store the sum for the lowest window.
-    let lowest = *window_sums.first().unwrap();
+    let lowest = *window_sums.first().expect("window_sums should not be empty in MSM algorithm");
 
     // We're traversing windows from high to low.
     lowest
@@ -818,7 +818,7 @@ where
         .collect();
 
     // We store the sum for the lowest window.
-    let lowest = *window_sums.first().unwrap();
+    let lowest = *window_sums.first().expect("window_sums should not be empty in MSM algorithm");
 
     // We're traversing windows from high to low.
     lowest
