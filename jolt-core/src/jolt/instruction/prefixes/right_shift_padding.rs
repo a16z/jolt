@@ -42,7 +42,13 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F>
         let mut result = F::from_u64(1 << (WORD_SIZE - usize::from(b)));
         let mut num_bits = b.len();
         let pow2 = 1 << (1 << num_bits);
-        result *= F::one() - (F::one() - F::from_u64(pow2).inverse().unwrap()) * F::from_u32(c);
+        
+        // Safe inverse since pow2 is always non-zero (at least 2)
+        let pow2_inv = F::from_u64(pow2).inverse().expect(&format!(
+            "Field inverse failed for pow2={}. This should never happen since pow2 >= 2", pow2
+        ));
+        
+        result *= F::one() - (F::one() - pow2_inv) * F::from_u32(c);
 
         // Shift amount is [c, b]
         if b.len() == WORD_SIZE.log_2() - 1 {
@@ -53,7 +59,10 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F>
         num_bits += 1;
         let pow2 = 1 << (1 << num_bits);
         if let Some(r_x) = r_x {
-            result *= F::one() - (F::one() - F::from_u64(pow2).inverse().unwrap()) * r_x;
+            let pow2_inv = F::from_u64(pow2).inverse().expect(&format!(
+                "Field inverse failed for pow2={}. This should never happen since pow2 >= 2", pow2
+            ));
+            result *= F::one() - (F::one() - pow2_inv) * r_x;
         }
 
         result *= checkpoints[Prefixes::RightShiftPadding].unwrap();
@@ -74,7 +83,10 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F>
         // r_y is the highest bit of the shift amount
         if j == 2 * WORD_SIZE - WORD_SIZE.log_2() {
             let pow2 = 1 << (WORD_SIZE / 2);
-            return Some(F::one() - (F::one() - F::from_u64(pow2).inverse().unwrap()) * r_y).into();
+            let pow2_inv = F::from_u64(pow2).inverse().expect(&format!(
+                "Field inverse failed for pow2={}. This should never happen since pow2 >= 2", pow2
+            ));
+            return Some(F::one() - (F::one() - pow2_inv) * r_y).into();
         }
 
         // r_x and r_y are bits in the shift amount
@@ -82,10 +94,16 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F>
             let mut checkpoint = checkpoints[Prefixes::RightShiftPadding].unwrap_or(F::one());
             let mut bit_index = 2 * WORD_SIZE - j;
             let pow2 = 1 << (1 << bit_index);
-            checkpoint *= F::one() - (F::one() - F::from_u64(pow2).inverse().unwrap()) * r_x;
+            let pow2_inv = F::from_u64(pow2).inverse().expect(&format!(
+                "Field inverse failed for pow2={}. This should never happen since pow2 >= 2", pow2
+            ));
+            checkpoint *= F::one() - (F::one() - pow2_inv) * r_x;
             bit_index -= 1;
             let pow2 = 1 << (1 << bit_index);
-            checkpoint *= F::one() - (F::one() - F::from_u64(pow2).inverse().unwrap()) * r_y;
+            let pow2_inv = F::from_u64(pow2).inverse().expect(&format!(
+                "Field inverse failed for pow2={}. This should never happen since pow2 >= 2", pow2
+            ));
+            checkpoint *= F::one() - (F::one() - pow2_inv) * r_y;
             if j == 2 * WORD_SIZE - 1 {
                 checkpoint *= F::from_u64(1 << WORD_SIZE);
             }
