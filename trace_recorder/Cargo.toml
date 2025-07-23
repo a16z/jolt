@@ -1,0 +1,18 @@
+[package]
+name = "trace_recorder"
+version = "0.1.0"
+edition = "2021"
+description = "Trace recorder for Jolt programs"
+
+[[bin]]
+name = "trace_recorder"
+path = "main.rs"
+
+[dependencies]
+jolt-core = { path = "../jolt-core" }
+postcard = "1.0.8"
+
+[features]
+default = ["rv64"]
+rv32 = ["jolt-core/rv32"]
+rv64 = ["jolt-core/rv64"] 
