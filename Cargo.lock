@@ -5747,9 +5747,12 @@ dependencies = [
  "itertools 0.10.5",
  "jolt-core",
  "onnx-tracer",
+ "rand 0.7.3",
  "rayon",
  "serde",
  "serde_json",
+ "strum",
+ "strum_macros",
  "tracing",
 ]
 
