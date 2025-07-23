@@ -1022,7 +1022,7 @@ where
                 .map(|chunk| chunk.iter().product())
                 .collect()
         } else {
-            let last_layer = self.sparse_layers.last().unwrap();
+            let last_layer = self.sparse_layers.last().expect("sparse_layers should not be empty");
             let (left, right) = last_layer.uninterleave();
             left.iter().zip(right.iter()).map(|(l, r)| *l * r).collect()
         }
