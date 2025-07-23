@@ -5,16 +5,11 @@ use std::marker::PhantomData;
 
 use super::Error;
 use crate::msm::Icicle;
-use crate::{
-    field::JoltField,
-    poly::commitment::bmmtv::{
-        afgho::AfghoCommitment, inner_products::MultiexponentiationInnerProduct,
-    },
-    utils::transcript::Transcript,
-};
+use crate::poly::commitment::bmmtv::afgho::AfghoCommitment;
+use crate::poly::commitment::bmmtv::inner_products::MultiexponentiationInnerProduct;
+use crate::{field::JoltField, optimal_iter, utils::transcript::Transcript};
 use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use rayon::prelude::*;
 use tracing::Level;
 
 pub type CommitmentSteps<P> = Vec<(
@@ -33,7 +28,7 @@ pub struct GipaProof<P: Pairing, ProofTranscript> {
     pub(crate) scalar_transcript: Vec<P::ScalarField>,
     pub(crate) final_commitment_param: P::G2,
     // we use fn because we need it to be Send without specifying bounds
-    _transcript: PhantomData<fn() -> ProofTranscript>,
+    pub(crate) _transcript: PhantomData<fn() -> ProofTranscript>,
 }
 
 impl<P, ProofTranscript> GipaProof<P, ProofTranscript>
@@ -141,8 +136,7 @@ where
                     // Set up values for next step of recursion
                     let rescale_ml = tracing::span!(Level::TRACE, "Rescale ML");
                     let _enter = rescale_ml.enter();
-                    g1 = m_ll
-                        .par_iter()
+                    g1 = optimal_iter!(m_ll)
                         .map(|a| *a * c)
                         .zip(m_lr)
                         .map(|(a_1, a_2)| a_1 + a_2)
@@ -151,8 +145,7 @@ where
 
                     let rescale_mr = tracing::span!(Level::TRACE, "Rescale MR");
                     let _enter = rescale_mr.enter();
-                    scalars = m_rr
-                        .par_iter()
+                    scalars = optimal_iter!(m_rr)
                         .map(|b| *b * c_inv)
                         .zip(m_rl)
                         .map(|(b_1, b_2)| b_1 + b_2)
@@ -161,8 +154,7 @@ where
 
                     let rescale_pl = tracing::span!(Level::TRACE, "Rescale CK1");
                     let _enter = rescale_pl.enter();
-                    g2 = param_lr
-                        .par_iter()
+                    g2 = optimal_iter!(param_lr)
                         .map(|a| *a * c_inv)
                         .zip(param_ll)
                         .map(|(a_1, a_2)| a_1 + a_2)

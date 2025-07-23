@@ -10,7 +10,6 @@ use ark_ec::{
 use ark_ff::{Field, One};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::Itertools;
-use rayon::prelude::*;
 
 use super::{
     afgho::AfghoCommitment, gipa::CommitmentSteps, inner_products::MultiexponentiationInnerProduct,
@@ -19,6 +18,7 @@ use super::{
 use crate::{
     field::JoltField,
     msm::Icicle,
+    optimal_iter,
     poly::{
         commitment::kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG, G2},
         unipoly::UniPoly,
@@ -153,9 +153,7 @@ where
             let ck_kzg = tracing::span!(Level::TRACE, "Prove commitment key");
             let _guard = ck_kzg.enter();
             let ck_a_final = proof.final_commitment_param;
-            let transcript_inverse = proof
-                .scalar_transcript
-                .par_iter()
+            let transcript_inverse = optimal_iter!(proof.scalar_transcript)
                 .map(|x| JoltField::inverse(x).unwrap())
                 .collect::<Vec<_>>();
 
@@ -190,8 +188,7 @@ where
     ) -> Result<bool, Error> {
         let (base_com, gipa_transcript) =
             GipaProof::<P, ProofTranscript>::verify(com, &proof.commitment_steps, transcript)?;
-        let transcript_inverse = gipa_transcript
-            .par_iter()
+        let transcript_inverse = optimal_iter!(gipa_transcript)
             .map(|x| JoltField::inverse(x).unwrap())
             .collect::<Vec<_>>();
 
@@ -216,7 +213,7 @@ where
             product_form.push(<P::ScalarField>::one() + (*x * power_2_b));
             power_2_b *= power_2_b;
         }
-        let b_base = product_form.par_iter().product::<P::ScalarField>();
+        let b_base = optimal_iter!(product_form).product::<P::ScalarField>();
 
         // Verify base inner product commitment
         let (com_a, com_t) = base_com;

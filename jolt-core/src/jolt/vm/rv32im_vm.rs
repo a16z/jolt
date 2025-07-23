@@ -1,19 +1,38 @@
 use crate::field::JoltField;
-use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::r1cs::constraints::JoltRV32IMConstraints;
-use ark_bn254::{Bn254, Fr};
+use ark_bn254::Fr;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
-use super::{Jolt, JoltProof};
+#[cfg(feature = "prover")]
+use super::JoltProver;
+use super::{JoltCommon, JoltProof, JoltVerifier};
+
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 
 const WORD_SIZE: usize = 32;
 
 // ==================== JOLT ====================
 
-pub enum RV32IJoltVM {}
+pub enum RV32IMJoltVM {}
 
-impl<F, PCS, ProofTranscript> Jolt<WORD_SIZE, F, PCS, ProofTranscript> for RV32IJoltVM
+impl<F, PCS, ProofTranscript> JoltCommon<WORD_SIZE, F, PCS, ProofTranscript> for RV32IMJoltVM
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
+}
+
+#[cfg(feature = "prover")]
+impl<F, PCS, ProofTranscript> JoltProver<WORD_SIZE, F, PCS, ProofTranscript> for RV32IMJoltVM
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
+    type Constraints = JoltRV32IMConstraints;
+}
+impl<F, PCS, ProofTranscript> JoltVerifier<WORD_SIZE, F, PCS, ProofTranscript> for RV32IMJoltVM
 where
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
@@ -22,8 +41,9 @@ where
     type Constraints = JoltRV32IMConstraints;
 }
 
-pub type RV32IJoltProof<F, PCS, ProofTranscript> = JoltProof<WORD_SIZE, F, PCS, ProofTranscript>;
+pub type RV32IMJoltProof<F, PCS, ProofTranscript> = JoltProof<WORD_SIZE, F, PCS, ProofTranscript>;
 
+use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::utils::transcript::{KeccakTranscript, Transcript};
 use eyre::Result;
 use std::fs::File;
@@ -66,14 +86,14 @@ pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
 }
 
 pub type ProofTranscript = KeccakTranscript;
-pub type PCS = HyperKZG<Bn254, ProofTranscript>;
+pub type PCS = DoryCommitmentScheme<ProofTranscript>;
 #[derive(CanonicalSerialize, CanonicalDeserialize, Clone)]
-pub struct JoltHyperKZGProof {
-    pub proof: RV32IJoltProof<Fr, PCS, ProofTranscript>,
+pub struct JoltProofBundle {
+    pub proof: RV32IMJoltProof<Fr, PCS, ProofTranscript>,
     // pub commitments: JoltCommitments<PCS, ProofTranscript>,
 }
 
-impl Serializable for JoltHyperKZGProof {}
+impl Serializable for JoltProofBundle {}
 
 // ==================== TEST ====================
 
@@ -83,8 +103,8 @@ mod tests {
 
     use crate::field::JoltField;
     use crate::host;
-    use crate::jolt::vm::rv32i_vm::{Jolt, RV32IJoltVM};
-    use crate::jolt::vm::JoltVerifierPreprocessing;
+    use crate::jolt::vm::rv32im_vm::{JoltProver, RV32IMJoltVM};
+    use crate::jolt::vm::{JoltVerifier, JoltVerifierPreprocessing};
     use crate::poly::commitment::commitment_scheme::CommitmentScheme;
     use crate::poly::commitment::dory::DoryCommitmentScheme;
     use crate::poly::commitment::mock::MockCommitScheme;
@@ -110,7 +130,7 @@ mod tests {
         let (trace, final_memory_state, io_device) = program.trace(&inputs);
         drop(artifact_guard);
 
-        let preprocessing = RV32IJoltVM::prover_preprocess(
+        let preprocessing = RV32IMJoltVM::prover_preprocess(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
@@ -119,7 +139,7 @@ mod tests {
             1 << 16,
         );
         let (proof, commitments, debug_info) =
-            <RV32IJoltVM as Jolt<32, F, PCS, ProofTranscript>>::prove(
+            <RV32IMJoltVM as JoltProver<32, F, PCS, ProofTranscript>>::prove(
                 io_device,
                 trace,
                 final_memory_state,
@@ -129,7 +149,7 @@ mod tests {
         let verifier_preprocessing =
             JoltVerifierPreprocessing::<F, PCS, ProofTranscript>::from(&preprocessing);
         let verification_result =
-            RV32IJoltVM::verify(verifier_preprocessing, proof, commitments, debug_info);
+            RV32IMJoltVM::verify(verifier_preprocessing, proof, commitments, debug_info);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -159,7 +179,7 @@ mod tests {
         let (trace, final_memory_state, io_device) = program.trace(&inputs);
         drop(guard);
 
-        let preprocessing = RV32IJoltVM::prover_preprocess(
+        let preprocessing = RV32IMJoltVM::prover_preprocess(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
@@ -168,7 +188,7 @@ mod tests {
             1 << 16,
         );
         let (jolt_proof, jolt_commitments, debug_info) =
-            <RV32IJoltVM as Jolt<
+            <RV32IMJoltVM as JoltProver<
                 32,
                 Fr,
                 DoryCommitmentScheme<KeccakTranscript>,
@@ -180,7 +200,7 @@ mod tests {
             DoryCommitmentScheme<KeccakTranscript>,
             KeccakTranscript,
         >::from(&preprocessing);
-        let verification_result = RV32IJoltVM::verify(
+        let verification_result = RV32IMJoltVM::verify(
             verifier_preprocessing,
             jolt_proof,
             jolt_commitments,
@@ -200,7 +220,7 @@ mod tests {
         let (bytecode, init_memory_state) = program.decode();
         let (trace, final_memory_state, io_device) = program.trace(&[]);
 
-        let preprocessing = RV32IJoltVM::prover_preprocess(
+        let preprocessing = RV32IMJoltVM::prover_preprocess(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
@@ -209,7 +229,7 @@ mod tests {
             1 << 16,
         );
         let (jolt_proof, jolt_commitments, debug_info) =
-            <RV32IJoltVM as Jolt<
+            <RV32IMJoltVM as JoltProver<
                 32,
                 Fr,
                 DoryCommitmentScheme<KeccakTranscript>,
@@ -217,7 +237,7 @@ mod tests {
             >>::prove(io_device, trace, final_memory_state, preprocessing.clone());
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
-        let verification_result = RV32IJoltVM::verify(
+        let verification_result = RV32IMJoltVM::verify(
             verifier_preprocessing,
             jolt_proof,
             jolt_commitments,
@@ -243,7 +263,7 @@ mod tests {
         io_device.outputs[0] = 0; // change the output to 0
         drop(artifact_guard);
 
-        let preprocessing = RV32IJoltVM::prover_preprocess(
+        let preprocessing = RV32IMJoltVM::prover_preprocess(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
@@ -252,7 +272,7 @@ mod tests {
             1 << 16,
         );
         let (proof, commitments, debug_info) =
-            <RV32IJoltVM as Jolt<
+            <RV32IMJoltVM as JoltProver<
                 32,
                 Fr,
                 DoryCommitmentScheme<KeccakTranscript>,
@@ -260,7 +280,7 @@ mod tests {
             >>::prove(io_device, trace, final_memory_state, preprocessing.clone());
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let _verification_result =
-            RV32IJoltVM::verify(verifier_preprocessing, proof, commitments, debug_info);
+            RV32IMJoltVM::verify(verifier_preprocessing, proof, commitments, debug_info);
     }
 
     #[test]
@@ -282,7 +302,7 @@ mod tests {
         io_device.memory_layout.termination = io_device.memory_layout.input_start;
 
         // Since the preprocessing is done with the original memory layout, the verifier should fail
-        let preprocessing = RV32IJoltVM::prover_preprocess(
+        let preprocessing = RV32IMJoltVM::prover_preprocess(
             bytecode.clone(),
             memory_layout,
             init_memory_state,
@@ -291,7 +311,7 @@ mod tests {
             1 << 16,
         );
         let (proof, commitments, debug_info) =
-            <RV32IJoltVM as Jolt<
+            <RV32IMJoltVM as JoltProver<
                 32,
                 Fr,
                 DoryCommitmentScheme<KeccakTranscript>,
@@ -299,6 +319,6 @@ mod tests {
             >>::prove(io_device, trace, final_memory_state, preprocessing.clone());
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let _verification_result =
-            RV32IJoltVM::verify(verifier_preprocessing, proof, commitments, debug_info);
+            RV32IMJoltVM::verify(verifier_preprocessing, proof, commitments, debug_info);
     }
 }

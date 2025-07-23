@@ -5,6 +5,7 @@ use ark_std::vec::Vec;
 #[cfg(feature = "icicle")]
 use icicle_core::curve::Affine;
 use num_integer::Integer;
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::borrow::Borrow;
 
@@ -22,8 +23,11 @@ pub type GpuBaseType<G: Icicle> = Affine<G::C>;
 #[cfg(not(feature = "icicle"))]
 pub type GpuBaseType<G: ScalarMul> = G::MulBase;
 
+use crate::optimal_iter;
 use crate::poly::unipoly::UniPoly;
 use itertools::Either;
+#[cfg(not(feature = "parallel"))]
+use itertools::Itertools;
 
 /// Copy of ark_ec::VariableBaseMSM with minor modifications to speed up
 /// known small element sized MSMs.
@@ -161,8 +165,7 @@ where
                             }
                         }
 
-                        let scalars = scalars
-                            .par_iter()
+                        let scalars = optimal_iter!(scalars)
                             .map(|s| s.into_bigint())
                             .collect::<Vec<_>>();
                         if Self::NEGATION_IS_CHEAP {
@@ -348,10 +351,10 @@ where
                     let slices_at_a_time = total_memory_bits() / slice_bit_size;
 
                     for work_chunk in gpu_batch.chunks(slices_at_a_time) {
-                        let (max_num_bits, chunk_polys): (Vec<_>, Vec<_>) = work_chunk
-                            .par_iter()
-                            .map(|(_, max_num_bits, poly)| (*max_num_bits, poly.as_slice()))
-                            .unzip();
+                        let (max_num_bits, chunk_polys): (Vec<_>, Vec<_>) =
+                            optimal_iter!(work_chunk)
+                                .map(|(_, max_num_bits, poly)| (*max_num_bits, poly.as_slice()))
+                                .unzip();
 
                         let max_num_bits = max_num_bits.iter().max().unwrap();
                         let batch_results =
@@ -504,8 +507,7 @@ where
     #[cfg(feature = "icicle")]
     #[tracing::instrument(skip_all)]
     fn get_gpu_bases(bases: &[Self::MulBase]) -> Vec<GpuBaseType<Self>> {
-        bases
-            .par_iter()
+        optimal_iter!(bases)
             .map(|base| <Self as Icicle>::from_ark_affine(base))
             .collect()
     }

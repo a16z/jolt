@@ -95,8 +95,7 @@ where
 
         #[cfg(feature = "icicle")]
         let gpu_g1 = Some(
-            g1_powers
-                .par_iter()
+            optimal_iter!(g1_powers)
                 .map(<P::G1 as Icicle>::from_ark_affine)
                 .collect::<Vec<_>>(),
         );

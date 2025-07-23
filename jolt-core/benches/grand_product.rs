@@ -4,10 +4,11 @@ use jolt_core::field::JoltField;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::hyperkzg::HyperKZG;
 use jolt_core::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
+use jolt_core::subprotocols::grand_product::quark::{QuarkGrandProduct, QuarkGrandProductConfig};
 use jolt_core::subprotocols::grand_product::{
-    BatchedDenseGrandProduct, BatchedGrandProduct, BatchedGrandProductProof,
+    BatchedDenseGrandProduct, BatchedGrandProductProof, BatchedGrandProductProver,
+    BatchedGrandProductVerifier,
 };
-use jolt_core::subprotocols::grand_product_quarks::{QuarkGrandProduct, QuarkGrandProductConfig};
 use jolt_core::subprotocols::QuarkHybridLayerDepth;
 use jolt_core::utils::transcript::{KeccakTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
@@ -80,7 +81,7 @@ fn benchmark_prove<PCS, F, G, ProofTranscript>(
 ) where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     F: JoltField,
-    G: BatchedGrandProduct<F, PCS, ProofTranscript, Leaves = (Vec<F>, usize)>,
+    G: BatchedGrandProductProver<F, PCS, ProofTranscript, Leaves = (Vec<F>, usize)>,
     ProofTranscript: Transcript,
 {
     let (leaves, _, _) = setup_bench::<PCS, F, ProofTranscript>(
@@ -117,7 +118,7 @@ fn benchmark_verify<PCS, F, G, ProofTranscript>(
 ) where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     F: JoltField,
-    G: BatchedGrandProduct<F, PCS, ProofTranscript, Leaves = (Vec<F>, usize)>,
+    G: BatchedGrandProductProver<F, PCS, ProofTranscript, Leaves = (Vec<F>, usize)>,
     ProofTranscript: Transcript,
 {
     let (leaves, _setup, known_products) = setup_bench::<PCS, F, ProofTranscript>(
@@ -164,7 +165,7 @@ fn benchmark_prove_and_verify<PCS, F, G, ProofTranscript>(
 ) where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     F: JoltField,
-    G: BatchedGrandProduct<F, PCS, ProofTranscript, Leaves = (Vec<F>, usize)>,
+    G: BatchedGrandProductProver<F, PCS, ProofTranscript, Leaves = (Vec<F>, usize)>,
     ProofTranscript: Transcript,
 {
     benchmark_prove::<PCS, F, G, ProofTranscript>(c, config, grand_product_config);
@@ -240,7 +241,7 @@ fn main() {
 
     // GKR
     config.name = "HyperKZG GKR";
-    <BatchedDenseGrandProduct<_> as BatchedGrandProduct<
+    <BatchedDenseGrandProduct<_> as BatchedGrandProductProver<
         Fr,
         HyperKZG<Bn254, KeccakTranscript>,
         KeccakTranscript,

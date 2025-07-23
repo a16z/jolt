@@ -273,9 +273,10 @@ where
                 poly.len(),
             ));
         }
-        Ok(ZeromorphCommitment(
-            UnivariateKZG::commit_as_univariate(&pp.commit_pp, poly).unwrap(),
-        ))
+        Ok(ZeromorphCommitment(UnivariateKZG::commit_as_univariate(
+            &pp.commit_pp,
+            poly,
+        )?))
     }
 
     #[tracing::instrument(skip_all, name = "Zeromorph::open")]
@@ -791,7 +792,7 @@ mod test {
     #[test]
     fn zeromorph_commit_prove_verify() {
         for num_vars in [4, 5, 6] {
-            let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(num_vars as u64);
+            let mut rng = ChaCha20Rng::seed_from_u64(num_vars as u64);
 
             let poly =
                 MultilinearPolynomial::LargeScalars(DensePolynomial::random(num_vars, &mut rng));

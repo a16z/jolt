@@ -1,10 +1,12 @@
 use itertools::Itertools;
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use tracer::instruction::RV32IMCycle;
 
 use crate::{
     field::JoltField,
     jolt::vm::{ram::remap_address, JoltProverPreprocessing},
+    optimal_iter,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         multilinear_polynomial::MultilinearPolynomial, one_hot_polynomial::OneHotPolynomial,
@@ -96,22 +98,19 @@ impl CommittedPolynomials {
     {
         match self {
             CommittedPolynomials::LeftInstructionInput => {
-                let coeffs: Vec<u64> = trace
-                    .par_iter()
+                let coeffs: Vec<u64> = optimal_iter!(trace)
                     .map(|cycle| LookupQuery::<32>::to_instruction_inputs(cycle).0)
                     .collect();
                 coeffs.into()
             }
             CommittedPolynomials::RightInstructionInput => {
-                let coeffs: Vec<i64> = trace
-                    .par_iter()
+                let coeffs: Vec<i64> = optimal_iter!(trace)
                     .map(|cycle| LookupQuery::<32>::to_instruction_inputs(cycle).1)
                     .collect();
                 coeffs.into()
             }
             CommittedPolynomials::Product => {
-                let coeffs: Vec<u64> = trace
-                    .par_iter()
+                let coeffs: Vec<u64> = optimal_iter!(trace)
                     .map(|cycle| {
                         let (left_input, right_input) =
                             LookupQuery::<32>::to_instruction_inputs(cycle);
@@ -121,8 +120,7 @@ impl CommittedPolynomials {
                 coeffs.into()
             }
             CommittedPolynomials::WriteLookupOutputToRD => {
-                let coeffs: Vec<u8> = trace
-                    .par_iter()
+                let coeffs: Vec<u8> = optimal_iter!(trace)
                     .map(|cycle| {
                         let flag = cycle.instruction().circuit_flags()
                             [CircuitFlags::WriteLookupOutputToRD as usize];
@@ -132,8 +130,7 @@ impl CommittedPolynomials {
                 coeffs.into()
             }
             CommittedPolynomials::WritePCtoRD => {
-                let coeffs: Vec<u8> = trace
-                    .par_iter()
+                let coeffs: Vec<u8> = optimal_iter!(trace)
                     .map(|cycle| {
                         let flag = cycle.instruction().circuit_flags()[CircuitFlags::Jump as usize];
                         (cycle.rd_write().0 as u8) * (flag as u8)
@@ -142,8 +139,7 @@ impl CommittedPolynomials {
                 coeffs.into()
             }
             CommittedPolynomials::ShouldBranch => {
-                let coeffs: Vec<u8> = trace
-                    .par_iter()
+                let coeffs: Vec<u8> = optimal_iter!(trace)
                     .map(|cycle| {
                         let is_branch =
                             cycle.instruction().circuit_flags()[CircuitFlags::Branch as usize];
@@ -169,8 +165,7 @@ impl CommittedPolynomials {
                 if *i > 0 {
                     panic!("RAM is implemented for only d=1 currently.");
                 }
-                let addresses: Vec<usize> = trace
-                    .par_iter()
+                let addresses: Vec<usize> = optimal_iter!(trace)
                     .map(|cycle| {
                         remap_address(
                             cycle.ram_access().address() as u64,
@@ -182,8 +177,7 @@ impl CommittedPolynomials {
                 MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(addresses, K))
             }
             CommittedPolynomials::RdInc => {
-                let coeffs: Vec<i64> = trace
-                    .par_iter()
+                let coeffs: Vec<i64> = optimal_iter!(trace)
                     .map(|cycle| {
                         let (_, pre_value, post_value) = cycle.rd_write();
                         post_value as i64 - pre_value as i64
@@ -192,8 +186,7 @@ impl CommittedPolynomials {
                 coeffs.into()
             }
             CommittedPolynomials::RamInc => {
-                let coeffs: Vec<i64> = trace
-                    .par_iter()
+                let coeffs: Vec<i64> = optimal_iter!(trace)
                     .map(|cycle| {
                         let ram_op = cycle.ram_access();
                         match ram_op {
@@ -210,8 +203,7 @@ impl CommittedPolynomials {
                 if *i > 3 {
                     panic!("Unexpected i: {i}");
                 }
-                let addresses: Vec<usize> = trace
-                    .par_iter()
+                let addresses: Vec<usize> = optimal_iter!(trace)
                     .map(|cycle| {
                         let lookup_index = LookupQuery::<32>::to_lookup_index(cycle);
                         let k = (lookup_index >> (16 * (3 - i))) % (1 << 16);

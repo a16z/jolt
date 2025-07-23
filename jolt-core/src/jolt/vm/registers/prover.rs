@@ -1,12 +1,11 @@
+use crate::jolt::vm::registers::{
+    RegistersTwistProof, ValEvaluationProof, ValEvaluationProverState, ValEvaluationSumcheck,
+    ValEvaluationSumcheckClaims,
+};
 use crate::{
     field::JoltField,
     jolt::{
-        vm::{
-            registers_read_write_checking::{
-                RegistersReadWriteChecking, RegistersReadWriteCheckingProof,
-            },
-            JoltCommitments, JoltProverPreprocessing,
-        },
+        vm::{registers::RegistersReadWriteChecking, JoltProverPreprocessing},
         witness::CommittedPolynomials,
     },
     poly::{
@@ -15,100 +14,21 @@ use crate::{
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
-        opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
+        opening_proof::ProverOpeningAccumulator,
     },
-    subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof},
+    subprotocols::sumcheck::BatchableSumcheckInstance,
     utils::{
-        errors::ProofVerifyError,
         math::Math,
         thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
         transcript::Transcript,
     },
 };
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 use tracer::instruction::RV32IMCycle;
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct RegistersTwistProof<F: JoltField, ProofTranscript: Transcript> {
-    /// Proof for the read-checking and write-checking sumchecks
-    /// (steps 3 and 4 of Figure 9).
-    read_write_checking_proof: RegistersReadWriteCheckingProof<F, ProofTranscript>,
-    /// Proof of the Val-evaluation sumcheck (step 6 of Figure 9).
-    val_evaluation_proof: ValEvaluationProof<F, ProofTranscript>,
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct ValEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
-    /// Sumcheck proof for the Val-evaluation sumcheck (steps 6 of Figure 9).
-    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    /// Inc(r_cycle')
-    inc_claim: F,
-    /// wa(r_address, r_cycle')
-    wa_claim: F,
-}
-
-struct ValEvaluationProverState<F: JoltField> {
-    /// Inc polynomial
-    inc: MultilinearPolynomial<F>,
-    /// wa polynomial
-    wa: MultilinearPolynomial<F>,
-    /// LT polynomial
-    lt: MultilinearPolynomial<F>,
-}
-
-/// Verifier state for the Val-evaluation sumcheck
-struct ValEvaluationVerifierState<F: JoltField> {
-    /// The number of rounds (log T)
-    num_rounds: usize,
-    /// r_address used to compute LT evaluation
-    r_address: Vec<F>,
-    /// r_cycle used to compute LT evaluation
-    r_cycle: Vec<F>,
-}
-
-/// Claims output by the Val-evaluation sumcheck
-#[derive(Clone)]
-struct ValEvaluationSumcheckClaims<F: JoltField> {
-    /// Inc(r_cycle')
-    inc_claim: F,
-    /// wa(r_address, r_cycle')
-    wa_claim: F,
-}
-
-/// Val-evaluation sumcheck instance implementing BatchableSumcheckInstance
-struct ValEvaluationSumcheck<F: JoltField> {
-    /// Initial claim value
-    claimed_evaluation: F,
-    /// Prover state
-    prover_state: Option<ValEvaluationProverState<F>>,
-    /// Verifier state
-    verifier_state: Option<ValEvaluationVerifierState<F>>,
-    /// Claims
-    claims: Option<ValEvaluationSumcheckClaims<F>>,
-}
 
 impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
     for ValEvaluationSumcheck<F>
 {
-    fn degree(&self) -> usize {
-        3
-    }
-
-    fn num_rounds(&self) -> usize {
-        if let Some(prover_state) = &self.prover_state {
-            prover_state.inc.len().log_2()
-        } else if let Some(verifier_state) = &self.verifier_state {
-            verifier_state.num_rounds
-        } else {
-            panic!("Neither prover state nor verifier state is initialized");
-        }
-    }
-
-    fn input_claim(&self) -> F {
-        self.claimed_evaluation
-    }
-
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
         let prover_state = self
             .prover_state
@@ -169,28 +89,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
             });
         }
     }
-
-    fn expected_output_claim(&self, r: &[F]) -> F {
-        let verifier_state = self
-            .verifier_state
-            .as_ref()
-            .expect("Verifier state not initialized");
-        let claims = self.claims.as_ref().expect("Claims not cached");
-
-        // r contains r_cycle_prime in low-to-high order
-        let r_cycle_prime: Vec<F> = r.iter().rev().copied().collect();
-
-        // Compute LT(r_cycle', r_cycle)
-        let mut lt_eval = F::zero();
-        let mut eq_term = F::one();
-        for (x, y) in r_cycle_prime.iter().zip(verifier_state.r_cycle.iter()) {
-            lt_eval += (F::one() - x) * y * eq_term;
-            eq_term *= F::one() - x - y + *x * y + *x * y;
-        }
-
-        // Return inc_claim * wa_claim * lt_eval
-        claims.inc_claim * claims.wa_claim * lt_eval
-    }
 }
 
 impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTranscript> {
@@ -231,61 +129,6 @@ impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTran
             read_write_checking_proof,
             val_evaluation_proof,
         }
-    }
-
-    pub fn verify<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
-        &self,
-        commitments: &JoltCommitments<F, PCS, ProofTranscript>,
-        T: usize,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
-        transcript: &mut ProofTranscript,
-    ) -> Result<(), ProofVerifyError> {
-        let log_T = T.log_2();
-        let r_prime: Vec<F> = transcript.challenge_vector(log_T);
-
-        let (r_address, r_cycle) = RegistersReadWriteChecking::verify(
-            &self.read_write_checking_proof,
-            &r_prime,
-            transcript,
-        )?;
-
-        let sumcheck_instance = ValEvaluationSumcheck {
-            claimed_evaluation: self.read_write_checking_proof.claims.val_claim,
-            prover_state: None,
-            verifier_state: Some(ValEvaluationVerifierState {
-                num_rounds: log_T,
-                r_address,
-                r_cycle,
-            }),
-            claims: Some(ValEvaluationSumcheckClaims {
-                inc_claim: self.val_evaluation_proof.inc_claim,
-                wa_claim: self.val_evaluation_proof.wa_claim,
-            }),
-        };
-
-        let mut r_cycle_prime = <ValEvaluationSumcheck<F> as BatchableSumcheckInstance<
-            F,
-            ProofTranscript,
-        >>::verify_single(
-            &sumcheck_instance,
-            &self.val_evaluation_proof.sumcheck_proof,
-            transcript,
-        )?;
-
-        // Cycle variables are bound from low to high
-        r_cycle_prime.reverse();
-
-        let inc_commitment = &commitments.commitments[CommittedPolynomials::RdInc.to_index()];
-        opening_accumulator.append(
-            &[inc_commitment],
-            r_cycle_prime,
-            &[self.val_evaluation_proof.inc_claim],
-            transcript,
-        );
-
-        // TODO: Append Inc claim to opening proof accumulator
-
-        Ok(())
     }
 }
 

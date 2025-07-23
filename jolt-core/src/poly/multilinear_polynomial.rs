@@ -2,6 +2,8 @@ use crate::{
     poly::{one_hot_polynomial::OneHotPolynomial, rlc_polynomial::RLCPolynomial},
     utils::{compute_dotproduct, math::Math},
 };
+#[cfg(not(feature = "parallel"))]
+use itertools::Itertools;
 use num_traits::MulAdd;
 use rayon::prelude::*;
 use strum_macros::EnumIter;
@@ -152,7 +154,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
 
         let lc_coeffs: Vec<F> = (0..num_chunks)
             .into_par_iter()
-            .flat_map_iter(|chunk_index| {
+            .flat_map(|chunk_index| {
                 let index = chunk_index * chunk_size;
                 let mut chunk = unsafe_allocate_zero_vec::<F>(chunk_size);
 

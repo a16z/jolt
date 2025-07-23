@@ -1,16 +1,14 @@
+#[cfg(test)]
+use super::dense_mlpoly::DensePolynomial;
+#[cfg(feature = "prover")]
+use super::{split_eq_poly::SplitEqPolynomial, unipoly::UniPoly};
+use crate::subprotocols::grand_product::BatchedGrandProductLayer;
 use crate::{
     field::JoltField,
-    subprotocols::{
-        grand_product::BatchedGrandProductLayer,
-        sumcheck::{BatchedCubicSumcheck, Bindable},
-    },
+    subprotocols::sumcheck::{BatchedCubicSumcheck, Bindable},
     utils::{thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
 use rayon::{prelude::*, slice::Chunks};
-
-#[cfg(test)]
-use super::dense_mlpoly::DensePolynomial;
-use super::{split_eq_poly::SplitEqPolynomial, unipoly::UniPoly};
 
 /// Represents a single layer of a grand product circuit.
 ///
@@ -181,19 +179,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedGrandProductLayer<F, Proo
 impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTranscript>
     for DenseInterleavedPolynomial<F>
 {
-    #[cfg(test)]
-    fn sumcheck_sanity_check(&self, eq_poly: &SplitEqPolynomial<F>, round_claim: F) {
-        let (left, right) = self.uninterleave();
-        let merged_eq = eq_poly.merge();
-        let expected: F = left
-            .iter()
-            .zip(right.iter())
-            .zip(merged_eq.evals_ref().iter())
-            .map(|((l, r), eq)| *eq * l * r)
-            .sum();
-        assert_eq!(expected, round_claim);
-    }
-
     /// We want to compute the evaluations of the following univariate cubic polynomial at
     /// points {0, 1, 2, 3}:
     ///     \sum_{x} eq(r, x) * left(x) * right(x)
@@ -209,6 +194,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
     ///    left(0, 0, 0, ..., x_b=0) |  |  right(0, 0, 0, ..., x_b=1)
     ///     right(0, 0, 0, ..., x_b=0)  left(0, 0, 0, ..., x_b=1)
     #[tracing::instrument(skip_all, name = "DenseInterleavedPolynomial::compute_cubic")]
+    #[cfg(feature = "prover")]
     fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
         // We use the Dao-Thaler optimization for the EQ polynomial, so there are two cases we
         // must handle. For details, refer to Section 2.2 of https://eprint.iacr.org/2024/1210.pdf
@@ -340,6 +326,19 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
         let left_claim = self.coeffs[0];
         let right_claim = self.coeffs[1];
         (left_claim, right_claim)
+    }
+
+    #[cfg(test)]
+    fn sumcheck_sanity_check(&self, eq_poly: &SplitEqPolynomial<F>, round_claim: F) {
+        let (left, right) = self.uninterleave();
+        let merged_eq = eq_poly.merge();
+        let expected: F = left
+            .iter()
+            .zip(right.iter())
+            .zip(merged_eq.evals_ref().iter())
+            .map(|((l, r), eq)| *eq * l * r)
+            .sum();
+        assert_eq!(expected, round_claim);
     }
 }
 

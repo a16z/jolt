@@ -3,14 +3,13 @@ use crate::field::JoltField;
 use std::cmp::Ordering;
 use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign, Sub};
 
+use super::compact_polynomial::SmallScalar;
+use super::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::gaussian_elimination::gaussian_elimination;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 use ark_serialize::*;
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
-
-use super::compact_polynomial::SmallScalar;
-use super::multilinear_polynomial::MultilinearPolynomial;
 
 // ax^2 + bx + c stored as vec![c,b,a]
 // ax^3 + bx^2 + cx + d stored as vec![d,c,b,a]

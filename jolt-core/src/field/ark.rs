@@ -1,9 +1,7 @@
-use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
-use rayon::prelude::*;
-
-use crate::utils::thread::unsafe_allocate_zero_vec;
-
 use super::{FieldOps, JoltField};
+use crate::into_optimal_iter;
+use crate::utils::thread::unsafe_allocate_zero_vec;
+use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
 
 impl FieldOps for ark_bn254::Fr {}
 impl FieldOps<&ark_bn254::Fr, ark_bn254::Fr> for &ark_bn254::Fr {}
@@ -31,8 +29,7 @@ impl JoltField for ark_bn254::Fr {
         for i in 0..2 {
             let bitshift = 16 * i;
             let unit = <Self as ark_ff::PrimeField>::from_u64(1 << bitshift).unwrap();
-            lookup_tables[i] = (0..(1 << 16))
-                .into_par_iter()
+            lookup_tables[i] = into_optimal_iter!((0..(1 << 16)))
                 .map(|j| unit * <Self as ark_ff::PrimeField>::from_u64(j).unwrap())
                 .collect();
         }

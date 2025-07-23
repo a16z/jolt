@@ -1,21 +1,29 @@
-use std::marker::PhantomData;
-use tracer::instruction::RV32IMCycle;
-use tracing::{span, Level};
+#![allow(dead_code)]
 
 use crate::field::JoltField;
 use crate::jolt::vm::JoltCommitments;
+#[cfg(feature = "prover")]
 use crate::jolt::vm::JoltProverPreprocessing;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::eq_poly::EqPolynomial;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+#[cfg(feature = "prover")]
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
-use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
+#[cfg(feature = "prover")]
 use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::r1cs::inputs::JoltR1CSInputs;
+#[cfg(feature = "prover")]
 use crate::r1cs::inputs::ALL_R1CS_INPUTS;
 use crate::r1cs::inputs::COMMITTED_R1CS_INPUTS;
 use crate::r1cs::key::UniformSpartanKey;
 use crate::utils::math::Math;
+use std::marker::PhantomData;
+#[cfg(feature = "prover")]
+use tracer::instruction::RV32IMCycle;
+use tracing::{span, Level};
+
+#[cfg(feature = "prover")]
+use crate::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 
 use crate::utils::transcript::Transcript;
 use ark_serialize::CanonicalDeserialize;
@@ -23,14 +31,19 @@ use ark_serialize::CanonicalSerialize;
 
 use thiserror::Error;
 
+#[cfg(feature = "prover")]
+use crate::subprotocols::sumcheck::BatchableSumcheckInstance;
+#[cfg(feature = "prover")]
+use crate::utils::small_value::NUM_SVO_ROUNDS;
 use crate::{
-    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPlusOnePolynomial},
-    subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof},
-    utils::small_value::NUM_SVO_ROUNDS,
+    poly::{
+        dense_mlpoly::DensePolynomial,
+        eq_poly::{EqPlusOnePolynomial, EqPolynomial},
+    },
+    subprotocols::sumcheck::{BatchableSumcheckVerifierInstance, SumcheckInstanceProof},
 };
 
 use super::builder::CombinedUniformBuilder;
-
 use rayon::prelude::*;
 
 #[derive(Clone, Debug)]
@@ -121,6 +134,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "Spartan::prove")]
+    #[cfg(feature = "prover")]
     pub fn prove<PCS>(
         preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
         constraint_builder: &CombinedUniformBuilder<F>,
@@ -263,6 +277,7 @@ where
     }
 
     #[tracing::instrument(skip_all)]
+    #[cfg(feature = "prover")]
     fn prove_inner_sumcheck(
         key: &UniformSpartanKey<F>,
         input_polys: &[MultilinearPolynomial<F>],
@@ -279,6 +294,7 @@ where
         (inner_sumcheck_proof, r)
     }
 
+    #[cfg(feature = "prover")]
     fn prove_pc_sumcheck(
         input_polys: &[MultilinearPolynomial<F>],
         claimed_witness_evals: &[F],
@@ -517,8 +533,8 @@ impl<'a, F: JoltField> InnerSumcheck<'a, F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
-    for InnerSumcheck<'_, F>
+impl<F: JoltField, ProofTranscript: Transcript>
+    BatchableSumcheckVerifierInstance<F, ProofTranscript> for InnerSumcheck<'_, F>
 {
     fn degree(&self) -> usize {
         2
@@ -538,12 +554,51 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         self.input_claim
     }
 
+    fn expected_output_claim(&self, r: &[F]) -> F {
+        let verifier_state = self
+            .verifier_state
+            .as_ref()
+            .expect("Verifier state not initialized");
+
+        // The verifier needs to compute:
+        // (A_small(rx, ry) + r * B_small(rx, ry) + r^2 * C_small(rx, ry)) * z(ry)
+
+        // Evaluate uniform matrices A_small, B_small, C_small at point (rx_var, ry_var)
+        let eval_a = verifier_state
+            .key
+            .evaluate_uniform_a_at_point(&verifier_state.rx_var, r);
+        let eval_b = verifier_state
+            .key
+            .evaluate_uniform_b_at_point(&verifier_state.rx_var, r);
+        let eval_c = verifier_state
+            .key
+            .evaluate_uniform_c_at_point(&verifier_state.rx_var, r);
+
+        let left_expected = eval_a
+            + verifier_state.inner_sumcheck_RLC * eval_b
+            + verifier_state.inner_sumcheck_RLC * verifier_state.inner_sumcheck_RLC * eval_c;
+
+        // Evaluate z(ry)
+        let eval_z = verifier_state.key.evaluate_z_mle_with_segment_evals(
+            &verifier_state.claimed_witness_evals,
+            r,
+            true,
+        );
+
+        left_expected * eval_z
+    }
+}
+
+#[cfg(feature = "prover")]
+impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
+    for InnerSumcheck<'_, F>
+{
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
         let prover_state = self
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
-        let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript>>::degree(self);
+        let degree = <Self as BatchableSumcheckVerifierInstance<F, ProofTranscript>>::degree(self);
 
         let univariate_poly_evals: Vec<F> = (0..prover_state.poly_abc_small.len() / 2)
             .into_par_iter()
@@ -606,40 +661,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         let final_poly_z = prover_state.poly_z.final_sumcheck_claim();
 
         self.cached_claims = Some((final_poly_abc, final_poly_z));
-    }
-
-    fn expected_output_claim(&self, r: &[F]) -> F {
-        let verifier_state = self
-            .verifier_state
-            .as_ref()
-            .expect("Verifier state not initialized");
-
-        // The verifier needs to compute:
-        // (A_small(rx, ry) + r * B_small(rx, ry) + r^2 * C_small(rx, ry)) * z(ry)
-
-        // Evaluate uniform matrices A_small, B_small, C_small at point (rx_var, ry_var)
-        let eval_a = verifier_state
-            .key
-            .evaluate_uniform_a_at_point(&verifier_state.rx_var, r);
-        let eval_b = verifier_state
-            .key
-            .evaluate_uniform_b_at_point(&verifier_state.rx_var, r);
-        let eval_c = verifier_state
-            .key
-            .evaluate_uniform_c_at_point(&verifier_state.rx_var, r);
-
-        let left_expected = eval_a
-            + verifier_state.inner_sumcheck_RLC * eval_b
-            + verifier_state.inner_sumcheck_RLC * verifier_state.inner_sumcheck_RLC * eval_c;
-
-        // Evaluate z(ry)
-        let eval_z = verifier_state.key.evaluate_z_mle_with_segment_evals(
-            &verifier_state.claimed_witness_evals,
-            r,
-            true,
-        );
-
-        left_expected * eval_z
     }
 }
 
@@ -714,8 +735,8 @@ impl<F: JoltField> PCSumcheck<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
-    for PCSumcheck<F>
+impl<F: JoltField, ProofTranscript: Transcript>
+    BatchableSumcheckVerifierInstance<F, ProofTranscript> for PCSumcheck<F>
 {
     fn degree(&self) -> usize {
         2
@@ -735,12 +756,34 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         self.input_claim
     }
 
+    fn expected_output_claim(&self, r: &[F]) -> F {
+        let verifier_state = self
+            .verifier_state
+            .as_ref()
+            .expect("Verifier state not initialized");
+
+        // Compute the expected claim:
+        // batched_eval_at_shift_r * eq_plus_one_shift_sumcheck
+        let batched_eval_at_shift_r = verifier_state.unexpanded_pc_eval_at_shift_r
+            + verifier_state.r * verifier_state.pc_eval_at_shift_r;
+
+        let eq_plus_one_shift_sumcheck =
+            EqPlusOnePolynomial::new(verifier_state.r_cycle.clone()).evaluate(r);
+
+        batched_eval_at_shift_r * eq_plus_one_shift_sumcheck
+    }
+}
+
+#[cfg(feature = "prover")]
+impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
+    for PCSumcheck<F>
+{
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
         let prover_state = self
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
-        let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript>>::degree(self);
+        let degree = <Self as BatchableSumcheckVerifierInstance<F, ProofTranscript>>::degree(self);
 
         let univariate_poly_evals: Vec<F> = (0..prover_state.unexpanded_pc_poly.len() / 2)
             .into_par_iter()
@@ -817,22 +860,5 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         let pc_eval = prover_state.pc_poly.final_sumcheck_claim();
 
         self.cached_claims = Some((unexpanded_pc_eval, pc_eval));
-    }
-
-    fn expected_output_claim(&self, r: &[F]) -> F {
-        let verifier_state = self
-            .verifier_state
-            .as_ref()
-            .expect("Verifier state not initialized");
-
-        // Compute the expected claim:
-        // batched_eval_at_shift_r * eq_plus_one_shift_sumcheck
-        let batched_eval_at_shift_r = verifier_state.unexpanded_pc_eval_at_shift_r
-            + verifier_state.r * verifier_state.pc_eval_at_shift_r;
-
-        let eq_plus_one_shift_sumcheck =
-            EqPlusOnePolynomial::new(verifier_state.r_cycle.clone()).evaluate(r);
-
-        batched_eval_at_shift_r * eq_plus_one_shift_sumcheck
     }
 }

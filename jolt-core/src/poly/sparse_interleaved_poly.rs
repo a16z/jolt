@@ -1,14 +1,15 @@
-use super::{
-    dense_interleaved_poly::DenseInterleavedPolynomial, dense_mlpoly::DensePolynomial,
-    split_eq_poly::SplitEqPolynomial, unipoly::UniPoly,
-};
+use super::{dense_interleaved_poly::DenseInterleavedPolynomial, dense_mlpoly::DensePolynomial};
+#[cfg(feature = "prover")]
+use super::{split_eq_poly::SplitEqPolynomial, unipoly::UniPoly};
+#[cfg(feature = "prover")]
+use crate::field::OptimizedMul;
+use crate::subprotocols::grand_product::BatchedGrandProductLayer;
+#[cfg(feature = "prover")]
+use crate::utils::math::Math;
 use crate::{
-    field::{JoltField, OptimizedMul},
-    subprotocols::{
-        grand_product::BatchedGrandProductLayer,
-        sumcheck::{BatchedCubicSumcheck, Bindable},
-    },
-    utils::{math::Math, transcript::Transcript},
+    field::JoltField,
+    subprotocols::sumcheck::{BatchedCubicSumcheck, Bindable},
+    utils::transcript::Transcript,
 };
 use rayon::prelude::*;
 
@@ -273,7 +274,6 @@ impl<F: JoltField> Bindable<F> for SparseInterleavedPolynomial<F> {
     ///
     /// If `self` is not coalesced, we basically do the same thing but with the
     /// sparse vectors in `self.coeffs`, and many more cases to check 😬
-    #[tracing::instrument(skip_all, name = "SparseInterleavedPolynomial::bind")]
     fn bind(&mut self, r: F) {
         #[cfg(test)]
         let (mut left_before_binding, mut right_before_binding) = self.uninterleave();
@@ -452,6 +452,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
     /// If `self` is not coalesced, we basically do the same thing but with with the
     /// sparse vectors in `self.coeffs`, some fancy optimizations, and many more cases to check 😬
     #[tracing::instrument(skip_all, name = "SparseInterleavedPolynomial::compute_cubic")]
+    #[cfg(feature = "prover")]
     fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
         if let Some(coalesced) = &self.coalesced {
             return BatchedCubicSumcheck::<F, ProofTranscript>::compute_cubic(

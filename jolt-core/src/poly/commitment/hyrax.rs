@@ -166,8 +166,7 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
             None,
             &MultilinearPolynomial::from(L),
             None,
-        )
-        .unwrap();
+        )?;
 
         let product_commitment = VariableBaseMSM::msm_field_elements(
             &G::normalize_batch(&pedersen_generators.generators[..R_size]),
@@ -175,8 +174,7 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
             &self.vector_matrix_product,
             None,
             false,
-        )
-        .unwrap();
+        )?;
 
         let dot_product = compute_dotproduct(&self.vector_matrix_product, &R);
 
@@ -194,7 +192,6 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
         ratio: usize,
     ) -> Vec<G::ScalarField> {
         let (_, R_size) = matrix_dimensions(poly.get_num_vars(), ratio);
-
         poly.evals_ref()
             .par_chunks(R_size)
             .enumerate()
@@ -246,7 +243,7 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
         let rlc_poly = if chunk_size > 0 {
             (0..num_chunks)
                 .into_par_iter()
-                .flat_map_iter(|chunk_index| {
+                .flat_map(|chunk_index| {
                     let mut chunk = vec![G::ScalarField::zero(); chunk_size];
                     for (coeff, poly) in rlc_coefficients.iter().zip(polynomials.iter()) {
                         for (rlc, poly_eval) in chunk
@@ -266,7 +263,7 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
                 .map(|(coeff, poly)| poly.evals_ref().iter().map(|eval| *coeff * *eval).collect())
                 .reduce(
                     || vec![G::ScalarField::zero(); poly_len],
-                    |running, new| {
+                    |running: Vec<_>, new: Vec<_>| {
                         debug_assert_eq!(running.len(), new.len());
                         running
                             .iter()
@@ -326,7 +323,7 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
             })
             .reduce(
                 || vec![G::zero(); L_size],
-                |running, new| {
+                |running: Vec<_>, new: Vec<_>| {
                     debug_assert_eq!(running.len(), new.len());
                     running
                         .iter()

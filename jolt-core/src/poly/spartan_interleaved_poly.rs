@@ -176,10 +176,10 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         let _num_x_in_non_svo_constraint_vals: usize = 1usize << iter_num_x_in_constraint_vars;
 
         assert_eq!(
-            (1usize << iter_num_x_in_vars),
+            1usize << iter_num_x_in_vars,
             E_in_evals.len(),
             "num_x_in_vals ({}) != E_in_evals.len ({})",
-            (1usize << iter_num_x_in_vars),
+            1usize << iter_num_x_in_vars,
             E_in_evals.len()
         );
 
@@ -530,11 +530,11 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                     let next_local_offset = next_coeff.index % Y_SVO_RELATED_COEFF_BLOCK_SIZE;
                                     let next_x_next_val = (next_local_offset / 2) / Y_SVO_SPACE_SIZE;
                                     debug_assert_eq!(x_next_val, next_x_next_val,
-                                        "Paired Az/Bz should share x_next_val. Current idx {}, next idx {}, current x_next {}, next x_next {}",
-                                        current_coeff.index,
-                                        next_coeff.index,
-                                        x_next_val,
-                                        next_x_next_val,
+                                                     "Paired Az/Bz should share x_next_val. Current idx {}, next idx {}, current x_next {}, next x_next {}",
+                                                     current_coeff.index,
+                                                     next_coeff.index,
+                                                     x_next_val,
+                                                     next_x_next_val,
                                     );
 
                                     match x_next_val { // x_next_val of the current Az

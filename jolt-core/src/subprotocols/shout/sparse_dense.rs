@@ -1,4 +1,5 @@
-use super::sumcheck::SumcheckInstanceProof;
+use crate::subprotocols::shout::{ExpandingTable, LookupBits};
+use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::{
     field::JoltField,
     jolt::{
@@ -19,75 +20,16 @@ use crate::{
         unipoly::{CompressedUniPoly, UniPoly},
     },
     utils::{
-        errors::ProofVerifyError,
         math::Math,
         thread::{drop_in_background_thread, unsafe_allocate_zero_vec, unsafe_zero_slice},
         transcript::{AppendToTranscript, Transcript},
-        uninterleave_bits,
     },
 };
 use rayon::{prelude::*, slice::Iter};
-use std::{fmt::Display, ops::Index};
 use strum::{EnumCount, IntoEnumIterator};
 use tracer::instruction::RV32IMCycle;
 
-/// Table containing the evaluations `EQ(x_1, ..., x_j, r_1, ..., r_j)`,
-/// built up incrementally as we receive random challenges `r_j` over the
-/// course of sumcheck.
-#[derive(Clone, Debug)]
-pub struct ExpandingTable<F: JoltField> {
-    len: usize,
-    values: Vec<F>,
-    scratch_space: Vec<F>,
-}
-
-impl<F: JoltField> ExpandingTable<F> {
-    /// Initializes an `ExpandingTable` with the given `capacity`.
-    #[tracing::instrument(skip_all, name = "ExpandingTable::new")]
-    pub fn new(capacity: usize) -> Self {
-        let (values, scratch_space) = rayon::join(
-            || unsafe_allocate_zero_vec(capacity),
-            || unsafe_allocate_zero_vec(capacity),
-        );
-        Self {
-            len: 0,
-            values,
-            scratch_space,
-        }
-    }
-
-    /// Resets this table to be length 1, containing only the given `value`.
-    pub fn reset(&mut self, value: F) {
-        self.values[0] = value;
-        self.len = 1;
-    }
-
-    /// Updates this table (expanding it by a factor of 2) to incorporate
-    /// the new random challenge `r_j`.
-    #[tracing::instrument(skip_all, name = "ExpandingTable::update")]
-    pub fn update(&mut self, r_j: F) {
-        self.values[..self.len]
-            .par_iter()
-            .zip(self.scratch_space.par_chunks_mut(2))
-            .for_each(|(&v_i, dest)| {
-                let eval_1 = r_j * v_i;
-                dest[0] = v_i - eval_1;
-                dest[1] = eval_1;
-            });
-        std::mem::swap(&mut self.values, &mut self.scratch_space);
-        self.len *= 2;
-    }
-}
-
-impl<F: JoltField> Index<usize> for ExpandingTable<F> {
-    type Output = F;
-
-    fn index(&self, index: usize) -> &F {
-        assert!(index < self.len);
-        &self.values[index]
-    }
-}
-
+#[cfg(feature = "parallel")]
 impl<'data, F: JoltField> IntoParallelIterator for &'data ExpandingTable<F> {
     type Item = &'data F;
     type Iter = Iter<'data, F>;
@@ -101,126 +43,6 @@ impl<F: JoltField> ParallelSlice<F> for &ExpandingTable<F> {
     fn as_parallel_slice(&self) -> &[F] {
         self.values[..self.len].as_parallel_slice()
     }
-}
-
-/// A bitvector type used to represent a (substring of a) lookup index.
-#[derive(Clone, Copy, Debug)]
-pub struct LookupBits {
-    bits: u64,
-    len: usize,
-}
-
-impl LookupBits {
-    pub fn new(mut bits: u64, len: usize) -> Self {
-        debug_assert!(len <= 64);
-        if len < 64 {
-            bits %= 1 << len;
-        }
-        Self { bits, len }
-    }
-
-    pub fn uninterleave(&self) -> (Self, Self) {
-        let (x_bits, y_bits) = uninterleave_bits(self.bits);
-        let x = Self::new(x_bits as u64, self.len / 2);
-        let y = Self::new(y_bits as u64, self.len - x.len);
-        (x, y)
-    }
-
-    /// Splits `self` into a tuple (prefix, suffix) of `LookupBits`, where
-    /// `suffix.len() == suffix_len`.
-    pub fn split(&self, suffix_len: usize) -> (Self, Self) {
-        let suffix_bits = self.bits % (1 << suffix_len);
-        let suffix = Self::new(suffix_bits, suffix_len);
-        let prefix_bits = self.bits >> suffix_len;
-        let prefix = Self::new(prefix_bits, self.len - suffix_len);
-        (prefix, suffix)
-    }
-
-    /// Pops the most significant bit from `self`, decrementing `len`.
-    pub fn pop_msb(&mut self) -> u8 {
-        let msb = (self.bits >> (self.len - 1)) & 1;
-        self.bits %= 1 << (self.len - 1);
-        self.len -= 1;
-        msb as u8
-    }
-
-    pub fn len(&self) -> usize {
-        self.len
-    }
-
-    pub fn trailing_zeros(&self) -> u32 {
-        std::cmp::min(self.bits.trailing_zeros(), self.len as u32)
-    }
-
-    pub fn leading_ones(&self) -> u32 {
-        self.bits.unbounded_shl(64 - self.len as u32).leading_ones()
-    }
-}
-
-impl Display for LookupBits {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:0width$b}", self.bits, width = self.len)
-    }
-}
-
-impl From<LookupBits> for u64 {
-    fn from(value: LookupBits) -> u64 {
-        value.bits
-    }
-}
-impl From<LookupBits> for usize {
-    fn from(value: LookupBits) -> usize {
-        value.bits.try_into().unwrap()
-    }
-}
-impl From<LookupBits> for u32 {
-    fn from(value: LookupBits) -> u32 {
-        value.bits.try_into().unwrap()
-    }
-}
-impl From<&LookupBits> for u64 {
-    fn from(value: &LookupBits) -> u64 {
-        value.bits
-    }
-}
-impl From<&LookupBits> for usize {
-    fn from(value: &LookupBits) -> usize {
-        value.bits.try_into().unwrap()
-    }
-}
-impl From<&LookupBits> for u32 {
-    fn from(value: &LookupBits) -> u32 {
-        value.bits.try_into().unwrap()
-    }
-}
-impl std::ops::Rem<usize> for &LookupBits {
-    type Output = usize;
-
-    fn rem(self, rhs: usize) -> Self::Output {
-        usize::from(self) % rhs
-    }
-}
-impl std::ops::Rem<usize> for LookupBits {
-    type Output = usize;
-
-    fn rem(self, rhs: usize) -> Self::Output {
-        usize::from(self) % rhs
-    }
-}
-impl PartialEq for LookupBits {
-    fn eq(&self, other: &Self) -> bool {
-        u64::from(self) == u64::from(other)
-    }
-}
-
-/// Computes the bit-length of the suffix, for the current (`j`th) round
-/// of sumcheck.
-pub fn current_suffix_len(log_K: usize, j: usize) -> usize {
-    // Number of sumcheck rounds per "phase" of sparse-dense sumcheck.
-    let phase_length = log_K / 4;
-    // The suffix length is 3/4 * log_K at the beginning and shrinks by
-    // log_K / 4 after each phase.
-    log_K - (j / phase_length + 1) * phase_length
 }
 
 /// Compute the sumcheck prover message in round `j` using the prefix-suffix
@@ -795,67 +617,10 @@ pub fn prove_sparse_dense_shout<
         eq_r_prime_evals,
     )
 }
-
-pub fn verify_sparse_dense_shout<
-    const WORD_SIZE: usize,
-    F: JoltField,
-    ProofTranscript: Transcript,
->(
-    proof: &SumcheckInstanceProof<F, ProofTranscript>,
-    log_T: usize,
-    r_cycle: Vec<F>,
-    rv_claim: F,
-    ra_claims: [F; 4],
-    is_add_mul_sub_flag_claim: F,
-    flag_claims: &[F],
-    transcript: &mut ProofTranscript,
-) -> Result<(), ProofVerifyError> {
-    let log_K = 2 * WORD_SIZE;
-    let first_log_K_rounds = SumcheckInstanceProof::new(proof.compressed_polys[..log_K].to_vec());
-    let last_log_T_rounds = SumcheckInstanceProof::new(proof.compressed_polys[log_K..].to_vec());
-
-    let gamma: F = transcript.challenge_scalar();
-    let gamma_squared = gamma.square();
-
-    // The first log(K) rounds' univariate polynomials are degree 2
-    let (sumcheck_claim, r_address) = first_log_K_rounds.verify(rv_claim, log_K, 2, transcript)?;
-    // The last log(T) rounds' univariate polynomials are degree 6
-    let (sumcheck_claim, r_cycle_prime) =
-        last_log_T_rounds.verify(sumcheck_claim, log_T, 6, transcript)?;
-
-    let val_evals: Vec<_> = LookupTables::<WORD_SIZE>::iter()
-        .map(|table| table.evaluate_mle(&r_address))
-        .collect();
-    let eq_eval_cycle = EqPolynomial::mle(&r_cycle, &r_cycle_prime);
-
-    let rv_val_claim = flag_claims
-        .iter()
-        .zip(val_evals.iter())
-        .map(|(flag, val)| *flag * val)
-        .sum::<F>();
-
-    let right_operand_eval = OperandPolynomial::new(log_K, OperandSide::Right).evaluate(&r_address);
-    let left_operand_eval = OperandPolynomial::new(log_K, OperandSide::Left).evaluate(&r_address);
-    let identity_poly_eval =
-        IdentityPolynomial::new_with_endianness(log_K, Endianness::Big).evaluate(&r_address);
-
-    let val_claim = rv_val_claim
-        + (F::one() - is_add_mul_sub_flag_claim)
-            * (gamma * right_operand_eval + gamma_squared * left_operand_eval)
-        + gamma_squared * is_add_mul_sub_flag_claim * identity_poly_eval;
-
-    assert_eq!(
-        eq_eval_cycle * ra_claims.iter().product::<F>() * val_claim,
-        sumcheck_claim,
-        "Read-checking sumcheck failed"
-    );
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::subprotocols::shout::verify_sparse_dense_shout;
     use crate::utils::transcript::KeccakTranscript;
     use ark_bn254::Fr;
     use rand::{rngs::StdRng, RngCore, SeedableRng};

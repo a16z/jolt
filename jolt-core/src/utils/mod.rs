@@ -23,11 +23,11 @@ macro_rules! optimal_iter {
     ($T:expr) => {{
         #[cfg(feature = "icicle")]
         {
-            $T.iter()
+            $T.par_iter()
         }
         #[cfg(not(feature = "icicle"))]
         {
-            $T.par_iter()
+            $T.iter()
         }
     }};
 }
@@ -37,39 +37,11 @@ macro_rules! into_optimal_iter {
     ($T:expr) => {{
         #[cfg(feature = "icicle")]
         {
-            $T.into_iter()
-        }
-        #[cfg(not(feature = "icicle"))]
-        {
             $T.into_par_iter()
         }
-    }};
-}
-
-#[macro_export]
-macro_rules! optimal_iter_mut {
-    ($T:expr) => {{
-        #[cfg(feature = "icicle")]
-        {
-            $T.iter_mut()
-        }
         #[cfg(not(feature = "icicle"))]
         {
-            $T.par_iter_mut()
-        }
-    }};
-}
-
-#[macro_export]
-macro_rules! join_conditional {
-    ($f1:expr, $f2:expr) => {{
-        #[cfg(feature = "icicle")]
-        {
-            ($f1(), $f2())
-        }
-        #[cfg(not(feature = "icicle"))]
-        {
-            rayon::join($f1, $f2)
+            $T.into_iter()
         }
     }};
 }
