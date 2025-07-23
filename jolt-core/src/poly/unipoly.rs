@@ -74,9 +74,16 @@ impl<F: JoltField> UniPoly<F> {
             let mut quotient = vec![F::zero(); self.degree() - divisor.degree() + 1];
             let mut remainder: Self = self.clone();
             // Can unwrap here because we know self is not zero.
-            let divisor_leading_inv = divisor.leading_coefficient().unwrap().inverse().unwrap();
+            let divisor_leading_coeff = divisor.leading_coefficient()?;
+            let divisor_leading_inv = divisor_leading_coeff.inverse();
+            if divisor_leading_inv.is_none() {
+                return None; // Division by zero in field
+            }
+            let divisor_leading_inv = divisor_leading_inv.unwrap();
+            
             while !remainder.is_zero() && remainder.degree() >= divisor.degree() {
-                let cur_q_coeff = *remainder.leading_coefficient().unwrap() * divisor_leading_inv;
+                let remainder_leading_coeff = remainder.leading_coefficient()?;
+                let cur_q_coeff = *remainder_leading_coeff * divisor_leading_inv;
                 let cur_q_degree = remainder.degree() - divisor.degree();
                 quotient[cur_q_degree] = cur_q_coeff;
 
