@@ -1,28 +1,27 @@
-use crate::instruction::virtual_rotril::VirtualROTRIL;
-/// This file contains Blake3-specific logic to be used in the Blake3 inline:
-/// 1) Prover: Blake3SequenceBuilder expands the inline to a list of RV instructions.
-/// 2) Host: Rust reference implementation to be called by jolt-sdk.
-///
-/// Blake3 is a cryptographic hash function that operates on 32-bit words in a compression function.
-/// Glossary:
-///   - "Word" = one 32-bit value in the 16-word state matrix.
-///   - "Round" = single application of G function to all columns and diagonals.
-///   - "Block" = 64 bytes (16 words) of input data.
-///   - "Compression" = Blake3 compression function: 7 rounds of G function.
-use crate::instruction::{add::ADD, addi::ADDI, sub::SUB};
 use crate::instruction::format::format_i::FormatI;
 use crate::instruction::format::format_load::FormatLoad;
 use crate::instruction::format::format_r::FormatR;
 use crate::instruction::format::format_s::FormatS;
 use crate::instruction::format::format_u::FormatU;
 use crate::instruction::format::format_virtual_right_shift_i::FormatVirtualRightShiftI;
-use crate::instruction::lw::LW;
 use crate::instruction::lui::LUI;
+use crate::instruction::lw::LW;
 use crate::instruction::sw::SW;
-use crate::instruction::virtual_rotri::VirtualROTRI;
+use crate::instruction::virtual_rotril::VirtualROTRIL;
 use crate::instruction::xor::XOR;
 use crate::instruction::xori::XORI;
 use crate::instruction::RV32IMInstruction;
+/// This file contains Blake3-specific logic to be used in the Blake3 inline:
+/// 1) Prover: Blake3SequenceBuilder expands the inline to a list of RV instructions.
+/// 2) Host: Rust reference implementation to be called by jolt-sdk.
+///
+/// Blake3 is a cryptographic hash function that operates on 32-bit words in a compression function.
+/// Glossary:
+///   - "Word" = one 32-bit value.
+///   - "Round" = single application of G function to all columns and diagonals.
+///   - "Block" = 64 bytes (16 words) of input data.
+///   - "Compression" = Blake3 compression function: 7 rounds of G function.
+use crate::instruction::{add::ADD, addi::ADDI};
 
 pub mod blake3;
 
@@ -53,19 +52,27 @@ enum Value {
 }
 use Value::{Imm, Reg};
 
-/// Layout of the 96 virtual registers (`vr`) for Blake3.
+/// Number of virtual registers needed for Blake3 implementation.
 ///
 /// Jolt requires the total number of registers (physical + virtual) to be a power of two.
 /// With 32 physical registers, we need 96 virtual registers to reach 128.
-///
 pub const NEEDED_REGISTERS: usize = 96;
 
-#[allow(dead_code)]
-const VR_STATE_START: usize = 0; // vr[0..15]: Working state `v` (16 words)
+/// Memory layout constants for Blake3 virtual registers
+///
+/// The virtual register layout is organized as follows:
+/// - vr[0..15]:  Working state `v` (16 words) - computed during compression
+/// - vr[16..31]: Message block `m` (16 words) - input data
+/// - vr[32..39]: Chaining value `h` (8 words) - input/output hash state
+/// - vr[40..41]: Counter values (2 words) - block counter
+/// - vr[42]:     Input bytes length (1 word)
+/// - vr[43]:     Flags (1 word) - final block flag, etc.
+/// - vr[44]:     Temporary register for intermediate calculations
+const VR_STATE_START: usize = 0;
 const STATE_SIZE: usize = 16;
-const VR_MESSAGE_BLOCK_START: usize = 16; // vr[16..31]: Message block `m` (16 words)
+const VR_MESSAGE_BLOCK_START: usize = 16;
 pub const MESSAGE_BLOCK_SIZE: usize = 16;
-const VR_CHAINING_VALUE_START: usize = 32; // vr[32..39]: Hash state `h` (8 words)
+const VR_CHAINING_VALUE_START: usize = 32;
 pub const CHAINING_VALUE_SIZE: usize = 8;
 const VR_COUNTER_START: usize = 40;
 const COUNTER_SIZE: usize = 2;
@@ -113,20 +120,40 @@ impl Blake3SequenceBuilder {
         }
     }
 
-    /// Store the final hash state back to memory
-    fn store_working_state(&mut self) {
-        for i in 0..STATE_SIZE {
-            self.sw(self.operand_rs1, self.vr[VR_STATE_START + i], i as i64);
-        }
-    }
-
     pub fn build(mut self) -> Vec<RV32IMInstruction> {
-        // 1. Load all required data from memory
-        self.load_state(); // Load hash state (8 words)
-        self.load_message(); // Load message block (16 words)
-        self.load_counter(); // Load counter value (2 word)
-        self.load_input_bytes_len(); // (1 word)
-        self.load_flag(); // Load flag (1 word)
+        // Load the current hash state (8 words) from memory into virtual registers
+        self.load_data_range(
+            self.operand_rs1,
+            0,
+            VR_CHAINING_VALUE_START,
+            CHAINING_VALUE_SIZE,
+        );
+        // Load the message block (16 words) from memory into virtual registers
+        self.load_data_range(
+            self.operand_rs2,
+            0,
+            VR_MESSAGE_BLOCK_START,
+            MESSAGE_BLOCK_SIZE,
+        );
+        // Load the counter value from memory - stored after the message block
+        self.load_data_range(
+            self.operand_rs2,
+            MESSAGE_BLOCK_SIZE,
+            VR_COUNTER_START,
+            COUNTER_SIZE,
+        );
+        // Load the input bytes length from memory - stored after the counter
+        self.lw(
+            self.operand_rs2,
+            (MESSAGE_BLOCK_SIZE + COUNTER_SIZE) as i64,
+            self.vr[VR_INPUT_BYTES_LEN_START],
+        );
+        // Load the final block flag from memory - stored after the input bytes length
+        self.lw(
+            self.operand_rs2,
+            (MESSAGE_BLOCK_SIZE + COUNTER_SIZE + 1) as i64,
+            self.vr[VR_FLAG_START],
+        );
 
         // 2. Initialize the working state v[0..15]
         self.initialize_working_state();
@@ -140,8 +167,6 @@ impl Blake3SequenceBuilder {
         // 4. Finalize the hash state: h[i] ^= v[i] ^ v[i+8]
         self.finalize_state();
 
-        // self.store_working_state();
-
         // 5. Store the final hash state back to memory
         self.store_state();
 
@@ -150,66 +175,60 @@ impl Blake3SequenceBuilder {
         self.sequence
     }
 
-    /// Load the current hash state (8 words) from memory into virtual registers
-    fn load_state(&mut self) {
-        (0..CHAINING_VALUE_SIZE)
-            .for_each(|i| self.lw(self.operand_rs1, i as i64, self.vr[VR_CHAINING_VALUE_START + i]));
-    }
-
-    /// Load the message block (16 words) from memory into virtual registers
-    fn load_message(&mut self) {
-        (0..MESSAGE_BLOCK_SIZE).for_each(|i| {
+    /// Load data from memory into virtual registers starting at a given offset
+    fn load_data_range(
+        &mut self,
+        base_register: usize,
+        memory_offset_start: usize,
+        vr_start: usize,
+        count: usize,
+    ) {
+        (0..count).for_each(|i| {
             self.lw(
-                self.operand_rs2,
-                i as i64,
-                self.vr[VR_MESSAGE_BLOCK_START + i],
+                base_register,
+                (memory_offset_start + i) as i64,
+                self.vr[vr_start + i],
             )
         });
     }
 
-    /// Load the counter value from memory - stored after the message block
-    fn load_counter(&mut self) {
-        (0..COUNTER_SIZE).for_each(|i| {
-            self.lw(
-                self.operand_rs2,
-                (MESSAGE_BLOCK_SIZE + i) as i64,
-                self.vr[VR_COUNTER_START + i],
-            )
-        });
-    }
-
-    /// Load the final block flag (is_final) from memory - stored after the counter
-    fn load_input_bytes_len(&mut self) {
-        self.lw(
-            self.operand_rs2,
-            (MESSAGE_BLOCK_SIZE + 2) as i64,
-            self.vr[VR_INPUT_BYTES_LEN_START],
-        );
-    }
-
-    /// Load the final block flag (is_final) from memory - stored after the counter
-    fn load_flag(&mut self) {
-        self.lw(
-            self.operand_rs2,
-            (MESSAGE_BLOCK_SIZE + 3) as i64,
-            self.vr[VR_FLAG_START],
-        );
-    }
-
-    /// Initialize the working state v[0..15] according to Blake3 specification
+    /// Initialize the working state v[0..15] according to Blake3 specification:
     fn initialize_working_state(&mut self) {
         // v[0..7] = h[0..7] (current hash state)
         for i in 0..CHAINING_VALUE_SIZE {
-            self.xor32(Reg(self.vr[VR_CHAINING_VALUE_START + i]), Imm(0), self.vr[i]);
+            self.xor32(
+                Reg(self.vr[VR_CHAINING_VALUE_START + i]),
+                Imm(0),
+                self.vr[VR_STATE_START + i],
+            );
         }
+
         // v[8..11] = IV[0..3] (first 4 words of initialization vector)
         for i in 0..4 {
             self.load_32bit_immediate(BLAKE3_IV[i], self.vr[CHAINING_VALUE_SIZE + i]);
         }
-        self.xor32(Reg(self.vr[VR_COUNTER_START]), Imm(0), self.vr[12]);
-        self.xor32(Reg(self.vr[VR_COUNTER_START + 1]), Imm(0), self.vr[13]);
-        self.xor32(Reg(self.vr[VR_INPUT_BYTES_LEN_START]), Imm(0), self.vr[14]);
-        self.xor32(Reg(self.vr[VR_FLAG_START]), Imm(0), self.vr[15]);
+
+        // v[12..15] = counter values, input length, and flags
+        self.xor32(
+            Reg(self.vr[VR_COUNTER_START]),
+            Imm(0),
+            self.vr[VR_STATE_START + 12],
+        );
+        self.xor32(
+            Reg(self.vr[VR_COUNTER_START + 1]),
+            Imm(0),
+            self.vr[VR_STATE_START + 13],
+        );
+        self.xor32(
+            Reg(self.vr[VR_INPUT_BYTES_LEN_START]),
+            Imm(0),
+            self.vr[VR_STATE_START + 14],
+        );
+        self.xor32(
+            Reg(self.vr[VR_FLAG_START]),
+            Imm(0),
+            self.vr[VR_STATE_START + 15],
+        );
     }
 
     /// Execute one round of Blake3 compression
@@ -271,17 +290,14 @@ impl Blake3SequenceBuilder {
         self.rotr32(Reg(temp1), 7, vb);
     }
 
-
-
-    /// Finalize the hash state: h[i] ^= v[i] ^ v[i+8]
     fn finalize_state(&mut self) {
-        for i in 0..STATE_SIZE/2 {
+        for i in 0..STATE_SIZE / 2 {
             let hi = self.vr[VR_STATE_START + i];
             let vi = self.vr[VR_STATE_START + i];
             let vi8 = self.vr[VR_STATE_START + i + 8];
             self.xor32(Reg(vi), Reg(vi8), hi);
         }
-        for i in 0..STATE_SIZE/2 {
+        for i in 0..STATE_SIZE / 2 {
             let hi_prime = self.vr[VR_STATE_START + i + 8];
             let vi = self.vr[VR_STATE_START + i + 8];
             let hi = self.vr[VR_CHAINING_VALUE_START + i];
@@ -289,16 +305,14 @@ impl Blake3SequenceBuilder {
         }
     }
 
-    /// Store the final hash state back to memory
+    /// Store the final hash state (chaining value) back to memory
+    /// Blake3 compression outputs an 8-word chaining value
     fn store_state(&mut self) {
         for i in 0..STATE_SIZE {
             self.sw(self.operand_rs1, self.vr[VR_STATE_START + i], i as i64);
         }
     }
 
-    // --- 32-bit Arithmetic Helpers ---
-
-    /// ADD two 32-bit numbers
     fn add32(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
         match (rs1, rs2) {
             (Reg(rs1), Reg(rs2)) => {
@@ -313,7 +327,11 @@ impl Blake3SequenceBuilder {
             (Reg(rs1), Imm(imm)) => {
                 let addi = ADDI {
                     address: self.address,
-                    operands: FormatI { rd, rs1, imm: imm as u64 },
+                    operands: FormatI {
+                        rd,
+                        rs1,
+                        imm: imm as u64,
+                    },
                     virtual_sequence_remaining: Some(0),
                 };
                 self.sequence.push(addi.into());
@@ -324,39 +342,6 @@ impl Blake3SequenceBuilder {
         }
     }
 
-    /// SUB two 32-bit numbers
-    fn sub32(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
-        match (rs1, rs2) {
-            (Reg(rs1), Reg(rs2)) => {
-                let sub = SUB {
-                    address: self.address,
-                    operands: FormatR { rd, rs1, rs2 },
-                    virtual_sequence_remaining: Some(0),
-                };
-                self.sequence.push(sub.into());
-                Reg(rd)
-            }
-            (Imm(imm), Reg(rs2)) => {
-                // For immediate - register, we need to first load the immediate
-                let temp_reg = self.vr[67]; // Use a temp register
-                self.load_32bit_immediate(imm, temp_reg);
-                let sub = SUB {
-                    address: self.address,
-                    operands: FormatR { rd, rs1: temp_reg, rs2 },
-                    virtual_sequence_remaining: Some(0),
-                };
-                self.sequence.push(sub.into());
-                Reg(rd)
-            }
-            (Reg(_), Imm(_)) => {
-                // Register - immediate: convert to register + (-immediate)
-                panic!("SUB with reg - imm not implemented, use imm - reg instead")
-            }
-            (Imm(imm1), Imm(imm2)) => Imm((imm1).wrapping_sub(imm2)),
-        }
-    }
-
-    /// XOR two 32-bit numbers
     fn xor32(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
         self.xor(rs1, rs2, rd)
     }
@@ -443,7 +428,11 @@ impl Blake3SequenceBuilder {
             (Reg(rs1), Imm(imm)) => {
                 let xori = XORI {
                     address: self.address,
-                    operands: FormatI { rd, rs1, imm: imm as u64 },
+                    operands: FormatI {
+                        rd,
+                        rs1,
+                        imm: imm as u64,
+                    },
                     virtual_sequence_remaining: Some(0),
                 };
                 self.sequence.push(xori.into());
@@ -453,7 +442,7 @@ impl Blake3SequenceBuilder {
             (Imm(imm1), Imm(imm2)) => Imm(imm1 ^ imm2),
         }
     }
-    
+
     /// Enumerates sequence in reverse order and sets virtual_sequence_remaining
     fn enumerate_sequence(&mut self) {
         let len = self.sequence.len();
@@ -469,6 +458,7 @@ impl Blake3SequenceBuilder {
 /// ------------------------------------------------------------------------------------------------
 /// Rust implementation of Blake3 compression on the host.
 /// ------------------------------------------------------------------------------------------------
+// The following code is copied from reference Blake3 implementation (https://github.com/BLAKE3-team/BLAKE3/blob/master/reference_impl/reference_impl.rs)
 
 /// Execute Blake3 compression with explicit counter values
 pub fn execute_blake3_compression(
@@ -542,18 +532,3 @@ fn permute(m: &mut [u32; 16]) {
     }
     *m = permuted;
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use super::blake3::tests as test_consts;
-
-    #[test]
-    fn test_blake3_compression_simple() {
-        let result = execute_blake3_compression(&BLAKE3_IV, &test_consts::BLOCK_WORDS, 
-            &test_consts::COUNTER, test_consts::BLOCK_LEN, test_consts::FLAGS);
-
-        assert_eq!(result, test_consts::EXPECTED_RESULTS);
-    }
-} 

@@ -287,7 +287,6 @@ impl Iterator for LazyTraceIterator {
 //     (instructions, data)
 // }
 
-
 #[tracing::instrument(skip_all)]
 pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>) {
     let obj = object::File::parse(elf).unwrap();
@@ -307,15 +306,15 @@ pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>) {
             let mut i = 0;
             while i < raw_data.len() {
                 let address = section.address() + i as u64;
-                
+
                 // Check if we have at least 2 bytes for instruction length detection
                 if i + 1 >= raw_data.len() {
                     break;
                 }
-                
+
                 // Read first 2 bytes to determine instruction length
                 let first_halfword = u16::from_le_bytes([raw_data[i], raw_data[i + 1]]);
-                
+
                 let (word, instruction_length) = if (first_halfword & 0x3) == 0x3 {
                     // 32-bit instruction (bits [1:0] == 11)
                     if i + 3 >= raw_data.len() {
@@ -323,10 +322,10 @@ pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>) {
                         break;
                     }
                     let word = u32::from_le_bytes([
-                        raw_data[i], 
-                        raw_data[i + 1], 
-                        raw_data[i + 2], 
-                        raw_data[i + 3]
+                        raw_data[i],
+                        raw_data[i + 1],
+                        raw_data[i + 2],
+                        raw_data[i + 3],
                     ]);
                     (word, 4)
                 } else {
@@ -342,7 +341,7 @@ pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>) {
                     eprintln!("Warning: word: {word:08X} at address: {address:08X} is not recognized as a valid instruction.");
                     instructions.push(RV32IMInstruction::UNIMPL);
                 }
-                
+
                 i += instruction_length;
             }
         }
@@ -412,7 +411,7 @@ fn uncompress_instruction(halfword: u32) -> u32 {
                 return (offset << 20) | ((rs1 + 8) << 15) | (3 << 12) | ((rd + 8) << 7) | 0x3;
             }
             _ => {}
-        }
+        },
         1 => match funct3 {
             0 => {
                 // C.ADDI
@@ -468,7 +467,7 @@ fn uncompress_instruction(halfword: u32) -> u32 {
                 }
             }
             _ => {}
-        }
+        },
         2 => match funct3 {
             0 => {
                 // C.SLLI
@@ -503,15 +502,14 @@ fn uncompress_instruction(halfword: u32) -> u32 {
                 }
             }
             _ => {}
-        }
+        },
         _ => {}
     }
-    
+
     // If we get here, it's an unsupported or invalid compressed instruction
     // Return a NOP instruction
     0x13 // ADDI x0, x0, 0 (NOP)
 }
-
 
 #[cfg(test)]
 mod test {

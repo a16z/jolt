@@ -1,15 +1,3 @@
-/// This file contains Blake2-specific logic to be used in the Blake2 inline:
-/// 1) Prover: Blake2SequenceBuilder expands the inline to a list of RV instructions.
-/// 2) Host: Rust reference implementation to be called by jolt-sdk.
-///
-/// Blake2 is a cryptographic hash function that operates on 64-bit words in a compression function.
-/// Glossary:
-///   - "Word" = one 64-bit value in the 16-word state matrix.
-///   - "Round" = single application of G function to all columns and diagonals.
-///   - "Block" = 128 bytes (16 words) of input data.
-///   - "Compression" = Blake2b compression function: 12 rounds of G function.
-/// Blake2b-256 refers to Blake2b with 256-bit (32-byte) output.
-use crate::instruction::{add::ADD, addi::ADDI, sub::SUB};
 use crate::instruction::format::format_i::FormatI;
 use crate::instruction::format::format_r::FormatR;
 use crate::instruction::format::format_s::FormatS;
@@ -24,6 +12,18 @@ use crate::instruction::virtual_rotri::VirtualROTRI;
 use crate::instruction::xor::XOR;
 use crate::instruction::xori::XORI;
 use crate::instruction::RV32IMInstruction;
+/// This file contains Blake2-specific logic to be used in the Blake2 inline:
+/// 1) Prover: Blake2SequenceBuilder expands the inline to a list of RV instructions.
+/// 2) Host: Rust reference implementation to be called by jolt-sdk.
+///
+/// Blake2 is a cryptographic hash function that operates on 64-bit words in a compression function.
+/// Glossary:
+///   - "Word" = one 64-bit value in the 16-word state matrix.
+///   - "Round" = single application of G function to all columns and diagonals.
+///   - "Block" = 128 bytes (16 words) of input data.
+///   - "Compression" = Blake2b compression function: 12 rounds of G function.
+/// Blake2b-256 refers to Blake2b with 256-bit (32-byte) output.
+use crate::instruction::{add::ADD, addi::ADDI, sub::SUB};
 
 pub mod blake2;
 
@@ -167,11 +167,7 @@ impl Blake2SequenceBuilder {
 
     /// Load the counter value (t) from memory - stored after the message block
     fn load_t(&mut self) {
-        self.ld(
-            self.operand_rs2,
-            MESSAGE_BLOCK_SIZE as i64,
-            self.vr[VR_T],
-        );
+        self.ld(self.operand_rs2, MESSAGE_BLOCK_SIZE as i64, self.vr[VR_T]);
     }
 
     /// Load the final block flag (is_final) from memory - stored after the counter
@@ -206,10 +202,10 @@ impl Blake2SequenceBuilder {
         // We need to create a mask that is 0xFFFFFFFFFFFFFFFF if is_final != 0, or 0 if is_final == 0
         // Use the formula: mask = (0 - is_final) to convert 1 to 0xFFFFFFFFFFFFFFFF and 0 to 0
         let temp_mask = self.vr[VR_TEMP];
-        
+
         // First, negate is_final (0 - is_final)
         self.sub64(Imm(0), Reg(self.vr[VR_IS_FINAL]), temp_mask);
-        
+
         // XOR v[14] with the mask: inverts all bits if is_final=1, leaves unchanged if is_final=0
         self.xor64(Reg(self.vr[14]), Reg(temp_mask), self.vr[14]);
     }
@@ -339,7 +335,11 @@ impl Blake2SequenceBuilder {
                 self.load_64bit_immediate(imm, temp_reg);
                 let sub = SUB {
                     address: self.address,
-                    operands: FormatR { rd, rs1: temp_reg, rs2 },
+                    operands: FormatR {
+                        rd,
+                        rs1: temp_reg,
+                        rs2,
+                    },
                     virtual_sequence_remaining: Some(0),
                 };
                 self.sequence.push(sub.into());
@@ -391,10 +391,7 @@ impl Blake2SequenceBuilder {
     fn load_64bit_immediate(&mut self, value: u64, rd: usize) {
         let lui = LUI {
             address: self.address,
-            operands: FormatU {
-                rd,
-                imm: value,
-            },
+            operands: FormatU { rd, imm: value },
             virtual_sequence_remaining: Some(0),
         };
         self.sequence.push(lui.into());
@@ -451,7 +448,7 @@ impl Blake2SequenceBuilder {
             (Imm(imm1), Imm(imm2)) => Imm(imm1 ^ imm2),
         }
     }
-    
+
     /// Enumerates sequence in reverse order and sets virtual_sequence_remaining
     fn enumerate_sequence(&mut self) {
         let len = self.sequence.len();

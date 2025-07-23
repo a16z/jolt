@@ -40,7 +40,7 @@ mod small_test {
         let result = val_32.rotate_right(shift); // Rotate only lower 32 bits
         let expected = 0x6781234_5; // 0x1234_5678 rotated right by 12
         assert_eq!(result, expected);
-        
+
         // Verify upper bits are cleared
         let final_result = result as u64 as i64;
         assert_eq!(final_result >> 32, 0x0000_0000);
