@@ -1,0 +1,11 @@
+[package]
+name = "blake2-default-guest"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+guest = []
+
+[dependencies]
+blake2 = { version = "0.10.6", default-features = false}
+jolt = { package = "jolt-sdk", path = "../../jolt-sdk"}

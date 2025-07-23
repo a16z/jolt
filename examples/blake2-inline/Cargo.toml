@@ -1,12 +1,10 @@
 [package]
-name = "blake2-inline"
+name = "blake2-inline-guest"
 version = "0.1.0"
 edition = "2021"
 
-[dependencies]
-jolt-sdk = { path = "../../jolt-sdk", features = ["blake2", "host", "rv64"] }
-guest = { package = "blake2-inline-guest", path = "./guest" }
-hex = "0.4.3"
-
 [features]
-icicle = ["jolt-sdk/icicle"]
+guest = []
+
+[dependencies]
+jolt = { package = "jolt-sdk", path = "../../jolt-sdk", features = ["blake2"] }

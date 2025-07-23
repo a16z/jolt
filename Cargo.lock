@@ -614,11 +614,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "blake2-inline"
+name = "blake2-default-guest"
 version = "0.1.0"
 dependencies = [
- "blake2-inline-guest",
- "hex",
+ "blake2",
  "jolt-sdk",
 ]
 
@@ -2242,6 +2241,21 @@ checksum = "505d1856a39b200489082f90d897c3f07c455563880bc5952e38eabf731c83b6"
 dependencies = [
  "digest 0.10.7",
  "sha3-asm",
+]
+
+[[package]]
+name = "keccak1600-default-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
+ "sha3",
+]
+
+[[package]]
+name = "keccak1600-inline-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
 ]
 
 [[package]]

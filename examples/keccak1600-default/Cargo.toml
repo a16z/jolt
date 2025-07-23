@@ -1,0 +1,11 @@
+[package]
+name = "keccak1600-default-guest"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+guest = []
+
+[dependencies]
+jolt = { package = "jolt-sdk", path = "../../jolt-sdk"}
+sha3 = { version = "0.10", default-features = false}

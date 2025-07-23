@@ -40,8 +40,6 @@ members = [
     "examples/sha2-chain/guest",
     "examples/sha3-chain",
     "examples/sha3-chain/guest",
-    "examples/blake2-inline",
-    "examples/blake2-inline/guest",
     "examples/multi-function",
     "examples/multi-function/guest",
     "examples/alloc",
@@ -54,6 +52,10 @@ members = [
     "examples/overflow/guest",
     "examples/memory-ops",
     "examples/memory-ops/guest",
+    "examples/blake2-inline",
+    "examples/blake2-default",
+    "examples/keccak1600-inline",
+    "examples/keccak1600-default",
 ]
 
 [features]

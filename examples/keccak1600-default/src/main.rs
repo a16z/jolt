@@ -2,4 +2,4 @@
 #![no_main]
 
 #[allow(unused_imports)]
-use blake2_inline_guest::*;
+use keccak1600_default_guest::*;
