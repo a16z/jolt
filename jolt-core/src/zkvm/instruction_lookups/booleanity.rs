@@ -70,7 +70,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             .0
             .r
             .clone();
-        let trace = sm.get_prover_data().1;
+        let trace = sm.get_prover_data().2;
 
         Self {
             gamma: gamma_powers,

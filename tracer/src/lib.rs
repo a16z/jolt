@@ -149,7 +149,7 @@ fn setup_emulator(elf_contents: Vec<u8>, inputs: &[u8], memory_config: &MemoryCo
 /// * `emulator` - Clone of the checkpoint emulator state to execute from
 /// * `prev_pc` - Previous program counter value, used for termination detection
 /// * `current_traces` - Buffer of trace entries from the most recent emulator tick
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LazyTraceIterator {
     emulator_state: EmulatorState,
     prev_pc: u64,

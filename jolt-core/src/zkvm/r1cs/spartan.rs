@@ -637,7 +637,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
            The matrices A, B, C have a block-diagonal structure with repeated blocks
            A_small, B_small, C_small corresponding to the uniform constraints.
         */
-        let (preprocessing, trace, _program_io, _final_memory_state) =
+        let (preprocessing, _, trace, _program_io, _final_memory_state) =
             state_manager.get_prover_data();
 
         let padded_trace_length = trace.len().next_power_of_two();
@@ -983,7 +983,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             2. NextPC(r_cycle) = \sum_t PC(t) * eq_plus_one(r_cycle, t)
         */
 
-        let (preprocessing, trace, _program_io, _final_memory_state) =
+        let (preprocessing, _, trace, _program_io, _final_memory_state) =
             state_manager.get_prover_data();
 
         let key = self.key.clone();

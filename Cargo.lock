@@ -1085,7 +1085,7 @@ dependencies = [
 [[package]]
 name = "dory"
 version = "1.0.0"
-source = "git+https://github.com/spaceandtimefdn/sxt-dory?branch=feat%2Freturn_row_commitments#b22b6f08fdda11150e5826ee1cba0f6d12f977f7"
+source = "git+https://github.com/GaloisInc/sxt-dory?branch=feat%2Fstreaming_take_2#071c5b7b06458bd246cf17e7dbb5ac84b5448d2d"
 dependencies = [
  "ark-bn254",
  "ark-ec",

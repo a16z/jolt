@@ -1,16 +1,12 @@
 #![allow(static_mut_refs)]
 
-use super::commitment_scheme::CommitmentScheme;
+use super::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme};
 use crate::{
-    field::JoltField,
-    msm::VariableBaseMSM,
-    poly::compact_polynomial::SmallScalar,
-    poly::multilinear_polynomial::MultilinearPolynomial,
-    utils::{
+    field::JoltField, jolt::vm::instruction_lookups::D, msm::VariableBaseMSM, poly::{compact_polynomial::SmallScalar, multilinear_polynomial::MultilinearPolynomial}, utils::{
         errors::ProofVerifyError,
         math::Math,
         transcript::{AppendToTranscript, Transcript},
-    },
+    }
 };
 use ark_bn254::{Bn254, Fr, G1Projective, G2Projective};
 use ark_ec::{
@@ -34,7 +30,8 @@ use dory::{
     curve::G2Cache,
     evaluate, setup_with_srs_file,
     transcript::Transcript as DoryTranscript,
-    verify, DoryProof, DoryProofBuilder, Polynomial as DoryPolynomial, ProverSetup, VerifierSetup,
+    verify, DoryProof, DoryProofBuilder, Polynomial as DoryPolynomial, ProverSetup, StreamingDory,
+    VerifierSetup,
 };
 
 /// The (padded) length of the execution trace currently being proven
@@ -1230,6 +1227,25 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
     fn protocol_name() -> &'static [u8] {
         b"dory_commitment_scheme"
+    }
+}
+
+impl StreamingCommitmentScheme for DoryCommitmentScheme {
+    type State<'a> = StreamingDory<'a, JoltBn254>;
+
+    fn initialize<'a>(_size: usize, setup: &'a Self::ProverSetup) -> Self::State<'a> {
+        let sigma = DoryGlobals::get_num_columns().log_2();
+        StreamingDory::initialize(sigma, setup)
+    }
+
+    fn process<'a>(state: Self::State<'a>, eval: Self::Field) -> Self::State<'a> {
+        state.process::<JoltMsmG1>(JoltFieldWrapper(eval))
+    }
+
+    fn finalize<'a>(state: Self::State<'a>) -> (Self::Commitment, Self::OpeningProofHint) {
+        let (commitment, hint) = state.finalize::<JoltMsmG1>();
+        (DoryCommitment(commitment), hint)
+        // DoryCommitment(state.finalize::<JoltMsmG1>())
     }
 }
 

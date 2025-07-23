@@ -49,7 +49,7 @@ use std::io::Write;
 /// // Go!
 /// emulator.run();
 /// ```
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Emulator {
     cpu: Cpu,
 

@@ -71,7 +71,7 @@ const MIP_SSIP: u64 = 0x002;
 pub const JOLT_CYCLE_TRACK_ECALL_NUM: u32 = 0xC7C1E;
 pub const JOLT_CYCLE_MARKER_START: u32 = 1;
 pub const JOLT_CYCLE_MARKER_END: u32 = 2;
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct ActiveMarker {
     label: String,
     start_instrs: u64,      // executed_instrs  at ‘start’
@@ -79,7 +79,7 @@ struct ActiveMarker {
 }
 
 /// Emulates a RISC-V CPU core
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Cpu {
     clock: u64,
     pub(crate) xlen: Xlen,
@@ -102,13 +102,13 @@ pub struct Cpu {
     active_markers: FnvHashMap<u32, ActiveMarker>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Xlen {
     Bit32,
     Bit64, // @TODO: Support Bit128
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub enum PrivilegeMode {
     User,

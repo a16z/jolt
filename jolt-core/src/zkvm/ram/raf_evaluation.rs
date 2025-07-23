@@ -56,7 +56,7 @@ impl<F: JoltField> RafEvaluationSumcheck<F> {
         T: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (_, trace, program_io, _) = state_manager.get_prover_data();
+        let (_, _, trace, program_io, _) = state_manager.get_prover_data();
         let memory_layout = &program_io.memory_layout;
 
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);

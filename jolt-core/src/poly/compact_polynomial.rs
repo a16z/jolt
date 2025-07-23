@@ -1,3 +1,5 @@
+use std::iter::Take;
+use std::marker::PhantomData;
 use std::ops::Index;
 
 use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
@@ -8,6 +10,8 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use num_integer::Integer;
 use rayon::prelude::*;
 use std::cmp::Ordering;
+use tracer::instruction::RV32IMCycle;
+use tracer::LazyTraceIterator;
 
 /// A trait for small scalars ({u/i}{8/16/32/64})
 pub trait SmallScalar: Copy + Integer + Sync + CanonicalSerialize + CanonicalDeserialize {
@@ -92,6 +96,20 @@ impl SmallScalar for i64 {
     fn abs_diff_u64(self, other: Self) -> u64 {
         // abs_diff for signed integers returns the corresponding unsigned type (u64 for i64)
         self.abs_diff(other)
+    }
+}
+
+pub struct StreamingCompactWitness<T: SmallScalar, F: JoltField> {
+    pub value: T,
+    phantom: PhantomData<fn(F)>,
+}
+
+impl<T: SmallScalar, F: JoltField> StreamingCompactWitness<T, F> {
+    pub(crate) fn new(v: T) -> Self {
+        Self {
+            value: v,
+            phantom: PhantomData,
+        }
     }
 }
 

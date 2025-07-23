@@ -2,7 +2,7 @@
 use alloc::{vec, vec::Vec};
 
 /// Emulates main memory.
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Memory {
     /// Memory content
     pub data: Vec<u64>,

@@ -17,7 +17,7 @@ use num_derive::FromPrimitive;
 use rayon::prelude::*;
 use tracer::emulator::memory::Memory;
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
-use tracer::JoltDevice;
+use tracer::{JoltDevice, LazyTraceIterator};
 
 #[derive(PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, FromPrimitive)]
 #[repr(u8)]
@@ -42,6 +42,7 @@ where
 {
     pub preprocessing: &'a JoltProverPreprocessing<F, PCS>,
     pub trace: Vec<RV32IMCycle>,
+    pub lazy_trace: Option<LazyTraceIterator>,
     pub final_memory_state: Memory,
     pub accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
 }
@@ -76,6 +77,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
 {
     pub fn new_prover(
         preprocessing: &'a JoltProverPreprocessing<F, PCS>,
+        lazy_trace: LazyTraceIterator,
         trace: Vec<RV32IMCycle>,
         program_io: JoltDevice,
         final_memory_state: Memory,
@@ -122,6 +124,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             twist_sumcheck_switch_index,
             prover_state: Some(ProverState {
                 preprocessing,
+                lazy_trace,
                 trace,
                 final_memory_state,
                 accumulator: opening_accumulator,
@@ -166,6 +169,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         &self,
     ) -> (
         &'a JoltProverPreprocessing<F, PCS>,
+        &LazyTraceIterator,
         &Vec<RV32IMCycle>,
         &JoltDevice,
         &Memory,
@@ -173,6 +177,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         if let Some(ref prover_state) = self.prover_state {
             (
                 prover_state.preprocessing,
+                &prover_state.lazy_trace
                 &prover_state.trace,
                 &self.program_io,
                 &prover_state.final_memory_state,

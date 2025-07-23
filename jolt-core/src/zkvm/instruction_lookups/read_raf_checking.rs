@@ -94,7 +94,7 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
         sm: &'a mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         eq_r_cycle: Vec<F>,
     ) -> Self {
-        let trace = sm.get_prover_data().1;
+        let trace = sm.get_prover_data().2;
         let log_T = trace.len().log_2();
         let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
         let mut ps = ReadRafProverState::new(trace, eq_r_cycle);

@@ -106,7 +106,7 @@ impl RamDag {
     >(
         state_manager: &StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (preprocessing, trace, program_io, final_memory) = state_manager.get_prover_data();
+        let (preprocessing, _, trace, program_io, final_memory) = state_manager.get_prover_data();
         let ram_preprocessing = &preprocessing.shared.ram;
 
         let K = state_manager.ram_K;

@@ -14,6 +14,11 @@ use rayon::prelude::*;
 
 use super::multilinear_polynomial::BindingOrder;
 
+// #[derive(Clone, Debug, Default, PartialEq)]
+pub struct StreamingDenseWitness<F: JoltField> {
+    pub value: F,
+}
+
 #[derive(Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DensePolynomial<F: JoltField> {
     pub num_vars: usize, // the number of variables in the multilinear polynomial

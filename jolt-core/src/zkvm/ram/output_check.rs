@@ -133,7 +133,7 @@ impl<F: JoltField> OutputSumcheck<F> {
         final_ram_state: Vec<u32>,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (_, _, program_io, _) = state_manager.get_prover_data();
+        let (_, _, _, program_io, _) = state_manager.get_prover_data();
         let K = final_ram_state.len();
 
         let r_address = state_manager
@@ -366,7 +366,7 @@ impl<F: JoltField> ValFinalSumcheck<F> {
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (preprocessing, trace, program_io, _) = state_manager.get_prover_data();
+        let (preprocessing, _, trace, program_io, _) = state_manager.get_prover_data();
         let memory_layout = &program_io.memory_layout;
         let T = trace.len();
 

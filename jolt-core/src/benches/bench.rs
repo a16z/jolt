@@ -129,7 +129,7 @@ fn prove_example(
     let mut tasks = Vec::new();
     let mut program = host::Program::new(example_name);
     let (bytecode, init_memory_state, _) = program.decode();
-    let (_, _, program_io) = program.trace(&serialized_input);
+    let (_, _, _, program_io) = program.trace(&serialized_input);
 
     let task = move || {
         let preprocessing = JoltRV32IM::prover_preprocess(
