@@ -5,6 +5,7 @@ use crate::dag::state_manager::StateManager;
 use crate::jolt::vm::bytecode::booleanity::BooleanitySumcheck;
 use crate::jolt::vm::bytecode::hamming_weight::HammingWeightSumcheck;
 use crate::jolt::vm::bytecode::read_raf_checking::ReadRafSumcheck;
+use crate::jolt::vm::ram::compute_d_parameter;
 use crate::jolt::witness::VirtualPolynomial;
 use crate::poly::opening_proof::SumcheckId;
 use crate::utils::math::Math;
@@ -62,12 +63,12 @@ impl BytecodePreprocessing {
         bytecode.insert(0, RV32IMInstruction::NoOp);
         assert_eq!(virtual_address_map.insert((0, 0), 0), None);
 
-        // Bytecode: Pad to nearest power of 2
-        let code_size = bytecode.len().next_power_of_two();
-        bytecode.resize(code_size, RV32IMInstruction::NoOp);
+        let d = compute_d_parameter(bytecode.len().next_power_of_two());
+        // Make log(code_size) a multiple of d
+        let code_size = (bytecode.len().next_power_of_two().log_2().div_ceil(d) * d).pow2();
 
-        // TODO: change this to have different calculations
-        let d = 2;
+        // Bytecode: Pad to nearest power of 2
+        bytecode.resize(code_size, RV32IMInstruction::NoOp);
 
         Self {
             code_size,
