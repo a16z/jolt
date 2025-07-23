@@ -47,7 +47,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
         // Calculate D dynamically such that 2^8 = K^(1/D)
         let d = compute_d_parameter(state_manager.ram_K);
 
-        let (_, trace, program_io, _) = state_manager.get_prover_data();
+        let (_, _, trace, program_io, _) = state_manager.get_prover_data();
         let memory_layout = &program_io.memory_layout;
 
         let T = trace.len();

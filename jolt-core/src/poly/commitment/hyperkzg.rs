@@ -513,7 +513,8 @@ pub struct HyperKZGState<'a, P: Pairing> {
     row_count: usize,
 }
 
-const CHUNK_SIZE: usize = 256;
+// TODO: This should go somewhere else.
+pub(crate) const CHUNK_SIZE: usize = 256;
 
 impl<P: Pairing> StreamingCommitmentScheme for HyperKZG<P>
 where
@@ -561,8 +562,8 @@ where
         state
     }
 
-    fn finalize<'a>(state: Self::State<'a>) -> Self::Commitment {
-        HyperKZGCommitment(state.acc.into())
+    fn finalize<'a>(state: Self::State<'a>) -> (Self::Commitment, Self::OpeningProofHint) {
+        (HyperKZGCommitment(state.acc.into()), ())
     }
 }
 

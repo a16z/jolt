@@ -80,7 +80,7 @@ pub const MIP_SEIP: u64 = 0x200;
 const MIP_STIP: u64 = 0x020;
 const MIP_SSIP: u64 = 0x002;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct ActiveMarker {
     label: String,
     start_instrs: u64,      // executed_instrs  at ‘start’
@@ -88,7 +88,7 @@ struct ActiveMarker {
 }
 
 /// Emulates a RISC-V CPU core
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Cpu {
     clock: u64,
     pub(crate) xlen: Xlen,
@@ -121,7 +121,7 @@ pub enum Xlen {
     Bit64, // @TODO: Support Bit128
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum PrivilegeMode {
     User,
     Supervisor,

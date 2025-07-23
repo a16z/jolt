@@ -210,7 +210,7 @@ fn setup_emulator_with_backtraces(
 /// * `emulator` - Clone of the checkpoint emulator state to execute from
 /// * `prev_pc` - Previous program counter value, used for termination detection
 /// * `current_traces` - Buffer of trace entries from the most recent emulator tick
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LazyTraceIterator {
     emulator_state: EmulatorState,
     prev_pc: u64,

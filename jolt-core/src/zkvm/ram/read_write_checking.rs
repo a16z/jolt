@@ -77,7 +77,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         K: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (preprocessing, trace, program_io, _) = state_manager.get_prover_data();
+        let (preprocessing, _, trace, program_io, _) = state_manager.get_prover_data();
 
         let r_prime = state_manager
             .get_prover_accumulator()

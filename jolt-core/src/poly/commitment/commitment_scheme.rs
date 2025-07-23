@@ -127,5 +127,5 @@ pub trait StreamingCommitmentScheme: CommitmentScheme {
 
     fn initialize<'a>(size: usize, setup: &'a Self::ProverSetup) -> Self::State<'a>;
     fn process<'a>(state: Self::State<'a>, eval: Self::Field) -> Self::State<'a>;
-    fn finalize<'a>(state: Self::State<'a>) -> Self::Commitment;
+    fn finalize<'a>(state: Self::State<'a>) -> (Self::Commitment, Self::OpeningProofHint);
 }

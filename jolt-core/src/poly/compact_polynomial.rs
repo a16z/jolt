@@ -7,8 +7,113 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::ops::Index;
-
+use std::iter::Take;
+use std::marker::PhantomData;
 use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
+
+use num_integer::Integer;
+use tracer::instruction::RV32IMCycle;
+use tracer::LazyTraceIterator;
+
+/// A trait for small scalars ({u/i}{8/16/32/64})
+pub trait SmallScalar: Copy + Integer + Sync + CanonicalSerialize + CanonicalDeserialize {
+    /// Performs a field multiplication. Uses `JoltField::mul_u64` under the hood.
+    fn field_mul<F: JoltField>(&self, n: F) -> F;
+    /// Converts a small scalar into a (potentially Montgomery form) `JoltField` type
+    fn to_field<F: JoltField>(self) -> F;
+    /// Computes `|self - other|` as a u64.
+    fn abs_diff_u64(self, other: Self) -> u64;
+}
+
+impl SmallScalar for u8 {
+    #[inline]
+    fn field_mul<F: JoltField>(&self, n: F) -> F {
+        n.mul_u64(*self as u64)
+    }
+    #[inline]
+    fn to_field<F: JoltField>(self) -> F {
+        F::from_u8(self)
+    }
+    #[inline]
+    fn abs_diff_u64(self, other: Self) -> u64 {
+        self.abs_diff(other) as u64
+    }
+}
+impl SmallScalar for u16 {
+    #[inline]
+    fn field_mul<F: JoltField>(&self, n: F) -> F {
+        n.mul_u64(*self as u64)
+    }
+    #[inline]
+    fn to_field<F: JoltField>(self) -> F {
+        F::from_u16(self)
+    }
+    #[inline]
+    fn abs_diff_u64(self, other: Self) -> u64 {
+        self.abs_diff(other) as u64
+    }
+}
+impl SmallScalar for u32 {
+    #[inline]
+    fn field_mul<F: JoltField>(&self, n: F) -> F {
+        n.mul_u64(*self as u64)
+    }
+    #[inline]
+    fn to_field<F: JoltField>(self) -> F {
+        F::from_u32(self)
+    }
+    #[inline]
+    fn abs_diff_u64(self, other: Self) -> u64 {
+        self.abs_diff(other) as u64
+    }
+}
+impl SmallScalar for u64 {
+    #[inline]
+    fn field_mul<F: JoltField>(&self, n: F) -> F {
+        n.mul_u64(*self)
+    }
+    #[inline]
+    fn to_field<F: JoltField>(self) -> F {
+        F::from_u64(self)
+    }
+    #[inline]
+    fn abs_diff_u64(self, other: Self) -> u64 {
+        self.abs_diff(other)
+    }
+}
+impl SmallScalar for i64 {
+    #[inline]
+    fn field_mul<F: JoltField>(&self, n: F) -> F {
+        if self.is_negative() {
+            -n.mul_u64(-self as u64)
+        } else {
+            n.mul_u64(*self as u64)
+        }
+    }
+    #[inline]
+    fn to_field<F: JoltField>(self) -> F {
+        F::from_i64(self)
+    }
+    #[inline]
+    fn abs_diff_u64(self, other: Self) -> u64 {
+        // abs_diff for signed integers returns the corresponding unsigned type (u64 for i64)
+        self.abs_diff(other)
+    }
+}
+
+pub struct StreamingCompactWitness<T: SmallScalar, F: JoltField> {
+    pub value: T,
+    phantom: PhantomData<fn(F)>,
+}
+
+impl<T: SmallScalar, F: JoltField> StreamingCompactWitness<T, F> {
+    pub(crate) fn new(v: T) -> Self {
+        Self {
+            value: v,
+            phantom: PhantomData,
+        }
+    }
+}
 
 /// Compact polynomials are used to store coefficients of small scalars.
 /// They have two representations:

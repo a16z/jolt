@@ -60,7 +60,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         eq_r_cycle: Vec<F>,
         G: Vec<Vec<F>>,
     ) -> Self {
-        let (preprocessing, trace, _, _) = sm.get_prover_data();
+        let (preprocessing, _, trace, _, _) = sm.get_prover_data();
         let d = preprocessing.shared.bytecode.d;
         let log_K = preprocessing.shared.bytecode.bytecode.len().log_2();
         let log_K_chunk = log_K.div_ceil(d);

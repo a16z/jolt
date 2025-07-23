@@ -36,7 +36,7 @@ impl<F: JoltField> HammingBooleanitySumcheck<F> {
     pub fn new_prover(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
-        let (_, trace, _, _) = sm.get_prover_data();
+        let (_, _, trace, _, _) = sm.get_prover_data();
 
         let T = trace.len();
         let log_T = T.log_2();

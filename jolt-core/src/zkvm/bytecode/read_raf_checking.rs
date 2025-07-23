@@ -85,7 +85,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         let K = sm.get_prover_data().0.shared.bytecode.code_size;
         let log_K = K.log_2();
         let d = sm.get_prover_data().0.shared.bytecode.d;
-        let log_T = sm.get_prover_data().1.len().log_2();
+        let log_T = sm.get_prover_data().2.len().log_2();
         let log_K_chunk = log_K.div_ceil(d);
         let K_chunk = 1 << log_K_chunk;
         let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
@@ -101,7 +101,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         let (_, raf_shift_claim) =
             sm.get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanShift);
         let int_poly = IdentityPolynomial::<F>::new(log_K);
-        let (preprocessing, trace, _, _) = sm.get_prover_data();
+        let (preprocessing, _, trace, _, _) = sm.get_prover_data();
 
         let rv_claim = rv_claim_1
             + gamma * rv_claim_2

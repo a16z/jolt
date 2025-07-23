@@ -60,6 +60,49 @@ impl<F: JoltField> CanonicalSerialize for MultilinearPolynomial<F> {
     }
 }
 
+/// Wrapper enum for the various streaming witness types used in Jolt
+#[repr(u8)]
+// #[derive(Clone, Debug, EnumIter)]
+pub enum StreamingWitness<F: JoltField> {
+    LargeScalars(StreamingDenseWitness<F>),
+    U8Scalars(StreamingCompactWitness<u8, F>),
+    U16Scalars(StreamingCompactWitness<u16, F>),
+    U32Scalars(StreamingCompactWitness<u32, F>),
+    U64Scalars(StreamingCompactWitness<u64, F>),
+    I64Scalars(StreamingCompactWitness<i64, F>),
+    // RLC(StreamingRLCPolynomial<F>),
+    OneHot(StreamingOneHotWitness<F>),
+}
+
+impl<F: JoltField> StreamingWitness<F> {
+    pub fn to_field(self) -> F {
+        match self {
+            StreamingWitness::LargeScalars(streaming_dense_witness) => {
+                streaming_dense_witness.value
+            }
+            StreamingWitness::U8Scalars(streaming_compact_witness) => {
+                streaming_compact_witness.value.to_field()
+            }
+            StreamingWitness::U16Scalars(streaming_compact_witness) => {
+                streaming_compact_witness.value.to_field()
+            }
+            StreamingWitness::U32Scalars(streaming_compact_witness) => {
+                streaming_compact_witness.value.to_field()
+            }
+            StreamingWitness::U64Scalars(streaming_compact_witness) => {
+                streaming_compact_witness.value.to_field()
+            }
+            StreamingWitness::I64Scalars(streaming_compact_witness) => {
+                streaming_compact_witness.value.to_field()
+            }
+            // StreamingWitness::RLC(streaming_rlcpolynomial) => todo!(),
+            StreamingWitness::OneHot(streaming_one_hot_witness) => {
+                (streaming_one_hot_witness.value as u64).to_field()
+            } // JP: ???
+        }
+    }
+}
+
 /// The order in which polynomial variables are bound in sumcheck
 #[derive(Clone, Copy, Debug, PartialEq, Allocative)]
 pub enum BindingOrder {

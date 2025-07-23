@@ -27,6 +27,7 @@ use crate::zkvm::ProverDebugInfo;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use anyhow::Context;
+use itertools::Itertools;
 use rayon::prelude::*;
 
 pub enum JoltDAG {}
@@ -50,7 +51,7 @@ impl JoltDAG {
         state_manager.fiat_shamir_preamble();
 
         // Initialize DoryGlobals at the beginning to keep it alive for the entire proof
-        let (preprocessing, trace, _, _) = state_manager.get_prover_data();
+        let (_, preprocessing, trace, _, _) = state_manager.get_prover_data();
         let trace_length = trace.len();
         let padded_trace_length = trace_length.next_power_of_two();
 
@@ -80,7 +81,7 @@ impl JoltDAG {
         let span = tracing::span!(tracing::Level::INFO, "Stage 1 sumchecks");
         let _guard = span.enter();
 
-        let (_, trace, _, _) = state_manager.get_prover_data();
+        let (_, _, trace, _, _) = state_manager.get_prover_data();
         let padded_trace_length = trace.len().next_power_of_two();
         let mut spartan_dag = SpartanDag::<F>::new::<ProofTranscript>(padded_trace_length);
         let mut lookups_dag = LookupsDag::default();
@@ -482,31 +483,59 @@ impl JoltDAG {
     >(
         prover_state_manager: &mut StateManager<'a, F, ProofTranscript, PCS>,
     ) -> Result<HashMap<CommittedPolynomial, PCS::OpeningProofHint>, anyhow::Error> {
-        let (preprocessing, trace, _program_io, _final_memory_state) =
+        let (preprocessing, lazy_trace, trace, _program_io, _final_memory_state) =
             prover_state_manager.get_prover_data();
 
-        let mut all_polys = CommittedPolynomial::generate_witness_batch(
-            &AllCommittedPolynomials::iter().copied().collect::<Vec<_>>(),
-            preprocessing,
-            trace,
-        );
-        let committed_polys: Vec<_> = AllCommittedPolynomials::iter()
-            .filter_map(|poly| all_polys.remove(poly))
-            .collect();
+        let size = _trace.len(); // Remove this from the trait??? Or get from preprocessing?
+        let trace = lazy_trace.clone();
 
-        let (commitments, hints): (Vec<PCS::Commitment>, Vec<PCS::OpeningProofHint>) =
-            committed_polys
-                .par_iter()
-                .map(|poly| PCS::commit(poly, &preprocessing.generators))
-                .unzip();
-        let mut hint_map = HashMap::with_capacity(committed_polys.len());
+
+        let init_pcss: Vec<_> = AllCommittedPolynomials::iter()
+            .map(|_poly| PCS::initialize(size, &preprocessing.generators))
+            .collect();
+        // TODO: Process in chunks with parallelization.
+        // let pcss = trace.chunks(CHUNK_SIZE).into_iter().fold(init_pcss, |pcss, trace_chunk| {
+        let pcss = trace.clone() // TODO(JP): More efficient way to zip_with_self_next
+            .zip(
+                trace
+                    .skip(1)
+                    .chain(std::iter::once(RV32IMCycle::NoOp)),
+            )
+            .fold(init_pcss, |pcss, (cycle, next_cycle)| {
+                // let offset = offset; // TODO: Can we get this from `cycle`?
+
+                AllCommittedPolynomials::iter()
+                    .zip(pcss.into_iter())
+                    .map(|(poly, pcs)| {
+                        let witness = poly.generate_streaming_witness(preprocessing, &cycle, &next_cycle);
+                        let witness = witness.to_field(); // JP: Can we leave this as a small value? Is it more efficient?
+                        PCS::process(pcs, witness)
+                    })
+                    .collect()
+        });
+
+        let (commitments, hints): (Vec<_>, Vec<PCS::OpeningProofHint>) = pcss.into_iter().map(|pcs| PCS::finalize(pcs)).unzip();//.collect();
+        // let hints: Vec<PCS::OpeningProofHint> = todo!("Compute hints in a streaming manner");
+        let mut hint_map = HashMap::with_capacity(AllCommittedPolynomials::len());
         for (poly, hint) in AllCommittedPolynomials::iter().zip(hints) {
             hint_map.insert(*poly, hint);
         }
 
         prover_state_manager.set_commitments(commitments);
 
-        drop_in_background_thread(committed_polys);
+        #[cfg(test)]
+        {
+            let committed_polys: Vec<_> = AllCommittedPolynomials::par_iter()
+                .map(|poly| poly.generate_witness(preprocessing, _trace))
+                .collect();
+
+            let commitments_non_streaming: Vec<_> = committed_polys
+                .iter()
+                .map(|poly| PCS::commit(poly, &preprocessing.generators).0)
+                .collect();
+
+            assert_eq!(commitments, commitments_non_streaming);
+        }
 
         Ok(hint_map)
     }

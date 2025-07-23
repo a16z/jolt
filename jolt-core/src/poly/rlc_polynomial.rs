@@ -11,6 +11,11 @@ use rayon::prelude::*;
 use std::sync::Arc;
 use tracing::trace_span;
 
+#[derive(Default, Clone, Debug, PartialEq)]
+pub struct StreamingRLCPolynomial<F: JoltField> {
+    phantom: std::marker::PhantomData<fn(F)>,
+}
+
 /// `RLCPolynomial` represents a multilinear polynomial comprised of a
 /// random linear combination of multiple polynomials, potentially with
 /// different sizes.
