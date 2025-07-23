@@ -29,7 +29,7 @@ const DEGREE: usize = 3;
 
 struct BooleanityProverState<F: JoltField> {
     B: GruenSplitEqPolynomial<F>,
-    D_poly: MultilinearPolynomial<F>,
+    D: MultilinearPolynomial<F>,
     G: [Vec<F>; D],
     H_indices: [Vec<usize>; D],
     H: Option<[MultilinearPolynomial<F>; D]>,
@@ -117,7 +117,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
 impl<F: JoltField> BooleanityProverState<F> {
     fn new(trace: &[RV32IMCycle], eq_r_cycle: Vec<F>, G: [Vec<F>; D], r_address: &[F]) -> Self {
         let B = GruenSplitEqPolynomial::new(r_address);
-        let D_poly = MultilinearPolynomial::from(eq_r_cycle);
+
         let mut F: Vec<F> = unsafe_allocate_zero_vec(K_CHUNK);
         F[0] = F::one();
 
@@ -151,7 +151,7 @@ impl<F: JoltField> BooleanityProverState<F> {
         ];
         BooleanityProverState {
             B,
-            D_poly,
+            D: MultilinearPolynomial::from(eq_r_cycle),
             G,
             H_indices,
             H: None,
@@ -219,10 +219,10 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
             }
         } else {
             // Phase 2: Bind D and H
-            ps.D_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
             ps.H.as_mut()
                 .unwrap()
                 .into_par_iter()
+                .chain(rayon::iter::once(&mut ps.D))
                 .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
         }
     }
@@ -258,6 +258,13 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
             .fold(F::zero(), |acc, (gamma, ra)| {
                 (ra.square() - ra) * gamma + acc
             })
+    }
+
+    fn set_previous_claim(&mut self, claim: F) {
+        self.previous_claim = claim;
+        if let Some(prover_state) = self.prover_state.as_mut() {
+            prover_state.previous_claim = claim;
+        }
     }
 
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
@@ -300,17 +307,6 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
             r_sumcheck.r,
         );
     }
-
-    fn previous_claim(&self) -> F {
-        self.previous_claim
-    }
-
-    fn set_previous_claim(&mut self, claim: F) {
-        self.previous_claim = claim;
-        if let Some(prover_state) = self.prover_state.as_mut() {
-            prover_state.previous_claim = claim;
-        }
-    }
 }
 
 impl<F: JoltField> BooleanitySumcheck<F> {
@@ -322,7 +318,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         let inner_span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
         let _inner_guard = inner_span.enter();
 
-        // Compute quadratic coefficients first
+        // Compute quadratic coefficients to interpolate for Gruen
         let quadratic_coeffs: [F; DEGREE - 1] = if B.E_in_current_len() == 1 {
             // E_in is fully bound
             (0..B.len() / 2)
@@ -424,22 +420,17 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         };
 
         // Use Gruen optimization to get cubic evaluations from quadratic coefficients
-        B.sumcheck_evals_from_quadratic_coeffs(
-            quadratic_coeffs[0],
-            quadratic_coeffs[1],
-            p.previous_claim,
-        )
-        .to_vec()
+        B.gruen_evals_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], p.previous_claim)
+            .to_vec()
     }
 
     fn compute_phase2_message(&self) -> Vec<F> {
         let p = self.prover_state.as_ref().unwrap();
-        let univariate_poly_evals: [F; 3] = (0..p.D_poly.len() / 2)
+        let univariate_poly_evals: [F; 3] = (0..p.D.len() / 2)
             .into_par_iter()
             .map(|i| {
-                let D_evals = p
-                    .D_poly
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
+                let D_evals =
+                    p.D.sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
                 let H = p.H.as_ref().unwrap();
                 let H_evals = H
                     .iter()

@@ -215,13 +215,9 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     /// q(X) is a linear polynomial, given the following:
     /// - c, the constant term of q
     /// - the previous round claim, s(0) + s(1)
-    /// 
+    ///
     /// We derive the linear coefficient d of q(X) from the constraint s(0) + s(1) = previous_claim
-    pub fn sumcheck_quadratic_evals_from_linear(
-        &self,
-        q_constant: F,
-        previous_claim: F,
-    ) -> [F; 2] {
+    pub fn gruen_evals_deg_2(&self, q_constant: F, previous_claim: F) -> [F; 2] {
         // We want to compute the evaluations of the quadratic polynomial s(X) = l(X) * q(X), where
         // both l and q are linear, at the points {0, 2}.
         //
@@ -232,31 +228,31 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         //
         // From s(0) + s(1) = l(0)*q(0) + l(1)*q(1) = a*c + (a+b)*(c+d) = previous_claim
         // We can solve for d
-        
+
         // Evaluations of the linear polynomial l(X)
         let eq_eval_1 = self.current_scalar * self.w[self.current_index - 1];
         let eq_eval_0 = self.current_scalar - eq_eval_1;
-        
+
         // s(0) = l(0) * q(0) = eq_eval_0 * q_constant
         let s_0 = eq_eval_0 * q_constant;
-        
+
         // From s(0) + s(1) = previous_claim, we get s(1) = previous_claim - s(0)
         let s_1 = previous_claim - s_0;
-        
+
         // Since s(1) = l(1) * q(1) = eq_eval_1 * (c + d), we can solve for d
         // s(1) = eq_eval_1 * (q_constant + d)
         // d = s(1) / eq_eval_1 - q_constant
         let q_linear_coeff = s_1 / eq_eval_1 - q_constant;
-        
+
         // Now compute the evaluations at 0 and 2
         let eq_m = eq_eval_1 - eq_eval_0; // This is b, the slope of l(X)
         let eq_eval_2 = eq_eval_1 + eq_m; // l(2) = l(1) + b
-        
+
         let q_eval_2 = q_constant + q_linear_coeff + q_linear_coeff; // q(2) = c + 2d
-        
+
         [
-            s_0,                      // s(0) = l(0) * q(0)
-            eq_eval_2 * q_eval_2,     // s(2) = l(2) * q(2)
+            s_0,                  // s(0) = l(0) * q(0)
+            eq_eval_2 * q_eval_2, // s(2) = l(2) * q(2)
         ]
     }
 
@@ -266,7 +262,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     /// - c, the constant term of q
     /// - e, the quadratic term of q
     /// - the previous round claim, s(0) + s(1)
-    pub fn sumcheck_evals_from_quadratic_coeffs(
+    pub fn gruen_evals_deg_3(
         &self,
         q_constant: F,
         q_quadratic_coeff: F,

@@ -371,10 +371,6 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
         eq_eval_address * eq_eval_cycle * result
     }
 
-    fn previous_claim(&self) -> F {
-        self.previous_claim
-    }
-
     fn set_previous_claim(&mut self, claim: F) {
         self.previous_claim = claim;
         if let Some(prover_state) = self.prover_state.as_mut() {
@@ -548,7 +544,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         };
 
         // Use Gruen optimization to get cubic evaluations from quadratic coefficients
-        B.sumcheck_evals_from_quadratic_coeffs(
+        B.gruen_evals_deg_3(
             quadratic_coeffs[0],
             quadratic_coeffs[1],
             prover_state.previous_claim,

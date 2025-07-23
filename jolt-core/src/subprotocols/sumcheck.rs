@@ -118,16 +118,9 @@ pub trait SumcheckInstance<F: JoltField>: Send + Sync {
         r: &[F],
     ) -> F;
 
-    /// Returns the previous round's claim for use in optimization techniques.
-    /// This is the sum s(0) + s(1) from the previous round.
-    fn previous_claim(&self) -> F {
-        F::zero()
-    }
-
-    /// Sets the previous round's claim for use in optimization techniques.
-    /// Called by the sumcheck prover after computing each round's polynomial.
+    /// Sets the previous round's claim for use in Gruen
     fn set_previous_claim(&mut self, _claim: F) {
-        // Default implementation does nothing
+        // Default doesn't need to set anything
     }
 
     /// Proves a single sumcheck instance.
@@ -241,7 +234,7 @@ impl BatchedSumcheck {
                         UniPoly::from_coeff(vec![scaled_input_claim])
                     } else {
                         let offset = max_num_rounds - sumcheck.num_rounds();
-                        // Set the previous claim before computing the prover message
+                        // Set the previous claim before computing the prover message for Gruen
                         sumcheck.set_previous_claim(*previous_claim);
                         let mut univariate_poly_evals =
                             sumcheck.compute_prover_message(round - offset);

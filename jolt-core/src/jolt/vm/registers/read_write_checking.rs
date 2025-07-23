@@ -81,7 +81,6 @@ struct ReadWriteCheckingProverState<F: JoltField> {
     rs2_ra: Option<MultilinearPolynomial<F>>,
     rd_wa: Option<MultilinearPolynomial<F>>,
     val: Option<MultilinearPolynomial<F>>,
-    // Track the previous claim for quadratic coefficient computation
     previous_claim: F,
 }
 
@@ -454,9 +453,9 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
 
         let previous_claim = self.previous_claim;
 
-        // Compute quadratic coefficients using Gruen's optimization
+        // Compute quadratic coefficients for Gruen's interpolation
         let quadratic_coeffs: [F; DEGREE - 1] = if gruens_eq_r_prime.E_in_current_len() == 1 {
-            // E_in is fully bound, use only E_out evaluations
+            // E_in is fully bound, use E_out
             I.par_iter()
                 .zip(data_buffers.par_iter_mut())
                 .zip(val_checkpoints.par_chunks(K))
@@ -610,7 +609,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 )
         } else {
-            // E_in is not fully bound, handle E_in and E_out separately
+            // E_in is not fully bound, handle E_in and E_out
             let num_x_in_bits = gruens_eq_r_prime.E_in_current_len().log_2();
             let x_bitmask = (1 << num_x_in_bits) - 1;
 
@@ -798,11 +797,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
 
         // Convert quadratic coefficients to cubic evaluations
         let cubic_evals = gruens_eq_r_prime
-            .sumcheck_evals_from_quadratic_coeffs(
-                quadratic_coeffs[0],
-                quadratic_coeffs[1],
-                previous_claim,
-            )
+            .gruen_evals_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], previous_claim)
             .to_vec();
 
         cubic_evals
@@ -1225,10 +1220,6 @@ impl<F: JoltField> SumcheckInstance<F> for RegistersReadWriteChecking<F> {
             * (claims.rd_wa_claim * (claims.inc_claim + claims.val_claim)
                 + self.z * claims.rs1_ra_claim * claims.val_claim
                 + self.z_squared * claims.rs2_ra_claim * claims.val_claim)
-    }
-
-    fn previous_claim(&self) -> F {
-        self.previous_claim
     }
 
     fn set_previous_claim(&mut self, claim: F) {

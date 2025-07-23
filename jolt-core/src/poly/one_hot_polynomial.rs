@@ -11,9 +11,7 @@ use crate::msm::VariableBaseMSM;
 use crate::poly::commitment::dory::{DoryGlobals, JoltGroupWrapper};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::multilinear_polynomial::{
-    MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-};
+use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::subprotocols::sparse_dense_shout::ExpandingTable;
 use crate::utils::math::Math;
@@ -58,8 +56,8 @@ pub struct OneHotSumcheckState<F: JoltField> {
     pub B: GruenSplitEqPolynomial<F>,
     /// D stores eq(r', j) using Gruen optimization, see Equation (54)
     pub D: GruenSplitEqPolynomial<F>,
-    /// Original B stores eq(r, k), see Equation (53)
-    pub D_org: MultilinearPolynomial<F>,
+    /// TODO(markosg04) we can eliminate this by potentially doing tensor product with Gruen D
+    pub D_eq: MultilinearPolynomial<F>,
     /// F will maintain an array that, at the end of sumcheck round m, has size 2^m
     /// and stores all 2^m values eq((k_1, ..., k_m), (r_1, ..., r_m))
     pub F: ExpandingTable<F>,
@@ -79,7 +77,7 @@ impl<F: JoltField> OneHotSumcheckState<F> {
         Self {
             B: GruenSplitEqPolynomial::new_rev(r_address), // Equation (53)
             D: GruenSplitEqPolynomial::new_rev(r_cycle),   // Equation (54)
-            D_org: MultilinearPolynomial::from(EqPolynomial::evals(r_cycle)), // Original D
+            D_eq: MultilinearPolynomial::from(EqPolynomial::evals(r_cycle)), // Original D
             F,
             num_variables_bound: 0,
         }
@@ -107,7 +105,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
         let T = polynomial.nonzero_indices.len();
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = (T / num_chunks).max(1);
-        let D_org = &self.eq_state.lock().unwrap().D_org;
+        let D_eq = &self.eq_state.lock().unwrap().D_eq;
 
         // Compute G as described in Section 6.3
         let G = polynomial
@@ -119,7 +117,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                 let mut j = chunk_index * chunk_size;
                 for k in chunk {
                     if let Some(k) = k {
-                        result[*k] += D_org.get_bound_coeff(j);
+                        result[*k] += D_eq.get_bound_coeff(j);
                     }
                     j += 1;
                 }
@@ -155,7 +153,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             let G = polynomial.G.as_ref().unwrap();
 
             // Compute constant coefficient of the quadratic polynomial
-            let quadratic_constant: F = (0..B.E_out_current_len() / 2)
+            let eval_at_0: F = (0..B.E_out_current_len() / 2)
                 .into_par_iter()
                 .map(|k_prime| {
                     let inner_sum = G
@@ -185,10 +183,8 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                 })
                 .sum::<F>();
 
-            // Use sumcheck_quadratic_evals_from_linear to get evaluations at {0, 2}
-            let quadratic_evals =
-                B.sumcheck_quadratic_evals_from_linear(quadratic_constant, self.previous_claim);
-
+            // Use Gruen's to get evaluations at {0, 2}
+            let quadratic_evals = B.gruen_evals_deg_2(eval_at_0, self.previous_claim);
             quadratic_evals.to_vec()
         } else {
             let H = polynomial.H.as_ref().unwrap();
@@ -197,7 +193,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             let n = H.len() / 2;
 
             // Compute constant coefficient from H
-            let quadratic_constant: F = (0..n)
+            let eval_at_0: F = (0..n)
                 .into_par_iter()
                 .map(|j| {
                     let H_evals = H.sumcheck_evals(j, 2, BindingOrder::HighToLow);
@@ -208,8 +204,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                 .sum::<F>();
 
             // Use sumcheck_quadratic_evals_from_linear on D with H's constant coefficient
-            let quadratic_evals =
-                D.sumcheck_quadratic_evals_from_linear(quadratic_constant, self.previous_claim);
+            let quadratic_evals = D.gruen_evals_deg_2(eval_at_0, self.previous_claim);
 
             let eq_r_address_claim = B.current_scalar;
             vec![

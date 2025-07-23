@@ -259,6 +259,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         drop(_guard);
         drop(span);
 
+        // @TODO(markosg04) eventually we want to get rid of eq_r_prime completely, requires Gruen for log(k) rounds
         let eq_r_prime = MultilinearPolynomial::from(EqPolynomial::evals(&r_prime.r));
         let gruens_eq_r_prime = GruenSplitEqPolynomial::new(&r_prime.r);
         let inc_cycle = CommittedPolynomial::RamInc.generate_witness(preprocessing, trace);
@@ -439,7 +440,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
 
         // Compute quadratic coefficients using Gruen's optimization
         let quadratic_coeffs: [F; DEGREE - 1] = if gruens_eq_r_prime.E_in_current_len() == 1 {
-            // E_in is fully bound, use only E_out evaluations
+            // E_in is fully bound, use E_out evaluations
             I.par_iter()
                 .zip(data_buffers.par_iter_mut())
                 .zip(val_checkpoints.par_chunks(self.K))
@@ -555,7 +556,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 )
         } else {
-            // E_in is not fully bound, handle E_in and E_out separately
+            // E_in is not fully bound, handle both E_in and E_out
             let num_x_in_bits = gruens_eq_r_prime.E_in_current_len().log_2();
             let x_bitmask = (1 << num_x_in_bits) - 1;
 
@@ -708,11 +709,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
 
         // Convert quadratic coefficients to cubic evaluations
         let cubic_evals = gruens_eq_r_prime
-            .sumcheck_evals_from_quadratic_coeffs(
-                quadratic_coeffs[0],
-                quadratic_coeffs[1],
-                previous_claim,
-            )
+            .gruen_evals_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], previous_claim)
             .to_vec();
 
         cubic_evals
@@ -1062,10 +1059,6 @@ impl<F: JoltField> SumcheckInstance<F> for RamReadWriteChecking<F> {
             SumcheckId::RamReadWriteChecking,
         );
         eq_eval_cycle * ra_claim * (val_claim + self.z * (val_claim + inc_claim))
-    }
-
-    fn previous_claim(&self) -> F {
-        self.previous_claim
     }
 
     fn set_previous_claim(&mut self, claim: F) {
