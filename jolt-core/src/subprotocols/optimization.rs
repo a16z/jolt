@@ -197,12 +197,18 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
         let _guard = span.enter();
 
         for j_idx in 0..T.log_2() {
-            let inner_span = tracing::span!(tracing::Level::INFO, "j_idx auxiliary data");
-            let _guard = span.enter();
+            let inner_span = tracing::span!(tracing::Level::INFO, "Create before and after idx evals table");
+            let _guard = inner_span.enter();
 
             let size = (T.log_2() - j_idx - 1).pow2();
             let mut before_idx_evals = vec![F::one(); size];
             let mut after_idx_evals = vec![Vec::with_capacity(D - 1); size];
+            drop(_guard);
+            drop(inner_span);
+
+            let inner_span = tracing::span!(tracing::Level::INFO, "Compute after idx evals");
+            let _guard = inner_span.enter();
+
             after_idx_evals
                 .par_iter_mut()
                 .enumerate()
@@ -231,6 +237,9 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
             let _guard = inner_span.enter();
 
             for d in 0..D {
+                let _span = tracing::span!(tracing::Level::INFO, "Field operations");
+                let _guard = _span.enter();
+
                 let round = j_idx * D + d;
 
                 if d == 0 {
@@ -320,6 +329,12 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
                         |running, new| [running[0] + new[0], running[1] + new[1]],
                     );
 
+                drop(_guard);
+                drop(_span);
+
+                let _span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
+                let _guard = _span.enter();
+
                 let univariate_poly = UniPoly::from_evals(&[
                     univariate_poly_evals[0],
                     *previous_claim - univariate_poly_evals[0],
@@ -332,6 +347,9 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
                 let w_j = transcript.challenge_scalar::<F>();
                 *previous_claim = univariate_poly.evaluate(&w_j);
                 w.push(w_j);
+
+                drop(_guard);
+                drop(_span);
 
                 mle_vec[D - 1 - d].bind_parallel(w_j, BindingOrder::HighToLow);
 
