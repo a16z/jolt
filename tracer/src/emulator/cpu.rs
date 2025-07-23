@@ -342,16 +342,16 @@ impl Cpu {
             Ok(inst) => {
                 // setup trace
                 let trace_inst = inst.trace.unwrap()(&inst, &self.xlen, word, instruction_address);
-                self.tracer.start_instruction(trace_inst);
-                self.tracer.capture_pre_state(self.x, &self.xlen);
+                let _ = self.tracer.start_instruction(trace_inst);
+                let _ = self.tracer.capture_pre_state(self.x, &self.xlen);
 
                 // execute
                 let result = (inst.operation)(self, word, instruction_address);
                 self.x[0] = 0; // hardwired zero
 
                 // complete trace
-                self.tracer.capture_post_state(self.x, &self.xlen);
-                self.tracer.end_instruction();
+                let _ = self.tracer.capture_post_state(self.x, &self.xlen);
+                let _ = self.tracer.end_instruction();
 
                 result
             }
