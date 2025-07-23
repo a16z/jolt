@@ -283,7 +283,7 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
                                 .mul_1_optimized(mle_vec[D - d - 1].get_bound_coeff(j));
                         }
 
-                        let temp = *before_idx_eval * eq_eval_after_idx * C;
+                        let temp = before_idx_eval.mul_1_optimized(eq_eval_after_idx * C);
 
                         [
                             {
@@ -295,13 +295,13 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
                                     eq_evals_at_idx[0].0 * factor
                                 };
 
-                                let eval_1 = if d < D - 1 {
-                                    eq_evals_at_idx[0].1 * factor * after_idx_evals[D - d - 2].1
-                                } else {
-                                    eq_evals_at_idx[0].1 * factor
-                                };
+                                // let eval_1 = if d < D - 1 {
+                                //     eq_evals_at_idx[0].1 * factor * after_idx_evals[D - d - 2].1
+                                // } else {
+                                //     eq_evals_at_idx[0].1 * factor
+                                // };
 
-                                eval_0 + eval_1
+                                eval_0
                             },
                             {
                                 let factor = at_idx_evals[1] * temp;
