@@ -131,7 +131,7 @@ pub enum SumcheckId {
     RamRafEvaluation,
     RamHammingWeight,
     RamBooleanity,
-    RamRaVirtualization(usize), // Two instances of ra-virtualization
+    RamRaVirtualization,
     RamOutputCheck,
     RamValEvaluation,
     RamValFinalEvaluation,
