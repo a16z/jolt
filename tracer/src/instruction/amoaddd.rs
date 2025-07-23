@@ -2,13 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use super::add::ADD;
 use super::format::format_i::FormatI;
-use super::format::format_load::FormatLoad;
 use super::format::format_s::FormatS;
-use super::format::format_virtual_halfword_alignment::HalfwordAlignFormat;
 use super::ld::LD;
 use super::sd::SD;
 use super::virtual_move::VirtualMove;
-use super::RAMWrite;
 use super::RV32IMInstruction;
 use super::VirtualInstructionSequence;
 use common::constants::virtual_register_index;

@@ -131,6 +131,8 @@ pub mod format;
 
 pub mod instruction_macros;
 
+pub(super) mod amo;
+
 pub mod add;
 pub mod addi;
 pub mod addiw;

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::amoswapw::{amo_post, amo_pre};
+use super::amo::{amo_post32, amo_post64, amo_pre32, amo_pre64};
 use super::xor::XOR;
 use super::RV32IMInstruction;
 use super::VirtualInstructionSequence;
@@ -68,6 +68,54 @@ impl RISCVTrace for AMOXORW {
 
 impl VirtualInstructionSequence for AMOXORW {
     fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+        match xlen {
+            Xlen::Bit32 => self.virtual_sequence_32(xlen),
+            Xlen::Bit64 => self.virtual_sequence_64(xlen),
+        }
+    }
+}
+
+impl AMOXORW {
+    fn virtual_sequence_32(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+        let v_rd = virtual_register_index(7) as usize;
+        let v_rs2 = virtual_register_index(8) as usize;
+
+        let mut sequence = vec![];
+        let mut remaining = 5;
+        remaining = amo_pre32(
+            &mut sequence,
+            self.address,
+            self.operands.rs1,
+            v_rd,
+            remaining,
+        );
+        
+        let xor = XOR {
+            address: self.address,
+            operands: FormatR {
+                rd: v_rs2,
+                rs1: v_rd,
+                rs2: self.operands.rs2,
+            },
+            virtual_sequence_remaining: Some(remaining),
+        };
+        sequence.push(xor.into());
+        remaining -= 1;
+        
+        amo_post32(
+            &mut sequence,
+            self.address,
+            v_rs2,
+            self.operands.rs1,
+            self.operands.rd,
+            v_rd,
+            remaining,
+        );
+
+        sequence
+    }
+
+    fn virtual_sequence_64(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_mask = virtual_register_index(10) as usize;
         let v_dword_address = virtual_register_index(11) as usize;
@@ -79,7 +127,7 @@ impl VirtualInstructionSequence for AMOXORW {
 
         let mut sequence = vec![];
         let mut remaining = 17;
-        remaining = amo_pre(
+        remaining = amo_pre64(
             &mut sequence,
             self.address,
             self.operands.rs1,
@@ -100,7 +148,7 @@ impl VirtualInstructionSequence for AMOXORW {
         };
         sequence.push(xor.into());
         remaining -= 1;
-        amo_post(
+        amo_post64(
             &mut sequence,
             self.address,
             v_rs2,

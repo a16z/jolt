@@ -1,31 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-use super::addi::ADDI;
-use super::and::AND;
-use super::andi::ANDI;
-use super::format::format_i::FormatI;
-use super::format::format_load::FormatLoad;
-use super::format::format_s::FormatS;
-use super::format::format_u::FormatU;
-use super::format::format_virtual_halfword_alignment::HalfwordAlignFormat;
-use super::ld::LD;
-use super::lui::LUI;
-use super::sd::SD;
-use super::sll::SLL;
-use super::slli::SLLI;
-use super::srl::SRL;
-use super::virtual_assert_word_alignment::VirtualAssertWordAlignment;
-use super::virtual_move::VirtualMove;
-use super::virtual_sign_extend::VirtualSignExtend;
-use super::virtual_sw::VirtualSW;
-use super::xor::XOR;
-use super::RAMWrite;
+use super::amo::{amo_post32, amo_post64, amo_pre32, amo_pre64};
 use super::RV32IMInstruction;
 use super::VirtualInstructionSequence;
 use common::constants::virtual_register_index;
 
-use crate::instruction::ori::ORI;
-use crate::instruction::srli::SRLI;
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
@@ -87,7 +66,42 @@ impl RISCVTrace for AMOSWAPW {
 }
 
 impl VirtualInstructionSequence for AMOSWAPW {
-    fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+        match xlen {
+            Xlen::Bit32 => self.virtual_sequence_32(xlen),
+            Xlen::Bit64 => self.virtual_sequence_64(xlen),
+        }
+    }
+}
+
+impl AMOSWAPW {
+    fn virtual_sequence_32(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+        let v_rd = virtual_register_index(7) as usize;
+
+        let mut sequence = vec![];
+        let mut remaining = 4;
+        remaining = amo_pre32(
+            &mut sequence,
+            self.address,
+            self.operands.rs1,
+            v_rd,
+            remaining,
+        );
+        
+        amo_post32(
+            &mut sequence,
+            self.address,
+            self.operands.rs2,
+            self.operands.rs1,
+            self.operands.rd,
+            v_rd,
+            remaining,
+        );
+
+        sequence
+    }
+
+    fn virtual_sequence_64(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_mask = virtual_register_index(10) as usize;
         let v_dword_address = virtual_register_index(11) as usize;
@@ -98,7 +112,7 @@ impl VirtualInstructionSequence for AMOSWAPW {
 
         let mut sequence = vec![];
         let mut remaining = 16;
-        remaining = amo_pre(
+        remaining = amo_pre64(
             &mut sequence,
             self.address,
             self.operands.rs1,
@@ -108,7 +122,7 @@ impl VirtualInstructionSequence for AMOSWAPW {
             v_shift,
             remaining,
         );
-        amo_post(
+        amo_post64(
             &mut sequence,
             self.address,
             self.operands.rs2,
@@ -124,195 +138,4 @@ impl VirtualInstructionSequence for AMOSWAPW {
 
         sequence
     }
-}
-
-pub fn amo_pre(
-    sequence: &mut Vec<RV32IMInstruction>,
-    address: u64,
-    rs1: usize,
-    v_rd: usize,
-    v_dword_address: usize,
-    v_dword: usize,
-    v_shift: usize,
-    mut remaining: usize,
-) -> usize {
-    let assert_alignment = VirtualAssertWordAlignment {
-        address,
-        operands: HalfwordAlignFormat { rs1, imm: 0 },
-        virtual_sequence_remaining: Some(remaining),
-    };
-    sequence.push(assert_alignment.into());
-    remaining -= 1;
-
-    let andi = ANDI {
-        address,
-        operands: FormatI {
-            rd: v_dword_address,
-            rs1,
-            imm: -8i64 as u64,
-        },
-        virtual_sequence_remaining: Some(remaining),
-    };
-    sequence.push(andi.into());
-    remaining -= 1;
-
-    let ld = LD {
-        address,
-        operands: FormatI {
-            rd: v_dword,
-            rs1: v_dword_address,
-            imm: 0,
-        },
-        virtual_sequence_remaining: Some(remaining),
-    };
-    sequence.push(ld.into());
-    remaining -= 1;
-
-    let slli = SLLI {
-        address,
-        operands: FormatI {
-            rd: v_shift,
-            rs1,
-            imm: 3,
-        },
-        virtual_sequence_remaining: Some(remaining),
-    };
-    sequence.extend(slli.virtual_sequence(Xlen::Bit64));
-    remaining -= 1;
-
-    let srl = SRL {
-        address,
-        operands: FormatR {
-            rd: v_rd,
-            rs1: v_dword,
-            rs2: v_shift,
-        },
-        virtual_sequence_remaining: Some(remaining),
-    };
-    sequence.extend(srl.virtual_sequence(Xlen::Bit64));
-    remaining -= 2;
-
-    remaining
-}
-
-pub fn amo_post(
-    sequence: &mut Vec<RV32IMInstruction>,
-    address: u64,
-    rs2: usize,
-    v_dword_address: usize,
-    v_dword: usize,
-    v_shift: usize,
-    v_mask: usize,
-    v_word: usize,
-    rd: usize,
-    v_rd: usize,
-    mut remaining: usize,
-) {
-    let ori = ORI {
-        address,
-        operands: FormatI {
-            rd: v_mask,
-            rs1: 0,
-            imm: -1i64 as u64,
-        },
-        virtual_sequence_remaining: Some(8),
-    };
-    sequence.push(ori.into()); // v_mask gets 0xFFFFFFFF_FFFFFFFF
-    remaining -= 1;
-
-    let srli = SRLI {
-        address,
-        operands: FormatI {
-            rd: v_mask,
-            rs1: v_mask,
-            imm: 32, // Logical right shift by 32 bits
-        },
-        virtual_sequence_remaining: Some(7),
-    };
-    sequence.push(srli.into()); // v_mask gets 0x00000000_FFFFFFFF
-    remaining -= 1;
-
-    let sll_mask = SLL {
-        address,
-        operands: FormatR {
-            rd: v_mask,
-            rs1: v_mask,
-            rs2: v_shift,
-        },
-        virtual_sequence_remaining: Some(remaining),
-    };
-    sequence.extend(sll_mask.virtual_sequence(Xlen::Bit64));
-    remaining -= 2;
-
-    let sll_value = SLL {
-        address,
-        operands: FormatR {
-            rd: v_word,
-            rs1: rs2,
-            rs2: v_shift,
-        },
-        virtual_sequence_remaining: Some(remaining),
-    };
-    sequence.extend(sll_value.virtual_sequence(Xlen::Bit64));
-    remaining -= 2;
-
-    let xor = XOR {
-        address,
-        operands: FormatR {
-            rd: v_word,
-            rs1: v_dword,
-            rs2: v_word,
-        },
-        virtual_sequence_remaining: Some(remaining),
-    };
-    sequence.push(xor.into());
-    remaining -= 1;
-
-    let and = AND {
-        address,
-        operands: FormatR {
-            rd: v_word,
-            rs1: v_word,
-            rs2: v_mask,
-        },
-        virtual_sequence_remaining: Some(remaining),
-    };
-    sequence.push(and.into());
-    remaining -= 1;
-
-    let xor_final = XOR {
-        address,
-        operands: FormatR {
-            rd: v_dword,
-            rs1: v_dword,
-            rs2: v_word,
-        },
-        virtual_sequence_remaining: Some(remaining),
-    };
-    sequence.push(xor_final.into());
-    remaining -= 1;
-
-    let sd = SD {
-        address,
-        operands: FormatS {
-            rs1: v_dword_address,
-            rs2: v_dword,
-            imm: 0,
-        },
-        virtual_sequence_remaining: Some(remaining),
-    };
-    sequence.push(sd.into());
-    remaining -= 1;
-
-    let signext = VirtualSignExtend {
-        address,
-        operands: FormatI {
-            rd,
-            rs1: v_rd,
-            imm: 0,
-        },
-        virtual_sequence_remaining: Some(0),
-    };
-    sequence.push(signext.into());
-    assert!(remaining == 0);
 }

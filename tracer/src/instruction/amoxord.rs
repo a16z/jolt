@@ -1,15 +1,11 @@
 use serde::{Deserialize, Serialize};
 
 use super::format::format_i::FormatI;
-use super::format::format_load::FormatLoad;
 use super::format::format_s::FormatS;
-use super::format::format_virtual_halfword_alignment::HalfwordAlignFormat;
 use super::ld::LD;
 use super::sd::SD;
-use super::slt::SLT;
 use super::virtual_move::VirtualMove;
 use super::xor::XOR;
-use super::RAMWrite;
 use super::RV32IMInstruction;
 use super::VirtualInstructionSequence;
 use crate::{

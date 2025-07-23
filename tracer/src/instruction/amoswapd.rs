@@ -1,22 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-use super::addi::ADDI;
-use super::and::AND;
-use super::andi::ANDI;
 use super::format::format_i::FormatI;
-use super::format::format_load::FormatLoad;
 use super::format::format_s::FormatS;
-use super::format::format_virtual_halfword_alignment::HalfwordAlignFormat;
 use super::ld::LD;
-use super::lui::LUI;
 use super::sd::SD;
-use super::sll::SLL;
-use super::slli::SLLI;
-use super::virtual_assert_word_alignment::VirtualAssertWordAlignment;
 use super::virtual_move::VirtualMove;
-use super::virtual_sw::VirtualSW;
-use super::xor::XOR;
-use super::RAMWrite;
 use super::RV32IMInstruction;
 use super::VirtualInstructionSequence;
 use common::constants::virtual_register_index;
