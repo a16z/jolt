@@ -93,6 +93,7 @@ use xor::XOR;
 use xori::XORI;
 
 use inline_blake2::blake2::BLAKE2;
+use inline_blake3::blake3::BLAKE3;
 use inline_keccak256::keccak256::KECCAK256;
 use inline_sha256::sha256::SHA256;
 use inline_sha256::sha256init::SHA256INIT;
@@ -109,8 +110,8 @@ use virtual_movsign::VirtualMovsign;
 use virtual_muli::VirtualMULI;
 use virtual_pow2::VirtualPow2;
 use virtual_pow2i::VirtualPow2I;
-use virtual_rotli::VirtualROTLI;
 use virtual_rotri::VirtualROTRI;
+use virtual_rotril::VirtualROTRIL;
 use virtual_shift_right_bitmask::VirtualShiftRightBitmask;
 use virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI;
 use virtual_sra::VirtualSRA;
@@ -162,6 +163,7 @@ pub mod divu;
 pub mod ecall;
 pub mod fence;
 pub mod inline_blake2;
+pub mod inline_blake3;
 pub mod inline_keccak256;
 pub mod inline_sha256;
 pub mod jal;
@@ -220,8 +222,8 @@ pub mod virtual_movsign;
 pub mod virtual_muli;
 pub mod virtual_pow2;
 pub mod virtual_pow2i;
-pub mod virtual_rotli;
 pub mod virtual_rotri;
+pub mod virtual_rotril;
 pub mod virtual_shift_right_bitmask;
 pub mod virtual_shift_right_bitmaski;
 pub mod virtual_sra;
@@ -508,12 +510,12 @@ define_rv32im_enums! {
         // Virtual
         VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertLTE,
         VirtualAssertValidDiv0, VirtualAssertValidSignedRemainder, VirtualAssertValidUnsignedRemainder,
-        VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I, VirtualROTLI, VirtualROTRI,
+        VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I, VirtualROTRI, VirtualROTRIL,
         VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
         // Extension
         SHA256, SHA256INIT,
-        KECCAK256, BLAKE2
+        KECCAK256, BLAKE2, BLAKE3
     ]
 }
 
@@ -801,6 +803,7 @@ impl RV32IMInstruction {
             // - 0x00: SHA256
             // - 0x01: Keccak
             // - 0x02: Blake2
+            // - 0x03: Blake3
             0b0001011 => {
                 // Custom-0 opcode: SHA256 compression instructions
                 let funct3 = (instr >> 12) & 0x7;
@@ -826,6 +829,13 @@ impl RV32IMInstruction {
                         match funct3 {
                             0x0 => Ok(BLAKE2::new(instr, address, true).into()),
                             _ => Err("Unknown funct3 for custom Blake2 instruction"),
+                        }
+                    }
+                    0x03 => {
+                        // Blake3
+                        match funct3 {
+                            0x0 => Ok(BLAKE3::new(instr, address, true).into()),
+                            _ => Err("Unknown funct3 for custom Blake3 instruction"),
                         }
                     }
                     _ => Err("Unknown funct7 for custom-0 opcode"),

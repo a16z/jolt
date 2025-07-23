@@ -26,7 +26,6 @@ use crate::instruction::sd::SD;
 use crate::instruction::slli::SLLI;
 use crate::instruction::srli::SRLI;
 use crate::instruction::virtual_muli::VirtualMULI;
-use crate::instruction::virtual_rotli::VirtualROTLI;
 use crate::instruction::virtual_rotri::VirtualROTRI;
 use crate::instruction::xor::XOR;
 use crate::instruction::xori::XORI;
