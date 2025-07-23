@@ -285,33 +285,26 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
 
                         let temp = before_idx_eval.mul_1_optimized(eq_eval_after_idx * C);
 
+                        let tmp = if d < D - 1 {
+                            eq_evals_at_idx[0].0 * temp * after_idx_evals[D - d - 2].0
+                        } else {
+                            eq_evals_at_idx[0].0 * temp
+                        };
+
                         [
                             {
-                                let factor = at_idx_evals[0] * temp;
-
-                                let eval_0 = if d < D - 1 {
-                                    eq_evals_at_idx[0].0 * factor * after_idx_evals[D - d - 2].0
-                                } else {
-                                    eq_evals_at_idx[0].0 * factor
-                                };
+                                at_idx_evals[0] * tmp
 
                                 // let eval_1 = if d < D - 1 {
                                 //     eq_evals_at_idx[0].1 * factor * after_idx_evals[D - d - 2].1
                                 // } else {
                                 //     eq_evals_at_idx[0].1 * factor
                                 // };
-
-                                eval_0
                             },
                             {
-                                let factor = at_idx_evals[1] * temp;
+                                let factor: F = at_idx_evals[1] * temp;
 
-                                let eval_0 = if d < D - 1 {
-                                    eq_evals_at_idx[1].0 * factor * after_idx_evals[D - d - 2].0
-                                } else {
-                                    eq_evals_at_idx[1].0 * factor
-                                };
-
+                                let eval_0 = -tmp * eq_evals_at_idx[1].0;
                                 let eval_1 = if d < D - 1 {
                                     eq_evals_at_idx[1].1 * factor * after_idx_evals[D - d - 2].1
                                 } else {
