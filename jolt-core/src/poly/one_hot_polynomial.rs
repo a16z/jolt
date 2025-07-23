@@ -3,8 +3,7 @@
 //! `opening_proof.rs`. In particular, this implementation is _not_ used
 //! in the Twist/Shout PIOP implementations in Jolt.
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use super::multilinear_polynomial::BindingOrder;
 use crate::field::JoltField;
@@ -85,12 +84,12 @@ impl<F: JoltField> OneHotSumcheckState<F> {
 #[derive(Clone)]
 pub struct OneHotPolynomialProverOpening<F: JoltField> {
     pub polynomial: Option<OneHotPolynomial<F>>,
-    pub eq_state: Rc<RefCell<OneHotSumcheckState<F>>>,
+    pub eq_state: Arc<Mutex<OneHotSumcheckState<F>>>,
 }
 
 impl<F: JoltField> OneHotPolynomialProverOpening<F> {
     #[tracing::instrument(skip_all, name = "OneHotPolynomialProverOpening::new")]
-    pub fn new(eq_state: Rc<RefCell<OneHotSumcheckState<F>>>) -> Self {
+    pub fn new(eq_state: Arc<Mutex<OneHotSumcheckState<F>>>) -> Self {
         Self {
             polynomial: None,
             eq_state,
@@ -101,7 +100,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
         let T = polynomial.nonzero_indices.len();
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = (T / num_chunks).max(1);
-        let D = &self.eq_state.borrow().D;
+        let D = &self.eq_state.lock().unwrap().D;
 
         // Compute G as described in Section 6.3
         let G = polynomial
@@ -137,7 +136,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
         name = "OneHotPolynomialProverOpening::compute_prover_message"
     )]
     pub fn compute_prover_message(&mut self, round: usize) -> Vec<F> {
-        let shared_eq = self.eq_state.borrow();
+        let shared_eq = self.eq_state.lock().unwrap();
         let polynomial = self.polynomial.as_ref().unwrap();
 
         if round < polynomial.K.log_2() {
@@ -222,7 +221,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
 
     #[tracing::instrument(skip_all, name = "OneHotPolynomialProverOpening::bind")]
     pub fn bind(&mut self, r: F, round: usize) {
-        let mut shared_eq = self.eq_state.borrow_mut();
+        let mut shared_eq = self.eq_state.lock().unwrap();
         let polynomial = self.polynomial.as_mut().unwrap();
         let num_variables_bound = shared_eq.num_variables_bound;
         if round < polynomial.K.log_2() {
@@ -443,7 +442,7 @@ mod tests {
 
         let one_hot_sumcheck_state = OneHotSumcheckState::new(&r_address, &r_cycle);
         let mut one_hot_opening =
-            OneHotPolynomialProverOpening::new(Rc::new(RefCell::new(one_hot_sumcheck_state)));
+            OneHotPolynomialProverOpening::new(Arc::new(Mutex::new(one_hot_sumcheck_state)));
         one_hot_opening.initialize(one_hot_poly);
 
         let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();

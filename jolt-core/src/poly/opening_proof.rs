@@ -5,7 +5,7 @@
 //! necessarily of the same size, each opened at a different point) into a single opening.
 
 use rayon::prelude::*;
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{collections::HashMap, sync::{Arc, Mutex}};
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
@@ -181,7 +181,7 @@ pub struct DensePolynomialProverOpening<F: JoltField> {
     /// The multilinear extension EQ(x, opening_point). This is typically
     /// an intermediate value used to compute `claim`, but is also used in
     /// the `ProverOpeningAccumulator::prove_batch_opening_reduction` sumcheck.
-    pub eq_poly: Rc<RefCell<SharedEqPolynomial<F>>>,
+    pub eq_poly: Arc<Mutex<SharedEqPolynomial<F>>>,
 }
 
 impl<F: JoltField> DensePolynomialProverOpening<F> {
@@ -190,7 +190,7 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
         name = "DensePolynomialProverOpening::compute_prover_message"
     )]
     fn compute_prover_message(&mut self, _: usize) -> Vec<F> {
-        let eq_poly = &self.eq_poly.borrow().eq_poly;
+        let eq_poly = &self.eq_poly.lock().unwrap().eq_poly;
         let polynomial = self.polynomial.as_ref().unwrap();
         let mle_half = polynomial.len() / 2;
         let eval_0: F = (0..mle_half)
@@ -212,7 +212,7 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
 
     #[tracing::instrument(skip_all, name = "DensePolynomialProverOpening::bind")]
     fn bind(&mut self, r_j: F, round: usize) {
-        let mut shared_eq = self.eq_poly.borrow_mut();
+        let mut shared_eq = self.eq_poly.lock().unwrap();
         if shared_eq.num_variables_bound <= round {
             shared_eq
                 .eq_poly
@@ -272,7 +272,7 @@ where
     fn new_prover_instance_dense(
         polynomials: Vec<CommittedPolynomial>,
         sumcheck_id: SumcheckId,
-        eq_poly: Rc<RefCell<SharedEqPolynomial<F>>>,
+        eq_poly: Arc<Mutex<SharedEqPolynomial<F>>>,
         opening_point: Vec<F>,
         claims: Vec<F>,
     ) -> Self {
@@ -294,7 +294,7 @@ where
     fn new_prover_instance_one_hot(
         polynomial: CommittedPolynomial,
         sumcheck_id: SumcheckId,
-        eq_state: Rc<RefCell<OneHotSumcheckState<F>>>,
+        eq_state: Arc<Mutex<OneHotSumcheckState<F>>>,
         opening_point: Vec<F>,
         claim: F,
     ) -> Self {
@@ -480,7 +480,7 @@ where
 
     fn expected_output_claim(
         &self,
-        _: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+        _: Option<std::rc::Rc<std::cell::RefCell<VerifierOpeningAccumulator<F>>>>,
         r: &[F],
     ) -> F {
         let eq_eval = EqPolynomial::mle(&self.opening_point, r);
@@ -493,7 +493,7 @@ where
 
     fn cache_openings_prover(
         &self,
-        _accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        _accumulator: std::rc::Rc<std::cell::RefCell<ProverOpeningAccumulator<F>>>,
         _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         unimplemented!("Unused")
@@ -501,7 +501,7 @@ where
 
     fn cache_openings_verifier(
         &self,
-        _accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        _accumulator: std::rc::Rc<std::cell::RefCell<VerifierOpeningAccumulator<F>>>,
         _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         unimplemented!("Unused")
@@ -637,7 +637,7 @@ where
         let sumcheck = OpeningProofReductionSumcheck::new_prover_instance_dense(
             polynomials,
             sumcheck,
-            Rc::new(RefCell::new(eq_evals.into())),
+            Arc::new(Mutex::new(eq_evals.into())),
             opening_point,
             claims.to_vec(),
         );
@@ -654,7 +654,7 @@ where
         claims: Vec<F>,
     ) {
         let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
-        let shared_eq = Rc::new(RefCell::new(OneHotSumcheckState::new(&r_address, &r_cycle)));
+        let shared_eq = Arc::new(Mutex::new(OneHotSumcheckState::new(&r_address, &r_cycle)));
 
         // Add openings to map
         for (label, claim) in polynomials.iter().zip(claims.iter()) {
