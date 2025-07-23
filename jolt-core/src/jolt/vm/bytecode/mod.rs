@@ -1,17 +1,17 @@
 use std::collections::BTreeMap;
 
-use crate::dag::stage::{StagedSumcheck, SumcheckStages};
+use crate::dag::stage::SumcheckStages;
 use crate::dag::state_manager::StateManager;
 use crate::jolt::vm::bytecode::booleanity::BooleanitySumcheck;
 use crate::jolt::vm::bytecode::hamming_weight::HammingWeightSumcheck;
 use crate::jolt::vm::bytecode::read_raf_checking::ReadRafSumcheck;
-use crate::poly::opening_proof::OpeningsKeys;
-use crate::r1cs::inputs::JoltR1CSInputs;
+use crate::jolt::witness::VirtualPolynomial;
+use crate::poly::opening_proof::SumcheckId;
 use crate::utils::math::Math;
 use crate::{
     field::JoltField,
-    jolt::witness::CommittedPolynomials,
     poly::{commitment::commitment_scheme::CommitmentScheme, eq_poly::EqPolynomial},
+    subprotocols::sumcheck::SumcheckInstance,
     utils::{thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -98,27 +98,24 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
     fn stage4_prover_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let (preprocessing, trace, _, _) = sm.get_prover_data();
         let bytecode_preprocessing = &preprocessing.shared.bytecode;
 
         let r_cycle: Vec<F> = sm
-            .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
-            .unwrap()
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::UnexpandedPC,
+                SumcheckId::SpartanOuter,
+            )
+            .0
             .r;
         let E_1: Vec<F> = EqPolynomial::evals(&r_cycle);
 
         let F_1 = compute_ra_evals(bytecode_preprocessing, trace, &E_1);
 
-        let d = bytecode_preprocessing.d;
-        let unbound_ra_polys = (0..d)
-            .map(|i| CommittedPolynomials::BytecodeRa(i).generate_witness(preprocessing, trace))
-            .collect::<Vec<_>>();
-
-        let read_raf = ReadRafSumcheck::new_prover(sm, unbound_ra_polys.clone());
-        let booleanity =
-            BooleanitySumcheck::new_prover(sm, E_1, F_1.clone(), unbound_ra_polys.clone());
-        let hamming_weight = HammingWeightSumcheck::new_prover(sm, F_1, unbound_ra_polys);
+        let read_raf = ReadRafSumcheck::new_prover(sm);
+        let booleanity = BooleanitySumcheck::new_prover(sm, E_1, F_1.clone());
+        let hamming_weight = HammingWeightSumcheck::new_prover(sm, F_1);
 
         vec![
             Box::new(read_raf),
@@ -130,7 +127,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
     fn stage4_verifier_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let read_checking = ReadRafSumcheck::new_verifier(sm);
         let booleanity = BooleanitySumcheck::new_verifier(sm);
         let hamming_weight = HammingWeightSumcheck::new_verifier(sm);

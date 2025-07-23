@@ -1,7 +1,7 @@
 use std::{cell::RefCell, iter::once, rc::Rc};
 
 use crate::{
-    dag::{stage::StagedSumcheck, state_manager::StateManager},
+    dag::state_manager::StateManager,
     field::JoltField,
     jolt::{
         instruction::{
@@ -10,6 +10,7 @@ use crate::{
         },
         lookup_table::{LookupTables, NUM_LOOKUP_TABLES},
         vm::instruction_lookups::WORD_SIZE,
+        witness::{CommittedPolynomial, VirtualPolynomial},
     },
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
@@ -20,15 +21,11 @@ use crate::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         opening_proof::{
-            OpeningPoint, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
+            OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
             BIG_ENDIAN,
         },
     },
-    r1cs::inputs::JoltR1CSInputs,
-    subprotocols::{
-        sparse_dense_shout::ExpandingTable,
-        sumcheck::{BatchableSumcheckInstance, CacheSumcheckOpenings},
-    },
+    subprotocols::{sparse_dense_shout::ExpandingTable, sumcheck::SumcheckInstance},
     utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
 use common::constants::REGISTER_COUNT;
@@ -44,7 +41,6 @@ struct ReadCheckingProverState<F: JoltField> {
     ra: Vec<MultilinearPolynomial<F>>,
     v: Vec<ExpandingTable<F>>,
     eq_polys: [MultilinearPolynomial<F>; STAGES],
-    unbound_ra_polys: Vec<MultilinearPolynomial<F>>,
     val_gamma: Option<[F; STAGES]>,
     pc: Vec<usize>,
 }
@@ -60,7 +56,6 @@ pub struct ReadRafSumcheck<F: JoltField> {
     log_T: usize,
     d: usize,
     prover_state: Option<ReadCheckingProverState<F>>,
-    prod_ra_claim: Option<F>,
     val_polys: [MultilinearPolynomial<F>; STAGES],
     int_poly: IdentityPolynomial<F>,
     r_cycles: [Vec<F>; STAGES],
@@ -80,7 +75,6 @@ impl<F: JoltField> ReadRafSumcheck<F> {
     #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheck::new_prover")]
     pub fn new_prover(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
-        unbound_ra_polys: Vec<MultilinearPolynomial<F>>,
     ) -> Self {
         let K = sm.get_prover_data().0.shared.bytecode.code_size;
         let log_K = K.log_2();
@@ -95,8 +89,10 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         let (val_1, rv_claim_1, r_cycle_1) = Self::compute_val_rv(sm, ReadCheckingValType::Stage1);
         let (val_2, rv_claim_2, r_cycle_2) = Self::compute_val_rv(sm, ReadCheckingValType::Stage2);
         let (val_3, rv_claim_3, r_cycle_3) = Self::compute_val_rv(sm, ReadCheckingValType::Stage3);
-        let raf_claim = sm.get_spartan_z(JoltR1CSInputs::PC);
-        let raf_shift_claim = sm.get_opening(OpeningsKeys::PCSumcheckPC);
+        let (_, raf_claim) =
+            sm.get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanOuter);
+        let (_, raf_shift_claim) =
+            sm.get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanShift);
         let int_poly = IdentityPolynomial::<F>::new(log_K);
         let (preprocessing, trace, _, _) = sm.get_prover_data();
 
@@ -180,8 +176,6 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             .map(|cycle| preprocessing.shared.bytecode.get_pc(cycle))
             .collect();
 
-        assert_eq!(unbound_ra_polys.len(), d);
-
         Self {
             rv_claim,
             log_K,
@@ -192,13 +186,11 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             prover_state: Some(ReadCheckingProverState {
                 F,
                 ra: Vec::with_capacity(d),
-                unbound_ra_polys,
                 v,
                 eq_polys,
                 val_gamma: None,
                 pc,
             }),
-            prod_ra_claim: None,
             val_polys: [
                 MultilinearPolynomial::from(val_1),
                 MultilinearPolynomial::from(val_2),
@@ -238,11 +230,10 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             MultilinearPolynomial::from(val_3),
         ];
 
-        let prod_ra_claim = (0..d)
-            .map(|i| sm.get_opening(OpeningsKeys::BytecodeRa(i)))
-            .product::<F>();
-        let raf_claim = sm.get_spartan_z(JoltR1CSInputs::PC);
-        let raf_shift_claim = sm.get_opening(OpeningsKeys::PCSumcheckPC);
+        let (_, raf_claim) =
+            sm.get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanOuter);
+        let (_, raf_shift_claim) =
+            sm.get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanShift);
         let rv_claim = rv_claim_1
             + gamma * rv_claim_2
             + gamma_sqr * rv_claim_3
@@ -260,7 +251,6 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             d,
             log_T,
             prover_state: None,
-            prod_ra_claim: Some(prod_ra_claim),
             val_polys,
             int_poly,
             r_cycles: [r_cycle_1, r_cycle_2, r_cycle_3],
@@ -278,12 +268,14 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 for _ in 0..NUM_CIRCUIT_FLAGS + 1 {
                     gamma_powers.push(gamma * gamma_powers.last().unwrap());
                 }
+                let (r_cycle, _) = sm.get_virtual_polynomial_opening(
+                    VirtualPolynomial::Imm,
+                    SumcheckId::SpartanOuter,
+                );
                 (
                     Self::compute_val_1(sm, &gamma_powers),
                     Self::compute_rv_claim_1(sm, &gamma_powers),
-                    sm.get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::Imm))
-                        .unwrap()
-                        .r,
+                    r_cycle.r,
                 )
             }
             ReadCheckingValType::Stage2 => {
@@ -292,12 +284,15 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 for _ in 0..2 {
                     gamma_powers.push(gamma * gamma_powers.last().unwrap());
                 }
+                let (r, _) = sm.get_virtual_polynomial_opening(
+                    VirtualPolynomial::Rs1Ra,
+                    SumcheckId::RegistersReadWriteChecking,
+                );
+                let (_, r_cycle) = r.split_at((REGISTER_COUNT as usize).log_2());
                 (
                     Self::compute_val_2(sm, &gamma_powers),
                     Self::compute_rv_claim_2(sm, &gamma_powers),
-                    sm.get_opening_point(OpeningsKeys::RegistersReadWriteInc)
-                        .unwrap()
-                        .r,
+                    r_cycle.r,
                 )
             }
             ReadCheckingValType::Stage3 => {
@@ -306,12 +301,15 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 for _ in 0..NUM_LOOKUP_TABLES + 2 {
                     gamma_powers.push(gamma * gamma_powers.last().unwrap());
                 }
+                let (r, _) = sm.get_virtual_polynomial_opening(
+                    VirtualPolynomial::RdWa,
+                    SumcheckId::RegistersValEvaluation,
+                );
+                let (_, r_cycle) = r.split_at((REGISTER_COUNT as usize).log_2());
                 (
                     Self::compute_val_3(sm, &gamma_powers),
                     Self::compute_rv_claim_3(sm, &gamma_powers),
-                    sm.get_opening_point(OpeningsKeys::RegistersValEvaluationInc)
-                        .unwrap()
-                        .r,
+                    r_cycle.r,
                 )
             }
         }
@@ -356,9 +354,21 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         gamma_powers: &[F],
     ) -> F {
-        once(sm.get_spartan_z(JoltR1CSInputs::UnexpandedPC))
-            .chain(once(sm.get_spartan_z(JoltR1CSInputs::Imm)))
-            .chain(CircuitFlags::iter().map(|f| sm.get_spartan_z(JoltR1CSInputs::OpFlags(f))))
+        let (_, unexpanded_pc_claim) = sm.get_virtual_polynomial_opening(
+            VirtualPolynomial::UnexpandedPC,
+            SumcheckId::SpartanOuter,
+        );
+        let (_, imm_claim) =
+            sm.get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);
+        once(unexpanded_pc_claim)
+            .chain(once(imm_claim))
+            .chain(CircuitFlags::iter().map(|flag| {
+                sm.get_virtual_polynomial_opening(
+                    VirtualPolynomial::OpFlags(flag),
+                    SumcheckId::SpartanOuter,
+                )
+                .1
+            }))
             .zip(gamma_powers)
             .map(|(claim, gamma)| claim * gamma)
             .sum()
@@ -374,8 +384,11 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         gamma_powers: &[F],
     ) -> Vec<F> {
         let r_register = sm
-            .get_opening_point(OpeningsKeys::RegistersReadWriteRdWa)
-            .unwrap()
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::RdWa,
+                SumcheckId::RegistersReadWriteChecking,
+            )
+            .0
             .r;
         let r_register = &r_register[..(REGISTER_COUNT as usize).log_2()];
         let eq_r_register = EqPolynomial::evals(r_register);
@@ -402,9 +415,13 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         gamma_powers: &[F],
     ) -> F {
         std::iter::empty()
-            .chain(once(sm.get_opening(OpeningsKeys::RegistersReadWriteRdWa)))
-            .chain(once(sm.get_opening(OpeningsKeys::RegistersReadWriteRs1Ra)))
-            .chain(once(sm.get_opening(OpeningsKeys::RegistersReadWriteRs2Ra)))
+            .chain(once(VirtualPolynomial::RdWa))
+            .chain(once(VirtualPolynomial::Rs1Ra))
+            .chain(once(VirtualPolynomial::Rs2Ra))
+            .map(|vp| {
+                sm.get_virtual_polynomial_opening(vp, SumcheckId::RegistersReadWriteChecking)
+                    .1
+            })
             .zip(gamma_powers)
             .map(|(claim, gamma)| claim * gamma)
             .sum()
@@ -422,8 +439,11 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         gamma_powers: &[F],
     ) -> Vec<F> {
         let r_register = sm
-            .get_opening_point(OpeningsKeys::RegistersValEvaluationWa)
-            .unwrap()
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::RdWa,
+                SumcheckId::RegistersValEvaluation,
+            )
+            .0
             .r;
         let r_register: Vec<_> = r_register[..(REGISTER_COUNT as usize).log_2()].to_vec();
         let eq_r_register = EqPolynomial::evals(&r_register);
@@ -433,13 +453,14 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             .map(|instruction| {
                 let instr = instruction.normalize();
                 let unexpanded_pc = instr.address;
-                let raf_flag = 1 - (instruction.circuit_flags().is_interleaved_operands() as u8);
 
                 let mut linear_combination: F = F::zero();
 
                 linear_combination += eq_r_register[instr.operands.rd];
                 linear_combination += gamma_powers[1].mul_u64(unexpanded_pc as u64);
-                linear_combination += gamma_powers[2].mul_u64(raf_flag as u64);
+                if !instruction.circuit_flags().is_interleaved_operands() {
+                    linear_combination += gamma_powers[2];
+                }
 
                 if let Some(table) = instruction.lookup_table() {
                     let table_index = LookupTables::enum_index(&table);
@@ -455,21 +476,36 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         gamma_powers: &[F],
     ) -> F {
+        let (_, rd_wa_claim) = sm.get_virtual_polynomial_opening(
+            VirtualPolynomial::RdWa,
+            SumcheckId::RegistersValEvaluation,
+        );
+        let (_, unexpanded_pc_claim) = sm.get_virtual_polynomial_opening(
+            VirtualPolynomial::UnexpandedPC,
+            SumcheckId::SpartanShift,
+        );
+        let (_, raf_flag_claim) = sm.get_virtual_polynomial_opening(
+            VirtualPolynomial::InstructionRafFlag,
+            SumcheckId::InstructionReadRaf,
+        );
         std::iter::empty()
-            .chain(once(sm.get_opening(OpeningsKeys::RegistersValEvaluationWa)))
-            .chain(once(sm.get_opening(OpeningsKeys::PCSumcheckUnexpandedPC)))
-            .chain(once(sm.get_opening(OpeningsKeys::InstructionRafFlag)))
-            .chain(
-                (0..LookupTables::<WORD_SIZE>::COUNT)
-                    .map(|i| sm.get_opening(OpeningsKeys::LookupTableFlag(i))),
-            )
+            .chain(once(rd_wa_claim))
+            .chain(once(unexpanded_pc_claim))
+            .chain(once(raf_flag_claim))
+            .chain((0..LookupTables::<WORD_SIZE>::COUNT).map(|i| {
+                sm.get_virtual_polynomial_opening(
+                    VirtualPolynomial::LookupTableFlag(i),
+                    SumcheckId::InstructionReadRaf,
+                )
+                .1
+            }))
             .zip(gamma_powers)
             .map(|(claim, gamma)| claim * gamma)
             .sum()
     }
 }
 
-impl<F: JoltField> BatchableSumcheckInstance<F> for ReadRafSumcheck<F> {
+impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
     fn degree(&self) -> usize {
         self.d + 1
     }
@@ -625,14 +661,31 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for ReadRafSumcheck<F> {
         }
     }
 
-    fn expected_output_claim(&self, r: &[F]) -> F {
+    fn expected_output_claim(
+        &self,
+        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+        r: &[F],
+    ) -> F {
         let (r_address_prime, r_cycle_prime) = r.split_at(self.log_K);
         // r_cycle is bound LowToHigh, so reverse
         let r_cycle_prime = r_cycle_prime.iter().rev().copied().collect::<Vec<F>>();
 
         let int_poly = self.int_poly.evaluate(r_address_prime);
 
-        self.val_polys
+        let ra_claims = (0..self.d).map(|i| {
+            accumulator
+                .as_ref()
+                .unwrap()
+                .borrow()
+                .get_committed_polynomial_opening(
+                    CommittedPolynomial::BytecodeRa(i),
+                    SumcheckId::BytecodeReadRaf,
+                )
+                .1
+        });
+
+        let val = self
+            .val_polys
             .iter()
             .zip(self.r_cycles.iter())
             .zip(self.gamma.iter())
@@ -646,8 +699,54 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for ReadRafSumcheck<F> {
                     * EqPolynomial::mle(r_cycle, &r_cycle_prime)
                     * gamma
             })
-            .sum::<F>()
-            * self.prod_ra_claim.unwrap()
+            .sum::<F>();
+
+        ra_claims.fold(val, |running, ra_claim| running * ra_claim)
+    }
+
+    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+        let mut r = opening_point.to_vec();
+        r[self.log_K..].reverse();
+        OpeningPoint::new(r)
+    }
+
+    fn cache_openings_prover(
+        &self,
+        accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) {
+        let ps = self
+            .prover_state
+            .as_ref()
+            .expect("Prover state not initialized");
+        let (r_address, r_cycle) = opening_point.clone().split_at(self.log_K);
+
+        for i in 0..self.d {
+            let r_address = &r_address.r[self.log_K_chunk * i..self.log_K_chunk * (i + 1)];
+            accumulator.borrow_mut().append_sparse(
+                vec![CommittedPolynomial::BytecodeRa(i)],
+                SumcheckId::BytecodeReadRaf,
+                r_address.to_vec(),
+                r_cycle.clone().into(),
+                vec![ps.ra[i].final_sumcheck_claim()],
+            );
+        }
+    }
+
+    fn cache_openings_verifier(
+        &self,
+        accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) {
+        let (r_address, r_cycle) = opening_point.split_at(self.log_K);
+        (0..self.d).for_each(|i| {
+            let r_address = &r_address.r[self.log_K_chunk * i..self.log_K_chunk * (i + 1)];
+            accumulator.borrow_mut().append_sparse(
+                vec![CommittedPolynomial::BytecodeRa(i)],
+                SumcheckId::BytecodeReadRaf,
+                [r_address, &r_cycle.r].concat(),
+            );
+        });
     }
 }
 
@@ -694,69 +793,3 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             });
     }
 }
-
-impl<F, PCS> CacheSumcheckOpenings<F, PCS> for ReadRafSumcheck<F>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-{
-    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
-        let mut r = opening_point.to_vec();
-        r[self.log_K..].reverse();
-        OpeningPoint::new(r)
-    }
-
-    fn cache_openings_prover(
-        &mut self,
-        accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
-    ) {
-        let ps = self
-            .prover_state
-            .as_mut()
-            .expect("Prover state not initialized");
-        let ra_claims = ps
-            .ra
-            .iter()
-            .map(|ra| ra.final_sumcheck_claim())
-            .collect::<Vec<F>>();
-        let ra_keys = (0..self.d)
-            .map(OpeningsKeys::BytecodeRa)
-            .collect::<Vec<_>>();
-        let accumulator = accumulator.expect("accumulator should be set");
-        ps.unbound_ra_polys
-            .iter_mut()
-            .zip(ra_claims)
-            .zip(ra_keys)
-            .enumerate()
-            .for_each(|(i, ((ra, claim), key))| {
-                accumulator.borrow_mut().append_sparse(
-                    vec![std::mem::take(ra)],
-                    opening_point.r[self.log_K_chunk * i..self.log_K_chunk * (i + 1)].to_vec(),
-                    opening_point.r[self.log_K..].to_vec(),
-                    vec![claim],
-                    Some(vec![key]),
-                );
-            });
-    }
-
-    fn cache_openings_verifier(
-        &mut self,
-        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
-    ) {
-        let accumulator = accumulator.expect("accumulator is needed");
-        (0..self.d).for_each(|i| {
-            let r = opening_point.r[self.log_K_chunk * i..self.log_K_chunk * (i + 1)]
-                .iter()
-                .cloned()
-                .chain(opening_point.r[self.log_K..].iter().cloned())
-                .collect::<Vec<_>>();
-            accumulator
-                .borrow_mut()
-                .populate_claim_opening(OpeningsKeys::BytecodeRa(i), r.into())
-        });
-    }
-}
-
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS> for ReadRafSumcheck<F> {}

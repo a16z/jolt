@@ -1,14 +1,12 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::dag::stage::StagedSumcheck;
 use crate::dag::state_manager::StateManager;
 use crate::jolt::vm::bytecode::BytecodePreprocessing;
+use crate::jolt::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::poly::opening_proof::{
-    OpeningPoint, OpeningsKeys, VerifierOpeningAccumulator, BIG_ENDIAN,
+    OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
-use crate::r1cs::inputs::JoltR1CSInputs;
-use crate::subprotocols::sumcheck::CacheSumcheckOpenings;
 use crate::{
     field::JoltField,
     poly::{
@@ -17,7 +15,7 @@ use crate::{
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::ProverOpeningAccumulator,
     },
-    subprotocols::sumcheck::BatchableSumcheckInstance,
+    subprotocols::sumcheck::SumcheckInstance,
     utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
 use rayon::prelude::*;
@@ -33,7 +31,6 @@ struct BooleanityProverState<F: JoltField> {
     eq_r_r: Option<F>,
     eq_km_c: [[F; 3]; 2],
     eq_km_c_squared: [[F; 3]; 2],
-    unbound_ra_polys: Vec<MultilinearPolynomial<F>>,
 }
 
 pub struct BooleanitySumcheck<F: JoltField> {
@@ -44,7 +41,6 @@ pub struct BooleanitySumcheck<F: JoltField> {
     prover_state: Option<BooleanityProverState<F>>,
     r_address: Vec<F>,
     r_cycle: Vec<F>,
-    ra_claims: Option<Vec<F>>,
 }
 
 impl<F: JoltField> BooleanitySumcheck<F> {
@@ -53,7 +49,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         eq_r_cycle: Vec<F>,
         G: Vec<Vec<F>>,
-        unbound_ra_polys: Vec<MultilinearPolynomial<F>>,
     ) -> Self {
         let (preprocessing, trace, _, _) = sm.get_prover_data();
         let d = preprocessing.shared.bytecode.d;
@@ -67,11 +62,10 @@ impl<F: JoltField> BooleanitySumcheck<F> {
 
         let r_address: Vec<F> = sm.transcript.borrow_mut().challenge_vector(log_K_chunk);
 
-        let r_cycle = sm
-            .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
-            .unwrap()
-            .r
-            .clone();
+        let (r_cycle, _) = sm.get_virtual_polynomial_opening(
+            VirtualPolynomial::LookupOutput,
+            SumcheckId::SpartanOuter,
+        );
 
         Self {
             gamma: gamma_powers,
@@ -80,7 +74,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                 &preprocessing.shared.bytecode,
                 eq_r_cycle,
                 G,
-                unbound_ra_polys,
                 &r_address,
                 d,
             )),
@@ -88,8 +81,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             log_T: trace.len().log_2(),
             log_K_chunk,
             r_address,
-            r_cycle,
-            ra_claims: None,
+            r_cycle: r_cycle.into(),
         }
     }
 
@@ -105,23 +97,18 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
         let r_address: Vec<F> = sm.transcript.borrow_mut().challenge_vector(log_K_chunk);
-        let r_cycle = sm
-            .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
-            .unwrap()
-            .r
-            .clone();
-        let ra_claims = (0..d)
-            .map(|i| sm.get_opening(OpeningsKeys::BytecodeBooleanityRa(i)))
-            .collect::<Vec<F>>();
+        let (r_cycle, _) = sm.get_virtual_polynomial_opening(
+            VirtualPolynomial::LookupOutput,
+            SumcheckId::SpartanOuter,
+        );
         Self {
             gamma: gamma_powers,
             prover_state: None,
             r_address,
             log_T: r_cycle.len(),
-            r_cycle,
-            ra_claims: Some(ra_claims),
-            d,
+            r_cycle: r_cycle.into(),
             log_K_chunk,
+            d,
         }
     }
 }
@@ -132,7 +119,6 @@ impl<F: JoltField> BooleanityProverState<F> {
         preprocessing: &BytecodePreprocessing,
         eq_r_cycle: Vec<F>,
         G: Vec<Vec<F>>,
-        unbound_ra_polys: Vec<MultilinearPolynomial<F>>,
         r_address: &[F],
         d: usize,
     ) -> Self {
@@ -187,12 +173,11 @@ impl<F: JoltField> BooleanityProverState<F> {
             eq_km_c,
             eq_km_c_squared,
             pc_by_cycle,
-            unbound_ra_polys,
         }
     }
 }
 
-impl<F: JoltField> BatchableSumcheckInstance<F> for BooleanitySumcheck<F> {
+impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
     fn degree(&self) -> usize {
         3
     }
@@ -260,7 +245,24 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for BooleanitySumcheck<F> {
         }
     }
 
-    fn expected_output_claim(&self, r: &[F]) -> F {
+    fn expected_output_claim(
+        &self,
+        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+        r: &[F],
+    ) -> F {
+        let accumulator = accumulator.as_ref().unwrap();
+        let ra_claims = (0..self.d)
+            .map(|i| {
+                accumulator
+                    .borrow()
+                    .get_committed_polynomial_opening(
+                        CommittedPolynomial::BytecodeRa(i),
+                        SumcheckId::BytecodeBooleanity,
+                    )
+                    .1
+            })
+            .collect::<Vec<F>>();
+
         EqPolynomial::mle(
             r,
             &self
@@ -273,18 +275,12 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for BooleanitySumcheck<F> {
         ) * self
             .gamma
             .iter()
-            .zip(self.ra_claims.as_ref().unwrap())
+            .zip(ra_claims)
             .fold(F::zero(), |acc, (gamma, ra)| {
                 (ra.square() - ra) * gamma + acc
             })
     }
-}
 
-impl<F, PCS> CacheSumcheckOpenings<F, PCS> for BooleanitySumcheck<F>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-{
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
         let mut opening_point = opening_point.to_vec();
         opening_point[..self.log_K_chunk].reverse();
@@ -293,56 +289,42 @@ where
     }
 
     fn cache_openings_prover(
-        &mut self,
-        accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        &self,
+        accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        let ps = self
-            .prover_state
-            .as_mut()
-            .expect("Prover state not initialized");
+        let ps = self.prover_state.as_ref().unwrap();
 
-        let accumulator = accumulator.expect("accumulator is needed");
-        let ra_claims =
+        let (keys, claims): (Vec<CommittedPolynomial>, Vec<F>) =
             ps.H.as_ref()
                 .unwrap()
                 .iter()
-                .map(|H| H.final_sumcheck_claim())
-                .collect::<Vec<F>>();
-        let ra_keys = (0..self.d)
-            .map(OpeningsKeys::BytecodeBooleanityRa)
-            .collect::<Vec<_>>();
+                .enumerate()
+                .map(|(i, H)| (CommittedPolynomial::BytecodeRa(i), H.final_sumcheck_claim()))
+                .collect();
 
-        let r_address = &opening_point.r[..self.log_K_chunk];
-        let r_cycle = &opening_point.r[self.log_K_chunk..];
-
-        ps.unbound_ra_polys
-            .iter_mut()
-            .zip(ra_claims)
-            .zip(ra_keys)
-            .for_each(|((ra, claim), key)| {
-                accumulator.borrow_mut().append_sparse(
-                    vec![std::mem::take(ra)],
-                    r_address.to_vec(),
-                    r_cycle.to_vec(),
-                    vec![claim],
-                    Some(vec![key]),
-                );
-            });
+        accumulator.borrow_mut().append_sparse(
+            keys,
+            SumcheckId::BytecodeBooleanity,
+            opening_point.r[..self.log_K_chunk].to_vec(),
+            opening_point.r[self.log_K_chunk..].to_vec(),
+            claims,
+        );
     }
 
     fn cache_openings_verifier(
-        &mut self,
-        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
+        &self,
+        accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        let accumulator = accumulator.expect("accumulator is needed");
-        (0..self.d).for_each(|i| {
-            accumulator.borrow_mut().populate_claim_opening(
-                OpeningsKeys::BytecodeBooleanityRa(i),
-                opening_point.clone(),
-            )
-        })
+        let keys = (0..self.d)
+            .map(|i| CommittedPolynomial::BytecodeRa(i))
+            .collect::<Vec<CommittedPolynomial>>();
+        accumulator.borrow_mut().append_sparse(
+            keys,
+            SumcheckId::BytecodeBooleanity,
+            opening_point.r,
+        );
     }
 }
 
@@ -465,9 +447,4 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             p.eq_r_r.unwrap() * univariate_poly_evals[2],
         ]
     }
-}
-
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS>
-    for BooleanitySumcheck<F>
-{
 }

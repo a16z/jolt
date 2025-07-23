@@ -78,6 +78,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.get_num_vars(),
             MultilinearPolynomial::U64Scalars(poly) => poly.get_num_vars(),
             MultilinearPolynomial::I64Scalars(poly) => poly.get_num_vars(),
+            MultilinearPolynomial::OneHot(poly) => poly.get_num_vars(),
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
@@ -613,6 +614,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
     fn evaluate(&self, r: &[F]) -> F {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly.evaluate(r),
+            MultilinearPolynomial::OneHot(poly) => poly.evaluate(r),
             MultilinearPolynomial::RLC(_) => {
                 // TODO(moodlezoup): This case is only hit in the Dory opening proof,
                 // which doesn't actually do anything with this value. We should

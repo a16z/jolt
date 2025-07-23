@@ -9,7 +9,6 @@ use crate::jolt::vm::{Jolt, JoltProverPreprocessing, JoltVerifierPreprocessing};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::{DoryCommitmentScheme as Dory, DoryGlobals};
 use crate::poly::commitment::hyperkzg::HyperKZG;
-use crate::subprotocols::shout::ShoutProof;
 use crate::subprotocols::twist::{TwistAlgorithm, TwistProof};
 use crate::utils::math::Math;
 use crate::utils::transcript::{KeccakTranscript, Transcript};
@@ -78,39 +77,7 @@ where
     F: JoltField,
     ProofTranscript: Transcript,
 {
-    let small_value_lookup_tables = F::compute_lookup_tables();
-    F::initialize_lookup_tables(small_value_lookup_tables);
-
-    let mut tasks = Vec::new();
-
-    const TABLE_SIZE: usize = 1 << 16;
-    const NUM_LOOKUPS: usize = 1 << 20;
-
-    let mut rng = test_rng();
-
-    let lookup_table: Vec<F> = (0..TABLE_SIZE).map(|_| F::random(&mut rng)).collect();
-    let read_addresses: Vec<usize> = (0..NUM_LOOKUPS)
-        .map(|_| rng.next_u32() as usize % TABLE_SIZE)
-        .collect();
-
-    let mut prover_transcript = ProofTranscript::new(b"test_transcript");
-    let r_cycle: Vec<F> = prover_transcript.challenge_vector(NUM_LOOKUPS.log_2());
-
-    let task = move || {
-        let _proof = ShoutProof::prove(
-            lookup_table,
-            read_addresses,
-            &r_cycle,
-            &mut prover_transcript,
-        );
-    };
-
-    tasks.push((
-        tracing::info_span!("Shout d=1"),
-        Box::new(task) as Box<dyn FnOnce()>,
-    ));
-
-    tasks
+    todo!()
 }
 
 fn sparse_dense_shout<F, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
@@ -397,7 +364,7 @@ where
 
         // Create state manager components
         let prover_accumulator_pre_wrap =
-            crate::poly::opening_proof::ProverOpeningAccumulator::<F, PCS>::new();
+            crate::poly::opening_proof::ProverOpeningAccumulator::<F>::new();
         let prover_accumulator = Rc::new(RefCell::new(prover_accumulator_pre_wrap));
         let prover_transcript = Rc::new(RefCell::new(ProofTranscript::new(b"Jolt")));
         let proofs = Rc::new(RefCell::new(HashMap::new()));
@@ -419,7 +386,7 @@ where
 
         // We only need the prover state manager for benchmarking
         let verifier_accumulator_pre_wrap =
-            crate::poly::opening_proof::VerifierOpeningAccumulator::<F, PCS>::new();
+            crate::poly::opening_proof::VerifierOpeningAccumulator::<F>::new();
         let verifier_accumulator = Rc::new(RefCell::new(verifier_accumulator_pre_wrap));
         let verifier_transcript = Rc::new(RefCell::new(ProofTranscript::new(b"Jolt")));
         let verifier_state_manager = state_manager::StateManager::new_verifier(

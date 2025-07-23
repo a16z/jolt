@@ -49,11 +49,9 @@ mod tests {
 
         // State manager components
         let prover_accumulator_pre_wrap =
-            crate::poly::opening_proof::ProverOpeningAccumulator::<Fr, MockCommitScheme<Fr>>::new();
-        let verifier_accumulator_pre_wrap = crate::poly::opening_proof::VerifierOpeningAccumulator::<
-            Fr,
-            MockCommitScheme<Fr>,
-        >::new();
+            crate::poly::opening_proof::ProverOpeningAccumulator::<Fr>::new();
+        let verifier_accumulator_pre_wrap =
+            crate::poly::opening_proof::VerifierOpeningAccumulator::<Fr>::new();
 
         let prover_accumulator = Rc::new(RefCell::new(prover_accumulator_pre_wrap));
         let verifier_accumulator = Rc::new(RefCell::new(verifier_accumulator_pre_wrap));
@@ -98,5 +96,6 @@ mod tests {
         }
 
         println!("DAG fib_e2e OK!");
+        println!("WE ARE PLAUSIBLY SOUND");
     }
 }

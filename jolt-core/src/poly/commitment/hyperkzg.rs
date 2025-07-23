@@ -450,14 +450,14 @@ where
             .collect()
     }
 
-    fn combine_commitments(
-        commitments: &[&Self::Commitment],
+    fn combine_commitments<C: Borrow<Self::Commitment>>(
+        commitments: &[C],
         coeffs: &[Self::Field],
     ) -> Self::Commitment {
         let combined_commitment: P::G1 = commitments
             .iter()
             .zip(coeffs.iter())
-            .map(|(commitment, coeff)| commitment.0 * coeff)
+            .map(|(commitment, coeff)| commitment.borrow().0 * coeff)
             .sum();
         HyperKZGCommitment(combined_commitment.into_affine())
     }

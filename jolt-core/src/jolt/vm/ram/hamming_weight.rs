@@ -6,19 +6,20 @@ use rayon::prelude::*;
 use crate::{
     dag::state_manager::StateManager,
     field::JoltField,
-    jolt::vm::ram::remap_address,
+    jolt::{
+        vm::ram::{compute_d_parameter, remap_address, NUM_RA_I_VARS},
+        witness::CommittedPolynomial,
+    },
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningPoint, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
+            OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
             BIG_ENDIAN,
         },
     },
-    subprotocols::sumcheck::{
-        BatchableSumcheckInstance, CacheSumcheckOpenings, SumcheckInstanceProof,
-    },
+    subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
     utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
 
@@ -42,8 +43,6 @@ pub struct HammingWeightProverState<F: JoltField> {
 }
 
 pub struct HammingWeightVerifierState<F: JoltField> {
-    /// log K (number of rounds)
-    log_K: usize,
     /// D parameter as in Twist and Shout paper
     d: usize,
     /// z powers for verification
@@ -58,8 +57,6 @@ pub struct HammingWeightSumcheck<F: JoltField> {
     prover_state: Option<HammingWeightProverState<F>>,
     /// Verifier state
     verifier_state: Option<HammingWeightVerifierState<F>>,
-    /// Cached claims for all d polynomials
-    cached_claims: Option<Vec<F>>,
     /// D parameter
     d: usize,
 }
@@ -71,8 +68,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         // Calculate D dynamically such that 2^8 = K^(1/D)
-        let log_K = K.log_2();
-        let d = (log_K / 8).max(1);
+        let d = compute_d_parameter(K);
 
         let (_, trace, program_io, _) = state_manager.get_prover_data();
         let memory_layout = &program_io.memory_layout;
@@ -94,68 +90,40 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
             .challenge_vector(T.log_2());
         let eq_r_cycle = EqPolynomial::evals(&r_cycle);
 
-        // Calculate variable chunk sizes for address decomposition
-        let log_k = K.log_2();
-        let base_chunk_size = log_k / d;
-        let remainder = log_k % d;
-        let chunk_sizes: Vec<usize> = (0..d)
-            .map(|i| {
-                if i < remainder {
-                    base_chunk_size + 1
-                } else {
-                    base_chunk_size
-                }
-            })
-            .collect();
+        let mut F_arrays = Vec::with_capacity(d);
+        for i in 0..d {
+            let F: Vec<F> = trace
+                .par_chunks(chunk_size)
+                .enumerate()
+                .map(|(chunk_index, trace_chunk)| {
+                    let mut local_array = unsafe_allocate_zero_vec(1 << NUM_RA_I_VARS);
+                    let mut j = chunk_index * chunk_size;
+                    for cycle in trace_chunk {
+                        let address =
+                            remap_address(cycle.ram_access().address() as u64, memory_layout)
+                                as usize;
 
-        // Compute F arrays for each decomposed part
-        let F_arrays: Vec<Vec<F>> = trace
-            .par_chunks(chunk_size)
-            .enumerate()
-            .map(|(chunk_index, trace_chunk)| {
-                // TODO(moodlezoup): Can be K^(1/d)-sized vectors
-                let mut local_arrays: Vec<Vec<F>> = vec![unsafe_allocate_zero_vec(K); d];
-                let mut j = chunk_index * chunk_size;
-                for cycle in trace_chunk {
-                    let address =
-                        remap_address(cycle.ram_access().address() as u64, memory_layout) as usize;
-
-                    // For each address, add eq_r_cycle[j] to each corresponding chunk
-                    // This maintains the property that sum of all ra values for an address equals 1
-                    let mut remaining_address = address;
-                    let mut chunk_values = Vec::with_capacity(d);
-
-                    // Decompose address into chunks
-                    for i in 0..d {
-                        let chunk_size = chunk_sizes[d - 1 - i];
-                        let chunk_modulo = 1 << chunk_size;
-                        let chunk_value = remaining_address % chunk_modulo;
-                        chunk_values.push(chunk_value);
-                        remaining_address /= chunk_modulo;
+                        // For each address, add eq_r_cycle[j] to each corresponding chunk
+                        // This maintains the property that sum of all ra values for an address equals 1
+                        let address_i =
+                            (address >> (NUM_RA_I_VARS * (d - 1 - i))) % (1 << NUM_RA_I_VARS);
+                        local_array[address_i] += eq_r_cycle[j];
+                        j += 1;
                     }
-
-                    // Add eq_r_cycle contribution to each ra polynomial
-                    for (i, &chunk_value) in chunk_values.iter().enumerate() {
-                        local_arrays[d - 1 - i][chunk_value] += eq_r_cycle[j];
-                    }
-                    j += 1;
-                }
-                local_arrays
-            })
-            .reduce(
-                || vec![unsafe_allocate_zero_vec(K); d],
-                |mut running, new| {
-                    running.par_iter_mut().zip(new.into_par_iter()).for_each(
-                        |(running_arr, new_arr)| {
-                            running_arr
-                                .par_iter_mut()
-                                .zip(new_arr.into_par_iter())
-                                .for_each(|(x, y)| *x += y);
-                        },
-                    );
-                    running
-                },
-            );
+                    local_array
+                })
+                .reduce(
+                    || unsafe_allocate_zero_vec(1 << NUM_RA_I_VARS),
+                    |mut running, new| {
+                        running
+                            .par_iter_mut()
+                            .zip(new.into_par_iter())
+                            .for_each(|(x, y)| *x += y);
+                        running
+                    },
+                );
+            F_arrays.push(F);
+        }
 
         // Create MultilinearPolynomials from F arrays
         let ra: Vec<MultilinearPolynomial<F>> = F_arrays
@@ -170,7 +138,6 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
             input_claim,
             prover_state: Some(HammingWeightProverState { ra, z_powers, d }),
             verifier_state: None,
-            cached_claims: None,
             r_cycle,
             d,
         }
@@ -183,8 +150,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
         let (_, _, T) = state_manager.get_verifier_data();
 
         // Calculate D dynamically such that 2^8 = K^(1/D)
-        let log_K = K.log_2();
-        let d = (log_K / 8).max(1);
+        let d = compute_d_parameter(K);
 
         // Get z challenges for batching
         let z_challenges: Vec<F> = state_manager.transcript.borrow_mut().challenge_vector(d);
@@ -201,34 +167,23 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
         // Compute input claim as sum of z powers
         let input_claim = z_powers.iter().sum();
 
-        let ra_claims = (0..d)
-            .map(|i| state_manager.get_opening(OpeningsKeys::RamHammingRa(i)))
-            .collect();
-
         Self {
             input_claim,
             prover_state: None,
-            verifier_state: Some(HammingWeightVerifierState { log_K, d, z_powers }),
-            cached_claims: Some(ra_claims),
+            verifier_state: Some(HammingWeightVerifierState { d, z_powers }),
             r_cycle,
             d,
         }
     }
 }
 
-impl<F: JoltField> BatchableSumcheckInstance<F> for HammingWeightSumcheck<F> {
+impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
     fn degree(&self) -> usize {
         1
     }
 
     fn num_rounds(&self) -> usize {
-        if let Some(prover_state) = &self.prover_state {
-            prover_state.ra[0].get_num_vars()
-        } else if let Some(verifier_state) = &self.verifier_state {
-            verifier_state.log_K / self.d
-        } else {
-            panic!("Neither prover state nor verifier state is initialized")
-        }
+        NUM_RA_I_VARS
     }
 
     fn input_claim(&self) -> F {
@@ -268,12 +223,29 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for HammingWeightSumcheck<F> {
         }
     }
 
-    fn expected_output_claim(&self, _r: &[F]) -> F {
+    fn expected_output_claim(
+        &self,
+        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+        _r: &[F],
+    ) -> F {
         let verifier_state = self
             .verifier_state
             .as_ref()
             .expect("Verifier state not initialized");
-        let ra_claims = self.cached_claims.as_ref().expect("RA claims not cached");
+
+        let ra_claims: Vec<_> = (0..self.d)
+            .map(|i| {
+                accumulator
+                    .as_ref()
+                    .unwrap()
+                    .borrow()
+                    .get_committed_polynomial_opening(
+                        CommittedPolynomial::RamRa(i),
+                        SumcheckId::RamHammingWeight,
+                    )
+                    .1
+            })
+            .collect();
 
         // Compute batched claim: sum_{i=0}^{d-1} z^i * ra_i
         ra_claims
@@ -282,23 +254,16 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for HammingWeightSumcheck<F> {
             .map(|(ra_claim, z_power)| *ra_claim * z_power)
             .sum()
     }
-}
 
-impl<F, PCS> CacheSumcheckOpenings<F, PCS> for HammingWeightSumcheck<F>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-{
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.iter().copied().rev().collect())
     }
 
     fn cache_openings_prover(
-        &mut self,
-        accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        &self,
+        accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
         r_address: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        debug_assert!(self.cached_claims.is_none());
         let prover_state = self
             .prover_state
             .as_ref()
@@ -307,36 +272,30 @@ where
         let claims: Vec<F> = prover_state
             .ra
             .iter()
-            .map(|ra_poly| ra_poly.final_sumcheck_claim())
+            .map(|ra_i| ra_i.final_sumcheck_claim())
             .collect();
-        self.cached_claims = Some(claims);
 
-        let opening_point =
-            OpeningPoint::new([r_address.r.as_slice(), self.r_cycle.as_slice()].concat());
-
-        let accumulator = accumulator.expect("accumulator is needed");
-        prover_state.ra.iter().enumerate().for_each(|(i, ra_i)| {
-            accumulator.borrow_mut().append_virtual(
-                OpeningsKeys::RamHammingRa(i),
-                opening_point.clone(),
-                ra_i.final_sumcheck_claim(),
-            );
-        });
+        accumulator.borrow_mut().append_sparse(
+            (0..self.d).map(CommittedPolynomial::RamRa).collect(),
+            SumcheckId::RamHammingWeight,
+            r_address.r,
+            self.r_cycle.clone(),
+            claims,
+        );
     }
 
     fn cache_openings_verifier(
-        &mut self,
-        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
+        &self,
+        accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
         r_address: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        let opening_point =
+        let opening_point: OpeningPoint<BIG_ENDIAN, F> =
             OpeningPoint::new([r_address.r.as_slice(), self.r_cycle.as_slice()].concat());
 
-        let accumulator = accumulator.expect("accumulator is needed");
-        (0..self.d).for_each(|i| {
-            accumulator
-                .borrow_mut()
-                .populate_claim_opening(OpeningsKeys::RamHammingRa(i), opening_point.clone())
-        });
+        accumulator.borrow_mut().append_sparse(
+            (0..self.d).map(CommittedPolynomial::RamRa).collect(),
+            SumcheckId::RamHammingWeight,
+            opening_point.r,
+        );
     }
 }

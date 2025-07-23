@@ -394,14 +394,17 @@ impl<F: JoltField> PolynomialBinding<F> for UnmapRamAddressPolynomial<F> {
 
     fn bind(&mut self, r: F, order: BindingOrder) {
         debug_assert!(self.num_bound_vars < self.num_vars);
-        debug_assert_eq!(
-            order,
-            BindingOrder::LowToHigh,
-            "UnmapAddressPolynomial only supports low-to-high binding"
-        );
 
         // Update the linear term: add 4 * 2^i * r_i
-        self.linear_term += r.mul_u64(4 * (1u64 << self.num_bound_vars));
+        match order {
+            BindingOrder::LowToHigh => {
+                self.linear_term += r.mul_u64(4 * (1u64 << self.num_bound_vars))
+            }
+            BindingOrder::HighToLow => {
+                self.linear_term +=
+                    r.mul_u64(4 * (1u64 << (self.num_vars - self.num_bound_vars - 1)))
+            }
+        };
 
         // Update the product term: multiply by (1 - r_i)
         self.product_term *= F::one() - r;
@@ -428,7 +431,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for UnmapRamAddressPolynomial<F> {
         // Compute sum_{i=0}^{len-1} 2^i * r_i
         let mut sum = F::zero();
         let mut power_of_two = F::one();
-        for &r_i in r.iter() {
+        for &r_i in r.iter().rev() {
             sum += power_of_two * r_i;
             power_of_two = power_of_two + power_of_two;
         }
@@ -450,17 +453,16 @@ impl<F: JoltField> PolynomialEvaluation<F> for UnmapRamAddressPolynomial<F> {
     fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F> {
         debug_assert!(degree > 0);
         debug_assert!(index < self.num_vars.pow2() / 2);
-        debug_assert_eq!(
-            order,
-            BindingOrder::LowToHigh,
-            "UnmapAddressPolynomial only supports low-to-high binding"
-        );
 
         let mut linear_evals = vec![F::zero(); degree];
         let mut product_evals = vec![F::one(); degree];
 
-        linear_evals[0] =
-            self.linear_term + F::from_u64((4 * index as u64) << (self.num_bound_vars + 1));
+        linear_evals[0] = match order {
+            BindingOrder::LowToHigh => {
+                self.linear_term + F::from_u64((4 * index as u64) << (self.num_bound_vars + 1))
+            }
+            BindingOrder::HighToLow => self.linear_term + F::from_u64(4 * index as u64),
+        };
         product_evals[0] = if index == 0 {
             self.product_term
         } else {
@@ -468,7 +470,10 @@ impl<F: JoltField> PolynomialEvaluation<F> for UnmapRamAddressPolynomial<F> {
             F::zero()
         };
 
-        let m = F::from_u32(4 * (1 << self.num_bound_vars));
+        let m = match order {
+            BindingOrder::LowToHigh => F::from_u32(4 << self.num_bound_vars),
+            BindingOrder::HighToLow => F::from_u32(4 << (self.num_vars - self.num_bound_vars - 1)),
+        };
         let mut linear_eval = linear_evals[0] + m;
         let mut product_eval = F::zero();
         for i in 1..degree {
@@ -574,12 +579,12 @@ mod tests {
 
         // k=1 should map to start_address
         let mut point_1 = vec![Fr::ZERO; NUM_VARS];
-        point_1[0] = Fr::ONE;
+        point_1[NUM_VARS - 1] = Fr::ONE;
         assert_eq!(unmap_poly.evaluate(&point_1), Fr::from(START_ADDRESS));
 
         // k=2 should map to start_address + 4
         let mut point_2 = vec![Fr::ZERO; NUM_VARS];
-        point_2[1] = Fr::ONE;
+        point_2[NUM_VARS - 2] = Fr::ONE;
         assert_eq!(unmap_poly.evaluate(&point_2), Fr::from(START_ADDRESS + 4));
 
         // k=3 should map to start_address + 8

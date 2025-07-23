@@ -8,19 +8,20 @@ use tracer::instruction::RV32IMCycle;
 use crate::{
     dag::state_manager::StateManager,
     field::JoltField,
-    jolt::vm::ram::remap_address,
+    jolt::{
+        vm::ram::{compute_d_parameter, remap_address, NUM_RA_I_VARS},
+        witness::CommittedPolynomial,
+    },
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningPoint, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
+            OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
             BIG_ENDIAN,
         },
     },
-    subprotocols::sumcheck::{
-        BatchableSumcheckInstance, CacheSumcheckOpenings, SumcheckInstanceProof,
-    },
+    subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
     utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
 
@@ -51,8 +52,6 @@ struct BooleanityProverState<F: JoltField> {
     z_powers: Vec<F>,
     /// D parameter as in Twist and Shout paper
     d: usize,
-    /// Chunk sizes for variable-sized d-way decomposition
-    chunk_sizes: Vec<usize>,
 }
 
 struct BooleanityVerifierState<F: JoltField> {
@@ -61,8 +60,6 @@ struct BooleanityVerifierState<F: JoltField> {
 }
 
 pub struct BooleanitySumcheck<F: JoltField> {
-    /// Size of address space
-    K: usize,
     /// Number of trace steps
     T: usize,
     /// D parameter as in Twist and Shout paper
@@ -75,8 +72,6 @@ pub struct BooleanitySumcheck<F: JoltField> {
     prover_state: Option<BooleanityProverState<F>>,
     /// Verifier state (if verifier)
     verifier_state: Option<BooleanityVerifierState<F>>,
-    /// Cached ra claims
-    ra_claims: Option<Vec<F>>,
     /// Current round
     current_round: usize,
     /// Store trace and memory layout for phase transition
@@ -91,15 +86,14 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         // Calculate D dynamically such that 2^8 = K^(1/D)
-        let log_K = K.log_2();
-        let d = (log_K / 8).max(1);
+        let d = compute_d_parameter(K);
 
         let (_, trace, program_io, _) = state_manager.get_prover_data();
         let memory_layout = &program_io.memory_layout;
 
         let T = trace.len();
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
-        let _chunk_size = (T / num_chunks).max(1);
+        let chunk_size = (T / num_chunks).max(1);
 
         let r_cycle: Vec<F> = state_manager
             .transcript
@@ -109,7 +103,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         let r_address: Vec<F> = state_manager
             .transcript
             .borrow_mut()
-            .challenge_vector(K.log_2());
+            .challenge_vector(NUM_RA_I_VARS);
 
         let eq_r_cycle = EqPolynomial::evals(&r_cycle);
 
@@ -120,40 +114,43 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             z_powers[i] = z_powers[i - 1] * z_challenges[0];
         }
 
-        // Calculate variable chunk sizes for address decomposition
-        let log_k = K.log_2();
-        let base_chunk_size = log_k / d;
-        let remainder = log_k % d;
-        let chunk_sizes: Vec<usize> = (0..d)
-            .map(|i| {
-                if i < remainder {
-                    base_chunk_size + 1
-                } else {
-                    base_chunk_size
-                }
-            })
-            .collect();
-
         let span = tracing::span!(tracing::Level::INFO, "compute G arrays");
         let _guard = span.enter();
 
-        // Compute G arrays for each decomposed part
-        let mut G_arrays: Vec<Vec<F>> = vec![unsafe_allocate_zero_vec(K); d];
+        // TODO(moodlezoup): `G_arrays` is identical to `F_arrays` in `hamming_weight.rs`
+        let mut G_arrays = Vec::with_capacity(d);
+        for i in 0..d {
+            let G: Vec<F> = trace
+                .par_chunks(chunk_size)
+                .enumerate()
+                .map(|(chunk_index, trace_chunk)| {
+                    let mut local_array = unsafe_allocate_zero_vec(1 << NUM_RA_I_VARS);
+                    let mut j = chunk_index * chunk_size;
+                    for cycle in trace_chunk {
+                        let address =
+                            remap_address(cycle.ram_access().address() as u64, memory_layout)
+                                as usize;
 
-        for (cycle_idx, cycle) in trace.iter().enumerate() {
-            let address =
-                remap_address(cycle.ram_access().address() as u64, memory_layout) as usize;
-
-            // Decompose the address according to chunk sizes
-            let mut remaining_address = address;
-            for i in 0..d {
-                let chunk_modulo = 1 << chunk_sizes[d - 1 - i];
-                let chunk_value = remaining_address % chunk_modulo;
-                remaining_address /= chunk_modulo;
-
-                // Add to the corresponding G array
-                G_arrays[d - 1 - i][chunk_value] += eq_r_cycle[cycle_idx];
-            }
+                        // For each address, add eq_r_cycle[j] to each corresponding chunk
+                        // This maintains the property that sum of all ra values for an address equals 1
+                        let address_i =
+                            (address >> (NUM_RA_I_VARS * (d - 1 - i))) % (1 << NUM_RA_I_VARS);
+                        local_array[address_i] += eq_r_cycle[j];
+                        j += 1;
+                    }
+                    local_array
+                })
+                .reduce(
+                    || unsafe_allocate_zero_vec(1 << NUM_RA_I_VARS),
+                    |mut running, new| {
+                        running
+                            .par_iter_mut()
+                            .zip(new.into_par_iter())
+                            .for_each(|(x, y)| *x += y);
+                        running
+                    },
+                );
+            G_arrays.push(G);
         }
 
         drop(_guard);
@@ -174,19 +171,16 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             eq_r_r: F::zero(),
             z_powers,
             d,
-            chunk_sizes,
         };
 
         // Create the sumcheck instance
         BooleanitySumcheck {
-            K,
             T,
             d,
             r_address,
             r_cycle,
             prover_state: Some(prover_state),
             verifier_state: None,
-            ra_claims: None,
             current_round: 0,
             trace: Some(trace.to_vec()),
             memory_layout: Some(memory_layout.clone()),
@@ -201,8 +195,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         let memory_layout = &program_io.memory_layout;
 
         // Calculate D dynamically such that 2^8 = K^(1/D)
-        let log_K = K.log_2();
-        let d = (log_K / 8).max(1);
+        let d = compute_d_parameter(K);
 
         let r_cycle: Vec<F> = state_manager
             .transcript
@@ -212,7 +205,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         let r_address: Vec<F> = state_manager
             .transcript
             .borrow_mut()
-            .challenge_vector(K.log_2());
+            .challenge_vector(NUM_RA_I_VARS);
 
         // Get z challenges for batching
         let z_challenges: Vec<F> = state_manager.transcript.borrow_mut().challenge_vector(d);
@@ -221,19 +214,13 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             z_powers[i] = z_powers[i - 1] * z_challenges[0];
         }
 
-        let ra_claims = (0..d)
-            .map(|i| state_manager.get_opening(OpeningsKeys::RamBooleanityRa(i)))
-            .collect();
-
         BooleanitySumcheck {
-            K,
             T,
             d,
             r_address,
             r_cycle,
             prover_state: None,
             verifier_state: Some(BooleanityVerifierState { z_powers }),
-            ra_claims: Some(ra_claims),
             current_round: 0,
             trace: None,
             memory_layout: Some(memory_layout.clone()),
@@ -241,13 +228,13 @@ impl<F: JoltField> BooleanitySumcheck<F> {
     }
 }
 
-impl<F: JoltField> BatchableSumcheckInstance<F> for BooleanitySumcheck<F> {
+impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
     fn degree(&self) -> usize {
         3
     }
 
     fn num_rounds(&self) -> usize {
-        self.K.log_2() + self.T.log_2()
+        NUM_RA_I_VARS + self.T.log_2()
     }
 
     fn input_claim(&self) -> F {
@@ -256,14 +243,12 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for BooleanitySumcheck<F> {
 
     #[tracing::instrument(skip_all, name = "RamBooleanitySumcheck::compute_prover_message")]
     fn compute_prover_message(&mut self, round: usize) -> Vec<F> {
-        let log_K = self.K.log_2();
-
-        if round < log_K {
-            // Phase 1: First log(K) rounds
+        if round < NUM_RA_I_VARS {
+            // Phase 1: First log(K^(1/d)) rounds
             self.compute_phase1_message(round)
         } else {
             // Phase 2: Last log(T) rounds
-            self.compute_phase2_message(round - log_K)
+            self.compute_phase2_message(round - NUM_RA_I_VARS)
         }
     }
 
@@ -273,9 +258,8 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for BooleanitySumcheck<F> {
             .prover_state
             .as_mut()
             .expect("Prover state not initialized");
-        let log_K = self.K.log_2();
 
-        if round < log_K {
+        if round < NUM_RA_I_VARS {
             // Phase 1: Bind B and update F
             prover_state.B.bind_parallel(r_j, BindingOrder::LowToHigh);
 
@@ -290,14 +274,13 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for BooleanitySumcheck<F> {
                 });
 
             // If transitioning to phase 2, prepare H polynomials
-            if round == log_K - 1 {
+            if round == NUM_RA_I_VARS - 1 {
                 prover_state.eq_r_r = prover_state.B.final_sumcheck_claim();
 
                 // Compute H polynomials for each decomposed part
                 let trace = self.trace.as_ref().expect("Trace not set");
                 let memory_layout = self.memory_layout.as_ref().expect("Memory layout not set");
                 let d = prover_state.d;
-                let chunk_sizes = &prover_state.chunk_sizes;
 
                 let mut H_polys = Vec::with_capacity(d);
 
@@ -309,12 +292,10 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for BooleanitySumcheck<F> {
                                 remap_address(cycle.ram_access().address() as u64, memory_layout)
                                     as usize;
 
-                            // Decompose address to get the i-th chunk
-                            let (left, right) = chunk_sizes.split_at(d - i);
-                            let shift: usize = right.iter().sum();
-                            let chunk_size = left.last().unwrap();
-                            let address_chunk = (address >> shift) % (1 << chunk_size);
-                            prover_state.F[address_chunk]
+                            // Get i-th address chunk
+                            let address_i =
+                                (address >> (NUM_RA_I_VARS * (d - 1 - i))) % (1 << NUM_RA_I_VARS);
+                            prover_state.F[address_i]
                         })
                         .collect();
                     H_polys.push(MultilinearPolynomial::from(H_vec));
@@ -343,15 +324,30 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for BooleanitySumcheck<F> {
         self.current_round += 1;
     }
 
-    fn expected_output_claim(&self, r: &[F]) -> F {
+    fn expected_output_claim(
+        &self,
+        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+        r: &[F],
+    ) -> F {
         let verifier_state = self
             .verifier_state
             .as_ref()
             .expect("Verifier state not initialized");
-        let ra_claims = self.ra_claims.as_ref().expect("RA claims not cached");
+        let ra_claims: Vec<_> = (0..self.d)
+            .map(|i| {
+                accumulator
+                    .as_ref()
+                    .unwrap()
+                    .borrow()
+                    .get_committed_polynomial_opening(
+                        CommittedPolynomial::RamRa(i),
+                        SumcheckId::RamBooleanity,
+                    )
+                    .1
+            })
+            .collect();
 
-        let log_K = self.K.log_2();
-        let (r_address_prime, r_cycle_prime) = r.split_at(log_K);
+        let (r_address_prime, r_cycle_prime) = r.split_at(NUM_RA_I_VARS);
 
         let r_address_prime: Vec<_> = r_address_prime.iter().copied().rev().collect();
         let eq_eval_address = EqPolynomial::mle(&self.r_address, &r_address_prime);
@@ -367,26 +363,19 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for BooleanitySumcheck<F> {
 
         eq_eval_address * eq_eval_cycle * result
     }
-}
 
-impl<F, PCS> CacheSumcheckOpenings<F, PCS> for BooleanitySumcheck<F>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-{
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
-        let (r_address, r_cycle) = opening_point.split_at(self.K.log_2());
+        let (r_address, r_cycle) = opening_point.split_at(NUM_RA_I_VARS);
         let mut r_big_endian: Vec<F> = r_address.iter().rev().copied().collect();
         r_big_endian.extend(r_cycle.iter().copied().rev());
         OpeningPoint::new(r_big_endian)
     }
 
     fn cache_openings_prover(
-        &mut self,
-        accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        &self,
+        accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        debug_assert!(self.ra_claims.is_none());
         let prover_state = self
             .prover_state
             .as_ref()
@@ -398,29 +387,26 @@ where
             .map(|h_poly| h_poly.final_sumcheck_claim())
             .collect();
 
-        let accumulator = accumulator.expect("accumulator is needed");
-        claims.iter().enumerate().for_each(|(i, ra_i)| {
-            accumulator.borrow_mut().append_virtual(
-                OpeningsKeys::RamBooleanityRa(i),
-                opening_point.clone(),
-                *ra_i,
-            );
-        });
-
-        self.ra_claims = Some(claims);
+        let (r_address, r_cycle) = opening_point.split_at(NUM_RA_I_VARS);
+        accumulator.borrow_mut().append_sparse(
+            (0..self.d).map(CommittedPolynomial::RamRa).collect(),
+            SumcheckId::RamBooleanity,
+            r_address.r,
+            r_cycle.r,
+            claims,
+        );
     }
 
     fn cache_openings_verifier(
-        &mut self,
-        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
+        &self,
+        accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        let accumulator = accumulator.expect("accumulator is needed");
-        (0..self.d).for_each(|i| {
-            accumulator
-                .borrow_mut()
-                .populate_claim_opening(OpeningsKeys::RamBooleanityRa(i), opening_point.clone());
-        });
+        accumulator.borrow_mut().append_sparse(
+            (0..self.d).map(CommittedPolynomial::RamRa).collect(),
+            SumcheckId::RamBooleanity,
+            opening_point.r,
+        );
     }
 }
 
