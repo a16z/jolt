@@ -397,13 +397,12 @@ where
                     }
                 };
             }
-        } else {
-            if let Some(prover_state) = self.prover_state.as_mut() {
-                let polynomials_map = polynomials_map.unwrap();
-                let poly = polynomials_map.get(&self.polynomials[0]).unwrap();
-                let num_vars = poly.get_num_vars();
-                let opening_point_len = self.opening_point.len();
-                debug_assert_eq!(
+        } else if let Some(prover_state) = self.prover_state.as_mut() {
+            let polynomials_map = polynomials_map.unwrap();
+            let poly = polynomials_map.get(&self.polynomials[0]).unwrap();
+            let num_vars = poly.get_num_vars();
+            let opening_point_len = self.opening_point.len();
+            debug_assert_eq!(
                     num_vars,
                     opening_point_len,
                     "{:?} has {num_vars} variables but opening point from {:?} has length {opening_point_len}",
@@ -411,17 +410,16 @@ where
                     self.sumcheck_id,
                 );
 
-                match prover_state {
-                    ProverOpening::Dense(opening) => opening.polynomial = Some(poly.clone()),
-                    ProverOpening::OneHot(opening) => {
-                        if let MultilinearPolynomial::OneHot(poly) = poly {
-                            opening.initialize(poly.clone());
-                        } else {
-                            panic!("Unexpected non-one-hot polynomial")
-                        }
+            match prover_state {
+                ProverOpening::Dense(opening) => opening.polynomial = Some(poly.clone()),
+                ProverOpening::OneHot(opening) => {
+                    if let MultilinearPolynomial::OneHot(poly) = poly {
+                        opening.initialize(poly.clone());
+                    } else {
+                        panic!("Unexpected non-one-hot polynomial")
                     }
-                };
-            }
+                }
+            };
         }
     }
 
@@ -495,16 +493,16 @@ where
 
     fn cache_openings_prover(
         &self,
-        accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        _accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         unimplemented!("Unused")
     }
 
     fn cache_openings_verifier(
         &self,
-        accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        _accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         unimplemented!("Unused")
     }

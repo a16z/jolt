@@ -40,7 +40,7 @@ pub const NUM_RA_I_VARS: usize = 8;
 pub fn compute_d_parameter(K: usize) -> usize {
     // Calculate D dynamically such that 2^8 = K^(1/D)
     let log_K = K.log_2();
-    (log_K + NUM_RA_I_VARS - 1) / NUM_RA_I_VARS
+    log_K.div_ceil(NUM_RA_I_VARS)
 }
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]

@@ -128,6 +128,14 @@ impl CommittedPolynomial {
         }
     }
 
+    pub fn from_index(index: usize) -> Self {
+        unsafe {
+            ALL_COMMITTED_POLYNOMIALS
+                .get()
+                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")[index]
+        }
+    }
+
     pub fn to_index(&self) -> usize {
         unsafe {
             ALL_COMMITTED_POLYNOMIALS

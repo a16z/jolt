@@ -271,9 +271,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
                 .iter()
                 .map(|ra| ra.final_sumcheck_claim())
                 .collect::<Vec<F>>();
-        let polynomials = (0..D)
-            .map(|i| CommittedPolynomial::InstructionRa(i))
-            .collect();
+        let polynomials = (0..D).map(CommittedPolynomial::InstructionRa).collect();
 
         accumulator.borrow_mut().append_sparse(
             polynomials,
@@ -289,9 +287,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
         r_sumcheck: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        let polynomials = (0..D)
-            .map(|i| CommittedPolynomial::InstructionRa(i))
-            .collect();
+        let polynomials = (0..D).map(CommittedPolynomial::InstructionRa).collect();
 
         accumulator.borrow_mut().append_sparse(
             polynomials,

@@ -193,8 +193,8 @@ impl<F: JoltField> SumcheckInstance<F> for RafBytecode<F> {
 
     fn cache_openings_prover(
         &self,
-        accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        _accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         // We don't need to cache claims since the read-checking sumcheck
         // already cached them, and since we are in the same batch,
@@ -204,8 +204,8 @@ impl<F: JoltField> SumcheckInstance<F> for RafBytecode<F> {
 
     fn cache_openings_verifier(
         &self,
-        accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        _accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         // We don't need to cache claims since the read-checking sumcheck
         // already cached them, and since we are in the same batch,

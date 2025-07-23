@@ -5,7 +5,7 @@ use crate::field::JoltField;
 use crate::jolt::vm::bytecode::BytecodePreprocessing;
 use crate::jolt::vm::ram::remap_address;
 use crate::jolt::vm::rv32i_vm::Serializable;
-use crate::jolt::witness::{AllCommittedPolynomials, ALL_COMMITTED_POLYNOMIALS};
+use crate::jolt::witness::AllCommittedPolynomials;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::opening_proof::{
@@ -200,7 +200,7 @@ where
         memory_layout: MemoryLayout,
         memory_init: Vec<(u64, u8)>,
         _max_bytecode_size: usize,
-        max_memory_size: usize,
+        _max_memory_size: usize,
         max_trace_length: usize,
     ) -> JoltProverPreprocessing<F, PCS> {
         let small_value_lookup_tables = F::compute_lookup_tables();
@@ -209,7 +209,7 @@ where
         let shared = Self::shared_preprocess(bytecode, memory_layout, memory_init);
 
         let max_K = [
-            // shared.bytecode.code_size.next_power_of_two(),
+            shared.bytecode.code_size.next_power_of_two(),
             // max_memory_size.next_power_of_two(),
             1 << 8, // instruction lookups Shout
         ]

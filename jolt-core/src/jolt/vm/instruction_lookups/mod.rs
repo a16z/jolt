@@ -66,7 +66,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        let (preprocessing, trace, _, _) = sm.get_prover_data();
+        let (_, trace, _, _) = sm.get_prover_data();
         let r_cycle = sm
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::LookupOutput,

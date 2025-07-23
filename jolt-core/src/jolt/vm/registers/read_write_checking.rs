@@ -1027,7 +1027,7 @@ impl<F: JoltField> SumcheckInstance<F> for RegistersReadWriteChecking<F> {
 
     fn expected_output_claim(
         &self,
-        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+        _accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         r: &[F],
     ) -> F {
         let ReadWriteCheckingVerifierState {
@@ -1127,12 +1127,6 @@ impl<F: JoltField> SumcheckInstance<F> for RegistersReadWriteChecking<F> {
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        // Get the sumcheck opening point
-        let verifier_state = self
-            .verifier_state
-            .as_ref()
-            .expect("Verifier state not initialized");
-
         // Populate opening points for all claims
         accumulator.borrow_mut().append_virtual(
             VirtualPolynomial::RegistersVal,
