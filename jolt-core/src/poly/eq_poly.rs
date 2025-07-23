@@ -201,21 +201,25 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
         eq_evals[0] = scaling_factor.unwrap_or(F::one());
         let mut eq_plus_one_evals: Vec<F> = unsafe_allocate_zero_vec(ell.pow2());
 
-        // Precompute cumulative products for r_lower_product
-        let mut r_products = vec![F::one(); ell + 1];
-        for i in (0..ell).rev() {
-            r_products[i] = r_products[i + 1] * r[i];
-        }
+        // i indicates the LENGTH of the prefix of r for which the eq_table is calculated
+        let eq_evals_helper = |eq_evals: &mut Vec<F>, r: &[F], i: usize| {
+            debug_assert!(i != 0);
+            let step = 1 << (ell - i); // step = (full / size)/2
+
+            let mut selected: Vec<_> = eq_evals.par_iter_mut().step_by(step).collect();
+
+            selected.par_chunks_mut(2).for_each(|chunk| {
+                *chunk[1] = *chunk[0] * r[i - 1];
+                *chunk[0] -= *chunk[1];
+            });
+        };
 
         for i in 0..ell {
             let step = 1 << (ell - i);
             let half_step = step / 2;
-            let r_i = r[i];
 
-            // Compute r_lower_product using precomputed products
-            let r_lower_product = (F::one() - r_i) * r_products[i + 1];
+            let r_lower_product = (F::one() - r[i]) * r.iter().skip(i + 1).copied().product::<F>();
 
-            // Update eq_plus_one_evals
             eq_plus_one_evals
                 .par_iter_mut()
                 .enumerate()
@@ -225,20 +229,7 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
                     *v = eq_evals[index - half_step] * r_lower_product;
                 });
 
-            // Update eq_evals in-place without intermediate vector
-            eq_evals
-                .par_chunks_mut(step)
-                .for_each(|chunk| {
-                    let mid = chunk.len() / 2;
-                    let (first, second) = chunk.split_at_mut(mid);
-                    first
-                        .par_iter_mut()
-                        .zip(second.par_iter_mut())
-                        .for_each(|(x, y)| {
-                            *y = *x * r_i;
-                            *x -= *y;
-                        });
-                });
+            eq_evals_helper(&mut eq_evals, r, i + 1);
         }
 
         (eq_evals, eq_plus_one_evals)
