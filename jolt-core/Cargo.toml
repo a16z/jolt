@@ -148,6 +148,11 @@ harness= false
 name = "jolt_core"
 path = "src/lib.rs"
 
+[[bin]]
+name = "jolt-core"
+path = "src/bin/jolt_core.rs"
+required-features = ["host"]
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 memory-stats = "1.0.0"
 sys-info = "0.9.1"
