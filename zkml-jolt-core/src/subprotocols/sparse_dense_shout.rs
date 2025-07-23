@@ -39,9 +39,8 @@ pub fn prove_sparse_dense_shout<
     const WORD_SIZE: usize,
     F: JoltField,
     ProofTranscript: Transcript,
-    I: LookupQuery<WORD_SIZE> + InstructionLookup<WORD_SIZE> + InstructionFlags + Sync,
 >(
-    tensor_op: &[I],
+    tensor_op: &[ElementWiseOpCycle],
     r_cycle: &[F],
     transcript: &mut ProofTranscript,
 ) -> (
@@ -68,7 +67,7 @@ pub fn prove_sparse_dense_shout<
     let _guard = span.enter();
     let lookup_indices: Vec<_> = tensor_op
         .par_iter()
-        .map(|cycle| LookupBits::new(LookupQuery::<WORD_SIZE>::to_lookup_index(cycle), log_K))
+        .map(|cycle| LookupBits::new(cycle.to_lookup_index(), log_K))
         .collect();
     drop(_guard);
     drop(span);
@@ -99,7 +98,7 @@ pub fn prove_sparse_dense_shout<
     // TODO: these claims should be connected from spartan
     let (right_operand_evals, left_operand_evals): (Vec<u64>, Vec<u64>) = tensor_op
         .par_iter()
-        .map(LookupQuery::<WORD_SIZE>::to_lookup_operands)
+        .map(ElementWiseOpCycle::to_lookup_operands)
         .collect();
     let right_operand_claim = MultilinearPolynomial::from(right_operand_evals).evaluate(r_cycle);
     let left_operand_claim = MultilinearPolynomial::from(left_operand_evals).evaluate(r_cycle);
@@ -671,11 +670,30 @@ fn prover_msg_read_checking<const WORD_SIZE: usize, F: JoltField>(
     [eval_0, eval_2_right + eval_2_right - eval_2_left]
 }
 
+/// This is pseudo-trace for initial testing.
+/// Mimics tracer's [`ONNXCycle`], but used solely for testing lookup logic.
+/// Represents a single operation in a [`TensorOpCycle`]
+pub struct ElementWiseOpCycle<T> {
+    operation_code: T,
+    memory_state: ElementWiseMemoryState,
+}
+
+// Represents read from memory (RAM)
+pub struct ElementWiseMemoryState {
+    // Represents an element in a ts1
+    ts1: u64,
+    // Represents an element in a ts2
+    ts2: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use ark_bn254::Fr;
-    use jolt_core::utils::transcript::KeccakTranscript;
+    use jolt_core::{
+        jolt::instruction::NUM_CIRCUIT_FLAGS,
+        utils::{interleave_bits, transcript::KeccakTranscript},
+    };
     use onnx_tracer::trace_types::ONNXOpcode;
     use rand::{RngCore, SeedableRng, rngs::StdRng};
 
@@ -683,24 +701,7 @@ mod tests {
     const LOG_T: usize = 8;
     const T: usize = 1 << LOG_T;
 
-    // This is pseudo-trace for initial testing.
-    // TODO: Connect to trace
-    /// Mimics tracer's [`ONNXCycle`], but used solely for testing lookup logic.
-    pub struct TensorOpCycle {
-        operation_code: ONNXOpcode,
-        ops: ElementWiseOpCycle,
-    }
-
-    /// Represents a single operation in a [`TensorOpCycle`]
-    pub struct ElementWiseOpCycle {
-        memory_state: MemoryState,
-    }
-
-    // Represents read from memory (RAM)
-    pub struct MemoryState {
-        ts1: u32,
-        ts2: u32,
-    }
+    // TODO: Connect to tests to actual trace
 
     //     fn random_instruction(rng: &mut StdRng, instruction: &Option<RV32IMCycle>) -> RV32IMCycle {
     //         let instruction = instruction.unwrap_or_else(|| {
