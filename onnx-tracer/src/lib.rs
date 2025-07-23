@@ -43,7 +43,7 @@ pub fn decode(model_path: &PathBuf) -> Vec<ONNXInstr> {
         .graph
         .nodes
         .iter()
-        .map(decode_node)
+        .flat_map(decode_nodes)
         .collect()
 }
 
@@ -83,11 +83,11 @@ fn model(model_path: &PathBuf) -> Model {
 ///
 /// # NOTE:
 /// Adds 1 to pc to account for prepended no-op
-pub fn decode_node((pc, node): (&usize, &NodeType)) -> ONNXInstr {
+pub fn decode_nodes((pc, node): (&usize, &NodeType)) -> Vec<ONNXInstr> {
     match node {
-        NodeType::Node(node) => node.decode(*pc + BYTECODE_PREPEND_NOOP),
-        NodeType::SubGraph { .. } => {
-            todo!()
+        NodeType::Node(node) => vec![node.decode(*pc + BYTECODE_PREPEND_NOOP)],
+        NodeType::SubGraph { model, .. } => {
+            model.graph.nodes.iter().flat_map(decode_nodes).collect()
         }
     }
 }

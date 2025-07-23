@@ -40,4 +40,17 @@ mod e2e_tests {
         println!("Program code: {program_bytecode:#?}",);
         text_classification.trace();
     }
+
+    #[test]
+    fn test_subgraph() {
+        init_logger();
+        let subgraph = ONNXProgram {
+            model_path: "../onnx-tracer/models/subgraph/network.onnx".into(),
+            inputs: Tensor::new(Some(&[1, 2, 3, 4]), &[1, 4]).unwrap(), // Example input
+        };
+        let program_bytecode = subgraph.decode();
+        println!("Program decoded");
+        println!("Program code: {program_bytecode:#?}",);
+        subgraph.trace();
+    }
 }

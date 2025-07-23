@@ -1,7 +1,7 @@
 use super::node::*;
 use crate::{
     circuit::ops::{Input, Op, Unknown},
-    decode_node,
+    decode_nodes,
     fieldutils::felt_to_i128,
     graph::{
         input::GraphData,
@@ -195,12 +195,12 @@ impl Model {
         //     - Reshapes it to match the expected shape for that input node.
         //     - Inserts the reshaped tensor into the `results` map under the input node's index.
         for (i, input_idx) in self.graph.inputs.iter().enumerate() {
-            let mut input = model_inputs[i].clone();
+            let mut input = model_inputs[i].clone(); 
             input.reshape(&input_shapes[i])?;
             results.insert(input_idx, vec![input]);
         }
         for (idx, n) in self.graph.nodes.iter() {
-            let instr = decode_node((idx, n));
+            let instr = decode_nodes((idx, n));
             self.tracer.capture_pre_state(instr);
             // Gathers the input tensors required for the current node's execution.
             //
