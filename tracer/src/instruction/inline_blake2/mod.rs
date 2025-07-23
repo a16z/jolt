@@ -140,13 +140,10 @@ impl Blake2SequenceBuilder {
         // 4. Finalize the hash state: h[i] ^= v[i] ^ v[i+8]
         self.finalize_state();
 
-        // // 5. Store the working state for debugging/testing
-        // self.store_working_state();
-
-        // 6. Store the final hash state back to memory
+        // 5. Store the final hash state back to memory
         self.store_state();
 
-        // 7. Finalize the sequence by setting instruction indices
+        // 6. Finalize the sequence by setting instruction indices
         self.enumerate_sequence();
         self.sequence
     }
@@ -355,16 +352,6 @@ impl Blake2SequenceBuilder {
             }
             (Imm(imm1), Imm(imm2)) => Imm((imm1).wrapping_sub(imm2)),
         }
-        // match (rs1, rs2) {
-        //     (Reg(rs1), Reg(rs2)) => {
-        //         // For simplicity, we use XOR for addition in this proof-of-concept
-        //         // In a full implementation, proper 64-bit addition would be needed
-        //         self.xor64(Reg(rs1), Reg(rs2), rd)
-        //     }
-        //     (Reg(rs1), Imm(imm)) => self.xor64(Reg(rs1), Imm(imm), rd),
-        //     (Imm(_), Reg(_)) => self.add64(rs2, rs1, rd),
-        //     (Imm(imm1), Imm(imm2)) => Imm(imm1.wrapping_add(imm2)),
-        // }
     }
 
     /// XOR two 64-bit numbers
@@ -481,56 +468,13 @@ impl Blake2SequenceBuilder {
 /// Rust implementation of Blake2b-256 on the host.
 /// ------------------------------------------------------------------------------------------------
 
-/// High-level Blake2 function following RFC specification
-///
-/// Parameters:
-/// - data_blocks: Array of data blocks d[0..dd-1]
-/// - ll: Length of input in bytes
-/// - kk: Key length (0 for unkeyed)  
-/// - nn: Output length in bytes
-fn blake2(data_blocks: &[[u64; 16]], ll: u64, kk: u64, nn: u64) -> Vec<u8> {
-    const BB: u64 = 128; // Block size in bytes
-
-    // h[0..7] := IV[0..7] (Initialization Vector)
-    let mut h = BLAKE2B_IV;
-
-    // Parameter block p[0]: h[0] := h[0] ^ 0x01010000 ^ (kk << 8) ^ nn
-    h[0] ^= 0x01010000 ^ (kk << 8) ^ nn;
-
-    let dd = data_blocks.len();
-
-    // Process padded key and data blocks
-    if dd > 1 {
-        for i in 0..(dd - 1) {
-            let counter = (i as u64 + 1) * BB;
-            execute_blake2b_compression(&mut h, &data_blocks[i], counter, false);
-        }
-    }
-
-    // Final block
-    let final_counter = if kk == 0 { ll } else { ll + BB };
-    execute_blake2b_compression(&mut h, &data_blocks[dd - 1], final_counter, true);
-
-    // Return first "nn" bytes from little-endian word array h[]
-    let mut result = Vec::with_capacity(nn as usize);
-    for &word in h.iter() {
-        let bytes = word.to_le_bytes();
-        for &byte in bytes.iter() {
-            if result.len() < nn as usize {
-                result.push(byte);
-            }
-        }
-    }
-    result
-}
-
 /// Execute Blake2b compression with explicit counter values
 pub fn execute_blake2b_compression(
     state: &mut [u64; 8],
     message_words: &[u64; 16],
     counter: u64,
     is_final: bool,
-) -> [u64; 16] {
+) {
     // Use the host implementation for compression
     use crate::instruction::inline_blake2::{BLAKE2B_IV, SIGMA};
 
@@ -631,7 +575,6 @@ pub fn execute_blake2b_compression(
     for i in 0..8 {
         state[i] ^= v[i] ^ v[i + 8];
     }
-    v
 }
 
 /// Blake2b G function
@@ -649,6 +592,49 @@ fn g(v: &mut [u64; 16], a: usize, b: usize, c: usize, d: usize, x: u64, y: u64) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// High-level Blake2 function following RFC specification
+    ///
+    /// Parameters:
+    /// - data_blocks: Array of data blocks d[0..dd-1]
+    /// - ll: Length of input in bytes
+    /// - kk: Key length (0 for unkeyed)  
+    /// - nn: Output length in bytes
+    fn blake2(data_blocks: &[[u64; 16]], ll: u64, kk: u64, nn: u64) -> Vec<u8> {
+        const BB: u64 = 128; // Block size in bytes
+
+        // h[0..7] := IV[0..7] (Initialization Vector)
+        let mut h = BLAKE2B_IV;
+
+        // Parameter block p[0]: h[0] := h[0] ^ 0x01010000 ^ (kk << 8) ^ nn
+        h[0] ^= 0x01010000 ^ (kk << 8) ^ nn;
+
+        let dd = data_blocks.len();
+
+        // Process padded key and data blocks
+        if dd > 1 {
+            for i in 0..(dd - 1) {
+                let counter = (i as u64 + 1) * BB;
+                execute_blake2b_compression(&mut h, &data_blocks[i], counter, false);
+            }
+        }
+
+        // Final block
+        let final_counter = if kk == 0 { ll } else { ll + BB };
+        execute_blake2b_compression(&mut h, &data_blocks[dd - 1], final_counter, true);
+
+        // Return first "nn" bytes from little-endian word array h[]
+        let mut result = Vec::with_capacity(nn as usize);
+        for &word in h.iter() {
+            let bytes = word.to_le_bytes();
+            for &byte in bytes.iter() {
+                if result.len() < nn as usize {
+                    result.push(byte);
+                }
+            }
+        }
+        result
+    }
 
     #[test]
     fn test_blake2_rfc_abc() {
