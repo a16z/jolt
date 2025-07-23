@@ -87,7 +87,7 @@ where
         // sum-check setup
         let rv_claim: F = F.iter().zip_eq(val.iter()).map(|(f, v)| *f * v).sum();
         // random linear combination of core piop claim and hamming weight claim
-        let mut prev_claim = rv_claim + z/* .mul(1)*/; // where 1 is hamming weight sumcheck claim
+        let mut prev_claim = rv_claim + z/* .mul(1) */; // where 1 is hamming weight sumcheck claim
         let mut ra = MultilinearPolynomial::from(F.clone());
         let mut val = MultilinearPolynomial::from(val);
         const DEGREE: usize = 2;
@@ -182,7 +182,6 @@ where
     let K = r.len().pow2();
     let T = trace.len();
     let mut B = MultilinearPolynomial::from(EqPolynomial::evals(r));
-
     let num_rounds = K.log_2() + T.log_2();
     let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
