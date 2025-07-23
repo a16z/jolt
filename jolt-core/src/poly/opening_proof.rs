@@ -277,7 +277,7 @@ where
         claims: Vec<F>,
     ) -> Self {
         let opening = DensePolynomialProverOpening {
-            polynomial: None, // Defer intialization until opening proof reduction sumcheck
+            polynomial: None, // Defer initialization until opening proof reduction sumcheck
             eq_poly,
         };
         Self {
