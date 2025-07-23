@@ -37,6 +37,7 @@ use super::{JoltPolynomials, JoltStuff, JoltTraceStep};
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct ReadWriteMemoryPreprocessing {
     min_bytecode_address: u64,
+    max_bytecode_address: u64,
     bytecode_words: Vec<u32>,
     // HACK: The verifier will populate this field by copying inputs/outputs from the
     // `ReadWriteMemoryProof` and the memory layout from preprocessing.
@@ -79,6 +80,7 @@ impl ReadWriteMemoryPreprocessing {
 
         Self {
             min_bytecode_address,
+            max_bytecode_address,
             bytecode_words,
             program_io: None,
         }
@@ -269,6 +271,12 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
                 MemoryOp::Read(a) => remap_address(a, &program_io.memory_layout),
                 MemoryOp::Write(a, _) => remap_address(a, &program_io.memory_layout),
             })
+            .chain(std::iter::once(
+                memory_address_to_witness_index(
+                    preprocessing.max_bytecode_address,
+                    &program_io.memory_layout,
+                ) as u64
+            ))
             .max()
             .unwrap();
 
