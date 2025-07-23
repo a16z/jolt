@@ -143,7 +143,10 @@ impl MacroBuilder {
         let imports = self.make_imports();
         let set_program_args = self.func_args.iter().map(|(name, _)| {
             quote! {
-                io_device.inputs.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
+                match jolt::postcard::to_stdvec(&#name) {
+                    Ok(mut bytes) => io_device.inputs.append(&mut bytes),
+                    Err(_) => return false, // Serialization failed, verification fails
+                }
             }
         });
 
@@ -167,7 +170,10 @@ impl MacroBuilder {
                     let mut io_device = tracer::JoltDevice::new(&memory_config);
 
                     #(#set_program_args;)*
-                    io_device.outputs.append(&mut jolt::postcard::to_stdvec(&output).unwrap());
+                    match jolt::postcard::to_stdvec(&output) {
+                        Ok(mut bytes) => io_device.outputs.append(&mut bytes),
+                        Err(_) => return false, // Serialization failed, verification fails
+                    }
 
                     RV32IJoltVM::verify(preprocessing, proof.proof, proof.commitments, io_device, None).is_ok()
                 };
@@ -203,7 +209,7 @@ impl MacroBuilder {
         let inputs = &self.func.sig.inputs;
         let set_program_args = self.func_args.iter().map(|(name, _)| {
             quote! {
-                input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
+                input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).expect("Failed to serialize function argument"))
             }
         });
 
@@ -352,13 +358,13 @@ impl MacroBuilder {
                 let ret_val = ();
             },
             ReturnType::Type(_, ty) => quote! {
-                let ret_val = jolt::postcard::from_bytes::<#ty>(&output_io_device.outputs).unwrap();
+                let ret_val = jolt::postcard::from_bytes::<#ty>(&output_io_device.outputs).expect("Failed to deserialize function output");
             },
         };
 
         let set_program_args = self.func_args.iter().map(|(name, _)| {
             quote! {
-                input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
+                input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).expect("Failed to serialize function argument"))
             }
         });
 
