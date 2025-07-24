@@ -295,8 +295,7 @@ where
             1 << 16, // TODO(moodlezoup)
         );
 
-        let committed_polys: Vec<_> = AllCommittedPolynomials::iter()
-            .par_bridge()
+        let committed_polys: Vec<_> = AllCommittedPolynomials::par_iter()
             .map(|poly| poly.generate_witness(&preprocessing, &trace))
             .collect();
         let commitments: Vec<_> = committed_polys

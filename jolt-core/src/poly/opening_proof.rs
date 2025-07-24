@@ -19,6 +19,7 @@ use crate::{
     jolt::witness::{CommittedPolynomial, VirtualPolynomial},
     poly::{
         dense_mlpoly::DensePolynomial,
+        multilinear_polynomial::PolynomialEvaluation,
         one_hot_polynomial::{OneHotPolynomialProverOpening, OneHotSumcheckState},
     },
     subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance, SumcheckInstanceProof},
@@ -237,17 +238,6 @@ pub enum ProverOpening<F: JoltField> {
     OneHot(OneHotPolynomialProverOpening<F>),
 }
 
-impl<F: JoltField> ProverOpening<F> {
-    fn clone_unbound_polynomial(&self) -> MultilinearPolynomial<F> {
-        match self {
-            ProverOpening::Dense(opening) => opening.polynomial.as_ref().unwrap().clone(),
-            ProverOpening::OneHot(opening) => {
-                MultilinearPolynomial::OneHot(opening.polynomial.as_ref().unwrap().clone())
-            }
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct OpeningProofReductionSumcheck<F>
 where
@@ -354,9 +344,9 @@ where
             }
         }
 
+        self.rlc_coeffs = vec![F::one()];
         if self.polynomials.len() > 1 {
             let gamma: F = transcript.challenge_scalar();
-            self.rlc_coeffs = vec![F::one()];
             for i in 1..self.polynomials.len() {
                 self.rlc_coeffs.push(self.rlc_coeffs[i - 1] * gamma);
             }
@@ -379,6 +369,7 @@ where
 
                 let rlc_poly =
                     MultilinearPolynomial::linear_combination(&polynomials, &self.rlc_coeffs);
+                debug_assert_eq!(rlc_poly.evaluate(&self.opening_point), reduced_claim);
                 let num_vars = rlc_poly.get_num_vars();
 
                 let opening_point_len = self.opening_point.len();
@@ -546,6 +537,10 @@ pub struct ReducedOpeningProof<
     pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub sumcheck_claims: Vec<F>,
     joint_opening_proof: PCS::Proof,
+    #[cfg(test)]
+    joint_poly: MultilinearPolynomial<F>,
+    #[cfg(test)]
+    joint_commitment: PCS::Commitment,
 }
 
 impl<F> Default for ProverOpeningAccumulator<F>
@@ -694,26 +689,15 @@ where
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::reduce_and_prove")]
     pub fn reduce_and_prove<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         &mut self,
-        polynomials: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
+        mut polynomials: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
         pcs_setup: &PCS::ProverSetup,
         transcript: &mut ProofTranscript,
     ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
         println!("# instances: {}", self.sumchecks.len());
+
         self.sumchecks
             .iter_mut()
             .for_each(|sumcheck| sumcheck.prepare_sumcheck(Some(&polynomials), transcript));
-        // TODO(moodlezoup): surely there's a better way to do this
-        let unbound_polys = self
-            .sumchecks
-            .iter()
-            .map(|opening| {
-                opening
-                    .prover_state
-                    .as_ref()
-                    .unwrap()
-                    .clone_unbound_polynomial()
-            })
-            .collect::<Vec<_>>();
 
         // Use sumcheck reduce many openings to one
         let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
@@ -727,10 +711,33 @@ where
             gamma_powers.push(gamma_powers[i - 1] * gamma);
         }
 
-        let joint_poly = MultilinearPolynomial::linear_combination(
-            &unbound_polys.iter().collect::<Vec<_>>(),
-            &gamma_powers,
-        );
+        let joint_poly = {
+            let mut rlc_map = HashMap::new();
+            for (gamma, sumcheck) in gamma_powers.iter().zip(self.sumchecks.iter()) {
+                for (coeff, polynomial) in
+                    sumcheck.rlc_coeffs.iter().zip(sumcheck.polynomials.iter())
+                {
+                    if let Some(value) = rlc_map.get_mut(&polynomial) {
+                        *value += *coeff * gamma;
+                    } else {
+                        rlc_map.insert(polynomial, *coeff * gamma);
+                    }
+                }
+            }
+
+            let (coeffs, polynomials): (Vec<F>, Vec<MultilinearPolynomial<F>>) = rlc_map
+                .into_iter()
+                .map(|(k, v)| (v, polynomials.remove(k).unwrap()))
+                .unzip();
+
+            MultilinearPolynomial::linear_combination(
+                &polynomials.iter().collect::<Vec<_>>(),
+                &coeffs,
+            )
+        };
+
+        #[cfg(test)]
+        let joint_commitment = PCS::commit(&joint_poly, pcs_setup);
 
         // Reduced opening proof
         let joint_opening_proof = PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, transcript);
@@ -739,6 +746,10 @@ where
             sumcheck_proof,
             sumcheck_claims,
             joint_opening_proof,
+            #[cfg(test)]
+            joint_poly,
+            #[cfg(test)]
+            joint_commitment,
         }
     }
 
@@ -1018,6 +1029,12 @@ where
             PCS::combine_commitments(&commitments, &coeffs)
         };
 
+        #[cfg(test)]
+        assert_eq!(
+            joint_commitment, reduced_opening_proof.joint_commitment,
+            "joint commitment mismatch"
+        );
+
         // Compute joint claim = ∑ᵢ γⁱ⋅ claimᵢ
         let joint_claim: F = gamma_powers
             .iter()
@@ -1029,6 +1046,13 @@ where
                 *coeff * claim * lagrange_eval
             })
             .sum();
+
+        // #[cfg(test)]
+        // assert_eq!(
+        //     joint_claim,
+        //     reduced_opening_proof.joint_poly.evaluate(&r_sumcheck),
+        //     "joint claim mismatch"
+        // );
 
         // Verify the reduced opening proof
         PCS::verify(

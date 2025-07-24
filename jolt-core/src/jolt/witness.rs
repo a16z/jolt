@@ -20,7 +20,7 @@ use crate::{
 
 use super::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
 
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord)]
 pub enum CommittedPolynomial {
     /* R1CS aux variables */
     /// The "left" input to the current instruction. Typically either the
@@ -104,6 +104,15 @@ impl AllCommittedPolynomials {
                 .get()
                 .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")
                 .iter()
+        }
+    }
+
+    pub fn par_iter() -> impl ParallelIterator<Item = &'static CommittedPolynomial> {
+        unsafe {
+            ALL_COMMITTED_POLYNOMIALS
+                .get()
+                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")
+                .par_iter()
         }
     }
 }
