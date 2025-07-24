@@ -4,16 +4,14 @@ use crate::dag::stage::SumcheckStages;
 use crate::dag::state_manager::StateManager;
 use crate::jolt::vm::bytecode::booleanity::BooleanitySumcheck;
 use crate::jolt::vm::bytecode::hamming_weight::HammingWeightSumcheck;
-use crate::jolt::vm::bytecode::raf::RafBytecode;
-use crate::jolt::vm::bytecode::read_checking::{ReadCheckingSumcheck, ReadCheckingValType};
-use crate::jolt::witness::{CommittedPolynomial, VirtualPolynomial};
+use crate::jolt::vm::bytecode::read_raf_checking::ReadRafSumcheck;
+use crate::jolt::vm::ram::compute_d_parameter;
+use crate::jolt::witness::VirtualPolynomial;
 use crate::poly::opening_proof::SumcheckId;
+use crate::utils::math::Math;
 use crate::{
     field::JoltField,
-    poly::{
-        commitment::commitment_scheme::CommitmentScheme, eq_poly::EqPolynomial,
-        multilinear_polynomial::MultilinearPolynomial,
-    },
+    poly::{commitment::commitment_scheme::CommitmentScheme, eq_poly::EqPolynomial},
     subprotocols::sumcheck::SumcheckInstance,
     utils::{thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
@@ -24,8 +22,7 @@ use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
 
 pub mod booleanity;
 pub mod hamming_weight;
-pub mod raf;
-pub mod read_checking;
+pub mod read_raf_checking;
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BytecodePreprocessing {
@@ -36,6 +33,7 @@ pub struct BytecodePreprocessing {
     /// is the one used to keep track of the next (potentially virtual) instruction to execute.
     /// Key: (ELF address, virtual sequence index or 0)
     pub virtual_address_map: BTreeMap<(usize, usize), usize>,
+    pub d: usize,
 }
 
 impl BytecodePreprocessing {
@@ -65,14 +63,18 @@ impl BytecodePreprocessing {
         bytecode.insert(0, RV32IMInstruction::NoOp);
         assert_eq!(virtual_address_map.insert((0, 0), 0), None);
 
+        let d = compute_d_parameter(bytecode.len().next_power_of_two());
+        // Make log(code_size) a multiple of d
+        let code_size = (bytecode.len().next_power_of_two().log_2().div_ceil(d) * d).pow2();
+
         // Bytecode: Pad to nearest power of 2
-        let code_size = bytecode.len().next_power_of_two();
         bytecode.resize(code_size, RV32IMInstruction::NoOp);
 
         Self {
             code_size,
             bytecode,
             virtual_address_map,
+            d,
         }
     }
 
@@ -100,119 +102,24 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let (preprocessing, trace, _, _) = sm.get_prover_data();
         let bytecode_preprocessing = &preprocessing.shared.bytecode;
-        let K = bytecode_preprocessing.bytecode.len().next_power_of_two();
 
-        let r_cycle_1: Vec<F> = sm
+        let r_cycle: Vec<F> = sm
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::UnexpandedPC,
                 SumcheckId::SpartanOuter,
             )
             .0
             .r;
-        let r_cycle_2 = sm
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::Rs1Ra,
-                SumcheckId::RegistersReadWriteChecking,
-            )
-            .0
-            .r;
-        let r_cycle_2 = &r_cycle_2[r_cycle_2.len() - r_cycle_1.len()..];
-        let r_cycle_3 = sm
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::UnexpandedPC,
-                SumcheckId::SpartanShift,
-            )
-            .0
-            .r;
-        let E_1: Vec<F> = EqPolynomial::evals(&r_cycle_1);
-        let E_2: Vec<F> = EqPolynomial::evals(r_cycle_2);
-        let E_3: Vec<F> = EqPolynomial::evals(&r_cycle_3);
+        let E_1: Vec<F> = EqPolynomial::evals(&r_cycle);
 
-        let span = tracing::span!(tracing::Level::INFO, "compute F");
-        let _guard = span.enter();
+        let F_1 = compute_ra_evals(bytecode_preprocessing, trace, &E_1);
 
-        let num_chunks = rayon::current_num_threads()
-            .next_power_of_two()
-            .min(trace.len());
-        let chunk_size = (trace.len() / num_chunks).max(1);
-        let (F_1, F_2, F_3): (Vec<_>, Vec<_>, Vec<_>) = trace
-            .par_chunks(chunk_size)
-            .enumerate()
-            .map(|(chunk_index, trace_chunk)| {
-                let mut result_1: Vec<F> = unsafe_allocate_zero_vec(K);
-                let mut result_2: Vec<F> = unsafe_allocate_zero_vec(K);
-                let mut result_3: Vec<F> = unsafe_allocate_zero_vec(K);
-                let mut j = chunk_index * chunk_size;
-                for cycle in trace_chunk {
-                    let k = bytecode_preprocessing.get_pc(cycle);
-                    result_1[k] += E_1[j];
-                    result_2[k] += E_2[j];
-                    result_3[k] += E_3[j];
-                    j += 1;
-                }
-                (result_1, result_2, result_3)
-            })
-            .reduce(
-                || {
-                    (
-                        unsafe_allocate_zero_vec(K),
-                        unsafe_allocate_zero_vec(K),
-                        unsafe_allocate_zero_vec(K),
-                    )
-                },
-                |(mut running_1, mut running_2, mut running_3), (new_1, new_2, new_3)| {
-                    running_1
-                        .par_iter_mut()
-                        .zip(new_1.into_par_iter())
-                        .for_each(|(x, y)| *x += y);
-                    running_2
-                        .par_iter_mut()
-                        .zip(new_2.into_par_iter())
-                        .for_each(|(x, y)| *x += y);
-                    running_3
-                        .par_iter_mut()
-                        .zip(new_3.into_par_iter())
-                        .for_each(|(x, y)| *x += y);
-                    (running_1, running_2, running_3)
-                },
-            );
-        drop(_guard);
-        drop(span);
-
-        let unbound_ra_poly =
-            CommittedPolynomial::BytecodeRa.generate_witness(preprocessing, trace);
-
-        let read_checking_1 = ReadCheckingSumcheck::new_prover(
-            sm,
-            F_1.clone(),
-            unbound_ra_poly.clone(),
-            ReadCheckingValType::Stage1,
-        );
-        let read_checking_2 = ReadCheckingSumcheck::new_prover(
-            sm,
-            F_2,
-            unbound_ra_poly.clone(),
-            ReadCheckingValType::Stage2,
-        );
-        let read_checking_3 = ReadCheckingSumcheck::new_prover(
-            sm,
-            F_3.clone(),
-            unbound_ra_poly.clone(),
-            ReadCheckingValType::Stage3,
-        );
-        let raf = RafBytecode::new_prover(
-            sm,
-            MultilinearPolynomial::from(F_1.clone()),
-            MultilinearPolynomial::from(F_3),
-        );
+        let read_raf = ReadRafSumcheck::new_prover(sm);
         let booleanity = BooleanitySumcheck::new_prover(sm, E_1, F_1.clone());
-        let hamming_weight = HammingWeightSumcheck::new_prover(F_1, K);
+        let hamming_weight = HammingWeightSumcheck::new_prover(sm, F_1);
 
         vec![
-            Box::new(read_checking_1),
-            Box::new(read_checking_2),
-            Box::new(read_checking_3),
-            Box::new(raf),
+            Box::new(read_raf),
             Box::new(booleanity),
             Box::new(hamming_weight),
         ]
@@ -222,20 +129,67 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        let read_checking_1 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValType::Stage1);
-        let read_checking_2 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValType::Stage2);
-        let read_checking_3 = ReadCheckingSumcheck::new_verifier(sm, ReadCheckingValType::Stage3);
-        let raf = RafBytecode::new_verifier(sm);
+        let read_checking = ReadRafSumcheck::new_verifier(sm);
         let booleanity = BooleanitySumcheck::new_verifier(sm);
         let hamming_weight = HammingWeightSumcheck::new_verifier(sm);
 
         vec![
-            Box::new(read_checking_1),
-            Box::new(read_checking_2),
-            Box::new(read_checking_3),
-            Box::new(raf),
+            Box::new(read_checking),
             Box::new(booleanity),
             Box::new(hamming_weight),
         ]
     }
+}
+
+#[inline(always)]
+#[tracing::instrument(skip_all, name = "Bytecode::compute_ra_evals")]
+fn compute_ra_evals<F: JoltField>(
+    preprocessing: &BytecodePreprocessing,
+    trace: &[RV32IMCycle],
+    eq_r_cycle: &[F],
+) -> Vec<Vec<F>> {
+    let T = trace.len();
+    let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
+    let chunk_size = (T / num_chunks).max(1);
+    let log_K = preprocessing.code_size.log_2();
+    let d = preprocessing.d;
+    let log_K_chunk = log_K.div_ceil(d);
+    let K_chunk = log_K_chunk.pow2();
+
+    trace
+        .par_chunks(chunk_size)
+        .enumerate()
+        .map(|(chunk_index, trace_chunk)| {
+            let mut result: Vec<Vec<F>> =
+                (0..d).map(|_| unsafe_allocate_zero_vec(K_chunk)).collect();
+            let mut j = chunk_index * chunk_size;
+            for cycle in trace_chunk {
+                let mut pc = preprocessing.get_pc(cycle);
+                for i in (0..d).rev() {
+                    let k = pc % K_chunk;
+                    result[i][k] += eq_r_cycle[j];
+                    pc >>= log_K_chunk;
+                }
+                j += 1;
+            }
+            result
+        })
+        .reduce(
+            || {
+                (0..d)
+                    .map(|_| unsafe_allocate_zero_vec(K_chunk))
+                    .collect::<Vec<_>>()
+            },
+            |mut running, new| {
+                running
+                    .par_iter_mut()
+                    .zip(new.into_par_iter())
+                    .for_each(|(x, y)| {
+                        x.par_iter_mut()
+                            .zip(y.into_par_iter())
+                            .for_each(|(x, y)| *x += y)
+                    });
+                running
+            },
+        )
 }

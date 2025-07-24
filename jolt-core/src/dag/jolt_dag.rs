@@ -55,6 +55,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             .max()
             .unwrap()
             .next_power_of_two();
+        let bytecode_d = preprocessing.shared.bytecode.d;
 
         // HACK
         self.prover_state_manager
@@ -74,7 +75,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
 
         let _guard = (
             DoryGlobals::initialize(K, padded_trace_length),
-            AllCommittedPolynomials::initialize(ram_K),
+            AllCommittedPolynomials::initialize(ram_K, bytecode_d),
         );
 
         // Generate and commit to all witness polynomials
@@ -250,7 +251,14 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             ProofData::RamK(ram_K) => *ram_K,
             _ => panic!("Unexpected ProofData"),
         };
-        let _guard = AllCommittedPolynomials::initialize(ram_K);
+        let bytecode_d = self
+            .verifier_state_manager
+            .get_verifier_data()
+            .0
+            .shared
+            .bytecode
+            .d;
+        let _guard = AllCommittedPolynomials::initialize(ram_K, bytecode_d);
 
         // Append commitments to transcript
         let commitments = self.verifier_state_manager.get_commitments();

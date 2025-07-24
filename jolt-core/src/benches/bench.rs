@@ -296,10 +296,10 @@ where
         // serialize_and_print_size(" jolt_proof.bytecode", &jolt_proof.bytecode);
         // serialize_and_print_size(" jolt_proof.ram", &jolt_proof.ram);
         serialize_and_print_size(" jolt_proof.registers", &jolt_proof.registers);
-        serialize_and_print_size(
-            " jolt_proof.instruction_lookups",
-            &jolt_proof.instruction_lookups,
-        );
+        // serialize_and_print_size(
+        //     " jolt_proof.instruction_lookups",
+        //     &jolt_proof.instruction_lookups,
+        // );
         serialize_and_print_size(" jolt_proof.opening_proof", &jolt_proof.opening_proof);
 
         let verification_result =

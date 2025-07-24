@@ -1,6 +1,5 @@
 use std::{cell::RefCell, rc::Rc};
 
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 
 use super::{D, LOG_K_CHUNK};
@@ -17,14 +16,13 @@ use crate::{
             BIG_ENDIAN,
         },
     },
-    subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
+    subprotocols::sumcheck::SumcheckInstance,
     utils::transcript::Transcript,
 };
 
 const DEGREE: usize = 1;
 
 struct HammingProverState<F: JoltField> {
-    r: Vec<F>,
     /// ra_i polynomials
     ra: [MultilinearPolynomial<F>; D],
 }
@@ -61,10 +59,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
             .r;
         Self {
             gamma: gamma_powers,
-            prover_state: Some(HammingProverState {
-                r: Vec::with_capacity(LOG_K_CHUNK),
-                ra,
-            }),
+            prover_state: Some(HammingProverState { ra }),
             r_cycle,
         }
     }
@@ -124,7 +119,6 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
 
     #[tracing::instrument(skip_all, name = "InstructionHammingWeight::bind")]
     fn bind(&mut self, r_j: F, _round: usize) {
-        self.prover_state.as_mut().unwrap().r.push(r_j);
         self.prover_state
             .as_mut()
             .unwrap()
@@ -197,14 +191,4 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
             r,
         );
     }
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct HammingWeightProof<F, ProofTranscript>
-where
-    F: JoltField,
-    ProofTranscript: Transcript,
-{
-    pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    ra_claims: [F; D],
 }

@@ -141,8 +141,7 @@ pub enum SumcheckId {
     RamValFinalEvaluation,
     RegistersReadWriteChecking,
     RegistersValEvaluation,
-    BytecodeReadChecking(usize), // Three instances of bytecode read-checking
-    BytecodeRafEvaluation(usize), // Two instances of bytecode raf-evaluation
+    BytecodeReadRaf,
     BytecodeBooleanity,
     BytecodeHammingWeight,
     OpeningReduction,

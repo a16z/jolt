@@ -16,6 +16,7 @@ use crate::{
         commitment::commitment_scheme::CommitmentScheme,
         multilinear_polynomial::MultilinearPolynomial, one_hot_polynomial::OneHotPolynomial,
     },
+    utils::math::Math,
 };
 
 use super::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
@@ -43,7 +44,7 @@ pub enum CommittedPolynomial {
     ShouldJump,
     /*  Twist/Shout witnesses */
     /// One-hot ra polynomial for the bytecode instance of Shout
-    BytecodeRa,
+    BytecodeRa(usize),
     /// One-hot ra/wa polynomial for the RAM instance of Twist
     /// Note that for RAM, ra and wa are the same polynomial because
     /// there is at most one load or store per cycle.
@@ -61,7 +62,7 @@ pub static mut ALL_COMMITTED_POLYNOMIALS: OnceCell<Vec<CommittedPolynomial>> = O
 
 pub struct AllCommittedPolynomials();
 impl AllCommittedPolynomials {
-    pub fn initialize(ram_K: usize) -> Self {
+    pub fn initialize(ram_K: usize, bytecode_d: usize) -> Self {
         let mut polynomials = vec![
             CommittedPolynomial::LeftInstructionInput,
             CommittedPolynomial::RightInstructionInput,
@@ -70,11 +71,13 @@ impl AllCommittedPolynomials {
             CommittedPolynomial::WritePCtoRD,
             CommittedPolynomial::ShouldBranch,
             CommittedPolynomial::ShouldJump,
-            CommittedPolynomial::BytecodeRa, // Will need to make this dynamic too
         ];
         let ram_d = compute_d_parameter(ram_K);
         for i in 0..ram_d {
             polynomials.push(CommittedPolynomial::RamRa(i));
+        }
+        for i in 0..bytecode_d {
+            polynomials.push(CommittedPolynomial::BytecodeRa(i));
         }
         polynomials.extend([
             CommittedPolynomial::RdInc,
@@ -254,15 +257,22 @@ impl CommittedPolynomial {
                     .collect();
                 coeffs.into()
             }
-            CommittedPolynomial::BytecodeRa => {
+            CommittedPolynomial::BytecodeRa(i) => {
+                let d = preprocessing.shared.bytecode.d;
+                let log_K = preprocessing.shared.bytecode.code_size.log_2();
+                let log_K_chunk = log_K.div_ceil(d);
+                let K_chunk = 1 << log_K_chunk;
+                if *i > d {
+                    panic!("Invalid index for bytecode ra: {i}");
+                }
                 let addresses: Vec<usize> = trace
                     .par_iter()
-                    .map(|cycle| preprocessing.shared.bytecode.get_pc(cycle))
+                    .map(|cycle| {
+                        let pc = preprocessing.shared.bytecode.get_pc(cycle);
+                        (pc >> (log_K_chunk * (d - 1 - i))) % K_chunk
+                    })
                     .collect();
-                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
-                    addresses,
-                    preprocessing.shared.bytecode.code_size,
-                ))
+                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(addresses, K_chunk))
             }
             CommittedPolynomial::RamRa(i) => {
                 let d = self.ram_d();

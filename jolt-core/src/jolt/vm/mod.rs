@@ -18,7 +18,6 @@ use crate::utils::math::Math;
 use crate::utils::transcript::Transcript;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
-use instruction_lookups::LookupsProof;
 use ram::RAMPreprocessing;
 use rayon::prelude::*;
 use registers::RegistersTwistProof;
@@ -153,7 +152,7 @@ where
     ProofTranscript: Transcript,
 {
     pub trace_length: usize,
-    pub instruction_lookups: LookupsProof<WORD_SIZE, F, PCS, ProofTranscript>,
+    // pub instruction_lookups: LookupsProof<WORD_SIZE, F, PCS, ProofTranscript>,
     // pub ram: RAMTwistProof<F, ProofTranscript>,
     pub registers: RegistersTwistProof<F, ProofTranscript>,
     pub r1cs: UniformSpartanProof<F, ProofTranscript>,
@@ -324,12 +323,12 @@ where
         .ok()
         .unwrap();
 
-        let instruction_proof = LookupsProof::prove(
-            &preprocessing,
-            &trace,
-            &mut opening_accumulator,
-            &mut transcript,
-        );
+        // let instruction_proof = LookupsProof::prove(
+        //     &preprocessing,
+        //     &trace,
+        //     &mut opening_accumulator,
+        //     &mut transcript,
+        // );
 
         let registers_proof = RegistersTwistProof::prove(
             &preprocessing,
@@ -371,7 +370,7 @@ where
 
         let jolt_proof = JoltProof {
             trace_length,
-            instruction_lookups: instruction_proof,
+            // instruction_lookups: instruction_proof,
             // ram: ram_proof,
             registers: registers_proof,
             r1cs: r1cs_proof,
@@ -465,11 +464,11 @@ where
             )
             .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))?;
 
-        proof.instruction_lookups.verify(
-            &proof.commitments,
-            &mut opening_accumulator,
-            &mut transcript,
-        )?;
+        // proof.instruction_lookups.verify(
+        //     &proof.commitments,
+        //     &mut opening_accumulator,
+        //     &mut transcript,
+        // )?;
 
         proof.registers.verify(
             &proof.commitments,

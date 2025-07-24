@@ -1,4 +1,3 @@
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
 use strum::{EnumCount, IntoEnumIterator};
@@ -21,7 +20,7 @@ use crate::{
         commitment::commitment_scheme::CommitmentScheme,
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
-        identity_poly::{Endianness, IdentityPolynomial, OperandPolynomial, OperandSide},
+        identity_poly::{IdentityPolynomial, OperandPolynomial, OperandSide},
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
@@ -33,7 +32,7 @@ use crate::{
     },
     subprotocols::{
         sparse_dense_shout::{compute_prefix_suffix_prover_message, ExpandingTable, LookupBits},
-        sumcheck::{SumcheckInstance, SumcheckInstanceProof},
+        sumcheck::SumcheckInstance,
     },
     utils::{
         math::Math,
@@ -158,7 +157,7 @@ impl<'a, F: JoltField> ReadRafProverState<F> {
         let log_T = trace.len().log_2();
         let right_operand_poly = OperandPolynomial::new(LOG_K, OperandSide::Right);
         let left_operand_poly = OperandPolynomial::new(LOG_K, OperandSide::Left);
-        let identity_poly = IdentityPolynomial::new_with_endianness(LOG_K, Endianness::Big);
+        let identity_poly = IdentityPolynomial::new(LOG_K);
         let right_operand_ps =
             PrefixSuffixDecomposition::new(Box::new(right_operand_poly), LOG_M, LOG_K);
         let left_operand_ps =
@@ -387,8 +386,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
             OperandPolynomial::new(LOG_K, OperandSide::Left).evaluate(r_address_prime);
         let right_operand_eval =
             OperandPolynomial::new(LOG_K, OperandSide::Right).evaluate(r_address_prime);
-        let identity_poly_eval = IdentityPolynomial::new_with_endianness(LOG_K, Endianness::Big)
-            .evaluate(r_address_prime);
+        let identity_poly_eval = IdentityPolynomial::new(LOG_K).evaluate(r_address_prime);
         let val_evals: Vec<_> = LookupTables::<WORD_SIZE>::iter()
             .map(|table| table.evaluate_mle(r_address_prime))
             .collect();
@@ -425,24 +423,6 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
                 SumcheckId::InstructionReadRaf,
             )
             .1;
-
-        // let raf_flag_claim: F = [
-        //     CircuitFlags::AddOperands,
-        //     CircuitFlags::SubtractOperands,
-        //     CircuitFlags::MultiplyOperands,
-        //     CircuitFlags::Advice,
-        // ]
-        // .into_iter()
-        // .map(|flag| {
-        // let accumulator = accumulator.borrow();
-        // accumulator
-        //     .get_virtual_polynomial_opening(
-        //         VirtualPolynomial::OpFlags(flag),
-        //         SumcheckId::InstructionReadRaf,
-        //     )
-        //     .1
-        // })
-        // .sum();
 
         let rv_val_claim = val_evals
             .into_iter()
@@ -511,22 +491,6 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
             r_cycle.clone(),
             raf_flag_claim,
         );
-
-        // for flag in [
-        //     CircuitFlags::AddOperands,
-        //     CircuitFlags::SubtractOperands,
-        //     CircuitFlags::MultiplyOperands,
-        //     CircuitFlags::Advice,
-        // ] {
-        //     let claim = todo!();
-        // accumulator.borrow_mut().append_virtual(
-        //     VirtualPolynomial::OpFlags(flag),
-        //     SumcheckId::InstructionReadRaf,
-        //     r_cycle.clone(),
-        //     claim,
-        // );
-        // }
-        // FIXME(moodlezoup): Prove these in bytecode read-checking
     }
 
     fn cache_openings_verifier(
@@ -553,10 +517,11 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
             );
         });
 
-        // TODO(moodlezoup): Append individual circuit flag claims corresponding to raf_flag_claim
-        // accumulator
-        //     .borrow_mut()
-        //     .append_virtual(OpeningId::InstructionRafFlag, r_cycle_prime);
+        accumulator.borrow_mut().append_virtual(
+            VirtualPolynomial::InstructionRafFlag,
+            SumcheckId::InstructionReadRaf,
+            r_cycle.clone(),
+        );
     }
 }
 
@@ -695,19 +660,4 @@ impl<F: JoltField> ReadRafProverState<F> {
             });
         self.combined_val_polynomial = Some(MultilinearPolynomial::from(combined_val_poly));
     }
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct ReadCheckingProof<F, ProofTranscript>
-where
-    F: JoltField,
-    ProofTranscript: Transcript,
-{
-    pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    rv_claim: F,
-    right_operand_claim: F,
-    left_operand_claim: F,
-    ra_claims: [F; D],
-    flag_claims: Vec<F>,
-    raf_flag_claim: F,
 }

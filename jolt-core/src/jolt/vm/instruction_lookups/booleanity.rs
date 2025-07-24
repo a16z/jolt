@@ -1,4 +1,3 @@
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
 use tracer::instruction::RV32IMCycle;
@@ -21,7 +20,7 @@ use crate::{
             BIG_ENDIAN,
         },
     },
-    subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
+    subprotocols::sumcheck::SumcheckInstance,
     utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
 
@@ -224,10 +223,10 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         r_prime: &[F],
     ) -> F {
+        let accumulator = accumulator.as_ref().unwrap();
         let ra_claims = (0..D).map(|i| {
-            let accumulator = accumulator.as_ref().unwrap();
-            let accumulator = accumulator.borrow();
             accumulator
+                .borrow()
                 .get_committed_polynomial_opening(
                     CommittedPolynomial::InstructionRa(i),
                     SumcheckId::InstructionBooleanity,
@@ -271,10 +270,9 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
                 .iter()
                 .map(|ra| ra.final_sumcheck_claim())
                 .collect::<Vec<F>>();
-        let polynomials = (0..D).map(CommittedPolynomial::InstructionRa).collect();
 
         accumulator.borrow_mut().append_sparse(
-            polynomials,
+            (0..D).map(CommittedPolynomial::InstructionRa).collect(),
             SumcheckId::InstructionBooleanity,
             opening_point.r[..LOG_K_CHUNK].to_vec(),
             opening_point.r[LOG_K_CHUNK..].to_vec(),
@@ -287,10 +285,8 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
         r_sumcheck: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        let polynomials = (0..D).map(CommittedPolynomial::InstructionRa).collect();
-
         accumulator.borrow_mut().append_sparse(
-            polynomials,
+            (0..D).map(CommittedPolynomial::InstructionRa).collect(),
             SumcheckId::InstructionBooleanity,
             r_sumcheck.r,
         );
@@ -414,14 +410,4 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             p.eq_r_r.unwrap() * univariate_poly_evals[2],
         ]
     }
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct BooleanityProof<F, ProofTranscript>
-where
-    F: JoltField,
-    ProofTranscript: Transcript,
-{
-    pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    ra_claims: [F; D],
 }

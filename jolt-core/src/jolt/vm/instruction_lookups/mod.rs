@@ -1,6 +1,4 @@
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
-use std::marker::PhantomData;
 use tracer::instruction::RV32IMCycle;
 
 use crate::{
@@ -8,24 +6,18 @@ use crate::{
     field::JoltField,
     jolt::{
         instruction::LookupQuery,
-        lookup_table::LookupTables,
-        vm::{
-            instruction_lookups::{
-                booleanity::{BooleanityProof, BooleanitySumcheck},
-                hamming_weight::{HammingWeightProof, HammingWeightSumcheck},
-                read_raf_checking::{ReadCheckingProof, ReadRafSumcheck},
-            },
-            JoltCommitments, JoltProverPreprocessing,
+        vm::instruction_lookups::{
+            booleanity::BooleanitySumcheck, hamming_weight::HammingWeightSumcheck,
+            read_raf_checking::ReadRafSumcheck,
         },
         witness::VirtualPolynomial,
     },
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
-        eq_poly::EqPolynomial,
-        opening_proof::{ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator},
+        commitment::commitment_scheme::CommitmentScheme, eq_poly::EqPolynomial,
+        opening_proof::SumcheckId,
     },
     subprotocols::sumcheck::SumcheckInstance,
-    utils::{errors::ProofVerifyError, thread::unsafe_allocate_zero_vec, transcript::Transcript},
+    utils::{thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
 
 pub mod booleanity;
@@ -41,20 +33,6 @@ pub const D: usize = 8;
 pub const LOG_K_CHUNK: usize = LOG_K / D;
 pub const K_CHUNK: usize = 1 << LOG_K_CHUNK;
 const RA_PER_LOG_M: usize = LOG_M / LOG_K_CHUNK;
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct LookupsProof<const WORD_SIZE: usize, F, PCS, ProofTranscript>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-    ProofTranscript: Transcript,
-{
-    read_checking_proof: ReadCheckingProof<F, ProofTranscript>,
-    booleanity_proof: BooleanityProof<F, ProofTranscript>,
-    hamming_weight_proof: HammingWeightProof<F, ProofTranscript>,
-    log_T: usize,
-    _marker: PhantomData<PCS>,
-}
 
 #[derive(Default)]
 pub struct LookupsDag {}
@@ -102,35 +80,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             Box::new(booleanity),
             Box::new(hamming_weight),
         ]
-    }
-}
-
-impl<const WORD_SIZE: usize, F, PCS, ProofTranscript>
-    LookupsProof<WORD_SIZE, F, PCS, ProofTranscript>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-    ProofTranscript: Transcript,
-{
-    pub fn generate_witness(_preprocessing: (), _lookups: &[LookupTables<WORD_SIZE>]) {}
-
-    #[tracing::instrument(skip_all, name = "LookupsProof::prove")]
-    pub fn prove(
-        _preprocessing: &JoltProverPreprocessing<F, PCS>,
-        _trace: &[RV32IMCycle],
-        _opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        _transcript: &mut ProofTranscript,
-    ) -> Self {
-        todo!();
-    }
-
-    pub fn verify(
-        &self,
-        _commitments: &JoltCommitments<F, PCS>,
-        _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        _transcript: &mut ProofTranscript,
-    ) -> Result<(), ProofVerifyError> {
-        todo!()
     }
 }
 
