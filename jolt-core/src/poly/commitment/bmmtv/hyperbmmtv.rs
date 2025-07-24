@@ -142,6 +142,7 @@ where
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
+        _: Self::OpeningProofHint,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         let ell = opening_point.len();
@@ -358,7 +359,7 @@ mod tests {
 
         let mut prover_transcript = KeccakTranscript::new(b"TestEval");
 
-        let proof = HyperTest::prove(&setup, &poly, &point, &mut prover_transcript);
+        let proof = HyperTest::prove(&setup, &poly, &point, (), &mut prover_transcript);
 
         let mut verifier_transcript = KeccakTranscript::new(b"TestEval");
         verifier_transcript.compare_to(prover_transcript);

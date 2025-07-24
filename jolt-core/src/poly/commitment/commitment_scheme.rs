@@ -46,10 +46,20 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         todo!("`combine_commitments` should be on a separate `AdditivelyHomomorphic` trait")
     }
 
+    /// Homomorphically combines multiple opening proof hints into a single hint, computed as a
+    /// linear combination with the given coefficients.
+    fn combine_hints(
+        _hints: Vec<Self::OpeningProofHint>,
+        _coeffs: &[Self::Field],
+    ) -> Self::OpeningProofHint {
+        unimplemented!()
+    }
+
     fn prove<ProofTranscript: Transcript>(
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
+        hint: Self::OpeningProofHint,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof;
 

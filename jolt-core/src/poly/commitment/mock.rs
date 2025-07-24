@@ -82,6 +82,7 @@ where
         _setup: &Self::ProverSetup,
         _poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[Self::Field],
+        _: Self::OpeningProofHint,
         _transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         MockProof {

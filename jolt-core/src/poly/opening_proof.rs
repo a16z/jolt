@@ -692,6 +692,7 @@ where
     pub fn reduce_and_prove<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         &mut self,
         mut polynomials: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
+        mut opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
         pcs_setup: &PCS::ProverSetup,
         transcript: &mut ProofTranscript,
     ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
@@ -739,7 +740,7 @@ where
         };
 
         #[cfg(test)]
-        let joint_commitment = PCS::commit(&joint_poly, pcs_setup);
+        let joint_commitment = PCS::commit(&joint_poly, pcs_setup).0;
 
         #[cfg(not(test))]
         {
@@ -747,8 +748,36 @@ where
             crate::utils::thread::drop_in_background_thread(sumchecks);
         }
 
+        // Compute opening proof hint = ∑ᵢ γⁱ⋅ hintᵢ
+        let hint = {
+            let mut rlc_map = HashMap::new();
+            for (gamma, sumcheck) in gamma_powers.iter().zip(self.sumchecks.iter()) {
+                for (coeff, polynomial) in
+                    sumcheck.rlc_coeffs.iter().zip(sumcheck.polynomials.iter())
+                {
+                    if let Some(value) = rlc_map.get_mut(&polynomial) {
+                        *value += *coeff * gamma;
+                    } else {
+                        rlc_map.insert(polynomial, *coeff * gamma);
+                    }
+                }
+            }
+
+            let (coeffs, hints): (Vec<F>, Vec<PCS::OpeningProofHint>) = rlc_map
+                .into_iter()
+                .map(|(k, v)| (v, opening_hints.remove(k).unwrap()))
+                .unzip();
+            debug_assert!(
+                opening_hints.is_empty(),
+                "Commitments to {:?} are not used",
+                opening_hints.keys()
+            );
+
+            PCS::combine_hints(hints, &coeffs)
+        };
+
         // Reduced opening proof
-        let joint_opening_proof = PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, transcript);
+        let joint_opening_proof = PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, hint, transcript);
 
         ReducedOpeningProof {
             sumcheck_proof,
@@ -977,7 +1006,7 @@ where
     pub fn reduce_and_verify<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         &mut self,
         pcs_setup: &PCS::VerifierSetup,
-        commitments: &mut HashMap<CommittedPolynomial, PCS::Commitment>,
+        commitment_map: &mut HashMap<CommittedPolynomial, PCS::Commitment>,
         reduced_opening_proof: &ReducedOpeningProof<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
@@ -1031,8 +1060,9 @@ where
 
             let (coeffs, commitments): (Vec<F>, Vec<PCS::Commitment>) = rlc_map
                 .into_iter()
-                .map(|(k, v)| (v, commitments.remove(k).unwrap()))
+                .map(|(k, v)| (v, commitment_map.remove(k).unwrap()))
                 .unzip();
+            debug_assert!(commitment_map.is_empty(), "Every commitment should be used");
 
             PCS::combine_commitments(&commitments, &coeffs)
         };

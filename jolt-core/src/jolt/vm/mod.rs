@@ -364,6 +364,7 @@ where
         }
         let opening_proof = opening_accumulator.reduce_and_prove(
             polynomials_map,
+            HashMap::new(),
             &preprocessing.generators,
             &mut transcript,
         );

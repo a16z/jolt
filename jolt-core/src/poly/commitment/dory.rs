@@ -26,6 +26,7 @@ use ark_std::{rand::RngCore, Zero};
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
 use std::{borrow::Borrow, marker::PhantomData};
+use tracing::trace_span;
 
 use dory::{
     arithmetic::{
@@ -1119,6 +1120,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[Self::Field],
+        row_commitments: Self::OpeningProofHint,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         // Dory uses the opposite endian-ness as Jolt
@@ -1138,7 +1140,14 @@ impl CommitmentScheme for DoryCommitmentScheme {
             JoltMsmG1,
             JoltMsmG2,
             _,
-        >(poly, &point_dory, sigma, setup, dory_transcript);
+        >(
+            poly,
+            Some(row_commitments),
+            &point_dory,
+            sigma,
+            setup,
+            dory_transcript,
+        );
 
         let dory_proof = proof_builder.build();
 
@@ -1208,6 +1217,43 @@ impl CommitmentScheme for DoryCommitmentScheme {
         DoryCommitment(JoltGTWrapper::from(combined_commitment))
     }
 
+    #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::combine_hints")]
+    fn combine_hints(
+        hints: Vec<Self::OpeningProofHint>,
+        coeffs: &[Self::Field],
+    ) -> Self::OpeningProofHint {
+        let num_rows = DoryGlobals::get_max_num_rows();
+
+        let mut rlc_hint = vec![JoltGroupWrapper(G1Projective::zero()); num_rows];
+        for (coeff, mut hint) in coeffs.iter().zip(hints.into_iter()) {
+            // TODO(moodlezoup): Avoid resize
+            hint.resize(num_rows, JoltGroupWrapper(G1Projective::zero()));
+
+            let row_commitments: &mut [G1Projective] = unsafe {
+                std::slice::from_raw_parts_mut(hint.as_mut_ptr() as *mut G1Projective, hint.len())
+            };
+
+            let rlc_row_commitments: &[G1Projective] = unsafe {
+                std::slice::from_raw_parts(rlc_hint.as_ptr() as *const G1Projective, rlc_hint.len())
+            };
+
+            let _span = trace_span!("vector_scalar_mul_add_gamma_g1_online");
+            let _enter = _span.enter();
+
+            // Scales the row commitments for the current polynomial by
+            // its coefficient
+            jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
+                row_commitments,
+                *coeff,
+                rlc_row_commitments,
+            );
+
+            let _ = std::mem::replace(&mut rlc_hint, hint);
+        }
+
+        rlc_hint
+    }
+
     fn protocol_name() -> &'static [u8] {
         b"dory_commitment_scheme"
     }
@@ -1273,8 +1319,13 @@ mod tests {
 
         let mut prove_transcript = KeccakTranscript::new(b"dory_test");
         let prove_start = Instant::now();
-        let proof =
-            DoryCommitmentScheme::prove(prover_setup, &poly, &opening_point, &mut prove_transcript);
+        let proof = DoryCommitmentScheme::prove(
+            prover_setup,
+            &poly,
+            &opening_point,
+            row_commitments,
+            &mut prove_transcript,
+        );
         let prove_time = prove_start.elapsed();
 
         println!(" Prove time: {prove_time:?}");
@@ -1442,6 +1493,7 @@ mod tests {
             &prover_setup,
             &poly,
             &opening_point,
+            row_commitments,
             &mut prove_transcript,
         );
 
