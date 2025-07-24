@@ -108,6 +108,7 @@ mod tests {
 
     // Identifies exact point at which direct execution and virtual sequence diverge
     // by that virtual registers match (in contrast to test_keccak_state_equivalence which only tests the final state).
+    // This test is SUPER useful and has caught the most bugs and regressions.
     #[test]
     fn test_keccak_exec_trace_intermediate_vr_equal() {
         for (description, initial_state) in TestVectors::get_standard_test_vectors() {
@@ -125,7 +126,13 @@ mod tests {
                     let builder = super::Keccak256SequenceBuilder::new(0x1000, setup.vr, 10, 11);
                     let sequence = builder.build_up_to_step(round, step);
                     setup.execute_virtual_sequence(&sequence);
-                    let vr_state = setup.read_vr();
+                    let vr_state = if *step == "rho_and_pi" {
+                        // This is needed because there is an optimization where the instructions in chi read
+                        // directly from the rho_and_pi scratch regisers to avoid a copy back.
+                        setup.read_vr_at_offset(25)
+                    } else {
+                        setup.read_vr()
+                    };
 
                     // 3. Compute the correct, expected state using the reference implementation helper.
                     let expected_vr_state =

@@ -60,10 +60,17 @@ impl KeccakCpuHarness {
         out
     }
 
-    /// Read the Keccak virtual registers used to store the state.
+    /// Read the Keccak virtual registers used to store the state (first 25).
     pub fn read_vr(&self) -> Keccak256State {
         let mut out = [0u64; 25];
         self.harness.read_registers(&self.vr[..25], &mut out);
+        out
+    }
+
+    pub fn read_vr_at_offset(&self, offset: usize) -> Keccak256State {
+        let mut out = [0u64; 25];
+        self.harness
+            .read_registers(&self.vr[offset..offset + 25], &mut out);
         out
     }
 

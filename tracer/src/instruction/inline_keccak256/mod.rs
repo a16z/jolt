@@ -284,7 +284,7 @@ impl Keccak256SequenceBuilder {
             for y in 0..5 {
                 // Get the source lane A[x,y] and its rotation offset.
                 let source_reg = self.lane(x, y);
-                // TODO: Clarify whether this should be [x][y] or [y][x]. It's clear in the native Rust that it's [x][y].
+                // We have checked that this is [x][y].
                 let rotation_offset = ROTATION_OFFSETS[x][y];
 
                 // Calculate the permuted destination coordinates in B.
@@ -296,38 +296,14 @@ impl Keccak256SequenceBuilder {
                 self.rotl64(Reg(source_reg), rotation_offset, dest_reg_in_b);
             }
         }
-
-        // --- 2. Copy the temporary state B back to the main state A ---
-        // We can do this with a no-op XOR with register zero, which acts as a move.
-        // for i in 0..25 {
-        //     let b_reg = self.vr[25 + i];
-        //     let a_reg = self.vr[i];
-        //     // This is equivalent to: a_reg = b_reg
-        //     self.xor64(Reg(b_reg), Imm(0), a_reg);
-        // }
     }
 
     fn chi(&mut self) {
         // The chi step provides non-linearity. For each row, it updates each lane as:
         // A[x,y] ^= (~A[x+1,y] & A[x+2,y])
-        //
-        // To do this without overwriting the A lanes we need for the calculation,
-        // we first copy the row into a temporary buffer (vr[60..64]).
         for y in 0..5 {
-            // 1. Copy the current row from state A into the temporary row buffer.
-            // for x in 0..5 {
-            //     // For each lane A[x,y] in the current row,
-            //     // copy its value from self.lane(x, y) to the temp row register self.vr[60 + x].
-
-            //     let a_reg = self.lane(x, y);
-            //     let temp_row_reg = self.vr[60 + x];
-            //     // A no-op XOR (xor with 0) is a good way to copy a register value.
-            //     self.xor64(Reg(a_reg), Imm(0), temp_row_reg);
-            // }
-
-            // 2. Calculate the new lane values using the temporary buffer.
             for x in 0..5 {
-                // Get the registers for the three input values from the temp buffer.
+                // Get the registers for the three input values
                 // A[x,y], A[x+1,y], A[x+2,y]
                 let current = 25 + self.lane(x, y);
                 let next = 25 + self.lane((x + 1) % 5, y);
@@ -357,16 +333,9 @@ impl Keccak256SequenceBuilder {
         let round_constant = ROUND_CONSTANTS[self.round as usize];
         let first_lane_reg = self.lane(0, 0);
 
-        // // DEBUG: Print what round and constant we're using
-        // if cfg!(test) {
-        //     eprintln!(
-        //         "DEBUG iota: round={}, constant=0x{:016x}",
-        //         self.round, round_constant
-        //     );
-        // }
-
         // IMPORTANT: XORI can only handle 12-bit immediates in RISC-V
         // For round constants that don't fit in 12 bits, we need to load them into a register first
+        // TODO: Review this - moodlezoup said that we have 64-bit support for 12-bits, so getting rid of this is a potential optimization.
 
         // Check if the constant fits in 12 bits (signed)
         let fits_in_12_bits = round_constant as i64 >= -2048 && round_constant as i64 <= 2047;
