@@ -212,7 +212,7 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
             .map(|i| {
                 let evals =
                     EqPolynomial::evals(&r_cycle[i..].iter().map(|x| *x).collect::<Vec<_>>());
-                MultilinearPolynomial::from(evals)
+                evals
             })
             .collect::<Vec<_>>();
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(D * T.log_2());
@@ -267,27 +267,6 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
                 })
                 .collect::<Vec<_>>();
 
-            // after_idx_evals
-            //     .par_iter_mut()
-            //     .enumerate()
-            //     .for_each(|(j, x)| {
-            //         let mut cur = (
-            //             mle_vec[D - 1].get_bound_coeff(j),
-            //             mle_vec[D - 1].get_bound_coeff(j + mle_vec[D - 1].len() / 2),
-            //         );
-            //         for i in 0..D - 1 {
-            //             x.push(cur);
-            //             if i < D - 2 {
-            //                 cur = (
-            //                     cur.0 * mle_vec[D - 2 - i].get_bound_coeff(j),
-            //                     cur.1
-            //                         * mle_vec[D - 2 - i]
-            //                             .get_bound_coeff(j + mle_vec[D - 2 - i].len() / 2),
-            //                 );
-            //             }
-            //         }
-            //     });
-
             drop(_guard);
             drop(inner_span);
 
@@ -333,18 +312,19 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
                                 - mle_vec[D - d - 1].get_bound_coeff(j),
                         ];
 
-                        let eq_eval_after_idx = if j_idx < T.log_2() - 1 {
-                            E_table[j_idx].get_coeff(j)
-                        } else {
-                            F::one()
-                        };
-
                         if d > 0 {
                             *before_idx_eval = before_idx_eval
                                 .mul_1_optimized(mle_vec[D - d - 1].get_bound_coeff(j));
                         }
 
-                        let temp = before_idx_eval.mul_1_optimized(eq_eval_after_idx * C);
+                        let eq_eval_after_idx = if j_idx < T.log_2() - 1 {
+                            E_table[j_idx][j]
+                        } else {
+                            F::one()
+                        };
+
+                        let temp =
+                            before_idx_eval.mul_1_optimized(eq_eval_after_idx.mul_1_optimized(C));
 
                         let tmp = if d < D - 1 {
                             eq_evals_at_idx[0].0 * temp * after_idx_evals[D - d - 2].0
@@ -436,12 +416,12 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
         r_prime: Vec<F>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        let (_sumcheck_claim, _r_sumcheck) = self.sumcheck_proof.verify(
-            self.eq_claim * self.mle_claims.iter().product::<F>(),
-            r_prime.len(),
-            2,
-            transcript,
-        )?;
+        let claim = self.eq_claim * self.mle_claims.iter().product::<F>();
+        let (sumcheck_claim, _r_sumcheck) =
+            self.sumcheck_proof
+                .verify(claim, r_prime.len(), 2, transcript)?;
+
+        assert_eq!(claim, sumcheck_claim);
 
         Ok(())
     }
@@ -576,10 +556,6 @@ mod test {
 
     #[test]
     fn test_large_d_optimization_sumcheck() {
-        let mut criterion = Criterion::default()
-            .configure_from_args()
-            .warm_up_time(std::time::Duration::from_secs(5));
-
         let test_inputs = [
             // (2, 1 << 10, 16),
             // (8, 1 << 10, 16),
@@ -590,14 +566,13 @@ mod test {
             // (12, 1 << 20, 1 << 16),
             // (16, 1 << 20, 1 << 16),
             // (50, 1 << 20, 1 << 16),
-            (16, 1 << 25),
+            (16, 1 << 10),
         ];
 
         for (D, T) in test_inputs {
-            large_d_optimization_ra_virtualization(D, T);
+            large_d_optimization_ra_virtualization::<15>(D, T);
             // benchmark_large_d_optimization_ra_virtualization(&mut criterion, D, T);
         }
-        criterion.final_summary();
     }
 
     fn test_func_data(D: usize, T: usize) -> Vec<MultilinearPolynomial<Fr>> {
@@ -746,10 +721,10 @@ mod test {
         D: usize,
         T: usize,
     ) {
-        let test_perf = large_d_optimization_ra_virtualization(D, T);
+        let test_perf = large_d_optimization_ra_virtualization::<D1>(D, T);
         criterion.bench_function(
             &format!("large_d_optimization_ra_virtualization_{D}_{T}"),
-            |b| b.iter(|| criterion::black_box(large_d_optimization_ra_virtualization(D, T))),
+            |b| b.iter(|| criterion::black_box(large_d_optimization_ra_virtualization::<D1>(D, T))),
         );
     }
 
