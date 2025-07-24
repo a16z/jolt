@@ -1199,21 +1199,23 @@ impl CommitmentScheme for DoryCommitmentScheme {
             dory_transcript,
         );
 
+        println!("{verify_result:?}");
+
         match verify_result {
             Ok(()) => Ok(()),
             Err(e) => Err(ProofVerifyError::DoryError(format!("{e:?}"))),
         }
     }
 
-    fn combine_commitments(
-        commitments: &[&Self::Commitment],
+    fn combine_commitments<C: Borrow<Self::Commitment>>(
+        commitments: &[C],
         coeffs: &[Self::Field],
     ) -> Self::Commitment {
         let combined_commitment: PairingOutput<_> = commitments
             .iter()
             .zip(coeffs.iter())
             .map(|(commitment, coeff)| {
-                let g: PairingOutput<_> = commitment.0.clone().into();
+                let g: PairingOutput<_> = commitment.borrow().0.clone().into();
                 g * coeff
             })
             .sum();

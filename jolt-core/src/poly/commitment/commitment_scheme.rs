@@ -38,8 +38,8 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
 
     /// Homomorphically combines multiple commitments into a single commitment, computed as a
     /// linear combination with the given coefficients.
-    fn combine_commitments(
-        _commitments: &[&Self::Commitment],
+    fn combine_commitments<C: Borrow<Self::Commitment>>(
+        _commitments: &[C],
         _coeffs: &[Self::Field],
     ) -> Self::Commitment {
         todo!("`combine_commitments` should be on a separate `AdditivelyHomomorphic` trait")

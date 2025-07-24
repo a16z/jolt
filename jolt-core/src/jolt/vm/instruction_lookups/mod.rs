@@ -1,34 +1,23 @@
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
-use std::marker::PhantomData;
 use tracer::instruction::RV32IMCycle;
 
 use crate::{
-    dag::{
-        stage::{StagedSumcheck, SumcheckStages},
-        state_manager::StateManager,
-    },
+    dag::{stage::SumcheckStages, state_manager::StateManager},
     field::JoltField,
     jolt::{
         instruction::LookupQuery,
-        lookup_table::LookupTables,
-        vm::{
-            instruction_lookups::{
-                booleanity::{BooleanityProof, BooleanitySumcheck},
-                hamming_weight::{HammingWeightProof, HammingWeightSumcheck},
-                read_raf_checking::{ReadCheckingProof, ReadRafSumcheck},
-            },
-            JoltCommitments, JoltProverPreprocessing,
+        vm::instruction_lookups::{
+            booleanity::BooleanitySumcheck, hamming_weight::HammingWeightSumcheck,
+            read_raf_checking::ReadRafSumcheck,
         },
-        witness::CommittedPolynomials,
+        witness::VirtualPolynomial,
     },
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
-        eq_poly::EqPolynomial,
-        opening_proof::{OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator},
+        commitment::commitment_scheme::CommitmentScheme, eq_poly::EqPolynomial,
+        opening_proof::SumcheckId,
     },
-    r1cs::inputs::JoltR1CSInputs,
-    utils::{errors::ProofVerifyError, thread::unsafe_allocate_zero_vec, transcript::Transcript},
+    subprotocols::sumcheck::SumcheckInstance,
+    utils::{thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
 
 pub mod booleanity;
@@ -45,20 +34,6 @@ pub const LOG_K_CHUNK: usize = LOG_K / D;
 pub const K_CHUNK: usize = 1 << LOG_K_CHUNK;
 const RA_PER_LOG_M: usize = LOG_M / LOG_K_CHUNK;
 
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct LookupsProof<const WORD_SIZE: usize, F, PCS, ProofTranscript>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-    ProofTranscript: Transcript,
-{
-    read_checking_proof: ReadCheckingProof<F, ProofTranscript>,
-    booleanity_proof: BooleanityProof<F, ProofTranscript>,
-    hamming_weight_proof: HammingWeightProof<F, ProofTranscript>,
-    log_T: usize,
-    _marker: PhantomData<PCS>,
-}
-
 #[derive(Default)]
 pub struct LookupsDag {}
 
@@ -68,26 +43,22 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
     fn stage3_prover_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
-        let (preprocessing, trace, _, _) = sm.get_prover_data();
-        let unbound_ra_polys = (0..D)
-            .map(|i| CommittedPolynomials::InstructionRa(i).generate_witness(preprocessing, trace))
-            .collect::<Vec<_>>();
+    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+        let (_, trace, _, _) = sm.get_prover_data();
         let r_cycle = sm
-            .get_opening_point(OpeningsKeys::SpartanZ(JoltR1CSInputs::LookupOutput))
-            .unwrap()
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::LookupOutput,
+                SumcheckId::SpartanOuter,
+            )
+            .0
             .r
             .clone();
         let eq_r_cycle = EqPolynomial::evals(&r_cycle);
         let F = compute_ra_evals(trace, &eq_r_cycle);
 
-        let read_raf =
-            ReadRafSumcheck::new_prover(sm, eq_r_cycle.clone(), unbound_ra_polys.clone());
-
-        let booleanity =
-            BooleanitySumcheck::new_prover(sm, eq_r_cycle, F.clone(), unbound_ra_polys.clone());
-
-        let hamming_weight = HammingWeightSumcheck::new_prover(sm, F, unbound_ra_polys.clone());
+        let read_raf = ReadRafSumcheck::new_prover(sm, eq_r_cycle.clone());
+        let booleanity = BooleanitySumcheck::new_prover(sm, eq_r_cycle, F.clone());
+        let hamming_weight = HammingWeightSumcheck::new_prover(sm, F);
 
         vec![
             Box::new(read_raf),
@@ -99,7 +70,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
     fn stage3_verifier_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let read_raf = ReadRafSumcheck::new_verifier(sm);
         let booleanity = BooleanitySumcheck::new_verifier(sm);
         let hamming_weight = HammingWeightSumcheck::new_verifier(sm);
@@ -109,35 +80,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             Box::new(booleanity),
             Box::new(hamming_weight),
         ]
-    }
-}
-
-impl<const WORD_SIZE: usize, F, PCS, ProofTranscript>
-    LookupsProof<WORD_SIZE, F, PCS, ProofTranscript>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-    ProofTranscript: Transcript,
-{
-    pub fn generate_witness(_preprocessing: (), _lookups: &[LookupTables<WORD_SIZE>]) {}
-
-    #[tracing::instrument(skip_all, name = "LookupsProof::prove")]
-    pub fn prove(
-        _preprocessing: &JoltProverPreprocessing<F, PCS>,
-        _trace: &[RV32IMCycle],
-        _opening_accumulator: &mut ProverOpeningAccumulator<F, PCS>,
-        _transcript: &mut ProofTranscript,
-    ) -> Self {
-        todo!();
-    }
-
-    pub fn verify(
-        &self,
-        _commitments: &JoltCommitments<F, PCS>,
-        _opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
-        _transcript: &mut ProofTranscript,
-    ) -> Result<(), ProofVerifyError> {
-        todo!()
     }
 }
 

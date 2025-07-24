@@ -11,7 +11,7 @@ use crate::{
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
-        identity_poly::{Endianness, IdentityPolynomial, OperandPolynomial, OperandSide},
+        identity_poly::{IdentityPolynomial, OperandPolynomial, OperandSide},
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
@@ -437,8 +437,7 @@ pub fn prove_sparse_dense_shout<
 
     let right_operand_poly = OperandPolynomial::new(log_K, OperandSide::Right);
     let left_operand_poly = OperandPolynomial::new(log_K, OperandSide::Left);
-    let identity_poly: IdentityPolynomial<F> =
-        IdentityPolynomial::new_with_endianness(log_K, Endianness::Big);
+    let identity_poly: IdentityPolynomial<F> = IdentityPolynomial::new(log_K);
     let mut right_operand_ps =
         PrefixSuffixDecomposition::new(Box::new(right_operand_poly), m.log_2(), log_K);
     let mut left_operand_ps =
@@ -840,8 +839,7 @@ pub fn verify_sparse_dense_shout<
         OperandPolynomial::new(log_K, OperandSide::Right).evaluate(&r_address_prime);
     let left_operand_eval =
         OperandPolynomial::new(log_K, OperandSide::Left).evaluate(&r_address_prime);
-    let identity_poly_eval =
-        IdentityPolynomial::new_with_endianness(log_K, Endianness::Big).evaluate(&r_address_prime);
+    let identity_poly_eval = IdentityPolynomial::new(log_K).evaluate(&r_address_prime);
 
     let val_claim = rv_val_claim
         + (F::one() - is_add_mul_sub_flag_claim)

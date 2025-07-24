@@ -5,7 +5,7 @@ use crate::field::JoltField;
 use crate::jolt::vm::bytecode::BytecodePreprocessing;
 use crate::jolt::vm::ram::remap_address;
 use crate::jolt::vm::rv32i_vm::Serializable;
-use crate::jolt::witness::ALL_COMMITTED_POLYNOMIALS;
+use crate::jolt::witness::AllCommittedPolynomials;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::opening_proof::{
@@ -18,10 +18,10 @@ use crate::utils::math::Math;
 use crate::utils::transcript::Transcript;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
-use instruction_lookups::LookupsProof;
 use ram::RAMPreprocessing;
 use rayon::prelude::*;
 use registers::RegistersTwistProof;
+use std::collections::HashMap;
 use std::{
     fs::File,
     io::{Read, Write},
@@ -140,7 +140,7 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     pub(crate) transcript: ProofTranscript,
-    pub(crate) opening_accumulator: ProverOpeningAccumulator<F, PCS>,
+    pub(crate) opening_accumulator: ProverOpeningAccumulator<F>,
     pub(crate) prover_setup: PCS::ProverSetup,
 }
 
@@ -152,7 +152,7 @@ where
     ProofTranscript: Transcript,
 {
     pub trace_length: usize,
-    pub instruction_lookups: LookupsProof<WORD_SIZE, F, PCS, ProofTranscript>,
+    // pub instruction_lookups: LookupsProof<WORD_SIZE, F, PCS, ProofTranscript>,
     // pub ram: RAMTwistProof<F, ProofTranscript>,
     pub registers: RegistersTwistProof<F, ProofTranscript>,
     pub r1cs: UniformSpartanProof<F, ProofTranscript>,
@@ -199,7 +199,7 @@ where
         memory_layout: MemoryLayout,
         memory_init: Vec<(u64, u8)>,
         _max_bytecode_size: usize,
-        max_memory_size: usize,
+        _max_memory_size: usize,
         max_trace_length: usize,
     ) -> JoltProverPreprocessing<F, PCS> {
         let small_value_lookup_tables = F::compute_lookup_tables();
@@ -209,8 +209,8 @@ where
 
         let max_K = [
             shared.bytecode.code_size.next_power_of_two(),
-            max_memory_size.next_power_of_two(),
-            1 << 16, // instruction lookups Shout
+            // max_memory_size.next_power_of_two(),
+            1 << 8, // instruction lookups Shout
         ]
         .into_iter()
         .max()
@@ -284,8 +284,7 @@ where
         let _guard = DoryGlobals::initialize(K, padded_trace_length);
 
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
-        let mut opening_accumulator: ProverOpeningAccumulator<F, PCS> =
-            ProverOpeningAccumulator::new();
+        let mut opening_accumulator: ProverOpeningAccumulator<F> = ProverOpeningAccumulator::new();
 
         Self::fiat_shamir_preamble(
             &mut transcript,
@@ -295,8 +294,7 @@ where
             1 << 16, // TODO(moodlezoup)
         );
 
-        let committed_polys: Vec<_> = ALL_COMMITTED_POLYNOMIALS
-            .par_iter()
+        let committed_polys: Vec<_> = AllCommittedPolynomials::par_iter()
             .map(|poly| poly.generate_witness(&preprocessing, &trace))
             .collect();
         let commitments: Vec<_> = committed_polys
@@ -325,12 +323,12 @@ where
         .ok()
         .unwrap();
 
-        let instruction_proof = LookupsProof::prove(
-            &preprocessing,
-            &trace,
-            &mut opening_accumulator,
-            &mut transcript,
-        );
+        // let instruction_proof = LookupsProof::prove(
+        //     &preprocessing,
+        //     &trace,
+        //     &mut opening_accumulator,
+        //     &mut transcript,
+        // );
 
         let registers_proof = RegistersTwistProof::prove(
             &preprocessing,
@@ -357,12 +355,22 @@ where
         // );
 
         // Batch-prove all openings
-        let opening_proof =
-            opening_accumulator.reduce_and_prove(&preprocessing.generators, &mut transcript);
+        let mut polynomials_map = HashMap::new();
+        for polynomial in AllCommittedPolynomials::iter() {
+            polynomials_map.insert(
+                *polynomial,
+                polynomial.generate_witness(&preprocessing, &trace),
+            );
+        }
+        let opening_proof = opening_accumulator.reduce_and_prove(
+            polynomials_map,
+            &preprocessing.generators,
+            &mut transcript,
+        );
 
         let jolt_proof = JoltProof {
             trace_length,
-            instruction_lookups: instruction_proof,
+            // instruction_lookups: instruction_proof,
             // ram: ram_proof,
             registers: registers_proof,
             r1cs: r1cs_proof,
@@ -390,7 +398,7 @@ where
         _debug_info: Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
     ) -> Result<(), ProofVerifyError> {
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
-        let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS> =
+        let mut opening_accumulator: VerifierOpeningAccumulator<F> =
             VerifierOpeningAccumulator::new();
 
         // truncate trailing zeros on device outputs
@@ -406,8 +414,7 @@ where
         {
             if let Some(debug_info) = _debug_info {
                 transcript.compare_to(debug_info.transcript);
-                opening_accumulator
-                    .compare_to(debug_info.opening_accumulator, &debug_info.prover_setup);
+                opening_accumulator.compare_to(debug_info.opening_accumulator);
             }
         }
 
@@ -457,11 +464,11 @@ where
             )
             .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))?;
 
-        proof.instruction_lookups.verify(
-            &proof.commitments,
-            &mut opening_accumulator,
-            &mut transcript,
-        )?;
+        // proof.instruction_lookups.verify(
+        //     &proof.commitments,
+        //     &mut opening_accumulator,
+        //     &mut transcript,
+        // )?;
 
         proof.registers.verify(
             &proof.commitments,
@@ -488,8 +495,16 @@ where
         // )?;
 
         // Batch-verify all openings
+        let mut commitments_map = HashMap::new();
+        for polynomial in AllCommittedPolynomials::iter() {
+            commitments_map.insert(
+                *polynomial,
+                proof.commitments.commitments[polynomial.to_index()].clone(),
+            );
+        }
         opening_accumulator.reduce_and_verify(
             &preprocessing.generators,
+            &mut commitments_map,
             &proof.opening_proof,
             &mut transcript,
         )?;
@@ -519,5 +534,4 @@ pub mod bytecode;
 pub mod instruction_lookups;
 pub mod ram;
 pub mod registers;
-pub mod registers_read_write_checking;
 pub mod rv32i_vm;

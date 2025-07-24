@@ -5,20 +5,19 @@ use std::sync::Arc;
 use tracer::instruction::RV32IMCycle;
 use tracing::{span, Level};
 
-use crate::dag::stage::{StagedSumcheck, SumcheckStages};
+use crate::dag::stage::SumcheckStages;
 use crate::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::field::JoltField;
 use crate::jolt::instruction::CircuitFlags;
 use crate::jolt::vm::JoltCommitments;
 use crate::jolt::vm::JoltProverPreprocessing;
+use crate::jolt::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
-use crate::poly::opening_proof::OpeningsKeys::{OuterSumcheckAz, OuterSumcheckBz, OuterSumcheckCz};
 use crate::poly::opening_proof::{
-    OpeningPoint, OpeningsExt, OpeningsKeys, ProverOpeningAccumulator, VerifierOpeningAccumulator,
-    BIG_ENDIAN,
+    OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
 use crate::r1cs::builder::Constraint;
 use crate::r1cs::constraints::{JoltRV32IMConstraints, R1CSConstraints};
@@ -26,9 +25,9 @@ use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::r1cs::inputs::ALL_R1CS_INPUTS;
 use crate::r1cs::inputs::COMMITTED_R1CS_INPUTS;
 use crate::r1cs::key::UniformSpartanKey;
-use crate::subprotocols::sumcheck::CacheSumcheckOpenings;
 use crate::utils::math::Math;
 
+use crate::utils::small_value::NUM_SVO_ROUNDS;
 use crate::utils::transcript::Transcript;
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
@@ -37,8 +36,7 @@ use thiserror::Error;
 
 use crate::{
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPlusOnePolynomial},
-    subprotocols::sumcheck::{BatchableSumcheckInstance, SumcheckInstanceProof},
-    utils::small_value::NUM_SVO_ROUNDS,
+    subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
 };
 
 use super::builder::CombinedUniformBuilder;
@@ -54,7 +52,6 @@ pub struct OuterClaims<F: JoltField> {
 
 #[derive(Clone, Debug)]
 pub struct InnerSumcheckParams<F: JoltField> {
-    r_cycle: Vec<F>,
     rx_var: Vec<F>,
 }
 
@@ -110,147 +107,17 @@ where
 
     #[tracing::instrument(skip_all, name = "Spartan::prove")]
     pub fn prove<PCS>(
-        preprocessing: &JoltProverPreprocessing<F, PCS>,
-        constraint_builder: &CombinedUniformBuilder<F>,
-        key: UniformSpartanKey<F>,
-        trace: &[RV32IMCycle],
-        opening_accumulator: &mut ProverOpeningAccumulator<F, PCS>,
-        transcript: &mut ProofTranscript,
+        _preprocessing: &JoltProverPreprocessing<F, PCS>,
+        _constraint_builder: &CombinedUniformBuilder<F>,
+        _key: UniformSpartanKey<F>,
+        _trace: &[RV32IMCycle],
+        _opening_accumulator: &mut ProverOpeningAccumulator<F>,
+        _transcript: &mut ProofTranscript,
     ) -> Result<Self, SpartanError>
     where
         PCS: CommitmentScheme<Field = F>,
     {
-        let input_polys: Vec<MultilinearPolynomial<F>> = ALL_R1CS_INPUTS
-            .par_iter()
-            .map(|var| var.generate_witness(trace, preprocessing))
-            .collect();
-
-        let num_rounds_x = key.num_rows_bits();
-
-        /* Sumcheck 1: Outer sumcheck
-           Proves: \sum_x eq(tau, x) * (Az(x) * Bz(x) - Cz(x)) = 0
-
-           The matrices A, B, C have a block-diagonal structure with repeated blocks
-           A_small, B_small, C_small corresponding to the uniform constraints.
-        */
-
-        let tau: Vec<F> = transcript.challenge_vector(num_rounds_x);
-        let uniform_constraints_only_padded = constraint_builder
-            .uniform_builder
-            .constraints
-            .len()
-            .next_power_of_two();
-        let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
-            Self::prove_outer_sumcheck(
-                num_rounds_x,
-                uniform_constraints_only_padded,
-                &constraint_builder.uniform_builder.constraints,
-                &input_polys,
-                &tau,
-                transcript,
-            );
-        let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
-
-        ProofTranscript::append_scalars(transcript, &outer_sumcheck_claims);
-        let (claim_Az, claim_Bz, claim_Cz): (F, F, F) = (
-            outer_sumcheck_claims[0],
-            outer_sumcheck_claims[1],
-            outer_sumcheck_claims[2],
-        );
-
-        /* Sumcheck 2: Inner sumcheck
-           Proves: claim_Az + r * claim_Bz + r^2 * claim_Cz =
-                   \sum_y (A_small(rx, y) + r * B_small(rx, y) + r^2 * C_small(rx, y)) * z(y)
-
-           Evaluates the uniform constraint matrices A_small, B_small, C_small at the point
-           determined by the outer sumcheck.
-        */
-
-        let num_cycles = key.num_steps;
-        let num_cycles_bits = num_cycles.ilog2() as usize;
-
-        let inner_sumcheck_RLC: F = transcript.challenge_scalar();
-
-        let (r_cycle, rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
-
-        let claims = OuterClaims {
-            az: claim_Az,
-            bz: claim_Bz,
-            cz: claim_Cz,
-        };
-        let params = InnerSumcheckParams {
-            r_cycle: r_cycle.to_vec(),
-            rx_var: rx_var.to_vec(),
-        };
-
-        let (inner_sumcheck_proof, _inner_sumcheck_r) = Self::prove_inner_sumcheck(
-            key.into(),
-            &input_polys,
-            &claims,
-            &params,
-            inner_sumcheck_RLC,
-            transcript,
-        );
-
-        // Evaluate all witness polynomials P_i at r_cycle for the verifier
-        // Verifier computes: z(r_inner, r_cycle) = Σ_i eq(r_inner, i) * P_i(r_cycle)
-        let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
-        let (claimed_witness_evals, chis) =
-            MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
-
-        let (_, eq_plus_one_r_cycle) = EqPlusOnePolynomial::evals(r_cycle, None);
-
-        /*  Sumcheck 3: Batched sumcheck for NextUnexpandedPC and NextPC verification
-            Proves: NextUnexpandedPC(r_cycle) + r * NextPC(r_cycle) =
-                    \sum_t (UnexpandedPC(t) + r * PC(t)) * eq_plus_one(r_cycle, t)
-
-            This batched sumcheck simultaneously proves:
-            1. NextUnexpandedPC(r_cycle) = \sum_t UnexpandedPC(t) * eq_plus_one(r_cycle, t)
-            2. NextPC(r_cycle) = \sum_t PC(t) * eq_plus_one(r_cycle, t)
-        */
-        let (shift_sumcheck_proof, shift_sumcheck_witness_eval) = Self::prove_pc_sumcheck(
-            &input_polys,
-            &claimed_witness_evals,
-            eq_plus_one_r_cycle,
-            r_cycle.to_vec(),
-            transcript,
-        );
-
-        // Only non-virtual (i.e. committed) polynomials' openings are
-        // proven using the PCS opening proof. Virtual polynomial openings
-        // are proven in some subsequent sumcheck.
-        let committed_polys: Vec<_> = COMMITTED_R1CS_INPUTS
-            .iter()
-            .map(|input| &input_polys[input.to_index()])
-            .collect();
-        let committed_poly_claims: Vec<_> = COMMITTED_R1CS_INPUTS
-            .iter()
-            .map(|input| claimed_witness_evals[input.to_index()])
-            .collect();
-
-        opening_accumulator.append_dense(
-            &committed_polys,
-            chis,
-            r_cycle.to_vec(),
-            &committed_poly_claims,
-            transcript,
-            None,
-        );
-
-        let outer_sumcheck_claims = (
-            outer_sumcheck_claims[0],
-            outer_sumcheck_claims[1],
-            outer_sumcheck_claims[2],
-        );
-        Ok(UniformSpartanProof {
-            outer_sumcheck_proof,
-            outer_sumcheck_claims,
-            inner_sumcheck_proof,
-            shift_sumcheck_proof,
-            claimed_witness_evals,
-            shift_sumcheck_witness_eval,
-            _marker: PhantomData,
-        })
+        todo!()
     }
 
     #[tracing::instrument(skip_all)]
@@ -272,39 +139,12 @@ where
         )
     }
 
-    #[tracing::instrument(skip_all)]
-    fn prove_inner_sumcheck(
-        key: Arc<UniformSpartanKey<F>>,
-        input_polys: &[MultilinearPolynomial<F>],
-        claims: &OuterClaims<F>,
-        params: &InnerSumcheckParams<F>,
-        inner_sumcheck_RLC: F,
-        transcript: &mut ProofTranscript,
-    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>) {
-        let mut inner_sumcheck =
-            InnerSumcheck::new_prover(key, input_polys, claims, params, inner_sumcheck_RLC);
-
-        let (inner_sumcheck_proof, r) = inner_sumcheck.prove_single(transcript);
-
-        (inner_sumcheck_proof, r)
-    }
-
-    fn prove_pc_sumcheck(
-        _input_polys: &[MultilinearPolynomial<F>],
-        _claimed_witness_evals: &[F],
-        _eq_plus_one_r_cycle: Vec<F>,
-        _r_cycle: Vec<F>,
-        _transcript: &mut ProofTranscript,
-    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>) {
-        todo!()
-    }
-
     #[tracing::instrument(skip_all, name = "Spartan::verify")]
     pub fn verify<PCS>(
         &self,
         _key: UniformSpartanKey<F>,
         _commitments: &JoltCommitments<F, PCS>,
-        _opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
+        _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
         _transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError>
     where
@@ -331,13 +171,12 @@ pub struct InnerSumcheck<F: JoltField> {
     input_claim: F,
     prover_state: Option<InnerSumcheckProverState<F>>,
     verifier_state: Option<InnerSumcheckVerifierState<F>>,
-    cached_claims: Option<(F, F)>, // (final_poly_abc_eval, final_poly_z_eval)
 }
 
 impl<F: JoltField> InnerSumcheck<F> {
-    pub fn new_prover(
+    pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         key: Arc<UniformSpartanKey<F>>,
-        input_polys: &[MultilinearPolynomial<F>],
         claims: &OuterClaims<F>,
         params: &InnerSumcheckParams<F>,
         inner_sumcheck_RLC: F,
@@ -345,8 +184,6 @@ impl<F: JoltField> InnerSumcheck<F> {
         let num_vars_uniform = key.num_vars_uniform_padded();
         let claim_inner_joint =
             claims.az + inner_sumcheck_RLC * claims.bz + inner_sumcheck_RLC.square() * claims.cz;
-
-        let (eq_r_cycle, _) = EqPlusOnePolynomial::evals(&params.r_cycle, None);
 
         // Evaluate A_small, B_small, C_small combined with RLC at point rx_var
         let poly_abc_small =
@@ -358,12 +195,17 @@ impl<F: JoltField> InnerSumcheck<F> {
         // Bind witness polynomials z at point r_cycle
         let mut bind_z = vec![F::zero(); num_vars_uniform];
 
-        input_polys
-            .par_iter()
-            .take(num_vars_uniform)
-            .zip(bind_z.par_iter_mut())
-            .for_each(|(poly, eval)| {
-                *eval = poly.dot_product(&eq_r_cycle);
+        ALL_R1CS_INPUTS
+            .into_iter()
+            .zip(bind_z.iter_mut())
+            .for_each(|(r1cs_input, dest)| {
+                let accumulator = state_manager.get_prover_accumulator();
+                let accumulator = accumulator.borrow();
+                let (_, claim) = accumulator
+                    .openings
+                    .get(&r1cs_input.try_into().ok().unwrap())
+                    .unwrap();
+                *dest = *claim;
             });
 
         // Set the constant value at the appropriate position
@@ -384,7 +226,6 @@ impl<F: JoltField> InnerSumcheck<F> {
                 poly_z: MultilinearPolynomial::LargeScalars(poly_z),
             }),
             verifier_state: None,
-            cached_claims: None,
         }
     }
 
@@ -404,12 +245,11 @@ impl<F: JoltField> InnerSumcheck<F> {
                 claimed_witness_evals,
                 inner_sumcheck_RLC,
             }),
-            cached_claims: None,
         }
     }
 }
 
-impl<F: JoltField> BatchableSumcheckInstance<F> for InnerSumcheck<F> {
+impl<F: JoltField> SumcheckInstance<F> for InnerSumcheck<F> {
     fn degree(&self) -> usize {
         2
     }
@@ -486,7 +326,11 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for InnerSumcheck<F> {
         );
     }
 
-    fn expected_output_claim(&self, r: &[F]) -> F {
+    fn expected_output_claim(
+        &self,
+        _accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+        r: &[F],
+    ) -> F {
         let verifier_state = self
             .verifier_state
             .as_ref()
@@ -519,29 +363,25 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for InnerSumcheck<F> {
 
         left_expected * eval_z
     }
-}
 
-impl<F, PCS> CacheSumcheckOpenings<F, PCS> for InnerSumcheck<F>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-{
+    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+        OpeningPoint::new(opening_point.to_vec())
+    }
+
     fn cache_openings_prover(
-        &mut self,
-        _accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        &self,
+        _accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
         _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        debug_assert!(self.cached_claims.is_none());
-        let prover_state = self
-            .prover_state
-            .as_ref()
-            .expect("Prover state not initialized");
+        // Nothing to cache
+    }
 
-        // Note that these claims are never used by the verifier hence we do not add to the state manager
-        let final_poly_abc = prover_state.poly_abc_small.final_sumcheck_claim();
-        let final_poly_z = prover_state.poly_z.final_sumcheck_claim();
-
-        self.cached_claims = Some((final_poly_abc, final_poly_z));
+    fn cache_openings_verifier(
+        &self,
+        _accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) {
+        // Nothing to cache
     }
 }
 
@@ -628,7 +468,7 @@ impl<F: JoltField> PCSumcheck<F> {
     }
 }
 
-impl<F: JoltField> BatchableSumcheckInstance<F> for PCSumcheck<F> {
+impl<F: JoltField> SumcheckInstance<F> for PCSumcheck<F> {
     fn degree(&self) -> usize {
         2
     }
@@ -720,7 +560,11 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for PCSumcheck<F> {
         });
     }
 
-    fn expected_output_claim(&self, r: &[F]) -> F {
+    fn expected_output_claim(
+        &self,
+        _accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+        r: &[F],
+    ) -> F {
         let verifier_state = self
             .verifier_state
             .as_ref()
@@ -735,16 +579,10 @@ impl<F: JoltField> BatchableSumcheckInstance<F> for PCSumcheck<F> {
 
         batched_eval_at_shift_r * eq_plus_one_shift_sumcheck
     }
-}
 
-impl<F, PCS> CacheSumcheckOpenings<F, PCS> for PCSumcheck<F>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-{
     fn cache_openings_prover(
-        &mut self,
-        accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>>,
+        &self,
+        accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let prover_state = self
@@ -756,41 +594,50 @@ where
         let pc_eval = prover_state.pc_poly.final_sumcheck_claim();
         let is_noop_eval = prover_state.is_noop_poly.final_sumcheck_claim();
 
-        let accumulator = accumulator.expect("accumulator is needed");
-
         accumulator.borrow_mut().append_virtual(
-            OpeningsKeys::PCSumcheckUnexpandedPC,
+            VirtualPolynomial::UnexpandedPC,
+            SumcheckId::SpartanShift,
             opening_point.clone(),
             unexpanded_pc_eval,
         );
         accumulator.borrow_mut().append_virtual(
-            OpeningsKeys::PCSumcheckPC,
+            VirtualPolynomial::PC,
+            SumcheckId::SpartanShift,
             opening_point.clone(),
             pc_eval,
         );
         accumulator.borrow_mut().append_virtual(
-            OpeningsKeys::PCSumcheckIsNoop,
+            VirtualPolynomial::OpFlags(CircuitFlags::IsNoop),
+            SumcheckId::SpartanShift,
             opening_point,
             is_noop_eval,
         );
     }
 
+    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+        OpeningPoint::new(opening_point.to_vec())
+    }
+
     fn cache_openings_verifier(
-        &mut self,
-        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>>,
+        &self,
+        accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        let accumulator = accumulator.expect("accumulator is needed");
-
-        accumulator
-            .borrow_mut()
-            .populate_claim_opening(OpeningsKeys::PCSumcheckUnexpandedPC, opening_point.clone());
-        accumulator
-            .borrow_mut()
-            .populate_claim_opening(OpeningsKeys::PCSumcheckPC, opening_point.clone());
-        accumulator
-            .borrow_mut()
-            .populate_claim_opening(OpeningsKeys::PCSumcheckIsNoop, opening_point);
+        accumulator.borrow_mut().append_virtual(
+            VirtualPolynomial::UnexpandedPC,
+            SumcheckId::SpartanShift,
+            opening_point.clone(),
+        );
+        accumulator.borrow_mut().append_virtual(
+            VirtualPolynomial::PC,
+            SumcheckId::SpartanShift,
+            opening_point.clone(),
+        );
+        accumulator.borrow_mut().append_virtual(
+            VirtualPolynomial::OpFlags(CircuitFlags::IsNoop),
+            SumcheckId::SpartanShift,
+            opening_point,
+        );
     }
 }
 
@@ -809,10 +656,6 @@ impl<F: JoltField> SpartanDag<F> {
         Self { key }
     }
 }
-
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS> for InnerSumcheck<F> {}
-
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> StagedSumcheck<F, PCS> for PCSumcheck<F> {}
 
 impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
     SumcheckStages<F, ProofTranscript, PCS> for SpartanDag<F>
@@ -878,17 +721,20 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         // Store Az, Bz, Cz claims with the outer sumcheck point
         let accumulator = state_manager.get_prover_accumulator();
         accumulator.borrow_mut().append_virtual(
-            OpeningsKeys::OuterSumcheckAz,
+            VirtualPolynomial::SpartanAz,
+            SumcheckId::SpartanOuter,
             OpeningPoint::new(outer_sumcheck_r.clone()),
             outer_sumcheck_claims[0],
         );
         accumulator.borrow_mut().append_virtual(
-            OpeningsKeys::OuterSumcheckBz,
+            VirtualPolynomial::SpartanBz,
+            SumcheckId::SpartanOuter,
             OpeningPoint::new(outer_sumcheck_r.clone()),
             outer_sumcheck_claims[1],
         );
         accumulator.borrow_mut().append_virtual(
-            OpeningsKeys::OuterSumcheckCz,
+            VirtualPolynomial::SpartanCz,
+            SumcheckId::SpartanOuter,
             OpeningPoint::new(outer_sumcheck_r.clone()),
             outer_sumcheck_claims[2],
         );
@@ -907,14 +753,14 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         // Evaluate all witness polynomials P_i at r_cycle for the verifier
         // Verifier computes: z(r_inner, r_cycle) = Σ_i eq(r_inner, i) * P_i(r_cycle)
         let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
-        let (claimed_witness_evals, chis) =
+        let (claimed_witness_evals, _) =
             MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
 
         // Only non-virtual (i.e. committed) polynomials' openings are
         // proven using the PCS opening proof, which we add for future opening proof here
         let committed_polys: Vec<_> = COMMITTED_R1CS_INPUTS
             .iter()
-            .map(|input| &input_polys[input.to_index()])
+            .map(|input| CommittedPolynomial::try_from(*input).ok().unwrap())
             .collect();
         let committed_poly_claims: Vec<_> = COMMITTED_R1CS_INPUTS
             .iter()
@@ -922,19 +768,11 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             .collect();
 
         let accumulator = state_manager.get_prover_accumulator();
-
-        let openings_keys: Vec<OpeningsKeys> = COMMITTED_R1CS_INPUTS
-            .iter()
-            .map(|input| OpeningsKeys::SpartanZ(*input))
-            .collect();
-
         accumulator.borrow_mut().append_dense(
-            &committed_polys,
-            chis,
+            committed_polys,
+            SumcheckId::SpartanOuter,
             r_cycle.to_vec(),
             &committed_poly_claims,
-            &mut *state_manager.transcript.borrow_mut(),
-            Some(openings_keys),
         );
 
         // Add virtual polynomial evaluations to the accumulator
@@ -943,7 +781,8 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             // Skip if it's a committed input (already added above)
             if !COMMITTED_R1CS_INPUTS.contains(input) {
                 accumulator.borrow_mut().append_virtual(
-                    OpeningsKeys::SpartanZ(*input),
+                    VirtualPolynomial::try_from(*input).ok().unwrap(),
+                    SumcheckId::SpartanOuter,
                     OpeningPoint::new(r_cycle.to_vec()),
                     *eval,
                 );
@@ -982,9 +821,12 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         // Get the claims:
         let accumulator = state_manager.get_verifier_accumulator();
         let accumulator_ref = accumulator.borrow();
-        let claim_Az = accumulator_ref.get_opening(OpeningsKeys::OuterSumcheckAz);
-        let claim_Bz = accumulator_ref.get_opening(OpeningsKeys::OuterSumcheckBz);
-        let claim_Cz = accumulator_ref.get_opening(OpeningsKeys::OuterSumcheckCz);
+        let (_, claim_Az) = accumulator_ref
+            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter);
+        let (_, claim_Bz) = accumulator_ref
+            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanBz, SumcheckId::SpartanOuter);
+        let (_, claim_Cz) = accumulator_ref
+            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanCz, SumcheckId::SpartanOuter);
         drop(accumulator_ref);
         let outer_sumcheck_claims = [claim_Az, claim_Bz, claim_Cz];
 
@@ -1004,15 +846,21 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         let opening_point = OpeningPoint::new(outer_sumcheck_r_reversed.clone());
 
         // Populate the opening points for Az, Bz, Cz claims now that we have outer_sumcheck_r
-        accumulator
-            .borrow_mut()
-            .populate_claim_opening(OpeningsKeys::OuterSumcheckAz, opening_point.clone());
-        accumulator
-            .borrow_mut()
-            .populate_claim_opening(OpeningsKeys::OuterSumcheckBz, opening_point.clone());
-        accumulator
-            .borrow_mut()
-            .populate_claim_opening(OpeningsKeys::OuterSumcheckCz, opening_point.clone());
+        accumulator.borrow_mut().append_virtual(
+            VirtualPolynomial::SpartanAz,
+            SumcheckId::SpartanOuter,
+            opening_point.clone(),
+        );
+        accumulator.borrow_mut().append_virtual(
+            VirtualPolynomial::SpartanBz,
+            SumcheckId::SpartanOuter,
+            opening_point.clone(),
+        );
+        accumulator.borrow_mut().append_virtual(
+            VirtualPolynomial::SpartanCz,
+            SumcheckId::SpartanOuter,
+            opening_point.clone(),
+        );
 
         let tau_bound_rx = EqPolynomial::mle(&tau, &outer_sumcheck_r_reversed);
         let claim_outer_final_expected = tau_bound_rx * (claim_Az * claim_Bz - claim_Cz);
@@ -1033,39 +881,27 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 
         let accumulator = state_manager.get_verifier_accumulator();
 
-        // Get commitments - TODO(moodlezoup): This relies on ordering of commitments
-        let commitments = state_manager.get_commitments();
-        let r1cs_input_commitments: Vec<_> = commitments
-            .commitments
+        // Only non-virtual (i.e. committed) polynomials' openings are
+        // proven using the PCS opening proof, which we add for future opening proof here
+        let committed_polys: Vec<_> = COMMITTED_R1CS_INPUTS
             .iter()
-            .take(COMMITTED_R1CS_INPUTS.len())
+            .map(|input| CommittedPolynomial::try_from(*input).ok().unwrap())
             .collect();
-
-        // Get claims for committed inputs
-        let claims: Vec<_> = COMMITTED_R1CS_INPUTS
-            .iter()
-            .map(|input| {
-                accumulator
-                    .borrow()
-                    .evaluation_openings()
-                    .get_spartan_z(*input)
-            })
-            .collect();
-
-        // let r_cycle: Vec<F> = r_cycle.into_iter().cloned().rev().collect();
-
-        accumulator.borrow_mut().append(
-            &r1cs_input_commitments,
+        accumulator.borrow_mut().append_dense(
+            committed_polys,
+            SumcheckId::SpartanOuter,
             r_cycle.to_vec(),
-            &claims,
-            &mut *state_manager.transcript.borrow_mut(),
         );
 
         ALL_R1CS_INPUTS.iter().for_each(|input| {
-            accumulator.borrow_mut().populate_claim_opening(
-                OpeningsKeys::SpartanZ(*input),
-                OpeningPoint::new(r_cycle.to_vec()),
-            );
+            // Skip if it's a committed input (already added above)
+            if !COMMITTED_R1CS_INPUTS.contains(input) {
+                accumulator.borrow_mut().append_virtual(
+                    VirtualPolynomial::try_from(*input).ok().unwrap(),
+                    SumcheckId::SpartanOuter,
+                    OpeningPoint::new(r_cycle.to_vec()),
+                );
+            }
         });
 
         Ok(())
@@ -1074,7 +910,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     fn stage2_prover_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         /* Sumcheck 2: Inner sumcheck
             Proves: claim_Az + r * claim_Bz + r^2 * claim_Cz =
                     \sum_y (A_small(rx, y) + r * B_small(rx, y) + r^2 * C_small(rx, y)) * z(y)
@@ -1083,16 +919,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             determined by the outer sumcheck.
         */
 
-        // Get the program data
-        let (preprocessing, trace, _program_io, _final_memory_state) =
-            state_manager.get_prover_data();
-
         let key = self.key.clone();
-
-        let input_polys: Vec<MultilinearPolynomial<F>> = ALL_R1CS_INPUTS
-            .par_iter()
-            .map(|var| var.generate_witness(trace, preprocessing))
-            .collect();
 
         let num_cycles = key.num_steps;
         let num_cycles_bits = num_cycles.ilog2() as usize;
@@ -1100,19 +927,14 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         let inner_sumcheck_RLC: F = state_manager.transcript.borrow_mut().challenge_scalar();
 
         // Get opening_point from accumulator (Az, Bz, Cz all have the same point)
-        let accumulator = state_manager.get_prover_accumulator();
-        let outer_sumcheck_r = accumulator
-            .borrow()
-            .get_opening_point(OuterSumcheckAz)
-            .unwrap();
+        let (outer_sumcheck_r, claim_Az) = state_manager
+            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter);
+        let (_, claim_Bz) = state_manager
+            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanBz, SumcheckId::SpartanOuter);
+        let (_, claim_Cz) = state_manager
+            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanCz, SumcheckId::SpartanOuter);
 
-        let (r_cycle, rx_var) = outer_sumcheck_r.r.split_at(num_cycles_bits);
-
-        let accumulator_ref = accumulator.borrow();
-        let claim_Az = accumulator_ref.get_opening(OuterSumcheckAz);
-        let claim_Bz = accumulator_ref.get_opening(OuterSumcheckBz);
-        let claim_Cz = accumulator_ref.get_opening(OuterSumcheckCz);
-        drop(accumulator_ref);
+        let (_r_cycle, rx_var) = outer_sumcheck_r.r.split_at(num_cycles_bits);
 
         let claims = OuterClaims {
             az: claim_Az,
@@ -1120,12 +942,11 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             cz: claim_Cz,
         };
         let params = InnerSumcheckParams {
-            r_cycle: r_cycle.to_vec(),
             rx_var: rx_var.to_vec(),
         };
 
         let inner_sumcheck =
-            InnerSumcheck::new_prover(key, &input_polys, &claims, &params, inner_sumcheck_RLC);
+            InnerSumcheck::new_prover(state_manager, key, &claims, &params, inner_sumcheck_RLC);
 
         vec![Box::new(inner_sumcheck)]
     }
@@ -1133,7 +954,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     fn stage2_verifier_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         /* Sumcheck 2: Inner sumcheck
            Verifies: claim_Az + r * claim_Bz + r^2 * claim_Cz =
                     (A_small(rx, ry) + r * B_small(rx, ry) + r^2 * C_small(rx, ry)) * z(ry)
@@ -1144,32 +965,30 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         let inner_sumcheck_RLC: F = state_manager.transcript.borrow_mut().challenge_scalar();
 
         // Get outer sumcheck claims from accumulator
-        let accumulator = state_manager.get_verifier_accumulator();
-        let accumulator_ref = accumulator.borrow();
-        let claim_Az = accumulator_ref.get_opening(OuterSumcheckAz);
-        let claim_Bz = accumulator_ref.get_opening(OuterSumcheckBz);
-        let claim_Cz = accumulator_ref.get_opening(OuterSumcheckCz);
-        drop(accumulator_ref);
+        let (outer_sumcheck_r, claim_Az) = state_manager
+            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter);
+        let (_, claim_Bz) = state_manager
+            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanBz, SumcheckId::SpartanOuter);
+        let (_, claim_Cz) = state_manager
+            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanCz, SumcheckId::SpartanOuter);
 
         // Compute joint claim
         let claim_inner_joint =
             claim_Az + inner_sumcheck_RLC * claim_Bz + inner_sumcheck_RLC.square() * claim_Cz;
-
-        let outer_sumcheck_r = accumulator
-            .borrow()
-            .get_opening_point(OuterSumcheckAz)
-            .unwrap();
         let num_cycles_bits = key.num_steps.log_2();
 
-        let (_r_cycle, rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
+        let (_r_cycle, rx_var) = outer_sumcheck_r.split_at_r(num_cycles_bits);
 
-        let claimed_witness_evals: Vec<F> = ALL_R1CS_INPUTS
-            .iter()
-            .map(|input| {
-                accumulator
-                    .borrow()
-                    .evaluation_openings()
-                    .get_spartan_z(*input)
+        let claimed_witness_evals = ALL_R1CS_INPUTS
+            .into_iter()
+            .map(|r1cs_input| {
+                let accumulator = state_manager.get_verifier_accumulator();
+                let accumulator = accumulator.borrow();
+                let (_, claim) = accumulator
+                    .openings
+                    .get(&r1cs_input.try_into().ok().unwrap())
+                    .unwrap();
+                *claim
             })
             .collect();
 
@@ -1187,7 +1006,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     fn stage3_prover_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         /*  Sumcheck 3: Batched sumcheck for NextUnexpandedPC and NextPC verification
             Proves: NextUnexpandedPC(r_cycle) + r * NextPC(r_cycle) =
                     \sum_t (UnexpandedPC(t) + r * PC(t)) * eq_plus_one(r_cycle, t)
@@ -1212,26 +1031,23 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         let num_cycles = key.num_steps;
         let num_cycles_bits = num_cycles.ilog2() as usize;
 
-        // Get opening_point from accumulator (Az, Bz, Cz all have the same point)
+        // Get opening_point and claims from accumulator
         let accumulator = state_manager.get_prover_accumulator();
-        let outer_sumcheck_r = accumulator
+        let (outer_sumcheck_r, next_pc_eval) = accumulator
             .borrow()
-            .get_opening_point(OuterSumcheckAz)
-            .unwrap();
+            .get_virtual_polynomial_opening(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter);
+        let (_, next_unexpanded_pc_eval) = accumulator.borrow().get_virtual_polynomial_opening(
+            VirtualPolynomial::NextUnexpandedPC,
+            SumcheckId::SpartanOuter,
+        );
+        let (_, next_is_noop_eval) = accumulator.borrow().get_virtual_polynomial_opening(
+            VirtualPolynomial::NextIsNoop,
+            SumcheckId::SpartanOuter,
+        );
+
         let (r_cycle, _rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
-        // Get the NextPC and NextUnexpandedPC claims from the accumulator from stage 1
-        let next_pc_eval = accumulator
-            .borrow()
-            .get_opening(OpeningsKeys::SpartanZ(JoltR1CSInputs::NextPC));
-        let next_unexpanded_pc_eval = accumulator
-            .borrow()
-            .get_opening(OpeningsKeys::SpartanZ(JoltR1CSInputs::NextUnexpandedPC));
-        let next_is_noop_eval = accumulator
-            .borrow()
-            .get_opening(OpeningsKeys::SpartanZ(JoltR1CSInputs::NextIsNoop));
-
-        let (_, eq_plus_one_r_cycle) = EqPlusOnePolynomial::evals(r_cycle, None);
+        let (_, eq_plus_one_r_cycle) = EqPlusOnePolynomial::evals(&r_cycle.r, None);
 
         let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
         let gamma_squared = gamma.square();
@@ -1258,7 +1074,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     fn stage3_verifier_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn StagedSumcheck<F, PCS>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         /* Sumcheck 3: Batched sumcheck for NextUnexpandedPC and NextPC verification
            Verifies the batched constraint for both NextUnexpandedPC and NextPC
         */
@@ -1269,41 +1085,42 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 
         // Get r_cycle from outer sumcheck opening point
         let accumulator = state_manager.get_verifier_accumulator();
-        let outer_sumcheck_r = accumulator
+        let (outer_sumcheck_r, next_pc_eval) = accumulator
             .borrow()
-            .get_opening_point(OuterSumcheckAz)
-            .unwrap();
+            .get_virtual_polynomial_opening(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter);
+        let (_, next_unexpanded_pc_eval) = accumulator.borrow().get_virtual_polynomial_opening(
+            VirtualPolynomial::NextUnexpandedPC,
+            SumcheckId::SpartanOuter,
+        );
+        let (_, next_is_noop_eval) = accumulator.borrow().get_virtual_polynomial_opening(
+            VirtualPolynomial::NextIsNoop,
+            SumcheckId::SpartanOuter,
+        );
+
         let num_cycles_bits = key.num_steps.log_2();
 
         let (r_cycle, _rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
-        let next_unexpanded_pc_eval = accumulator
-            .borrow()
-            .evaluation_openings()
-            .get_spartan_z(JoltR1CSInputs::NextUnexpandedPC);
-        let next_pc_eval = accumulator
-            .borrow()
-            .evaluation_openings()
-            .get_spartan_z(JoltR1CSInputs::NextPC);
-        let next_is_noop_eval = accumulator
-            .borrow()
-            .evaluation_openings()
-            .get_spartan_z(JoltR1CSInputs::NextIsNoop);
         let shift_sumcheck_claim =
             next_unexpanded_pc_eval + gamma * next_pc_eval + gamma.square() * next_is_noop_eval;
 
         // Get shift sumcheck witness evaluations from openings (UnexpandedPC and PC at shift_r)
-        let unexpanded_pc_eval_at_shift_r = accumulator
+        let (_, pc_eval_at_shift_r) = accumulator
             .borrow()
-            .get_opening(OpeningsKeys::PCSumcheckUnexpandedPC);
-        let pc_eval_at_shift_r = accumulator.borrow().get_opening(OpeningsKeys::PCSumcheckPC);
-        let is_noop_eval_at_shift_r = accumulator
-            .borrow()
-            .get_opening(OpeningsKeys::PCSumcheckIsNoop);
+            .get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanShift);
+        let (_, unexpanded_pc_eval_at_shift_r) =
+            accumulator.borrow().get_virtual_polynomial_opening(
+                VirtualPolynomial::UnexpandedPC,
+                SumcheckId::SpartanShift,
+            );
+        let (_, is_noop_eval_at_shift_r) = accumulator.borrow().get_virtual_polynomial_opening(
+            VirtualPolynomial::OpFlags(CircuitFlags::IsNoop),
+            SumcheckId::SpartanShift,
+        );
 
         let pc_sumcheck = PCSumcheck::<F>::new_verifier(
             shift_sumcheck_claim,
-            r_cycle.to_vec(),
+            r_cycle.into(),
             gamma,
             unexpanded_pc_eval_at_shift_r,
             pc_eval_at_shift_r,

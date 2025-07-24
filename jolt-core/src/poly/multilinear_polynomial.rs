@@ -2,6 +2,7 @@ use crate::{
     poly::{one_hot_polynomial::OneHotPolynomial, rlc_polynomial::RLCPolynomial},
     utils::{compute_dotproduct, math::Math},
 };
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
 use num_traits::MulAdd;
 use rayon::prelude::*;
 use strum_macros::EnumIter;
@@ -28,6 +29,36 @@ pub enum MultilinearPolynomial<F: JoltField> {
     I64Scalars(CompactPolynomial<i64, F>),
     RLC(RLCPolynomial<F>),
     OneHot(OneHotPolynomial<F>),
+}
+
+impl<F: JoltField> Valid for MultilinearPolynomial<F> {
+    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+        unimplemented!("Only here to satisfy trait bounds")
+    }
+}
+
+impl<F: JoltField> CanonicalDeserialize for MultilinearPolynomial<F> {
+    fn deserialize_with_mode<R: std::io::Read>(
+        _reader: R,
+        _compress: ark_serialize::Compress,
+        _validate: ark_serialize::Validate,
+    ) -> Result<Self, ark_serialize::SerializationError> {
+        unimplemented!("Only here to satisfy trait bounds")
+    }
+}
+
+impl<F: JoltField> CanonicalSerialize for MultilinearPolynomial<F> {
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        _writer: W,
+        _compress: ark_serialize::Compress,
+    ) -> Result<(), ark_serialize::SerializationError> {
+        unimplemented!("Only here to satisfy trait bounds")
+    }
+
+    fn serialized_size(&self, _compress: ark_serialize::Compress) -> usize {
+        unimplemented!("Only here to satisfy trait bounds")
+    }
 }
 
 /// The order in which polynomial variables are bound in sumcheck
@@ -78,6 +109,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.get_num_vars(),
             MultilinearPolynomial::U64Scalars(poly) => poly.get_num_vars(),
             MultilinearPolynomial::I64Scalars(poly) => poly.get_num_vars(),
+            MultilinearPolynomial::OneHot(poly) => poly.get_num_vars(),
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
@@ -613,6 +645,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
     fn evaluate(&self, r: &[F]) -> F {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly.evaluate(r),
+            MultilinearPolynomial::OneHot(poly) => poly.evaluate(r),
             MultilinearPolynomial::RLC(_) => {
                 // TODO(moodlezoup): This case is only hit in the Dory opening proof,
                 // which doesn't actually do anything with this value. We should

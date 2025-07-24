@@ -4,12 +4,12 @@ use std::rc::Rc;
 
 use crate::field::JoltField;
 use crate::jolt::vm::{JoltCommitments, JoltProverPreprocessing, JoltVerifierPreprocessing};
+use crate::jolt::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::opening_proof::{
-    OpeningPoint, OpeningsExt, OpeningsKeys, ProverOpeningAccumulator, ReducedOpeningProof,
+    OpeningPoint, ProverOpeningAccumulator, ReducedOpeningProof, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN,
 };
-use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::utils::transcript::Transcript;
 use tracer::emulator::memory::Memory;
@@ -45,7 +45,7 @@ where
     pub trace: Option<Vec<RV32IMCycle>>,
     pub program_io: Option<JoltDevice>,
     pub final_memory_state: Option<Memory>,
-    pub accumulator: Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>,
+    pub accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
 }
 
 pub struct VerifierState<'a, F: JoltField, PCS>
@@ -55,7 +55,7 @@ where
     pub preprocessing: Option<&'a JoltVerifierPreprocessing<F, PCS>>,
     pub program_io: Option<JoltDevice>,
     pub trace_length: Option<usize>,
-    pub accumulator: Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>,
+    pub accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
 }
 
 pub struct StateManager<
@@ -75,7 +75,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
     StateManager<'a, F, ProofTranscript, PCS>
 {
     pub fn new_prover(
-        prover_accumulator: Rc<RefCell<ProverOpeningAccumulator<F, PCS>>>,
+        prover_accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
         transcript: Rc<RefCell<ProofTranscript>>,
         proofs: Rc<RefCell<Proofs<F, PCS, ProofTranscript>>>,
         commitments: Rc<RefCell<Option<JoltCommitments<F, PCS>>>>,
@@ -96,7 +96,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
     }
 
     pub fn new_verifier(
-        verifier_accumulator: Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>>,
+        verifier_accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
         transcript: Rc<RefCell<ProofTranscript>>,
         proofs: Rc<RefCell<Proofs<F, PCS, ProofTranscript>>>,
         commitments: Rc<RefCell<Option<JoltCommitments<F, PCS>>>>,
@@ -208,7 +208,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         }
     }
 
-    pub fn get_prover_accumulator(&self) -> Rc<RefCell<ProverOpeningAccumulator<F, PCS>>> {
+    pub fn get_prover_accumulator(&self) -> Rc<RefCell<ProverOpeningAccumulator<F>>> {
         if let Some(ref prover_state) = self.prover_state {
             prover_state.accumulator.clone()
         } else {
@@ -220,7 +220,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         self.transcript.clone()
     }
 
-    pub fn get_verifier_accumulator(&self) -> Rc<RefCell<VerifierOpeningAccumulator<F, PCS>>> {
+    pub fn get_verifier_accumulator(&self) -> Rc<RefCell<VerifierOpeningAccumulator<F>>> {
         if let Some(ref verifier_state) = self.verifier_state {
             verifier_state.accumulator.clone()
         } else {
@@ -240,70 +240,43 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         *self.commitments.borrow_mut() = Some(commitments);
     }
 
-    /// Gets the opening point for a given key from whichever accumulator is available.
-    /// Returns the opening point from the prover accumulator if available, otherwise from the verifier accumulator.
-    pub fn get_opening_point(&self, key: OpeningsKeys) -> Option<OpeningPoint<BIG_ENDIAN, F>> {
-        if let Some(ref prover_state) = self.prover_state {
-            prover_state.accumulator.borrow().get_opening_point(key)
-        } else if let Some(ref verifier_state) = self.verifier_state {
-            verifier_state.accumulator.borrow().get_opening_point(key)
-        } else {
-            panic!("Neither prover nor verifier state initialized");
-        }
-    }
-
-    /// Gets the opening value for a given key from whichever accumulator is available.
-    /// Returns the opening value from the prover accumulator if available, otherwise from the verifier accumulator.
-    pub fn get_opening(&self, key: OpeningsKeys) -> F {
-        if let Some(ref prover_state) = self.prover_state {
-            prover_state.accumulator.borrow().get_opening(key)
-        } else if let Some(ref verifier_state) = self.verifier_state {
-            verifier_state.accumulator.borrow().get_opening(key)
-        } else {
-            panic!("Neither prover nor verifier state initialized");
-        }
-    }
-
-    /// Gets a specific spartan z value from the evaluation openings from whichever accumulator is available.
-    /// Returns the spartan z value from the prover accumulator if available, otherwise from the verifier accumulator.
-    pub fn get_spartan_z(&self, index: JoltR1CSInputs) -> F {
-        if let Some(ref prover_state) = self.prover_state {
-            prover_state
-                .accumulator
-                .borrow()
-                .evaluation_openings()
-                .get_spartan_z(index)
-        } else if let Some(ref verifier_state) = self.verifier_state {
-            verifier_state
-                .accumulator
-                .borrow()
-                .evaluation_openings()
-                .get_spartan_z(index)
-        } else {
-            panic!("Neither prover nor verifier state initialized");
-        }
-    }
-
-    /// Gets a specific evaluation opening value by key from whichever accumulator is available.
-    /// Returns the evaluation opening value from the prover accumulator if available, otherwise from the verifier accumulator.
-    pub fn get_evaluation_opening(
+    /// Gets the opening for a given virtual polynomial from whichever accumulator is available.
+    pub fn get_virtual_polynomial_opening(
         &self,
-        key: &OpeningsKeys,
-    ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
+        polynomial: VirtualPolynomial,
+        sumcheck: SumcheckId,
+    ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
         if let Some(ref prover_state) = self.prover_state {
             prover_state
                 .accumulator
                 .borrow()
-                .evaluation_openings()
-                .get(key)
-                .cloned()
+                .get_virtual_polynomial_opening(polynomial, sumcheck)
         } else if let Some(ref verifier_state) = self.verifier_state {
             verifier_state
                 .accumulator
                 .borrow()
-                .evaluation_openings()
-                .get(key)
-                .cloned()
+                .get_virtual_polynomial_opening(polynomial, sumcheck)
+        } else {
+            panic!("Neither prover nor verifier state initialized");
+        }
+    }
+
+    /// Gets the opening for a given committed polynomial from whichever accumulator is available.
+    pub fn get_committed_polynomial_opening(
+        &self,
+        polynomial: CommittedPolynomial,
+        sumcheck: SumcheckId,
+    ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
+        if let Some(ref prover_state) = self.prover_state {
+            prover_state
+                .accumulator
+                .borrow()
+                .get_committed_polynomial_opening(polynomial, sumcheck)
+        } else if let Some(ref verifier_state) = self.verifier_state {
+            verifier_state
+                .accumulator
+                .borrow()
+                .get_committed_polynomial_opening(polynomial, sumcheck)
         } else {
             panic!("Neither prover nor verifier state initialized");
         }
