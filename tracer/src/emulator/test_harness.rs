@@ -4,7 +4,7 @@
 //! CPU instance with memory and offering helper functions for execution and state assertion.
 
 use crate::emulator::{cpu::Cpu, default_terminal::DefaultTerminal};
-use crate::instruction::{RAMRead, RAMWrite, RISCVInstruction, RV32IMInstruction};
+use crate::instruction::RV32IMInstruction;
 
 /// Default memory capacity for tests.
 pub const TEST_MEMORY_CAPACITY: u64 = 1024 * 1024; // 1MB
@@ -90,64 +90,5 @@ impl<I, E> InstructionTestCase<I, E> {
             expected,
             description,
         }
-    }
-}
-
-/// Generic instruction executor that handles instruction types used in custom instructions.
-pub fn execute_instruction(cpu: &mut Cpu, instr: &RV32IMInstruction) {
-    match instr {
-        RV32IMInstruction::LD(ld) => {
-            let mut ram_access = RAMRead::default();
-            ld.execute(cpu, &mut ram_access);
-        }
-        RV32IMInstruction::SD(sd) => {
-            let mut ram_access = RAMWrite::default();
-            sd.execute(cpu, &mut ram_access);
-        }
-        RV32IMInstruction::XOR(xor) => {
-            let mut ram_access = ();
-            xor.execute(cpu, &mut ram_access);
-        }
-        RV32IMInstruction::XORI(xori) => {
-            let mut ram_access = ();
-            xori.execute(cpu, &mut ram_access);
-        }
-        RV32IMInstruction::AND(and) => {
-            let mut ram_access = ();
-            and.execute(cpu, &mut ram_access);
-        }
-        RV32IMInstruction::ANDI(andi) => {
-            let mut ram_access = ();
-            andi.execute(cpu, &mut ram_access);
-        }
-        RV32IMInstruction::OR(or) => {
-            let mut ram_access = ();
-            or.execute(cpu, &mut ram_access);
-        }
-        RV32IMInstruction::SLLI(slli) => {
-            let mut ram_access = ();
-            slli.execute(cpu, &mut ram_access);
-        }
-        RV32IMInstruction::SRLI(srli) => {
-            let mut ram_access = ();
-            srli.execute(cpu, &mut ram_access);
-        }
-        RV32IMInstruction::VirtualROTRI(rotri) => {
-            let mut ram_access = ();
-            rotri.execute(cpu, &mut ram_access);
-        }
-        RV32IMInstruction::VirtualMULI(muli) => {
-            let mut ram_access = ();
-            muli.execute(cpu, &mut ram_access);
-        }
-        RV32IMInstruction::ADDI(addi) => {
-            let mut ram_access = ();
-            addi.execute(cpu, &mut ram_access);
-        }
-        RV32IMInstruction::LUI(lui) => {
-            let mut ram_access = ();
-            lui.execute(cpu, &mut ram_access);
-        }
-        _ => panic!("Unexpected instruction type: {:?}", instr),
     }
 }
