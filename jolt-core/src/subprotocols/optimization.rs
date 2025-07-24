@@ -50,18 +50,29 @@ pub struct NaiveSumCheckProof<F: JoltField, ProofTranscript: Transcript> {
 }
 
 impl<F: JoltField, ProofTranscript: Transcript> NaiveSumCheckProof<F, ProofTranscript> {
+    #[tracing::instrument(skip_all, name = "NaiveSumCheckProof::prove")]
     pub fn prove(
         mle_vec: &mut Vec<&mut MultilinearPolynomial<F>>,
         r_cycle: &Vec<F>,
         previous_claim: &mut F,
         transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>) {
+        let span = tracing::span!(tracing::Level::INFO, "Initialize eq");
+        let _guard = span.enter();
         let mut eq = MultilinearPolynomial::from(EqPolynomial::evals(&r_cycle));
         let log_T = r_cycle.len();
         let mut r: Vec<F> = Vec::with_capacity(r_cycle.len());
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(r_cycle.len());
+        drop(_guard);
+        drop(span);
+
+        let span = tracing::span!(tracing::Level::INFO, "Loop over rounds");
+        let _guard = span.enter();
 
         for round in 0..r_cycle.len() {
+            let inner_span = tracing::span!(tracing::Level::INFO, "Compute evals");
+            let _guard = inner_span.enter();
+
             let mut evals = (0..(log_T - round - 1).pow2())
                 .into_par_iter()
                 .map(|j| {
@@ -99,6 +110,12 @@ impl<F: JoltField, ProofTranscript: Transcript> NaiveSumCheckProof<F, ProofTrans
             evals.insert(1, *previous_claim - evals[0]);
             assert_eq!(evals.len(), mle_vec.len() + 2);
 
+            drop(_guard);
+            drop(inner_span);
+
+            let inner_span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
+            let _guard = inner_span.enter();
+
             let univariate_poly = UniPoly::from_evals(&evals);
             let compressed_poly = univariate_poly.compress();
             compressed_poly.append_to_transcript(transcript);
@@ -108,15 +125,27 @@ impl<F: JoltField, ProofTranscript: Transcript> NaiveSumCheckProof<F, ProofTrans
             *previous_claim = univariate_poly.evaluate(&r_j);
             r.push(r_j);
 
+            drop(_guard);
+            drop(inner_span);
+
+            let inner_span = tracing::span!(tracing::Level::INFO, "Bind");
+            let _guard = inner_span.enter();
+
             rayon::join(
                 || eq.bind_parallel(r_j, BindingOrder::HighToLow),
                 || {
                     mle_vec
-                        .iter_mut()
+                        .par_iter_mut()
                         .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow))
                 },
             );
+
+            drop(_guard);
+            drop(inner_span);
         }
+
+        drop(_guard);
+        drop(span);
 
         (
             Self {
@@ -197,12 +226,16 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
         let _guard = span.enter();
 
         for j_idx in 0..T.log_2() {
-            let inner_span = tracing::span!(tracing::Level::INFO, "Create before and after idx evals table");
+            let inner_span = tracing::span!(
+                tracing::Level::INFO,
+                "Create before and after idx evals table"
+            );
             let _guard = inner_span.enter();
 
             let size = (T.log_2() - j_idx - 1).pow2();
             let mut before_idx_evals = vec![F::one(); size];
             let mut after_idx_evals = vec![Vec::with_capacity(D - 1); size];
+
             drop(_guard);
             drop(inner_span);
 
@@ -253,13 +286,7 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
                     C_summands[1] = F::one() - r_cycle_val;
                 }
 
-                // Compute eq(r_round, w_1, ..., w_{idx - 1}, c, b) for each c and b = 0, 1
-                // let eq_evals_at_idx = eval_points
-                //     .iter()
-                //     .map(|c| (((F::one() - c) * C_summands[1], *c * C_summands[0])))
-                //     .collect::<Vec<(F, F)>>();
-
-                // Evaluate eq(r_round, w_1, ..., w_{idx - 1}, c) at c = 0, 2
+                // Evaluate eq(r_round, w_1, ..., w_{idx - 1}, c, b) at c = 0, 2 and b = 0, 1
                 let eq_evals_at_idx = [
                     (C_summands[1], F::zero()),
                     (-C_summands[1], C_summands[0] + C_summands[0]),
@@ -351,11 +378,12 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
                 drop(_guard);
                 drop(_span);
 
-                mle_vec[D - 1 - d].bind_parallel(w_j, BindingOrder::HighToLow);
-
                 C_summands[0] *= w_j;
                 C_summands[1] *= F::one() - w_j;
             }
+            mle_vec.par_iter_mut().enumerate().for_each(|(d, mle)| {
+                mle.bind_parallel(w[D - 1 - d], BindingOrder::HighToLow);
+            });
 
             drop(_guard);
             drop(inner_span);
@@ -537,14 +565,12 @@ mod test {
             // (12, 1 << 20, 1 << 16),
             // (16, 1 << 20, 1 << 16),
             // (50, 1 << 20, 1 << 16),
-            (8, 1 << 20),
-            (12, 1 << 20),
-            (16, 1 << 20),
-            (50, 1 << 20),
+            (16, 1 << 25),
         ];
 
         for (D, T) in test_inputs {
-            benchmark_large_d_optimization_ra_virtualization(&mut criterion, D, T);
+            large_d_optimization_ra_virtualization(D, T);
+            // benchmark_large_d_optimization_ra_virtualization(&mut criterion, D, T);
         }
         criterion.final_summary();
     }
