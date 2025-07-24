@@ -54,6 +54,11 @@ members = [
     "examples/memory-ops/guest",
     "examples/blake2-inline",
     "examples/blake2-default",
+    "examples/blake3-inline",
+    "examples/blake3-64-inline",
+    "examples/blake3-128-inline",
+    "examples/blake3-192-inline",
+    "examples/blake3-256-inline",
     "examples/keccak1600-inline",
     "examples/keccak1600-default",
 ]

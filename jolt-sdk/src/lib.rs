@@ -31,6 +31,11 @@ pub mod blake2;
 #[cfg(feature = "blake2")]
 pub use blake2::*;
 
+#[cfg(feature = "blake3")]
+pub mod blake3;
+#[cfg(feature = "blake3")]
+pub use blake3::*;
+
 // This is a dummy _HEAP_PTR to keep the compiler happy.
 // It should never be used when compiled as a guest or with
 // our custom allocator

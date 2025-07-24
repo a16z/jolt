@@ -24,6 +24,10 @@ use crate::instruction::RV32IMInstruction;
 use crate::instruction::{add::ADD, addi::ADDI};
 
 pub mod blake3;
+pub mod blake3_hash_modes;
+
+// Re-export the Blake3 variants for public use
+pub use blake3_hash_modes::{BLAKE3_64, BLAKE3_128, BLAKE3_192, BLAKE3_256};
 
 /// Blake3 initialization vector (IV)
 #[rustfmt::skip]
@@ -80,6 +84,11 @@ const VR_INPUT_BYTES_LEN_START: usize = 42;
 const VR_FLAG_START: usize = 43;
 const VR_TEMP: usize = 44;
 
+pub enum BuilderMode {
+    COMPRESSION, 
+    HASH(u32),
+}
+
 pub struct Blake3SequenceBuilder {
     address: u64,
     sequence: Vec<RV32IMInstruction>,
@@ -87,6 +96,7 @@ pub struct Blake3SequenceBuilder {
     vr: [usize; NEEDED_REGISTERS],
     operand_rs1: usize,
     operand_rs2: usize,
+    mode: BuilderMode,
 }
 
 /// `Blake3SequenceBuilder` is a helper struct for constructing the virtual instruction
@@ -109,6 +119,7 @@ impl Blake3SequenceBuilder {
         vr: [usize; NEEDED_REGISTERS],
         operand_rs1: usize,
         operand_rs2: usize,
+        mode: BuilderMode
     ) -> Self {
         Blake3SequenceBuilder {
             address,
@@ -117,10 +128,48 @@ impl Blake3SequenceBuilder {
             vr,
             operand_rs1,
             operand_rs2,
+            mode,
         }
     }
 
     pub fn build(mut self) -> Vec<RV32IMInstruction> {
+        match self.mode {
+            BuilderMode::COMPRESSION => {return self.compress_build();}
+            BuilderMode::HASH(block_num) => {
+                // v[8..11] = IV[0..3] (first 4 words of initialization vector)
+                for i in 0..8 {
+                    self.load_32bit_immediate(BLAKE3_IV[i], self.vr[VR_CHAINING_VALUE_START + i]);
+                }
+                for i in 0..block_num {
+                    // Load new message chunk
+                    self.load_data_range(
+                        self.operand_rs2,
+                        MESSAGE_BLOCK_SIZE * i as usize,
+                        VR_MESSAGE_BLOCK_START,
+                        MESSAGE_BLOCK_SIZE,
+                    );
+                    // 2^0 for chunk_start -- 2^1 for chunk_end
+                    let flag = (i == 0) as u32 | (((i == block_num - 1) as u32) << 1) | (((i == block_num - 1) as u32) << 3);
+                    self.initialize_working_state(flag);
+                    // 3. Main loop: 7 rounds of Blake3 compression
+                    for round in 0..7 {
+                        self.round = round;
+                        self.blake3_round();
+                    }
+
+                    // 4. Finalize the hash state: h[i] ^= v[i] ^ v[i+8]
+                    let requires_truncate = i != block_num - 1;
+                    self.finalize_state(requires_truncate);   
+                }
+                self.store_state();
+                // 6. Finalize the sequence by setting instruction indices
+                self.enumerate_sequence();
+                self.sequence
+            }
+        }
+    }
+
+    pub fn compress_build(mut self) -> Vec<RV32IMInstruction> {
         // Load the current hash state (8 words) from memory into virtual registers
         self.load_data_range(
             self.operand_rs1,
@@ -156,7 +205,7 @@ impl Blake3SequenceBuilder {
         );
 
         // 2. Initialize the working state v[0..15]
-        self.initialize_working_state();
+        self.initialize_working_state(0);
 
         // 3. Main loop: 7 rounds of Blake3 compression
         for round in 0..7 {
@@ -165,7 +214,7 @@ impl Blake3SequenceBuilder {
         }
 
         // 4. Finalize the hash state: h[i] ^= v[i] ^ v[i+8]
-        self.finalize_state();
+        self.finalize_state(false);
 
         // 5. Store the final hash state back to memory
         self.store_state();
@@ -193,7 +242,7 @@ impl Blake3SequenceBuilder {
     }
 
     /// Initialize the working state v[0..15] according to Blake3 specification:
-    fn initialize_working_state(&mut self) {
+    fn initialize_working_state(&mut self, flag: u32) {
         // v[0..7] = h[0..7] (current hash state)
         for i in 0..CHAINING_VALUE_SIZE {
             self.xor32(
@@ -208,27 +257,39 @@ impl Blake3SequenceBuilder {
             self.load_32bit_immediate(BLAKE3_IV[i], self.vr[CHAINING_VALUE_SIZE + i]);
         }
 
-        // v[12..15] = counter values, input length, and flags
-        self.xor32(
-            Reg(self.vr[VR_COUNTER_START]),
-            Imm(0),
-            self.vr[VR_STATE_START + 12],
-        );
-        self.xor32(
-            Reg(self.vr[VR_COUNTER_START + 1]),
-            Imm(0),
-            self.vr[VR_STATE_START + 13],
-        );
-        self.xor32(
-            Reg(self.vr[VR_INPUT_BYTES_LEN_START]),
-            Imm(0),
-            self.vr[VR_STATE_START + 14],
-        );
-        self.xor32(
-            Reg(self.vr[VR_FLAG_START]),
-            Imm(0),
-            self.vr[VR_STATE_START + 15],
-        );
+        match self.mode {
+            BuilderMode::COMPRESSION => {
+                // v[12..15] = counter values, input length, and flags
+                self.xor32(
+                    Reg(self.vr[VR_COUNTER_START]),
+                    Imm(0),
+                    self.vr[VR_STATE_START + 12],
+                );
+                self.xor32(
+                    Reg(self.vr[VR_COUNTER_START + 1]),
+                    Imm(0),
+                    self.vr[VR_STATE_START + 13],
+                );
+                self.xor32(
+                    Reg(self.vr[VR_INPUT_BYTES_LEN_START]),
+                    Imm(0),
+                    self.vr[VR_STATE_START + 14],
+                );
+                self.xor32(
+                    Reg(self.vr[VR_FLAG_START]),
+                    Imm(0),
+                    self.vr[VR_STATE_START + 15],
+                );
+            }
+            BuilderMode::HASH(_) => {
+                for i in 12..14 {
+                    self.load_32bit_immediate(0, self.vr[VR_STATE_START + i]);
+                }
+                self.load_32bit_immediate(64, self.vr[VR_STATE_START + 14]);
+                self.load_32bit_immediate(flag, self.vr[VR_STATE_START + 15]);
+            }
+        }
+        
     }
 
     /// Execute one round of Blake3 compression
@@ -290,18 +351,28 @@ impl Blake3SequenceBuilder {
         self.rotr32(Reg(temp1), 7, vb);
     }
 
-    fn finalize_state(&mut self) {
-        for i in 0..STATE_SIZE / 2 {
-            let hi = self.vr[VR_STATE_START + i];
-            let vi = self.vr[VR_STATE_START + i];
-            let vi8 = self.vr[VR_STATE_START + i + 8];
-            self.xor32(Reg(vi), Reg(vi8), hi);
+    fn finalize_state(&mut self, is_truncated: bool) {
+        if is_truncated {
+            for i in 0..STATE_SIZE / 2 {
+                let hi = self.vr[VR_CHAINING_VALUE_START + i];
+                let vi = self.vr[VR_STATE_START + i];
+                let vi8 = self.vr[VR_STATE_START + i + 8];
+                self.xor32(Reg(vi), Reg(vi8), hi);
+            } 
         }
-        for i in 0..STATE_SIZE / 2 {
-            let hi_prime = self.vr[VR_STATE_START + i + 8];
-            let vi = self.vr[VR_STATE_START + i + 8];
-            let hi = self.vr[VR_CHAINING_VALUE_START + i];
-            self.xor32(Reg(vi), Reg(hi), hi_prime);
+        else {
+            for i in 0..STATE_SIZE / 2 {
+                let hi = self.vr[VR_STATE_START + i];
+                let vi = self.vr[VR_STATE_START + i];
+                let vi8 = self.vr[VR_STATE_START + i + 8];
+                self.xor32(Reg(vi), Reg(vi8), hi);
+            }
+            for i in 0..STATE_SIZE / 2 {
+                let hi_prime = self.vr[VR_STATE_START + i + 8];
+                let vi = self.vr[VR_STATE_START + i + 8];
+                let hi = self.vr[VR_CHAINING_VALUE_START + i];
+                self.xor32(Reg(vi), Reg(hi), hi_prime);
+            }
         }
     }
 
@@ -462,12 +533,12 @@ impl Blake3SequenceBuilder {
 
 /// Execute Blake3 compression with explicit counter values
 pub fn execute_blake3_compression(
-    chaining_value: &[u32; 8],
+    chaining_value: &mut [u32; 16],
     block_words: &[u32; 16],
     counter: &[u32; 2],
     block_len: u32,
     flags: u32,
-) -> [u32; 16] {
+) {
     #[rustfmt::skip]
     let mut state = [
         chaining_value[0], chaining_value[1], chaining_value[2], chaining_value[3],
@@ -495,7 +566,9 @@ pub fn execute_blake3_compression(
         state[i] ^= state[i + 8];
         state[i + 8] ^= chaining_value[i];
     }
-    state
+    for i in 0..16 {
+        chaining_value[i] = state[i];
+    }
 }
 
 // The mixing function, G, which mixes either a column or a diagonal.

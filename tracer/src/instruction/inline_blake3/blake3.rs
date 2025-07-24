@@ -66,7 +66,7 @@ impl BLAKE3 {
         let block_addr = cpu.x[self.operands.rs2] as u64;
 
         // 1. Read the 8-word chaining value from memory
-        let mut chaining_value = [0u32; CHAINING_VALUE_SIZE];
+        let mut chaining_value = [0u32; CHAINING_VALUE_SIZE * 2];
         load_words_from_memory(cpu, state_addr, &mut chaining_value)
             .expect("Failed to load chaining value");
 
@@ -103,8 +103,8 @@ impl BLAKE3 {
         .expect("Failed to load flags");
 
         // 6. Execute Blake3 compression function
-        let output = execute_blake3_compression(
-            &chaining_value,
+        execute_blake3_compression(
+            &mut chaining_value,
             &message_words,
             &counter,
             input_bytes[0],
@@ -113,7 +113,7 @@ impl BLAKE3 {
 
         // 7. Write the result back to memory
         // Blake3 compression returns 16 words, but we only store the first 8 as chaining value
-        store_words_to_memory(cpu, state_addr, &output).expect("Failed to store result");
+        store_words_to_memory(cpu, state_addr, &chaining_value).expect("Failed to store result");
     }
 }
 
@@ -122,7 +122,7 @@ impl VirtualInstructionSequence for BLAKE3 {
         let vr: [usize; NEEDED_REGISTERS] =
             core::array::from_fn(|i| virtual_register_index(i as u64) as usize);
 
-        Blake3SequenceBuilder::new(self.address, vr, self.operands.rs1, self.operands.rs2).build()
+        Blake3SequenceBuilder::new(self.address, vr, self.operands.rs1, self.operands.rs2, super::BuilderMode::COMPRESSION).build()
     }
 }
 
@@ -138,7 +138,7 @@ impl RISCVTrace for BLAKE3 {
 }
 
 #[cfg(test)]
-pub mod tests {
+mod compression_tests {
     use super::*;
     use crate::emulator::{cpu::Cpu, default_terminal::DefaultTerminal, mmu::DRAM_BASE};
     use crate::instruction::format::format_r::FormatR;
@@ -147,16 +147,16 @@ pub mod tests {
     const TEST_MEMORY_CAPACITY: u64 = 1024 * 1024; // 1MB
 
     pub const BLOCK_WORDS: [u32; 16] = [
-        0u32, 1u32, 2u32, 3u32, 4u32, 5u32, 6u32, 7u32, 8u32, 9u32, 10u32, 11u32, 12u32, 13u32,
-        14u32, 15u32,
+        50462976, 117835012, 185207048, 252579084, 319951120, 387323156, 454695192, 522067228, 589439264, 656811300, 724183336, 791555372, 858927408, 926299444, 993671480, 1061043516
     ];
     pub const COUNTER: [u32; 2] = [0, 0];
     pub const BLOCK_LEN: u32 = 64;
-    pub const FLAGS: u32 = 0;
+    pub const FLAGS: u32 = 1u32 | 2u32 | 8u32;
+
     pub const EXPECTED_RESULTS: [u32; 16] = [
-        0x5f98b37e, 0x26b0af2a, 0xdc58b278, 0x85d56ff6, 0x96f5d384, 0x42c9e776, 0xbeedd1e4,
-        0xa03faf22, 0x8a4b2d59, 0x1a1c224d, 0x303f2ae7, 0xd36ee60c, 0xfba05dbb, 0xef024714,
-        0xf597a6be, 0xd849c813,
+        0x4171ed4e, 0xd45c4aea, 0x6b6088b7, 0xe2463fd2, 0xac9caf12, 0x7ddcaceb, 0xc76d4c1f,
+        0x981b51f2, 0x6cc59cfc, 0xe3ff31b8, 0xe1e7a83e, 0xb209dfd1, 0x6727fd6e, 0xaa660067,
+        0xb123d082, 0x1babe8df,
     ];
 
     /// Macro to reduce repetitive test setup and verification code

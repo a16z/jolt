@@ -18,11 +18,13 @@ fn main() {
     let mut program = host::Program::new(guest_name);
     let mut inputs = vec![];
     inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
-    inputs.append(&mut postcard::to_stdvec(&1000u32).unwrap());
+    inputs.append(&mut postcard::to_stdvec(&100000u32).unwrap());
 
     let (trace, _final_memory_state, _io_device) = program.trace(&inputs);
     let (bytecode, _init_memory_state) = program.decode();
     println!("Trace length: {}, Bytecode length: {}", trace.len(), bytecode.len());
+    println!("Output is: {:x?}", _io_device.inputs);
+    println!("Output is: {:x?}", _io_device.outputs);
     // let result = program.trace_analyze::<Fr>(&inputs);
 
     // #[cfg(feature = "rv32")]

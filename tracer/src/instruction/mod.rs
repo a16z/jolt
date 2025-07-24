@@ -94,6 +94,7 @@ use xori::XORI;
 
 use inline_blake2::blake2::BLAKE2;
 use inline_blake3::blake3::BLAKE3;
+use inline_blake3::blake3_hash_modes::{BLAKE3_64, BLAKE3_128, BLAKE3_192, BLAKE3_256};
 use inline_keccak256::keccak256::KECCAK256;
 use inline_sha256::sha256::SHA256;
 use inline_sha256::sha256init::SHA256INIT;
@@ -515,7 +516,8 @@ define_rv32im_enums! {
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
         // Extension
         SHA256, SHA256INIT,
-        KECCAK256, BLAKE2, BLAKE3
+        KECCAK256, BLAKE2, 
+        BLAKE3, BLAKE3_64, BLAKE3_128, BLAKE3_192, BLAKE3_256, 
     ]
 }
 
@@ -835,6 +837,10 @@ impl RV32IMInstruction {
                         // Blake3
                         match funct3 {
                             0x0 => Ok(BLAKE3::new(instr, address, true).into()),
+                            0x2 => Ok(BLAKE3_64::new(instr, address, true).into()),
+                            0x3 => Ok(BLAKE3_128::new(instr, address, true).into()),
+                            0x4 => Ok(BLAKE3_192::new(instr, address, true).into()),
+                            0x5 => Ok(BLAKE3_256::new(instr, address, true).into()),
                             _ => Err("Unknown funct3 for custom Blake3 instruction"),
                         }
                     }

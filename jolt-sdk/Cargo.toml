@@ -13,7 +13,7 @@ repository = "https://github.com/a16z/jolt"
 edition = "2021"
 
 [features]
-default = ["sha256", "keccak256", "blake2"]
+default = ["sha256", "keccak256", "blake2", "blake3"]
 host = [
     "dep:tracer",
     "dep:common",
@@ -30,6 +30,7 @@ rv64 = ["jolt-core?/rv64"]
 sha256 = []
 keccak256 = []
 blake2 = []
+blake3 = []
 
 [dependencies]
 postcard = { version = "1.0.8", default-features = false }
