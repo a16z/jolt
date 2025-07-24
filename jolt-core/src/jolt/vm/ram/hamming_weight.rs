@@ -8,7 +8,7 @@ use crate::{
     field::JoltField,
     jolt::{
         vm::ram::{compute_d_parameter, remap_address, NUM_RA_I_VARS},
-        witness::CommittedPolynomial,
+        witness::{CommittedPolynomial, VirtualPolynomial},
     },
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
@@ -20,7 +20,7 @@ use crate::{
         },
     },
     subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
-    utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
+    utils::{thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
@@ -37,7 +37,7 @@ pub struct HammingWeightProverState<F: JoltField> {
     /// The ra polynomials - one for each decomposed part
     ra: Vec<MultilinearPolynomial<F>>,
     /// z powers for batching
-    z_powers: Vec<F>,
+    gamma_powers: Vec<F>,
     /// D parameter as in Twist and Shout paper
     d: usize,
 }
@@ -46,7 +46,7 @@ pub struct HammingWeightVerifierState<F: JoltField> {
     /// D parameter as in Twist and Shout paper
     d: usize,
     /// z powers for verification
-    z_powers: Vec<F>,
+    gamma_powers: Vec<F>,
 }
 
 pub struct HammingWeightSumcheck<F: JoltField> {
@@ -78,17 +78,18 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
         let chunk_size = (T / num_chunks).max(1);
 
         // Get z challenges for batching
-        let z_challenges: Vec<F> = state_manager.transcript.borrow_mut().challenge_vector(d);
-        let mut z_powers = vec![F::one(); d];
+        let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
+        let mut gamma_powers = vec![F::one(); d];
         for i in 1..d {
-            z_powers[i] = z_powers[i - 1] * z_challenges[0];
+            gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
 
-        let r_cycle: Vec<F> = state_manager
-            .transcript
-            .borrow_mut()
-            .challenge_vector(T.log_2());
-        let eq_r_cycle = EqPolynomial::evals(&r_cycle);
+        let (r_cycle, hamming_booleanity_claim) = state_manager.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamHammingWeight,
+            SumcheckId::RamHammingBooleanity,
+        );
+
+        let eq_r_cycle = EqPolynomial::evals(&r_cycle.r);
 
         let mut F_arrays = Vec::with_capacity(d);
         for i in 0..d {
@@ -131,14 +132,17 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
             .map(MultilinearPolynomial::from)
             .collect();
 
-        // Compute input claim as sum of z powers
-        let input_claim = z_powers.iter().sum();
+        let input_claim = hamming_booleanity_claim * gamma_powers.iter().sum::<F>();
 
         Self {
             input_claim,
-            prover_state: Some(HammingWeightProverState { ra, z_powers, d }),
+            prover_state: Some(HammingWeightProverState {
+                ra,
+                gamma_powers,
+                d,
+            }),
             verifier_state: None,
-            r_cycle,
+            r_cycle: r_cycle.r.clone(),
             d,
         }
     }
@@ -147,31 +151,28 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
         K: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (_, _, T) = state_manager.get_verifier_data();
-
         // Calculate D dynamically such that 2^8 = K^(1/D)
         let d = compute_d_parameter(K);
 
         // Get z challenges for batching
-        let z_challenges: Vec<F> = state_manager.transcript.borrow_mut().challenge_vector(d);
-        let mut z_powers = vec![F::one(); d];
+        let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
+        let mut gamma_powers = vec![F::one(); d];
         for i in 1..d {
-            z_powers[i] = z_powers[i - 1] * z_challenges[0];
+            gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
 
-        let r_cycle: Vec<F> = state_manager
-            .transcript
-            .borrow_mut()
-            .challenge_vector(T.log_2());
+        let (r_cycle, hamming_booleanity_claim) = state_manager.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamHammingWeight,
+            SumcheckId::RamHammingBooleanity,
+        );
 
-        // Compute input claim as sum of z powers
-        let input_claim = z_powers.iter().sum();
+        let input_claim = hamming_booleanity_claim * gamma_powers.iter().sum::<F>();
 
         Self {
             input_claim,
             prover_state: None,
-            verifier_state: Some(HammingWeightVerifierState { d, z_powers }),
-            r_cycle,
+            verifier_state: Some(HammingWeightVerifierState { d, gamma_powers }),
+            r_cycle: r_cycle.r.clone(),
             d,
         }
     }
@@ -200,7 +201,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
         let univariate_poly_eval: F = prover_state
             .ra
             .par_iter()
-            .zip(prover_state.z_powers.par_iter())
+            .zip(prover_state.gamma_powers.par_iter())
             .map(|(ra_poly, z_power)| {
                 let sum: F = (0..ra_poly.len() / 2)
                     .into_par_iter()
@@ -250,7 +251,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
         // Compute batched claim: sum_{i=0}^{d-1} z^i * ra_i
         ra_claims
             .iter()
-            .zip(verifier_state.z_powers.iter())
+            .zip(verifier_state.gamma_powers.iter())
             .map(|(ra_claim, z_power)| *ra_claim * z_power)
             .sum()
     }

@@ -10,6 +10,7 @@ use crate::{
     field::JoltField,
     jolt::vm::ram::{
         booleanity::{BooleanityProof, BooleanitySumcheck},
+        hamming_booleanity::HammingBooleanitySumcheck,
         hamming_weight::{HammingWeightProof, HammingWeightSumcheck},
         output_check::{OutputProof, OutputSumcheck, ValFinalSumcheck},
         ra_virtual::{RAProof, RASumcheck},
@@ -29,6 +30,7 @@ use common::{
 use rayon::prelude::*;
 
 pub mod booleanity;
+pub mod hamming_booleanity;
 pub mod hamming_weight;
 pub mod output_check;
 pub mod ra_virtual;
@@ -361,10 +363,12 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         //     state_manager,
         // );
         let val_final_evaluation = ValFinalSumcheck::new_prover(state_manager);
+        let hamming_booleanity = HammingBooleanitySumcheck::new_prover(state_manager);
 
         vec![
             // Box::new(val_evaluation),
             Box::new(val_final_evaluation),
+            Box::new(hamming_booleanity),
         ]
     }
 
@@ -381,10 +385,12 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             self.initial_memory_state.as_ref().unwrap(),
             state_manager,
         );
+        let hamming_booleanity = HammingBooleanitySumcheck::new_verifier(state_manager);
 
         vec![
             // Box::new(val_evaluation),
             Box::new(val_final_evaluation),
+            Box::new(hamming_booleanity),
         ]
     }
 

@@ -367,7 +367,7 @@ pub enum VirtualPolynomial {
     OpFlags(CircuitFlags),
     LookupOutput,
     InstructionRaf,
-    InstructionRafFlag, // TODO(moodlezoup): Remove this
+    InstructionRafFlag,
     LookupTableFlag(usize),
     RegistersVal,
     RamAddress,
@@ -377,4 +377,5 @@ pub enum VirtualPolynomial {
     RamVal,
     RamValInit,
     RamValFinal,
+    RamHammingWeight,
 }
