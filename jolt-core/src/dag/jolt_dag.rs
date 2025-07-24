@@ -132,6 +132,8 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             ProofData::BatchableSumcheckData(stage2_proof),
         );
 
+        drop_in_background_thread(stage2_instances);
+
         drop(_guard);
         drop(span);
 
@@ -161,6 +163,8 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             ProofData::BatchableSumcheckData(stage3_proof),
         );
 
+        drop_in_background_thread(stage3_instances);
+
         drop(_guard);
         drop(span);
 
@@ -187,6 +191,8 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             ProofKeys::Stage4Sumcheck,
             ProofData::BatchableSumcheckData(stage4_proof),
         );
+
+        drop_in_background_thread(stage4_instances);
 
         drop(_guard);
         drop(span);
