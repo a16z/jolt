@@ -195,7 +195,7 @@ impl Model {
         //     - Reshapes it to match the expected shape for that input node.
         //     - Inserts the reshaped tensor into the `results` map under the input node's index.
         for (i, input_idx) in self.graph.inputs.iter().enumerate() {
-            let mut input = model_inputs[i].clone(); 
+            let mut input = model_inputs[i].clone();
             input.reshape(&input_shapes[i])?;
             results.insert(input_idx, vec![input]);
         }
@@ -764,6 +764,14 @@ impl Model {
         table.with(tabled::settings::Style::modern());
         format!("{string} \n{table}",)
     }
+
+    pub fn add_node(&mut self, node: NodeType) -> Result<usize, Box<dyn Error>> {
+        let node_id = (0..self.graph.nodes.len() + 1)
+            .find(|i| !self.graph.nodes.contains_key(i))
+            .ok_or(GraphError::MissingNode(0))?;
+        self.graph.nodes.insert(node_id, node);
+        Ok(node_id)
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -1086,3 +1094,4 @@ fn output_state_idx(output_mappings: &[Vec<OutputMapping>]) -> Vec<usize> {
         .filter_map(|x| if x.is_state() { Some(x.outlet()) } else { None })
         .collect::<Vec<_>>()
 }
+
