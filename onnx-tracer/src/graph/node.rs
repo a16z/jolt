@@ -36,7 +36,6 @@
 //!
 //! By abstracting the details of node construction, scale management, and operation decoding, this module enables robust and efficient handling of ONNX models in privacy-preserving and quantized computation settings.
 use crate::graph::{model::NodeType, vars::VarScales};
-use crate::tensor::TensorType;
 use crate::trace_types::{ONNXInstr, ONNXOpcode};
 use crate::{
     circuit::ops::{
@@ -51,7 +50,6 @@ use crate::{
     tensor::{Tensor, TensorError},
 };
 use halo2curves::bn256::Fr as Fp;
-use halo2curves::ff::PrimeField;
 use log::{trace, warn};
 use std::fmt::Debug;
 use std::{collections::BTreeMap, error::Error, fmt};
@@ -744,7 +742,7 @@ impl SupportedOp {
             SupportedOp::Linear(op) => {
                 Node {
                     opkind: self.clone(),
-                    out_scale: op.out_scale(vec![1]).unwrap(),
+                    out_scale: op.out_scale(vec![1, 1]).unwrap(),
                     inputs,
                     out_dims,
                     idx,

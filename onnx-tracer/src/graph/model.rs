@@ -1113,7 +1113,7 @@ fn output_state_idx(output_mappings: &[Vec<OutputMapping>]) -> Vec<usize> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{circuit::ops::{lookup::LookupOp, poly::PolyOp, InputType}, fieldutils::i128_to_felt};
+    use crate::{circuit::{ops::{lookup::LookupOp, poly::PolyOp, InputType}, utils::F32}, fieldutils::i128_to_felt};
 
     use super::*;
 
@@ -1157,7 +1157,6 @@ mod tests {
     fn test_model_builder_relu() {
         let mut model = Model::default();
     
-        // Input node (id: 0)
         let input_node = SupportedOp::Input(Input {
             scale: 1,
             datum_type: InputType::F32,
@@ -1179,4 +1178,80 @@ mod tests {
         assert_eq!(result.outputs.len(), 1);
         assert_eq!(result.outputs[0], Tensor::new(Some(&[i128_to_felt(0), i128_to_felt(0), i128_to_felt(1), i128_to_felt(2)]), &[1, 4]).unwrap());
     }
+
+    #[test]
+fn test_model_builder_sigmoid() {
+    let mut model = Model::default();
+
+    let input_node = SupportedOp::Input(Input {
+        scale: 1,
+        datum_type: InputType::F32,
+    });
+
+    // input: shape [1, 3]
+    model.add_node(input_node.clone(), vec![], vec![1, 3]).unwrap();
+
+    // sigmoid node
+    let sigmoid_node = SupportedOp::Nonlinear(LookupOp::Sigmoid { scale: F32(1.0) });
+    model.add_node(sigmoid_node, vec![(0, 0)], vec![1, 3]).unwrap();
+
+    model.add_inputs(vec![0]);
+    model.add_outputs(vec![(1, 0)]);
+
+    // x = [-2.0, 0.0, 2.0]
+    let x = Tensor::new(
+        Some(&[i128_to_felt(-2), i128_to_felt(0), i128_to_felt(2)]),
+        &[1, 3],
+    ).unwrap();
+
+    let result = model.forward(&[x]).unwrap();
+    assert_eq!(result.outputs.len(), 1);
+
+    let _out: Vec<i128> = result.outputs[0]
+        .iter()
+        .map(|f| {
+            let f = felt_to_i128(*f);
+            f
+        }) 
+        .collect();
+
+    // TODO(Alberto): Not sure how to handle precision yet 
+    // sigmoid(-2)≈0.119, sigmoid(0)=0.5, sigmoid(2)≈0.881
+    // assert!((out[0] - 0.119).abs() < 1e-3);
+    // assert!((out[1] - 0.5).abs() < 1e-3);
+    // assert!((out[2] - 0.881).abs() < 1e-3);
+}
+
+#[test]
+fn test_model_builder_add() {
+    let mut model = Model::default();
+
+    let input_node = SupportedOp::Input(Input {
+        scale: 1,
+        datum_type: InputType::F32,
+    });
+
+    // two inputs: shape [1, 3]
+    model.add_node(input_node.clone(), vec![], vec![1, 3]).unwrap(); // id 0
+    model.add_node(input_node.clone(), vec![], vec![1, 3]).unwrap(); // id 1
+
+    // elementwise add
+    let add_node = SupportedOp::Linear(PolyOp::Add);
+    model.add_node(add_node, vec![(0, 0), (1, 0)], vec![1, 3]).unwrap();
+
+    model.add_inputs(vec![0, 1]);
+    model.add_outputs(vec![(2, 0)]);
+
+    let a = Tensor::new(Some(&[Fp::from(1), Fp::from(2), Fp::from(3)]), &[1, 3]).unwrap();
+    let b = Tensor::new(Some(&[Fp::from(4), Fp::from(5), Fp::from(6)]), &[1, 3]).unwrap();
+
+    let result = model.forward(&[a.clone(), b.clone()]).unwrap();
+    assert_eq!(result.outputs.len(), 1);
+    assert_eq!(
+        result.outputs[0],
+        Tensor::new(Some(&[Fp::from(5), Fp::from(7), Fp::from(9)]), &[1, 3]).unwrap()
+    );
+
+}
+
 }
