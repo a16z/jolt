@@ -192,7 +192,7 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
     // val = \sum_{j_1, ..., j_d \in \{0, 1\}^T} eq(j, j_1, ..., j_d) \prod_{i=1}^d func(j_i)
     //     = \sum_{j' \in \{0, 1\}^T} eq(j, j', ..., j') \prod_{i=1}^d func(j)
     #[tracing::instrument(skip_all, name = "LargeDSumCheckProof::prove")]
-    pub fn prove(
+    pub fn prove<const D1: usize>(
         mle_vec: &mut Vec<&mut MultilinearPolynomial<F>>,
         r_cycle: &Vec<F>,
         previous_claim: &mut F,
@@ -200,8 +200,8 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
     ) -> (Self, Vec<F>) {
         let mut C = F::one();
         let mut C_summands = [F::one(), F::one()];
-        let D = mle_vec.len();
         let T = r_cycle.len().pow2();
+        let D = mle_vec.len();
 
         let span = tracing::span!(tracing::Level::INFO, "Initialize E_table");
         let _guard = span.enter();
@@ -234,7 +234,6 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
 
             let size = (T.log_2() - j_idx - 1).pow2();
             let mut before_idx_evals = vec![F::one(); size];
-            let mut after_idx_evals = vec![Vec::with_capacity(D - 1); size];
 
             drop(_guard);
             drop(inner_span);
@@ -242,17 +241,17 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
             let inner_span = tracing::span!(tracing::Level::INFO, "Compute after idx evals");
             let _guard = inner_span.enter();
 
-            after_idx_evals
-                .par_iter_mut()
-                .enumerate()
-                .for_each(|(j, x)| {
+            let after_idx_evals = (0..size)
+                .into_par_iter()
+                .map(|j| {
                     let mut cur = (
                         mle_vec[D - 1].get_bound_coeff(j),
                         mle_vec[D - 1].get_bound_coeff(j + mle_vec[D - 1].len() / 2),
                     );
-                    for i in 0..D - 1 {
-                        x.push(cur);
-                        if i < D - 2 {
+
+                    let res: [(F, F); D1] = std::array::from_fn(|i| {
+                        let entry = cur;
+                        if i < D1 - 1 {
                             cur = (
                                 cur.0 * mle_vec[D - 2 - i].get_bound_coeff(j),
                                 cur.1
@@ -260,8 +259,34 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
                                         .get_bound_coeff(j + mle_vec[D - 2 - i].len() / 2),
                             );
                         }
-                    }
-                });
+
+                        entry
+                    });
+
+                    res
+                })
+                .collect::<Vec<_>>();
+
+            // after_idx_evals
+            //     .par_iter_mut()
+            //     .enumerate()
+            //     .for_each(|(j, x)| {
+            //         let mut cur = (
+            //             mle_vec[D - 1].get_bound_coeff(j),
+            //             mle_vec[D - 1].get_bound_coeff(j + mle_vec[D - 1].len() / 2),
+            //         );
+            //         for i in 0..D - 1 {
+            //             x.push(cur);
+            //             if i < D - 2 {
+            //                 cur = (
+            //                     cur.0 * mle_vec[D - 2 - i].get_bound_coeff(j),
+            //                     cur.1
+            //                         * mle_vec[D - 2 - i]
+            //                             .get_bound_coeff(j + mle_vec[D - 2 - i].len() / 2),
+            //                 );
+            //             }
+            //         }
+            //     });
 
             drop(_guard);
             drop(inner_span);
@@ -295,7 +320,7 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
                 let univariate_poly_evals = before_idx_evals
                     .par_iter_mut()
                     .take(size)
-                    .zip(after_idx_evals.par_iter_mut().take(size))
+                    .zip(after_idx_evals.par_iter().take(size))
                     .enumerate()
                     .map(|(j, (before_idx_eval, after_idx_evals))| {
                         // let at_idx_evals =
@@ -716,7 +741,7 @@ mod test {
         assert_eq!(previous_claim, previous_claim_bench);
     }
 
-    fn benchmark_large_d_optimization_ra_virtualization(
+    fn benchmark_large_d_optimization_ra_virtualization<const D1: usize>(
         criterion: &mut Criterion,
         D: usize,
         T: usize,
@@ -728,7 +753,7 @@ mod test {
         );
     }
 
-    fn large_d_optimization_ra_virtualization(D: usize, T: usize) -> TestPerf {
+    fn large_d_optimization_ra_virtualization<const D1: usize>(D: usize, T: usize) -> TestPerf {
         assert!(T.is_power_of_two(), "T: {T}");
 
         // Compute the sum-check
@@ -750,7 +775,7 @@ mod test {
         let mut previous_claim_copy = previous_claim;
 
         let start_time = Instant::now();
-        let (proof, r_prime) = LargeDSumCheckProof::<Fr, KeccakTranscript>::prove(
+        let (proof, r_prime) = LargeDSumCheckProof::<Fr, KeccakTranscript>::prove::<D1>(
             &mut ra.iter_mut().collect::<Vec<_>>(),
             &r_cycle,
             &mut previous_claim,

@@ -9,7 +9,9 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::DoryCommitmentScheme as Dory;
 use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-use crate::subprotocols::optimization::{compute_initial_eval_claim, LargeDSumCheckProof};
+use crate::subprotocols::optimization::{
+    compute_initial_eval_claim, LargeDSumCheckProof, NaiveSumCheckProof,
+};
 use crate::subprotocols::shout::ShoutProof;
 use crate::subprotocols::twist::{TwistAlgorithm, TwistProof};
 use crate::utils::math::Math;
@@ -55,7 +57,7 @@ pub fn benchmarks(
             BenchType::Twist => twist::<Fr, KeccakTranscript>(),
             BenchType::SparseDenseShout => sparse_dense_shout::<Fr, KeccakTranscript>(),
             BenchType::LargeDSumCheck => {
-                large_d_sumcheck::<Fr, Dory<KeccakTranscript>, KeccakTranscript>()
+                large_d_sumcheck::<Fr, Dory<KeccakTranscript>, KeccakTranscript, 15>()
             }
             _ => panic!("BenchType does not have a mapping"),
         },
@@ -72,7 +74,7 @@ pub fn benchmarks(
             BenchType::Twist => twist::<Fr, KeccakTranscript>(),
             BenchType::SparseDenseShout => sparse_dense_shout::<Fr, KeccakTranscript>(),
             BenchType::LargeDSumCheck => {
-                large_d_sumcheck::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>()
+                large_d_sumcheck::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript, 15>()
             }
             _ => panic!("BenchType does not have a mapping"),
         },
@@ -352,7 +354,8 @@ where
     tasks
 }
 
-fn large_d_sumcheck<F, PCS, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
+fn large_d_sumcheck<F, PCS, ProofTranscript, const D1: usize>(
+) -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
 where
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
@@ -361,7 +364,7 @@ where
     let mut tasks = Vec::new();
 
     let D = 16;
-    let T = 1 << 10;
+    let T = 1 << 20;
 
     let mut ra = {
         let mut rng = test_rng();
@@ -386,12 +389,23 @@ where
     let mut previous_claim =
         compute_initial_eval_claim(&ra.iter().map(|x| &*x).collect::<Vec<_>>(), &r_cycle);
 
+    let mut transcript_copy = transcript.clone();
+    let mut previous_claim_copy = previous_claim.clone();
+    let mut ra_copy = ra.clone();
+
     let task = move || {
-        let _proof = LargeDSumCheckProof::<F, ProofTranscript>::prove(
+        let _proof = LargeDSumCheckProof::<F, ProofTranscript>::prove::<D1>(
             &mut ra.iter_mut().collect::<Vec<_>>(),
             &r_cycle,
             &mut previous_claim,
             &mut transcript,
+        );
+
+        let _proof = NaiveSumCheckProof::<F, ProofTranscript>::prove(
+            &mut ra_copy.iter_mut().collect::<Vec<_>>(),
+            &r_cycle,
+            &mut previous_claim_copy,
+            &mut transcript_copy,
         );
     };
 
