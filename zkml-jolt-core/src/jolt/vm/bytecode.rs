@@ -77,6 +77,7 @@ where
         let z: F = transcript.challenge_scalar();
         let E = EqPolynomial::evals(&r_cycle);
         let mut F = vec![F::zero(); K];
+        // Iterate through bytecode trace.
         for (j, cycle) in trace.iter().enumerate() {
             let k = cycle.instr.address;
             F[k] += E[j]
@@ -86,7 +87,7 @@ where
         // sum-check setup
         let rv_claim: F = F.iter().zip_eq(val.iter()).map(|(f, v)| *f * v).sum();
         // random linear combination of core piop claim and hamming weight claim
-        let mut prev_claim = rv_claim + z/* .mul(1)*/; // where 1 is hamming weight sumcheck claim
+        let mut prev_claim = rv_claim + z/* .mul(1) */; // where 1 is hamming weight sumcheck claim
         let mut ra = MultilinearPolynomial::from(F.clone());
         let mut val = MultilinearPolynomial::from(val);
         const DEGREE: usize = 2;
@@ -181,7 +182,6 @@ where
     let K = r.len().pow2();
     let T = trace.len();
     let mut B = MultilinearPolynomial::from(EqPolynomial::evals(r));
-
     let num_rounds = K.log_2() + T.log_2();
     let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
@@ -432,13 +432,11 @@ where
         // field element.
         let val: Vec<F> = Self::bytecode_to_val(&preprocessing.bytecode, &gamma);
         let val = MultilinearPolynomial::from(val);
-
         assert_eq!(
             self.ra_claim * (z + val.evaluate(&r_address)),
             sumcheck_claim,
             "Core PIOP + Hamming weight sumcheck failed"
         );
-
         let (sumcheck_claim, r_booleanity) =
             self.booleanity_sumcheck
                 .verify(F::zero(), K.log_2() + T.log_2(), 3, transcript)?;
