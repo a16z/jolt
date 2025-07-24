@@ -24,7 +24,6 @@ fn main() {
     let (bytecode, _init_memory_state) = program.decode();
     println!("Trace length: {}, Bytecode length: {}", trace.len(), bytecode.len());
     println!("Output is: {:x?}", _io_device.inputs);
-    println!("Output is: {:x?}", _io_device.outputs);
     // let result = program.trace_analyze::<Fr>(&inputs);
 
     // #[cfg(feature = "rv32")]
