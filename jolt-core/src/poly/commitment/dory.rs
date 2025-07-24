@@ -1199,6 +1199,8 @@ impl CommitmentScheme for DoryCommitmentScheme {
             dory_transcript,
         );
 
+        println!("{verify_result:?}");
+
         match verify_result {
             Ok(()) => Ok(()),
             Err(e) => Err(ProofVerifyError::DoryError(format!("{e:?}"))),

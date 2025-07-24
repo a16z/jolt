@@ -7,7 +7,8 @@ mod tests {
     use super::*;
     use crate::host;
     use crate::jolt::vm::{rv32i_vm::RV32IJoltVM, Jolt, JoltProverPreprocessing};
-    use crate::poly::commitment::mock::MockCommitScheme;
+    use crate::poly::commitment::dory::DoryCommitmentScheme;
+    use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
     use crate::utils::transcript::{KeccakTranscript, Transcript};
     use ark_bn254::Fr;
     use std::cell::RefCell;
@@ -19,12 +20,12 @@ mod tests {
     #[test]
     fn test_dag_fib_e2e() {
         let mut program = host::Program::new("fibonacci-guest");
-        let inputs = postcard::to_stdvec(&9u32).unwrap();
+        let inputs = postcard::to_stdvec(&100u32).unwrap();
         let (bytecode, init_memory_state) = program.decode();
         let (mut trace, final_memory_state, mut io_device) = program.trace(&inputs);
 
         // Preprocessing
-        let preprocessing: JoltProverPreprocessing<Fr, MockCommitScheme<Fr>> =
+        let preprocessing: JoltProverPreprocessing<Fr, DoryCommitmentScheme> =
             RV32IJoltVM::prover_preprocess(
                 bytecode.clone(),
                 io_device.memory_layout.clone(),
@@ -48,10 +49,8 @@ mod tests {
         );
 
         // State manager components
-        let prover_accumulator_pre_wrap =
-            crate::poly::opening_proof::ProverOpeningAccumulator::<Fr>::new();
-        let verifier_accumulator_pre_wrap =
-            crate::poly::opening_proof::VerifierOpeningAccumulator::<Fr>::new();
+        let prover_accumulator_pre_wrap = ProverOpeningAccumulator::<Fr>::new();
+        let verifier_accumulator_pre_wrap = VerifierOpeningAccumulator::<Fr>::new();
 
         let prover_accumulator = Rc::new(RefCell::new(prover_accumulator_pre_wrap));
         let verifier_accumulator = Rc::new(RefCell::new(verifier_accumulator_pre_wrap));

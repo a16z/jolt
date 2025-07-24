@@ -420,8 +420,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         let (preprocessing, trace, _program_io, _final_memory_state) =
             self.prover_state_manager.get_prover_data();
 
-        let committed_polys: Vec<_> = AllCommittedPolynomials::iter()
-            .par_bridge()
+        let committed_polys: Vec<_> = AllCommittedPolynomials::par_iter()
             .map(|poly| poly.generate_witness(preprocessing, trace))
             .collect();
 
@@ -430,9 +429,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             .map(|poly| PCS::commit(poly, &preprocessing.generators))
             .collect();
 
-        let jolt_commitments = JoltCommitments {
-            commitments: commitments.clone(),
-        };
+        let jolt_commitments = JoltCommitments { commitments };
 
         self.prover_state_manager.set_commitments(jolt_commitments);
 
