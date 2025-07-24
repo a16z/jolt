@@ -765,12 +765,28 @@ impl Model {
         format!("{string} \n{table}",)
     }
 
-    pub fn add_node(&mut self, node: NodeType) -> Result<usize, Box<dyn Error>> {
+    pub fn add_node(
+        &mut self,
+        op: SupportedOp,
+        inputs: Vec<Outlet>,
+        out_dims: Vec<usize>,
+    ) -> Result<usize, Box<dyn Error>> {
         let node_id = (0..self.graph.nodes.len() + 1)
             .find(|i| !self.graph.nodes.contains_key(i))
             .ok_or(GraphError::MissingNode(0))?;
-        self.graph.nodes.insert(node_id, node);
+        self.graph.nodes.insert(
+            node_id,
+            NodeType::Node(op.gen_node(inputs, out_dims, node_id)),
+        );
         Ok(node_id)
+    }
+
+    pub fn add_inputs(&mut self, inputs: Vec<usize>) {
+        self.graph.inputs.extend(inputs);
+    }
+
+    pub fn add_outputs(&mut self, outputs: Vec<Outlet>) {
+        self.graph.outputs.extend(outputs);
     }
 }
 
@@ -1095,3 +1111,45 @@ fn output_state_idx(output_mappings: &[Vec<OutputMapping>]) -> Vec<usize> {
         .collect::<Vec<_>>()
 }
 
+#[cfg(test)]
+mod tests {
+    use crate::circuit::ops::{poly::PolyOp, InputType};
+
+    use super::*;
+
+    #[test]
+    fn test_model_builder_mat_mul() {
+        let mut model = Model::default();
+
+        let input_node = SupportedOp::Input(Input {
+            scale: 1,
+            datum_type: InputType::F32,
+        });
+
+        // Add matrix node input
+        model.add_node(input_node.clone(), vec![], vec![2, 2]).unwrap();
+        // Add vector node input
+        model.add_node(input_node.clone(), vec![], vec![1, 2]).unwrap();
+
+        let mat_mul_node = SupportedOp::Linear(PolyOp::Einsum {
+            equation: "ij,bj->bi".to_string(), 
+        });
+
+        model.add_node(mat_mul_node, vec![(0, 0), (1, 0)], vec![1, 2]).unwrap();
+        model.add_inputs(vec![0, 1]);
+        model.add_outputs(vec![(2, 0)]);
+
+        // Test execution with vector-matrix multiplication
+        // Vector: [1, 2]
+        let input2 = Tensor::new(Some(&[Fp::from(1), Fp::from(2)]), &[1, 2]).unwrap();
+        // Matrix: [[5, 6], [7, 8]]
+        let input1 = Tensor::new(Some(&[Fp::from(5), Fp::from(6), Fp::from(7), Fp::from(8)]), &[2, 2]).unwrap();
+
+        let result = model
+            .forward(&[input1.clone(), input2.clone()])
+            .unwrap();
+
+        assert_eq!(result.outputs.len(), 1);
+        assert_eq!(result.outputs[0], Tensor::new(Some(&[Fp::from(17), Fp::from(23)]), &[1, 2]).unwrap());
+    }
+}

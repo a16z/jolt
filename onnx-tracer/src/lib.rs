@@ -79,6 +79,7 @@ fn model(model_path: &PathBuf) -> Model {
 /// # NOTE:
 /// Adds 1 to pc to account for prepended no-op
 pub fn decode_nodes(offset: usize, nodes: &BTreeMap<usize, NodeType>) -> Vec<ONNXInstr> {
+    println!("nodes: {:?}", nodes);
     let mut new_offset = offset;
 
     nodes.iter().flat_map(|(pc, node)| {
