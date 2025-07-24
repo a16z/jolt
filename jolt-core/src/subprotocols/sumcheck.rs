@@ -90,7 +90,7 @@ where
 ///
 /// This trait defines the interface needed to participate in the `BatchedSumcheck` protocol,
 /// which reduces verifier cost and proof size by batching multiple sumcheck protocols.
-pub trait SumcheckInstance<F: JoltField> {
+pub trait SumcheckInstance<F: JoltField>: Send + Sync {
     /// Returns the maximum degree of the sumcheck polynomial.
     fn degree(&self) -> usize;
 
