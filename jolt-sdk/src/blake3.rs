@@ -22,33 +22,17 @@ const BLAKE3_IV: [u32; 8] = [
 pub unsafe fn blake3_compress(
     chaining_value: *mut u32,
     message: *const u32,
-    counter: u64,
-    block_len: u32,
-    flags: u32,
 ){
     // Memory layout for Blake3 instruction:
     // rs1: points to chaining value (32 bytes)
     // rs2: points to message block (64 bytes) + counter (8 bytes) + block_len (4 bytes) + flags (4 bytes)
 
-    // We need to set up memory with the message block followed by counter, block_len, and flags
-    let mut block_data = [0u32; 20]; // 16 words message + 2 words counter + 1 word block_len + 1 word flags
-
-    // Copy message (16 u32 words)
-    core::ptr::copy_nonoverlapping(message, block_data.as_mut_ptr(), 16);
-    
-    // Set counter as two u32 words (little-endian u64)
-    block_data[16] = counter as u32;
-    block_data[17] = (counter >> 32) as u32;
-    
-    // Set block_len and flags
-    block_data[18] = block_len;
-    block_data[19] = flags;
 
     // Call Blake3 instruction using funct7=0x03 to distinguish from Keccak (0x01), SHA-256 (0x00), and Blake2 (0x02)
     core::arch::asm!(
         ".insn r 0x0B, 0x0, 0x03, x0, {}, {}",
         in(reg) chaining_value,
-        in(reg) block_data.as_ptr(),
+        in(reg) message,
         options(nostack)
     );
     
