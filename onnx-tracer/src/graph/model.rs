@@ -1113,7 +1113,7 @@ fn output_state_idx(output_mappings: &[Vec<OutputMapping>]) -> Vec<usize> {
 
 #[cfg(test)]
 mod tests {
-    use crate::circuit::ops::{poly::PolyOp, InputType};
+    use crate::{circuit::ops::{lookup::LookupOp, poly::PolyOp, InputType}, fieldutils::i128_to_felt};
 
     use super::*;
 
@@ -1151,5 +1151,32 @@ mod tests {
 
         assert_eq!(result.outputs.len(), 1);
         assert_eq!(result.outputs[0], Tensor::new(Some(&[Fp::from(17), Fp::from(23)]), &[1, 2]).unwrap());
+    }
+
+    #[test]
+    fn test_model_builder_relu() {
+        let mut model = Model::default();
+    
+        // Input node (id: 0)
+        let input_node = SupportedOp::Input(Input {
+            scale: 1,
+            datum_type: InputType::F32,
+        });
+
+        model.add_node(input_node.clone(), vec![], vec![1, 4]).unwrap();
+
+        let relu_node = SupportedOp::Nonlinear(LookupOp::ReLU);
+
+        model.add_node(relu_node, vec![(0, 0)], vec![1, 4]).unwrap();
+        model.add_inputs(vec![0]);
+        model.add_outputs(vec![(1, 0)]);
+    
+        // Test execution with various inputs
+        let input = Tensor::new(Some(&[i128_to_felt(-1), i128_to_felt(0), i128_to_felt(1), i128_to_felt(2)]), &[1, 4]).unwrap();
+        let result = model.forward(&[input]).unwrap();
+    
+        // Expected result: [0.0, 0.0, 1.0, 2.0]
+        assert_eq!(result.outputs.len(), 1);
+        assert_eq!(result.outputs[0], Tensor::new(Some(&[i128_to_felt(0), i128_to_felt(0), i128_to_felt(1), i128_to_felt(2)]), &[1, 4]).unwrap());
     }
 }
