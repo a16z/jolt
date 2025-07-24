@@ -536,21 +536,32 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
                     let int_evals =
                         self.int_poly
                             .sumcheck_evals(i, DEGREE, BindingOrder::HighToLow);
+                    // We have a separate Val polynomial for each stage
+                    // Additionally, for stages 1 and 3 we have an Int polynomial for RAF
+                    // So we would have:
+                    // Stage 1: gamma^0 * (Val_1 + gamma^3 * Int)
+                    // Stage 2: gamma^1 * (Val_2)
+                    // Stage 3: gamma^2 * (Val_3 + gamma^2 * Int)
+                    // Which matches with the input claim:
+                    // rv_1 + gamma * rv_2 + gamma^2 * rv_3 + gamma^3 * raf_1 + gamma^4 * raf_3
                     let val_evals = self
                         .val_polys
                         .iter()
-                        .map(|poly| poly.sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow))
+                        // Val polynomials
+                        .map(|val| val.sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow))
+                        // Here are the RAF polynomials and their powers
                         .zip([Some(&int_evals), None, Some(&int_evals)])
                         .zip([Some(self.gamma_cub), None, Some(self.gamma_sqr)])
-                        .map(|((poly_evals, int_evals), gamma)| {
+                        .map(|((val_evals, int_evals), gamma)| {
                             std::array::from_fn::<F, DEGREE, _>(|j| {
-                                poly_evals[j]
+                                val_evals[j]
                                     + int_evals.map_or(F::zero(), |int_evals| {
                                         int_evals[j] * gamma.unwrap()
                                     })
                             })
                         });
 
+                    // Compute ra * val * gamma, and sum together
                     ra_evals
                         .zip(val_evals)
                         .zip(self.gamma.iter())
@@ -684,6 +695,14 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
                 .1
         });
 
+        // We have a separate Val polynomial for each stage
+        // Additionally, for stages 1 and 3 we have an Int polynomial for RAF
+        // So we would have:
+        // Stage 1: gamma^0 * (Val_1 + gamma^3 * Int)
+        // Stage 2: gamma^1 * (Val_2)
+        // Stage 3: gamma^2 * (Val_3 + gamma^2 * Int)
+        // Which matches with the input claim:
+        // rv_1 + gamma * rv_2 + gamma^2 * rv_3 + gamma^3 * raf_1 + gamma^4 * raf_3
         let val = self
             .val_polys
             .iter()
@@ -758,6 +777,14 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             .expect("Prover state not initialized");
         let int_poly = self.int_poly.final_sumcheck_claim();
 
+        // We have a separate Val polynomial for each stage
+        // Additionally, for stages 1 and 3 we have an Int polynomial for RAF
+        // So we would have:
+        // Stage 1: gamma^0 * (Val_1 + gamma^3 * Int)
+        // Stage 2: gamma^1 * (Val_2)
+        // Stage 3: gamma^2 * (Val_3 + gamma^2 * Int)
+        // Which matches with the input claim:
+        // rv_1 + gamma * rv_2 + gamma^2 * rv_3 + gamma^3 * raf_1 + gamma^4 * raf_3
         ps.val_gamma = Some(
             self.val_polys
                 .iter()
