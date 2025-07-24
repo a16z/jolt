@@ -387,13 +387,7 @@ impl<F: JoltField> ValFinalSumcheckProverState<F> {
         let eq_table = &output_sumcheck_prover_state.eq_table;
         let wa_r_address: Vec<_> = write_addresses
             .par_iter()
-            .map(|k| {
-                if let Some(k) = k {
-                    eq_table[*k]
-                } else {
-                    F::zero()
-                }
-            })
+            .map(|k| k.map_or(F::zero(), |k| eq_table[k]))
             .collect();
         let inc = CommittedPolynomial::RamInc.generate_witness(preprocessing, trace);
 
@@ -469,11 +463,8 @@ impl<F: JoltField> ValFinalSumcheck<F> {
         let wa: Vec<F> = trace
             .par_iter()
             .map(|cycle| {
-                if let Some(k) = remap_address(cycle.ram_access().address() as u64, memory_layout) {
-                    eq_r_address[k as usize]
-                } else {
-                    F::zero()
-                }
+                remap_address(cycle.ram_access().address() as u64, memory_layout)
+                    .map_or(F::zero(), |k| eq_r_address[k as usize])
             })
             .collect();
         let wa = MultilinearPolynomial::from(wa);

@@ -36,7 +36,7 @@ where
 pub struct HammingWeightProverState<F: JoltField> {
     /// The ra polynomials - one for each decomposed part
     ra: Vec<MultilinearPolynomial<F>>,
-    /// z powers for batching
+    /// gamma powers for batching
     gamma_powers: Vec<F>,
     /// D parameter as in Twist and Shout paper
     d: usize,
@@ -45,12 +45,12 @@ pub struct HammingWeightProverState<F: JoltField> {
 pub struct HammingWeightVerifierState<F: JoltField> {
     /// D parameter as in Twist and Shout paper
     d: usize,
-    /// z powers for verification
+    /// gamma powers for verification
     gamma_powers: Vec<F>,
 }
 
 pub struct HammingWeightSumcheck<F: JoltField> {
-    /// The initial claim (sum of z powers for hamming weight)
+    /// The initial claim (sum of gamma powers for hamming weight)
     input_claim: F,
     r_cycle: Vec<F>,
     /// Prover state
@@ -77,7 +77,6 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = (T / num_chunks).max(1);
 
-        // Get z challenges for batching
         let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
         let mut gamma_powers = vec![F::one(); d];
         for i in 1..d {
@@ -154,7 +153,6 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
         // Calculate D dynamically such that 2^8 = K^(1/D)
         let d = compute_d_parameter(K);
 
-        // Get z challenges for batching
         let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
         let mut gamma_powers = vec![F::one(); d];
         for i in 1..d {

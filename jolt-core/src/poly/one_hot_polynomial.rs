@@ -243,7 +243,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                     polynomial
                         .nonzero_indices
                         .par_iter()
-                        .map(|&k| if let Some(k) = k { F[k] } else { F::zero() })
+                        .map(|&k| k.map_or(F::zero(), |k| F[k]))
                         .collect::<Vec<_>>(),
                 ));
             }

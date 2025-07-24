@@ -288,16 +288,13 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
                     let H_vec: Vec<F> = trace
                         .par_iter()
                         .map(|cycle| {
-                            if let Some(address) =
-                                remap_address(cycle.ram_access().address() as u64, memory_layout)
-                            {
-                                // Get i-th address chunk
-                                let address_i = (address >> (NUM_RA_I_VARS * (d - 1 - i)))
-                                    % (1 << NUM_RA_I_VARS);
-                                prover_state.F[address_i as usize]
-                            } else {
-                                F::zero()
-                            }
+                            remap_address(cycle.ram_access().address() as u64, memory_layout)
+                                .map_or(F::zero(), |address| {
+                                    // Get i-th address chunk
+                                    let address_i = (address >> (NUM_RA_I_VARS * (d - 1 - i)))
+                                        % (1 << NUM_RA_I_VARS);
+                                    prover_state.F[address_i as usize]
+                                })
                         })
                         .collect();
                     H_polys.push(MultilinearPolynomial::from(H_vec));
