@@ -102,7 +102,7 @@ impl<F: JoltField, ProofTranscript: Transcript> NaiveSumCheckProof<F, ProofTrans
                         running
                             .iter()
                             .zip(new.iter())
-                            .map(|(a, b)| *a * b)
+                            .map(|(a, b)| *a + b)
                             .collect::<Vec<_>>()
                     },
                 );
@@ -163,14 +163,21 @@ impl<F: JoltField, ProofTranscript: Transcript> NaiveSumCheckProof<F, ProofTrans
     pub fn verify(
         &self,
         r_prime: Vec<F>,
+        claim: F,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let (_sumcheck_claim, _r_sumcheck) = self.sumcheck_proof.verify(
-            self.eq_claim * self.mle_claims.iter().product::<F>(),
+            claim,
             r_prime.len(),
             self.mle_claims.len() + 1,
             transcript,
         )?;
+
+        assert_eq!(_r_sumcheck, r_prime);
+        assert_eq!(
+            _sumcheck_claim,
+            self.eq_claim * self.mle_claims.iter().product::<F>()
+        );
 
         Ok(())
     }
@@ -413,15 +420,18 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
 
     pub fn verify(
         &self,
+        claim: F,
         r_prime: Vec<F>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        let claim = self.eq_claim * self.mle_claims.iter().product::<F>();
         let (sumcheck_claim, _r_sumcheck) =
             self.sumcheck_proof
                 .verify(claim, r_prime.len(), 2, transcript)?;
 
-        assert_eq!(claim, sumcheck_claim);
+        assert_eq!(
+            sumcheck_claim,
+            self.eq_claim * self.mle_claims.iter().product::<F>()
+        );
 
         Ok(())
     }
@@ -748,6 +758,8 @@ mod test {
         let mut previous_claim =
             compute_initial_eval_claim(&ra.iter().map(|x| &*x).collect::<Vec<_>>(), &r_cycle);
         let mut previous_claim_copy = previous_claim;
+        let claim_copy = previous_claim_copy.clone();
+        let claim = previous_claim.clone();
 
         let start_time = Instant::now();
         let (proof, r_prime) = LargeDSumCheckProof::<Fr, KeccakTranscript>::prove::<D1>(
@@ -762,7 +774,7 @@ mod test {
         verifier_transcript.compare_to(prover_transcript);
         let _r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
 
-        let verification_result = proof.verify(r_prime, &mut verifier_transcript);
+        let verification_result = proof.verify(claim, r_prime, &mut verifier_transcript);
         assert!(
             verification_result.is_ok(),
             "Verification (optimized sumcheck) failed: {verification_result:?}"
@@ -784,7 +796,7 @@ mod test {
         verifier_transcript.compare_to(prover_transcript);
         let _r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
 
-        let verification_result = proof.verify(r_prime, &mut verifier_transcript);
+        let verification_result = proof.verify(r_prime, claim_copy, &mut verifier_transcript);
         assert!(
             verification_result.is_ok(),
             "Verification (naive sumcheck) failed: {verification_result:?}"
