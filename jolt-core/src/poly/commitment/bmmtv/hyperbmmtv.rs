@@ -90,15 +90,12 @@ where
     P::ScalarField: JoltField,
 {
     type Field = P::ScalarField;
-
     type ProverSetup = KZGProverKey<P>;
     type VerifierSetup = KZGVerifierKey<P>;
-
     type Commitment = HyperBmmtvCommitment<P>;
-
     type Proof = HyperBmmtvProof<P>;
-
     type BatchedProof = ();
+    type OpeningProofHint = ();
 
     #[tracing::instrument(skip_all, name = "HyperBmmtv::setup")]
     fn setup_prover(max_len: usize) -> Self::ProverSetup {
@@ -122,10 +119,11 @@ where
     fn commit(
         poly: &MultilinearPolynomial<Self::Field>,
         setup: &Self::ProverSetup,
-    ) -> Self::Commitment {
+    ) -> (Self::Commitment, Self::OpeningProofHint) {
         let unipoly: UniPoly<Self::Field> = poly.into();
         let commitment = UnivariatePolynomialCommitment::<P>::commit(setup, &unipoly).unwrap();
-        HyperBmmtvCommitment(commitment.0, commitment.1)
+        let commitment = HyperBmmtvCommitment(commitment.0, commitment.1);
+        (commitment, ())
     }
 
     #[tracing::instrument(skip_all, name = "HyperBmmtv::batch_commit")]
@@ -135,7 +133,7 @@ where
     {
         polys
             .par_iter()
-            .map(|poly| Self::commit(poly.borrow(), gens))
+            .map(|poly| Self::commit(poly.borrow(), gens).0)
             .collect()
     }
 
@@ -144,6 +142,7 @@ where
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
+        _: Self::OpeningProofHint,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         let ell = opening_point.len();
@@ -352,7 +351,7 @@ mod tests {
         let setup = HyperTest::setup_prover(poly.len());
         let verifier_setup = HyperTest::setup_verifier(&setup);
 
-        let commit = HyperTest::commit(&poly, &setup);
+        let commit = HyperTest::commit(&poly, &setup).0;
 
         let point = (0..ell)
             .map(|_| <Bn254 as Pairing>::ScalarField::rand(&mut rng))
@@ -360,7 +359,7 @@ mod tests {
 
         let mut prover_transcript = KeccakTranscript::new(b"TestEval");
 
-        let proof = HyperTest::prove(&setup, &poly, &point, &mut prover_transcript);
+        let proof = HyperTest::prove(&setup, &poly, &point, (), &mut prover_transcript);
 
         let mut verifier_transcript = KeccakTranscript::new(b"TestEval");
         verifier_transcript.compare_to(prover_transcript);

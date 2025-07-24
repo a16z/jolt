@@ -299,7 +299,7 @@ where
             .collect();
         let commitments: Vec<_> = committed_polys
             .par_iter()
-            .map(|poly| PCS::commit(poly, &preprocessing.generators))
+            .map(|poly| PCS::commit(poly, &preprocessing.generators).0)
             .collect();
         for commitment in commitments.iter() {
             transcript.append_serializable(commitment);
@@ -364,6 +364,7 @@ where
         }
         let opening_proof = opening_accumulator.reduce_and_prove(
             polynomials_map,
+            HashMap::new(),
             &preprocessing.generators,
             &mut transcript,
         );

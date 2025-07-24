@@ -8,7 +8,7 @@ use crate::jolt::vm::instruction_lookups::LookupsDag;
 use crate::jolt::vm::ram::RamDag;
 use crate::jolt::vm::registers::RegistersDag;
 use crate::jolt::vm::JoltCommitments;
-use crate::jolt::witness::AllCommittedPolynomials;
+use crate::jolt::witness::{AllCommittedPolynomials, CommittedPolynomial};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
@@ -79,7 +79,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         );
 
         // Generate and commit to all witness polynomials
-        self.generate_and_commit_polynomials()?;
+        let opening_proof_hints = self.generate_and_commit_polynomials()?;
 
         // Append commitments to transcript
         let commitments = self.prover_state_manager.get_commitments();
@@ -209,6 +209,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         }
         let opening_proof = accumulator.borrow_mut().reduce_and_prove(
             polynomials_map,
+            opening_proof_hints,
             &preprocessing.generators,
             &mut *transcript.borrow_mut(),
         );
@@ -422,7 +423,9 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
 
     // Prover utility to commit to all the polynomials for the PCS
     #[tracing::instrument(skip_all)]
-    fn generate_and_commit_polynomials(&mut self) -> Result<(), anyhow::Error> {
+    fn generate_and_commit_polynomials(
+        &mut self,
+    ) -> Result<HashMap<CommittedPolynomial, PCS::OpeningProofHint>, anyhow::Error> {
         let (preprocessing, trace, _program_io, _final_memory_state) =
             self.prover_state_manager.get_prover_data();
 
@@ -430,10 +433,15 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             .map(|poly| poly.generate_witness(preprocessing, trace))
             .collect();
 
-        let commitments: Vec<_> = committed_polys
-            .iter()
-            .map(|poly| PCS::commit(poly, &preprocessing.generators))
-            .collect();
+        let (commitments, hints): (Vec<PCS::Commitment>, Vec<PCS::OpeningProofHint>) =
+            committed_polys
+                .iter()
+                .map(|poly| PCS::commit(poly, &preprocessing.generators))
+                .unzip();
+        let mut hint_map = HashMap::with_capacity(committed_polys.len());
+        for (poly, hint) in AllCommittedPolynomials::iter().zip(hints) {
+            hint_map.insert(*poly, hint);
+        }
 
         let jolt_commitments = JoltCommitments { commitments };
 
@@ -441,6 +449,6 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
 
         drop_in_background_thread(committed_polys);
 
-        Ok(())
+        Ok(hint_map)
     }
 }

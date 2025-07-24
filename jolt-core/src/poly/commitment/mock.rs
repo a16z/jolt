@@ -45,6 +45,7 @@ where
     type Commitment = MockCommitment<F>;
     type Proof = MockProof<F>;
     type BatchedProof = MockProof<F>;
+    type OpeningProofHint = ();
 
     fn setup_prover(_max_len: usize) -> Self::ProverSetup {}
 
@@ -57,8 +58,8 @@ where
     fn commit(
         _poly: &MultilinearPolynomial<Self::Field>,
         _setup: &Self::ProverSetup,
-    ) -> Self::Commitment {
-        MockCommitment::default()
+    ) -> (Self::Commitment, Self::OpeningProofHint) {
+        (MockCommitment::default(), ())
     }
     fn batch_commit<P>(polys: &[P], gens: &Self::ProverSetup) -> Vec<Self::Commitment>
     where
@@ -66,7 +67,7 @@ where
     {
         polys
             .iter()
-            .map(|poly| Self::commit(poly.borrow(), gens))
+            .map(|poly| Self::commit(poly.borrow(), gens).0)
             .collect()
     }
 
@@ -81,6 +82,7 @@ where
         _setup: &Self::ProverSetup,
         _poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[Self::Field],
+        _: Self::OpeningProofHint,
         _transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         MockProof {
