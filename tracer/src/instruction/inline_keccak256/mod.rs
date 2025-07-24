@@ -10,6 +10,7 @@ use crate::instruction::addi::ADDI;
 ///   - “Rate”  = 1088 bits (136 B) that interact with the message/output.
 ///   - “Capacity” = 512 bits hidden from the attacker (1600 − 1088).
 ///   - “Permutation” = Keccak-f[1600] : 24 rounds, each θ→ρ→π→χ→ι.
+///
 /// Keccak256 refers to the specific variant where the rate is 1088 bits and the capacity is 512 bits.
 /// Keccak256 differs from SHA3-256 (not implemented here) in the padding scheme.
 use crate::instruction::and::AND;
@@ -24,8 +25,6 @@ use crate::instruction::lui::LUI;
 use crate::instruction::or::OR;
 use crate::instruction::sd::SD;
 use crate::instruction::slli::SLLI;
-use crate::instruction::srli::SRLI;
-use crate::instruction::virtual_muli::VirtualMULI;
 use crate::instruction::virtual_rotri::VirtualROTRI;
 use crate::instruction::xor::XOR;
 use crate::instruction::xori::XORI;
@@ -176,13 +175,7 @@ impl Keccak256SequenceBuilder {
         self.sequence
     }
 
-    /// Build only the load_state portion of the sequence for testing
-    fn build_load_state_only(mut self) -> Vec<RV32IMInstruction> {
-        self.load_state();
-        self.enumerate_sequence();
-        self.sequence
-    }
-
+    #[cfg(test)]
     /// Build sequence up to a specific round and step for testing
     fn build_up_to_step(mut self, target_round: u32, target_step: &str) -> Vec<RV32IMInstruction> {
         // Always start by loading state
@@ -504,24 +497,14 @@ impl Keccak256SequenceBuilder {
 
         match rs1 {
             Reg(rs1_reg) => {
-                let ones = (1u64 << (amount as u64)) - 1;
-                let imm = ones << (64u64 - amount as u64);
-                let rotri = VirtualROTRI {
-                    address: self.address,
-                    operands: FormatVirtualRightShiftI {
-                        rd,
-                        rs1: rs1_reg,
-                        imm,
-                    },
-                    virtual_sequence_remaining: Some(0),
-                };
-                self.sequence.push(rotri.into());
-                Reg(rd)
+                // rotl(n) == rotr(64 - n). The VirtualROTRI instruction encodes the rotation
+                // via a bitmask whose trailing zeros indicate the shift amount. Construct that
+                // bitmask and delegate to the existing `rotri` helper to avoid duplicated logic.
+                let ones = (1u64 << amount as u64) - 1;
+                let imm = ones << (64 - amount as u64);
+                self.rotri(Reg(rs1_reg), imm, rd)
             }
-            Imm(val) => {
-                // For immediate values, we can compute at compile time
-                Imm(val.rotate_left(amount))
-            }
+            Imm(val) => Imm(val.rotate_left(amount)),
         }
     }
 
@@ -636,21 +619,6 @@ impl Keccak256SequenceBuilder {
         }
     }
 
-    fn srli(&mut self, rs1: Value, imm: u64, rd: usize) -> Value {
-        match rs1 {
-            Reg(rs1) => {
-                let srli = SRLI {
-                    address: self.address,
-                    operands: FormatI { rd, rs1, imm },
-                    virtual_sequence_remaining: Some(0),
-                };
-                self.sequence.push(srli.into());
-                Reg(rd)
-            }
-            Imm(val) => Imm(val >> imm),
-        }
-    }
-
     fn or(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
         match (rs1, rs2) {
             (Reg(rs1), Reg(rs2)) => {
@@ -714,11 +682,8 @@ impl Keccak256SequenceBuilder {
     }
 }
 
-/// ------------------------------------------------------------------------------------------------
-/// Rust implementation of Keccak-256 on the host.
-/// ------------------------------------------------------------------------------------------------
-
 // Host-side Keccak-256 implementation for reference and testing.
+#[allow(dead_code)]
 pub fn execute_keccak256(msg: &[u8]) -> [u8; 32] {
     // Keccak-256 parameters.
     const RATE_IN_BYTES: usize = 136; // 1088-bit rate
@@ -836,6 +801,7 @@ fn execute_iota(state: &mut [u64; 25], round_constant: u64) {
 mod tests {
     use super::*;
     use crate::instruction::inline_keccak256::test_constants::xkcp_vectors;
+    use crate::instruction::inline_keccak256::test_constants::TestVectors;
     use hex_literal::hex;
 
     #[test]
@@ -980,5 +946,27 @@ mod tests {
             "Round {}: Failed after iota",
             round
         );
+    }
+
+    // Test builder.rotl64 against known rotation vectors
+    #[test]
+    fn test_rotl64() {
+        // Set up a minimal builder; VR contents are irrelevant for Imm path
+        let mut builder = Keccak256SequenceBuilder::new(0x0, [0; NEEDED_REGISTERS], 0, 0);
+        let dest_reg = 0; // dummy register index
+        for (value, amount, expected) in TestVectors::get_rotation_test_vectors() {
+            if amount as u32 >= 64 {
+                // Our rotl64 expects amount < 64; vectors use 32,36 which are fine
+            }
+            let result_val = match builder.rotl64(Value::Imm(value), amount, dest_reg) {
+                Value::Imm(v) => v,
+                _ => panic!("rotl64 with Imm should return Imm"),
+            };
+            assert_eq!(
+                result_val, expected,
+                "rotl64(0x{:016x}, {}) produced 0x{:016x}, expected 0x{:016x}",
+                value, amount, result_val, expected
+            );
+        }
     }
 }

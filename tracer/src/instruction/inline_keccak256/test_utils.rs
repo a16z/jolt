@@ -192,25 +192,6 @@ pub fn execute_reference_up_to_step(
 pub mod kverify {
     use super::*;
 
-    /// Compare two states and print differences.
-    pub fn compare_states(
-        expected: &Keccak256State,
-        actual: &Keccak256State,
-        description: &str,
-    ) -> bool {
-        let mut all_match = true;
-        for i in 0..25 {
-            if expected[i] != actual[i] {
-                println!(
-                    "{} mismatch at lane {}: expected {:#018x}, got {:#018x}",
-                    description, i, expected[i], actual[i]
-                );
-                all_match = false;
-            }
-        }
-        all_match
-    }
-
     /// Assert two Keccak states are identical.
     pub fn assert_states_equal(
         expected: &Keccak256State,

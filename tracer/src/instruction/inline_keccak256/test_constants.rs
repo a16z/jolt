@@ -233,33 +233,3 @@ pub mod xkcp_vectors {
         iota: EXPECTED_AFTER_ROUND1_IOTA,
     };
 }
-
-pub mod custom_vectors {
-    pub const ROTATION_TEST: [u64; 25] = [
-        0x0000000000000001u64, // This should rotate to 0x0000000000000002 after ROTL(1)
-        0x8000000000000000u64, // This should rotate to 0x0000000000000001 after ROTL(1)
-        0xFFFFFFFFFFFFFFFFu64, // This should stay 0xFFFFFFFFFFFFFFFF after ROTL(1)
-        0x123456789ABCDEF0u64, // This should rotate to 0x2468ACF13579BDE0 after ROTL(1)
-        0x0F0F0F0F0F0F0F0Fu64, // Pattern to check
-        0x00FF00FF00FF00FFu64,
-        0x0000FFFF0000FFFFu64,
-        0x00000000FFFFFFFFu64,
-        0xAAAAAAAAAAAAAAAAu64,
-        0x5555555555555555u64,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-    ];
-}

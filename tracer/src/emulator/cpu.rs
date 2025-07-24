@@ -105,7 +105,7 @@ pub struct Cpu {
     active_markers: FnvHashMap<u32, ActiveMarker>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum Xlen {
     Bit32,
     Bit64, // @TODO: Support Bit128
