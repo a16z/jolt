@@ -318,12 +318,12 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let raf_evaluation = RafEvaluationSumcheck::new_prover(self.K, self.T, state_manager);
 
-        // let read_write_checking = RamReadWriteChecking::new_prover(
-        //     self.K,
-        //     self.T,
-        //     self.initial_memory_state.as_ref().unwrap(),
-        //     state_manager,
-        // );
+        let read_write_checking = RamReadWriteChecking::new_prover(
+            self.K,
+            self.T,
+            self.initial_memory_state.as_ref().unwrap(),
+            state_manager,
+        );
 
         let output_check = OutputSumcheck::new_prover(
             self.initial_memory_state.as_ref().unwrap().clone(),
@@ -333,7 +333,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 
         vec![
             Box::new(raf_evaluation),
-            // Box::new(read_write_checking),
+            Box::new(read_write_checking),
             Box::new(output_check),
         ]
     }
@@ -343,12 +343,12 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let raf_evaluation = RafEvaluationSumcheck::new_verifier(self.K, state_manager);
-        // let read_write_checking = RamReadWriteChecking::new_verifier(self.K, state_manager);
+        let read_write_checking = RamReadWriteChecking::new_verifier(self.K, state_manager);
         let output_check = OutputSumcheck::new_verifier(self.K, state_manager);
 
         vec![
             Box::new(raf_evaluation),
-            // Box::new(read_write_checking),
+            Box::new(read_write_checking),
             Box::new(output_check),
         ]
     }
@@ -357,16 +357,16 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        // let val_evaluation = ValEvaluationSumcheck::new_prover(
-        //     self.K,
-        //     self.initial_memory_state.as_ref().unwrap(),
-        //     state_manager,
-        // );
+        let val_evaluation = ValEvaluationSumcheck::new_prover(
+            self.K,
+            self.initial_memory_state.as_ref().unwrap(),
+            state_manager,
+        );
         let val_final_evaluation = ValFinalSumcheck::new_prover(state_manager);
         let hamming_booleanity = HammingBooleanitySumcheck::new_prover(state_manager);
 
         vec![
-            // Box::new(val_evaluation),
+            Box::new(val_evaluation),
             Box::new(val_final_evaluation),
             Box::new(hamming_booleanity),
         ]
@@ -376,11 +376,11 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        // let val_evaluation = ValEvaluationSumcheck::new_verifier(
-        //     self.K,
-        //     self.initial_memory_state.as_ref().unwrap(),
-        //     state_manager,
-        // );
+        let val_evaluation = ValEvaluationSumcheck::new_verifier(
+            self.K,
+            self.initial_memory_state.as_ref().unwrap(),
+            state_manager,
+        );
         let val_final_evaluation = ValFinalSumcheck::new_verifier(
             self.initial_memory_state.as_ref().unwrap(),
             state_manager,
@@ -388,7 +388,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         let hamming_booleanity = HammingBooleanitySumcheck::new_verifier(state_manager);
 
         vec![
-            // Box::new(val_evaluation),
+            Box::new(val_evaluation),
             Box::new(val_final_evaluation),
             Box::new(hamming_booleanity),
         ]
@@ -400,12 +400,12 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let hamming_weight = HammingWeightSumcheck::new_prover(self.K, state_manager);
         let booleanity = BooleanitySumcheck::new_prover(self.K, state_manager);
-        // let ra_virtual = RASumcheck::new_prover(self.K, state_manager);
+        let ra_virtual = RASumcheck::new_prover(self.K, state_manager);
 
         vec![
             Box::new(hamming_weight),
             Box::new(booleanity),
-            // Box::new(ra_virtual),
+            Box::new(ra_virtual),
         ]
     }
 
@@ -415,12 +415,12 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let hamming_weight = HammingWeightSumcheck::new_verifier(self.K, state_manager);
         let booleanity = BooleanitySumcheck::new_verifier(self.K, state_manager);
-        // let ra_virtual = RASumcheck::new_verifier(self.K, state_manager);
+        let ra_virtual = RASumcheck::new_verifier(self.K, state_manager);
 
         vec![
             Box::new(hamming_weight),
             Box::new(booleanity),
-            // Box::new(ra_virtual),
+            Box::new(ra_virtual),
         ]
     }
 }

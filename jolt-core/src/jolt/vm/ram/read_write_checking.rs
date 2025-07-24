@@ -448,29 +448,31 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                         let j_prime = inc_chunk[0].0; // row index
 
                         for j in j_prime << round..(j_prime + 1) << round {
-                            let j_bound = j % (1 << round);
-                            let k = remap_address(
+                            if let Some(k) = remap_address(
                                 trace[j].ram_access().address() as u64,
                                 &self.memory_layout,
-                            )
-                            .unwrap_or(0) as usize;
-                            if ra[0][k].is_zero() {
-                                dirty_indices.push(k);
+                            ) {
+                                let k = k as usize;
+                                let j_bound = j % (1 << round);
+                                if ra[0][k].is_zero() {
+                                    dirty_indices.push(k);
+                                }
+                                ra[0][k] += A[j_bound];
                             }
-                            ra[0][k] += A[j_bound];
                         }
 
                         for j in (j_prime + 1) << round..(j_prime + 2) << round {
-                            let j_bound = j % (1 << round);
-                            let k = remap_address(
+                            if let Some(k) = remap_address(
                                 trace[j].ram_access().address() as u64,
                                 &self.memory_layout,
-                            )
-                            .unwrap_or(0) as usize;
-                            if ra[0][k].is_zero() && ra[1][k].is_zero() {
-                                dirty_indices.push(k);
+                            ) {
+                                let k = k as usize;
+                                let j_bound = j % (1 << round);
+                                if ra[0][k].is_zero() && ra[1][k].is_zero() {
+                                    dirty_indices.push(k);
+                                }
+                                ra[1][k] += A[j_bound];
                             }
-                            ra[1][k] += A[j_bound];
                         }
 
                         for &k in dirty_indices.iter() {
