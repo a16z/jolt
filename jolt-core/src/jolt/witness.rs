@@ -265,11 +265,11 @@ impl CommittedPolynomial {
                 if *i > d {
                     panic!("Invalid index for bytecode ra: {i}");
                 }
-                let addresses: Vec<usize> = trace
+                let addresses: Vec<_> = trace
                     .par_iter()
                     .map(|cycle| {
                         let pc = preprocessing.shared.bytecode.get_pc(cycle);
-                        (pc >> (log_K_chunk * (d - 1 - i))) % K_chunk
+                        Some((pc >> (log_K_chunk * (d - 1 - i))) % K_chunk)
                     })
                     .collect();
                 MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(addresses, K_chunk))
@@ -277,7 +277,7 @@ impl CommittedPolynomial {
             CommittedPolynomial::RamRa(i) => {
                 let d = self.ram_d();
                 debug_assert!(*i < d);
-                let addresses: Vec<Option<usize>> = trace
+                let addresses: Vec<_> = trace
                     .par_iter()
                     .map(|cycle| {
                         remap_address(
@@ -290,7 +290,7 @@ impl CommittedPolynomial {
                         })
                     })
                     .collect();
-                MultilinearPolynomial::OneHot(OneHotPolynomial::from_optional_indices(
+                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
                     addresses,
                     1 << NUM_RA_I_VARS,
                 ))
@@ -324,7 +324,7 @@ impl CommittedPolynomial {
                 if *i > instruction_lookups::D {
                     panic!("Unexpected i: {i}");
                 }
-                let addresses: Vec<usize> = trace
+                let addresses: Vec<_> = trace
                     .par_iter()
                     .map(|cycle| {
                         let lookup_index = LookupQuery::<32>::to_lookup_index(cycle);
@@ -332,7 +332,7 @@ impl CommittedPolynomial {
                             >> (instruction_lookups::LOG_K_CHUNK
                                 * (instruction_lookups::D - 1 - i)))
                             % instruction_lookups::K_CHUNK as u64;
-                        k as usize
+                        Some(k as usize)
                     })
                     .collect();
                 MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(

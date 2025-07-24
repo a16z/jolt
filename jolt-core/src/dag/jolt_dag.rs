@@ -214,10 +214,10 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             &mut *transcript.borrow_mut(),
         );
 
-        // self.prover_state_manager.proofs.borrow_mut().insert(
-        //     ProofKeys::ReducedOpeningProof,
-        //     ProofData::ReducedOpeningProof(opening_proof),
-        // );
+        self.prover_state_manager.proofs.borrow_mut().insert(
+            ProofKeys::ReducedOpeningProof,
+            ProofData::ReducedOpeningProof(opening_proof),
+        );
 
         Ok(())
     }
