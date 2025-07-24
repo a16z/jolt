@@ -7,6 +7,7 @@ use crate::instruction::format::format_virtual_right_shift_i::FormatVirtualRight
 use crate::instruction::lui::LUI;
 use crate::instruction::lw::LW;
 use crate::instruction::sw::SW;
+use crate::instruction::virtual_rot_xor::{VirtualROTXOR12, VirtualROTXOR16, VirtualROTXOR7, VirtualROTXOR8};
 use crate::instruction::virtual_rotril::VirtualROTRIL;
 use crate::instruction::xor::XOR;
 use crate::instruction::xori::XORI;
@@ -87,6 +88,13 @@ const VR_TEMP: usize = 44;
 pub enum BuilderMode {
     COMPRESSION, 
     HASH(u32),
+}
+
+pub enum RotationAmount {
+    ROT16, 
+    ROT12, 
+    ROT8, 
+    ROT7
 }
 
 pub struct Blake3SequenceBuilder {
@@ -325,30 +333,27 @@ impl Blake3SequenceBuilder {
         self.add32(Reg(temp1), Reg(mx), va);
 
         // // v[d] = rotr32(v[d] ^ v[a], 16)
-        self.xor32(Reg(vd), Reg(va), temp1);
-        self.rotr32(Reg(temp1), 16, vd);
+        self.xor_rotate(vd, va, RotationAmount::ROT16, vd);
+        
 
         // v[c] = v[c] + v[d]
         self.add32(Reg(vc), Reg(vd), vc);
 
         // v[b] = rotr32(v[b] ^ v[c], 12)
-        self.xor32(Reg(vb), Reg(vc), temp1);
-        self.rotr32(Reg(temp1), 12, vb);
+        self.xor_rotate(vb, vc, RotationAmount::ROT12, vb);
 
         // v[a] = v[a] + v[b] + m[y]
         self.add32(Reg(va), Reg(vb), temp1);
         self.add32(Reg(temp1), Reg(my), va);
 
         // v[d] = rotr32(v[d] ^ v[a], 8)
-        self.xor32(Reg(vd), Reg(va), temp1);
-        self.rotr32(Reg(temp1), 8, vd);
+        self.xor_rotate(vd, va, RotationAmount::ROT8, vd);
 
         // v[c] = v[c] + v[d]
         self.add32(Reg(vc), Reg(vd), vc);
 
         // v[b] = rotr32(v[b] ^ v[c], 7)
-        self.xor32(Reg(vb), Reg(vc), temp1);
-        self.rotr32(Reg(temp1), 7, vb);
+        self.xor_rotate(vb, vc, RotationAmount::ROT7, vb);
     }
 
     fn finalize_state(&mut self, is_truncated: bool) {
@@ -410,6 +415,47 @@ impl Blake3SequenceBuilder {
             }
             (Imm(_), Reg(_)) => self.add32(rs2, rs1, rd),
             (Imm(imm1), Imm(imm2)) => Imm((imm1).wrapping_add(imm2)),
+        }
+    }
+
+    fn xor_rotate(&mut self, rs1: usize, rs2: usize, amount: RotationAmount, rd: usize) -> Value {
+        match amount {
+            RotationAmount::ROT16 => {
+                let xor = VirtualROTXOR16 {
+                    address: self.address,
+                    operands: FormatR { rd, rs1, rs2 },
+                    virtual_sequence_remaining: Some(0),
+                };
+                self.sequence.push(xor.into());
+                Reg(rd)
+            }
+            RotationAmount::ROT12 => {
+                let xor = VirtualROTXOR12 {
+                    address: self.address,
+                    operands: FormatR { rd, rs1, rs2 },
+                    virtual_sequence_remaining: Some(0),
+                };
+                self.sequence.push(xor.into());
+                Reg(rd)
+            }
+            RotationAmount::ROT8 => {
+                let xor = VirtualROTXOR8 {
+                    address: self.address,
+                    operands: FormatR { rd, rs1, rs2 },
+                    virtual_sequence_remaining: Some(0),
+                };
+                self.sequence.push(xor.into());
+                Reg(rd)
+            }
+            RotationAmount::ROT7 => {
+                let xor = VirtualROTXOR7 {
+                    address: self.address,
+                    operands: FormatR { rd, rs1, rs2 },
+                    virtual_sequence_remaining: Some(0),
+                };
+                self.sequence.push(xor.into());
+                Reg(rd)
+            }
         }
     }
 
