@@ -299,12 +299,12 @@ impl Keccak256SequenceBuilder {
 
         // --- 2. Copy the temporary state B back to the main state A ---
         // We can do this with a no-op XOR with register zero, which acts as a move.
-        for i in 0..25 {
-            let b_reg = self.vr[25 + i];
-            let a_reg = self.vr[i];
-            // This is equivalent to: a_reg = b_reg
-            self.xor64(Reg(b_reg), Imm(0), a_reg);
-        }
+        // for i in 0..25 {
+        //     let b_reg = self.vr[25 + i];
+        //     let a_reg = self.vr[i];
+        //     // This is equivalent to: a_reg = b_reg
+        //     self.xor64(Reg(b_reg), Imm(0), a_reg);
+        // }
     }
 
     fn chi(&mut self) {
@@ -315,23 +315,23 @@ impl Keccak256SequenceBuilder {
         // we first copy the row into a temporary buffer (vr[60..64]).
         for y in 0..5 {
             // 1. Copy the current row from state A into the temporary row buffer.
-            for x in 0..5 {
-                // For each lane A[x,y] in the current row,
-                // copy its value from self.lane(x, y) to the temp row register self.vr[60 + x].
+            // for x in 0..5 {
+            //     // For each lane A[x,y] in the current row,
+            //     // copy its value from self.lane(x, y) to the temp row register self.vr[60 + x].
 
-                let a_reg = self.lane(x, y);
-                let temp_row_reg = self.vr[60 + x];
-                // A no-op XOR (xor with 0) is a good way to copy a register value.
-                self.xor64(Reg(a_reg), Imm(0), temp_row_reg);
-            }
+            //     let a_reg = self.lane(x, y);
+            //     let temp_row_reg = self.vr[60 + x];
+            //     // A no-op XOR (xor with 0) is a good way to copy a register value.
+            //     self.xor64(Reg(a_reg), Imm(0), temp_row_reg);
+            // }
 
             // 2. Calculate the new lane values using the temporary buffer.
             for x in 0..5 {
                 // Get the registers for the three input values from the temp buffer.
                 // A[x,y], A[x+1,y], A[x+2,y]
-                let current = self.vr[60 + x];
-                let next = self.vr[60 + (x + 1) % 5];
-                let two_next = self.vr[60 + (x + 2) % 5];
+                let current = 25 + self.lane(x, y);
+                let next = 25 + self.lane((x + 1) % 5, y);
+                let two_next = 25 + self.lane((x + 2) % 5, y);
 
                 // Define scratch registers for intermediate results.
                 let not_next = self.vr[65];
@@ -533,76 +533,21 @@ impl Keccak256SequenceBuilder {
             return self.xor(rs1, Imm(0), rd);
         }
 
-        // TODO: Once we have proper 64-bit rotation support, replace this workaround.
-        // For now, we use VirtualROTRI but adjust for its 32-bit limitation.
-
         match rs1 {
             Reg(rs1_reg) => {
-                // Since VirtualROTRI only does 32-bit rotation, we need to handle
-                // 64-bit values carefully. We'll split the operation into parts.
-
-                // For ROTL(x, n) = ROTR(x, 64 - n), but since VirtualROTRI only
-                // rotates the lower 32 bits, we need a different approach.
-
-                // Let's use a combination of operations that work correctly:
-                // 1. For small rotations (1-31), we can carefully combine operations
-                // 2. For larger rotations (32-63), we need special handling
-
-                if amount < 32 {
-                    // For rotations less than 32, we can use shifts and OR
-                    let scratch1 = self.vr[65];
-                    let scratch2 = self.vr[66];
-
-                    // Left shift by amount
-                    let multiplicand = 1u64 << amount;
-
-                    // Use MULI to effectively shift left
-                    let muli = VirtualMULI {
-                        address: self.address,
-                        operands: FormatI {
-                            rd: scratch1,
-                            rs1: rs1_reg,
-                            imm: multiplicand,
-                        },
-                        virtual_sequence_remaining: Some(0),
-                    };
-                    self.sequence.push(muli.into());
-
-                    // Right shift by (64 - amount)
-                    // Since SRLI might be limited to 32-bit, we need to be careful
-                    if (64 - amount) < 32 {
-                        self.srli(Reg(rs1_reg), (64 - amount) as u64, scratch2);
-                    } else {
-                        // For shifts >= 32, the result would be 0 for 32-bit operation
-                        // We need to handle the upper 32 bits specially
-                        // For now, use the shift anyway and hope it works in 64-bit mode
-                        self.srli(Reg(rs1_reg), (64 - amount) as u64, scratch2);
-                    }
-
-                    // OR the results
-                    self.or(Reg(scratch1), Reg(scratch2), rd);
-
-                    Reg(rd)
-                } else {
-                    // For rotations >= 32, we need different handling
-                    // ROTL by n where n >= 32 is equivalent to ROTL by (n - 32)
-                    // plus swapping the high and low 32-bit halves
-
-                    // For now, just do the basic shift+or and hope it works
-                    let scratch1 = self.vr[65];
-                    let scratch2 = self.vr[66];
-
-                    // Left shift
-                    self.slli(Reg(rs1_reg), amount as u64, scratch1);
-
-                    // Right shift
-                    self.srli(Reg(rs1_reg), (64 - amount) as u64, scratch2);
-
-                    // OR the results
-                    self.or(Reg(scratch1), Reg(scratch2), rd);
-
-                    Reg(rd)
-                }
+                let ones = (1u64 << (amount as u64)) - 1;
+                let imm = ones << (64u64 - amount as u64);
+                let rotri = VirtualROTRI {
+                    address: self.address,
+                    operands: FormatVirtualRightShiftI {
+                        rd,
+                        rs1: rs1_reg,
+                        imm,
+                    },
+                    virtual_sequence_remaining: Some(0),
+                };
+                self.sequence.push(rotri.into());
+                Reg(rd)
             }
             Imm(val) => {
                 // For immediate values, we can compute at compile time
