@@ -1217,6 +1217,11 @@ impl CommitmentScheme for DoryCommitmentScheme {
         DoryCommitment(JoltGTWrapper::from(combined_commitment))
     }
 
+    /// In Dory, the opening proof hint consists of the Pedersen commitments to the rows
+    /// of the polynomial coefficient matrix. In the context of a batch opening proof, we
+    /// can homomorphically combine the row commitments for multiple polynomials into the
+    /// row commitments for the RLC of those polynomials. This is more efficient than computing
+    /// the row commitments for the RLC from scratch.
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::combine_hints")]
     fn combine_hints(
         hints: Vec<Self::OpeningProofHint>,
@@ -1226,7 +1231,6 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
         let mut rlc_hint = vec![JoltGroupWrapper(G1Projective::zero()); num_rows];
         for (coeff, mut hint) in coeffs.iter().zip(hints.into_iter()) {
-            // TODO(moodlezoup): Avoid resize
             hint.resize(num_rows, JoltGroupWrapper(G1Projective::zero()));
 
             let row_commitments: &mut [G1Projective] = unsafe {

@@ -714,6 +714,8 @@ where
             gamma_powers.push(gamma_powers[i - 1] * gamma);
         }
 
+        // Combines the individual polynomials into the RLC that will be used for the
+        // batched opening proof.
         let joint_poly = {
             let mut rlc_map = HashMap::new();
             for (gamma, sumcheck) in gamma_powers.iter().zip(self.sumchecks.iter()) {
@@ -748,7 +750,8 @@ where
             crate::utils::thread::drop_in_background_thread(sumchecks);
         }
 
-        // Compute opening proof hint = ∑ᵢ γⁱ⋅ hintᵢ
+        // Compute the opening proof hint for the reduced opening by homomorphically combining
+        // the hints for the individual sumchecks.
         let hint = {
             let mut rlc_map = HashMap::new();
             for (gamma, sumcheck) in gamma_powers.iter().zip(self.sumchecks.iter()) {
@@ -1043,7 +1046,8 @@ where
             gamma_powers.push(gamma_powers[i - 1] * gamma);
         }
 
-        // Compute joint commitment = ∑ᵢ γⁱ⋅ commitmentᵢ
+        // Compute the commitment for the reduced opening proof by homomorphically combining
+        // the commitments of the individual polynomials.
         let joint_commitment = {
             let mut rlc_map = HashMap::new();
             for (gamma, sumcheck) in gamma_powers.iter().zip(self.sumchecks.iter()) {

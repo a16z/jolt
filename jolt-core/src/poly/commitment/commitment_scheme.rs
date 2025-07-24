@@ -24,6 +24,9 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         + Clone;
     type Proof: Sync + Send + CanonicalSerialize + CanonicalDeserialize + Clone + Debug;
     type BatchedProof: Sync + Send + CanonicalSerialize + CanonicalDeserialize;
+    /// A hint that helps the prover compute an opening proof. Typically some byproduct of
+    /// the commitment computation, e.g. for Dory the Pedersen commitments to the rows can be
+    /// used as a hint for the opening proof.
     type OpeningProofHint: Sync + Send + Clone + Debug;
 
     fn setup_prover(max_len: usize) -> Self::ProverSetup;
