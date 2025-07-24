@@ -15,6 +15,7 @@ impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for SUB<WORD_SIZE> {
     }
 }
 
+// TODO: Implement circuit flags for ONNX instructions
 impl<const WORD_SIZE: usize> InstructionFlags for SUB<WORD_SIZE> {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
