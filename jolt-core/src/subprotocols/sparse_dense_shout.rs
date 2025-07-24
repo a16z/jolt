@@ -929,7 +929,7 @@ mod tests {
     fn test_sparse_dense_shout(instruction: Option<RV32IMCycle>) {
         let mut rng = StdRng::seed_from_u64(12345);
 
-        let tensor_op: Vec<_> = (0..T)
+        let trace: Vec<_> = (0..T)
             .map(|_| random_instruction(&mut rng, &instruction))
             .collect();
 
@@ -937,11 +937,7 @@ mod tests {
         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(LOG_T);
 
         let (proof, rv_claim, ra_claims, add_mul_sub_claim, flag_claims, _) =
-            prove_sparse_dense_shout::<WORD_SIZE, _, _>(
-                &tensor_op,
-                &r_cycle,
-                &mut prover_transcript,
-            );
+            prove_sparse_dense_shout::<WORD_SIZE, _, _>(&trace, &r_cycle, &mut prover_transcript);
 
         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
         verifier_transcript.compare_to(prover_transcript);
