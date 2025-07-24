@@ -26,12 +26,10 @@ use jolt_core::{
         math::Math,
         thread::{drop_in_background_thread, unsafe_allocate_zero_vec, unsafe_zero_slice},
         transcript::{AppendToTranscript, Transcript},
-        uninterleave_bits,
     },
 };
-use onnx_tracer::trace_types::ONNXCycle;
-use rayon::{prelude::*, slice::Iter};
-use std::{fmt::Display, ops::Index};
+use rand::rngs::StdRng;
+use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
 
 #[allow(clippy::type_complexity)]
@@ -671,149 +669,79 @@ fn prover_msg_read_checking<const WORD_SIZE: usize, F: JoltField>(
     [eval_0, eval_2_right + eval_2_right - eval_2_left]
 }
 
-/// This is pseudo-trace for initial testing.
-/// Mimics tracer's [`ONNXCycle`], but used solely for testing lookup logic.
-/// Represents a single operation in a [`TensorOpCycle`]
-pub struct ElementWiseOpCycle<T> {
-    operation: T,
-    pub memory_state: ElementWiseMemoryState,
-}
-
-// Represents read from memory (RAM)
-pub struct ElementWiseMemoryState {
-    // Represents an element in a ts1
-    pub ts1: u64,
-    // Represents an element in a ts2
-    pub ts2: u64,
+pub trait TestInstructionTrait {
+    fn random(rng: &mut StdRng) -> Self;
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::jolt::instruction::{add::ADD, mul::MUL, sub::SUB};
+
     use super::*;
     use ark_bn254::Fr;
-    use jolt_core::{
-        jolt::instruction::NUM_CIRCUIT_FLAGS,
-        utils::{interleave_bits, transcript::KeccakTranscript},
-    };
-    use onnx_tracer::trace_types::ONNXOpcode;
-    use rand::{RngCore, SeedableRng, rngs::StdRng};
+    use jolt_core::utils::transcript::KeccakTranscript;
+    use rand::{SeedableRng, rngs::StdRng};
 
     const WORD_SIZE: usize = 8;
     const LOG_T: usize = 8;
     const T: usize = 1 << LOG_T;
 
-    //     fn random_instruction(rng: &mut StdRng, instruction: &Option<RV32IMCycle>) -> RV32IMCycle {
-    //         let instruction = instruction.unwrap_or_else(|| {
-    //             let index = rng.next_u64() as usize % RV32IMCycle::COUNT;
-    //             RV32IMCycle::iter()
-    //                 .enumerate()
-    //                 .filter(|(i, _)| *i == index)
-    //                 .map(|(_, x)| x)
-    //                 .next()
-    //                 .unwrap()
-    //         });
+    fn test_sparse_dense_shout<I>()
+    where
+        I: Sync
+            + InstructionLookup<WORD_SIZE>
+            + InstructionFlags
+            + LookupQuery<WORD_SIZE>
+            + TestInstructionTrait
+            + Default,
+    {
+        let mut rng = StdRng::seed_from_u64(12345);
 
-    //         match instruction {
-    //             RV32IMCycle::ADD(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::ADDI(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::AND(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::ANDI(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::AUIPC(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::BEQ(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::BGE(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::BGEU(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::BLT(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::BLTU(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::BNE(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::FENCE(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::JAL(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::JALR(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::LUI(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::LW(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::MUL(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::MULHU(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::OR(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::ORI(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::SLT(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::SLTI(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::SLTIU(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::SLTU(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::SUB(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::SW(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::XOR(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::XORI(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::VirtualAdvice(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::VirtualAssertEQ(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::VirtualAssertHalfwordAlignment(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::VirtualAssertLTE(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::VirtualAssertValidDiv0(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::VirtualAssertValidSignedRemainder(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::VirtualAssertValidUnsignedRemainder(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::VirtualMove(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::VirtualMovsign(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::VirtualMULI(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::VirtualPow2(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::VirtualPow2I(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::VirtualShiftRightBitmask(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::VirtualShiftRightBitmaskI(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::VirtualSRA(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::VirtualSRAI(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::VirtualSRL(cycle) => cycle.random(rng).into(),
-    //             RV32IMCycle::VirtualSRLI(cycle) => cycle.random(rng).into(),
-    //             _ => RV32IMCycle::NoOp(0),
-    //         }
-    //     }
+        let tensor: Vec<_> = (0..T)
+            .map(|_| <I as TestInstructionTrait>::random(&mut rng))
+            .collect();
 
-    fn test_sparse_dense_shout(instruction: Option<ONNXCycle>) {
-        // let mut rng = StdRng::seed_from_u64(12345);
+        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+        let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(LOG_T);
 
-        // let trace: Vec<_> = (0..T)
-        //     .map(|_| random_instruction(&mut rng, &instruction))
-        //     .collect();
+        let (proof, rv_claim, ra_claims, add_mul_sub_claim, flag_claims, _) =
+            prove_sparse_dense_shout::<WORD_SIZE, _, _, I>(
+                &tensor,
+                &r_cycle,
+                &mut prover_transcript,
+            );
 
-        // let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
-        // let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(LOG_T);
-
-        // let (proof, rv_claim, ra_claims, add_mul_sub_claim, flag_claims, _) =
-        //     prove_sparse_dense_shout::<WORD_SIZE, _, _>(&trace, &r_cycle, &mut prover_transcript);
-
-        // let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
-        // verifier_transcript.compare_to(prover_transcript);
-        // let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(LOG_T);
-        // let verification_result = verify_sparse_dense_shout::<WORD_SIZE, _, _>(
-        //     &proof,
-        //     LOG_T,
-        //     r_cycle,
-        //     rv_claim,
-        //     ra_claims,
-        //     add_mul_sub_claim,
-        //     &flag_claims,
-        //     &mut verifier_transcript,
-        // );
-        // assert!(
-        //     verification_result.is_ok(),
-        //     "Verification failed with error: {:?}",
-        //     verification_result.err()
-        // );
+        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+        let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(LOG_T);
+        let verification_result = verify_sparse_dense_shout::<WORD_SIZE, _, _>(
+            &proof,
+            LOG_T,
+            r_cycle,
+            rv_claim,
+            ra_claims,
+            add_mul_sub_claim,
+            &flag_claims,
+            &mut verifier_transcript,
+        );
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
     }
 
-    //     #[test]
-    //     fn test_random_instructions() {
-    //         test_sparse_dense_shout(None);
-    //     }
+    #[test]
+    fn test_add() {
+        test_sparse_dense_shout::<ADD<WORD_SIZE>>();
+    }
 
-    //     #[test]
-    //     fn test_add() {
-    //         test_sparse_dense_shout(Some(RV32IMCycle::ADD(Default::default())));
-    //     }
+    #[test]
+    fn test_sub() {
+        test_sparse_dense_shout::<SUB<WORD_SIZE>>();
+    }
 
-    //     #[test]
-    //     fn test_sub() {
-    //         test_sparse_dense_shout(Some(RV32IMCycle::SUB(Default::default())));
-    //     }
-
-    //     #[test]
-    //     fn test_mul() {
-    //         test_sparse_dense_shout(Some(RV32IMCycle::MUL(Default::default())));
-    //     }
+    #[test]
+    fn test_mul() {
+        test_sparse_dense_shout::<MUL<WORD_SIZE>>();
+    }
 }
