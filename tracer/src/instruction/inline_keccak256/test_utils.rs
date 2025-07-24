@@ -7,7 +7,7 @@
 #[cfg(test)]
 use super::*;
 use crate::emulator::mmu::DRAM_BASE;
-use crate::emulator::test_harness::{execute_instruction, CpuTestHarness, InstructionTestCase};
+use crate::emulator::test_harness::{CpuTestHarness, InstructionTestCase};
 use crate::instruction::format::format_r::FormatR;
 use crate::instruction::inline_keccak256::keccak256::KECCAK256;
 use crate::instruction::inline_keccak256::test_constants::{self, TestVectors};
@@ -60,11 +60,11 @@ impl KeccakCpuHarness {
         out
     }
 
-    /// Read the the Keccak virtual registers.
+    /// Read the Keccak virtual registers used to store the state.
     pub fn read_vr(&self) -> Keccak256State {
-        let mut out = [0u64; NEEDED_REGISTERS];
-        self.harness.read_registers(&self.vr, &mut out);
-        out[..25].try_into().unwrap()
+        let mut out = [0u64; 25];
+        self.harness.read_registers(&self.vr[..25], &mut out);
+        out
     }
 
     /// Construct a canonical KECCAK256 instruction.

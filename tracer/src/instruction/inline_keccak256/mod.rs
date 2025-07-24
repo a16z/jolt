@@ -26,7 +26,6 @@ use crate::instruction::sd::SD;
 use crate::instruction::slli::SLLI;
 use crate::instruction::srli::SRLI;
 use crate::instruction::virtual_muli::VirtualMULI;
-use crate::instruction::virtual_rotli::VirtualROTLI;
 use crate::instruction::virtual_rotri::VirtualROTRI;
 use crate::instruction::xor::XOR;
 use crate::instruction::xori::XORI;
@@ -1040,40 +1039,6 @@ mod tests {
             assert_eq!(state[i], 0, "Iota should only affect first lane");
         }
     }
-
-    // #[test]
-    // fn test_step_by_step_round_0() {
-    //     // Test the first round step by step using XKCP intermediate values
-    //     let mut state = [0u64; 25]; // All zeros initially
-
-    //     // After theta (Round 0):
-    //     // All zeros remain zeros in theta step for all-zero input
-    //     execute_theta(&mut state);
-    //     let expected_after_theta = [0u64; 25];
-    //     assert_eq!(state, expected_after_theta, "Round 0: Failed after theta");
-
-    //     // After rho (Round 0):
-    //     // All zeros remain zeros in rho step
-    //     execute_rho_and_pi(&mut state);
-    //     let expected_after_rho_pi = [0u64; 25];
-    //     assert_eq!(
-    //         state, expected_after_rho_pi,
-    //         "Round 0: Failed after rho and pi"
-    //     );
-
-    //     // After chi (Round 0):
-    //     // All zeros remain zeros in chi step
-    //     execute_chi(&mut state);
-    //     let expected_after_chi = [0u64; 25];
-    //     assert_eq!(state, expected_after_chi, "Round 0: Failed after chi");
-
-    //     // After iota (Round 0):
-    //     // Only the first lane gets the round constant
-    //     execute_iota(&mut state, ROUND_CONSTANTS[0]);
-    //     let mut expected_after_iota = [0u64; 25];
-    //     expected_after_iota[0] = 0x0000000000000001;
-    //     assert_eq!(state, expected_after_iota, "Round 0: Failed after iota");
-    // }
 
     #[test]
     fn test_step_by_step_round_1() {

@@ -93,7 +93,7 @@ impl<I, E> InstructionTestCase<I, E> {
     }
 }
 
-/// Generic instruction executor that handles all instruction types used in custom instructions.
+/// Generic instruction executor that handles instruction types used in custom instructions.
 pub fn execute_instruction(cpu: &mut Cpu, instr: &RV32IMInstruction) {
     match instr {
         RV32IMInstruction::LD(ld) => {
