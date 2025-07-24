@@ -276,9 +276,8 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
             .gamma
             .iter()
             .zip(ra_claims)
-            .fold(F::zero(), |acc, (gamma, ra)| {
-                (ra.square() - ra) * gamma + acc
-            })
+            .map(|(gamma, ra)| (ra.square() - ra) * gamma)
+            .sum::<F>()
     }
 
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {

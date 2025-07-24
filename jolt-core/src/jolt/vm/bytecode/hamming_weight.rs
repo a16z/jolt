@@ -93,8 +93,8 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
 
         vec![prover_state
             .ra
-            .iter()
-            .zip(self.gamma.iter())
+            .par_iter()
+            .zip(self.gamma.par_iter())
             .map(|(ra, gamma)| {
                 (0..ra.len() / 2)
                     .into_par_iter()
