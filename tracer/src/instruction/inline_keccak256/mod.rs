@@ -38,8 +38,6 @@ pub mod keccak256;
 pub mod test_constants;
 #[cfg(test)]
 mod test_utils;
-#[cfg(test)]
-mod tests_debug;
 
 /// The 24 round constants for the Keccak-f[1600] permutation.
 /// These values are XORed into the state during the `iota` step of each round.
@@ -1041,5 +1039,67 @@ mod tests {
         for i in 1..25 {
             assert_eq!(state[i], 0, "Iota should only affect first lane");
         }
+    }
+
+    // #[test]
+    // fn test_step_by_step_round_0() {
+    //     // Test the first round step by step using XKCP intermediate values
+    //     let mut state = [0u64; 25]; // All zeros initially
+
+    //     // After theta (Round 0):
+    //     // All zeros remain zeros in theta step for all-zero input
+    //     execute_theta(&mut state);
+    //     let expected_after_theta = [0u64; 25];
+    //     assert_eq!(state, expected_after_theta, "Round 0: Failed after theta");
+
+    //     // After rho (Round 0):
+    //     // All zeros remain zeros in rho step
+    //     execute_rho_and_pi(&mut state);
+    //     let expected_after_rho_pi = [0u64; 25];
+    //     assert_eq!(
+    //         state, expected_after_rho_pi,
+    //         "Round 0: Failed after rho and pi"
+    //     );
+
+    //     // After chi (Round 0):
+    //     // All zeros remain zeros in chi step
+    //     execute_chi(&mut state);
+    //     let expected_after_chi = [0u64; 25];
+    //     assert_eq!(state, expected_after_chi, "Round 0: Failed after chi");
+
+    //     // After iota (Round 0):
+    //     // Only the first lane gets the round constant
+    //     execute_iota(&mut state, ROUND_CONSTANTS[0]);
+    //     let mut expected_after_iota = [0u64; 25];
+    //     expected_after_iota[0] = 0x0000000000000001;
+    //     assert_eq!(state, expected_after_iota, "Round 0: Failed after iota");
+    // }
+
+    #[test]
+    fn test_step_by_step_round_1() {
+        // Start with the state after round 0
+        let mut state = [0u64; 25];
+        state[0] = 0x0000000000000001; // Result from round 0
+        let round = 1;
+        let expected_states = &xkcp_vectors::EXPECTED_AFTER_ROUND1;
+
+        let steps: &[(&str, fn(&mut [u64; 25]), [u64; 25])] = &[
+            ("theta", execute_theta, expected_states.theta),
+            ("rho and pi", execute_rho_and_pi, expected_states.rho_pi),
+            ("chi", execute_chi, expected_states.chi),
+        ];
+
+        for &(name, step_fn, expected) in steps {
+            step_fn(&mut state);
+            assert_eq!(state, expected, "Round {}: Failed after {}", round, name);
+        }
+
+        // Handle iota separately as it has a different signature
+        execute_iota(&mut state, ROUND_CONSTANTS[round]);
+        assert_eq!(
+            state, expected_states.iota,
+            "Round {}: Failed after iota",
+            round
+        );
     }
 }

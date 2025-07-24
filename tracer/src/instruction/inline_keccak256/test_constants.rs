@@ -2,9 +2,11 @@
 /// Common test vectors used across multiple tests
 pub struct TestVectors;
 
+pub type Keccak256State = [u64; 25];
+
 impl TestVectors {
     /// Get standard test vectors for state testing
-    pub fn get_standard_test_vectors() -> Vec<(&'static str, [u64; 25])> {
+    pub fn get_standard_test_vectors() -> Vec<(&'static str, Keccak256State)> {
         vec![
             ("zero state", [0u64; 25]),
             ("simple pattern", Self::create_simple_pattern()),
@@ -16,7 +18,7 @@ impl TestVectors {
     }
 
     /// Create a simple arithmetic pattern for testing
-    pub fn create_simple_pattern() -> [u64; 25] {
+    pub fn create_simple_pattern() -> Keccak256State {
         let mut state = [0u64; 25];
         for i in 0..25 {
             state[i] = (i * 3 + 5) as u64;
@@ -42,9 +44,19 @@ pub mod xkcp_vectors {
     //! These constants are extracted from XKCP test vectors and other reference implementations
     //! to avoid duplication and accidental modification during test refactoring.
 
+    use super::Keccak256State;
+
+    #[derive(Debug, PartialEq)]
+    pub struct ExpectedKeccakRoundState {
+        pub theta: Keccak256State,
+        pub rho_pi: Keccak256State,
+        pub chi: Keccak256State,
+        pub iota: Keccak256State,
+    }
+
     /// XKCP test vector: Result after one Keccak-f[1600] permutation on all-zero input
     /// Source: https://github.com/XKCP/XKCP/blob/master/tests/TestVectors/KeccakF-1600-IntermediateValues.txt
-    pub const AFTER_ONE_PERMUTATION: [u64; 25] = [
+    pub const AFTER_ONE_PERMUTATION: Keccak256State = [
         0xF1258F7940E1DDE7,
         0x84D5CCF933C0478A,
         0xD598261EA65AA9EE,
@@ -73,7 +85,7 @@ pub mod xkcp_vectors {
     ];
 
     /// XKCP test vector: Result after two Keccak-f[1600] permutations on all-zero input
-    pub const AFTER_TWO_PERMUTATIONS: [u64; 25] = [
+    pub const AFTER_TWO_PERMUTATIONS: Keccak256State = [
         0x2D5C954DF96ECB3C,
         0x6A332CD07057B56D,
         0x093D8D1270D76B6C,
@@ -101,7 +113,7 @@ pub mod xkcp_vectors {
         0x20D06CD26A8FBF5C,
     ];
 
-    pub const EXPECTED_AFTER_ROUND1_THETA: [u64; 25] = [
+    pub const EXPECTED_AFTER_ROUND1_THETA: Keccak256State = [
         0x0000000000000001,
         0x0000000000000001,
         0x0000000000000000,
@@ -129,7 +141,7 @@ pub mod xkcp_vectors {
         0x0000000000000002,
     ];
 
-    pub const EXPECTED_AFTER_ROUND1_CHI: [u64; 25] = [
+    pub const EXPECTED_AFTER_ROUND1_CHI: Keccak256State = [
         0x0000000000000001u64, // After chi, before iota
         0x0000100000000000u64,
         0x0000000000008000u64,
@@ -158,7 +170,7 @@ pub mod xkcp_vectors {
     ];
 
     /// Expected state after Round 1 rho and pi steps
-    pub const EXPECTED_AFTER_ROUND1_RHO_PI: [u64; 25] = [
+    pub const EXPECTED_AFTER_ROUND1_RHO_PI: Keccak256State = [
         0x0000000000000001u64,
         0x0000100000000000u64,
         0x0000000000000000u64,
@@ -186,7 +198,7 @@ pub mod xkcp_vectors {
         0x0000000000000004u64,
     ];
 
-    pub const EXPECTED_AFTER_ROUND1_IOTA: [u64; 25] = [
+    pub const EXPECTED_AFTER_ROUND1_IOTA: Keccak256State = [
         0x0000000000008083u64,
         0x0000100000000000u64,
         0x0000000000008000u64,
@@ -213,10 +225,17 @@ pub mod xkcp_vectors {
         0x0000000000000000u64,
         0x0000000000000004u64,
     ];
+
+    pub const EXPECTED_AFTER_ROUND1: ExpectedKeccakRoundState = ExpectedKeccakRoundState {
+        theta: EXPECTED_AFTER_ROUND1_THETA,
+        rho_pi: EXPECTED_AFTER_ROUND1_RHO_PI,
+        chi: EXPECTED_AFTER_ROUND1_CHI,
+        iota: EXPECTED_AFTER_ROUND1_IOTA,
+    };
 }
 
 pub mod custom_vectors {
-    pub const ROTATION_TEST: [u64; 24] = [
+    pub const ROTATION_TEST: [u64; 25] = [
         0x0000000000000001u64, // This should rotate to 0x0000000000000002 after ROTL(1)
         0x8000000000000000u64, // This should rotate to 0x0000000000000001 after ROTL(1)
         0xFFFFFFFFFFFFFFFFu64, // This should stay 0xFFFFFFFFFFFFFFFF after ROTL(1)
@@ -227,6 +246,7 @@ pub mod custom_vectors {
         0x00000000FFFFFFFFu64,
         0xAAAAAAAAAAAAAAAAu64,
         0x5555555555555555u64,
+        0,
         0,
         0,
         0,
