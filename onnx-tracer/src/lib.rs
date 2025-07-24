@@ -14,7 +14,7 @@ use crate::{
 };
 use clap::Args;
 use serde::{Deserialize, Serialize};
-use std::{fs::File, path::PathBuf};
+use std::{collections::BTreeMap, fs::File, path::PathBuf};
 
 /// Methods for configuring tensor operations and assigning values to them in a Halo2
 /// circuit.
@@ -39,12 +39,7 @@ pub type Scale = i32;
 /// # Returns
 /// A vector of [`ONNXInstr`] representing the program code.
 pub fn decode(model_path: &PathBuf) -> Vec<ONNXInstr> {
-    model(model_path)
-        .graph
-        .nodes
-        .iter()
-        .flat_map(decode_nodes)
-        .collect()
+    decode_nodes(0, &model(model_path).graph.nodes)
 }
 
 /// Provides a simple API to obtain the execution trace for an ONNX model.
@@ -83,14 +78,22 @@ fn model(model_path: &PathBuf) -> Model {
 ///
 /// # NOTE:
 /// Adds 1 to pc to account for prepended no-op
-pub fn decode_nodes((pc, node): (&usize, &NodeType)) -> Vec<ONNXInstr> {
-    match node {
-        NodeType::Node(node) => vec![node.decode(*pc + BYTECODE_PREPEND_NOOP)],
-        NodeType::SubGraph { model, .. } => {
-            model.graph.nodes.iter().flat_map(decode_nodes).collect()
+pub fn decode_nodes(offset: usize, nodes: &BTreeMap<usize, NodeType>) -> Vec<ONNXInstr> {
+    let mut new_offset = offset;
+
+    nodes.iter().flat_map(|(pc, node)| {
+        match node {
+            NodeType::Node(node) => {
+                new_offset += 1;
+                vec![node.decode(*pc + offset + BYTECODE_PREPEND_NOOP)]
+            }
+            NodeType::SubGraph { model, .. } => {
+                decode_nodes(new_offset, &model.graph.nodes)
+            }
         }
-    }
+    }).collect()
 }
+
 
 /// Parameters specific to a proving run
 #[derive(Debug, Args, Deserialize, Serialize, Clone, PartialEq, PartialOrd)]

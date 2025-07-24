@@ -199,9 +199,11 @@ impl Model {
             input.reshape(&input_shapes[i])?;
             results.insert(input_idx, vec![input]);
         }
+
+        let instr = decode_nodes(0, &self.graph.nodes);
+        self.tracer.capture_pre_state(instr);
+
         for (idx, n) in self.graph.nodes.iter() {
-            let instr = decode_nodes((idx, n));
-            self.tracer.capture_pre_state(instr);
             // Gathers the input tensors required for the current node's execution.
             //
             // # Intent

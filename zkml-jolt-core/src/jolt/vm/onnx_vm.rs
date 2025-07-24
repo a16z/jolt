@@ -44,13 +44,22 @@ mod e2e_tests {
     #[test]
     fn test_subgraph() {
         init_logger();
-        let subgraph = ONNXProgram {
+        let subgraph_program = ONNXProgram {
             model_path: "../onnx-tracer/models/subgraph/network.onnx".into(),
             inputs: Tensor::new(Some(&[1, 2, 3, 4]), &[1, 4]).unwrap(), // Example input
         };
-        let program_bytecode = subgraph.decode();
+        let program_bytecode = subgraph_program.decode();
+
         println!("Program decoded");
         println!("Program code: {program_bytecode:#?}",);
-        subgraph.trace();
+
+        // Test that the addresses of a subgraph are monotonically increasing
+        let mut i = 0;
+        for instr in program_bytecode {
+            assert!(instr.address > i);
+            i = instr.address;
+        }
+
+        subgraph_program.trace();
     }
 }
