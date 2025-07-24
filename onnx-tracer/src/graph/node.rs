@@ -726,6 +726,91 @@ impl SupportedOp {
             SupportedOp::RebaseScale(op) => op,
         }
     }
+
+    pub fn gen_node(&self, inputs: Vec<Outlet>, out_dims: Vec<usize>, idx: usize) -> Node {
+        match self {
+            SupportedOp::Input(op) => {
+                Node {
+                    opkind: self.clone(),
+                    out_scale: <Input as Op<Fp>>::out_scale(op, vec![]).unwrap(),
+                    inputs,
+                    out_dims,
+                    idx,
+                    num_uses: 1,
+                }
+            },
+            SupportedOp::Linear(op) => {
+                Node {
+                    opkind: self.clone(),
+                    out_scale: op.out_scale(vec![1, 1]).unwrap(),
+                    inputs,
+                    out_dims,
+                    idx,
+                    num_uses: 1,
+                }
+            },
+            SupportedOp::Constant(op) => {
+                Node {
+                    opkind: self.clone(),
+                    out_scale: op.out_scale(vec![1]).unwrap(),
+                    inputs,
+                    out_dims,
+                    idx,
+                    num_uses: 1,
+                }
+            },
+            SupportedOp::Nonlinear(op) => {
+                Node {
+                    opkind: self.clone(),
+                    out_scale: <LookupOp as Op<Fp>>::out_scale(op, vec![1]).unwrap(),
+                    inputs,
+                    out_dims,
+                    idx,
+                    num_uses: 1,
+                }
+            },
+            SupportedOp::Hybrid(op) => {
+                Node {
+                    opkind: self.clone(),
+                    out_scale: <HybridOp as Op<Fp>>::out_scale(op, vec![1]).unwrap(),
+                    inputs,
+                    out_dims,
+                    idx,
+                    num_uses: 1,
+                }
+            },
+            SupportedOp::Unknown(_) => {
+                Node {
+                    opkind: self.clone(),
+                    out_scale: 0,
+                    inputs,
+                    out_dims,
+                    idx,
+                    num_uses: 1,
+                }
+            },
+            SupportedOp::Rescaled(op) => {
+                Node {
+                    opkind: self.clone(),
+                    out_scale: <Rescaled as Op<Fp>>::out_scale(op, vec![1]).unwrap(),
+                    inputs,
+                    out_dims,
+                    idx,
+                    num_uses: 1,
+                }
+            },
+            SupportedOp::RebaseScale(op) => {
+                Node {
+                    opkind: self.clone(),
+                    out_scale: <RebaseScale as Op<Fp>>::out_scale(op, vec![1]).unwrap(),
+                    inputs,
+                    out_dims,
+                    idx,
+                    num_uses: 1,
+                }
+            },
+        }
+    }
 }
 
 impl From<Box<dyn Op<Fp>>> for SupportedOp {
