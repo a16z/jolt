@@ -39,8 +39,9 @@ pub fn prove_sparse_dense_shout<
     const WORD_SIZE: usize,
     F: JoltField,
     ProofTranscript: Transcript,
+    I: Sync + InstructionLookup<WORD_SIZE> + InstructionFlags + LookupQuery<WORD_SIZE>,
 >(
-    tensor_op: &[ElementWiseOpCycle],
+    tensor_op: &[I],
     r_cycle: &[F],
     transcript: &mut ProofTranscript,
 ) -> (
@@ -98,7 +99,7 @@ pub fn prove_sparse_dense_shout<
     // TODO: these claims should be connected from spartan
     let (right_operand_evals, left_operand_evals): (Vec<u64>, Vec<u64>) = tensor_op
         .par_iter()
-        .map(ElementWiseOpCycle::to_lookup_operands)
+        .map(|i| i.to_lookup_operands())
         .collect();
     let right_operand_claim = MultilinearPolynomial::from(right_operand_evals).evaluate(r_cycle);
     let left_operand_claim = MultilinearPolynomial::from(left_operand_evals).evaluate(r_cycle);
@@ -674,16 +675,16 @@ fn prover_msg_read_checking<const WORD_SIZE: usize, F: JoltField>(
 /// Mimics tracer's [`ONNXCycle`], but used solely for testing lookup logic.
 /// Represents a single operation in a [`TensorOpCycle`]
 pub struct ElementWiseOpCycle<T> {
-    operation_code: T,
-    memory_state: ElementWiseMemoryState,
+    operation: T,
+    pub memory_state: ElementWiseMemoryState,
 }
 
 // Represents read from memory (RAM)
 pub struct ElementWiseMemoryState {
     // Represents an element in a ts1
-    ts1: u64,
+    pub ts1: u64,
     // Represents an element in a ts2
-    ts2: u64,
+    pub ts2: u64,
 }
 
 #[cfg(test)]
@@ -700,8 +701,6 @@ mod tests {
     const WORD_SIZE: usize = 8;
     const LOG_T: usize = 8;
     const T: usize = 1 << LOG_T;
-
-    // TODO: Connect to tests to actual trace
 
     //     fn random_instruction(rng: &mut StdRng, instruction: &Option<RV32IMCycle>) -> RV32IMCycle {
     //         let instruction = instruction.unwrap_or_else(|| {
