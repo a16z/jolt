@@ -70,8 +70,9 @@ impl<F: JoltField> OutputSumcheckProverState<F> {
         let io_start = remap_address(
             program_io.memory_layout.input_start,
             &program_io.memory_layout,
-        ) as usize;
-        let io_end = remap_address(RAM_START_ADDRESS, &program_io.memory_layout) as usize;
+        )
+        .unwrap() as usize;
+        let io_end = remap_address(RAM_START_ADDRESS, &program_io.memory_layout).unwrap() as usize;
 
         // Compute Val_io by copying the relevant slice of Val_final
         let mut val_io = vec![0; K];
@@ -295,8 +296,9 @@ impl<F: JoltField> SumcheckInstance<F> for OutputSumcheck<F> {
             remap_address(
                 program_io.memory_layout.input_start,
                 &program_io.memory_layout,
-            ),
-            remap_address(RAM_START_ADDRESS, &program_io.memory_layout),
+            )
+            .unwrap(),
+            remap_address(RAM_START_ADDRESS, &program_io.memory_layout).unwrap(),
         );
         let val_io = ProgramIOPolynomial::new(program_io);
 
@@ -376,13 +378,23 @@ impl<F: JoltField> ValFinalSumcheckProverState<F> {
                 remap_address(
                     cycle.ram_access().address() as u64,
                     &preprocessing.shared.memory_layout,
-                ) as usize
+                )
+                .map(|k| k as usize)
             })
             .collect();
 
         // wa(r_address, j)
         let eq_table = &output_sumcheck_prover_state.eq_table;
-        let wa_r_address: Vec<_> = write_addresses.par_iter().map(|k| eq_table[*k]).collect();
+        let wa_r_address: Vec<_> = write_addresses
+            .par_iter()
+            .map(|k| {
+                if let Some(k) = k {
+                    eq_table[*k]
+                } else {
+                    F::zero()
+                }
+            })
+            .collect();
         let inc = CommittedPolynomial::RamInc.generate_witness(preprocessing, trace);
 
         #[cfg(test)]
@@ -457,8 +469,11 @@ impl<F: JoltField> ValFinalSumcheck<F> {
         let wa: Vec<F> = trace
             .par_iter()
             .map(|cycle| {
-                let k = remap_address(cycle.ram_access().address() as u64, memory_layout) as usize;
-                eq_r_address[k]
+                if let Some(k) = remap_address(cycle.ram_access().address() as u64, memory_layout) {
+                    eq_r_address[k as usize]
+                } else {
+                    F::zero()
+                }
             })
             .collect();
         let wa = MultilinearPolynomial::from(wa);

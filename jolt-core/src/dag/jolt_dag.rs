@@ -46,15 +46,15 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         // Calculate K for DoryGlobals initialization
         let ram_K = trace
             .par_iter()
-            .map(|cycle| {
+            .filter_map(|cycle| {
                 crate::jolt::vm::ram::remap_address(
                     cycle.ram_access().address() as u64,
                     &preprocessing.shared.memory_layout,
-                ) as usize
+                )
             })
             .max()
             .unwrap()
-            .next_power_of_two();
+            .next_power_of_two() as usize;
         let bytecode_d = preprocessing.shared.bytecode.d;
 
         // HACK
@@ -214,10 +214,10 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             &mut *transcript.borrow_mut(),
         );
 
-        self.prover_state_manager.proofs.borrow_mut().insert(
-            ProofKeys::ReducedOpeningProof,
-            ProofData::ReducedOpeningProof(opening_proof),
-        );
+        // self.prover_state_manager.proofs.borrow_mut().insert(
+        //     ProofKeys::ReducedOpeningProof,
+        //     ProofData::ReducedOpeningProof(opening_proof),
+        // );
 
         Ok(())
     }

@@ -277,19 +277,20 @@ impl CommittedPolynomial {
             CommittedPolynomial::RamRa(i) => {
                 let d = self.ram_d();
                 debug_assert!(*i < d);
-                let addresses: Vec<usize> = trace
+                let addresses: Vec<Option<usize>> = trace
                     .par_iter()
                     .map(|cycle| {
-                        let address = remap_address(
+                        remap_address(
                             cycle.ram_access().address() as u64,
                             &preprocessing.shared.memory_layout,
-                        ) as usize;
-
-                        // Get i'th chunk of the address
-                        (address >> (NUM_RA_I_VARS * (d - 1 - i))) % (1 << NUM_RA_I_VARS)
+                        )
+                        .map(|address| {
+                            (address as usize >> (NUM_RA_I_VARS * (d - 1 - i)))
+                                % (1 << NUM_RA_I_VARS)
+                        })
                     })
                     .collect();
-                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
+                MultilinearPolynomial::OneHot(OneHotPolynomial::from_optional_indices(
                     addresses,
                     1 << NUM_RA_I_VARS,
                 ))

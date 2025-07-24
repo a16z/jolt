@@ -104,8 +104,11 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         let wa: Vec<F> = trace
             .par_iter()
             .map(|cycle| {
-                let k = remap_address(cycle.ram_access().address() as u64, memory_layout) as usize;
-                eq_r_address[k]
+                if let Some(k) = remap_address(cycle.ram_access().address() as u64, memory_layout) {
+                    eq_r_address[k as usize]
+                } else {
+                    F::zero()
+                }
             })
             .collect();
         let wa = MultilinearPolynomial::from(wa);

@@ -312,6 +312,18 @@ impl<F: JoltField> OneHotPolynomial<F> {
         }
     }
 
+    pub fn from_optional_indices(nonzero_indices: Vec<Option<usize>>, K: usize) -> Self {
+        let nonzero_indices: Vec<_> = nonzero_indices.into_iter().flatten().collect();
+
+        Self {
+            K,
+            nonzero_indices,
+            num_variables_bound: 0,
+            G: None,
+            H: None,
+        }
+    }
+
     #[tracing::instrument(skip_all, name = "OneHotPolynomial::commit_rows")]
     pub fn commit_rows<G: CurveGroup<ScalarField = F> + VariableBaseMSM>(
         &self,

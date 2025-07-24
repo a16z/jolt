@@ -99,15 +99,15 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
                     let mut local_array = unsafe_allocate_zero_vec(1 << NUM_RA_I_VARS);
                     let mut j = chunk_index * chunk_size;
                     for cycle in trace_chunk {
-                        let address =
+                        if let Some(address) =
                             remap_address(cycle.ram_access().address() as u64, memory_layout)
-                                as usize;
-
-                        // For each address, add eq_r_cycle[j] to each corresponding chunk
-                        // This maintains the property that sum of all ra values for an address equals 1
-                        let address_i =
-                            (address >> (NUM_RA_I_VARS * (d - 1 - i))) % (1 << NUM_RA_I_VARS);
-                        local_array[address_i] += eq_r_cycle[j];
+                        {
+                            // For each address, add eq_r_cycle[j] to each corresponding chunk
+                            // This maintains the property that sum of all ra values for an address equals 1
+                            let address_i =
+                                (address >> (NUM_RA_I_VARS * (d - 1 - i))) % (1 << NUM_RA_I_VARS);
+                            local_array[address_i as usize] += eq_r_cycle[j];
+                        }
                         j += 1;
                     }
                     local_array

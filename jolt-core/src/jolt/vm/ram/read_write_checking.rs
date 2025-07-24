@@ -97,8 +97,8 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
                 let mut delta = vec![0; K];
                 for cycle in trace_chunk.iter() {
                     let ram_op = cycle.ram_access();
-                    let k =
-                        remap_address(ram_op.address() as u64, &program_io.memory_layout) as usize;
+                    let k = remap_address(ram_op.address() as u64, &program_io.memory_layout)
+                        .unwrap_or(0) as usize;
                     let increment = match ram_op {
                         RAMAccess::Write(write) => {
                             write.post_value as i128 - write.pre_value as i128
@@ -237,7 +237,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
                     .map(|cycle| {
                         let ram_op = cycle.ram_access();
                         let k = remap_address(ram_op.address() as u64, &program_io.memory_layout)
-                            as usize;
+                            .unwrap_or(0) as usize;
                         let increment = match ram_op {
                             RAMAccess::Write(write) => {
                                 write.post_value as i128 - write.pre_value as i128
@@ -452,7 +452,8 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                             let k = remap_address(
                                 trace[j].ram_access().address() as u64,
                                 &self.memory_layout,
-                            ) as usize;
+                            )
+                            .unwrap_or(0) as usize;
                             if ra[0][k].is_zero() {
                                 dirty_indices.push(k);
                             }
@@ -464,7 +465,8 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                             let k = remap_address(
                                 trace[j].ram_access().address() as u64,
                                 &self.memory_layout,
-                            ) as usize;
+                            )
+                            .unwrap_or(0) as usize;
                             if ra[0][k].is_zero() && ra[1][k].is_zero() {
                                 dirty_indices.push(k);
                             }
@@ -762,9 +764,10 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                         .enumerate()
                     {
                         let ram_op = cycle.ram_access();
-                        let k =
-                            remap_address(ram_op.address() as u64, &self.memory_layout) as usize;
-                        ra_chunk[k] += A[j_bound];
+                        if let Some(k) = remap_address(ram_op.address() as u64, &self.memory_layout)
+                        {
+                            ra_chunk[k as usize] += A[j_bound];
+                        }
                     }
                 });
             *ra = Some(MultilinearPolynomial::from(ra_evals));

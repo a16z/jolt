@@ -84,9 +84,11 @@ impl<F: JoltField> RafEvaluationSumcheck<F> {
                 let mut result = unsafe_allocate_zero_vec(K);
                 let mut j = chunk_index * chunk_size;
                 for cycle in trace_chunk {
-                    let k =
-                        remap_address(cycle.ram_access().address() as u64, memory_layout) as usize;
-                    result[k] += eq_r_cycle[j];
+                    if let Some(k) =
+                        remap_address(cycle.ram_access().address() as u64, memory_layout)
+                    {
+                        result[k as usize] += eq_r_cycle[j];
+                    }
                     j += 1;
                 }
                 result

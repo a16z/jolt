@@ -102,12 +102,14 @@ pub struct RAMTwistProof<F: JoltField, ProofTranscript: Transcript> {
     output_proof: OutputProof<F, ProofTranscript>,
 }
 
-pub fn remap_address(address: u64, memory_layout: &MemoryLayout) -> u64 {
+/// Returns Some(address) if there was read/write
+/// Returns None if there was no read/write
+pub fn remap_address(address: u64, memory_layout: &MemoryLayout) -> Option<u64> {
     if address == 0 {
-        return 0; // [JOLT-135]: Better handling for no-ops
+        return None;
     }
     if address >= memory_layout.input_start {
-        (address - memory_layout.input_start) / 4 + 1
+        Some((address - memory_layout.input_start) / 4 + 1)
     } else {
         panic!("Unexpected address {address}")
     }
@@ -133,15 +135,15 @@ impl RamDag {
 
         let K = trace
             .par_iter()
-            .map(|cycle| {
+            .filter_map(|cycle| {
                 remap_address(
                     cycle.ram_access().address() as u64,
                     &preprocessing.shared.memory_layout,
-                ) as usize
+                )
             })
             .max()
             .unwrap()
-            .next_power_of_two();
+            .next_power_of_two() as usize;
 
         let T = trace.len();
 
@@ -150,13 +152,15 @@ impl RamDag {
         let mut index = remap_address(
             ram_preprocessing.min_bytecode_address,
             &program_io.memory_layout,
-        ) as usize;
+        )
+        .unwrap() as usize;
         for word in ram_preprocessing.bytecode_words.iter() {
             initial_memory_state[index] = *word;
             index += 1;
         }
 
-        let dram_start_index = remap_address(RAM_START_ADDRESS, &program_io.memory_layout) as usize;
+        let dram_start_index =
+            remap_address(RAM_START_ADDRESS, &program_io.memory_layout).unwrap() as usize;
         let mut final_memory_state = vec![0; K];
         // Note that `final_memory` only contains memory at addresses >= `RAM_START_ADDRESS`
         // so we will still need to populate `final_memory_state` with the contents of
@@ -171,7 +175,8 @@ impl RamDag {
         index = remap_address(
             program_io.memory_layout.input_start,
             &program_io.memory_layout,
-        ) as usize;
+        )
+        .unwrap() as usize;
         // Convert input bytes into words and populate
         // `initial_memory_state` and `final_memory_state`
         for chunk in program_io.inputs.chunks(4) {
@@ -190,7 +195,8 @@ impl RamDag {
         index = remap_address(
             program_io.memory_layout.output_start,
             &program_io.memory_layout,
-        ) as usize;
+        )
+        .unwrap() as usize;
         for chunk in program_io.outputs.chunks(4) {
             let mut word = [0u8; 4];
             for (i, byte) in chunk.iter().enumerate() {
@@ -202,15 +208,16 @@ impl RamDag {
         }
 
         // Copy panic bit
-        let panic_index =
-            remap_address(program_io.memory_layout.panic, &program_io.memory_layout) as usize;
+        let panic_index = remap_address(program_io.memory_layout.panic, &program_io.memory_layout)
+            .unwrap() as usize;
         final_memory_state[panic_index] = program_io.panic as u32;
         if !program_io.panic {
             // Set termination bit
             let termination_index = remap_address(
                 program_io.memory_layout.termination,
                 &program_io.memory_layout,
-            ) as usize;
+            )
+            .unwrap() as usize;
             final_memory_state[termination_index] = 1;
         }
 
@@ -227,8 +234,9 @@ impl RamDag {
                 use tracer::instruction::RAMAccess;
 
                 if let RAMAccess::Write(write) = cycle.ram_access() {
-                    let k = remap_address(write.address, &program_io.memory_layout) as usize;
-                    expected_final_memory_state[k] += inc.get_coeff_i64(j);
+                    if let Some(k) = remap_address(write.address, &program_io.memory_layout) {
+                        expected_final_memory_state[k as usize] += inc.get_coeff_i64(j);
+                    }
                 }
             }
             let expected_final_memory_state: Vec<u32> = expected_final_memory_state
@@ -266,7 +274,8 @@ impl RamDag {
         let mut index = remap_address(
             ram_preprocessing.min_bytecode_address,
             &program_io.memory_layout,
-        ) as usize;
+        )
+        .unwrap() as usize;
         for word in ram_preprocessing.bytecode_words.iter() {
             initial_memory_state[index] = *word;
             index += 1;
@@ -275,7 +284,8 @@ impl RamDag {
         index = remap_address(
             program_io.memory_layout.input_start,
             &program_io.memory_layout,
-        ) as usize;
+        )
+        .unwrap() as usize;
         // Convert input bytes into words and populate
         // `initial_memory_state` and `final_memory_state`
         for chunk in program_io.inputs.chunks(4) {
@@ -306,12 +316,12 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let raf_evaluation = RafEvaluationSumcheck::new_prover(self.K, self.T, state_manager);
 
-        let read_write_checking = RamReadWriteChecking::new_prover(
-            self.K,
-            self.T,
-            self.initial_memory_state.as_ref().unwrap(),
-            state_manager,
-        );
+        // let read_write_checking = RamReadWriteChecking::new_prover(
+        //     self.K,
+        //     self.T,
+        //     self.initial_memory_state.as_ref().unwrap(),
+        //     state_manager,
+        // );
 
         let output_check = OutputSumcheck::new_prover(
             self.initial_memory_state.as_ref().unwrap().clone(),
@@ -321,7 +331,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 
         vec![
             Box::new(raf_evaluation),
-            Box::new(read_write_checking),
+            // Box::new(read_write_checking),
             Box::new(output_check),
         ]
     }
@@ -331,12 +341,12 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let raf_evaluation = RafEvaluationSumcheck::new_verifier(self.K, state_manager);
-        let read_write_checking = RamReadWriteChecking::new_verifier(self.K, state_manager);
+        // let read_write_checking = RamReadWriteChecking::new_verifier(self.K, state_manager);
         let output_check = OutputSumcheck::new_verifier(self.K, state_manager);
 
         vec![
             Box::new(raf_evaluation),
-            Box::new(read_write_checking),
+            // Box::new(read_write_checking),
             Box::new(output_check),
         ]
     }
@@ -345,31 +355,37 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        let val_evaluation = ValEvaluationSumcheck::new_prover(
-            self.K,
-            self.initial_memory_state.as_ref().unwrap(),
-            state_manager,
-        );
+        // let val_evaluation = ValEvaluationSumcheck::new_prover(
+        //     self.K,
+        //     self.initial_memory_state.as_ref().unwrap(),
+        //     state_manager,
+        // );
         let val_final_evaluation = ValFinalSumcheck::new_prover(state_manager);
 
-        vec![Box::new(val_evaluation), Box::new(val_final_evaluation)]
+        vec![
+            // Box::new(val_evaluation),
+            Box::new(val_final_evaluation),
+        ]
     }
 
     fn stage3_verifier_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        let val_evaluation = ValEvaluationSumcheck::new_verifier(
-            self.K,
-            self.initial_memory_state.as_ref().unwrap(),
-            state_manager,
-        );
+        // let val_evaluation = ValEvaluationSumcheck::new_verifier(
+        //     self.K,
+        //     self.initial_memory_state.as_ref().unwrap(),
+        //     state_manager,
+        // );
         let val_final_evaluation = ValFinalSumcheck::new_verifier(
             self.initial_memory_state.as_ref().unwrap(),
             state_manager,
         );
 
-        vec![Box::new(val_evaluation), Box::new(val_final_evaluation)]
+        vec![
+            // Box::new(val_evaluation),
+            Box::new(val_final_evaluation),
+        ]
     }
 
     fn stage4_prover_instances(
@@ -378,12 +394,12 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let hamming_weight = HammingWeightSumcheck::new_prover(self.K, state_manager);
         let booleanity = BooleanitySumcheck::new_prover(self.K, state_manager);
-        let ra_virtual = RASumcheck::new_prover(self.K, state_manager);
+        // let ra_virtual = RASumcheck::new_prover(self.K, state_manager);
 
         vec![
             Box::new(hamming_weight),
             Box::new(booleanity),
-            Box::new(ra_virtual),
+            // Box::new(ra_virtual),
         ]
     }
 
@@ -393,12 +409,12 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let hamming_weight = HammingWeightSumcheck::new_verifier(self.K, state_manager);
         let booleanity = BooleanitySumcheck::new_verifier(self.K, state_manager);
-        let ra_virtual = RASumcheck::new_verifier(self.K, state_manager);
+        // let ra_virtual = RASumcheck::new_verifier(self.K, state_manager);
 
         vec![
             Box::new(hamming_weight),
             Box::new(booleanity),
-            Box::new(ra_virtual),
+            // Box::new(ra_virtual),
         ]
     }
 }
