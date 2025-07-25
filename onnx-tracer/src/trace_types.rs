@@ -92,6 +92,7 @@ pub enum ONNXOpcode {
     /// Used for the ReduceMean operator, which is internally converted to a
     /// combination of Sum and Div operations.
     Sum,
+    MeanOfSquares,
     Sigmoid,
     Softmax,
 }

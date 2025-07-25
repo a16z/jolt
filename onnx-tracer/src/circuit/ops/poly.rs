@@ -1,6 +1,7 @@
 use std::any::Any;
 
 use crate::{
+    fieldutils::{felt_to_i128, i128_to_felt},
     //   circuit::layouts,
     tensor::{self, Tensor, TensorError},
     trace_types::ONNXOpcode,
@@ -51,6 +52,9 @@ pub enum PolyOp<F: PrimeField + TensorType + PartialOrd> {
     Sum {
         axes: Vec<usize>,
     },
+    MeanOfSquares {
+        axes: Vec<usize>,
+    },
     Prod {
         axes: Vec<usize>,
         len_prod: usize,
@@ -85,6 +89,7 @@ impl<F: PrimeField + TensorType + PartialOrd> From<&PolyOp<F>> for ONNXOpcode {
             PolyOp::Pow(_) => ONNXOpcode::Pow,
             PolyOp::Einsum { .. } => ONNXOpcode::MatMult,
             PolyOp::Sum { .. } => ONNXOpcode::Sum,
+            PolyOp::MeanOfSquares { .. } => ONNXOpcode::MeanOfSquares,
             _ => {
                 panic!("PolyOp {value:?} cannot be converted to ONNXOpcode",);
             }
@@ -114,6 +119,9 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for PolyOp<F> {
             PolyOp::Mult => "MULT".into(),
             PolyOp::Sub => "SUB".into(),
             PolyOp::Sum { .. } => "SUM".into(),
+            PolyOp::MeanOfSquares { axes } => {
+                format!("MEANOFSQUARES (axes={axes:?})")
+            }
             PolyOp::Prod { .. } => "PROD".into(),
             PolyOp::Pow(_) => "POW".into(),
             PolyOp::Pack(_, _) => "PACK".into(),
@@ -225,6 +233,10 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for PolyOp<F> {
                 }
                 tensor::ops::sum_axes(&inputs[0], axes)
             }
+            PolyOp::MeanOfSquares { axes } => {
+                let x = inputs[0].map(|x| felt_to_i128(x));
+                Ok(tensor::ops::nonlinearities::mean_of_squares_axes(&x, axes).map(i128_to_felt))
+            }
             PolyOp::Prod { axes, .. } => {
                 if 1 != inputs.len() {
                     return Err(TensorError::DimMismatch("prod inputs".to_string()));
@@ -267,6 +279,7 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for PolyOp<F> {
             }
             PolyOp::Prod { len_prod, .. } => in_scales[0] * (*len_prod as crate::Scale),
             PolyOp::Sum { .. } => in_scales[0],
+            PolyOp::MeanOfSquares { .. } => 2 * in_scales[0],
             PolyOp::Conv { kernel, bias, .. } => {
                 let kernel_scale = match kernel.scale() {
                     Some(s) => s,
