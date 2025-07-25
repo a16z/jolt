@@ -34,7 +34,7 @@ fn test_func_data(d: usize, t: usize) -> Vec<MultilinearPolynomial<Fr>> {
     val_mle
 }
 
-fn benchmark_large_d_sumcheck(c: &mut Criterion, d: usize, t: usize) {
+fn benchmark_large_d_sumcheck<const D1: usize>(c: &mut Criterion, d: usize, t: usize) {
     let ra = test_func_data(d, t);
 
     let mut transcript = KeccakTranscript::new(b"test_transcript");
@@ -52,7 +52,7 @@ fn benchmark_large_d_sumcheck(c: &mut Criterion, d: usize, t: usize) {
             b.iter_with_setup(
                 || (ra.clone(), transcript.clone(), previous_claim.clone()),
                 |(mut ra, mut transcript, mut previous_claim)| {
-                    criterion::black_box(LargeDSumCheckProof::<Fr, KeccakTranscript>::prove::<15>(
+                    criterion::black_box(LargeDSumCheckProof::<Fr, KeccakTranscript>::prove::<D1>(
                         &mut ra.iter_mut().collect::<Vec<_>>(),
                         &r_cycle,
                         &mut previous_claim,
@@ -96,15 +96,9 @@ fn main() {
         .warm_up_time(std::time::Duration::from_secs(10));
 
     let t = 1 << 20;
-    let test_inputs = [(16, t)];
 
-    for (d, t) in test_inputs {
-        benchmark_large_d_sumcheck(&mut criterion, d, t);
-    }
-
-    for (d, t) in test_inputs {
-        benchmark_naive_sumcheck::<Fr>(&mut criterion, d, t);
-    }
+    benchmark_large_d_sumcheck::<31>(&mut criterion, 32, t);
+    benchmark_naive_sumcheck::<Fr>(&mut criterion, 32, t);
 
     criterion.final_summary();
 }
