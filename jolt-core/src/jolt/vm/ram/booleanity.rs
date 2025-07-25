@@ -575,32 +575,37 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                 let D_evals = prover_state
                     .D
                     .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
+                let H_evals = h_polys
+                    .iter()
+                    .map(|h| h.sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh))
+                    .collect::<Vec<_>>();
 
-                let mut evals = [F::zero(); DEGREE];
+                let mut evals = [
+                    H_evals[0][0].square() - H_evals[0][0],
+                    H_evals[0][1].square() - H_evals[0][1],
+                    H_evals[0][2].square() - H_evals[0][2],
+                ];
 
-                // For each polynomial in the batch
-                for j in 0..d {
-                    let H_j_evals =
-                        h_polys[j].sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
-
-                    // For each evaluation point
-                    for k in 0..DEGREE {
-                        // Add z^j * (H_j^2 - H_j) * D
-                        evals[k] += prover_state.z_powers[j]
-                            * D_evals[k]
-                            * (H_j_evals[k].square() - H_j_evals[k]);
-                    }
+                for i in 1..d {
+                    evals[0] += prover_state.z_powers[i] * (H_evals[i][0].square() - H_evals[i][0]);
+                    evals[1] += prover_state.z_powers[i] * (H_evals[i][1].square() - H_evals[i][1]);
+                    evals[2] += prover_state.z_powers[i] * (H_evals[i][2].square() - H_evals[i][2]);
                 }
 
-                evals
+                [
+                    D_evals[0] * evals[0],
+                    D_evals[1] * evals[1],
+                    D_evals[2] * evals[2],
+                ]
             })
             .reduce(
                 || [F::zero(); DEGREE],
-                |mut running, new| {
-                    for i in 0..DEGREE {
-                        running[i] += new[i];
-                    }
-                    running
+                |running, new| {
+                    [
+                        running[0] + new[0],
+                        running[1] + new[1],
+                        running[2] + new[2],
+                    ]
                 },
             )
             .into_iter()

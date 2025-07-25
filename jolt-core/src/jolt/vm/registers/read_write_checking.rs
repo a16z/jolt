@@ -558,7 +558,10 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                                 [inc_cycle_0, inc_cycle_infty]
                             };
 
-                            let mut inner_sum_evals = [F::zero(); DEGREE - 1];
+                            let mut rd_inner_sum_evals = [F::zero(); DEGREE - 1];
+                            let mut rs1_inner_sum_evals = [F::zero(); DEGREE - 1];
+                            let mut rs2_inner_sum_evals = [F::zero(); DEGREE - 1];
+
                             for k in dirty_indices.ones() {
                                 let val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
 
@@ -566,9 +569,9 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                                 if !rd_wa[0][k].is_zero() || !rd_wa[1][k].is_zero() {
                                     let wa_evals = [rd_wa[0][k], rd_wa[1][k] - rd_wa[0][k]];
 
-                                    inner_sum_evals[0] += wa_evals[0]
+                                    rd_inner_sum_evals[0] += wa_evals[0]
                                         .mul_0_optimized(inc_cycle_evals[0] + val_evals[0]);
-                                    inner_sum_evals[1] +=
+                                    rd_inner_sum_evals[1] +=
                                         wa_evals[1] * (inc_cycle_evals[1] + val_evals[1]);
 
                                     rd_wa[0][k] = F::zero();
@@ -579,9 +582,9 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                                 if !rs1_ra[0][k].is_zero() || !rs1_ra[1][k].is_zero() {
                                     let ra_evals_rs1 = [rs1_ra[0][k], rs1_ra[1][k] - rs1_ra[0][k]];
 
-                                    inner_sum_evals[0] +=
-                                        self.z * ra_evals_rs1[0].mul_0_optimized(val_evals[0]);
-                                    inner_sum_evals[1] += self.z * ra_evals_rs1[1] * val_evals[1];
+                                    rs1_inner_sum_evals[0] +=
+                                        ra_evals_rs1[0].mul_0_optimized(val_evals[0]);
+                                    rs1_inner_sum_evals[1] += ra_evals_rs1[1] * val_evals[1];
 
                                     rs1_ra[0][k] = F::zero();
                                     rs1_ra[1][k] = F::zero();
@@ -591,10 +594,9 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                                 if !rs2_ra[0][k].is_zero() || !rs2_ra[1][k].is_zero() {
                                     let ra_evals_rs2 = [rs2_ra[0][k], rs2_ra[1][k] - rs2_ra[0][k]];
 
-                                    inner_sum_evals[0] += self.z_squared
-                                        * ra_evals_rs2[0].mul_0_optimized(val_evals[0]);
-                                    inner_sum_evals[1] +=
-                                        self.z_squared * ra_evals_rs2[1] * val_evals[1];
+                                    rs2_inner_sum_evals[0] +=
+                                        ra_evals_rs2[0].mul_0_optimized(val_evals[0]);
+                                    rs2_inner_sum_evals[1] += ra_evals_rs2[1] * val_evals[1];
 
                                     rs2_ra[0][k] = F::zero();
                                     rs2_ra[1][k] = F::zero();
@@ -605,8 +607,14 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                             }
                             dirty_indices.clear();
 
-                            evals[0] += eq_r_prime_eval * inner_sum_evals[0];
-                            evals[1] += eq_r_prime_eval * inner_sum_evals[1];
+                            evals[0] += eq_r_prime_eval
+                                * (rd_inner_sum_evals[0]
+                                    + self.z * rs1_inner_sum_evals[0]
+                                    + self.z_squared * rs2_inner_sum_evals[0]);
+                            evals[1] += eq_r_prime_eval
+                                * (rd_inner_sum_evals[1]
+                                    + self.z * rs1_inner_sum_evals[1]
+                                    + self.z_squared * rs2_inner_sum_evals[1]);
                         });
 
                     evals
@@ -745,7 +753,10 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                                 _ => (),
                             }
 
-                            let mut inner_sum_evals = [F::zero(); DEGREE - 1];
+                            let mut rd_inner_sum_evals = [F::zero(); DEGREE - 1];
+                            let mut rs1_inner_sum_evals = [F::zero(); DEGREE - 1];
+                            let mut rs2_inner_sum_evals = [F::zero(); DEGREE - 1];
+
                             for k in dirty_indices.ones() {
                                 let val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
 
@@ -753,9 +764,9 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                                 if !rd_wa[0][k].is_zero() || !rd_wa[1][k].is_zero() {
                                     let wa_evals = [rd_wa[0][k], rd_wa[1][k] - rd_wa[0][k]];
 
-                                    inner_sum_evals[0] += wa_evals[0]
+                                    rd_inner_sum_evals[0] += wa_evals[0]
                                         .mul_0_optimized(inc_cycle_evals[0] + val_evals[0]);
-                                    inner_sum_evals[1] +=
+                                    rd_inner_sum_evals[1] +=
                                         wa_evals[1] * (inc_cycle_evals[1] + val_evals[1]);
 
                                     rd_wa[0][k] = F::zero();
@@ -766,9 +777,9 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                                 if !rs1_ra[0][k].is_zero() || !rs1_ra[1][k].is_zero() {
                                     let ra_evals_rs1 = [rs1_ra[0][k], rs1_ra[1][k] - rs1_ra[0][k]];
 
-                                    inner_sum_evals[0] +=
-                                        self.z * ra_evals_rs1[0].mul_0_optimized(val_evals[0]);
-                                    inner_sum_evals[1] += self.z * ra_evals_rs1[1] * val_evals[1];
+                                    rs1_inner_sum_evals[0] +=
+                                        ra_evals_rs1[0].mul_0_optimized(val_evals[0]);
+                                    rs1_inner_sum_evals[1] += ra_evals_rs1[1] * val_evals[1];
 
                                     rs1_ra[0][k] = F::zero();
                                     rs1_ra[1][k] = F::zero();
@@ -778,10 +789,9 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                                 if !rs2_ra[0][k].is_zero() || !rs2_ra[1][k].is_zero() {
                                     let ra_evals_rs2 = [rs2_ra[0][k], rs2_ra[1][k] - rs2_ra[0][k]];
 
-                                    inner_sum_evals[0] += self.z_squared
-                                        * ra_evals_rs2[0].mul_0_optimized(val_evals[0]);
-                                    inner_sum_evals[1] +=
-                                        self.z_squared * ra_evals_rs2[1] * val_evals[1];
+                                    rs2_inner_sum_evals[0] +=
+                                        ra_evals_rs2[0].mul_0_optimized(val_evals[0]);
+                                    rs2_inner_sum_evals[1] += ra_evals_rs2[1] * val_evals[1];
 
                                     rs2_ra[0][k] = F::zero();
                                     rs2_ra[1][k] = F::zero();
@@ -792,8 +802,14 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                             }
                             dirty_indices.clear();
 
-                            evals_for_current_E_out[0] += E_in_eval * inner_sum_evals[0];
-                            evals_for_current_E_out[1] += E_in_eval * inner_sum_evals[1];
+                            evals_for_current_E_out[0] += E_in_eval
+                                * (rd_inner_sum_evals[0]
+                                    + self.z * rs1_inner_sum_evals[0]
+                                    + self.z_squared * rs2_inner_sum_evals[0]);
+                            evals_for_current_E_out[1] += E_in_eval
+                                * (rd_inner_sum_evals[1]
+                                    + self.z * rs1_inner_sum_evals[1]
+                                    + self.z_squared * rs2_inner_sum_evals[1]);
                         });
 
                     // Multiply the final running sum by the final value of E_out_eval and add the
