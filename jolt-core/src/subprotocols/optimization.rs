@@ -339,34 +339,60 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
                             eq_evals_at_idx[0].0 * temp
                         };
 
-                        [
-                            {
-                                at_idx_evals[0] * tmp
-
-                                // let eval_1 = if d < D - 1 {
-                                //     eq_evals_at_idx[0].1 * factor * after_idx_evals[D - d - 2].1
-                                // } else {
-                                //     eq_evals_at_idx[0].1 * factor
-                                // };
-                            },
-                            {
-                                let factor: F = at_idx_evals[1] * temp;
-
-                                let eval_0 = -tmp * eq_evals_at_idx[1].0;
+                        eq_evals_at_idx
+                            .iter()
+                            .zip(at_idx_evals.iter())
+                            .map(|((c_eq_eval_0, c_eq_eval_1), at_idx_eval)| {
+                                let factor =
+                                    *at_idx_eval * *before_idx_eval * eq_eval_after_idx * C;
                                 let eval_1 = if d < D - 1 {
-                                    eq_evals_at_idx[1].1 * factor * after_idx_evals[D - d - 2].1
+                                    *c_eq_eval_1 * factor * after_idx_evals[D - d - 2].1
                                 } else {
-                                    eq_evals_at_idx[1].1 * factor
+                                    *c_eq_eval_1 * factor
+                                };
+
+                                let eval_0 = if d < D - 1 {
+                                    *c_eq_eval_0 * factor * after_idx_evals[D - d - 2].0
+                                } else {
+                                    *c_eq_eval_0 * factor
                                 };
 
                                 eval_0 + eval_1
-                            },
-                        ]
+                            })
+                            .collect::<Vec<_>>()
+
+                        // [
+                        //     {
+                        //         at_idx_evals[0] * tmp
+
+                        //         // let eval_1 = if d < D - 1 {
+                        //         //     eq_evals_at_idx[0].1 * factor * after_idx_evals[D - d - 2].1
+                        //         // } else {
+                        //         //     eq_evals_at_idx[0].1 * factor
+                        //         // };
+                        //     },
+                        //     {
+                        //         let factor: F = at_idx_evals[1] * temp;
+
+                        //         let eval_0 = -tmp * eq_evals_at_idx[1].0;
+                        //         let eval_1 = if d < D - 1 {
+                        //             eq_evals_at_idx[1].1 * factor * after_idx_evals[D - d - 2].1
+                        //         } else {
+                        //             eq_evals_at_idx[1].1 * factor
+                        //         };
+
+                        //         eval_0 + eval_1
+                        //     },
+                        // ]
                     })
-                    .reduce(
-                        || [F::zero(); 2],
-                        |running, new| [running[0] + new[0], running[1] + new[1]],
-                    );
+                    // .reduce(
+                    //     || [F::zero(); 2],
+                    //     |running, new| [running[0] + new[0], running[1] + new[1]],
+                    // );
+                .reduce(
+                    || vec![F::zero(); 2],
+                    |running, new| vec![running[0] + new[0], running[1] + new[1]],
+                );
 
                 drop(_guard);
                 drop(_span);
