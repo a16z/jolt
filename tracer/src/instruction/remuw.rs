@@ -60,8 +60,8 @@ impl RISCVTrace for REMUW {
                 if y == 0 {
                     (u64::MAX, x as u64)
                 } else {
-                    let mut quotient = x / y;
-                    let mut remainder = x % y;
+                    let quotient = x / y;
+                    let remainder = x % y;
                     (quotient as u64, remainder as u64)
                 }
             }

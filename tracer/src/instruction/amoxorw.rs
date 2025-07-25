@@ -89,7 +89,7 @@ impl AMOXORW {
             v_rd,
             remaining,
         );
-        
+
         let xor = XOR {
             address: self.address,
             operands: FormatR {
@@ -101,7 +101,7 @@ impl AMOXORW {
         };
         sequence.push(xor.into());
         remaining -= 1;
-        
+
         amo_post32(
             &mut sequence,
             self.address,

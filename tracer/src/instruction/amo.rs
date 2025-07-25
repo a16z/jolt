@@ -1,4 +1,3 @@
-
 use super::and::AND;
 use super::andi::ANDI;
 use super::format::format_i::FormatI;
@@ -11,9 +10,9 @@ use super::slli::SLLI;
 use super::srl::SRL;
 use super::virtual_assert_word_alignment::VirtualAssertWordAlignment;
 use super::virtual_lw::VirtualLW;
-use super::virtual_sw::VirtualSW;
 use super::virtual_move::VirtualMove;
 use super::virtual_sign_extend::VirtualSignExtend;
+use super::virtual_sw::VirtualSW;
 use super::xor::XOR;
 use super::RV32IMInstruction;
 use super::VirtualInstructionSequence;
@@ -25,6 +24,7 @@ use crate::emulator::cpu::Xlen;
 
 use super::format::format_r::FormatR;
 
+#[allow(clippy::too_many_arguments)]
 pub fn amo_pre64(
     sequence: &mut Vec<RV32IMInstruction>,
     address: u64,
@@ -94,6 +94,7 @@ pub fn amo_pre64(
     remaining
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn amo_post64(
     sequence: &mut Vec<RV32IMInstruction>,
     address: u64,
@@ -257,11 +258,7 @@ pub fn amo_post32(
 ) {
     let sw = VirtualSW {
         address,
-        operands: FormatS {
-            rs1,
-            rs2,
-            imm: 0,
-        },
+        operands: FormatS { rs1, rs2, imm: 0 },
         virtual_sequence_remaining: Some(remaining),
     };
     sequence.push(sw.into());
@@ -278,7 +275,11 @@ pub fn amo_post32(
     };
     sequence.push(vmove.into());
     remaining -= 1;
-    
-    println!("{}, remaining: {}", sequence.len(), remaining);
-    assert!(remaining == 0, "sequence: {:?}, remaining: {}", sequence.len(), remaining);
+
+    assert!(
+        remaining == 0,
+        "sequence: {:?}, remaining: {}",
+        sequence.len(),
+        remaining
+    );
 }

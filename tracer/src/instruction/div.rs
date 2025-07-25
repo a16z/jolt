@@ -57,8 +57,8 @@ impl RISCVTrace for DIV {
                 } else if x == cpu.most_negative() && y == -1 {
                     (x as u32 as u64, 0)
                 } else {
-                    let mut quotient = x as i32 / y as i32;
-                    let mut remainder = x as i32 % y as i32;
+                    let quotient = x as i32 / y as i32;
+                    let remainder = x as i32 % y as i32;
                     (quotient as u32 as u64, remainder as u32 as u64)
                 }
             }
@@ -68,8 +68,8 @@ impl RISCVTrace for DIV {
                 } else if x == cpu.most_negative() && y == -1 {
                     (x as u64, 0)
                 } else {
-                    let mut quotient = x / y;
-                    let mut remainder = x % y;
+                    let quotient = x / y;
+                    let remainder = x % y;
                     (quotient as u64, remainder as u64)
                 }
             }

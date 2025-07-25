@@ -89,7 +89,7 @@ impl AMOADDW {
             v_rd,
             remaining,
         );
-        
+
         let add = ADD {
             address: self.address,
             operands: FormatR {
@@ -101,7 +101,7 @@ impl AMOADDW {
         };
         sequence.push(add.into());
         remaining -= 1;
-        
+
         amo_post32(
             &mut sequence,
             self.address,

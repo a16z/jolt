@@ -64,8 +64,8 @@ impl RISCVTrace for REMW {
                 } else if y == -1 && x == i32::MIN {
                     (i32::MIN, 0) //overflow
                 } else {
-                    let mut quotient = x / y;
-                    let mut remainder = x % y;
+                    let quotient = x / y;
+                    let remainder = x % y;
                     (quotient, remainder)
                 }
             }

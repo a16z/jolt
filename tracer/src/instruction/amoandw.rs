@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use super::and::AND;
 use super::amo::{amo_post32, amo_post64, amo_pre32, amo_pre64};
+use super::and::AND;
 use super::RV32IMInstruction;
 use super::VirtualInstructionSequence;
 use crate::{
@@ -89,7 +89,7 @@ impl AMOANDW {
             v_rd,
             remaining,
         );
-        
+
         let and = AND {
             address: self.address,
             operands: FormatR {
@@ -101,7 +101,7 @@ impl AMOANDW {
         };
         sequence.push(and.into());
         remaining -= 1;
-        
+
         amo_post32(
             &mut sequence,
             self.address,

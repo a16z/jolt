@@ -9,7 +9,6 @@ use crate::{
 use super::addi::ADDI;
 use super::and::AND;
 use super::andi::ANDI;
-use super::format::format_load::FormatLoad;
 use super::format::{format_i::FormatI, format_r::FormatR, format_u::FormatU};
 use super::ld::LD;
 use super::lui::LUI;

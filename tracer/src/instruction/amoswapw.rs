@@ -87,7 +87,7 @@ impl AMOSWAPW {
             v_rd,
             remaining,
         );
-        
+
         amo_post32(
             &mut sequence,
             self.address,

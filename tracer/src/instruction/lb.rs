@@ -15,7 +15,6 @@ use super::sll::SLL;
 use super::slli::SLLI;
 use super::srai::SRAI;
 use super::virtual_lw::VirtualLW;
-use super::virtual_muli::VirtualMULI;
 use super::xori::XORI;
 use super::{RAMRead, RV32IMInstruction, VirtualInstructionSequence};
 

@@ -89,7 +89,7 @@ impl AMOORW {
             v_rd,
             remaining,
         );
-        
+
         let or = OR {
             address: self.address,
             operands: FormatR {
@@ -101,7 +101,7 @@ impl AMOORW {
         };
         sequence.push(or.into());
         remaining -= 1;
-        
+
         amo_post32(
             &mut sequence,
             self.address,

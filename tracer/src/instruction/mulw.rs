@@ -1,4 +1,3 @@
-use common::constants::virtual_register_index;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -7,10 +6,7 @@ use crate::{
 };
 
 use super::{
-    format::{
-        format_b::FormatB, format_i::FormatI, format_j::FormatJ, format_r::FormatR,
-        InstructionFormat,
-    },
+    format::{format_i::FormatI, format_r::FormatR, InstructionFormat},
     mul::MUL,
     virtual_sign_extend::VirtualSignExtend,
     RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,

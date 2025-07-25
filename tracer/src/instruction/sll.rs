@@ -45,7 +45,7 @@ impl RISCVTrace for SLL {
 }
 
 impl VirtualInstructionSequence for SLL {
-    fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_pow2 = virtual_register_index(6) as usize;
 

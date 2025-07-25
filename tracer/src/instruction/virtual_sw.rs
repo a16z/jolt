@@ -4,10 +4,7 @@ use super::{
     format::{format_s::FormatS, InstructionFormat},
     RISCVInstruction, RISCVTrace,
 };
-use crate::{
-    declare_riscv_instr,
-    emulator::cpu::{Cpu, Xlen},
-};
+use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 declare_riscv_instr!(
     name = VirtualSW,

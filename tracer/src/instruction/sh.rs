@@ -9,7 +9,6 @@ use super::addi::ADDI;
 use super::and::AND;
 use super::andi::ANDI;
 use super::format::format_i::FormatI;
-use super::format::format_load::FormatLoad;
 use super::format::format_r::FormatR;
 use super::format::format_u::FormatU;
 use super::format::format_virtual_halfword_alignment::HalfwordAlignFormat;

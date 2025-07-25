@@ -49,7 +49,7 @@ impl RISCVTrace for MULH {
 }
 
 impl VirtualInstructionSequence for MULH {
-    fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_sx = virtual_register_index(0) as usize;
         let v_sy = virtual_register_index(1) as usize;

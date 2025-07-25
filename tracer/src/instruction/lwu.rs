@@ -7,14 +7,13 @@ use super::sll::SLL;
 use super::slli::SLLI;
 use super::srli::SRLI;
 use super::virtual_assert_word_alignment::VirtualAssertWordAlignment;
-use super::virtual_sign_extend::VirtualSignExtend;
 use super::xori::XORI;
+use super::VirtualInstructionSequence;
 use super::{addi::ADDI, RV32IMInstruction};
 use super::{
     format::{format_load::FormatLoad, InstructionFormat},
     RISCVInstruction, RISCVTrace, RV32IMCycle,
 };
-use super::{RAMRead, VirtualInstructionSequence};
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
