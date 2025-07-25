@@ -57,7 +57,7 @@ pub fn benchmarks(
             BenchType::Twist => twist::<Fr, KeccakTranscript>(),
             BenchType::SparseDenseShout => sparse_dense_shout::<Fr, KeccakTranscript>(),
             BenchType::LargeDSumCheck => {
-                large_d_sumcheck::<Fr, Dory<KeccakTranscript>, KeccakTranscript, 15>()
+                large_d_sumcheck::<Fr, Dory<KeccakTranscript>, KeccakTranscript>()
             }
             _ => panic!("BenchType does not have a mapping"),
         },
@@ -74,7 +74,7 @@ pub fn benchmarks(
             BenchType::Twist => twist::<Fr, KeccakTranscript>(),
             BenchType::SparseDenseShout => sparse_dense_shout::<Fr, KeccakTranscript>(),
             BenchType::LargeDSumCheck => {
-                large_d_sumcheck::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript, 15>()
+                large_d_sumcheck::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>()
             }
             _ => panic!("BenchType does not have a mapping"),
         },
@@ -354,8 +354,7 @@ where
     tasks
 }
 
-fn large_d_sumcheck<F, PCS, ProofTranscript, const D1: usize>(
-) -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
+fn large_d_sumcheck<F, PCS, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
 where
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
@@ -365,6 +364,7 @@ where
 
     let D = 16;
     let T = 1 << 20;
+    const D1: usize = 15;
 
     let mut ra = {
         let mut rng = test_rng();
