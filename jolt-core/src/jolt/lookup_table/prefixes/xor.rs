@@ -1,6 +1,6 @@
 use crate::{
     field::JoltField,
-    subprotocols::sparse_dense_shout::{current_suffix_len, LookupBits},
+    utils::lookup_bits::{current_suffix_len, LookupBits},
 };
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};

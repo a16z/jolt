@@ -5,8 +5,8 @@ use crate::{
         suffixes::SuffixEval,
         PrefixSuffixDecomposition,
     },
-    subprotocols::sparse_dense_shout::LookupBits,
     utils::index_to_field_bitvector,
+    utils::lookup_bits::LookupBits,
 };
 use num::Integer;
 use rand::prelude::*;

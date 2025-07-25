@@ -20,11 +20,8 @@ use crate::{
         program_io_polynomial::ProgramIOPolynomial,
         range_mask_polynomial::RangeMaskPolynomial,
     },
-    subprotocols::{
-        sparse_dense_shout::ExpandingTable,
-        sumcheck::{SumcheckInstance, SumcheckInstanceProof},
-    },
-    utils::{math::Math, transcript::Transcript},
+    subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
+    utils::{expanding_table::ExpandingTable, math::Math, transcript::Transcript},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::RAM_START_ADDRESS;

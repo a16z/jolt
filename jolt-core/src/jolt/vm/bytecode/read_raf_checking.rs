@@ -25,8 +25,11 @@ use crate::{
             BIG_ENDIAN,
         },
     },
-    subprotocols::{sparse_dense_shout::ExpandingTable, sumcheck::SumcheckInstance},
-    utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
+    subprotocols::sumcheck::SumcheckInstance,
+    utils::{
+        expanding_table::ExpandingTable, math::Math, thread::unsafe_allocate_zero_vec,
+        transcript::Transcript,
+    },
 };
 use common::constants::REGISTER_COUNT;
 use rayon::prelude::*;

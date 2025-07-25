@@ -6,7 +6,7 @@ use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
 use crate::field::JoltField;
 use crate::jolt::lookup_table::prefixes::Prefixes;
-use crate::subprotocols::sparse_dense_shout::LookupBits;
+use crate::utils::lookup_bits::LookupBits;
 use crate::utils::uninterleave_bits;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
