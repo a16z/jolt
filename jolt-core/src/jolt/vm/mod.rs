@@ -208,7 +208,7 @@ where
         let shared = Self::shared_preprocess(bytecode, memory_layout, memory_init);
 
         let max_K = [
-            shared.bytecode.code_size.next_power_of_two(),
+            1 << 8, // bytecode lookups
             // max_memory_size.next_power_of_two(),
             1 << 8, // instruction lookups Shout
         ]

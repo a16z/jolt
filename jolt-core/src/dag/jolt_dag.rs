@@ -65,7 +65,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
 
         println!("bytecode size: {}", preprocessing.shared.bytecode.code_size);
         let K = [
-            preprocessing.shared.bytecode.code_size,
+            // preprocessing.shared.bytecode.code_size,
             // ram_K,
             1 << 8, // K for instruction lookups
         ]
