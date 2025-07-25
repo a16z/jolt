@@ -427,25 +427,12 @@ mod test {
 
     use ark_bn254::Fr;
     use ark_std::test_rng;
-    use criterion::Criterion;
     use rand_core::RngCore;
-    use rayon::{
-        iter::{
-            IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
-            ParallelIterator,
-        },
-        slice::ParallelSliceMut,
-    };
+    use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
     use crate::{
         field::JoltField,
-        poly::{
-            eq_poly::EqPolynomial,
-            multilinear_polynomial::{
-                BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-            },
-            unipoly::UniPoly,
-        },
+        poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         subprotocols::optimization::{
             compute_initial_eval_claim, LargeDSumCheckProof, NaiveSumCheckProof,
         },
@@ -523,50 +510,14 @@ mod test {
         eq
     }
 
-    fn read_addresses_to_ra_vec<F: JoltField>(
-        read_addresses: &Vec<usize>,
-        K: usize,
-        T: usize,
-    ) -> Vec<F> {
-        // TODO: can separate this into a single utils function to be used in the module.
-        // Compute ra in cycle-major order, since we will be binding
-        // from low-to-high starting with the cycle variables.
-        // The higher bits represent the address variables.
-        let mut ra: Vec<F> = unsafe_allocate_zero_vec(K * T);
-        ra.par_chunks_mut(T).enumerate().for_each(|(k, ra_k)| {
-            for j in 0..T {
-                if read_addresses[j] == k {
-                    ra_k[j] = F::one();
-                }
-            }
-        });
-        ra
-    }
-
     struct TestPerf {
         naive_duration: Duration,
         optimized_duration: Duration,
     }
 
     #[test]
-    fn test_hd_optimization_sumcheck() {
-        let test_inputs = [
-            // (2, 1 << 10, 16),
-            // (8, 1 << 10, 16),
-            // (16, 1 << 10, 16),
-            // (32, 1 << 10, 16),
-
-            // (8, 1 << 20, 1 << 16),
-            // (12, 1 << 20, 1 << 16),
-            // (16, 1 << 20, 1 << 16),
-            // (50, 1 << 20, 1 << 16),
-            (16, 1 << 10),
-        ];
-
-        for (D, T) in test_inputs {
-            large_d_optimization_ra_virtualization::<15>(D, T);
-            // benchmark_large_d_optimization_ra_virtualization(&mut criterion, D, T);
-        }
+    fn test_large_d_optimization_sumcheck() {
+        large_d_optimization_ra_virtualization::<15>(16, 1 << 10);
     }
 
     fn test_func_data(D: usize, T: usize) -> Vec<MultilinearPolynomial<Fr>> {
@@ -585,40 +536,6 @@ mod test {
             .collect::<Vec<_>>();
 
         val_mle
-    }
-
-    fn test_ra_data(D: usize, T: usize, K: usize) -> Vec<MultilinearPolynomial<Fr>> {
-        let mut rng = test_rng();
-        let mut read_addresses: Vec<Vec<usize>> = vec![Vec::with_capacity(T); D];
-
-        for _ in 0..T {
-            for i in 0..D {
-                let read_address = rng.next_u32() as usize % K;
-                read_addresses[i].push(read_address);
-            }
-        }
-        panic!("Success");
-
-        println!("Check point");
-        let mut ra = read_addresses
-            .iter()
-            .map(|r| {
-                let ra_vec = read_addresses_to_ra_vec::<Fr>(r, K, T);
-                MultilinearPolynomial::from(ra_vec)
-            })
-            .collect::<Vec<_>>();
-
-        let mut dummy_transcript = KeccakTranscript::new(b"dummy");
-        let _r_address = (0..D)
-            .map(|idx| {
-                let r_address = dummy_transcript.challenge_vector::<Fr>(K.log_2());
-                r_address.iter().for_each(|r| {
-                    ra[idx].bind_parallel(*r, BindingOrder::HighToLow);
-                });
-                r_address
-            })
-            .collect::<Vec<_>>();
-        ra
     }
 
     fn check_initial_eval_claim(
@@ -708,18 +625,6 @@ mod test {
 
         let previous_claim = compute_initial_eval_claim(&ra.iter().collect::<Vec<_>>(), r_cycle);
         assert_eq!(previous_claim, previous_claim_bench);
-    }
-
-    fn benchmark_large_d_optimization_ra_virtualization<const D1: usize>(
-        criterion: &mut Criterion,
-        D: usize,
-        T: usize,
-    ) {
-        let test_perf = large_d_optimization_ra_virtualization::<D1>(D, T);
-        criterion.bench_function(
-            &format!("large_d_optimization_ra_virtualization_{D}_{T}"),
-            |b| b.iter(|| criterion::black_box(large_d_optimization_ra_virtualization::<D1>(D, T))),
-        );
     }
 
     fn large_d_optimization_ra_virtualization<const D1: usize>(D: usize, T: usize) -> TestPerf {
