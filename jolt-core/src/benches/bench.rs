@@ -345,7 +345,6 @@ where
             1 << 24,
         );
 
-        // Setup trace length and padding (similar to DAG test)
         let trace_length = trace.len();
         let padded_trace_length = trace_length.next_power_of_two();
         trace.resize(padded_trace_length, RV32IMCycle::NoOp);

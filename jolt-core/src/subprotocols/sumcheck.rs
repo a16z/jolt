@@ -118,6 +118,11 @@ pub trait SumcheckInstance<F: JoltField>: Send + Sync {
         r: &[F],
     ) -> F;
 
+    /// Sets the previous round's claim for use in Gruen
+    fn set_previous_claim(&mut self, _claim: F) {
+        // Default doesn't need to set anything
+    }
+
     /// Proves a single sumcheck instance.
     fn prove_single<ProofTranscript: Transcript>(
         &mut self,
@@ -229,6 +234,8 @@ impl BatchedSumcheck {
                         UniPoly::from_coeff(vec![scaled_input_claim])
                     } else {
                         let offset = max_num_rounds - sumcheck.num_rounds();
+                        // Set the previous claim before computing the prover message for Gruen
+                        sumcheck.set_previous_claim(*previous_claim);
                         let mut univariate_poly_evals =
                             sumcheck.compute_prover_message(round - offset);
                         univariate_poly_evals.insert(1, *previous_claim - univariate_poly_evals[0]);

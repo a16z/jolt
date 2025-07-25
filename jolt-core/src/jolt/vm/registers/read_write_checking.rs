@@ -5,6 +5,7 @@ use crate::jolt::vm::registers::{
 };
 use crate::jolt::witness::VirtualPolynomial;
 use crate::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN};
+use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::{
     dag::stage::SumcheckStages,
     field::{JoltField, OptimizedMul},
@@ -72,6 +73,7 @@ struct ReadWriteCheckingProverState<F: JoltField> {
     I: Vec<Vec<(usize, usize, F, F)>>,
     A: Vec<F>,
     eq_r_prime: MultilinearPolynomial<F>,
+    gruens_eq_r_prime: GruenSplitEqPolynomial<F>,
     inc_cycle: MultilinearPolynomial<F>,
     // The following polynomials are instantiated after
     // the first phase
@@ -79,6 +81,7 @@ struct ReadWriteCheckingProverState<F: JoltField> {
     rs2_ra: Option<MultilinearPolynomial<F>>,
     rd_wa: Option<MultilinearPolynomial<F>>,
     val: Option<MultilinearPolynomial<F>>,
+    previous_claim: F,
 }
 
 impl<F: JoltField> ReadWriteCheckingProverState<F> {
@@ -181,6 +184,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         drop(span);
 
         let eq_r_prime = MultilinearPolynomial::from(EqPolynomial::evals(r_prime));
+        let gruens_eq_r_prime = GruenSplitEqPolynomial::new(r_prime);
         let inc_cycle = CommittedPolynomial::RdInc.generate_witness(preprocessing, trace);
 
         let data_buffers: Vec<DataBuffers<F>> = (0..num_chunks)
@@ -203,11 +207,13 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
             I,
             A,
             eq_r_prime,
+            gruens_eq_r_prime,
             inc_cycle,
             rs1_ra: None,
             rs2_ra: None,
             rd_wa: None,
             val: None,
+            previous_claim: F::zero(),
         }
     }
 }
@@ -245,6 +251,7 @@ pub struct RegistersReadWriteChecking<F: JoltField> {
     rs1_rv_claim: F,
     rs2_rv_claim: F,
     rd_wv_claim: F,
+    previous_claim: F,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
@@ -343,6 +350,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
             rs1_rv_claim,
             rs2_rv_claim,
             rd_wv_claim,
+            previous_claim: F::zero(),
         }
     }
 
@@ -370,6 +378,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
             rs1_rv_claim,
             rs2_rv_claim,
             rd_wv_claim,
+            previous_claim: F::zero(),
         }
     }
 
@@ -396,6 +405,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
             rs1_rv_claim: proof.rs1_rv_claim,
             rs2_rv_claim: proof.rs2_rv_claim,
             rd_wv_claim: proof.rd_wv_claim,
+            previous_claim: F::zero(),
         }
     }
 
@@ -424,6 +434,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
             rs1_rv_claim: value_claims.rs1_rv_claim,
             rs2_rv_claim: value_claims.rs2_rv_claim,
             rd_wv_claim: value_claims.rd_wv_claim,
+            previous_claim: F::zero(),
         }
     }
 
@@ -436,205 +447,390 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
             A,
             val_checkpoints,
             inc_cycle,
-            eq_r_prime,
+            gruens_eq_r_prime,
             ..
         } = self.prover_state.as_mut().unwrap();
 
-        let univariate_poly_evals: [F; DEGREE] = I
-            .par_iter()
-            .zip(data_buffers.par_iter_mut())
-            .zip(val_checkpoints.par_chunks(K))
-            .map(|((I_chunk, buffers), checkpoint)| {
-                let mut evals = [F::zero(), F::zero(), F::zero()];
+        let previous_claim = self.previous_claim;
 
-                let DataBuffers {
-                    val_j_0,
-                    val_j_r,
-                    rs1_ra,
-                    rs2_ra,
-                    rd_wa,
-                    dirty_indices,
-                } = buffers;
+        // Compute quadratic coefficients for Gruen's interpolation
+        let quadratic_coeffs: [F; DEGREE - 1] = if gruens_eq_r_prime.E_in_current_len() == 1 {
+            // E_in is fully bound, use E_out
+            I.par_iter()
+                .zip(data_buffers.par_iter_mut())
+                .zip(val_checkpoints.par_chunks(K))
+                .map(|((I_chunk, buffers), checkpoint)| {
+                    let mut evals = [F::zero(), F::zero()];
 
-                val_j_0.as_mut_slice().copy_from_slice(checkpoint);
+                    let DataBuffers {
+                        val_j_0,
+                        val_j_r,
+                        rs1_ra,
+                        rs2_ra,
+                        rd_wa,
+                        dirty_indices,
+                    } = buffers;
 
-                // Iterate over I_chunk, two rows at a time.
-                I_chunk
-                    .chunk_by(|a, b| a.0 / 2 == b.0 / 2)
-                    .for_each(|inc_chunk| {
-                        let j_prime = inc_chunk[0].0; // row index
+                    val_j_0.as_mut_slice().copy_from_slice(checkpoint);
 
-                        for j in j_prime << round..(j_prime + 1) << round {
-                            let j_bound = j % (1 << round);
+                    // Iterate over I_chunk, two rows at a time.
+                    I_chunk
+                        .chunk_by(|a, b| a.0 / 2 == b.0 / 2)
+                        .for_each(|inc_chunk| {
+                            let j_prime = inc_chunk[0].0; // row index
 
-                            let k = trace[j].rs1_read().0;
-                            unsafe {
-                                dirty_indices.insert_unchecked(k);
-                            }
-                            rs1_ra[0][k] += A[j_bound];
+                            for j in j_prime << round..(j_prime + 1) << round {
+                                let j_bound = j % (1 << round);
 
-                            let k = trace[j].rs2_read().0;
-                            unsafe {
-                                dirty_indices.insert_unchecked(k);
-                            }
-                            rs2_ra[0][k] += A[j_bound];
+                                let k = trace[j].rs1_read().0;
+                                unsafe {
+                                    dirty_indices.insert_unchecked(k);
+                                }
+                                rs1_ra[0][k] += A[j_bound];
 
-                            let k = trace[j].rd_write().0;
-                            unsafe {
-                                dirty_indices.insert_unchecked(k);
-                            }
-                            rd_wa[0][k] += A[j_bound];
-                        }
+                                let k = trace[j].rs2_read().0;
+                                unsafe {
+                                    dirty_indices.insert_unchecked(k);
+                                }
+                                rs2_ra[0][k] += A[j_bound];
 
-                        for j in (j_prime + 1) << round..(j_prime + 2) << round {
-                            let j_bound = j % (1 << round);
-
-                            let k = trace[j].rs1_read().0;
-                            unsafe {
-                                dirty_indices.insert_unchecked(k);
-                            }
-                            rs1_ra[1][k] += A[j_bound];
-
-                            let k = trace[j].rs2_read().0;
-                            unsafe {
-                                dirty_indices.insert_unchecked(k);
-                            }
-                            rs2_ra[1][k] += A[j_bound];
-
-                            let k = trace[j].rd_write().0;
-                            unsafe {
-                                dirty_indices.insert_unchecked(k);
-                            }
-                            rd_wa[1][k] += A[j_bound];
-                        }
-
-                        for k in dirty_indices.ones() {
-                            val_j_r[0][k] = val_j_0[k];
-                        }
-                        let mut inc_iter = inc_chunk.iter().peekable();
-
-                        // First of the two rows
-                        loop {
-                            let (row, col, inc_lt, inc) = inc_iter.next().unwrap();
-                            debug_assert_eq!(*row, j_prime);
-                            val_j_r[0][*col] += *inc_lt;
-                            val_j_0[*col] += *inc;
-                            if inc_iter.peek().unwrap().0 != j_prime {
-                                break;
-                            }
-                        }
-                        for k in dirty_indices.ones() {
-                            val_j_r[1][k] = val_j_0[k];
-                        }
-
-                        // Second of the two rows
-                        for inc in inc_iter {
-                            let (row, col, inc_lt, inc) = *inc;
-                            debug_assert_eq!(row, j_prime + 1);
-                            val_j_r[1][col] += inc_lt;
-                            val_j_0[col] += inc;
-                        }
-
-                        let eq_r_prime_evals = eq_r_prime
-                            .sumcheck_evals_array::<DEGREE>(j_prime / 2, BindingOrder::LowToHigh);
-                        let inc_cycle_evals = inc_cycle
-                            .sumcheck_evals_array::<DEGREE>(j_prime / 2, BindingOrder::LowToHigh);
-
-                        let mut inner_sum_evals = [F::zero(); 3];
-                        for k in dirty_indices.ones() {
-                            let mut m_val: Option<F> = None;
-                            let mut val_eval_2: Option<F> = None;
-                            let mut val_eval_3: Option<F> = None;
-
-                            // rs1 read-checking sumcheck
-                            if !rs1_ra[0][k].is_zero() || !rs1_ra[1][k].is_zero() {
-                                // Preemptively multiply by `z` to save a mult
-                                let ra_eval_0 = self.z * rs1_ra[0][k];
-                                let ra_eval_1 = self.z * rs1_ra[1][k];
-                                let m_ra = ra_eval_1 - ra_eval_0;
-                                let ra_eval_2 = ra_eval_1 + m_ra;
-                                let ra_eval_3 = ra_eval_2 + m_ra;
-
-                                m_val = Some(val_j_r[1][k] - val_j_r[0][k]);
-                                val_eval_2 = Some(val_j_r[1][k] + m_val.unwrap());
-                                val_eval_3 = Some(val_eval_2.unwrap() + m_val.unwrap());
-
-                                inner_sum_evals[0] += ra_eval_0.mul_0_optimized(val_j_r[0][k]);
-                                inner_sum_evals[1] += ra_eval_2 * val_eval_2.unwrap();
-                                inner_sum_evals[2] += ra_eval_3 * val_eval_3.unwrap();
-
-                                rs1_ra[0][k] = F::zero();
-                                rs1_ra[1][k] = F::zero();
+                                let k = trace[j].rd_write().0;
+                                unsafe {
+                                    dirty_indices.insert_unchecked(k);
+                                }
+                                rd_wa[0][k] += A[j_bound];
                             }
 
-                            // rs2 read-checking sumcheck
-                            if !rs2_ra[0][k].is_zero() || !rs2_ra[1][k].is_zero() {
-                                // Preemptively multiply by `z_squared` to save a mult
-                                let ra_eval_0 = self.z_squared * rs2_ra[0][k];
-                                let ra_eval_1 = self.z_squared * rs2_ra[1][k];
-                                let m_ra = ra_eval_1 - ra_eval_0;
-                                let ra_eval_2 = ra_eval_1 + m_ra;
-                                let ra_eval_3 = ra_eval_2 + m_ra;
+                            for j in (j_prime + 1) << round..(j_prime + 2) << round {
+                                let j_bound = j % (1 << round);
 
-                                m_val = m_val.or(Some(val_j_r[1][k] - val_j_r[0][k]));
-                                val_eval_2 = val_eval_2.or(Some(val_j_r[1][k] + m_val.unwrap()));
-                                val_eval_3 =
-                                    val_eval_3.or(Some(val_eval_2.unwrap() + m_val.unwrap()));
+                                let k = trace[j].rs1_read().0;
+                                unsafe {
+                                    dirty_indices.insert_unchecked(k);
+                                }
+                                rs1_ra[1][k] += A[j_bound];
 
-                                inner_sum_evals[0] += ra_eval_0.mul_0_optimized(val_j_r[0][k]);
-                                inner_sum_evals[1] += ra_eval_2 * val_eval_2.unwrap();
-                                inner_sum_evals[2] += ra_eval_3 * val_eval_3.unwrap();
+                                let k = trace[j].rs2_read().0;
+                                unsafe {
+                                    dirty_indices.insert_unchecked(k);
+                                }
+                                rs2_ra[1][k] += A[j_bound];
 
-                                rs2_ra[0][k] = F::zero();
-                                rs2_ra[1][k] = F::zero();
+                                let k = trace[j].rd_write().0;
+                                unsafe {
+                                    dirty_indices.insert_unchecked(k);
+                                }
+                                rd_wa[1][k] += A[j_bound];
                             }
 
-                            // Write-checking sumcheck
-                            if !rd_wa[0][k].is_zero() || !rd_wa[1][k].is_zero() {
-                                let wa_eval_0 = rd_wa[0][k];
-                                let wa_eval_1 = rd_wa[1][k];
-                                let m_wa = wa_eval_1 - wa_eval_0;
-                                let wa_eval_2 = wa_eval_1 + m_wa;
-                                let wa_eval_3 = wa_eval_2 + m_wa;
+                            for k in dirty_indices.ones() {
+                                val_j_r[0][k] = val_j_0[k];
+                            }
+                            let mut inc_iter = inc_chunk.iter().peekable();
 
-                                // TODO: can move val evals outside if statements.
-                                let m_val = m_val.unwrap_or(val_j_r[1][k] - val_j_r[0][k]);
-                                let val_eval_2 = val_eval_2.unwrap_or(val_j_r[1][k] + m_val);
-                                let val_eval_3 = val_eval_3.unwrap_or(val_eval_2 + m_val);
-
-                                inner_sum_evals[0] +=
-                                    wa_eval_0.mul_0_optimized(inc_cycle_evals[0] + val_j_r[0][k]);
-                                inner_sum_evals[1] += wa_eval_2 * (inc_cycle_evals[1] + val_eval_2);
-                                inner_sum_evals[2] += wa_eval_3 * (inc_cycle_evals[2] + val_eval_3);
-
-                                rd_wa[0][k] = F::zero();
-                                rd_wa[1][k] = F::zero();
+                            // First of the two rows
+                            loop {
+                                let (row, col, inc_lt, inc) = inc_iter.next().unwrap();
+                                debug_assert_eq!(*row, j_prime);
+                                val_j_r[0][*col] += *inc_lt;
+                                val_j_0[*col] += *inc;
+                                if inc_iter.peek().unwrap().0 != j_prime {
+                                    break;
+                                }
+                            }
+                            for k in dirty_indices.ones() {
+                                val_j_r[1][k] = val_j_0[k];
                             }
 
-                            val_j_r[0][k] = F::zero();
-                            val_j_r[1][k] = F::zero();
-                        }
-                        dirty_indices.clear();
+                            // Second of the two rows
+                            for inc in inc_iter {
+                                let (row, col, inc_lt, inc) = *inc;
+                                debug_assert_eq!(row, j_prime + 1);
+                                val_j_r[1][col] += inc_lt;
+                                val_j_0[col] += inc;
+                            }
 
-                        evals[0] += eq_r_prime_evals[0] * inner_sum_evals[0];
-                        evals[1] += eq_r_prime_evals[1] * inner_sum_evals[1];
-                        evals[2] += eq_r_prime_evals[2] * inner_sum_evals[2];
-                    });
+                            let eq_r_prime_eval = gruens_eq_r_prime.E_out_current()[j_prime / 2];
+                            let inc_cycle_evals = {
+                                let inc_cycle_0 = inc_cycle.get_bound_coeff(j_prime);
+                                let inc_cycle_1 = inc_cycle.get_bound_coeff(j_prime + 1);
+                                let inc_cycle_infty = inc_cycle_1 - inc_cycle_0;
+                                [inc_cycle_0, inc_cycle_infty]
+                            };
 
-                evals
-            })
-            .reduce(
-                || [F::zero(); DEGREE],
-                |running, new| {
-                    [
-                        running[0] + new[0],
-                        running[1] + new[1],
-                        running[2] + new[2],
-                    ]
-                },
-            );
+                            let mut rd_inner_sum_evals = [F::zero(); DEGREE - 1];
+                            let mut rs1_inner_sum_evals = [F::zero(); DEGREE - 1];
+                            let mut rs2_inner_sum_evals = [F::zero(); DEGREE - 1];
 
-        univariate_poly_evals.into()
+                            for k in dirty_indices.ones() {
+                                let val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
+
+                                // Check rd_wa and compute its contribution if non-zero
+                                if !rd_wa[0][k].is_zero() || !rd_wa[1][k].is_zero() {
+                                    let wa_evals = [rd_wa[0][k], rd_wa[1][k] - rd_wa[0][k]];
+
+                                    rd_inner_sum_evals[0] += wa_evals[0]
+                                        .mul_0_optimized(inc_cycle_evals[0] + val_evals[0]);
+                                    rd_inner_sum_evals[1] +=
+                                        wa_evals[1] * (inc_cycle_evals[1] + val_evals[1]);
+
+                                    rd_wa[0][k] = F::zero();
+                                    rd_wa[1][k] = F::zero();
+                                }
+
+                                // Check rs1_ra and compute its contribution if non-zero
+                                if !rs1_ra[0][k].is_zero() || !rs1_ra[1][k].is_zero() {
+                                    let ra_evals_rs1 = [rs1_ra[0][k], rs1_ra[1][k] - rs1_ra[0][k]];
+
+                                    rs1_inner_sum_evals[0] +=
+                                        ra_evals_rs1[0].mul_0_optimized(val_evals[0]);
+                                    rs1_inner_sum_evals[1] += ra_evals_rs1[1] * val_evals[1];
+
+                                    rs1_ra[0][k] = F::zero();
+                                    rs1_ra[1][k] = F::zero();
+                                }
+
+                                // Check rs2_ra and compute its contribution if non-zero
+                                if !rs2_ra[0][k].is_zero() || !rs2_ra[1][k].is_zero() {
+                                    let ra_evals_rs2 = [rs2_ra[0][k], rs2_ra[1][k] - rs2_ra[0][k]];
+
+                                    rs2_inner_sum_evals[0] +=
+                                        ra_evals_rs2[0].mul_0_optimized(val_evals[0]);
+                                    rs2_inner_sum_evals[1] += ra_evals_rs2[1] * val_evals[1];
+
+                                    rs2_ra[0][k] = F::zero();
+                                    rs2_ra[1][k] = F::zero();
+                                }
+
+                                val_j_r[0][k] = F::zero();
+                                val_j_r[1][k] = F::zero();
+                            }
+                            dirty_indices.clear();
+
+                            evals[0] += eq_r_prime_eval
+                                * (rd_inner_sum_evals[0]
+                                    + self.z * rs1_inner_sum_evals[0]
+                                    + self.z_squared * rs2_inner_sum_evals[0]);
+                            evals[1] += eq_r_prime_eval
+                                * (rd_inner_sum_evals[1]
+                                    + self.z * rs1_inner_sum_evals[1]
+                                    + self.z_squared * rs2_inner_sum_evals[1]);
+                        });
+
+                    evals
+                })
+                .reduce(
+                    || [F::zero(); DEGREE - 1],
+                    |running, new| [running[0] + new[0], running[1] + new[1]],
+                )
+        } else {
+            // E_in is not fully bound, handle E_in and E_out
+            let num_x_in_bits = gruens_eq_r_prime.E_in_current_len().log_2();
+            let x_bitmask = (1 << num_x_in_bits) - 1;
+
+            I.par_iter()
+                .zip(data_buffers.par_iter_mut())
+                .zip(val_checkpoints.par_chunks(K))
+                .map(|((I_chunk, buffers), checkpoint)| {
+                    let mut evals = [F::zero(), F::zero()];
+
+                    let mut evals_for_current_E_out = [F::zero(), F::zero()];
+                    let mut x_out_prev: Option<usize> = None;
+
+                    let DataBuffers {
+                        val_j_0,
+                        val_j_r,
+                        rs1_ra,
+                        rs2_ra,
+                        rd_wa,
+                        dirty_indices,
+                    } = buffers;
+                    val_j_0.as_mut_slice().copy_from_slice(checkpoint);
+
+                    // Iterate over I_chunk, two rows at a time.
+                    I_chunk
+                        .chunk_by(|a, b| a.0 / 2 == b.0 / 2)
+                        .for_each(|inc_chunk| {
+                            let j_prime = inc_chunk[0].0; // row index
+
+                            for j in j_prime << round..(j_prime + 1) << round {
+                                let j_bound = j % (1 << round);
+
+                                let k = trace[j].rs1_read().0;
+                                unsafe {
+                                    dirty_indices.insert_unchecked(k);
+                                }
+                                rs1_ra[0][k] += A[j_bound];
+
+                                let k = trace[j].rs2_read().0;
+                                unsafe {
+                                    dirty_indices.insert_unchecked(k);
+                                }
+                                rs2_ra[0][k] += A[j_bound];
+
+                                let k = trace[j].rd_write().0;
+                                unsafe {
+                                    dirty_indices.insert_unchecked(k);
+                                }
+                                rd_wa[0][k] += A[j_bound];
+                            }
+
+                            for j in (j_prime + 1) << round..(j_prime + 2) << round {
+                                let j_bound = j % (1 << round);
+
+                                let k = trace[j].rs1_read().0;
+                                unsafe {
+                                    dirty_indices.insert_unchecked(k);
+                                }
+                                rs1_ra[1][k] += A[j_bound];
+
+                                let k = trace[j].rs2_read().0;
+                                unsafe {
+                                    dirty_indices.insert_unchecked(k);
+                                }
+                                rs2_ra[1][k] += A[j_bound];
+
+                                let k = trace[j].rd_write().0;
+                                unsafe {
+                                    dirty_indices.insert_unchecked(k);
+                                }
+                                rd_wa[1][k] += A[j_bound];
+                            }
+
+                            for k in dirty_indices.ones() {
+                                val_j_r[0][k] = val_j_0[k];
+                            }
+                            let mut inc_iter = inc_chunk.iter().peekable();
+
+                            // First of the two rows
+                            loop {
+                                let (row, col, inc_lt, inc) = inc_iter.next().unwrap();
+                                debug_assert_eq!(*row, j_prime);
+                                val_j_r[0][*col] += *inc_lt;
+                                val_j_0[*col] += *inc;
+                                if inc_iter.peek().unwrap().0 != j_prime {
+                                    break;
+                                }
+                            }
+                            for k in dirty_indices.ones() {
+                                val_j_r[1][k] = val_j_0[k];
+                            }
+
+                            // Second of the two rows
+                            for inc in inc_iter {
+                                let (row, col, inc_lt, inc) = *inc;
+                                debug_assert_eq!(row, j_prime + 1);
+                                val_j_r[1][col] += inc_lt;
+                                val_j_0[col] += inc;
+                            }
+
+                            let x_in = (j_prime / 2) & x_bitmask;
+                            let x_out = (j_prime / 2) >> num_x_in_bits;
+                            let E_in_eval = gruens_eq_r_prime.E_in_current()[x_in];
+
+                            let inc_cycle_evals = {
+                                let inc_cycle_0 = inc_cycle.get_bound_coeff(j_prime);
+                                let inc_cycle_1 = inc_cycle.get_bound_coeff(j_prime + 1);
+                                let inc_cycle_infty = inc_cycle_1 - inc_cycle_0;
+                                [inc_cycle_0, inc_cycle_infty]
+                            };
+
+                            // Multiply the running sum by the previous value of E_out_eval when
+                            // its value changes and add the result to the total.
+                            match x_out_prev {
+                                None => {
+                                    x_out_prev = Some(x_out);
+                                }
+                                Some(x) if x_out != x => {
+                                    x_out_prev = Some(x_out);
+
+                                    let E_out_eval = gruens_eq_r_prime.E_out_current()[x];
+                                    evals[0] += E_out_eval * evals_for_current_E_out[0];
+                                    evals[1] += E_out_eval * evals_for_current_E_out[1];
+
+                                    evals_for_current_E_out = [F::zero(), F::zero()];
+                                }
+                                _ => (),
+                            }
+
+                            let mut rd_inner_sum_evals = [F::zero(); DEGREE - 1];
+                            let mut rs1_inner_sum_evals = [F::zero(); DEGREE - 1];
+                            let mut rs2_inner_sum_evals = [F::zero(); DEGREE - 1];
+
+                            for k in dirty_indices.ones() {
+                                let val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
+
+                                // Check rd_wa and compute its contribution if non-zero
+                                if !rd_wa[0][k].is_zero() || !rd_wa[1][k].is_zero() {
+                                    let wa_evals = [rd_wa[0][k], rd_wa[1][k] - rd_wa[0][k]];
+
+                                    rd_inner_sum_evals[0] += wa_evals[0]
+                                        .mul_0_optimized(inc_cycle_evals[0] + val_evals[0]);
+                                    rd_inner_sum_evals[1] +=
+                                        wa_evals[1] * (inc_cycle_evals[1] + val_evals[1]);
+
+                                    rd_wa[0][k] = F::zero();
+                                    rd_wa[1][k] = F::zero();
+                                }
+
+                                // Check rs1_ra and compute its contribution if non-zero
+                                if !rs1_ra[0][k].is_zero() || !rs1_ra[1][k].is_zero() {
+                                    let ra_evals_rs1 = [rs1_ra[0][k], rs1_ra[1][k] - rs1_ra[0][k]];
+
+                                    rs1_inner_sum_evals[0] +=
+                                        ra_evals_rs1[0].mul_0_optimized(val_evals[0]);
+                                    rs1_inner_sum_evals[1] += ra_evals_rs1[1] * val_evals[1];
+
+                                    rs1_ra[0][k] = F::zero();
+                                    rs1_ra[1][k] = F::zero();
+                                }
+
+                                // Check rs2_ra and compute its contribution if non-zero
+                                if !rs2_ra[0][k].is_zero() || !rs2_ra[1][k].is_zero() {
+                                    let ra_evals_rs2 = [rs2_ra[0][k], rs2_ra[1][k] - rs2_ra[0][k]];
+
+                                    rs2_inner_sum_evals[0] +=
+                                        ra_evals_rs2[0].mul_0_optimized(val_evals[0]);
+                                    rs2_inner_sum_evals[1] += ra_evals_rs2[1] * val_evals[1];
+
+                                    rs2_ra[0][k] = F::zero();
+                                    rs2_ra[1][k] = F::zero();
+                                }
+
+                                val_j_r[0][k] = F::zero();
+                                val_j_r[1][k] = F::zero();
+                            }
+                            dirty_indices.clear();
+
+                            evals_for_current_E_out[0] += E_in_eval
+                                * (rd_inner_sum_evals[0]
+                                    + self.z * rs1_inner_sum_evals[0]
+                                    + self.z_squared * rs2_inner_sum_evals[0]);
+                            evals_for_current_E_out[1] += E_in_eval
+                                * (rd_inner_sum_evals[1]
+                                    + self.z * rs1_inner_sum_evals[1]
+                                    + self.z_squared * rs2_inner_sum_evals[1]);
+                        });
+
+                    // Multiply the final running sum by the final value of E_out_eval and add the
+                    // result to the total.
+                    if let Some(x) = x_out_prev {
+                        let E_out_eval = gruens_eq_r_prime.E_out_current()[x];
+                        evals[0] += E_out_eval * evals_for_current_E_out[0];
+                        evals[1] += E_out_eval * evals_for_current_E_out[1];
+                    }
+                    evals
+                })
+                .reduce(
+                    || [F::zero(); DEGREE - 1],
+                    |running, new| [running[0] + new[0], running[1] + new[1]],
+                )
+        };
+
+        // Convert quadratic coefficients to cubic evaluations
+        gruens_eq_r_prime
+            .gruen_evals_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], previous_claim)
+            .to_vec()
     }
 
     fn phase2_compute_prover_message(&self) -> Vec<F> {
@@ -788,6 +984,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
             A,
             inc_cycle,
             eq_r_prime,
+            gruens_eq_r_prime,
             chunk_size,
             val_checkpoints,
             rs1_ra,
@@ -836,6 +1033,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
         drop(inner_span);
 
         eq_r_prime.bind_parallel(r_j, BindingOrder::LowToHigh);
+        gruens_eq_r_prime.bind(r_j);
         inc_cycle.bind_parallel(r_j, BindingOrder::LowToHigh);
 
         let inner_span = tracing::span!(tracing::Level::INFO, "Update A");
@@ -1052,6 +1250,10 @@ impl<F: JoltField> SumcheckInstance<F> for RegistersReadWriteChecking<F> {
             * (claims.rd_wa_claim * (claims.inc_claim + claims.val_claim)
                 + self.z * claims.rs1_ra_claim * claims.val_claim
                 + self.z_squared * claims.rs2_ra_claim * claims.val_claim)
+    }
+
+    fn set_previous_claim(&mut self, claim: F) {
+        self.previous_claim = claim;
     }
 
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {

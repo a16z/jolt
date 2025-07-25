@@ -96,32 +96,6 @@ impl<F: JoltField> EqPolynomial<F> {
         evals
     }
 
-    /// Computes the table of coefficients like `evals_serial`, but also caches the intermediate
-    /// results. This binds `r` in the reverse order compared to `evals_serial_cached`.
-    ///
-    /// Concretely, this returns a vector of vectors, where the `(n -j)`th vector contains the
-    /// coefficients for the polynomial `eq(r[j..], x)` for all `x in {0, 1}^{n - j}`.
-    ///
-    /// Performance seems at most 10% worse than `evals_serial`
-    #[allow(dead_code)]
-    fn evals_serial_cached_rev(r: &[F], scaling_factor: Option<F>) -> Vec<Vec<F>> {
-        let rev_r = r.iter().rev().collect::<Vec<_>>();
-        let mut evals: Vec<Vec<F>> = (0..r.len() + 1)
-            .map(|i| vec![scaling_factor.unwrap_or(F::one()); 1 << i])
-            .collect();
-        let mut size = 1;
-        for j in 0..r.len() {
-            for i in 0..size {
-                let scalar = evals[j][i];
-                let multiple = 1 << j;
-                evals[j + 1][i + multiple] = scalar * rev_r[j];
-                evals[j + 1][i] = scalar - evals[j + 1][i + multiple];
-            }
-            size *= 2;
-        }
-        evals
-    }
-
     /// Computes the table of coefficients:
     ///
     ///     `scaling_factor * eq(r, x) for all x in {0, 1}^n`,

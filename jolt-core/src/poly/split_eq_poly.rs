@@ -61,6 +61,33 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "GruenSplitEqPolynomial::new_rev")]
+    pub fn new_rev(w: &[F]) -> Self {
+        let mut w_rev = w.to_vec();
+        w_rev.reverse();
+        let w = &w_rev;
+        let m = w.len() / 2;
+        //   w = [w_out, w_in, w_last]
+        //         ↑      ↑      ↑
+        //         |      |      |
+        //         |      |      last element
+        //         |      second half of remaining elements (for E_in)
+        //         first half of remaining elements (for E_out)
+        let (_, wprime) = w.split_last().unwrap();
+        let (w_out, w_in) = wprime.split_at(m);
+        let (E_out_vec, E_in_vec) = rayon::join(
+            || EqPolynomial::evals_cached(w_out),
+            || EqPolynomial::evals_cached(w_in),
+        );
+        Self {
+            current_index: w.len(),
+            current_scalar: F::one(),
+            w: w_rev,
+            E_in_vec,
+            E_out_vec,
+        }
+    }
+
     /// Compute the split equality polynomial for the small value optimization
     ///
     /// The split is done as follows: (here `l = num_small_value_rounds`)
@@ -181,6 +208,102 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         } else if 0 < self.current_index {
             self.E_out_vec.pop();
         }
+    }
+
+    /// Compute the sumcheck quadratic evaluations (i.e., the evaluations at {0, 2}) of a
+    /// polynomial s(X) = l(X) * q(X), where l(X) is the current (linear) eq polynomial and
+    /// q(X) is a linear polynomial, given the following:
+    /// - c, the constant term of q
+    /// - the previous round claim, s(0) + s(1)
+    ///
+    /// We derive the linear coefficient d of q(X) from the constraint s(0) + s(1) = previous_claim
+    pub fn gruen_evals_deg_2(&self, q_constant: F, previous_claim: F) -> [F; 2] {
+        // We want to compute the evaluations of the quadratic polynomial s(X) = l(X) * q(X), where
+        // both l and q are linear, at the points {0, 2}.
+        //
+        // We have:
+        // - the linear polynomial l(X) = a + bX (current eq polynomial)
+        // - the linear polynomial q(X) = c + dX where c is given
+        // - the previous round's claim s(0) + s(1) = previous_claim
+        //
+        // From s(0) + s(1) = l(0)*q(0) + l(1)*q(1) = a*c + (a+b)*(c+d) = previous_claim
+        // We can solve for d
+
+        // Evaluations of the linear polynomial l(X)
+        let eq_eval_1 = self.current_scalar * self.w[self.current_index - 1];
+        let eq_eval_0 = self.current_scalar - eq_eval_1;
+
+        // s(0) = l(0) * q(0) = eq_eval_0 * q_constant
+        let s_0 = eq_eval_0 * q_constant;
+
+        // From s(0) + s(1) = previous_claim, we get s(1) = previous_claim - s(0)
+        let s_1 = previous_claim - s_0;
+
+        // Since s(1) = l(1) * q(1) = eq_eval_1 * (c + d), we can solve for d
+        // s(1) = eq_eval_1 * (q_constant + d)
+        // d = s(1) / eq_eval_1 - q_constant
+        let q_linear_coeff = s_1 / eq_eval_1 - q_constant;
+
+        // Now compute the evaluations at 0 and 2
+        let eq_m = eq_eval_1 - eq_eval_0; // This is b, the slope of l(X)
+        let eq_eval_2 = eq_eval_1 + eq_m; // l(2) = l(1) + b
+
+        let q_eval_2 = q_constant + q_linear_coeff + q_linear_coeff; // q(2) = c + 2d
+
+        [
+            s_0,                  // s(0) = l(0) * q(0)
+            eq_eval_2 * q_eval_2, // s(2) = l(2) * q(2)
+        ]
+    }
+
+    /// Compute the sumcheck cubic sumcheck evaluations (i.e., the evaluations at {0, 2, 3}) of a
+    /// polynomial s(X) = l(X) * q(X), where l(X) is the current (linear) eq polynomial and
+    /// q(X) = c + dX + eX^2, given the following:
+    /// - c, the constant term of q
+    /// - e, the quadratic term of q
+    /// - the previous round claim, s(0) + s(1)
+    pub fn gruen_evals_deg_3(
+        &self,
+        q_constant: F,
+        q_quadratic_coeff: F,
+        s_0_plus_s_1: F,
+    ) -> [F; 3] {
+        // We want to compute the evaluations of the cubic polynomial s(X) = l(X) * q(X), where
+        // l is linear, and q is quadratic, at the points {0, 2, 3}.
+        //
+        // At this point, we have
+        // - the linear polynomial, l(X) = a + bX
+        // - the quadratic polynomial, q(X) = c + dX + eX^2
+        // - the previous round's claim s(0) + s(1) = a * c + (a + b) * (c + d + e)
+        //
+        // Both l and q are represented by their evaluations at 0 and infinity. I.e., we have a, b, c,
+        // and e, but not d. We compute s by first computing l and q at points 2 and 3.
+
+        // Evaluations of the linear polynomial
+        let eq_eval_1 = self.current_scalar * self.w[self.current_index - 1];
+        let eq_eval_0 = self.current_scalar - eq_eval_1;
+        let eq_m = eq_eval_1 - eq_eval_0;
+        let eq_eval_2 = eq_eval_1 + eq_m;
+        let eq_eval_3 = eq_eval_2 + eq_m;
+
+        // Evaluations of the quadratic polynomial
+        let quadratic_eval_0 = q_constant;
+        let cubic_eval_0 = eq_eval_0 * quadratic_eval_0;
+        let cubic_eval_1 = s_0_plus_s_1 - cubic_eval_0;
+        // q(1) = c + d + e
+        let quadratic_eval_1 = cubic_eval_1 / eq_eval_1;
+        // q(2) = c + 2d + 4e = q(1) + q(1) - q(0) + 2e
+        let e_times_2 = q_quadratic_coeff + q_quadratic_coeff;
+        let quadratic_eval_2 = quadratic_eval_1 + quadratic_eval_1 - quadratic_eval_0 + e_times_2;
+        // q(3) = c + 3d + 9e = q(2) + q(1) - q(0) + 4e
+        let quadratic_eval_3 =
+            quadratic_eval_2 + quadratic_eval_1 - quadratic_eval_0 + e_times_2 + e_times_2;
+
+        [
+            cubic_eval_0,
+            eq_eval_2 * quadratic_eval_2,
+            eq_eval_3 * quadratic_eval_3,
+        ]
     }
 
     #[cfg(test)]
@@ -320,6 +443,35 @@ mod tests {
             split_eq.bind(r);
 
             let merged = split_eq.merge();
+            assert_eq!(regular_eq.Z[..regular_eq.len()], merged.Z[..merged.len()]);
+        }
+    }
+
+    #[test]
+    fn bind_rev() {
+        const NUM_VARS: usize = 10;
+        let mut rng = test_rng();
+        let w: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
+            .take(NUM_VARS)
+            .collect();
+
+        // Create regular polynomial with original w
+        // @TODO(markosg04) this fails when trying to use regular_eq high to low
+        let mut regular_eq = DensePolynomial::new(EqPolynomial::evals(&w));
+
+        // Create split eq polynomial using new_rev with original w
+        let mut split_eq_rev = GruenSplitEqPolynomial::new_rev(&w);
+
+        // Verify they start equal
+        assert_eq!(regular_eq, split_eq_rev.merge());
+
+        // Bind with same random values
+        for _ in 0..NUM_VARS {
+            let r = Fr::random(&mut rng);
+            regular_eq.bound_poly_var_top(&r);
+            split_eq_rev.bind(r);
+
+            let merged = split_eq_rev.merge();
             assert_eq!(regular_eq.Z[..regular_eq.len()], merged.Z[..merged.len()]);
         }
     }

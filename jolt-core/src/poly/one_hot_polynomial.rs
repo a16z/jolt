@@ -151,7 +151,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             let univariate_poly_evals: [F; 2] = (0..B.len() / 2)
                 .into_par_iter()
                 .map(|k_prime| {
-                    let B_evals = B.sumcheck_evals(k_prime, 2, BindingOrder::HighToLow);
+                    let B_evals = B.sumcheck_evals_array::<2>(k_prime, BindingOrder::HighToLow);
                     let inner_sum = G
                         .par_iter()
                         .enumerate()
@@ -206,7 +206,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                 .into_par_iter()
                 .map(|j| {
                     let H_evals = H.sumcheck_evals(j, 2, BindingOrder::HighToLow);
-                    let D_evals = D.sumcheck_evals(j, 2, BindingOrder::HighToLow);
+                    let D_evals = D.sumcheck_evals_array::<2>(j, BindingOrder::HighToLow);
                     [H_evals[0] * D_evals[0], H_evals[1] * D_evals[1]]
                 })
                 .reduce(
