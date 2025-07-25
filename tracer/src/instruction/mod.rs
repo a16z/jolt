@@ -94,7 +94,7 @@ use xori::XORI;
 
 use inline_blake2::blake2::BLAKE2;
 use inline_blake3::blake3::BLAKE3;
-use inline_blake3::blake3_hash_modes::{BLAKE3_64, BLAKE3_128, BLAKE3_192, BLAKE3_256};
+use inline_blake3::blake3_hash_modes::{BLAKE3_128, BLAKE3_192, BLAKE3_256, BLAKE3_64};
 use inline_keccak256::keccak256::KECCAK256;
 use inline_sha256::sha256::SHA256;
 use inline_sha256::sha256init::SHA256INIT;
@@ -113,14 +113,14 @@ use virtual_pow2::VirtualPow2;
 use virtual_pow2i::VirtualPow2I;
 use virtual_rotri::VirtualROTRI;
 use virtual_rotril::VirtualROTRIL;
-use virtual_rot_xor::{VirtualROTXOR16L, VirtualROTXOR12L, VirtualROTXOR8L, VirtualROTXOR7L};
 use virtual_shift_right_bitmask::VirtualShiftRightBitmask;
 use virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI;
 use virtual_sra::VirtualSRA;
 use virtual_srai::VirtualSRAI;
 use virtual_srl::VirtualSRL;
 use virtual_srli::VirtualSRLI;
-
+use virtual_xor_rot::{VirtualROTXOR12L, VirtualROTXOR16L, VirtualROTXOR7L, VirtualROTXOR8L};
+use virtual_xor_rot::{VirtualROTXOR16, VirtualROTXOR24, VirtualROTXOR32, VirtualROTXOR63};
 use crate::emulator::cpu::Cpu;
 use derive_more::From;
 use format::{InstructionFormat, InstructionRegisterState, NormalizedOperands};
@@ -226,13 +226,13 @@ pub mod virtual_pow2;
 pub mod virtual_pow2i;
 pub mod virtual_rotri;
 pub mod virtual_rotril;
-pub mod virtual_rot_xor;
 pub mod virtual_shift_right_bitmask;
 pub mod virtual_shift_right_bitmaski;
 pub mod virtual_sra;
 pub mod virtual_srai;
 pub mod virtual_srl;
 pub mod virtual_srli;
+pub mod virtual_xor_rot;
 pub mod xor;
 pub mod xori;
 
@@ -515,12 +515,13 @@ define_rv32im_enums! {
         VirtualAssertValidDiv0, VirtualAssertValidSignedRemainder, VirtualAssertValidUnsignedRemainder,
         VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I, VirtualROTRI, VirtualROTRIL,
         VirtualROTXOR16L, VirtualROTXOR12L, VirtualROTXOR8L, VirtualROTXOR7L,
+        VirtualROTXOR32, VirtualROTXOR24, VirtualROTXOR16, VirtualROTXOR63,
         VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
         // Extension
         SHA256, SHA256INIT,
-        KECCAK256, BLAKE2, 
-        BLAKE3, BLAKE3_64, BLAKE3_128, BLAKE3_192, BLAKE3_256, 
+        KECCAK256, BLAKE2,
+        BLAKE3, BLAKE3_64, BLAKE3_128, BLAKE3_192, BLAKE3_256,
     ]
 }
 

@@ -7,8 +7,10 @@ use crate::instruction::format::format_virtual_right_shift_i::FormatVirtualRight
 use crate::instruction::lui::LUI;
 use crate::instruction::lw::LW;
 use crate::instruction::sw::SW;
-use crate::instruction::virtual_rot_xor::{VirtualROTXOR12L, VirtualROTXOR16L, VirtualROTXOR7L, VirtualROTXOR8L};
 use crate::instruction::virtual_rotril::VirtualROTRIL;
+use crate::instruction::virtual_xor_rot::{
+    VirtualROTXOR12L, VirtualROTXOR16L, VirtualROTXOR7L, VirtualROTXOR8L,
+};
 use crate::instruction::xor::XOR;
 use crate::instruction::xori::XORI;
 use crate::instruction::RV32IMInstruction;
@@ -28,7 +30,7 @@ pub mod blake3;
 pub mod blake3_hash_modes;
 
 // Re-export the Blake3 variants for public use
-pub use blake3_hash_modes::{BLAKE3_64, BLAKE3_128, BLAKE3_192, BLAKE3_256};
+pub use blake3_hash_modes::{BLAKE3_128, BLAKE3_192, BLAKE3_256, BLAKE3_64};
 
 /// Blake3 initialization vector (IV)
 #[rustfmt::skip]
@@ -86,15 +88,15 @@ const VR_FLAG_START: usize = 43;
 const VR_TEMP: usize = 44;
 
 pub enum BuilderMode {
-    COMPRESSION, 
+    COMPRESSION,
     HASH(u32),
 }
 
 pub enum RotationAmount {
-    ROT16, 
-    ROT12, 
-    ROT8, 
-    ROT7
+    ROT16,
+    ROT12,
+    ROT8,
+    ROT7,
 }
 
 pub struct Blake3SequenceBuilder {
@@ -127,7 +129,7 @@ impl Blake3SequenceBuilder {
         vr: [usize; NEEDED_REGISTERS],
         operand_rs1: usize,
         operand_rs2: usize,
-        mode: BuilderMode
+        mode: BuilderMode,
     ) -> Self {
         Blake3SequenceBuilder {
             address,
@@ -142,7 +144,9 @@ impl Blake3SequenceBuilder {
 
     pub fn build(mut self) -> Vec<RV32IMInstruction> {
         match self.mode {
-            BuilderMode::COMPRESSION => {return self.compress_build();}
+            BuilderMode::COMPRESSION => {
+                return self.compress_build();
+            }
             BuilderMode::HASH(block_num) => {
                 // v[8..11] = IV[0..3] (first 4 words of initialization vector)
                 for i in 0..8 {
@@ -157,7 +161,9 @@ impl Blake3SequenceBuilder {
                         MESSAGE_BLOCK_SIZE,
                     );
                     // 2^0 for chunk_start -- 2^1 for chunk_end
-                    let flag = (i == 0) as u32 | (((i == block_num - 1) as u32) << 1) | (((i == block_num - 1) as u32) << 3);
+                    let flag = (i == 0) as u32
+                        | (((i == block_num - 1) as u32) << 1)
+                        | (((i == block_num - 1) as u32) << 3);
                     self.initialize_working_state(flag);
                     // 3. Main loop: 7 rounds of Blake3 compression
                     for round in 0..7 {
@@ -167,7 +173,7 @@ impl Blake3SequenceBuilder {
 
                     // 4. Finalize the hash state: h[i] ^= v[i] ^ v[i+8]
                     let requires_truncate = i != block_num - 1;
-                    self.finalize_state(requires_truncate);   
+                    self.finalize_state(requires_truncate);
                 }
                 self.store_state();
                 // 6. Finalize the sequence by setting instruction indices
@@ -297,7 +303,6 @@ impl Blake3SequenceBuilder {
                 self.load_32bit_immediate(flag, self.vr[VR_STATE_START + 15]);
             }
         }
-        
     }
 
     /// Execute one round of Blake3 compression
@@ -334,7 +339,6 @@ impl Blake3SequenceBuilder {
 
         // // v[d] = rotr32(v[d] ^ v[a], 16)
         self.xor_rotate(vd, va, RotationAmount::ROT16, vd);
-        
 
         // v[c] = v[c] + v[d]
         self.add32(Reg(vc), Reg(vd), vc);
@@ -363,9 +367,8 @@ impl Blake3SequenceBuilder {
                 let vi = self.vr[VR_STATE_START + i];
                 let vi8 = self.vr[VR_STATE_START + i + 8];
                 self.xor32(Reg(vi), Reg(vi8), hi);
-            } 
-        }
-        else {
+            }
+        } else {
             for i in 0..STATE_SIZE / 2 {
                 let hi = self.vr[VR_STATE_START + i];
                 let vi = self.vr[VR_STATE_START + i];

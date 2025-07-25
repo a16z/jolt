@@ -21,61 +21,49 @@ declare_riscv_instr!(
     ram    = ()
 );
 
-/// Load words from memory into the provided slice
-/// Returns an error if any memory access fails
+/// Load words from memory into slice
 fn load_words_from_memory(cpu: &mut Cpu, base_addr: u64, state: &mut [u64]) -> Result<(), String> {
     for (i, word) in state.iter_mut().enumerate() {
         *word = cpu
             .mmu
             .load_doubleword(base_addr.wrapping_add((i * 8) as u64))
             .map_err(|e| {
-                format!(
-                    "BLAKE2: Failed to load from memory at offset {}: {:?}",
-                    i * 8,
-                    e
-                )
+                format!("BLAKE2: Failed to load at offset {}: {:?}", i * 8, e)
             })?
             .0;
     }
     Ok(())
 }
 
-/// Store words to memory from the provided slice
-/// Returns an error if any memory access fails
+/// Store words to memory from slice
 fn store_words_to_memory(cpu: &mut Cpu, base_addr: u64, values: &[u64]) -> Result<(), String> {
     for (i, &value) in values.iter().enumerate() {
         cpu.mmu
             .store_doubleword(base_addr.wrapping_add((i * 8) as u64), value)
             .map_err(|e| {
-                format!(
-                    "BLAKE2: Failed to store to memory at offset {}: {:?}",
-                    i * 8,
-                    e
-                )
+                format!("BLAKE2: Failed to store at offset {}: {:?}", i * 8, e)
             })?;
     }
     Ok(())
 }
 
 impl BLAKE2 {
-    /// Fast path for emulation without tracing.
-    /// Performs Blake2b compression using a native Rust implementation.
+    /// Fast path emulation using native Rust Blake2b implementation.
     fn exec(&self, cpu: &mut Cpu, _ram_access: &mut <BLAKE2 as RISCVInstruction>::RAMAccess) {
-        // Memory addresses
         let state_addr = cpu.x[self.operands.rs1] as u64;
         let block_addr = cpu.x[self.operands.rs2] as u64;
 
-        // 1. Read the 8-word hash state from memory
+        // Read 8-word hash state
         let mut state = [0u64; HASH_STATE_SIZE];
         load_words_from_memory(cpu, state_addr, &mut state).expect("Failed to load hash state");
 
-        // 2. Read the 16-word message block from memory
-        let mut message_words = [0u64; MESSAGE_BLOCK_SIZE];
+        // Read 16-word message block
+        let mut message_words = [0u64; MESSAGE_BLOCK_SIZE + 2];
         load_words_from_memory(cpu, block_addr, &mut message_words)
             .expect("Failed to load message block");
 
-        // 3. Load counter value (t) from memory after message block
-        let counter = {
+        // Load counter value after message block
+        message_words[16] = {
             let mut buffer = [0];
             load_words_from_memory(
                 cpu,
@@ -86,8 +74,8 @@ impl BLAKE2 {
             buffer[0]
         };
 
-        // 4. Load final block flag from memory after counter
-        let is_final = {
+        // Load final block flag after counter
+        message_words[17] = {
             let mut buffer = [0];
             load_words_from_memory(
                 cpu,
@@ -95,13 +83,13 @@ impl BLAKE2 {
                 &mut buffer,
             )
             .expect("Failed to load final flag");
-            buffer[0] != 0
+            buffer[0]
         };
 
-        // 5. Execute Blake2b compression function
-        execute_blake2b_compression(&mut state, &message_words, counter, is_final);
+        // Execute Blake2b compression
+        execute_blake2b_compression(&mut state, &message_words);
 
-        // 6. Write the result back to memory
+        // Write result back to memory
         store_words_to_memory(cpu, state_addr, &state).expect("Failed to store result");
     }
 }
@@ -134,7 +122,7 @@ mod tests {
 
     const TEST_MEMORY_CAPACITY: u64 = 1024 * 1024; // 1MB
 
-    // Test constants from RFC 7693 Appendix A (Blake2b with "abc" input)
+    // Test constants from RFC 7693 Appendix A (Blake2b with "abc")
     const INITIAL_STATE: [u64; HASH_STATE_SIZE] = [
         0x6a09e667f3bcc908,
         0xbb67ae8584caa73b,
@@ -161,7 +149,7 @@ mod tests {
         (INITIAL_STATE, EXPECTED_STATE)
     }
 
-    /// Macro to reduce repetitive test setup and verification code
+    /// Test macro to reduce repetitive setup and verification
     macro_rules! test_blake2 {
         ($test_name:ident, $exec_block:expr) => {
             #[test]
@@ -170,9 +158,9 @@ mod tests {
                 // Apply Blake2b parameter block: h[0] ^= 0x01010000 ^ (kk << 8) ^ nn
                 initial_state[0] ^= 0x01010000 ^ (0u64 << 8) ^ 64u64;
 
-                // Message block with "abc" in little-endian format
+                // Message block with "abc" in little-endian
                 let mut message_block = [0u64; MESSAGE_BLOCK_SIZE];
-                message_block[0] = 0x0000000000636261u64; // "abc" in little-endian
+                message_block[0] = 0x0000000000636261u64; // "abc"
 
                 let (counter, is_final) = (3u64, true);
 

@@ -13,22 +13,19 @@ fn blake3_inline(input: [u8; 32], num_iters: u32) -> [u32; 8] {
             input[i * 4..(i + 1) * 4].try_into().unwrap(),
         ));
     }
-    
+
     // Set block_len and flags
     message[18] = 64;
 
     // Blake2b initialization vector
     let mut h: [u32; 8] = black_box([
-        0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A,
-        0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19,
+        0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A, 0x510E527F, 0x9B05688C, 0x1F83D9AB,
+        0x5BE0CD19,
     ]);
 
     for _ in 0..black_box(num_iters) {
         unsafe {
-            blake3::blake3_compress(
-                black_box(h.as_mut_ptr()),
-                black_box(message.as_ptr()),
-            );
+            blake3::blake3_compress(black_box(h.as_mut_ptr()), black_box(message.as_ptr()));
         }
         // Prevent optimization of the hash state
         h = black_box(h);

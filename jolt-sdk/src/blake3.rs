@@ -19,14 +19,10 @@ const BLAKE3_IV: [u32; 8] = [
 /// - `message` must be a valid pointer to 64 bytes of readable memory.
 /// - Both pointers must be properly aligned for u32 access (4-byte alignment).
 #[cfg(not(feature = "host"))]
-pub unsafe fn blake3_compress(
-    chaining_value: *mut u32,
-    message: *const u32,
-){
+pub unsafe fn blake3_compress(chaining_value: *mut u32, message: *const u32) {
     // Memory layout for Blake3 instruction:
     // rs1: points to chaining value (32 bytes)
     // rs2: points to message block (64 bytes) + counter (8 bytes) + block_len (4 bytes) + flags (4 bytes)
-
 
     // Call Blake3 instruction using funct7=0x03 to distinguish from Keccak (0x01), SHA-256 (0x00), and Blake2 (0x02)
     core::arch::asm!(
@@ -35,7 +31,7 @@ pub unsafe fn blake3_compress(
         in(reg) message,
         options(nostack)
     );
-    
+
     // // Return the modified chaining value as the result
     // let result_slice = core::slice::from_raw_parts(chaining_value, 16);
     // let mut result = [0u32; 16];
@@ -80,7 +76,7 @@ macro_rules! blake3_hash_mode {
             // Initialize chaining value with BLAKE3_IV
             let mut chaining_value = [0u32; 16];
             chaining_value[0..8].copy_from_slice(&BLAKE3_IV);
-            
+
             // Perform chained compressions
             for i in 0..$num_blocks {
                 // Get message block for this iteration (16 u32 words = 64 bytes)
@@ -88,12 +84,12 @@ macro_rules! blake3_hash_mode {
                 let message_slice = core::slice::from_raw_parts(input.add(message_offset), 16);
                 let mut message_block = [0u32; 16];
                 message_block.copy_from_slice(message_slice);
-                
+
                 // Set flags: chunk_start (bit 0), chunk_end (bit 1), root (bit 3)
                 let chunk_start = i == 0;
                 let chunk_end = i == $num_blocks - 1;
                 let flags = (chunk_start as u32) | ((chunk_end as u32) << 1) | ((chunk_end as u32) << 3);
-                
+
                 // Execute Blake3 compression
                 tracer::instruction::inline_blake3::execute_blake3_compression(
                     &mut chaining_value,
@@ -103,7 +99,7 @@ macro_rules! blake3_hash_mode {
                     flags,
                 );
             }
-            
+
             // Copy result to output (64 bytes = 16 u32 words)
             core::ptr::copy_nonoverlapping(chaining_value.as_ptr(), output, 16);
         }
@@ -125,26 +121,25 @@ mod tests {
         // Test vector from tracer implementation
         let mut chaining_value = [0u32; 16]; // 16 words total
         chaining_value[0..8].copy_from_slice(&BLAKE3_IV); // Fill first 8 with IV
-        // Remaining 8 are already 0
-        
+                                                          // Remaining 8 are already 0
+
         // Message block: sequential u32 values 0..15
         let message: [u32; 16] = [
-            0u32, 1u32, 2u32, 3u32, 4u32, 5u32, 6u32, 7u32, 
-            8u32, 9u32, 10u32, 11u32, 12u32, 13u32, 14u32, 15u32,
+            0u32, 1u32, 2u32, 3u32, 4u32, 5u32, 6u32, 7u32, 8u32, 9u32, 10u32, 11u32, 12u32, 13u32,
+            14u32, 15u32,
         ];
-        
+
         let counter = 0u64;
         let block_len = 64u32;
         let flags = 0u32;
-        
+
         // Expected output from tracer test vector
         let expected: [u32; 16] = [
-            0x5f98b37e, 0x26b0af2a, 0xdc58b278, 0x85d56ff6, 
-            0x96f5d384, 0x42c9e776, 0xbeedd1e4, 0xa03faf22, 
-            0x8a4b2d59, 0x1a1c224d, 0x303f2ae7, 0xd36ee60c, 
-            0xfba05dbb, 0xef024714, 0xf597a6be, 0xd849c813,
+            0x5f98b37e, 0x26b0af2a, 0xdc58b278, 0x85d56ff6, 0x96f5d384, 0x42c9e776, 0xbeedd1e4,
+            0xa03faf22, 0x8a4b2d59, 0x1a1c224d, 0x303f2ae7, 0xd36ee60c, 0xfba05dbb, 0xef024714,
+            0xf597a6be, 0xd849c813,
         ];
-        
+
         unsafe {
             blake3_compress(
                 chaining_value.as_mut_ptr(),
@@ -154,33 +149,32 @@ mod tests {
                 flags,
             )
         };
-        
+
         assert_eq!(chaining_value, expected, "Blake3 compression test failed");
     }
 
-    #[test] 
+    #[test]
     fn test_direct_tracer_call() {
         // Direct call to tracer function
         let mut chaining_value = [0u32; 16]; // 16 words total
         chaining_value[0..8].copy_from_slice(&BLAKE3_IV); // Fill first 8 with IV
-        
+
         let message: [u32; 16] = [
-            0u32, 1u32, 2u32, 3u32, 4u32, 5u32, 6u32, 7u32, 
-            8u32, 9u32, 10u32, 11u32, 12u32, 13u32, 14u32, 15u32,
+            0u32, 1u32, 2u32, 3u32, 4u32, 5u32, 6u32, 7u32, 8u32, 9u32, 10u32, 11u32, 12u32, 13u32,
+            14u32, 15u32,
         ];
-        
+
         let counter = [0u32, 0u32];
         let block_len = 64u32;
         let flags = 0u32;
-        
+
         // Expected output from tracer test vector
         let expected: [u32; 16] = [
-            0x5f98b37e, 0x26b0af2a, 0xdc58b278, 0x85d56ff6, 
-            0x96f5d384, 0x42c9e776, 0xbeedd1e4, 0xa03faf22, 
-            0x8a4b2d59, 0x1a1c224d, 0x303f2ae7, 0xd36ee60c, 
-            0xfba05dbb, 0xef024714, 0xf597a6be, 0xd849c813,
+            0x5f98b37e, 0x26b0af2a, 0xdc58b278, 0x85d56ff6, 0x96f5d384, 0x42c9e776, 0xbeedd1e4,
+            0xa03faf22, 0x8a4b2d59, 0x1a1c224d, 0x303f2ae7, 0xd36ee60c, 0xfba05dbb, 0xef024714,
+            0xf597a6be, 0xd849c813,
         ];
-        
+
         // Call tracer function directly
         tracer::instruction::inline_blake3::execute_blake3_compression(
             &mut chaining_value,
@@ -189,7 +183,7 @@ mod tests {
             block_len,
             flags,
         );
-        
+
         println!("Direct tracer result: {:x?}", chaining_value);
         assert_eq!(chaining_value, expected, "Direct tracer call failed");
     }
@@ -237,16 +231,16 @@ mod tests {
 
         // Flatten the blocks into contiguous input arrays for each test
         let input_64: [u32; 16] = BLOCK_WORDS[0];
-        
+
         let mut input_128 = [0u32; 32];
         input_128[0..16].copy_from_slice(&BLOCK_WORDS[0]);
         input_128[16..32].copy_from_slice(&BLOCK_WORDS[1]);
-        
+
         let mut input_192 = [0u32; 48];
         input_192[0..16].copy_from_slice(&BLOCK_WORDS[0]);
         input_192[16..32].copy_from_slice(&BLOCK_WORDS[1]);
         input_192[32..48].copy_from_slice(&BLOCK_WORDS[2]);
-        
+
         let mut input_256 = [0u32; 64];
         input_256[0..16].copy_from_slice(&BLOCK_WORDS[0]);
         input_256[16..32].copy_from_slice(&BLOCK_WORDS[1]);
@@ -265,20 +259,29 @@ mod tests {
         unsafe {
             blake3_hash_128(output_128.as_mut_ptr(), input_128.as_ptr());
         }
-        assert_eq!(output_128, EXPECTED_RESULTS[1], "Blake3 hash 128 test failed");
+        assert_eq!(
+            output_128, EXPECTED_RESULTS[1],
+            "Blake3 hash 128 test failed"
+        );
 
         // Test blake3_hash_192
         let mut output_192 = [0u32; 16];
         unsafe {
             blake3_hash_192(output_192.as_mut_ptr(), input_192.as_ptr());
         }
-        assert_eq!(output_192, EXPECTED_RESULTS[2], "Blake3 hash 192 test failed");
+        assert_eq!(
+            output_192, EXPECTED_RESULTS[2],
+            "Blake3 hash 192 test failed"
+        );
 
         // Test blake3_hash_256
         let mut output_256 = [0u32; 16];
         unsafe {
             blake3_hash_256(output_256.as_mut_ptr(), input_256.as_ptr());
         }
-        assert_eq!(output_256, EXPECTED_RESULTS[3], "Blake3 hash 256 test failed");
+        assert_eq!(
+            output_256, EXPECTED_RESULTS[3],
+            "Blake3 hash 256 test failed"
+        );
     }
-} 
+}

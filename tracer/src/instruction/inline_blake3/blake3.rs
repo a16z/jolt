@@ -122,7 +122,14 @@ impl VirtualInstructionSequence for BLAKE3 {
         let vr: [usize; NEEDED_REGISTERS] =
             core::array::from_fn(|i| virtual_register_index(i as u64) as usize);
 
-        Blake3SequenceBuilder::new(self.address, vr, self.operands.rs1, self.operands.rs2, super::BuilderMode::COMPRESSION).build()
+        Blake3SequenceBuilder::new(
+            self.address,
+            vr,
+            self.operands.rs1,
+            self.operands.rs2,
+            super::BuilderMode::COMPRESSION,
+        )
+        .build()
     }
 }
 
@@ -147,7 +154,8 @@ mod compression_tests {
     const TEST_MEMORY_CAPACITY: u64 = 1024 * 1024; // 1MB
 
     pub const BLOCK_WORDS: [u32; 16] = [
-        50462976, 117835012, 185207048, 252579084, 319951120, 387323156, 454695192, 522067228, 589439264, 656811300, 724183336, 791555372, 858927408, 926299444, 993671480, 1061043516
+        50462976, 117835012, 185207048, 252579084, 319951120, 387323156, 454695192, 522067228,
+        589439264, 656811300, 724183336, 791555372, 858927408, 926299444, 993671480, 1061043516,
     ];
     pub const COUNTER: [u32; 2] = [0, 0];
     pub const BLOCK_LEN: u32 = 64;

@@ -1,27 +1,22 @@
+/// Blake2b inline implementation for Jolt zkVM.
+/// 1) Prover: Blake2SequenceBuilder expands the inline to RISC-V-64 instructions.
+/// 2) Host: Rust reference implementation called by jolt-sdk.
+///
+/// Blake2b is a cryptographic hash function operating on 64-bit words.
+
+
 use crate::instruction::format::format_i::FormatI;
 use crate::instruction::format::format_r::FormatR;
 use crate::instruction::format::format_s::FormatS;
 use crate::instruction::format::format_u::FormatU;
-use crate::instruction::format::format_virtual_right_shift_i::FormatVirtualRightShiftI;
 use crate::instruction::ld::LD;
 use crate::instruction::lui::LUI;
 use crate::instruction::sd::SD;
-use crate::instruction::virtual_rotri::VirtualROTRI;
+use crate::instruction::virtual_xor_rot::{VirtualROTXOR16, VirtualROTXOR24, VirtualROTXOR32, VirtualROTXOR63};
 use crate::instruction::xor::XOR;
-use crate::instruction::xori::XORI;
 use crate::instruction::RV32IMInstruction;
-/// This file contains Blake2-specific logic to be used in the Blake2 inline:
-/// 1) Prover: Blake2SequenceBuilder expands the inline to a list of RV instructions.
-/// 2) Host: Rust reference implementation to be called by jolt-sdk.
-///
-/// Blake2 is a cryptographic hash function that operates on 64-bit words in a compression function.
-/// Glossary:
-///   - "Word" = one 64-bit value in the 16-word state matrix.
-///   - "Round" = single application of G function to all columns and diagonals.
-///   - "Block" = 128 bytes (16 words) of input data.
-///   - "Compression" = Blake2b compression function: 12 rounds of G function.
-/// Blake2b-256 refers to Blake2b with 256-bit (32-byte) output.
-use crate::instruction::{add::ADD, addi::ADDI, sub::SUB};
+
+use crate::instruction::{add::ADD, sub::SUB};
 
 pub mod blake2;
 
@@ -52,11 +47,13 @@ const SIGMA: [[usize; 16]; 12] = [
     [14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3],
 ];
 
+#[allow(dead_code)]
 #[derive(Clone, Copy)]
 enum Value {
     Imm(u64),
     Reg(usize),
 }
+#[allow(unused_imports)]
 use Value::{Imm, Reg};
 
 /// Number of virtual registers needed for Blake2 implementation.
@@ -67,14 +64,14 @@ pub const NEEDED_REGISTERS: usize = 96;
 
 /// Memory layout constants for Blake2 virtual registers
 ///
-/// The virtual register layout is organized as follows:
-/// - vr[0..15]:  Working state `v` (16 words) - computed during compression
-/// - vr[16..31]: Message block `m` (16 words) - input data
-/// - vr[32..39]: Hash state `h` (8 words) - input/output hash state
-/// - vr[40]:     Counter value `t` (1 word) - byte counter
-/// - vr[41]:     Final block flag (1 word) - indicates last block
-/// - vr[42]:     Temporary register for intermediate calculations
-/// - vr[43..95]: Additional temporary registers for complex operations
+/// Virtual register layout:
+/// - vr[0..15]:  Working state `v` (16 words)
+/// - vr[16..31]: Message block `m` (16 words)
+/// - vr[32..39]: Hash state `h` (8 words)
+/// - vr[40]:     Counter value `t`
+/// - vr[41]:     Final block flag
+/// - vr[42]:     Temporary register
+/// - vr[43]:     Zero constant
 const VR_WORKING_STATE_START: usize = 0;
 const WORKING_STATE_SIZE: usize = 16;
 const VR_MESSAGE_BLOCK_START: usize = 16;
@@ -84,6 +81,15 @@ pub const HASH_STATE_SIZE: usize = 8;
 const VR_T: usize = 40;
 const VR_IS_FINAL: usize = 41;
 const VR_TEMP: usize = 42;
+const VR_ZERO: usize = 43;
+
+// Rotation constants required in Blake2b
+pub enum RotationAmount {
+    ROT32,
+    ROT24,
+    ROT16,
+    ROT63,
+}
 
 struct Blake2SequenceBuilder {
     address: u64,
@@ -94,19 +100,16 @@ struct Blake2SequenceBuilder {
     operand_rs2: usize,
 }
 
-/// `Blake2SequenceBuilder` is a helper struct for constructing the virtual instruction
-/// sequence required to emulate the Blake2b hashing operation within the RISC-V
-/// instruction set. This builder is responsible for generating the correct sequence of
-/// `RV32IMInstruction` instances that together perform the Blake2b compression
-/// function, using a set of virtual registers to hold intermediate state.
+/// `Blake2SequenceBuilder` generates RISC-V instruction sequences for Blake2b compression.
+/// Uses virtual registers to hold intermediate state during the compression function.
 ///
 /// # Fields
-/// - `address`: The starting program counter address for the sequence.
-/// - `sequence`: The vector of generated instructions representing the Blake2 operation.
-/// - `round`: The current round of the Blake2 compression (0..12).
-/// - `vr`: An array of virtual register indices used for state and temporary values.
-/// - `operand_rs1`: The source register index for the first operand (state pointer).
-/// - `operand_rs2`: The source register index for the second operand (message block pointer).
+/// - `address`: Starting program counter address
+/// - `sequence`: Generated instructions for Blake2 operation
+/// - `round`: Current compression round (0..12)
+/// - `vr`: Virtual register indices for state and temporary values
+/// - `operand_rs1`: Source register for state pointer
+/// - `operand_rs2`: Source register for message block pointer
 
 impl Blake2SequenceBuilder {
     fn new(
@@ -126,73 +129,63 @@ impl Blake2SequenceBuilder {
     }
 
     fn build(mut self) -> Vec<RV32IMInstruction> {
-        // Load the current hash state (8 words) from memory into virtual registers
+        // Load inputs
+        self.load_hash_state();
+        self.load_message_blocks();
+        self.load_counter_and_is_final_and_zero();
+
+        // Initialize the working state v[0..15]
+        self.initialize_working_state();
+
+        // Cryptographic mixing for 12 rounds
+        for round in 0..12 {
+            self.round = round;
+            self.blake2_round();
+        }
+
+        // Finalize the hash state
+        self.finalize_state();
+
+        // Store the final hash state back to memory
+        self.store_state();
+
+        self.enumerate_sequence();
+        self.sequence
+    }
+
+    fn load_hash_state(&mut self) {
         self.load_data_range(self.operand_rs1, 0, VR_HASH_STATE_START, HASH_STATE_SIZE);
-        // Load the message block (16 words) from memory into virtual registers
+    }
+
+    fn load_message_blocks(&mut self) {
         self.load_data_range(
             self.operand_rs2,
             0,
             VR_MESSAGE_BLOCK_START,
             MESSAGE_BLOCK_SIZE,
         );
-        // Load the counter value (t) from memory - stored after the message block
+    }
+
+    fn load_counter_and_is_final_and_zero(&mut self) {
         self.ld(self.operand_rs2, MESSAGE_BLOCK_SIZE as i64, self.vr[VR_T]);
-        // Load the final block flag (is_final) from memory - stored after the counter
         self.ld(
             self.operand_rs2,
             MESSAGE_BLOCK_SIZE as i64 + 1,
             self.vr[VR_IS_FINAL],
         );
-
-        // 2. Initialize the working state v[0..15]
-        self.initialize_working_state();
-
-        // 3. Main loop: 12 rounds of Blake2b compression
-        for round in 0..12 {
-            self.round = round;
-            self.blake2_round();
-        }
-
-        // 4. Finalize the hash state: h[i] ^= v[i] ^ v[i+8]
-        self.finalize_state();
-
-        // 5. Store the final hash state back to memory
-        self.store_state();
-
-        // 6. Finalize the sequence by setting instruction indices
-        self.enumerate_sequence();
-        self.sequence
+        self.load_64bit_immediate(
+            0,
+            self.vr[VR_ZERO],
+        );
     }
 
-    /// Load data from memory into virtual registers starting at a given offset
-    fn load_data_range(
-        &mut self,
-        base_register: usize,
-        memory_offset_start: usize,
-        vr_start: usize,
-        count: usize,
-    ) {
-        (0..count).for_each(|i| {
-            self.ld(
-                base_register,
-                (memory_offset_start + i) as i64,
-                self.vr[vr_start + i],
-            )
-        });
-    }
-
-    /// Initialize the working state v[0..15] according to Blake2b specification:
-    /// - v[0..7] = h[0..7] (current hash state)
-    /// - v[8..15] = IV[0..7] (Blake2b initialization vector)
-    /// - v[12] ^= t (counter low)
-    /// - v[13] ^= t >> 64 (counter high, always 0 for 64-bit counter)
-    /// - v[14] = ~v[14] if is_final (invert all bits for final block)
+    // Initialize the working state v[0..15] according to Blake2b specification:
     fn initialize_working_state(&mut self) {
         // v[0..7] = h[0..7] (current hash state)
         for i in 0..HASH_STATE_SIZE {
             self.xor64(
                 Reg(self.vr[VR_HASH_STATE_START + i]),
-                Imm(0),
+                Reg(self.vr[VR_ZERO]),
                 self.vr[VR_WORKING_STATE_START + i],
             );
         }
@@ -205,7 +198,6 @@ impl Blake2SequenceBuilder {
             );
         }
 
-        // Blake2b counter handling: XOR counter with v[12]
         // v[12] = v[12] ^ t (counter low)
         self.xor64(
             Reg(self.vr[VR_WORKING_STATE_START + 12]),
@@ -214,16 +206,14 @@ impl Blake2SequenceBuilder {
         );
 
         // v[13] = IV[5] ^ (t >> 64) (counter high) - for 64-bit counter, high part is 0
-        // Since we're using 64-bit counter, the high part is always 0, so v[13] remains unchanged
+        // Since we are using 64-bit counter, the high part is always 0, so v[13] remains unchanged
 
         // Handle final block flag: if is_final != 0, invert all bits of v[14]
         // We need to create a mask that is 0xFFFFFFFFFFFFFFFF if is_final != 0, or 0 if is_final == 0
         // Use the formula: mask = (0 - is_final) to convert 1 to 0xFFFFFFFFFFFFFFFF and 0 to 0
         let temp_mask = self.vr[VR_TEMP];
-
         // First, negate is_final (0 - is_final)
-        self.sub64(Imm(0), Reg(self.vr[VR_IS_FINAL]), temp_mask);
-
+        self.negate64(Reg(self.vr[VR_IS_FINAL]), temp_mask);
         // XOR v[14] with the mask: inverts all bits if is_final=1, leaves unchanged if is_final=0
         self.xor64(
             Reg(self.vr[VR_WORKING_STATE_START + 14]),
@@ -265,30 +255,26 @@ impl Blake2SequenceBuilder {
         self.add64(Reg(temp1), Reg(mx), va);
 
         // v[d] = rotr64(v[d] ^ v[a], 32)
-        self.xor64(Reg(vd), Reg(va), temp1);
-        self.rotr64(Reg(temp1), 32, vd);
+        self.xor_rotate(vd, va, RotationAmount::ROT32, vd);
 
         // v[c] = v[c] + v[d]
         self.add64(Reg(vc), Reg(vd), vc);
 
         // v[b] = rotr64(v[b] ^ v[c], 24)
-        self.xor64(Reg(vb), Reg(vc), temp1);
-        self.rotr64(Reg(temp1), 24, vb);
+        self.xor_rotate(vb, vc, RotationAmount::ROT24, vb);
 
         // v[a] = v[a] + v[b] + m[y]
         self.add64(Reg(va), Reg(vb), temp1);
         self.add64(Reg(temp1), Reg(my), va);
 
         // v[d] = rotr64(v[d] ^ v[a], 16)
-        self.xor64(Reg(vd), Reg(va), temp1);
-        self.rotr64(Reg(temp1), 16, vd);
+        self.xor_rotate(vd, va, RotationAmount::ROT16, vd);
 
         // v[c] = v[c] + v[d]
         self.add64(Reg(vc), Reg(vd), vc);
 
         // v[b] = rotr64(v[b] ^ v[c], 63)
-        self.xor64(Reg(vb), Reg(vc), temp1);
-        self.rotr64(Reg(temp1), 63, vb);
+        self.xor_rotate(vb, vc, RotationAmount::ROT63, vb);
     }
 
     /// Finalize the hash state according to Blake2b specification:
@@ -317,9 +303,24 @@ impl Blake2SequenceBuilder {
         }
     }
 
-    // --- 64-bit Arithmetic Helpers ---
+    /// Load data from memory into virtual registers starting at a given offset
+    fn load_data_range(
+        &mut self,
+        base_register: usize,
+        memory_offset_start: usize,
+        vr_start: usize,
+        count: usize,
+    ) {
+        (0..count).for_each(|i| {
+            self.ld(
+                base_register,
+                (memory_offset_start + i) as i64,
+                self.vr[vr_start + i],
+            )
+        });
+    }
 
-    /// ADD two 64-bit numbers (using lower 32 bits for RISC-V compatibility)
+    // ADD two 64-bit registers
     fn add64(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
         match (rs1, rs2) {
             (Reg(rs1), Reg(rs2)) => {
@@ -331,41 +332,19 @@ impl Blake2SequenceBuilder {
                 self.sequence.push(add.into());
                 Reg(rd)
             }
-            (Reg(rs1), Imm(imm)) => {
-                let addi = ADDI {
-                    address: self.address,
-                    operands: FormatI { rd, rs1, imm },
-                    virtual_sequence_remaining: Some(0),
-                };
-                self.sequence.push(addi.into());
-                Reg(rd)
-            }
-            (Imm(_), Reg(_)) => self.add64(rs2, rs1, rd),
-            (Imm(imm1), Imm(imm2)) => Imm(imm1.wrapping_add(imm2)),
+            _ => unreachable!()
         }
     }
 
-    /// SUB two 64-bit numbers (using lower 32 bits for RISC-V compatibility)
-    fn sub64(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
-        match (rs1, rs2) {
-            (Reg(rs1), Reg(rs2)) => {
-                let sub = SUB {
-                    address: self.address,
-                    operands: FormatR { rd, rs1, rs2 },
-                    virtual_sequence_remaining: Some(0),
-                };
-                self.sequence.push(sub.into());
-                Reg(rd)
-            }
-            (Imm(imm), Reg(rs2)) => {
-                // For immediate - register, we need to first load the immediate
-                let temp_reg = self.vr[67]; // Use a temp register (outside normal range)
-                self.load_64bit_immediate(imm, temp_reg);
+    // To negate register rs2, compute (0 - rs2)
+    fn negate64(&mut self, rs2: Value, rd: usize) -> Value {
+        match rs2 {
+            Reg(rs2) => {
                 let sub = SUB {
                     address: self.address,
                     operands: FormatR {
                         rd,
-                        rs1: temp_reg,
+                        rs1: self.vr[VR_ZERO],
                         rs2,
                     },
                     virtual_sequence_remaining: Some(0),
@@ -373,45 +352,65 @@ impl Blake2SequenceBuilder {
                 self.sequence.push(sub.into());
                 Reg(rd)
             }
-            (Reg(_), Imm(_)) => {
-                // Register - immediate: not commonly used in Blake2, would require more complex implementation
-                panic!("SUB with reg - imm not implemented, use imm - reg instead")
-            }
-            (Imm(imm1), Imm(imm2)) => Imm(imm1.wrapping_sub(imm2)),
+            _ => unreachable!()
         }
     }
 
-    /// XOR two 64-bit numbers
+    // XOR two 64-bit registers
     fn xor64(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
-        self.xor(rs1, rs2, rd)
-    }
-
-    /// Right rotate a 64-bit number
-    fn rotr64(&mut self, rs1: Value, amount: u32, rd: usize) -> Value {
-        if amount == 0 {
-            return self.xor(rs1, Imm(0), rd);
-        }
-
-        match rs1 {
-            Reg(rs1_reg) => {
-                // Convert right rotation to left rotation: rotr(x, n) = rotl(x, 64-n)
-                let left_amount = 64 - amount;
-                let ones = (1u64 << left_amount) - 1;
-                let imm = ones << (64 - left_amount);
-
-                let rotri = VirtualROTRI {
+        match (rs1, rs2) {
+            (Reg(rs1), Reg(rs2)) => {
+                let xor = XOR {
                     address: self.address,
-                    operands: FormatVirtualRightShiftI {
-                        rd,
-                        rs1: rs1_reg,
-                        imm,
-                    },
+                    operands: FormatR { rd, rs1, rs2 },
                     virtual_sequence_remaining: Some(0),
                 };
-                self.sequence.push(rotri.into());
+                self.sequence.push(xor.into());
                 Reg(rd)
             }
-            Imm(val) => Imm(val.rotate_right(amount)),
+            _ => unreachable!()
+        }
+    }
+
+    // xor two registers, and then rotate right by the given amount.
+    fn xor_rotate(&mut self, rs1: usize, rs2: usize, amount: RotationAmount, rd: usize) -> Value {
+        match amount {
+            RotationAmount::ROT32 => {
+                let xor = VirtualROTXOR32 {
+                    address: self.address,
+                    operands: FormatR { rd, rs1, rs2 },
+                    virtual_sequence_remaining: Some(0),
+                };
+                self.sequence.push(xor.into());
+                Reg(rd)
+            }
+            RotationAmount::ROT24 => {
+                let xor = VirtualROTXOR24 {
+                    address: self.address,
+                    operands: FormatR { rd, rs1, rs2 },
+                    virtual_sequence_remaining: Some(0),
+                };
+                self.sequence.push(xor.into());
+                Reg(rd)
+            }
+            RotationAmount::ROT16 => {
+                let xor = VirtualROTXOR16 {
+                    address: self.address,
+                    operands: FormatR { rd, rs1, rs2 },
+                    virtual_sequence_remaining: Some(0),
+                };
+                self.sequence.push(xor.into());
+                Reg(rd)
+            }
+            RotationAmount::ROT63 => {
+                let xor = VirtualROTXOR63 {
+                    address: self.address,
+                    operands: FormatR { rd, rs1, rs2 },
+                    virtual_sequence_remaining: Some(0),
+                };
+                self.sequence.push(xor.into());
+                Reg(rd)
+            }
         }
     }
 
@@ -423,7 +422,6 @@ impl Blake2SequenceBuilder {
         };
         self.sequence.push(lui.into());
     }
-    // --- RV64 Instruction Emitters ---
 
     fn ld(&mut self, rs1: usize, offset: i64, rd: usize) {
         let ld = LD {
@@ -451,31 +449,6 @@ impl Blake2SequenceBuilder {
         self.sequence.push(sd.into());
     }
 
-    fn xor(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
-        match (rs1, rs2) {
-            (Reg(rs1), Reg(rs2)) => {
-                let xor = XOR {
-                    address: self.address,
-                    operands: FormatR { rd, rs1, rs2 },
-                    virtual_sequence_remaining: Some(0),
-                };
-                self.sequence.push(xor.into());
-                Reg(rd)
-            }
-            (Reg(rs1), Imm(imm)) => {
-                let xori = XORI {
-                    address: self.address,
-                    operands: FormatI { rd, rs1, imm },
-                    virtual_sequence_remaining: Some(0),
-                };
-                self.sequence.push(xori.into());
-                Reg(rd)
-            }
-            (Imm(_), Reg(_)) => self.xor(rs2, rs1, rd),
-            (Imm(imm1), Imm(imm2)) => Imm(imm1 ^ imm2),
-        }
-    }
-
     /// Enumerates sequence in reverse order and sets virtual_sequence_remaining
     fn enumerate_sequence(&mut self) {
         let len = self.sequence.len();
@@ -493,11 +466,10 @@ impl Blake2SequenceBuilder {
 /// ------------------------------------------------------------------------------------------------
 
 /// Execute Blake2b compression with explicit counter values
+#[rustfmt::skip]
 pub fn execute_blake2b_compression(
     state: &mut [u64; 8],
-    message_words: &[u64; 16],
-    counter: u64,
-    is_final: bool,
+    message_words: &[u64; 18],
 ) {
     // Use the host implementation for compression
     use crate::instruction::inline_blake2::{BLAKE2B_IV, SIGMA};
@@ -508,91 +480,27 @@ pub fn execute_blake2b_compression(
     v[8..16].copy_from_slice(&BLAKE2B_IV);
 
     // Blake2b counter handling: XOR counter values with v[12] and v[13]
-    v[12] ^= counter; // counter_low
+    v[12] ^= message_words[16]; // counter_low
                       // v[13] ^= counter.shr(64) as u64;  // counter_high
 
     // Set final block flag if this is the last block
-    if is_final {
+    if message_words[17] != 0 {
         v[14] = !v[14]; // Invert v[14] for final block
     }
 
     // 12 rounds of mixing
     for s in SIGMA {
         // Column step
-        g(
-            &mut v,
-            0,
-            4,
-            8,
-            12,
-            message_words[s[0]],
-            message_words[s[1]],
-        );
-        g(
-            &mut v,
-            1,
-            5,
-            9,
-            13,
-            message_words[s[2]],
-            message_words[s[3]],
-        );
-        g(
-            &mut v,
-            2,
-            6,
-            10,
-            14,
-            message_words[s[4]],
-            message_words[s[5]],
-        );
-        g(
-            &mut v,
-            3,
-            7,
-            11,
-            15,
-            message_words[s[6]],
-            message_words[s[7]],
-        );
+        g(&mut v, 0, 4, 8, 12, message_words[s[0]], message_words[s[1]]);
+        g(&mut v, 1, 5, 9, 13, message_words[s[2]], message_words[s[3]]);
+        g(&mut v, 2, 6, 10, 14, message_words[s[4]], message_words[s[5]]);
+        g(&mut v, 3, 7, 11, 15, message_words[s[6]], message_words[s[7]]);
 
         // Diagonal step
-        g(
-            &mut v,
-            0,
-            5,
-            10,
-            15,
-            message_words[s[8]],
-            message_words[s[9]],
-        );
-        g(
-            &mut v,
-            1,
-            6,
-            11,
-            12,
-            message_words[s[10]],
-            message_words[s[11]],
-        );
-        g(
-            &mut v,
-            2,
-            7,
-            8,
-            13,
-            message_words[s[12]],
-            message_words[s[13]],
-        );
-        g(
-            &mut v,
-            3,
-            4,
-            9,
-            14,
-            message_words[s[14]],
-            message_words[s[15]],
-        );
+        g(&mut v, 0, 5, 10, 15, message_words[s[8]], message_words[s[9]]);
+        g(&mut v, 1, 6, 11, 12, message_words[s[10]], message_words[s[11]]);
+        g(&mut v, 2, 7, 8, 13, message_words[s[12]], message_words[s[13]]);
+        g(&mut v, 3, 4, 9, 14, message_words[s[14]], message_words[s[15]]);
     }
 
     // Finalize hash state
@@ -601,7 +509,7 @@ pub fn execute_blake2b_compression(
     }
 }
 
-/// Blake2b G function
+// Blake2b G function
 fn g(v: &mut [u64; 16], a: usize, b: usize, c: usize, d: usize, x: u64, y: u64) {
     v[a] = v[a].wrapping_add(v[b]).wrapping_add(x);
     v[d] = (v[d] ^ v[a]).rotate_right(32);

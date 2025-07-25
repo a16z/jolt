@@ -19,10 +19,7 @@ fn blake3_192_inline(input: [u8; 32], num_iters: u32) -> [u32; 8] {
 
     for _ in 0..black_box(num_iters) {
         unsafe {
-            blake3::blake3_hash_192(
-                black_box(h.as_mut_ptr()),
-                black_box(message.as_ptr()),
-            );
+            blake3::blake3_hash_192(black_box(h.as_mut_ptr()), black_box(message.as_ptr()));
         }
         // Prevent optimization of the hash state
         h = black_box(h);

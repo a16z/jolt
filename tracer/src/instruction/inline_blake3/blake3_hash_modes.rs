@@ -6,7 +6,8 @@ use crate::emulator::cpu::Cpu;
 use crate::instruction::format::format_r::FormatR;
 use crate::instruction::format::InstructionFormat;
 use crate::instruction::inline_blake3::{
-    execute_blake3_compression, Blake3SequenceBuilder, BLAKE3_IV, MESSAGE_BLOCK_SIZE, NEEDED_REGISTERS
+    execute_blake3_compression, Blake3SequenceBuilder, BLAKE3_IV, MESSAGE_BLOCK_SIZE,
+    NEEDED_REGISTERS,
 };
 use crate::instruction::{
     RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
@@ -87,7 +88,11 @@ macro_rules! impl_blake3_exec {
         impl $struct_name {
             /// Fast path for emulation without tracing.
             /// Performs Blake3 compression using a native Rust implementation.
-            fn exec(&self, cpu: &mut Cpu, _ram_access: &mut <$struct_name as RISCVInstruction>::RAMAccess) {
+            fn exec(
+                &self,
+                cpu: &mut Cpu,
+                _ram_access: &mut <$struct_name as RISCVInstruction>::RAMAccess,
+            ) {
                 // Memory addresses
                 let state_addr = cpu.x[self.operands.rs1] as u64;
                 let block_addr = cpu.x[self.operands.rs2] as u64;
@@ -107,7 +112,9 @@ macro_rules! impl_blake3_exec {
                     // Set flags: chunk_start (bit 0), chunk_end (bit 1), root (bit 3)
                     let chunk_start = i == 0;
                     let chunk_end = i == $num_blocks - 1;
-                    let flags = (chunk_start as u32) | ((chunk_end as u32) << 1) | ((chunk_end as u32) << 3);
+                    let flags = (chunk_start as u32)
+                        | ((chunk_end as u32) << 1)
+                        | ((chunk_end as u32) << 3);
 
                     // Execute Blake3 compression function
                     execute_blake3_compression(
@@ -120,7 +127,8 @@ macro_rules! impl_blake3_exec {
                 }
 
                 // Store the final result back to memory
-                store_words_to_memory(cpu, state_addr, &chaining_value).expect("Failed to store result");
+                store_words_to_memory(cpu, state_addr, &chaining_value)
+                    .expect("Failed to store result");
             }
         }
     };
@@ -135,12 +143,13 @@ macro_rules! impl_virtual_instruction_sequence {
                     core::array::from_fn(|i| virtual_register_index(i as u64) as usize);
 
                 Blake3SequenceBuilder::new(
-                    self.address, 
-                    vr, 
-                    self.operands.rs1, 
-                    self.operands.rs2, 
-                    super::BuilderMode::HASH($hash_param)
-                ).build()
+                    self.address,
+                    vr,
+                    self.operands.rs1,
+                    self.operands.rs2,
+                    super::BuilderMode::HASH($hash_param),
+                )
+                .build()
             }
         }
     };
@@ -207,21 +216,29 @@ mod compression_tests {
     // Expected results for each Blake3 mode (64, 128, 192, 256)
     pub const EXPECTED_RESULTS: [[u32; 16]; 4] = [
         // BLAKE3_64 (1 block)
-        [0x4171ed4e, 0xd45c4aea, 0x6b6088b7, 0xe2463fd2, 0xac9caf12, 0x7ddcaceb, 0xc76d4c1f,
-         0x981b51f2, 0x6cc59cfc, 0xe3ff31b8, 0xe1e7a83e, 0xb209dfd1, 0x6727fd6e, 0xaa660067,
-         0xb123d082, 0x1babe8df],
+        [
+            0x4171ed4e, 0xd45c4aea, 0x6b6088b7, 0xe2463fd2, 0xac9caf12, 0x7ddcaceb, 0xc76d4c1f,
+            0x981b51f2, 0x6cc59cfc, 0xe3ff31b8, 0xe1e7a83e, 0xb209dfd1, 0x6727fd6e, 0xaa660067,
+            0xb123d082, 0x1babe8df,
+        ],
         // BLAKE3_128 (2 blocks)
-        [0x5577ef1, 0x7865b264, 0xf4b73bc3, 0x39f54346, 0xdf054b62, 0x1fc8761a, 0x48d5ac30,
-         0xef454bc4, 0xa0ab9fa6, 0x9c7f4291, 0x87aa4c5c, 0x2878a03a, 0xc5191f65, 0xc485ad5b,
-          0xb168137d, 0x9ed96f1c],
+        [
+            0x5577ef1, 0x7865b264, 0xf4b73bc3, 0x39f54346, 0xdf054b62, 0x1fc8761a, 0x48d5ac30,
+            0xef454bc4, 0xa0ab9fa6, 0x9c7f4291, 0x87aa4c5c, 0x2878a03a, 0xc5191f65, 0xc485ad5b,
+            0xb168137d, 0x9ed96f1c,
+        ],
         // BLAKE3_192 (3 blocks)
-        [0x235dbc4a, 0xcc4afb28, 0x4bff9a54, 0xbf07d87, 0x97462da5, 0x6b9d7457, 0x58d4338c,
-         0xfffcb870, 0xdd896cf8, 0xa5f40732, 0xe842d97b, 0x4caa3db1, 0x420a25b, 0x2cff4eb8,
-          0xfd58405c, 0x9dcac30b],
+        [
+            0x235dbc4a, 0xcc4afb28, 0x4bff9a54, 0xbf07d87, 0x97462da5, 0x6b9d7457, 0x58d4338c,
+            0xfffcb870, 0xdd896cf8, 0xa5f40732, 0xe842d97b, 0x4caa3db1, 0x420a25b, 0x2cff4eb8,
+            0xfd58405c, 0x9dcac30b,
+        ],
         // BLAKE3_256 (4 blocks)
-        [0xa45b494a, 0x8e746124, 0xd6da8fca, 0xaa76f918, 0x90c26c72, 0xb4fce93d, 0x86a73507,
-         0x6b191cac, 0x94fc88e3, 0xb022df83, 0xe7d57d4a, 0xcb558b67, 0x70fc9994, 0x7961680b,
-          0x84fb2342, 0x8d4015ab],
+        [
+            0xa45b494a, 0x8e746124, 0xd6da8fca, 0xaa76f918, 0x90c26c72, 0xb4fce93d, 0x86a73507,
+            0x6b191cac, 0x94fc88e3, 0xb022df83, 0xe7d57d4a, 0xcb558b67, 0x70fc9994, 0x7961680b,
+            0x84fb2342, 0x8d4015ab,
+        ],
     ];
 
     /// Macro to reduce repetitive test setup and verification code
@@ -250,8 +267,12 @@ mod compression_tests {
                 // Store the required number of message blocks
                 for block_idx in 0..$num_blocks {
                     let block_offset = (block_idx * 16 * 4) as u64; // 16 words * 4 bytes per word
-                    store_words_to_memory(&mut cpu, message_addr + block_offset, &BLOCK_WORDS[block_idx])
-                        .expect("Failed to store message block");
+                    store_words_to_memory(
+                        &mut cpu,
+                        message_addr + block_offset,
+                        &BLOCK_WORDS[block_idx],
+                    )
+                    .expect("Failed to store message block");
                 }
 
                 // Execute the instruction
@@ -263,15 +284,18 @@ mod compression_tests {
                 for i in 0..16 {
                     results[i] = cpu.mmu.load_word(state_addr + (i * 4) as u64).unwrap().0;
                 }
-                
+
                 // Verify results
                 let mut results = [0u32; 16];
                 for i in 0..16 {
                     results[i] = cpu.mmu.load_word(state_addr + (i * 4) as u64).unwrap().0;
                     assert_eq!(
-                        results[i], EXPECTED_RESULTS[$num_blocks - 1][i],
+                        results[i],
+                        EXPECTED_RESULTS[$num_blocks - 1][i],
                         "Mismatch at word {}: got {:#x}, expected {:#x}",
-                        i, results[i], EXPECTED_RESULTS[$num_blocks - 1][i]
+                        i,
+                        results[i],
+                        EXPECTED_RESULTS[$num_blocks - 1][i]
                     );
                 }
             }
