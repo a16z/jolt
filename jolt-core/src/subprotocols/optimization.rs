@@ -252,18 +252,17 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
                 .into_par_iter()
                 .map(|j| {
                     let mut cur = (
-                        mle_vec[D - 1].get_bound_coeff(j),
-                        mle_vec[D - 1].get_bound_coeff(j + mle_vec[D - 1].len() / 2),
+                        mle_vec[0].get_bound_coeff(j),
+                        mle_vec[0].get_bound_coeff(j + mle_vec[0].len() / 2),
                     );
 
                     let res: [(F, F); D1] = std::array::from_fn(|i| {
                         let entry = cur;
                         if i < D1 - 1 {
                             cur = (
-                                cur.0 * mle_vec[D - 2 - i].get_bound_coeff(j),
+                                cur.0 * mle_vec[i + 1].get_bound_coeff(j),
                                 cur.1
-                                    * mle_vec[D - 2 - i]
-                                        .get_bound_coeff(j + mle_vec[D - 2 - i].len() / 2),
+                                    * mle_vec[i + 1].get_bound_coeff(j + mle_vec[i + 1].len() / 2),
                             );
                         }
 
@@ -309,8 +308,6 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
                     .zip(after_idx_evals.par_iter().take(size))
                     .enumerate()
                     .map(|(j, (before_idx_eval, after_idx_evals))| {
-                        // let at_idx_evals =
-                        // mle_vec[D - d - 1].sumcheck_evals(j, 2, BindingOrder::HighToLow);
                         let at_idx_evals = [
                             mle_vec[D - d - 1].get_bound_coeff(j),
                             mle_vec[D - d - 1].get_bound_coeff(j + mle_vec[D - d - 1].len() / 2)
@@ -320,8 +317,8 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
                         ];
 
                         if d > 0 {
-                            *before_idx_eval = before_idx_eval
-                                .mul_1_optimized(mle_vec[D - d - 1].get_bound_coeff(j));
+                            *before_idx_eval =
+                                before_idx_eval.mul_1_optimized(mle_vec[D - d].get_bound_coeff(j));
                         }
 
                         let eq_eval_after_idx = if j_idx < T.log_2() - 1 {
@@ -339,60 +336,23 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
                             eq_evals_at_idx[0].0 * temp
                         };
 
-                        eq_evals_at_idx
-                            .iter()
-                            .zip(at_idx_evals.iter())
-                            .map(|((c_eq_eval_0, c_eq_eval_1), at_idx_eval)| {
-                                let factor =
-                                    *at_idx_eval * *before_idx_eval * eq_eval_after_idx * C;
-                                let eval_1 = if d < D - 1 {
-                                    *c_eq_eval_1 * factor * after_idx_evals[D - d - 2].1
-                                } else {
-                                    *c_eq_eval_1 * factor
-                                };
+                        [{ at_idx_evals[0] * tmp }, {
+                            let factor: F = at_idx_evals[1] * temp;
 
-                                let eval_0 = if d < D - 1 {
-                                    *c_eq_eval_0 * factor * after_idx_evals[D - d - 2].0
-                                } else {
-                                    *c_eq_eval_0 * factor
-                                };
+                            let eval_0 = -tmp * at_idx_evals[1];
+                            let eval_1 = if d < D - 1 {
+                                eq_evals_at_idx[1].1 * factor * after_idx_evals[D - d - 2].1
+                            } else {
+                                eq_evals_at_idx[1].1 * factor
+                            };
 
-                                eval_0 + eval_1
-                            })
-                            .collect::<Vec<_>>()
-
-                        // [
-                        //     {
-                        //         at_idx_evals[0] * tmp
-
-                        //         // let eval_1 = if d < D - 1 {
-                        //         //     eq_evals_at_idx[0].1 * factor * after_idx_evals[D - d - 2].1
-                        //         // } else {
-                        //         //     eq_evals_at_idx[0].1 * factor
-                        //         // };
-                        //     },
-                        //     {
-                        //         let factor: F = at_idx_evals[1] * temp;
-
-                        //         let eval_0 = -tmp * eq_evals_at_idx[1].0;
-                        //         let eval_1 = if d < D - 1 {
-                        //             eq_evals_at_idx[1].1 * factor * after_idx_evals[D - d - 2].1
-                        //         } else {
-                        //             eq_evals_at_idx[1].1 * factor
-                        //         };
-
-                        //         eval_0 + eval_1
-                        //     },
-                        // ]
+                            eval_0 + eval_1
+                        }]
                     })
-                    // .reduce(
-                    //     || [F::zero(); 2],
-                    //     |running, new| [running[0] + new[0], running[1] + new[1]],
-                    // );
-                .reduce(
-                    || vec![F::zero(); 2],
-                    |running, new| vec![running[0] + new[0], running[1] + new[1]],
-                );
+                    .reduce(
+                        || [F::zero(); 2],
+                        |running, new| [running[0] + new[0], running[1] + new[1]],
+                    );
 
                 drop(_guard);
                 drop(_span);
@@ -418,11 +378,9 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
 
                 C_summands[0] *= w_j;
                 C_summands[1] *= F::one() - w_j;
-            }
-            mle_vec.par_iter_mut().enumerate().for_each(|(d, mle)| {
-                mle.bind_parallel(w[D - 1 - d], BindingOrder::HighToLow);
-            });
 
+                mle_vec[D - d - 1].bind_parallel(w_j, BindingOrder::HighToLow);
+            }
             drop(_guard);
             drop(inner_span);
         }
@@ -591,7 +549,7 @@ mod test {
     }
 
     #[test]
-    fn test_large_d_optimization_sumcheck() {
+    fn test_hd_optimization_sumcheck() {
         let test_inputs = [
             // (2, 1 << 10, 16),
             // (8, 1 << 10, 16),
