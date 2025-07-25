@@ -3,6 +3,7 @@
 
 use crate::field::JoltField;
 use crate::jolt::vm::bytecode::BytecodePreprocessing;
+use crate::jolt::vm::ram::NUM_RA_I_VARS;
 // use crate::jolt::vm::ram::remap_address;
 use crate::jolt::vm::rv32i_vm::Serializable;
 use crate::jolt::witness::AllCommittedPolynomials;
@@ -207,14 +208,7 @@ where
 
         let shared = Self::shared_preprocess(bytecode, memory_layout, memory_init);
 
-        let max_K = [
-            1 << 8, // bytecode lookups
-            // max_memory_size.next_power_of_two(),
-            1 << 8, // instruction lookups Shout
-        ]
-        .into_iter()
-        .max()
-        .unwrap();
+        let max_K = 1 << NUM_RA_I_VARS;
         let max_T = max_trace_length.next_power_of_two();
 
         println!("setup...");
