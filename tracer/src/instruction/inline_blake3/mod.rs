@@ -7,7 +7,7 @@ use crate::instruction::format::format_virtual_right_shift_i::FormatVirtualRight
 use crate::instruction::lui::LUI;
 use crate::instruction::lw::LW;
 use crate::instruction::sw::SW;
-use crate::instruction::virtual_rot_xor::{VirtualROTXOR12, VirtualROTXOR16, VirtualROTXOR7, VirtualROTXOR8};
+use crate::instruction::virtual_rot_xor::{VirtualROTXOR12L, VirtualROTXOR16L, VirtualROTXOR7L, VirtualROTXOR8L};
 use crate::instruction::virtual_rotril::VirtualROTRIL;
 use crate::instruction::xor::XOR;
 use crate::instruction::xori::XORI;
@@ -421,7 +421,7 @@ impl Blake3SequenceBuilder {
     fn xor_rotate(&mut self, rs1: usize, rs2: usize, amount: RotationAmount, rd: usize) -> Value {
         match amount {
             RotationAmount::ROT16 => {
-                let xor = VirtualROTXOR16 {
+                let xor = VirtualROTXOR16L {
                     address: self.address,
                     operands: FormatR { rd, rs1, rs2 },
                     virtual_sequence_remaining: Some(0),
@@ -430,7 +430,7 @@ impl Blake3SequenceBuilder {
                 Reg(rd)
             }
             RotationAmount::ROT12 => {
-                let xor = VirtualROTXOR12 {
+                let xor = VirtualROTXOR12L {
                     address: self.address,
                     operands: FormatR { rd, rs1, rs2 },
                     virtual_sequence_remaining: Some(0),
@@ -439,7 +439,7 @@ impl Blake3SequenceBuilder {
                 Reg(rd)
             }
             RotationAmount::ROT8 => {
-                let xor = VirtualROTXOR8 {
+                let xor = VirtualROTXOR8L {
                     address: self.address,
                     operands: FormatR { rd, rs1, rs2 },
                     virtual_sequence_remaining: Some(0),
@@ -448,7 +448,7 @@ impl Blake3SequenceBuilder {
                 Reg(rd)
             }
             RotationAmount::ROT7 => {
-                let xor = VirtualROTXOR7 {
+                let xor = VirtualROTXOR7L {
                     address: self.address,
                     operands: FormatR { rd, rs1, rs2 },
                     virtual_sequence_remaining: Some(0),

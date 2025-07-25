@@ -8,7 +8,7 @@ use super::{
 };
 
 // Macro to generate virtual XOR-rotate instructions
-macro_rules! declare_virtual_rot_xor {
+macro_rules! declare_virtual_rot_xor_lower {
     ($name:ident, $shift:expr) => {
         declare_riscv_instr!(
             name = $name,
@@ -37,35 +37,97 @@ macro_rules! declare_virtual_rot_xor {
 }
 
 // Generate the 4 virtual XOR-rotate instructions
-declare_virtual_rot_xor!(VirtualROTXOR16, 16);
-declare_virtual_rot_xor!(VirtualROTXOR12, 12);
-declare_virtual_rot_xor!(VirtualROTXOR8, 8);
-declare_virtual_rot_xor!(VirtualROTXOR7, 7);
+declare_virtual_rot_xor_lower!(VirtualROTXOR16L, 16);
+declare_virtual_rot_xor_lower!(VirtualROTXOR12L, 12);
+declare_virtual_rot_xor_lower!(VirtualROTXOR8L, 8);
+declare_virtual_rot_xor_lower!(VirtualROTXOR7L, 7);
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::emulator::{cpu::{Cpu}, default_terminal::DefaultTerminal};
 
+    // Macro to generate tests for different rotation variations
+    macro_rules! test_virtual_rot_xor_l {
+        ($test_name:ident, $instr_type:ident, $shift:expr) => {
+            #[test]
+            fn $test_name() {
+                let mut cpu = Cpu::new(Box::new(DefaultTerminal::new()));
+                cpu.x[1] = 0x12345678;
+                cpu.x[2] = 0xabcdef00;
+                
+                let instr = $instr_type {
+                    address: 0,
+                    operands: FormatR { rd: 3, rs1: 1, rs2: 2 },
+                    virtual_sequence_remaining: None,
+                };
+                
+                instr.exec(&mut cpu, &mut ());
+                
+                // Expected: (0x12345678 ^ 0xabcdef00) as u32, then rotate_right($shift)
+                let expected_xor = (0x12345678u64 ^ 0xabcdef00u64) as u32;
+                let expected_result = expected_xor.rotate_right($shift) as u64;
+                assert_eq!(cpu.x[3] as u64, expected_result);
+                // Verify upper 32 bits are cleared
+                assert_eq!(cpu.x[3] >> 32, 0);
+            }
+        };
+    }
+
+    // Generate tests for all 4 rotation variations
+    test_virtual_rot_xor_l!(test_virtual_rot_xor16l, VirtualROTXOR16L, 16);
+    test_virtual_rot_xor_l!(test_virtual_rot_xor12l, VirtualROTXOR12L, 12);
+    test_virtual_rot_xor_l!(test_virtual_rot_xor8l, VirtualROTXOR8L, 8);
+    test_virtual_rot_xor_l!(test_virtual_rot_xor7l, VirtualROTXOR7L, 7);
+
+    // Edge case tests
     #[test]
-    fn test_virtual_rot_xor16() {
+    fn test_virtual_rot_xor_edge_cases() {
         let mut cpu = Cpu::new(Box::new(DefaultTerminal::new()));
-        cpu.x[1] = 0x12345678;
-        cpu.x[2] = 0xabcdef00;
         
-        let instr = VirtualROTXOR16 {
+        // Test with zero values
+        cpu.x[1] = 0;
+        cpu.x[2] = 0;
+        let instr = VirtualROTXOR16L {
             address: 0,
             operands: FormatR { rd: 3, rs1: 1, rs2: 2 },
             virtual_sequence_remaining: None,
         };
-        
         instr.exec(&mut cpu, &mut ());
+        assert_eq!(cpu.x[3], 0);
         
-        // Expected: (0x12345678 ^ 0xabcdef00) as u32, then rotate_right(16)
-        let expected_xor = (0x12345678u64 ^ 0xabcdef00u64) as u32;
+        // Test with max u32 values
+        cpu.x[1] = 0xFFFFFFFF;
+        cpu.x[2] = 0xFFFFFFFF;
+        instr.exec(&mut cpu, &mut ());
+        assert_eq!(cpu.x[3], 0); // XOR of same values is 0
+        
+        // Test with one register being zero
+        cpu.x[1] = 0x12345678;
+        cpu.x[2] = 0;
+        instr.exec(&mut cpu, &mut ());
+        let expected = (0x12345678u32).rotate_right(16) as u64;
+        assert_eq!(cpu.x[3] as u64, expected);
+        // Verify upper 32 bits are cleared
+        assert_eq!(cpu.x[3] >> 32, 0);
+        
+        // Test with alternating bit patterns
+        cpu.x[1] = 0xAAAAAAAA; // 10101010...
+        cpu.x[2] = 0x55555555; // 01010101...
+        instr.exec(&mut cpu, &mut ());
+        let expected_xor = (0xAAAAAAAAu64 ^ 0x55555555u64) as u32; // Should be all 1s
         let expected_result = expected_xor.rotate_right(16) as u64;
         assert_eq!(cpu.x[3] as u64, expected_result);
-        // Verify upper 32 bits are cleared
+        assert_eq!(cpu.x[3] >> 32, 0);
+        
+        // Test with high bits set in 64-bit registers (should be ignored)
+        cpu.x[1] = 0xFFFFFFFF12345678u64 as i64;
+        cpu.x[2] = 0xFFFFFFFFabcdef00u64 as i64;
+        instr.exec(&mut cpu, &mut ());
+        // Should only use lower 32 bits: 0x12345678 ^ 0xabcdef00
+        let expected_xor_high = (0x12345678u64 ^ 0xabcdef00u64) as u32;
+        let expected_result_high = expected_xor_high.rotate_right(16) as u64;
+        assert_eq!(cpu.x[3] as u64, expected_result_high);
         assert_eq!(cpu.x[3] >> 32, 0);
     }
 }

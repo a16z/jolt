@@ -113,7 +113,7 @@ use virtual_pow2::VirtualPow2;
 use virtual_pow2i::VirtualPow2I;
 use virtual_rotri::VirtualROTRI;
 use virtual_rotril::VirtualROTRIL;
-use virtual_rot_xor::{VirtualROTXOR16, VirtualROTXOR12, VirtualROTXOR8, VirtualROTXOR7};
+use virtual_rot_xor::{VirtualROTXOR16L, VirtualROTXOR12L, VirtualROTXOR8L, VirtualROTXOR7L};
 use virtual_shift_right_bitmask::VirtualShiftRightBitmask;
 use virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI;
 use virtual_sra::VirtualSRA;
@@ -514,7 +514,7 @@ define_rv32im_enums! {
         VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertLTE,
         VirtualAssertValidDiv0, VirtualAssertValidSignedRemainder, VirtualAssertValidUnsignedRemainder,
         VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I, VirtualROTRI, VirtualROTRIL,
-        VirtualROTXOR16, VirtualROTXOR12, VirtualROTXOR8, VirtualROTXOR7,
+        VirtualROTXOR16L, VirtualROTXOR12L, VirtualROTXOR8L, VirtualROTXOR7L,
         VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
         // Extension
