@@ -18,7 +18,7 @@ use crate::{
         },
     },
     subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
-    utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
+    utils::{errors::ProofVerifyError, transcript::Transcript},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
@@ -57,35 +57,17 @@ pub struct ValEvaluationProverState<F: JoltField> {
     pub lt: MultilinearPolynomial<F>,
 }
 
-/// Verifier state for the Val-evaluation sumcheck
-pub(crate) struct ValEvaluationVerifierState<F: JoltField> {
+/// Val-evaluation sumcheck instance implementing SumcheckInstance
+pub(crate) struct ValEvaluationSumcheck<F: JoltField> {
+    // The `r_address` at in the claimed `Val(r_address, r_cycle)`
+    pub r_address: Vec<F>,
+    /// Initial claim value
+    pub claimed_evaluation: F,
     /// The number of rounds (log T)
     pub num_rounds: usize,
     /// r_cycle used to compute LT evaluation
     pub r_cycle: Vec<F>,
-}
-
-/// Claims output by the Val-evaluation sumcheck
-#[derive(Clone)]
-pub(crate) struct ValEvaluationSumcheckClaims<F: JoltField> {
-    /// Inc(r_cycle')
-    pub inc_claim: F,
-    /// wa(r_address, r_cycle')
-    pub wa_claim: F,
-}
-
-/// Val-evaluation sumcheck instance implementing SumcheckInstance
-pub(crate) struct ValEvaluationSumcheck<F: JoltField> {
-    // The `r_address` at in the claimed `Val(r_address, r_cycle)`
-    r_address: Vec<F>,
-    /// Initial claim value
-    pub claimed_evaluation: F,
-    /// Prover state
     pub prover_state: Option<ValEvaluationProverState<F>>,
-    /// Verifier state
-    pub verifier_state: Option<ValEvaluationVerifierState<F>>,
-    /// Claims
-    pub claims: Option<ValEvaluationSumcheckClaims<F>>,
 }
 
 impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
@@ -94,13 +76,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
     }
 
     fn num_rounds(&self) -> usize {
-        if let Some(prover_state) = &self.prover_state {
-            prover_state.inc.original_len().log_2()
-        } else if let Some(verifier_state) = &self.verifier_state {
-            verifier_state.num_rounds
-        } else {
-            panic!("Neither prover state nor verifier state is initialized");
-        }
+        self.num_rounds
     }
 
     fn input_claim(&self) -> F {
@@ -166,25 +142,29 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
 
     fn expected_output_claim(
         &self,
-        _accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         r: &[F],
     ) -> F {
-        let verifier_state = self
-            .verifier_state
-            .as_ref()
-            .expect("Verifier state not initialized");
-        let claims = self.claims.as_ref().expect("Claims not cached");
-
         // Compute LT(r_cycle', r_cycle)
         let mut lt_eval = F::zero();
         let mut eq_term = F::one();
-        for (x, y) in r.iter().zip(verifier_state.r_cycle.iter()) {
+        for (x, y) in r.iter().zip(self.r_cycle.iter()) {
             lt_eval += (F::one() - x) * y * eq_term;
             eq_term *= F::one() - x - y + *x * y + *x * y;
         }
 
+        let accumulator = accumulator.as_ref().unwrap();
+        let (_, inc_claim) = accumulator.borrow().get_committed_polynomial_opening(
+            CommittedPolynomial::RdInc,
+            SumcheckId::RegistersValEvaluation,
+        );
+        let (_, wa_claim) = accumulator.borrow().get_virtual_polynomial_opening(
+            VirtualPolynomial::RdWa,
+            SumcheckId::RegistersValEvaluation,
+        );
+
         // Return inc_claim * wa_claim * lt_eval
-        claims.inc_claim * claims.wa_claim * lt_eval
+        inc_claim * wa_claim * lt_eval
     }
 
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {

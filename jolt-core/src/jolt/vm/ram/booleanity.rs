@@ -49,15 +49,8 @@ struct BooleanityProverState<F: JoltField> {
     H: Option<Vec<MultilinearPolynomial<F>>>,
     /// eq(r, r) value computed at end of phase 1
     eq_r_r: F,
-    /// z powers
-    z_powers: Vec<F>,
     /// D parameter as in Twist and Shout paper
     d: usize,
-}
-
-struct BooleanityVerifierState<F: JoltField> {
-    /// z powers
-    z_powers: Vec<F>,
 }
 
 pub struct BooleanitySumcheck<F: JoltField> {
@@ -69,10 +62,9 @@ pub struct BooleanitySumcheck<F: JoltField> {
     r_address: Vec<F>,
     /// r_cycle challenge
     r_cycle: Vec<F>,
-    /// Prover state (if prover)
+    /// gamma powers for batching
+    gamma_powers: Vec<F>,
     prover_state: Option<BooleanityProverState<F>>,
-    /// Verifier state (if verifier)
-    verifier_state: Option<BooleanityVerifierState<F>>,
     /// Current round
     current_round: usize,
     /// Store trace and memory layout for phase transition
@@ -108,11 +100,11 @@ impl<F: JoltField> BooleanitySumcheck<F> {
 
         let eq_r_cycle = EqPolynomial::evals(&r_cycle);
 
-        // Get z challenges for batching
-        let z_challenges: Vec<F> = state_manager.transcript.borrow_mut().challenge_vector(d);
-        let mut z_powers = vec![F::one(); d];
+        // Get gamma challenge for batching
+        let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
+        let mut gamma_powers = vec![F::one(); d];
         for i in 1..d {
-            z_powers[i] = z_powers[i - 1] * z_challenges[0];
+            gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
 
         let span = tracing::span!(tracing::Level::INFO, "compute G arrays");
@@ -170,18 +162,16 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             D,
             H: None,
             eq_r_r: F::zero(),
-            z_powers,
             d,
         };
 
-        // Create the sumcheck instance
         BooleanitySumcheck {
             T,
             d,
             r_address,
             r_cycle,
+            gamma_powers,
             prover_state: Some(prover_state),
-            verifier_state: None,
             current_round: 0,
             trace: Some(trace.to_vec()),
             memory_layout: Some(memory_layout.clone()),
@@ -208,11 +198,11 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             .borrow_mut()
             .challenge_vector(NUM_RA_I_VARS);
 
-        // Get z challenges for batching
-        let z_challenges: Vec<F> = state_manager.transcript.borrow_mut().challenge_vector(d);
-        let mut z_powers = vec![F::one(); d];
+        // Get gamma challenge for batching
+        let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
+        let mut gamma_powers = vec![F::one(); d];
         for i in 1..d {
-            z_powers[i] = z_powers[i - 1] * z_challenges[0];
+            gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
 
         BooleanitySumcheck {
@@ -220,8 +210,8 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             d,
             r_address,
             r_cycle,
+            gamma_powers,
             prover_state: None,
-            verifier_state: Some(BooleanityVerifierState { z_powers }),
             current_round: 0,
             trace: None,
             memory_layout: Some(memory_layout.clone()),
@@ -329,10 +319,6 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         r: &[F],
     ) -> F {
-        let verifier_state = self
-            .verifier_state
-            .as_ref()
-            .expect("Verifier state not initialized");
         let ra_claims: Vec<_> = (0..self.d)
             .map(|i| {
                 accumulator
@@ -355,10 +341,10 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
         let r_cycle_prime: Vec<_> = r_cycle_prime.iter().copied().rev().collect();
         let eq_eval_cycle = EqPolynomial::mle(&self.r_cycle, &r_cycle_prime);
 
-        // Compute batched booleanity check: sum_{i=0}^{d-1} z^i * (ra_i^2 - ra_i)
+        // Compute batched booleanity check: sum_{i=0}^{d-1} gamma^i * (ra_i^2 - ra_i)
         let mut result = F::zero();
         for (i, ra_claim) in ra_claims.iter().enumerate() {
-            result += verifier_state.z_powers[i] * (ra_claim.square() - *ra_claim);
+            result += self.gamma_powers[i] * (ra_claim.square() - *ra_claim);
         }
 
         eq_eval_address * eq_eval_cycle * result
@@ -512,8 +498,8 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                                         |running, new| [running[0] + new[0], running[1] + new[1]],
                                     );
 
-                                coeffs[0] += prover_state.z_powers[i] * inner_sum[0];
-                                coeffs[1] += prover_state.z_powers[i] * inner_sum[1];
+                                coeffs[0] += prover_state.gamma_powers[i] * inner_sum[0];
+                                coeffs[1] += prover_state.gamma_powers[i] * inner_sum[1];
                             }
 
                             [B_E_in_eval * coeffs[0], B_E_in_eval * coeffs[1]]
@@ -569,9 +555,12 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                 ];
 
                 for i in 1..d {
-                    evals[0] += prover_state.z_powers[i] * (H_evals[i][0].square() - H_evals[i][0]);
-                    evals[1] += prover_state.z_powers[i] * (H_evals[i][1].square() - H_evals[i][1]);
-                    evals[2] += prover_state.z_powers[i] * (H_evals[i][2].square() - H_evals[i][2]);
+                    evals[0] +=
+                        prover_state.gamma_powers[i] * (H_evals[i][0].square() - H_evals[i][0]);
+                    evals[1] +=
+                        prover_state.gamma_powers[i] * (H_evals[i][1].square() - H_evals[i][1]);
+                    evals[2] +=
+                        prover_state.gamma_powers[i] * (H_evals[i][2].square() - H_evals[i][2]);
                 }
 
                 [

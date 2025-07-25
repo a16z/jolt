@@ -37,26 +37,19 @@ pub struct RafEvaluationProverState<F: JoltField> {
     unmap: UnmapRamAddressPolynomial<F>,
 }
 
-pub struct RafEvaluationVerifierState {
-    /// Start address for unmap polynomial
-    start_address: u64,
-}
-
 pub struct RafEvaluationSumcheck<F: JoltField> {
     /// The initial claim (raf_claim)
     input_claim: F,
     /// log K (number of rounds)
     log_K: usize,
-    /// Prover state (only present for prover)
+    /// Start address for unmap polynomial
+    start_address: u64,
     prover_state: Option<RafEvaluationProverState<F>>,
-    /// Verifier state (only present for verifier)
-    verifier_state: Option<RafEvaluationVerifierState>,
     /// Cached ra_claim after sumcheck completion
     cached_claim: Option<F>,
 }
 
 impl<F: JoltField> RafEvaluationSumcheck<F> {
-    /// Create a new prover instance
     #[tracing::instrument(skip_all, name = "RamRafEvaluationSumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         K: usize,
@@ -109,13 +102,12 @@ impl<F: JoltField> RafEvaluationSumcheck<F> {
         Self {
             input_claim: raf_claim,
             log_K: K.log_2(),
+            start_address: memory_layout.input_start,
             prover_state: Some(RafEvaluationProverState { ra, unmap }),
-            verifier_state: None,
             cached_claim: None,
         }
     }
 
-    /// Create a new verifier instance
     pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         K: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
@@ -131,10 +123,8 @@ impl<F: JoltField> RafEvaluationSumcheck<F> {
         Self {
             input_claim: raf_claim,
             log_K: K.log_2(),
+            start_address: program_io.memory_layout.input_start,
             prover_state: None,
-            verifier_state: Some(RafEvaluationVerifierState {
-                start_address: program_io.memory_layout.input_start,
-            }),
             cached_claim: Some(ra_claim),
         }
     }
@@ -202,14 +192,8 @@ impl<F: JoltField> SumcheckInstance<F> for RafEvaluationSumcheck<F> {
         _accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         r: &[F],
     ) -> F {
-        let verifier_state = self
-            .verifier_state
-            .as_ref()
-            .expect("Verifier state not initialized");
-
         // Compute unmap evaluation at r
-        let unmap_eval =
-            UnmapRamAddressPolynomial::new(self.log_K, verifier_state.start_address).evaluate(r);
+        let unmap_eval = UnmapRamAddressPolynomial::new(self.log_K, self.start_address).evaluate(r);
 
         // Return unmap(r) * ra(r)
         let ra_claim = self.cached_claim.expect("ra_claim not cached");

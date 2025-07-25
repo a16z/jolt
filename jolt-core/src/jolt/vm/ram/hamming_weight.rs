@@ -36,29 +36,17 @@ where
 pub struct HammingWeightProverState<F: JoltField> {
     /// The ra polynomials - one for each decomposed part
     ra: Vec<MultilinearPolynomial<F>>,
-    /// gamma powers for batching
-    gamma_powers: Vec<F>,
-    /// D parameter as in Twist and Shout paper
-    d: usize,
-}
-
-pub struct HammingWeightVerifierState<F: JoltField> {
-    /// D parameter as in Twist and Shout paper
-    d: usize,
-    /// gamma powers for verification
-    gamma_powers: Vec<F>,
 }
 
 pub struct HammingWeightSumcheck<F: JoltField> {
     /// The initial claim (sum of gamma powers for hamming weight)
     input_claim: F,
     r_cycle: Vec<F>,
-    /// Prover state
-    prover_state: Option<HammingWeightProverState<F>>,
-    /// Verifier state
-    verifier_state: Option<HammingWeightVerifierState<F>>,
-    /// D parameter
+    /// D parameter as in Twist and Shout paper
     d: usize,
+    /// gamma powers for batching
+    gamma_powers: Vec<F>,
+    prover_state: Option<HammingWeightProverState<F>>,
 }
 
 impl<F: JoltField> HammingWeightSumcheck<F> {
@@ -135,14 +123,10 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
 
         Self {
             input_claim,
-            prover_state: Some(HammingWeightProverState {
-                ra,
-                gamma_powers,
-                d,
-            }),
-            verifier_state: None,
             r_cycle: r_cycle.r.clone(),
             d,
+            gamma_powers,
+            prover_state: Some(HammingWeightProverState { ra }),
         }
     }
 
@@ -168,10 +152,10 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
 
         Self {
             input_claim,
-            prover_state: None,
-            verifier_state: Some(HammingWeightVerifierState { d, gamma_powers }),
             r_cycle: r_cycle.r.clone(),
             d,
+            gamma_powers,
+            prover_state: None,
         }
     }
 }
@@ -199,13 +183,13 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
         let univariate_poly_eval: F = prover_state
             .ra
             .par_iter()
-            .zip(prover_state.gamma_powers.par_iter())
-            .map(|(ra_poly, z_power)| {
+            .zip(self.gamma_powers.par_iter())
+            .map(|(ra_poly, gamma_power)| {
                 let sum: F = (0..ra_poly.len() / 2)
                     .into_par_iter()
                     .map(|i| ra_poly.get_bound_coeff(2 * i))
                     .sum();
-                sum * z_power
+                sum * gamma_power
             })
             .sum();
 
@@ -227,11 +211,6 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         _r: &[F],
     ) -> F {
-        let verifier_state = self
-            .verifier_state
-            .as_ref()
-            .expect("Verifier state not initialized");
-
         let ra_claims: Vec<_> = (0..self.d)
             .map(|i| {
                 accumulator
@@ -246,11 +225,11 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
             })
             .collect();
 
-        // Compute batched claim: sum_{i=0}^{d-1} z^i * ra_i
+        // Compute batched claim: sum_{i=0}^{d-1} gamma^i * ra_i
         ra_claims
             .iter()
-            .zip(verifier_state.gamma_powers.iter())
-            .map(|(ra_claim, z_power)| *ra_claim * z_power)
+            .zip(self.gamma_powers.iter())
+            .map(|(ra_claim, gamma_power)| *ra_claim * gamma_power)
             .sum()
     }
 
