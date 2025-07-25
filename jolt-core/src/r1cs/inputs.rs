@@ -266,6 +266,9 @@ impl JoltR1CSInputs {
                         tracer::instruction::RAMAccess::Read(read) => read.value,
                         tracer::instruction::RAMAccess::Write(write) => write.pre_value,
                         tracer::instruction::RAMAccess::NoOp => 0,
+                        tracer::instruction::RAMAccess::Atomic(_) => {
+                            unimplemented!("Atomic instructions are mapped to virtual sequences")
+                        }
                     })
                     .collect();
                 coeffs.into()
@@ -277,6 +280,9 @@ impl JoltR1CSInputs {
                         tracer::instruction::RAMAccess::Read(read) => read.value,
                         tracer::instruction::RAMAccess::Write(write) => write.post_value,
                         tracer::instruction::RAMAccess::NoOp => 0,
+                        tracer::instruction::RAMAccess::Atomic(_) => {
+                            unimplemented!("Atomic instructions are mapped to virtual sequences")
+                        }
                     })
                     .collect();
                 coeffs.into()

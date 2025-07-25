@@ -519,7 +519,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
     }
 
     #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheck::compute_prover_message")]
-    fn compute_prover_message(&mut self, round: usize) -> Vec<F> {
+    fn compute_prover_message(&mut self, round: usize, _previous_claim: F) -> Vec<F> {
         let ps = self
             .prover_state
             .as_ref()

@@ -332,15 +332,18 @@ impl<F: JoltField> MultilinearPolynomial<F> {
         }
     }
 
-    pub fn optimised_evaluate(&self, r: &[F]) -> F {
+    // This is the old polynomial evaluation code that uses
+    // the dot product with langrange bases as the algorithm
+    // This might be eventually removed from the code base
+    pub fn evaluate_dot_product(&self, r: &[F]) -> F {
         match self {
-            MultilinearPolynomial::LargeScalars(poly) => poly.optimised_evaluate(r),
-            MultilinearPolynomial::U8Scalars(poly) => poly.optimised_evaluate(r),
-            MultilinearPolynomial::U16Scalars(poly) => poly.optimised_evaluate(r),
-            MultilinearPolynomial::U32Scalars(poly) => poly.optimised_evaluate(r),
-            MultilinearPolynomial::U64Scalars(poly) => poly.optimised_evaluate(r),
-            MultilinearPolynomial::I64Scalars(poly) => poly.optimised_evaluate(r),
-            MultilinearPolynomial::RLC(_) => F::zero(),
+            MultilinearPolynomial::LargeScalars(poly) => poly.evaluate(r),
+            MultilinearPolynomial::RLC(_) => {
+                // TODO(moodlezoup): This case is only hit in the Dory opening proof,
+                // which doesn't actually do anything with this value. We should
+                // remove that call from Dory.
+                F::zero()
+            }
             _ => {
                 let chis = EqPolynomial::evals(r);
                 self.dot_product(&chis)
@@ -572,7 +575,10 @@ pub trait PolynomialBinding<F: JoltField> {
 
 pub trait PolynomialEvaluation<F: JoltField> {
     /// Returns the final sumcheck claim about the polynomial.
+    /// This uses the algorithm in Lemma 4.3 in Thaler, Proofs and
+    /// Arguments -- the inside out processing
     fn evaluate(&self, r: &[F]) -> F;
+
     /// Evaluates a batch of polynomials on the same point `r`.
     /// Returns: (evals, EQ table)
     /// where EQ table is EQ(x, r) for x \in {0, 1}^|r|. This is used for
@@ -644,18 +650,14 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::evaluate")]
     fn evaluate(&self, r: &[F]) -> F {
         match self {
-            MultilinearPolynomial::LargeScalars(poly) => poly.evaluate(r),
+            MultilinearPolynomial::LargeScalars(poly) => poly.optimised_evaluate(r),
+            MultilinearPolynomial::U8Scalars(poly) => poly.optimised_evaluate(r),
+            MultilinearPolynomial::U16Scalars(poly) => poly.optimised_evaluate(r),
+            MultilinearPolynomial::U32Scalars(poly) => poly.optimised_evaluate(r),
+            MultilinearPolynomial::U64Scalars(poly) => poly.optimised_evaluate(r),
+            MultilinearPolynomial::I64Scalars(poly) => poly.optimised_evaluate(r),
             MultilinearPolynomial::OneHot(poly) => poly.evaluate(r),
-            MultilinearPolynomial::RLC(_) => {
-                // TODO(moodlezoup): This case is only hit in the Dory opening proof,
-                // which doesn't actually do anything with this value. We should
-                // remove that call from Dory.
-                F::zero()
-            }
-            _ => {
-                let chis = EqPolynomial::evals(r);
-                self.dot_product(&chis)
-            }
+            _ => unimplemented!("Unsupported MultilinearPolynomial variant"),
         }
     }
 

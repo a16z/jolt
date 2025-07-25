@@ -104,7 +104,7 @@ pub trait SumcheckInstance<F: JoltField>: Send + Sync {
     /// Computes the prover's message for a specific round of the sumcheck protocol.
     /// Returns the evaluations of the sumcheck polynomial at 0, 2, 3, ..., degree.
     /// The point evaluation at 1 can be interpolated using the previous round's claim.
-    fn compute_prover_message(&mut self, round: usize) -> Vec<F>;
+    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F>;
 
     /// Binds this sumcheck instance to the verifier's challenge from a specific round.
     /// This updates the internal state to prepare for the next round.
@@ -117,11 +117,6 @@ pub trait SumcheckInstance<F: JoltField>: Send + Sync {
         opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         r: &[F],
     ) -> F;
-
-    /// Sets the previous round's claim for use in Gruen
-    fn set_previous_claim(&mut self, _claim: F) {
-        // Default doesn't need to set anything
-    }
 
     /// Proves a single sumcheck instance.
     fn prove_single<ProofTranscript: Transcript>(
@@ -234,10 +229,8 @@ impl BatchedSumcheck {
                         UniPoly::from_coeff(vec![scaled_input_claim])
                     } else {
                         let offset = max_num_rounds - sumcheck.num_rounds();
-                        // Set the previous claim before computing the prover message for Gruen
-                        sumcheck.set_previous_claim(*previous_claim);
                         let mut univariate_poly_evals =
-                            sumcheck.compute_prover_message(round - offset);
+                            sumcheck.compute_prover_message(round - offset, *previous_claim);
                         univariate_poly_evals.insert(1, *previous_claim - univariate_poly_evals[0]);
                         UniPoly::from_evals(&univariate_poly_evals)
                     }

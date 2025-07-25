@@ -37,8 +37,6 @@ struct BooleanityProverState<F: JoltField> {
     eq_r_r: Option<F>,
     eq_km_c: [[F; 3]; 2],
     eq_km_c_squared: [[F; 3]; 2],
-    /// Previous round claim for Gruen optimization
-    previous_claim: F,
 }
 
 pub struct BooleanitySumcheck<F: JoltField> {
@@ -155,7 +153,6 @@ impl<F: JoltField> BooleanityProverState<F> {
             eq_r_r: None,
             eq_km_c,
             eq_km_c_squared,
-            previous_claim: F::zero(),
         }
     }
 }
@@ -177,10 +174,10 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
         skip_all,
         name = "InstructionBooleanitySumcheck::compute_prover_message"
     )]
-    fn compute_prover_message(&mut self, round: usize) -> Vec<F> {
+    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         if round < LOG_K_CHUNK {
             // Phase 1: First log(K_CHUNK) rounds
-            self.compute_phase1_message(round)
+            self.compute_phase1_message(round, previous_claim)
         } else {
             // Phase 2: Last log(T) rounds
             self.compute_phase2_message()
@@ -256,12 +253,6 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
             })
     }
 
-    fn set_previous_claim(&mut self, claim: F) {
-        if let Some(prover_state) = self.prover_state.as_mut() {
-            prover_state.previous_claim = claim;
-        }
-    }
-
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
         let (r_address, r_cycle) = opening_point.split_at(LOG_K_CHUNK);
         let mut r_big_endian: Vec<F> = r_address.iter().rev().copied().collect();
@@ -305,7 +296,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
 }
 
 impl<F: JoltField> BooleanitySumcheck<F> {
-    fn compute_phase1_message(&self, round: usize) -> Vec<F> {
+    fn compute_phase1_message(&self, round: usize, previous_claim: F) -> Vec<F> {
         let p = self.prover_state.as_ref().unwrap();
         let m = round + 1;
         let B = &p.B;
@@ -416,7 +407,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         };
 
         // Use Gruen optimization to get cubic evaluations from quadratic coefficients
-        B.gruen_evals_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], p.previous_claim)
+        B.gruen_evals_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], previous_claim)
             .to_vec()
     }
 

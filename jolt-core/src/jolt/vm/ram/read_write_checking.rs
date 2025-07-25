@@ -311,7 +311,6 @@ pub struct RamReadWriteChecking<F: JoltField> {
     memory_layout: MemoryLayout,
     rv_claim: F,
     wv_claim: F,
-    previous_claim: F,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
@@ -359,7 +358,6 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             memory_layout,
             rv_claim,
             wv_claim,
-            previous_claim: F::zero(),
         }
     }
 
@@ -418,12 +416,11 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             memory_layout,
             rv_claim,
             wv_claim,
-            previous_claim: F::zero(),
         }
     }
 
     #[tracing::instrument(skip_all, name = "RamReadWriteChecking::phase1_compute_prover_message")]
-    fn phase1_compute_prover_message(&mut self, round: usize) -> Vec<F> {
+    fn phase1_compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         const DEGREE: usize = 3;
         let ReadWriteCheckingProverState {
             trace,
@@ -435,8 +432,6 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             gruens_eq_r_prime,
             ..
         } = self.prover_state.as_mut().unwrap();
-
-        let previous_claim = self.previous_claim;
 
         // Compute quadratic coefficients using Gruen's optimization
         let quadratic_coeffs: [F; DEGREE - 1] = if gruens_eq_r_prime.E_in_current_len() == 1 {
@@ -1000,10 +995,10 @@ impl<F: JoltField> SumcheckInstance<F> for RamReadWriteChecking<F> {
     }
 
     #[tracing::instrument(skip_all, name = "RamReadWriteChecking::compute_prover_message")]
-    fn compute_prover_message(&mut self, round: usize) -> Vec<F> {
+    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         let prover_state = self.prover_state.as_ref().unwrap();
         if round < prover_state.chunk_size.log_2() {
-            self.phase1_compute_prover_message(round)
+            self.phase1_compute_prover_message(round, previous_claim)
         } else if round < self.T.log_2() {
             self.phase2_compute_prover_message()
         } else {
@@ -1057,10 +1052,6 @@ impl<F: JoltField> SumcheckInstance<F> for RamReadWriteChecking<F> {
             SumcheckId::RamReadWriteChecking,
         );
         eq_eval_cycle * ra_claim * (val_claim + self.z * (val_claim + inc_claim))
-    }
-
-    fn set_previous_claim(&mut self, claim: F) {
-        self.previous_claim = claim;
     }
 
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {

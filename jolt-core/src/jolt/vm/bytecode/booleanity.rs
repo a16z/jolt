@@ -191,7 +191,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
     }
 
     #[tracing::instrument(skip_all, name = "BytecodeBooleanitySumcheck::compute_prover_message")]
-    fn compute_prover_message(&mut self, round: usize) -> Vec<F> {
+    fn compute_prover_message(&mut self, round: usize, _previous_claim: F) -> Vec<F> {
         if round < self.log_K_chunk {
             // Phase 1: First log(K_chunk) rounds
             self.compute_phase1_message(round)

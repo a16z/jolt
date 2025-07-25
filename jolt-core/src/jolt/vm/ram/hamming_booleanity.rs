@@ -86,7 +86,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingBooleanitySumcheck<F> {
         F::zero()
     }
 
-    fn compute_prover_message(&mut self, _round: usize) -> Vec<F> {
+    fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
         let p = self.prover_state.as_ref().unwrap();
 
         let univariate_poly_evals: [F; 3] = (0..p.eq_r_cycle.len() / 2)

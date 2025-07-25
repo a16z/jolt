@@ -111,7 +111,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
         skip_all,
         name = "RegistersValEvaluationSumcheck::compute_prover_message"
     )]
-    fn compute_prover_message(&mut self, _round: usize) -> Vec<F> {
+    fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
         let prover_state = self
             .prover_state
             .as_ref()

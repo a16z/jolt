@@ -53,8 +53,6 @@ struct BooleanityProverState<F: JoltField> {
     z_powers: Vec<F>,
     /// D parameter as in Twist and Shout paper
     d: usize,
-    /// Previous round claim for Gruen optimization
-    previous_claim: F,
 }
 
 struct BooleanityVerifierState<F: JoltField> {
@@ -80,8 +78,6 @@ pub struct BooleanitySumcheck<F: JoltField> {
     /// Store trace and memory layout for phase transition
     trace: Option<Vec<RV32IMCycle>>,
     memory_layout: Option<MemoryLayout>,
-    /// Previous round claim
-    previous_claim: F,
 }
 
 impl<F: JoltField> BooleanitySumcheck<F> {
@@ -176,7 +172,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             eq_r_r: F::zero(),
             z_powers,
             d,
-            previous_claim: F::zero(),
         };
 
         // Create the sumcheck instance
@@ -190,7 +185,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             current_round: 0,
             trace: Some(trace.to_vec()),
             memory_layout: Some(memory_layout.clone()),
-            previous_claim: F::zero(),
         }
     }
 
@@ -231,7 +225,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             current_round: 0,
             trace: None,
             memory_layout: Some(memory_layout.clone()),
-            previous_claim: F::zero(),
         }
     }
 }
@@ -250,10 +243,10 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
     }
 
     #[tracing::instrument(skip_all, name = "RamBooleanitySumcheck::compute_prover_message")]
-    fn compute_prover_message(&mut self, round: usize) -> Vec<F> {
+    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         if round < NUM_RA_I_VARS {
             // Phase 1: First log(K^(1/d)) rounds
-            self.compute_phase1_message(round)
+            self.compute_phase1_message(round, previous_claim)
         } else {
             // Phase 2: Last log(T) rounds
             self.compute_phase2_message(round - NUM_RA_I_VARS)
@@ -371,13 +364,6 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
         eq_eval_address * eq_eval_cycle * result
     }
 
-    fn set_previous_claim(&mut self, claim: F) {
-        self.previous_claim = claim;
-        if let Some(prover_state) = self.prover_state.as_mut() {
-            prover_state.previous_claim = claim;
-        }
-    }
-
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
         let (r_address, r_cycle) = opening_point.split_at(NUM_RA_I_VARS);
         let mut r_big_endian: Vec<F> = r_address.iter().rev().copied().collect();
@@ -426,7 +412,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
 
 impl<F: JoltField> BooleanitySumcheck<F> {
     /// Compute prover message for first log k rounds
-    fn compute_phase1_message(&self, round: usize) -> Vec<F> {
+    fn compute_phase1_message(&self, round: usize, previous_claim: F) -> Vec<F> {
         let prover_state = self
             .prover_state
             .as_ref()
@@ -546,12 +532,8 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         };
 
         // Use Gruen optimization to get cubic evaluations from quadratic coefficients
-        B.gruen_evals_deg_3(
-            quadratic_coeffs[0],
-            quadratic_coeffs[1],
-            prover_state.previous_claim,
-        )
-        .to_vec()
+        B.gruen_evals_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], previous_claim)
+            .to_vec()
     }
 
     /// Compute prover message for phase 2 (last log(T) rounds)

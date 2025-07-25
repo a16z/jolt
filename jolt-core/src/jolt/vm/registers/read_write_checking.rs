@@ -81,7 +81,6 @@ struct ReadWriteCheckingProverState<F: JoltField> {
     rs2_ra: Option<MultilinearPolynomial<F>>,
     rd_wa: Option<MultilinearPolynomial<F>>,
     val: Option<MultilinearPolynomial<F>>,
-    previous_claim: F,
 }
 
 impl<F: JoltField> ReadWriteCheckingProverState<F> {
@@ -213,7 +212,6 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
             rs2_ra: None,
             rd_wa: None,
             val: None,
-            previous_claim: F::zero(),
         }
     }
 }
@@ -251,7 +249,6 @@ pub struct RegistersReadWriteChecking<F: JoltField> {
     rs1_rv_claim: F,
     rs2_rv_claim: F,
     rd_wv_claim: F,
-    previous_claim: F,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
@@ -350,7 +347,6 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
             rs1_rv_claim,
             rs2_rv_claim,
             rd_wv_claim,
-            previous_claim: F::zero(),
         }
     }
 
@@ -378,7 +374,6 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
             rs1_rv_claim,
             rs2_rv_claim,
             rd_wv_claim,
-            previous_claim: F::zero(),
         }
     }
 
@@ -405,7 +400,6 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
             rs1_rv_claim: proof.rs1_rv_claim,
             rs2_rv_claim: proof.rs2_rv_claim,
             rd_wv_claim: proof.rd_wv_claim,
-            previous_claim: F::zero(),
         }
     }
 
@@ -434,11 +428,10 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
             rs1_rv_claim: value_claims.rs1_rv_claim,
             rs2_rv_claim: value_claims.rs2_rv_claim,
             rd_wv_claim: value_claims.rd_wv_claim,
-            previous_claim: F::zero(),
         }
     }
 
-    fn phase1_compute_prover_message(&mut self, round: usize) -> Vec<F> {
+    fn phase1_compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         const DEGREE: usize = 3;
         let ReadWriteCheckingProverState {
             trace,
@@ -450,8 +443,6 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
             gruens_eq_r_prime,
             ..
         } = self.prover_state.as_mut().unwrap();
-
-        let previous_claim = self.previous_claim;
 
         // Compute quadratic coefficients for Gruen's interpolation
         let quadratic_coeffs: [F; DEGREE - 1] = if gruens_eq_r_prime.E_in_current_len() == 1 {
@@ -1199,10 +1190,10 @@ impl<F: JoltField> SumcheckInstance<F> for RegistersReadWriteChecking<F> {
     }
 
     #[tracing::instrument(skip_all, name = "RegistersReadWriteChecking::compute_prover_message")]
-    fn compute_prover_message(&mut self, round: usize) -> Vec<F> {
+    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         let prover_state = self.prover_state.as_ref().unwrap();
         if round < prover_state.chunk_size.log_2() {
-            self.phase1_compute_prover_message(round)
+            self.phase1_compute_prover_message(round, previous_claim)
         } else if round < self.T.log_2() {
             self.phase2_compute_prover_message()
         } else {
@@ -1250,10 +1241,6 @@ impl<F: JoltField> SumcheckInstance<F> for RegistersReadWriteChecking<F> {
             * (claims.rd_wa_claim * (claims.inc_claim + claims.val_claim)
                 + self.z * claims.rs1_ra_claim * claims.val_claim
                 + self.z_squared * claims.rs2_ra_claim * claims.val_claim)
-    }
-
-    fn set_previous_claim(&mut self, claim: F) {
-        self.previous_claim = claim;
     }
 
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
