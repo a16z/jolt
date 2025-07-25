@@ -571,12 +571,12 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                                         val_evals_computed = true;
                                     }
                                     let wa_evals = [rd_wa[0][k], rd_wa[1][k] - rd_wa[0][k]];
-                                    
+
                                     inner_sum_evals[0] += wa_evals[0]
                                         .mul_0_optimized(inc_cycle_evals[0] + val_evals[0]);
-                                    inner_sum_evals[1] += wa_evals[1]
-                                        * (inc_cycle_evals[1] + val_evals[1]);
-                                    
+                                    inner_sum_evals[1] +=
+                                        wa_evals[1] * (inc_cycle_evals[1] + val_evals[1]);
+
                                     rd_wa[0][k] = F::zero();
                                     rd_wa[1][k] = F::zero();
                                 }
@@ -588,10 +588,11 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                                         val_evals_computed = true;
                                     }
                                     let ra_evals_rs1 = [rs1_ra[0][k], rs1_ra[1][k] - rs1_ra[0][k]];
-                                    
-                                    inner_sum_evals[0] += self.z * ra_evals_rs1[0].mul_0_optimized(val_evals[0]);
+
+                                    inner_sum_evals[0] +=
+                                        self.z * ra_evals_rs1[0].mul_0_optimized(val_evals[0]);
                                     inner_sum_evals[1] += self.z * ra_evals_rs1[1] * val_evals[1];
-                                    
+
                                     rs1_ra[0][k] = F::zero();
                                     rs1_ra[1][k] = F::zero();
                                 }
@@ -600,14 +601,14 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                                 if !rs2_ra[0][k].is_zero() || !rs2_ra[1][k].is_zero() {
                                     if !val_evals_computed {
                                         val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
-                                        val_evals_computed = true;
                                     }
                                     let ra_evals_rs2 = [rs2_ra[0][k], rs2_ra[1][k] - rs2_ra[0][k]];
-                                    
+
                                     inner_sum_evals[0] += self.z_squared
                                         * ra_evals_rs2[0].mul_0_optimized(val_evals[0]);
-                                    inner_sum_evals[1] += self.z_squared * ra_evals_rs2[1] * val_evals[1];
-                                    
+                                    inner_sum_evals[1] +=
+                                        self.z_squared * ra_evals_rs2[1] * val_evals[1];
+
                                     rs2_ra[0][k] = F::zero();
                                     rs2_ra[1][k] = F::zero();
                                 }
@@ -770,12 +771,12 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                                         val_evals_computed = true;
                                     }
                                     let wa_evals = [rd_wa[0][k], rd_wa[1][k] - rd_wa[0][k]];
-                                    
+
                                     inner_sum_evals[0] += wa_evals[0]
                                         .mul_0_optimized(inc_cycle_evals[0] + val_evals[0]);
-                                    inner_sum_evals[1] += wa_evals[1]
-                                        * (inc_cycle_evals[1] + val_evals[1]);
-                                    
+                                    inner_sum_evals[1] +=
+                                        wa_evals[1] * (inc_cycle_evals[1] + val_evals[1]);
+
                                     rd_wa[0][k] = F::zero();
                                     rd_wa[1][k] = F::zero();
                                 }
@@ -787,10 +788,11 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                                         val_evals_computed = true;
                                     }
                                     let ra_evals_rs1 = [rs1_ra[0][k], rs1_ra[1][k] - rs1_ra[0][k]];
-                                    
-                                    inner_sum_evals[0] += self.z * ra_evals_rs1[0].mul_0_optimized(val_evals[0]);
+
+                                    inner_sum_evals[0] +=
+                                        self.z * ra_evals_rs1[0].mul_0_optimized(val_evals[0]);
                                     inner_sum_evals[1] += self.z * ra_evals_rs1[1] * val_evals[1];
-                                    
+
                                     rs1_ra[0][k] = F::zero();
                                     rs1_ra[1][k] = F::zero();
                                 }
@@ -799,14 +801,14 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                                 if !rs2_ra[0][k].is_zero() || !rs2_ra[1][k].is_zero() {
                                     if !val_evals_computed {
                                         val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
-                                        val_evals_computed = true;
                                     }
                                     let ra_evals_rs2 = [rs2_ra[0][k], rs2_ra[1][k] - rs2_ra[0][k]];
-                                    
+
                                     inner_sum_evals[0] += self.z_squared
                                         * ra_evals_rs2[0].mul_0_optimized(val_evals[0]);
-                                    inner_sum_evals[1] += self.z_squared * ra_evals_rs2[1] * val_evals[1];
-                                    
+                                    inner_sum_evals[1] +=
+                                        self.z_squared * ra_evals_rs2[1] * val_evals[1];
+
                                     rs2_ra[0][k] = F::zero();
                                     rs2_ra[1][k] = F::zero();
                                 }
