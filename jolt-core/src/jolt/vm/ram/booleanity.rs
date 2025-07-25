@@ -459,12 +459,13 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                                 // For c \in {0, infty} compute:
                                 // G[k] * (F[k_1, ...., k_{m-1}, c]^2 - F[k_1, ...., k_{m-1}, c])
                                 // = G_times_F * (eq(k_m, c)^2 * F[k_1, ...., k_{m-1}] - eq(k_m, c))
+                                let eval_infty = G_times_F * F_k;
                                 let eval_0 = if k_m == 0 {
-                                    G_times_F * (F_k - F::one())
+                                    eval_infty - G_times_F
                                 } else {
                                     F::zero()
                                 };
-                                let eval_infty = G_times_F * F_k;
+
                                 [eval_0, eval_infty]
                             })
                             .reduce(
@@ -486,12 +487,13 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             // E_in has not been fully bound
             let num_x_in_bits = B.E_in_current_len().log_2();
             let x_bitmask = (1 << num_x_in_bits) - 1;
+            let chunk_size = 1 << num_x_in_bits;
 
             (0..B.len() / 2)
                 .collect::<Vec<_>>()
-                .par_chunk_by(|k1, k2| k1 >> num_x_in_bits == k2 >> num_x_in_bits)
-                .map(|chunk| {
-                    let x_out = chunk[0] >> num_x_in_bits;
+                .par_chunks(chunk_size)
+                .enumerate()
+                .map(|(x_out, chunk)| {
                     let B_E_out_eval = B.E_out_current()[x_out];
 
                     let chunk_evals = chunk
@@ -511,12 +513,12 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                                         let F_k = prover_state.F[k % (1 << (m - 1))];
                                         let G_times_F = G_k * F_k;
 
+                                        let eval_infty = G_times_F * F_k;
                                         let eval_0 = if k_m == 0 {
-                                            G_times_F * (F_k - F::one())
+                                            eval_infty - G_times_F
                                         } else {
                                             F::zero()
                                         };
-                                        let eval_infty = G_times_F * F_k;
                                         [eval_0, eval_infty]
                                     })
                                     .reduce(

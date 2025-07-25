@@ -560,37 +560,56 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
 
                             let mut inner_sum_evals = [F::zero(); DEGREE - 1];
                             for k in dirty_indices.ones() {
-                                if !rs1_ra[0][k].is_zero()
-                                    || !rs1_ra[1][k].is_zero()
-                                    || !rs2_ra[0][k].is_zero()
-                                    || !rs2_ra[1][k].is_zero()
-                                    || !rd_wa[0][k].is_zero()
-                                    || !rd_wa[1][k].is_zero()
-                                {
-                                    let ra_evals_rs1 = [rs1_ra[0][k], rs1_ra[1][k] - rs1_ra[0][k]];
-                                    let ra_evals_rs2 = [rs2_ra[0][k], rs2_ra[1][k] - rs2_ra[0][k]];
+                                // Only compute val_evals if at least one of the arrays is non-zero
+                                let mut val_evals_computed = false;
+                                let mut val_evals = [F::zero(); 2];
+
+                                // Check rd_wa and compute its contribution if non-zero
+                                if !rd_wa[0][k].is_zero() || !rd_wa[1][k].is_zero() {
+                                    if !val_evals_computed {
+                                        val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
+                                        val_evals_computed = true;
+                                    }
                                     let wa_evals = [rd_wa[0][k], rd_wa[1][k] - rd_wa[0][k]];
-                                    let val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
-
-                                    // Compute the combined polynomial evaluation at 0 and infinity
-                                    // The polynomial is: rd_wa * (inc + val) + z * rs1_ra * val + z^2 * rs2_ra * val
+                                    
                                     inner_sum_evals[0] += wa_evals[0]
-                                        .mul_0_optimized(inc_cycle_evals[0] + val_evals[0])
-                                        + self.z * ra_evals_rs1[0].mul_0_optimized(val_evals[0])
-                                        + self.z_squared
-                                            * ra_evals_rs2[0].mul_0_optimized(val_evals[0]);
-
+                                        .mul_0_optimized(inc_cycle_evals[0] + val_evals[0]);
                                     inner_sum_evals[1] += wa_evals[1]
-                                        * (inc_cycle_evals[1] + val_evals[1])
-                                        + self.z * ra_evals_rs1[1] * val_evals[1]
-                                        + self.z_squared * ra_evals_rs2[1] * val_evals[1];
-
-                                    rs1_ra[0][k] = F::zero();
-                                    rs1_ra[1][k] = F::zero();
-                                    rs2_ra[0][k] = F::zero();
-                                    rs2_ra[1][k] = F::zero();
+                                        * (inc_cycle_evals[1] + val_evals[1]);
+                                    
                                     rd_wa[0][k] = F::zero();
                                     rd_wa[1][k] = F::zero();
+                                }
+
+                                // Check rs1_ra and compute its contribution if non-zero
+                                if !rs1_ra[0][k].is_zero() || !rs1_ra[1][k].is_zero() {
+                                    if !val_evals_computed {
+                                        val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
+                                        val_evals_computed = true;
+                                    }
+                                    let ra_evals_rs1 = [rs1_ra[0][k], rs1_ra[1][k] - rs1_ra[0][k]];
+                                    
+                                    inner_sum_evals[0] += self.z * ra_evals_rs1[0].mul_0_optimized(val_evals[0]);
+                                    inner_sum_evals[1] += self.z * ra_evals_rs1[1] * val_evals[1];
+                                    
+                                    rs1_ra[0][k] = F::zero();
+                                    rs1_ra[1][k] = F::zero();
+                                }
+
+                                // Check rs2_ra and compute its contribution if non-zero
+                                if !rs2_ra[0][k].is_zero() || !rs2_ra[1][k].is_zero() {
+                                    if !val_evals_computed {
+                                        val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
+                                        val_evals_computed = true;
+                                    }
+                                    let ra_evals_rs2 = [rs2_ra[0][k], rs2_ra[1][k] - rs2_ra[0][k]];
+                                    
+                                    inner_sum_evals[0] += self.z_squared
+                                        * ra_evals_rs2[0].mul_0_optimized(val_evals[0]);
+                                    inner_sum_evals[1] += self.z_squared * ra_evals_rs2[1] * val_evals[1];
+                                    
+                                    rs2_ra[0][k] = F::zero();
+                                    rs2_ra[1][k] = F::zero();
                                 }
 
                                 val_j_r[0][k] = F::zero();
@@ -740,35 +759,56 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
 
                             let mut inner_sum_evals = [F::zero(); DEGREE - 1];
                             for k in dirty_indices.ones() {
-                                if !rs1_ra[0][k].is_zero()
-                                    || !rs1_ra[1][k].is_zero()
-                                    || !rs2_ra[0][k].is_zero()
-                                    || !rs2_ra[1][k].is_zero()
-                                    || !rd_wa[0][k].is_zero()
-                                    || !rd_wa[1][k].is_zero()
-                                {
-                                    let ra_evals_rs1 = [rs1_ra[0][k], rs1_ra[1][k] - rs1_ra[0][k]];
-                                    let ra_evals_rs2 = [rs2_ra[0][k], rs2_ra[1][k] - rs2_ra[0][k]];
+                                // Only compute val_evals if at least one of the arrays is non-zero
+                                let mut val_evals_computed = false;
+                                let mut val_evals = [F::zero(); 2];
+
+                                // Check rd_wa and compute its contribution if non-zero
+                                if !rd_wa[0][k].is_zero() || !rd_wa[1][k].is_zero() {
+                                    if !val_evals_computed {
+                                        val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
+                                        val_evals_computed = true;
+                                    }
                                     let wa_evals = [rd_wa[0][k], rd_wa[1][k] - rd_wa[0][k]];
-                                    let val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
-
+                                    
                                     inner_sum_evals[0] += wa_evals[0]
-                                        .mul_0_optimized(inc_cycle_evals[0] + val_evals[0])
-                                        + self.z * ra_evals_rs1[0].mul_0_optimized(val_evals[0])
-                                        + self.z_squared
-                                            * ra_evals_rs2[0].mul_0_optimized(val_evals[0]);
-
+                                        .mul_0_optimized(inc_cycle_evals[0] + val_evals[0]);
                                     inner_sum_evals[1] += wa_evals[1]
-                                        * (inc_cycle_evals[1] + val_evals[1])
-                                        + self.z * ra_evals_rs1[1] * val_evals[1]
-                                        + self.z_squared * ra_evals_rs2[1] * val_evals[1];
-
-                                    rs1_ra[0][k] = F::zero();
-                                    rs1_ra[1][k] = F::zero();
-                                    rs2_ra[0][k] = F::zero();
-                                    rs2_ra[1][k] = F::zero();
+                                        * (inc_cycle_evals[1] + val_evals[1]);
+                                    
                                     rd_wa[0][k] = F::zero();
                                     rd_wa[1][k] = F::zero();
+                                }
+
+                                // Check rs1_ra and compute its contribution if non-zero
+                                if !rs1_ra[0][k].is_zero() || !rs1_ra[1][k].is_zero() {
+                                    if !val_evals_computed {
+                                        val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
+                                        val_evals_computed = true;
+                                    }
+                                    let ra_evals_rs1 = [rs1_ra[0][k], rs1_ra[1][k] - rs1_ra[0][k]];
+                                    
+                                    inner_sum_evals[0] += self.z * ra_evals_rs1[0].mul_0_optimized(val_evals[0]);
+                                    inner_sum_evals[1] += self.z * ra_evals_rs1[1] * val_evals[1];
+                                    
+                                    rs1_ra[0][k] = F::zero();
+                                    rs1_ra[1][k] = F::zero();
+                                }
+
+                                // Check rs2_ra and compute its contribution if non-zero
+                                if !rs2_ra[0][k].is_zero() || !rs2_ra[1][k].is_zero() {
+                                    if !val_evals_computed {
+                                        val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
+                                        val_evals_computed = true;
+                                    }
+                                    let ra_evals_rs2 = [rs2_ra[0][k], rs2_ra[1][k] - rs2_ra[0][k]];
+                                    
+                                    inner_sum_evals[0] += self.z_squared
+                                        * ra_evals_rs2[0].mul_0_optimized(val_evals[0]);
+                                    inner_sum_evals[1] += self.z_squared * ra_evals_rs2[1] * val_evals[1];
+                                    
+                                    rs2_ra[0][k] = F::zero();
+                                    rs2_ra[1][k] = F::zero();
                                 }
 
                                 val_j_r[0][k] = F::zero();

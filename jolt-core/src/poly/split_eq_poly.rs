@@ -456,12 +456,9 @@ mod tests {
             .take(NUM_VARS)
             .collect();
 
-        // Create reversed w
-        let mut w_rev = w.clone();
-        w_rev.reverse();
-
-        // Create regular polynomial with reversed w
-        let mut regular_eq = DensePolynomial::new(EqPolynomial::evals(&w_rev));
+        // Create regular polynomial with original w
+        // @TODO(markosg04) this fails when trying to use regular_eq high to low
+        let mut regular_eq = DensePolynomial::new(EqPolynomial::evals(&w));
 
         // Create split eq polynomial using new_rev with original w
         let mut split_eq_rev = GruenSplitEqPolynomial::new_rev(&w);
@@ -472,7 +469,7 @@ mod tests {
         // Bind with same random values
         for _ in 0..NUM_VARS {
             let r = Fr::random(&mut rng);
-            regular_eq.bound_poly_var_bot(&r);
+            regular_eq.bound_poly_var_top(&r);
             split_eq_rev.bind(r);
 
             let merged = split_eq_rev.merge();
