@@ -31,7 +31,8 @@ pub struct OneHotPolynomial<F: JoltField> {
     /// The indices of the nonzero coefficients for each j \in {0, 1}^T.
     /// In other words, the raf/waf corresponding to this
     /// ra/wa polynomial.
-    pub nonzero_indices: Vec<usize>,
+    /// If None, this polynomial is 0 for this j.
+    pub nonzero_indices: Vec<Option<usize>>,
     /// The number of variables that have been bound over the
     /// course of sumcheck so far.
     num_variables_bound: usize,
@@ -111,7 +112,9 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                 let mut result = unsafe_allocate_zero_vec(polynomial.K);
                 let mut j = chunk_index * chunk_size;
                 for k in chunk {
-                    result[*k] += D.get_bound_coeff(j);
+                    if let Some(k) = k {
+                        result[*k] += D.get_bound_coeff(j);
+                    }
                     j += 1;
                 }
                 result
@@ -240,7 +243,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                     polynomial
                         .nonzero_indices
                         .par_iter()
-                        .map(|&k| F[k])
+                        .map(|&k| k.map_or(F::zero(), |k| F[k]))
                         .collect::<Vec<_>>(),
                 ));
             }
@@ -283,7 +286,9 @@ impl<F: JoltField> OneHotPolynomial<F> {
         let T = DoryGlobals::get_T();
         let mut dense_coeffs: Vec<F> = vec![F::zero(); self.K * T];
         for (t, k) in self.nonzero_indices.iter().enumerate() {
-            dense_coeffs[k * T + t] = F::one();
+            if let Some(k) = k {
+                dense_coeffs[k * T + t] = F::one();
+            }
         }
         DensePolynomial::new(dense_coeffs)
     }
@@ -300,7 +305,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
             .sum()
     }
 
-    pub fn from_indices(nonzero_indices: Vec<usize>, K: usize) -> Self {
+    pub fn from_indices(nonzero_indices: Vec<Option<usize>>, K: usize) -> Self {
         debug_assert_eq!(DoryGlobals::get_T(), nonzero_indices.len());
 
         Self {
@@ -334,7 +339,9 @@ impl<F: JoltField> OneHotPolynomial<F> {
                     for (col_index, k) in chunk.iter().enumerate() {
                         // All the nonzero coefficients are 1, so we simply add
                         // the associated base to the result.
-                        row_commitments[*k].0 += bases[col_index];
+                        if let Some(k) = k {
+                            row_commitments[*k].0 += bases[col_index];
+                        }
                     }
                     row_commitments
                 })
@@ -364,16 +371,18 @@ impl<F: JoltField> OneHotPolynomial<F> {
                     let max_row_index = min_row_index + chunk_size;
 
                     for (t, k) in self.nonzero_indices.iter().enumerate() {
-                        let global_index = *k as u64 * T as u64 + t as u64;
-                        let row_index = (global_index / row_len as u64) as usize;
+                        if let Some(k) = k {
+                            let global_index = *k as u64 * T as u64 + t as u64;
+                            let row_index = (global_index / row_len as u64) as usize;
 
-                        // If this coefficient falls in the chunk of rows corresponding
-                        // to `chunk_index`, add its contribution to the result
-                        if row_index >= min_row_index && row_index < max_row_index {
-                            let col_index = global_index % row_len as u64;
-                            // All the nonzero coefficients are 1, so we simply add
-                            // the associated base to the result.
-                            chunk[row_index % chunk_size].0 += bases[col_index as usize];
+                            // If this coefficient falls in the chunk of rows corresponding
+                            // to `chunk_index`, add its contribution to the result
+                            if row_index >= min_row_index && row_index < max_row_index {
+                                let col_index = global_index % row_len as u64;
+                                // All the nonzero coefficients are 1, so we simply add
+                                // the associated base to the result.
+                                chunk[row_index % chunk_size].0 += bases[col_index as usize];
+                            }
                         }
                     }
                 });
@@ -398,13 +407,15 @@ impl<F: JoltField> OneHotPolynomial<F> {
                 let min_col_index = chunk_index * chunk_size;
                 let max_col_index = min_col_index + chunk_size;
                 for (t, k) in self.nonzero_indices.iter().enumerate() {
-                    let global_index = *k as u128 * T as u128 + t as u128;
-                    let col_index = (global_index % row_len as u128) as usize;
-                    // If this coefficient falls in the chunk of rows corresponding
-                    // to `chunk_index`, compute its contribution to the result.
-                    if col_index >= min_col_index && col_index < max_col_index {
-                        let row_index = (global_index / row_len as u128) as usize;
-                        chunk[col_index % chunk_size] += left_vec[row_index];
+                    if let Some(k) = k {
+                        let global_index = *k as u128 * T as u128 + t as u128;
+                        let col_index = (global_index % row_len as u128) as usize;
+                        // If this coefficient falls in the chunk of rows corresponding
+                        // to `chunk_index`, compute its contribution to the result.
+                        if col_index >= min_col_index && col_index < max_col_index {
+                            let row_index = (global_index / row_len as u128) as usize;
+                            chunk[col_index % chunk_size] += left_vec[row_index];
+                        }
                     }
                 }
             });
@@ -427,7 +438,7 @@ mod tests {
 
         let mut rng = test_rng();
 
-        let nonzero_indices: Vec<_> = std::iter::repeat_with(|| rng.next_u64() as usize % K)
+        let nonzero_indices: Vec<_> = std::iter::repeat_with(|| Some(rng.next_u64() as usize % K))
             .take(T)
             .collect();
         let one_hot_poly = OneHotPolynomial::<Fr>::from_indices(nonzero_indices, K);
@@ -503,7 +514,7 @@ mod tests {
 
         let mut rng = test_rng();
 
-        let nonzero_indices: Vec<_> = std::iter::repeat_with(|| rng.next_u64() as usize % K)
+        let nonzero_indices: Vec<_> = std::iter::repeat_with(|| Some(rng.next_u64() as usize % K))
             .take(T)
             .collect();
         let one_hot_poly = OneHotPolynomial::<Fr>::from_indices(nonzero_indices, K);

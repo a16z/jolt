@@ -265,11 +265,11 @@ impl CommittedPolynomial {
                 if *i > d {
                     panic!("Invalid index for bytecode ra: {i}");
                 }
-                let addresses: Vec<usize> = trace
+                let addresses: Vec<_> = trace
                     .par_iter()
                     .map(|cycle| {
                         let pc = preprocessing.shared.bytecode.get_pc(cycle);
-                        (pc >> (log_K_chunk * (d - 1 - i))) % K_chunk
+                        Some((pc >> (log_K_chunk * (d - 1 - i))) % K_chunk)
                     })
                     .collect();
                 MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(addresses, K_chunk))
@@ -277,16 +277,17 @@ impl CommittedPolynomial {
             CommittedPolynomial::RamRa(i) => {
                 let d = self.ram_d();
                 debug_assert!(*i < d);
-                let addresses: Vec<usize> = trace
+                let addresses: Vec<_> = trace
                     .par_iter()
                     .map(|cycle| {
-                        let address = remap_address(
+                        remap_address(
                             cycle.ram_access().address() as u64,
                             &preprocessing.shared.memory_layout,
-                        ) as usize;
-
-                        // Get i'th chunk of the address
-                        (address >> (NUM_RA_I_VARS * (d - 1 - i))) % (1 << NUM_RA_I_VARS)
+                        )
+                        .map(|address| {
+                            (address as usize >> (NUM_RA_I_VARS * (d - 1 - i)))
+                                % (1 << NUM_RA_I_VARS)
+                        })
                     })
                     .collect();
                 MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
@@ -323,7 +324,7 @@ impl CommittedPolynomial {
                 if *i > instruction_lookups::D {
                     panic!("Unexpected i: {i}");
                 }
-                let addresses: Vec<usize> = trace
+                let addresses: Vec<_> = trace
                     .par_iter()
                     .map(|cycle| {
                         let lookup_index = LookupQuery::<32>::to_lookup_index(cycle);
@@ -331,7 +332,7 @@ impl CommittedPolynomial {
                             >> (instruction_lookups::LOG_K_CHUNK
                                 * (instruction_lookups::D - 1 - i)))
                             % instruction_lookups::K_CHUNK as u64;
-                        k as usize
+                        Some(k as usize)
                     })
                     .collect();
                 MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
@@ -366,7 +367,7 @@ pub enum VirtualPolynomial {
     OpFlags(CircuitFlags),
     LookupOutput,
     InstructionRaf,
-    InstructionRafFlag, // TODO(moodlezoup): Remove this
+    InstructionRafFlag,
     LookupTableFlag(usize),
     RegistersVal,
     RamAddress,
@@ -376,4 +377,5 @@ pub enum VirtualPolynomial {
     RamVal,
     RamValInit,
     RamValFinal,
+    RamHammingWeight,
 }

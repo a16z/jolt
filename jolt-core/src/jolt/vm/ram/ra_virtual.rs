@@ -140,17 +140,18 @@ impl<F: JoltField> RASumcheck<F> {
                 let ra_i: Vec<F> = trace
                     .par_iter()
                     .map(|cycle| {
-                        let address = remap_address(
+                        remap_address(
                             cycle.ram_access().address() as u64,
                             &preprocessing.shared.memory_layout,
-                        ) as usize;
+                        )
+                        .map_or(F::zero(), |address| {
+                            // For each address, add eq_r_cycle[j] to each corresponding chunk
+                            // This maintains the property that sum of all ra values for an address equals 1
+                            let address_i =
+                                (address >> (NUM_RA_I_VARS * (d - 1 - i))) % (1 << NUM_RA_I_VARS);
 
-                        // For each address, add eq_r_cycle[j] to each corresponding chunk
-                        // This maintains the property that sum of all ra values for an address equals 1
-                        let address_i =
-                            (address >> (NUM_RA_I_VARS * (d - 1 - i))) % (1 << NUM_RA_I_VARS);
-
-                        eq_tables[i][address_i]
+                            eq_tables[i][address_i as usize]
+                        })
                     })
                     .collect();
                 ra_i.into()

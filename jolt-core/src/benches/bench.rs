@@ -231,7 +231,7 @@ where
     PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 {
-    prove_example::<Vec<u8>, PCS, F, ProofTranscript>("sha2-guest", &vec![5u8; 2048])
+    prove_example_dag::<Vec<u8>, PCS, F, ProofTranscript>("sha2-guest", &vec![5u8; 10000])
 }
 
 fn sha3<F, PCS, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
@@ -423,41 +423,82 @@ where
 
     let mut inputs = vec![];
     inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
-    inputs.append(&mut postcard::to_stdvec(&1500u32).unwrap());
+    inputs.append(&mut postcard::to_stdvec(&1000u32).unwrap());
 
     let task = move || {
-        let (trace, final_memory_state, io_device) = program.trace(&inputs);
+        let (mut trace, final_memory_state, mut io_device) = program.trace(&inputs);
         let (bytecode, init_memory_state) = program.decode();
 
         let preprocessing: JoltProverPreprocessing<F, PCS> = RV32IJoltVM::prover_preprocess(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
-            1 << 20,
-            1 << 20,
-            1 << 24,
+            1 << 18,
+            1 << 18,
+            1 << 25,
         );
 
-        let (jolt_proof, program_io, _) = <RV32IJoltVM as Jolt<32, _, PCS, _>>::prove(
-            io_device,
-            trace,
-            final_memory_state,
-            preprocessing.clone(),
+        // Setup trace length and padding (similar to DAG test)
+        let trace_length = trace.len();
+        let padded_trace_length = trace_length.next_power_of_two();
+        trace.resize(padded_trace_length, RV32IMCycle::NoOp);
+
+        // Truncate trailing zeros on device outputs
+        io_device.outputs.truncate(
+            io_device
+                .outputs
+                .iter()
+                .rposition(|&b| b != 0)
+                .map_or(0, |pos| pos + 1),
         );
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::<F, PCS>::from(&preprocessing);
+        // Initialize Dory globals
+        // let _guard = DoryGlobals::initialize(1 << 18, 1 << 20);
 
-        let verification_result =
-            RV32IJoltVM::verify(verifier_preprocessing, jolt_proof, program_io, None);
-        assert!(
-            verification_result.is_ok(),
-            "Verification failed with error: {:?}",
-            verification_result.err()
+        // Create state manager components
+        let prover_accumulator_pre_wrap =
+            crate::poly::opening_proof::ProverOpeningAccumulator::<F>::new();
+        let prover_accumulator = Rc::new(RefCell::new(prover_accumulator_pre_wrap));
+        let prover_transcript = Rc::new(RefCell::new(ProofTranscript::new(b"Jolt")));
+        let proofs = Rc::new(RefCell::new(HashMap::new()));
+        let commitments = Rc::new(RefCell::new(None));
+
+        // Create prover state manager
+        let mut prover_state_manager = state_manager::StateManager::new_prover(
+            prover_accumulator,
+            prover_transcript.clone(),
+            proofs.clone(),
+            commitments.clone(),
         );
+        prover_state_manager.set_prover_data(
+            &preprocessing,
+            trace.clone(),
+            io_device.clone(),
+            final_memory_state.clone(),
+        );
+
+        // We only need the prover state manager for benchmarking
+        let verifier_accumulator_pre_wrap =
+            crate::poly::opening_proof::VerifierOpeningAccumulator::<F>::new();
+        let verifier_accumulator = Rc::new(RefCell::new(verifier_accumulator_pre_wrap));
+        let verifier_transcript = Rc::new(RefCell::new(ProofTranscript::new(b"Jolt")));
+        let verifier_state_manager = state_manager::StateManager::new_verifier(
+            verifier_accumulator,
+            verifier_transcript.clone(),
+            proofs,
+            commitments,
+        );
+
+        let mut dag = jolt_dag::JoltDAG::new(prover_state_manager, verifier_state_manager);
+
+        // Only run the prover
+        if let Err(e) = dag.prove() {
+            panic!("DAG prove failed: {e}");
+        }
     };
 
     tasks.push((
-        tracing::info_span!("Example_E2E"),
+        tracing::info_span!("DAG_Prover_Only"),
         Box::new(task) as Box<dyn FnOnce()>,
     ));
 

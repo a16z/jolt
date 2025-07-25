@@ -3,7 +3,8 @@
 
 use crate::field::JoltField;
 use crate::jolt::vm::bytecode::BytecodePreprocessing;
-use crate::jolt::vm::ram::remap_address;
+use crate::jolt::vm::ram::NUM_RA_I_VARS;
+// use crate::jolt::vm::ram::remap_address;
 use crate::jolt::vm::rv32i_vm::Serializable;
 use crate::jolt::witness::AllCommittedPolynomials;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
@@ -207,14 +208,7 @@ where
 
         let shared = Self::shared_preprocess(bytecode, memory_layout, memory_init);
 
-        let max_K = [
-            shared.bytecode.code_size.next_power_of_two(),
-            // max_memory_size.next_power_of_two(),
-            1 << 8, // instruction lookups Shout
-        ]
-        .into_iter()
-        .max()
-        .unwrap();
+        let max_K = 1 << NUM_RA_I_VARS;
         let max_T = max_trace_length.next_power_of_two();
 
         println!("setup...");
@@ -262,11 +256,12 @@ where
 
         let ram_addresses: Vec<usize> = trace
             .par_iter()
-            .map(|cycle| {
-                remap_address(
-                    cycle.ram_access().address() as u64,
-                    &preprocessing.shared.memory_layout,
-                ) as usize
+            .map(|_cycle| {
+                todo!()
+                // remap_address(
+                //     cycle.ram_access().address() as u64,
+                //     &preprocessing.shared.memory_layout,
+                // ) as usize
             })
             .collect();
         let ram_K = ram_addresses.par_iter().max().unwrap().next_power_of_two();

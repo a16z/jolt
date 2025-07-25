@@ -5,7 +5,7 @@ use crate::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::field::JoltField;
 use crate::jolt::vm::bytecode::BytecodeDag;
 use crate::jolt::vm::instruction_lookups::LookupsDag;
-use crate::jolt::vm::ram::RamDag;
+use crate::jolt::vm::ram::{RamDag, NUM_RA_I_VARS};
 use crate::jolt::vm::registers::RegistersDag;
 use crate::jolt::vm::JoltCommitments;
 use crate::jolt::witness::{AllCommittedPolynomials, CommittedPolynomial};
@@ -46,15 +46,15 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         // Calculate K for DoryGlobals initialization
         let ram_K = trace
             .par_iter()
-            .map(|cycle| {
+            .filter_map(|cycle| {
                 crate::jolt::vm::ram::remap_address(
                     cycle.ram_access().address() as u64,
                     &preprocessing.shared.memory_layout,
-                ) as usize
+                )
             })
             .max()
             .unwrap()
-            .next_power_of_two();
+            .next_power_of_two() as usize;
         let bytecode_d = preprocessing.shared.bytecode.d;
 
         // HACK
@@ -64,14 +64,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             .insert(ProofKeys::RamK, ProofData::RamK(ram_K));
 
         println!("bytecode size: {}", preprocessing.shared.bytecode.code_size);
-        let K = [
-            preprocessing.shared.bytecode.code_size,
-            // ram_K,
-            1 << 8, // K for instruction lookups
-        ]
-        .into_iter()
-        .max()
-        .unwrap();
+        let K = 1 << NUM_RA_I_VARS;
 
         let _guard = (
             DoryGlobals::initialize(K, padded_trace_length),
