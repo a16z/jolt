@@ -708,11 +708,9 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         };
 
         // Convert quadratic coefficients to cubic evaluations
-        let cubic_evals = gruens_eq_r_prime
+        gruens_eq_r_prime
             .gruen_evals_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], previous_claim)
-            .to_vec();
-
-        cubic_evals
+            .to_vec()
     }
 
     fn phase2_compute_prover_message(&self) -> Vec<F> {

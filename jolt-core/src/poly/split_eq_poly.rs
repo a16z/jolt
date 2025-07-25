@@ -423,7 +423,6 @@ impl<F: JoltField> SplitEqPolynomial<F> {
 mod tests {
     use super::*;
     use ark_bn254::Fr;
-    use ark_ff::AdditiveGroup;
     use ark_std::test_rng;
 
     #[test]

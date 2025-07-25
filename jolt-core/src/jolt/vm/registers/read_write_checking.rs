@@ -560,16 +560,10 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
 
                             let mut inner_sum_evals = [F::zero(); DEGREE - 1];
                             for k in dirty_indices.ones() {
-                                // Only compute val_evals if at least one of the arrays is non-zero
-                                let mut val_evals_computed = false;
-                                let mut val_evals = [F::zero(); 2];
+                                let val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
 
                                 // Check rd_wa and compute its contribution if non-zero
                                 if !rd_wa[0][k].is_zero() || !rd_wa[1][k].is_zero() {
-                                    if !val_evals_computed {
-                                        val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
-                                        val_evals_computed = true;
-                                    }
                                     let wa_evals = [rd_wa[0][k], rd_wa[1][k] - rd_wa[0][k]];
 
                                     inner_sum_evals[0] += wa_evals[0]
@@ -583,10 +577,6 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
 
                                 // Check rs1_ra and compute its contribution if non-zero
                                 if !rs1_ra[0][k].is_zero() || !rs1_ra[1][k].is_zero() {
-                                    if !val_evals_computed {
-                                        val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
-                                        val_evals_computed = true;
-                                    }
                                     let ra_evals_rs1 = [rs1_ra[0][k], rs1_ra[1][k] - rs1_ra[0][k]];
 
                                     inner_sum_evals[0] +=
@@ -599,9 +589,6 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
 
                                 // Check rs2_ra and compute its contribution if non-zero
                                 if !rs2_ra[0][k].is_zero() || !rs2_ra[1][k].is_zero() {
-                                    if !val_evals_computed {
-                                        val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
-                                    }
                                     let ra_evals_rs2 = [rs2_ra[0][k], rs2_ra[1][k] - rs2_ra[0][k]];
 
                                     inner_sum_evals[0] += self.z_squared
@@ -760,16 +747,10 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
 
                             let mut inner_sum_evals = [F::zero(); DEGREE - 1];
                             for k in dirty_indices.ones() {
-                                // Only compute val_evals if at least one of the arrays is non-zero
-                                let mut val_evals_computed = false;
-                                let mut val_evals = [F::zero(); 2];
+                                let val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
 
                                 // Check rd_wa and compute its contribution if non-zero
                                 if !rd_wa[0][k].is_zero() || !rd_wa[1][k].is_zero() {
-                                    if !val_evals_computed {
-                                        val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
-                                        val_evals_computed = true;
-                                    }
                                     let wa_evals = [rd_wa[0][k], rd_wa[1][k] - rd_wa[0][k]];
 
                                     inner_sum_evals[0] += wa_evals[0]
@@ -783,10 +764,6 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
 
                                 // Check rs1_ra and compute its contribution if non-zero
                                 if !rs1_ra[0][k].is_zero() || !rs1_ra[1][k].is_zero() {
-                                    if !val_evals_computed {
-                                        val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
-                                        val_evals_computed = true;
-                                    }
                                     let ra_evals_rs1 = [rs1_ra[0][k], rs1_ra[1][k] - rs1_ra[0][k]];
 
                                     inner_sum_evals[0] +=
@@ -799,9 +776,6 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
 
                                 // Check rs2_ra and compute its contribution if non-zero
                                 if !rs2_ra[0][k].is_zero() || !rs2_ra[1][k].is_zero() {
-                                    if !val_evals_computed {
-                                        val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
-                                    }
                                     let ra_evals_rs2 = [rs2_ra[0][k], rs2_ra[1][k] - rs2_ra[0][k]];
 
                                     inner_sum_evals[0] += self.z_squared
@@ -838,11 +812,9 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
         };
 
         // Convert quadratic coefficients to cubic evaluations
-        let cubic_evals = gruens_eq_r_prime
+        gruens_eq_r_prime
             .gruen_evals_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], previous_claim)
-            .to_vec();
-
-        cubic_evals
+            .to_vec()
     }
 
     fn phase2_compute_prover_message(&self) -> Vec<F> {
