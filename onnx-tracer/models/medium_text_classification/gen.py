@@ -73,9 +73,9 @@ for epoch in range(20):
 # Export to ONNX (float32)
 dummy_input = torch.randint(1, len(vocab)+1, (1, max_len))
 torch.onnx.export(
-    model, dummy_input, "medium_text_classification.onnx",
+    model, dummy_input, "network.onnx",
     input_names=["input"], output_names=["probs"],
     dynamic_axes={"input": {0: "batch_size"}, "probs": {0: "batch_size"}},
     opset_version=15
 )
-print("✅ Exported ONNX model with richer ISA ops to medium_text_classification.onnx")
+print("✅ Exported ONNX model with richer ISA ops to network.onnx")
