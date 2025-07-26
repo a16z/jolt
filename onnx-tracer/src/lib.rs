@@ -39,7 +39,12 @@ pub type Scale = i32;
 /// # Returns
 /// A vector of [`ONNXInstr`] representing the program code.
 pub fn decode(model_path: &PathBuf) -> Vec<ONNXInstr> {
-    decode_nodes(0, &model(model_path).graph.nodes)
+    model(model_path)
+        .graph
+        .nodes
+        .iter()
+        .map(decode_node)
+        .collect()
 }
 
 /// Provides a simple API to obtain the execution trace for an ONNX model.
@@ -78,22 +83,14 @@ fn model(model_path: &PathBuf) -> Model {
 ///
 /// # NOTE:
 /// Adds 1 to pc to account for prepended no-op
-pub fn decode_nodes(offset: usize, nodes: &BTreeMap<usize, NodeType>) -> Vec<ONNXInstr> {
-    let mut new_offset = offset;
-
-    nodes.iter().flat_map(|(pc, node)| {
-        match node {
-            NodeType::Node(node) => {
-                new_offset += 1;
-                vec![node.decode(*pc + offset + BYTECODE_PREPEND_NOOP)]
-            }
-            NodeType::SubGraph { model, .. } => {
-                decode_nodes(new_offset, &model.graph.nodes)
-            }
+pub fn decode_node((pc, node): (&usize, &NodeType)) -> ONNXInstr {
+    match node {
+        NodeType::Node(node) => node.decode(*pc + BYTECODE_PREPEND_NOOP),
+        NodeType::SubGraph { .. } => {
+            todo!()
         }
-    }).collect()
+    }
 }
-
 
 /// Parameters specific to a proving run
 #[derive(Debug, Args, Deserialize, Serialize, Clone, PartialEq, PartialOrd)]

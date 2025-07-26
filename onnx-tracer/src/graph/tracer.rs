@@ -27,11 +27,11 @@ pub struct Tracer {
 }
 
 impl Tracer {
-    pub fn capture_pre_state(&self, instr: Vec<ONNXInstr>) {
+    pub fn capture_pre_state(&self, instr: ONNXInstr) {
         self.execution_trace
             .try_borrow_mut()
             .unwrap()
-            .extend(instr.into_iter().map(|instr| ONNXCycle { instr }));
+            .push(ONNXCycle { instr });
     }
 
     pub fn capture_post_state() {
