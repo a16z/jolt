@@ -2,18 +2,13 @@ use super::node::*;
 use crate::{
     circuit::ops::{Input, Op, Unknown},
     decode_node,
-    fieldutils::felt_to_i128,
     graph::{
-        input::GraphData,
-        tracer::Tracer,
-        utilities::{node_output_shapes, scale_to_multiplier},
-        vars::VarScales,
+        input::GraphData, tracer::Tracer, utilities::node_output_shapes, vars::VarScales,
         GraphError,
     },
     tensor::Tensor,
     RunArgs,
 };
-use halo2curves::bn256::Fr as Fp;
 use log::{debug, trace};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -103,7 +98,7 @@ impl Model {
     /// - Input tensors must be in the correct order and shape.
     /// - This function does not perform any hardware-accelerated inference; it executes the model using the internal Rust implementation.
     /// - Handles both standard nodes and subgraphs (e.g., for ONNX Scan/Loop constructs).
-    pub fn forward(&self, model_inputs: &[Tensor<Fp>]) -> Result<ForwardResult, Box<dyn Error>> {
+    pub fn forward(&self, model_inputs: &[Tensor<i128>]) -> Result<ForwardResult, Box<dyn Error>> {
         // A map that stores the output tensors of each node in the computation graph.
         //
         // # Purpose
@@ -150,7 +145,7 @@ impl Model {
         // 5. Summary:
         //    - This structure allows us to efficiently store and retrieve all intermediate and final outputs of the computation graph,
         //      supporting both single-output and multi-output nodes, and ensuring deterministic iteration order.
-        let mut results: BTreeMap<&usize, Vec<Tensor<Fp>>> = BTreeMap::new();
+        let mut results: BTreeMap<&usize, Vec<Tensor<i128>>> = BTreeMap::new();
         let mut max_lookup_inputs = 0;
         let mut min_lookup_inputs = 0;
         // Retrieves the shapes of all input tensors for the current computational graph.
@@ -207,18 +202,8 @@ impl Model {
             if n.is_lookup() {
                 let (mut min, mut max) = (0, 0);
                 for i in &inputs {
-                    max = max.max(
-                        i.iter()
-                            .map(|x| felt_to_i128(*x))
-                            .max()
-                            .ok_or("missing max")?,
-                    );
-                    min = min.min(
-                        i.iter()
-                            .map(|x| felt_to_i128(*x))
-                            .min()
-                            .ok_or("missing min")?,
-                    );
+                    max = max.max(i.iter().map(|x| *x).max().ok_or("missing max")?);
+                    min = min.min(i.iter().map(|x| *x).min().ok_or("missing min")?);
                 }
                 max_lookup_inputs = max_lookup_inputs.max(max);
                 min_lookup_inputs = min_lookup_inputs.min(min);
@@ -229,7 +214,7 @@ impl Model {
                 NodeType::Node(n) => {
                     // execute the op
                     let start = instant::Instant::now();
-                    let res = Op::<Fp>::f(&n.opkind, &inputs)?;
+                    let res = Op::<i128>::f(&n.opkind, &inputs)?;
                     let elapsed = start.elapsed();
                     trace!("op took: {elapsed:?}",);
                     // see if any of the intermediate lookup calcs are the max
@@ -245,15 +230,9 @@ impl Model {
                         debug!("intermediate min lookup inputs: {min}",);
                     }
                     debug!(
-                        "------------ output node int {}: {} \n ------------ float: {} \n ------------ max: {} \n ------------ min: {} ------------ scale: {}",
+                        "------------ output node int {}: {} \n  ------------ scale: {}",
                         idx,
-                        res.output.map(crate::fieldutils::felt_to_i32).show(),
-                        res.output
-                            .map(|x| crate::fieldutils::felt_to_f64(x)
-                                / scale_to_multiplier(n.out_scale))
-                            .show(),
-                        res.output.clone().into_iter().map(crate::fieldutils::felt_to_i128).max().unwrap_or(0),
-                        res.output.clone().into_iter().map(crate::fieldutils::felt_to_i128).min().unwrap_or(0),
+                        res.output.show(),
                         n.out_scale
                     );
                     results.insert(idx, vec![res.output]);
@@ -275,7 +254,7 @@ impl Model {
                         num_iter, input_tuple, model.graph.inputs
                     );
                     debug!("input_mappings: {input_mappings:?}",);
-                    let mut full_results: Vec<Tensor<Fp>> = vec![];
+                    let mut full_results: Vec<Tensor<i128>> = vec![];
                     for i in 0..num_iter {
                         // replace the Stacked input with the current chunk iter
                         for ((mapping, inp), og_input) in
@@ -325,12 +304,7 @@ impl Model {
                     trace!(
                         "------------ output subgraph node {}: {:?}",
                         idx,
-                        full_results
-                            .iter()
-                            .map(|x|
-                            // convert to tensor i32
-                            x.map(crate::fieldutils::felt_to_i32).show())
-                            .collect_vec()
+                        full_results.iter().map(|x| x.show()).collect_vec()
                     );
                     results.insert(idx, full_results);
                 }
@@ -403,8 +377,8 @@ impl Model {
     fn node_inputs(
         idx: &usize,
         n: &NodeType,
-        results: &BTreeMap<&usize, Vec<Tensor<Fp>>>,
-    ) -> Result<Vec<Tensor<Fp>>, Box<dyn Error>> {
+        results: &BTreeMap<&usize, Vec<Tensor<i128>>>,
+    ) -> Result<Vec<Tensor<i128>>, Box<dyn Error>> {
         let mut inputs = vec![];
         if n.is_input() {
             let t = results.get(idx).ok_or(GraphError::MissingResults)?[0].clone();
@@ -994,7 +968,7 @@ impl NodeType {
 #[derive(Clone, Debug)]
 pub struct ForwardResult {
     /// The outputs of the forward pass.
-    pub outputs: Vec<Tensor<Fp>>,
+    pub outputs: Vec<Tensor<i128>>,
     /// The maximum value of any input to a lookup operation.
     pub max_lookup_inputs: i128,
     /// The minimum value of any input to a lookup operation.
@@ -1161,20 +1135,16 @@ mod tests {
 
         // Test execution with vector-matrix multiplication
         // Vector: [1, 2]
-        let input2 = Tensor::new(Some(&[Fp::from(1), Fp::from(2)]), &[1, 2]).unwrap();
+        let input2 = Tensor::new(Some(&[1, 2]), &[1, 2]).unwrap();
         // Matrix: [[5, 6], [7, 8]]
-        let input1 = Tensor::new(
-            Some(&[Fp::from(5), Fp::from(6), Fp::from(7), Fp::from(8)]),
-            &[2, 2],
-        )
-        .unwrap();
+        let input1 = Tensor::new(Some(&[5, 6, 7, 8]), &[2, 2]).unwrap();
 
         let result = model.forward(&[input1.clone(), input2.clone()]).unwrap();
 
         assert_eq!(result.outputs.len(), 1);
         assert_eq!(
             result.outputs[0],
-            Tensor::new(Some(&[Fp::from(17), Fp::from(23)]), &[1, 2]).unwrap()
+            Tensor::new(Some(&[17, 23]), &[1, 2]).unwrap()
         );
     }
 
@@ -1198,32 +1168,14 @@ mod tests {
         model.add_outputs(vec![(1, 0)]);
 
         // Test execution with various inputs
-        let input = Tensor::new(
-            Some(&[
-                i128_to_felt(-1),
-                i128_to_felt(0),
-                i128_to_felt(1),
-                i128_to_felt(2),
-            ]),
-            &[1, 4],
-        )
-        .unwrap();
+        let input = Tensor::new(Some(&[-1, 0, 1, 2]), &[1, 4]).unwrap();
         let result = model.forward(&[input]).unwrap();
 
         // Expected result: [0.0, 0.0, 1.0, 2.0]
         assert_eq!(result.outputs.len(), 1);
         assert_eq!(
             result.outputs[0],
-            Tensor::new(
-                Some(&[
-                    i128_to_felt(0),
-                    i128_to_felt(0),
-                    i128_to_felt(1),
-                    i128_to_felt(2)
-                ]),
-                &[1, 4]
-            )
-            .unwrap()
+            Tensor::new(Some(&[0, 0, 1, 2]), &[1, 4]).unwrap()
         );
     }
 
@@ -1251,11 +1203,7 @@ mod tests {
         model.add_outputs(vec![(1, 0)]);
 
         // x = [-2.0, 0.0, 2.0]
-        let x = Tensor::new(
-            Some(&[i128_to_felt(-2), i128_to_felt(0), i128_to_felt(2)]),
-            &[1, 3],
-        )
-        .unwrap();
+        let x = Tensor::new(Some(&[-2, 0, 2]), &[1, 3]).unwrap();
 
         let result = model.forward(&[x]).unwrap();
         assert_eq!(result.outputs.len(), 1);
@@ -1263,7 +1211,7 @@ mod tests {
         let _out: Vec<i128> = result.outputs[0]
             .iter()
             .map(|f| {
-                let f = felt_to_i128(*f);
+                let f = *f;
                 f
             })
             .collect();
@@ -1301,14 +1249,14 @@ mod tests {
         model.add_inputs(vec![0, 1]);
         model.add_outputs(vec![(2, 0)]);
 
-        let a = Tensor::new(Some(&[Fp::from(1), Fp::from(2), Fp::from(3)]), &[1, 3]).unwrap();
-        let b = Tensor::new(Some(&[Fp::from(4), Fp::from(5), Fp::from(6)]), &[1, 3]).unwrap();
+        let a = Tensor::new(Some(&[1, 2, 3]), &[1, 3]).unwrap();
+        let b = Tensor::new(Some(&[4, 5, 6]), &[1, 3]).unwrap();
 
         let result = model.forward(&[a.clone(), b.clone()]).unwrap();
         assert_eq!(result.outputs.len(), 1);
         assert_eq!(
             result.outputs[0],
-            Tensor::new(Some(&[Fp::from(5), Fp::from(7), Fp::from(9)]), &[1, 3]).unwrap()
+            Tensor::new(Some(&[5, 7, 9]), &[1, 3]).unwrap()
         );
     }
 }

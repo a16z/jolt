@@ -7,14 +7,13 @@
 
 use crate::{
     constants::BYTECODE_PREPEND_NOOP,
-    fieldutils::i128_to_felt,
     graph::model::{Model, NodeType},
     tensor::Tensor,
     trace_types::{ONNXCycle, ONNXInstr},
 };
 use clap::Args;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fs::File, path::PathBuf};
+use std::{fs::File, path::PathBuf};
 
 /// Methods for configuring tensor operations and assigning values to them in a Halo2
 /// circuit.
@@ -62,7 +61,7 @@ fn execution_trace(model: Model, input: &Tensor<i128>) -> Vec<ONNXCycle> {
     // Run the model with the provided inputs.
     // The internal model tracer will automatically capture the execution trace during the forward pass
     let _ = model
-        .forward(&[input.map(i128_to_felt)])
+        .forward(&[input.clone()])
         .expect("Failed to run model");
     let execution_trace = model.tracer.execution_trace.borrow().clone();
     execution_trace

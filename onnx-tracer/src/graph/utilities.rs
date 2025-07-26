@@ -6,9 +6,8 @@ use crate::{
         vars::VarScales,
         GraphError,
     },
-    tensor::{Tensor, TensorError, TensorType},
+    tensor::{Tensor, TensorError},
 };
-use halo2curves::{bn256::Fr as Fp, ff::PrimeField};
 use log::{debug, warn};
 use std::{error::Error, sync::Arc};
 use tract_onnx::tract_core::ops::{
@@ -65,8 +64,7 @@ pub fn quantize_float(elem: &f64, shift: f64, scale: crate::Scale) -> Result<i12
 /// * `felt` - the field element to dequantize.
 /// * `scale` - `2^scale` used in the fixed point representation.
 /// * `shift` - offset used in the fixed point representation.
-pub fn dequantize(felt: Fp, scale: crate::Scale, shift: f64) -> f64 {
-    let int_rep = crate::fieldutils::felt_to_i128(felt);
+pub fn dequantize(int_rep: i128, scale: crate::Scale, shift: f64) -> f64 {
     let multiplier = scale_to_multiplier(scale);
     let float_rep = int_rep as f64 / multiplier - shift;
     float_rep
@@ -1379,7 +1377,7 @@ pub fn extract_const_raw_values(op: SupportedOp) -> Option<Tensor<f32>> {
 }
 
 /// Extracts the quantized values from a [crate::circuit::ops::Constant] op.
-pub fn extract_const_quantized_values(op: SupportedOp) -> Option<Tensor<Fp>> {
+pub fn extract_const_quantized_values(op: SupportedOp) -> Option<Tensor<i128>> {
     match op {
         SupportedOp::Constant(crate::circuit::ops::Constant {
             quantized_values, ..
@@ -1389,10 +1387,10 @@ pub fn extract_const_quantized_values(op: SupportedOp) -> Option<Tensor<Fp>> {
 }
 
 /// Extract the quantized values from a conv op
-pub fn extract_conv_values(boxed_op: Box<dyn Op<Fp>>) -> [Option<Tensor<Fp>>; 2] {
+pub fn extract_conv_values(boxed_op: Box<dyn Op<i128>>) -> [Option<Tensor<i128>>; 2] {
     let op = boxed_op
         .as_any()
-        .downcast_ref::<crate::circuit::ops::poly::PolyOp<Fp>>();
+        .downcast_ref::<crate::circuit::ops::poly::PolyOp<i128>>();
 
     if let Some(PolyOp::Conv { kernel, bias, .. }) = op {
         return [Some(kernel.clone()), bias.clone()];
@@ -1401,27 +1399,22 @@ pub fn extract_conv_values(boxed_op: Box<dyn Op<Fp>>) -> [Option<Tensor<Fp>>; 2]
 }
 
 /// Converts a tensor to a [ValTensor] with a given scale.
-pub fn quantize_tensor<F: PrimeField + TensorType + PartialOrd>(
+pub fn quantize_tensor(
     const_value: Tensor<f32>,
     scale: crate::Scale,
-) -> Result<Tensor<F>, Box<dyn std::error::Error>> {
-    let mut value: Tensor<F> = const_value.par_enum_map(|_, x| {
-        Ok::<_, TensorError>(crate::fieldutils::i128_to_felt::<F>(quantize_float(
-            &(x).into(),
-            0.0,
-            scale,
-        )?))
-    })?;
+) -> Result<Tensor<i128>, Box<dyn std::error::Error>> {
+    let mut value = const_value
+        .par_enum_map(|_, x| Ok::<_, TensorError>(quantize_float(&(x).into(), 0.0, scale)?))?;
     value.set_scale(scale);
     Ok(value)
 }
 
 ///
 pub fn homogenize_input_scales(
-    op: Box<dyn Op<Fp>>,
+    op: Box<dyn Op<i128>>,
     input_scales: Vec<crate::Scale>,
     inputs_to_scale: Vec<usize>,
-) -> Result<Box<dyn Op<Fp>>, Box<dyn Error>> {
+) -> Result<Box<dyn Op<i128>>, Box<dyn Error>> {
     let relevant_input_scales = input_scales
         .clone()
         .into_iter()

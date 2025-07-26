@@ -42,14 +42,12 @@ use crate::{
         hybrid::HybridOp, lookup::LookupOp, poly::PolyOp, Constant, ForwardResult, Input, Op,
         Unknown,
     },
-    fieldutils::{felt_to_i128, i128_to_felt},
     graph::utilities::{
         multiplier_to_scale, new_op_from_onnx, node_output_shapes, quantize_tensor,
         scale_to_multiplier,
     },
     tensor::{Tensor, TensorError},
 };
-use halo2curves::bn256::Fr as Fp;
 use log::{trace, warn};
 use std::fmt::Debug;
 use std::{collections::BTreeMap, error::Error, fmt};
@@ -462,22 +460,22 @@ pub struct Rescaled {
     pub scale: Vec<(usize, u128)>,
 }
 
-impl Op<Fp> for Rescaled {
+impl Op<i128> for Rescaled {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
-    fn f(&self, x: &[Tensor<Fp>]) -> Result<ForwardResult<Fp>, TensorError> {
+    fn f(&self, x: &[Tensor<i128>]) -> Result<ForwardResult<i128>, TensorError> {
         if self.scale.len() != x.len() {
             return Err(TensorError::DimMismatch("rescaled inputs".to_string()));
         }
         let mut rescaled_inputs = vec![];
         let inputs = &mut x.to_vec();
         for (i, ri) in inputs.iter_mut().enumerate() {
-            let mult_tensor = Tensor::from([Fp::from(self.scale[i].1 as u64)].into_iter());
+            let mult_tensor = Tensor::from([self.scale[i].1 as i128].into_iter());
             let res = (ri.clone() * mult_tensor)?;
             rescaled_inputs.push(res);
         }
-        Op::<Fp>::f(&*self.inner, &rescaled_inputs)
+        Op::<i128>::f(&*self.inner, &rescaled_inputs)
     }
 
     fn as_string(&self) -> String {
@@ -491,10 +489,10 @@ impl Op<Fp> for Rescaled {
             .map(|(a, b)| a + multiplier_to_scale(b.1 as f64))
             .collect();
 
-        Op::<Fp>::out_scale(&*self.inner, in_scales)
+        Op::<i128>::out_scale(&*self.inner, in_scales)
     }
 
-    fn clone_dyn(&self) -> Box<dyn Op<Fp>> {
+    fn clone_dyn(&self) -> Box<dyn Op<i128>> {
         Box::new(self.clone()) // Forward to the derive(Clone) impl
     }
 }
@@ -575,15 +573,15 @@ impl RebaseScale {
     }
 }
 
-impl Op<Fp> for RebaseScale {
+impl Op<i128> for RebaseScale {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
-    fn f(&self, x: &[Tensor<Fp>]) -> Result<ForwardResult<Fp>, TensorError> {
-        let mut res = Op::<Fp>::f(&*self.inner, x)?;
-        let ri = res.output.map(felt_to_i128);
+    fn f(&self, x: &[Tensor<i128>]) -> Result<ForwardResult<i128>, TensorError> {
+        let mut res = Op::<i128>::f(&*self.inner, x)?;
+        let ri = res.output;
         let rescaled = crate::tensor::ops::nonlinearities::const_div(&ri, self.multiplier);
-        res.output = rescaled.map(i128_to_felt);
+        res.output = rescaled;
 
         res.intermediate_lookups.push(ri);
 
@@ -610,7 +608,7 @@ impl Op<Fp> for RebaseScale {
         lookups
     }
 
-    fn clone_dyn(&self) -> Box<dyn Op<Fp>> {
+    fn clone_dyn(&self) -> Box<dyn Op<i128>> {
         Box::new(self.clone()) // Forward to the derive(Clone) impl
     }
 }
@@ -619,7 +617,7 @@ impl Op<Fp> for RebaseScale {
 #[derive(Clone, Debug, PartialEq)]
 pub enum SupportedOp {
     /// A linear operation.
-    Linear(PolyOp<Fp>),
+    Linear(PolyOp<i128>),
     /// A nonlinear operation.
     Nonlinear(LookupOp),
     /// A hybrid operation.
@@ -627,7 +625,7 @@ pub enum SupportedOp {
     /// An input node (e.g., model input or placeholder).
     Input(Input),
     /// A constant value node (e.g., weights, biases, or fixed tensors).
-    Constant(Constant<Fp>),
+    Constant(Constant<i128>),
     /// An unknown or unsupported operation.
     Unknown(Unknown),
     /// An operation whose inputs have been rescaled for homogeneity.
@@ -685,7 +683,7 @@ impl SupportedOp {
     }
 
     ///
-    pub fn get_constant(&self) -> Option<&Constant<Fp>> {
+    pub fn get_constant(&self) -> Option<&Constant<i128>> {
         match self {
             SupportedOp::Constant(op) => Some(op),
             _ => None,
@@ -693,7 +691,7 @@ impl SupportedOp {
     }
 
     ///
-    pub fn get_mutable_constant(&mut self) -> Option<&mut Constant<Fp>> {
+    pub fn get_mutable_constant(&mut self) -> Option<&mut Constant<i128>> {
         match self {
             SupportedOp::Constant(op) => Some(op),
             _ => None,
@@ -704,7 +702,7 @@ impl SupportedOp {
     fn homogenous_rescale(
         &self,
         in_scales: Vec<crate::Scale>,
-    ) -> Result<Box<dyn Op<Fp>>, Box<dyn Error>> {
+    ) -> Result<Box<dyn Op<i128>>, Box<dyn Error>> {
         use crate::graph::utilities::homogenize_input_scales;
 
         let inputs_to_scale = self.requires_homogenous_input_scales();
@@ -715,7 +713,7 @@ impl SupportedOp {
 
     /// Since each associated value of `SupportedOp` implements `Op`, let's define a
     /// helper method to retrieve it.
-    fn as_op(&self) -> &dyn Op<Fp> {
+    fn as_op(&self) -> &dyn Op<i128> {
         match self {
             SupportedOp::Linear(op) => op,
             SupportedOp::Nonlinear(op) => op,
@@ -732,7 +730,7 @@ impl SupportedOp {
         match self {
             SupportedOp::Input(op) => Node {
                 opkind: self.clone(),
-                out_scale: <Input as Op<Fp>>::out_scale(op, vec![]).unwrap(),
+                out_scale: <Input as Op<i128>>::out_scale(op, vec![]).unwrap(),
                 inputs,
                 out_dims,
                 idx,
@@ -756,7 +754,7 @@ impl SupportedOp {
             },
             SupportedOp::Nonlinear(op) => Node {
                 opkind: self.clone(),
-                out_scale: <LookupOp as Op<Fp>>::out_scale(op, vec![1]).unwrap(),
+                out_scale: <LookupOp as Op<i128>>::out_scale(op, vec![1]).unwrap(),
                 inputs,
                 out_dims,
                 idx,
@@ -764,7 +762,7 @@ impl SupportedOp {
             },
             SupportedOp::Hybrid(op) => Node {
                 opkind: self.clone(),
-                out_scale: <HybridOp as Op<Fp>>::out_scale(op, vec![1]).unwrap(),
+                out_scale: <HybridOp as Op<i128>>::out_scale(op, vec![1]).unwrap(),
                 inputs,
                 out_dims,
                 idx,
@@ -780,7 +778,7 @@ impl SupportedOp {
             },
             SupportedOp::Rescaled(op) => Node {
                 opkind: self.clone(),
-                out_scale: <Rescaled as Op<Fp>>::out_scale(op, vec![1]).unwrap(),
+                out_scale: <Rescaled as Op<i128>>::out_scale(op, vec![1]).unwrap(),
                 inputs,
                 out_dims,
                 idx,
@@ -788,7 +786,7 @@ impl SupportedOp {
             },
             SupportedOp::RebaseScale(op) => Node {
                 opkind: self.clone(),
-                out_scale: <RebaseScale as Op<Fp>>::out_scale(op, vec![1]).unwrap(),
+                out_scale: <RebaseScale as Op<i128>>::out_scale(op, vec![1]).unwrap(),
                 inputs,
                 out_dims,
                 idx,
@@ -798,9 +796,9 @@ impl SupportedOp {
     }
 }
 
-impl From<Box<dyn Op<Fp>>> for SupportedOp {
-    fn from(value: Box<dyn Op<Fp>>) -> Self {
-        if let Some(op) = value.as_any().downcast_ref::<PolyOp<Fp>>() {
+impl From<Box<dyn Op<i128>>> for SupportedOp {
+    fn from(value: Box<dyn Op<i128>>) -> Self {
+        if let Some(op) = value.as_any().downcast_ref::<PolyOp<i128>>() {
             return SupportedOp::Linear(op.clone());
         };
 
@@ -816,7 +814,7 @@ impl From<Box<dyn Op<Fp>>> for SupportedOp {
             return SupportedOp::Input(op.clone());
         };
 
-        if let Some(op) = value.as_any().downcast_ref::<Constant<Fp>>() {
+        if let Some(op) = value.as_any().downcast_ref::<Constant<i128>>() {
             return SupportedOp::Constant(op.clone());
         };
 
@@ -836,8 +834,11 @@ impl From<Box<dyn Op<Fp>>> for SupportedOp {
     }
 }
 
-impl Op<Fp> for SupportedOp {
-    fn f(&self, inputs: &[Tensor<Fp>]) -> Result<ForwardResult<Fp>, crate::tensor::TensorError> {
+impl Op<i128> for SupportedOp {
+    fn f(
+        &self,
+        inputs: &[Tensor<i128>],
+    ) -> Result<ForwardResult<i128>, crate::tensor::TensorError> {
         self.as_op().f(inputs)
     }
 
@@ -853,7 +854,7 @@ impl Op<Fp> for SupportedOp {
         self.as_op().requires_homogenous_input_scales()
     }
 
-    fn clone_dyn(&self) -> Box<dyn Op<Fp>> {
+    fn clone_dyn(&self) -> Box<dyn Op<i128>> {
         self.as_op().clone_dyn()
     }
 
@@ -904,7 +905,7 @@ impl Tabled for Node {
             self.opkind
                 .required_lookups()
                 .iter()
-                .map(<LookupOp as Op<Fp>>::as_string)
+                .map(<LookupOp as Op<i128>>::as_string)
                 .collect_vec()
         )));
         fields
@@ -952,7 +953,7 @@ impl PartialEq for Node {
 /// rescale_const_with_single_use(constant, input_scales, constant_node.num_uses())?;
 /// ```
 fn rescale_const_with_single_use(
-    constant: &mut Constant<Fp>,
+    constant: &mut Constant<i128>,
     in_scales: Vec<crate::Scale>,
     num_uses: usize,
 ) -> Result<(), Box<dyn Error>> {
