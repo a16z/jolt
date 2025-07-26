@@ -14,19 +14,19 @@ mod e2e_tests {
         init_logger();
         let text_classification_model = ONNXProgram::new(
             "../onnx-tracer/models/addsubmul0/network.onnx".into(),
-            Tensor::new(Some(&[1]), &[1]).unwrap(),
+            Tensor::new(Some(&[10]), &[1]).unwrap(),
         );
         let program_bytecode = text_classification_model.decode();
         println!("{program_bytecode:#?}");
-        // let pp: JoltProverPreprocessing<Fr, KeccakTranscript> =
-        //     JoltSNARK::prover_preprocess(program_bytecode);
+        let pp: JoltProverPreprocessing<Fr, KeccakTranscript> =
+            JoltSNARK::prover_preprocess(program_bytecode);
 
-        // // --- Proving ---
-        // let execution_trace = text_classification_model.trace();
-        // let snark: JoltSNARK<Fr, KeccakTranscript> = JoltSNARK::prove(pp.clone(), execution_trace);
+        // --- Proving ---
+        let execution_trace = text_classification_model.trace();
+        let snark: JoltSNARK<Fr, KeccakTranscript> = JoltSNARK::prove(pp.clone(), execution_trace);
 
-        // // --- Verification ---
-        // snark.verify((&pp).into()).unwrap();
+        // --- Verification ---
+        snark.verify((&pp).into()).unwrap();
     }
 
     // TODO(Forpee): refactor duplicate code in these tests
