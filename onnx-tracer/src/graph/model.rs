@@ -201,49 +201,9 @@ impl Model {
         }
 
         for (idx, n) in self.graph.nodes.iter() {
+            let mut inputs = Self::node_inputs(idx, n, &results)?;
             let instr = decode_node((idx, n));
-            self.tracer.capture_pre_state(instr);
-            // Gathers the input tensors required for the current node's execution.
-            //
-            // # Intent
-            // This code block prepares the list of input tensors (`inputs`) that will be fed into the current node's operation.
-            // For each node in the graph, we must collect its input tensors from the results of previously executed nodes.
-            //
-            // # Why this code is needed
-            // In a computational graph, each node may depend on the outputs of other nodes (its inputs).
-            // Before executing a node, we must gather all its required input tensors in the correct order.
-            // This ensures that the node receives the correct data for computation, and is essential for correct model execution.
-            //
-            // # How it works
-            // - Initializes an empty `inputs` vector.
-            // - If the current node is an input node, retrieves its tensor from the `results` map.
-            // - Otherwise, iterates over the node's input connections (each a tuple of node index and outlet).
-            //   For each input:
-            //     - Looks up the output tensor of the source node from the `results` map.
-            //     - Pushes the required output (by outlet index) into the `inputs` vector.
-            //   - If any required input is missing, returns an error.
-            //
-            // # What it does
-            // After this block, `inputs` contains the tensors that should be passed to the current node's operation,
-            // in the order expected by the node. This enables the subsequent execution of the node's computation.
-            let mut inputs = vec![];
-            if n.is_input() {
-                let t = results.get(idx).ok_or(GraphError::MissingResults)?[0].clone();
-                inputs.push(t);
-            } else {
-                for (idx, outlet) in n.inputs().iter() {
-                    match results.get(&idx) {
-                        Some(value) => inputs.push(value[*outlet].clone()),
-                        None => return Err(Box::new(GraphError::MissingNode(*idx))),
-                    }
-                }
-            };
-            debug!("executing {}: {}", idx, n.as_str());
-            debug!("dims: {:?}", n.out_dims());
-            debug!(
-                "input_dims: {:?}",
-                inputs.iter().map(|x| x.dims()).collect::<Vec<_>>()
-            );
+            self.tracer.capture_pre_state(instr, inputs.clone());
             if n.is_lookup() {
                 let (mut min, mut max) = (0, 0);
                 for i in &inputs {
@@ -415,6 +375,55 @@ impl Model {
             min_lookup_inputs,
         };
         Ok(res)
+    }
+
+    /// Gathers the input tensors required for the current node's execution.
+    ///
+    /// # Intent
+    /// This code block prepares the list of input tensors (`inputs`) that will be fed into the current node's operation.
+    /// For each node in the graph, we must collect its input tensors from the results of previously executed nodes.
+    ///
+    /// # Why this code is needed
+    /// In a computational graph, each node may depend on the outputs of other nodes (its inputs).
+    /// Before executing a node, we must gather all its required input tensors in the correct order.
+    /// This ensures that the node receives the correct data for computation, and is essential for correct model execution.
+    ///
+    /// # How it works
+    /// - Initializes an empty `inputs` vector.
+    /// - If the current node is an input node, retrieves its tensor from the `results` map.
+    /// - Otherwise, iterates over the node's input connections (each a tuple of node index and outlet).
+    ///   For each input:
+    ///     - Looks up the output tensor of the source node from the `results` map.
+    ///     - Pushes the required output (by outlet index) into the `inputs` vector.
+    ///   - If any required input is missing, returns an error.
+    ///
+    /// # What it does
+    /// After this block, `inputs` contains the tensors that should be passed to the current node's operation,
+    /// in the order expected by the node. This enables the subsequent execution of the node's computation.
+    fn node_inputs(
+        idx: &usize,
+        n: &NodeType,
+        results: &BTreeMap<&usize, Vec<Tensor<Fp>>>,
+    ) -> Result<Vec<Tensor<Fp>>, Box<dyn Error>> {
+        let mut inputs = vec![];
+        if n.is_input() {
+            let t = results.get(idx).ok_or(GraphError::MissingResults)?[0].clone();
+            inputs.push(t);
+        } else {
+            for (idx, outlet) in n.inputs().iter() {
+                match results.get(&idx) {
+                    Some(value) => inputs.push(value[*outlet].clone()),
+                    None => return Err(Box::new(GraphError::MissingNode(*idx))),
+                }
+            }
+        };
+        debug!("executing {}: {}", idx, n.as_str());
+        debug!("dims: {:?}", n.out_dims());
+        debug!(
+            "input_dims: {:?}",
+            inputs.iter().map(|x| x.dims()).collect::<Vec<_>>()
+        );
+        Ok(inputs)
     }
 
     /// Loads an Onnx model from a specified path.

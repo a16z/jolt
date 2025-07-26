@@ -10,7 +10,11 @@
 
 use std::cell::RefCell;
 
-use crate::trace_types::{ONNXCycle, ONNXInstr};
+use crate::{
+    tensor::Tensor,
+    trace_types::{MemoryState, ONNXCycle, ONNXInstr},
+};
+use halo2curves::bn256::Fr as Fp;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -27,14 +31,17 @@ pub struct Tracer {
 }
 
 impl Tracer {
-    pub fn capture_pre_state(&self, instr: ONNXInstr) {
-        self.execution_trace
-            .try_borrow_mut()
-            .unwrap()
-            .push(ONNXCycle { instr });
+    /// # Panics
+    /// - if the `execution_trace` is already borrowed mutably.
+    pub fn capture_pre_state(&self, instr: ONNXInstr, inputs: Vec<Tensor<Fp>>) {
+        let cycle = ONNXCycle {
+            instr,
+            memory_state: MemoryState::default(),
+        };
+        self.execution_trace.borrow_mut().push(cycle);
     }
 
-    pub fn capture_post_state() {
+    pub fn capture_post_state(&self) {
         todo!()
     }
 }

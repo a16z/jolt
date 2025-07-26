@@ -10,14 +10,23 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ONNXCycle {
     pub instr: ONNXInstr,
+    pub memory_state: MemoryState,
 }
 
 impl ONNXCycle {
     pub fn no_op() -> Self {
         ONNXCycle {
             instr: ONNXInstr::no_op(),
+            memory_state: MemoryState::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, Eq, PartialOrd, Ord)]
+pub struct MemoryState {
+    pub ts1_val: Option<Vec<u64>>,
+    pub ts2_val: Option<Vec<u64>>,
+    pub td_post_val: Option<Vec<u64>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
