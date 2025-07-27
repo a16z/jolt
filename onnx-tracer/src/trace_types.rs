@@ -4,6 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::tensor::Tensor;
+
 /// Represents a step in the execution trace, where an execution trace is a `Vec<ONNXCycle>`.
 /// Records what the VM did at a cycle of execution.
 /// Constructed at each step in the VM execution cycle, documenting instr, reads & state changes (writes).
@@ -22,14 +24,14 @@ impl ONNXCycle {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, Eq, PartialEq, Default, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct MemoryState {
-    pub ts1_val: Option<Vec<u64>>,
-    pub ts2_val: Option<Vec<u64>>,
-    pub td_post_val: Option<Vec<u64>>,
+    pub ts1_val: Option<Tensor<i128>>,
+    pub ts2_val: Option<Tensor<i128>>,
+    pub td_post_val: Option<Tensor<i128>>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Debug, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 /// Represents a single ONNX instruction parsed from the model.
 /// Represents a single ONNX instruction in the program code.
 ///
@@ -64,6 +66,11 @@ pub struct ONNXInstr {
     /// This field is analogous to the `rs2` register specifier in RISC-V,
     /// serving to specify the address or index of the second operand.
     pub ts2: Option<usize>,
+    /// The destination tensor index, which is the index of the node in the computation graph
+    /// where the result of this instruction will be stored.
+    /// This is analogous to the `rd` register specifier in RISC-V, indicating
+    /// where the result of the operation should be written.
+    pub td: Option<usize>,
 }
 
 impl ONNXInstr {
@@ -73,6 +80,7 @@ impl ONNXInstr {
             opcode: ONNXOpcode::Noop,
             ts1: None,
             ts2: None,
+            td: None,
         }
     }
 }

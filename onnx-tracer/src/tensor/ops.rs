@@ -953,8 +953,8 @@ pub fn neg<T: TensorType + Neg<Output = T> + std::marker::Send + std::marker::Sy
 /// * `b` - Tensor
 /// # Examples
 /// ```
-/// use ezkl::tensor::Tensor;
-/// use ezkl::tensor::ops::mult;
+/// use onnx_tracer::tensor::Tensor;
+/// use onnx_tracer::tensor::ops::mult;
 /// let x = Tensor::<i128>::new(
 ///     Some(&[2, 1, 2, 1, 1, 1]),
 ///     &[2, 3],
@@ -984,7 +984,6 @@ pub fn mult<T: TensorType + Mul<Output = T> + std::marker::Send + std::marker::S
 ) -> Result<Tensor<T>, TensorError> {
     // calculate value of output
     let mut output: Tensor<T> = t[0].clone();
-
     for e in t[1..].iter() {
         output = (output * e.clone())?;
     }
@@ -999,8 +998,8 @@ pub fn mult<T: TensorType + Mul<Output = T> + std::marker::Send + std::marker::S
 /// * `b` - Single value
 /// # Examples
 /// ```
-/// use ezkl::tensor::Tensor;
-/// use ezkl::tensor::ops::rescale;
+/// use onnx_tracer::tensor::Tensor;
+/// use onnx_tracer::tensor::ops::rescale;
 /// let x = Tensor::<i128>::new(
 ///     Some(&[2, 1, 2, 1, 1, 1]),
 ///     &[2, 3],

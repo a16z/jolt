@@ -202,8 +202,8 @@ impl Model {
             if n.is_lookup() {
                 let (mut min, mut max) = (0, 0);
                 for i in &inputs {
-                    max = max.max(i.iter().map(|x| *x).max().ok_or("missing max")?);
-                    min = min.min(i.iter().map(|x| *x).min().ok_or("missing min")?);
+                    max = max.max(i.iter().copied().max().ok_or("missing max")?);
+                    min = min.min(i.iter().copied().min().ok_or("missing min")?);
                 }
                 max_lookup_inputs = max_lookup_inputs.max(max);
                 min_lookup_inputs = min_lookup_inputs.min(min);
@@ -215,6 +215,7 @@ impl Model {
                     // execute the op
                     let start = instant::Instant::now();
                     let res = Op::<i128>::f(&n.opkind, &inputs)?;
+                    debug!("opkind: {:#?}, instr: {instr:#?}, res: {res:#?}", n.opkind);
                     let elapsed = start.elapsed();
                     trace!("op took: {elapsed:?}",);
                     // see if any of the intermediate lookup calcs are the max
@@ -235,7 +236,8 @@ impl Model {
                         res.output.show(),
                         n.out_scale
                     );
-                    results.insert(idx, vec![res.output]);
+                    results.insert(idx, vec![res.output.clone()]);
+                    self.tracer.capture_post_state(res.output);
                 }
                 NodeType::SubGraph {
                     model,

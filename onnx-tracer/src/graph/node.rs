@@ -35,6 +35,7 @@
 //! - The `trace_types` module for ONNX instruction and opcode representations.
 //!
 //! By abstracting the details of node construction, scale management, and operation decoding, this module enables robust and efficient handling of ONNX models in privacy-preserving and quantized computation settings.
+
 use crate::graph::{model::NodeType, vars::VarScales};
 use crate::trace_types::{ONNXInstr, ONNXOpcode};
 use crate::{
@@ -393,14 +394,6 @@ impl Node {
     }
 }
 
-fn display_vector<T: fmt::Debug>(v: &Vec<T>) -> String {
-    if !v.is_empty() {
-        format!("{v:?}",)
-    } else {
-        String::new()
-    }
-}
-
 impl Node {
     /// Decodes the current [Node] into an [ONNXInstr] at the specified `address`.
     ///
@@ -443,173 +436,9 @@ impl Node {
             opcode: op.into(),
             ts1: self.inputs.first().map(node_idx),
             ts2: self.inputs.get(1).map(node_idx),
+            // The output tensor is always the current node's index.
+            td: Some(self.idx),
         }
-    }
-}
-
-fn display_opkind(v: &SupportedOp) -> String {
-    v.as_string()
-}
-
-/// A wrapper for an operation that has been rescaled.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Rescaled {
-    /// The operation that has to be rescaled.
-    pub inner: Box<SupportedOp>,
-    /// The scale of the operation's inputs.
-    pub scale: Vec<(usize, u128)>,
-}
-
-impl Op<i128> for Rescaled {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-    fn f(&self, x: &[Tensor<i128>]) -> Result<ForwardResult<i128>, TensorError> {
-        if self.scale.len() != x.len() {
-            return Err(TensorError::DimMismatch("rescaled inputs".to_string()));
-        }
-        let mut rescaled_inputs = vec![];
-        let inputs = &mut x.to_vec();
-        for (i, ri) in inputs.iter_mut().enumerate() {
-            let mult_tensor = Tensor::from([self.scale[i].1 as i128].into_iter());
-            let res = (ri.clone() * mult_tensor)?;
-            rescaled_inputs.push(res);
-        }
-        Op::<i128>::f(&*self.inner, &rescaled_inputs)
-    }
-
-    fn as_string(&self) -> String {
-        format!("RESCALED INPUT ({})", self.inner.as_string())
-    }
-
-    fn out_scale(&self, in_scales: Vec<crate::Scale>) -> Result<crate::Scale, Box<dyn Error>> {
-        let in_scales = in_scales
-            .into_iter()
-            .zip(self.scale.iter())
-            .map(|(a, b)| a + multiplier_to_scale(b.1 as f64))
-            .collect();
-
-        Op::<i128>::out_scale(&*self.inner, in_scales)
-    }
-
-    fn clone_dyn(&self) -> Box<dyn Op<i128>> {
-        Box::new(self.clone()) // Forward to the derive(Clone) impl
-    }
-}
-
-/// A wrapper for an operation that has been rescaled.
-#[derive(Clone, Debug, PartialEq)]
-pub struct RebaseScale {
-    /// The operation that has to be rescaled.
-    pub inner: Box<SupportedOp>,
-    /// the multiplier applied to the node output
-    pub multiplier: f64,
-    /// scale being rebased to
-    pub target_scale: i32,
-    /// The original scale of the operation's inputs.
-    pub original_scale: i32,
-}
-
-impl RebaseScale {
-    ///
-    pub fn rebase(
-        inner: SupportedOp,
-        global_scale: crate::Scale,
-        op_out_scale: crate::Scale,
-        scale_rebase_multiplier: u32,
-    ) -> SupportedOp {
-        if (op_out_scale > (global_scale * scale_rebase_multiplier as i32))
-            && !inner.is_constant()
-            && !inner.is_input()
-        {
-            let multiplier =
-                scale_to_multiplier(op_out_scale - global_scale * scale_rebase_multiplier as i32);
-            if let Some(op) = inner.get_rebased() {
-                SupportedOp::RebaseScale(RebaseScale {
-                    inner: op.inner.clone(),
-                    target_scale: op.target_scale,
-                    multiplier: op.multiplier * multiplier,
-                    original_scale: op.original_scale,
-                })
-            } else {
-                SupportedOp::RebaseScale(RebaseScale {
-                    inner: Box::new(inner),
-                    target_scale: global_scale * scale_rebase_multiplier as i32,
-                    multiplier,
-                    original_scale: op_out_scale,
-                })
-            }
-        } else {
-            inner
-        }
-    }
-
-    ///
-    pub fn rebase_up(
-        inner: SupportedOp,
-        target_scale: crate::Scale,
-        op_out_scale: crate::Scale,
-    ) -> SupportedOp {
-        if (op_out_scale < (target_scale)) && !inner.is_constant() && !inner.is_input() {
-            let multiplier = scale_to_multiplier(op_out_scale - target_scale);
-            if let Some(op) = inner.get_rebased() {
-                SupportedOp::RebaseScale(RebaseScale {
-                    inner: op.inner.clone(),
-                    target_scale: op.target_scale,
-                    multiplier: op.multiplier * multiplier,
-                    original_scale: op.original_scale,
-                })
-            } else {
-                SupportedOp::RebaseScale(RebaseScale {
-                    inner: Box::new(inner),
-                    target_scale,
-                    multiplier,
-                    original_scale: op_out_scale,
-                })
-            }
-        } else {
-            inner
-        }
-    }
-}
-
-impl Op<i128> for RebaseScale {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-    fn f(&self, x: &[Tensor<i128>]) -> Result<ForwardResult<i128>, TensorError> {
-        let mut res = Op::<i128>::f(&*self.inner, x)?;
-        let ri = res.output;
-        let rescaled = crate::tensor::ops::nonlinearities::const_div(&ri, self.multiplier);
-        res.output = rescaled;
-
-        res.intermediate_lookups.push(ri);
-
-        Ok(res)
-    }
-
-    fn as_string(&self) -> String {
-        format!(
-            "REBASED (div={:?}) ({})",
-            self.multiplier,
-            self.inner.as_string()
-        )
-    }
-
-    fn out_scale(&self, _: Vec<crate::Scale>) -> Result<crate::Scale, Box<dyn Error>> {
-        Ok(self.target_scale)
-    }
-
-    fn required_lookups(&self) -> Vec<LookupOp> {
-        let mut lookups = self.inner.required_lookups();
-        lookups.push(LookupOp::Div {
-            denom: crate::circuit::utils::F32(self.multiplier as f32),
-        });
-        lookups
-    }
-
-    fn clone_dyn(&self) -> Box<dyn Op<i128>> {
-        Box::new(self.clone()) // Forward to the derive(Clone) impl
     }
 }
 
@@ -875,6 +704,168 @@ impl Op<i128> for SupportedOp {
     }
 }
 
+/// A wrapper for an operation that has been rescaled.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Rescaled {
+    /// The operation that has to be rescaled.
+    pub inner: Box<SupportedOp>,
+    /// The scale of the operation's inputs.
+    pub scale: Vec<(usize, u128)>,
+}
+
+impl Op<i128> for Rescaled {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn f(&self, x: &[Tensor<i128>]) -> Result<ForwardResult<i128>, TensorError> {
+        if self.scale.len() != x.len() {
+            return Err(TensorError::DimMismatch("rescaled inputs".to_string()));
+        }
+        let mut rescaled_inputs = vec![];
+        let inputs = &mut x.to_vec();
+        for (i, ri) in inputs.iter_mut().enumerate() {
+            let mult_tensor = Tensor::from([self.scale[i].1 as i128].into_iter());
+            let res = (ri.clone() * mult_tensor)?;
+            rescaled_inputs.push(res);
+        }
+        Op::<i128>::f(&*self.inner, &rescaled_inputs)
+    }
+
+    fn as_string(&self) -> String {
+        format!("RESCALED INPUT ({})", self.inner.as_string())
+    }
+
+    fn out_scale(&self, in_scales: Vec<crate::Scale>) -> Result<crate::Scale, Box<dyn Error>> {
+        let in_scales = in_scales
+            .into_iter()
+            .zip(self.scale.iter())
+            .map(|(a, b)| a + multiplier_to_scale(b.1 as f64))
+            .collect();
+
+        Op::<i128>::out_scale(&*self.inner, in_scales)
+    }
+
+    fn clone_dyn(&self) -> Box<dyn Op<i128>> {
+        Box::new(self.clone()) // Forward to the derive(Clone) impl
+    }
+}
+
+/// A wrapper for an operation that has been rescaled.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RebaseScale {
+    /// The operation that has to be rescaled.
+    pub inner: Box<SupportedOp>,
+    /// the multiplier applied to the node output
+    pub multiplier: f64,
+    /// scale being rebased to
+    pub target_scale: i32,
+    /// The original scale of the operation's inputs.
+    pub original_scale: i32,
+}
+
+impl RebaseScale {
+    ///
+    pub fn rebase(
+        inner: SupportedOp,
+        global_scale: crate::Scale,
+        op_out_scale: crate::Scale,
+        scale_rebase_multiplier: u32,
+    ) -> SupportedOp {
+        if (op_out_scale > (global_scale * scale_rebase_multiplier as i32))
+            && !inner.is_constant()
+            && !inner.is_input()
+        {
+            let multiplier =
+                scale_to_multiplier(op_out_scale - global_scale * scale_rebase_multiplier as i32);
+            if let Some(op) = inner.get_rebased() {
+                SupportedOp::RebaseScale(RebaseScale {
+                    inner: op.inner.clone(),
+                    target_scale: op.target_scale,
+                    multiplier: op.multiplier * multiplier,
+                    original_scale: op.original_scale,
+                })
+            } else {
+                SupportedOp::RebaseScale(RebaseScale {
+                    inner: Box::new(inner),
+                    target_scale: global_scale * scale_rebase_multiplier as i32,
+                    multiplier,
+                    original_scale: op_out_scale,
+                })
+            }
+        } else {
+            inner
+        }
+    }
+
+    ///
+    pub fn rebase_up(
+        inner: SupportedOp,
+        target_scale: crate::Scale,
+        op_out_scale: crate::Scale,
+    ) -> SupportedOp {
+        if (op_out_scale < (target_scale)) && !inner.is_constant() && !inner.is_input() {
+            let multiplier = scale_to_multiplier(op_out_scale - target_scale);
+            if let Some(op) = inner.get_rebased() {
+                SupportedOp::RebaseScale(RebaseScale {
+                    inner: op.inner.clone(),
+                    target_scale: op.target_scale,
+                    multiplier: op.multiplier * multiplier,
+                    original_scale: op.original_scale,
+                })
+            } else {
+                SupportedOp::RebaseScale(RebaseScale {
+                    inner: Box::new(inner),
+                    target_scale,
+                    multiplier,
+                    original_scale: op_out_scale,
+                })
+            }
+        } else {
+            inner
+        }
+    }
+}
+
+impl Op<i128> for RebaseScale {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn f(&self, x: &[Tensor<i128>]) -> Result<ForwardResult<i128>, TensorError> {
+        let mut res = Op::<i128>::f(&*self.inner, x)?;
+        let ri = res.output;
+        let rescaled = crate::tensor::ops::nonlinearities::const_div(&ri, self.multiplier);
+        res.output = rescaled;
+
+        res.intermediate_lookups.push(ri);
+
+        Ok(res)
+    }
+
+    fn as_string(&self) -> String {
+        format!(
+            "REBASED (div={:?}) ({})",
+            self.multiplier,
+            self.inner.as_string()
+        )
+    }
+
+    fn out_scale(&self, _: Vec<crate::Scale>) -> Result<crate::Scale, Box<dyn Error>> {
+        Ok(self.target_scale)
+    }
+
+    fn required_lookups(&self) -> Vec<LookupOp> {
+        let mut lookups = self.inner.required_lookups();
+        lookups.push(LookupOp::Div {
+            denom: crate::circuit::utils::F32(self.multiplier as f32),
+        });
+        lookups
+    }
+
+    fn clone_dyn(&self) -> Box<dyn Op<i128>> {
+        Box::new(self.clone()) // Forward to the derive(Clone) impl
+    }
+}
+
 impl Tabled for Node {
     const LENGTH: usize = 6;
 
@@ -966,4 +957,16 @@ fn rescale_const_with_single_use(
         }
     }
     Ok(())
+}
+
+fn display_vector<T: fmt::Debug>(v: &Vec<T>) -> String {
+    if !v.is_empty() {
+        format!("{v:?}",)
+    } else {
+        String::new()
+    }
+}
+
+fn display_opkind(v: &SupportedOp) -> String {
+    v.as_string()
 }

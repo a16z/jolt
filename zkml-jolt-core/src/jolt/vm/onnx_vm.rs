@@ -17,12 +17,12 @@ mod e2e_tests {
             Tensor::new(Some(&[10]), &[1]).unwrap(),
         );
         let program_bytecode = text_classification_model.decode();
-        println!("{program_bytecode:#?}");
         let pp: JoltProverPreprocessing<Fr, KeccakTranscript> =
             JoltSNARK::prover_preprocess(program_bytecode);
 
         // --- Proving ---
         let execution_trace = text_classification_model.trace();
+        // println!("{execution_trace:#?}");
         let snark: JoltSNARK<Fr, KeccakTranscript> = JoltSNARK::prove(pp.clone(), execution_trace);
 
         // --- Verification ---
