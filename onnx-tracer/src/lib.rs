@@ -1,5 +1,39 @@
-//! A library for turning computational graphs, such as neural networks, into
-//! ZK-circuits.
+//! # zkml-jolt ONNX Tracer Library
+//!
+//! This library provides utilities for converting computational graphs, such as neural networks in ONNX format, into ZK-circuits suitable for zero-knowledge proof systems. It is designed to facilitate the extraction, transformation, and tracing of ONNX models for use in the Jolt zkVM and proof system.
+//!
+//! ## Overview
+//!
+//! The main components of the library include:
+//!
+//! - **circuit**: Methods for configuring tensor operations and assigning values to them in a Halo2 circuit.
+//! - **fieldutils**: Utilities for converting between Halo2 Field types and integers.
+//! - **graph**: Methods for loading ONNX format models and automatically laying them out in a Halo2 circuit.
+//! - **constants**: Constants used throughout the library, including bytecode and configuration values.
+//! - **logger**: Logging utilities.
+//! - **tensor**: Multi-dimensional tensor implementation and utilities.
+//! - **trace_types**: Types representing execution traces and instructions for ONNX models.
+//!
+//! ## Key Functions
+//!
+//! - `decode`: Given a file path, decodes the ONNX model binary into a vector of `ONNXInstr`, representing the program code for the zkVM.
+//! - `trace`: Provides an API to obtain the execution trace for an ONNX model and its inference input, producing a step-by-step record of VM state transitions.
+//! - `execution_trace`: Internal function that runs the model and extracts its execution trace.
+//! - `model`: Loads an ONNX model from a file path and returns a `Model` instance for further processing.
+//! - `decode_node`: Converts a `NodeType` and its program counter into an `ONNXInstr`, used during decoding.
+//!
+//! ## Configuration
+//!
+//! - `RunArgs`: Struct containing parameters specific to a proving run, such as batch size, scale multipliers, and quantization denominators. Implements `Default` for easy initialization.
+//! - `parse_key_val`: Utility function for parsing key-value pairs from strings, used for command-line argument parsing.
+//!
+//! ## Usage
+//!
+//! This library is intended for use in systems that require verifiable execution of neural network inference, such as zkML applications. It provides the necessary abstractions to load ONNX models, trace their execution, and prepare them for zero-knowledge proof generation.
+//!
+//! ## Extensibility
+//!
+//! The library is modular, allowing for extension and customization of tensor operations, model loading, and execution tracing. Advanced configuration options are available via `RunArgs` for fine-tuning proving runs.
 
 // we allow this for our dynamic range based indexing scheme
 #![allow(clippy::single_range_in_vec_init)]
