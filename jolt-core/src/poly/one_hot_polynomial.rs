@@ -138,7 +138,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
         skip_all,
         name = "OneHotPolynomialProverOpening::compute_prover_message"
     )]
-    pub fn compute_prover_message(&mut self, round: usize) -> Vec<F> {
+    pub fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         let shared_eq = self.eq_state.lock().unwrap();
         let polynomial = self.polynomial.as_ref().unwrap();
 
@@ -459,10 +459,25 @@ mod tests {
         let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
         let mut eq = DensePolynomial::new(EqPolynomial::evals(&r_concat));
 
+        // For Gruen testing: create high-to-low version of split eq polynomial
+        use crate::poly::split_eq_poly::GruenSplitEqPolynomialHighToLow;
+        let mut gruen_split_eq = GruenSplitEqPolynomialHighToLow::new(&r_concat);
+
+        // Verify that the regular eq polynomial and Gruen split eq are equivalent
+        let initial_gruen_merged = gruen_split_eq.merge();
+        assert_eq!(
+            eq.Z[..eq.len()],
+            initial_gruen_merged.Z[..initial_gruen_merged.len()],
+            "Initial eq polynomial and Gruen split eq should be equivalent"
+        );
+
+        let mut previous_claim = Fr::zero();
+
         for round in 0..LOG_K + LOG_T {
-            let one_hot_message = one_hot_opening.compute_prover_message(round);
+            let one_hot_message = one_hot_opening.compute_prover_message(round, previous_claim);
             let mut expected_message = vec![Fr::zero(), Fr::zero()];
             let mle_half = dense_poly.len() / 2;
+
             expected_message[0] = (0..mle_half).map(|i| dense_poly[i] * eq[i]).sum();
             expected_message[1] = (0..mle_half)
                 .map(|i| {
@@ -477,10 +492,47 @@ mod tests {
                 "round {round} prover message mismatch"
             );
 
+            if round > 0 {
+            // Test Gruen optimization
+            // Compute q(0) - the evaluation of dense_poly at 0 (first half sum)
+            let q_0 = if dense_poly.len() > 1 {
+                (0..dense_poly.len() / 2).map(|i| dense_poly[i]).sum()
+            } else {
+                dense_poly[0]
+            };
+
+            // Get the Gruen evaluations
+            let gruen_evals = gruen_split_eq.gruen_evals_deg_2(q_0, previous_claim);
+
+            // Verify that gruen_evals matches expected_message
+            assert_eq!(
+                gruen_evals[0], expected_message[0],
+                "round {}: Gruen eval at 0 should match expected_message[0]",
+                round
+            );
+            assert_eq!(
+                gruen_evals[1], expected_message[1],
+                "round {}: Gruen eval at 2 should match expected_message[1]",
+                round
+            );
+        }
+         
+
+            // Update previous_claim for next round
+            previous_claim = expected_message[0] + expected_message[1];
+
             let r = Fr::random(&mut rng);
             one_hot_opening.bind(r, round);
             dense_poly.bind_parallel(r, BindingOrder::HighToLow);
             eq.bind_parallel(r, BindingOrder::HighToLow);
+            gruen_split_eq.bind(r);
+
+            // let gruen_merged = gruen_split_eq.merge();
+            // assert_eq!(
+            //     eq.Z[..eq.len()],
+            //     gruen_merged.Z[..gruen_merged.len()],
+            //     "round {round}: eq polynomial and Gruen split eq should be equivalent after binding"
+            // );
         }
         assert_eq!(
             one_hot_opening.final_sumcheck_claim(),

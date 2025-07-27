@@ -28,7 +28,6 @@ pub trait Bindable<F: JoltField>: Sync {
     fn bind(&mut self, r: F);
 }
 
-/// Batched cubic sumcheck used in grand products
 pub trait BatchedCubicSumcheck<F, ProofTranscript>: Bindable<F>
 where
     F: JoltField,

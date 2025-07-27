@@ -453,12 +453,12 @@ where
         self.input_claims[0]
     }
 
-    fn compute_prover_message(&mut self, round: usize, _previous_claim: F) -> Vec<F> {
+    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         debug_assert!(round < self.num_rounds());
         let prover_state = self.prover_state.as_mut().unwrap();
         match prover_state {
             ProverOpening::Dense(opening) => opening.compute_prover_message(round),
-            ProverOpening::OneHot(opening) => opening.compute_prover_message(round),
+            ProverOpening::OneHot(opening) => opening.compute_prover_message(round, previous_claim),
         }
     }
 
