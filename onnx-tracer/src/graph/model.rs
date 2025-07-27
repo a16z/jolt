@@ -195,7 +195,9 @@ impl Model {
             results.insert(input_idx, vec![input]);
         }
 
+        // --- Fetch Decode Execute ---
         for (idx, n) in self.graph.nodes.iter() {
+            // Fetch and Decode
             let mut inputs = Self::node_inputs(idx, n, &results)?;
             let instr = decode_node((idx, n));
             self.tracer.capture_pre_state(instr, inputs.clone());
@@ -204,9 +206,9 @@ impl Model {
             }
             match n {
                 NodeType::Node(n) => {
-                    // execute the op
+                    // Execute
                     let res = Op::<i128>::f(&n.opkind, &inputs)?;
-                    trace!("opkind: {:#?}, instr: {instr:#?}, res: {res:#?}", n.opkind);
+                    debug!("opkind: {:#?}, instr: {instr:#?}, res: {res:#?}", n.opkind);
                     // see if any of the intermediate lookup calcs are the max
                     if !res.intermediate_lookups.is_empty() {
                         Self::lookup_check(
