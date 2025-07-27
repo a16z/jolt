@@ -467,7 +467,6 @@ impl MacroBuilder {
             #[cfg(feature = "guest")]
             #[no_mangle]
             pub extern "C" fn main() {
-                let mut offset = 0;
                 #get_input_slice
                 #(#args_fetch;)*
                 #check_input_len
