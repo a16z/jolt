@@ -62,6 +62,9 @@ pub struct OneHotSumcheckState<F: JoltField> {
     pub F: ExpandingTable<F>,
     /// The number of variables that have been bound during sumcheck so far
     pub num_variables_bound: usize,
+    /// Gruen version of B for testing
+    #[cfg(test)]
+    pub B_gruen: Option<crate::poly::split_eq_poly::GruenSplitEqPolynomialHighToLow<F>>,
 }
 
 impl<F: JoltField> OneHotSumcheckState<F> {
@@ -78,6 +81,8 @@ impl<F: JoltField> OneHotSumcheckState<F> {
             D: MultilinearPolynomial::from(EqPolynomial::evals(r_cycle)),   // Equation (54)
             F,
             num_variables_bound: 0,
+            #[cfg(test)]
+            B_gruen: Some(crate::poly::split_eq_poly::GruenSplitEqPolynomialHighToLow::new(r_address)),
         }
     }
 }
@@ -195,6 +200,67 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 );
 
+            #[cfg(test)]
+            {
+                // Test Gruen optimization
+                if let Some(ref b_gruen) = shared_eq.B_gruen {
+                    let mut gruen_evals = [F::zero(); 2];
+                    
+                    // Match the computation pattern of the original code
+                    for k_prime in 0..B.len() / 2 {
+                        // Get B evaluations at 0 and 2 for this k_prime using Gruen
+                        let b_gruen_evals = b_gruen.sumcheck_evals_array::<2>(k_prime);
+                        
+                        let mut inner_sum = [F::zero(); 2];
+                        
+                        // Iterate over k values in the same pattern as the original
+                        for (k, &g_k) in G.iter()
+                            .enumerate()
+                            .skip(k_prime)
+                            .step_by(B.len() / 2)
+                        {
+                            let k_m = (k >> (num_unbound_address_variables - 1)) & 1;
+                            let f_k = F[k >> num_unbound_address_variables];
+                            let g_times_f = g_k * f_k;
+                            
+                            // Compute contribution to s(0)
+                            let contrib_0 = match k_m {
+                                0 => g_times_f,
+                                1 => F::zero(),
+                                _ => unreachable!(),
+                            };
+                            
+                            // Compute contribution to s(2)
+                            let contrib_2 = match k_m {
+                                0 => -g_times_f,
+                                1 => g_times_f + g_times_f,
+                                _ => unreachable!(),
+                            };
+                            
+                            inner_sum[0] += contrib_0;
+                            inner_sum[1] += contrib_2;
+                        }
+                        
+                        gruen_evals[0] += b_gruen_evals[0] * inner_sum[0];
+                        gruen_evals[1] += b_gruen_evals[1] * inner_sum[1];
+                    }
+                    
+                    // Use gruen_evals_deg_2 method to compute s(2) from s(0) and previous_claim
+                    // For degree 2 polynomial: previous_claim = s(0) + s(1)
+                    // let gruen_result = b_gruen.gruen_evals_deg_2(univariate_poly_evals[0], previous_claim);
+                    
+                    // Compare with the standard method
+                    assert_eq!(
+                        univariate_poly_evals[0], gruen_evals[0],
+                        "Round {}: Gruen s(0) mismatch", round
+                    );
+                    assert_eq!(
+                        univariate_poly_evals[1], gruen_evals[1],
+                        "Round {}: Gruen s(2) mismatch", round
+                    );
+                }
+            }
+
             univariate_poly_evals.to_vec()
         } else {
             let H = polynomial.H.as_ref().unwrap();
@@ -232,6 +298,11 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                 shared_eq.B.bind_parallel(r, BindingOrder::HighToLow);
                 // Update F for this round (see Equation 55)
                 shared_eq.F.update(r);
+                
+                #[cfg(test)]
+                if let Some(ref mut b_gruen) = shared_eq.B_gruen {
+                    b_gruen.bind(r);
+                }
 
                 shared_eq.num_variables_bound += 1;
             }
@@ -454,7 +525,7 @@ mod tests {
         let one_hot_sumcheck_state = OneHotSumcheckState::new(&r_address, &r_cycle);
         let mut one_hot_opening =
             OneHotPolynomialProverOpening::new(Arc::new(Mutex::new(one_hot_sumcheck_state)));
-        one_hot_opening.initialize(one_hot_poly);
+        one_hot_opening.initialize(one_hot_poly.clone());
 
         let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
         let mut eq = DensePolynomial::new(EqPolynomial::evals(&r_concat));
@@ -462,6 +533,9 @@ mod tests {
         // For Gruen testing: create high-to-low version of split eq polynomial
         use crate::poly::split_eq_poly::GruenSplitEqPolynomialHighToLow;
         let mut gruen_split_eq = GruenSplitEqPolynomialHighToLow::new(&r_concat);
+        
+        // Create a separate copy of dense_poly for Gruen calculation
+        let mut dense_poly_gruen = one_hot_poly.to_dense_poly();
 
         // Verify that the regular eq polynomial and Gruen split eq are equivalent
         let initial_gruen_merged = gruen_split_eq.merge();
@@ -492,32 +566,6 @@ mod tests {
                 "round {round} prover message mismatch"
             );
 
-            if round > 0 {
-            // Test Gruen optimization
-            // Compute q(0) - the evaluation of dense_poly at 0 (first half sum)
-            let q_0 = if dense_poly.len() > 1 {
-                (0..dense_poly.len() / 2).map(|i| dense_poly[i]).sum()
-            } else {
-                dense_poly[0]
-            };
-
-            // Get the Gruen evaluations
-            let gruen_evals = gruen_split_eq.gruen_evals_deg_2(q_0, previous_claim);
-
-            // Verify that gruen_evals matches expected_message
-            assert_eq!(
-                gruen_evals[0], expected_message[0],
-                "round {}: Gruen eval at 0 should match expected_message[0]",
-                round
-            );
-            assert_eq!(
-                gruen_evals[1], expected_message[1],
-                "round {}: Gruen eval at 2 should match expected_message[1]",
-                round
-            );
-        }
-         
-
             // Update previous_claim for next round
             previous_claim = expected_message[0] + expected_message[1];
 
@@ -527,13 +575,143 @@ mod tests {
             eq.bind_parallel(r, BindingOrder::HighToLow);
             gruen_split_eq.bind(r);
 
-            // let gruen_merged = gruen_split_eq.merge();
-            // assert_eq!(
-            //     eq.Z[..eq.len()],
-            //     gruen_merged.Z[..gruen_merged.len()],
-            //     "round {round}: eq polynomial and Gruen split eq should be equivalent after binding"
-            // );
+            let gruen_merged = gruen_split_eq.merge();
+            assert_eq!(
+                eq.Z[..eq.len()],
+                gruen_merged.Z[..gruen_merged.len()],
+                "round {round}: eq polynomial and Gruen split eq should be equivalent after binding"
+            );
         }
+        assert_eq!(
+            one_hot_opening.final_sumcheck_claim(),
+            dense_poly[0],
+            "final sumcheck claim"
+        );
+    }
+
+    fn dense_polynomial_equivalence_gruen<const LOG_K: usize, const LOG_T: usize>() {
+        let K: usize = 1 << LOG_K;
+        let T: usize = 1 << LOG_T;
+        let _guard = DoryGlobals::initialize(K, T);
+
+        let mut rng = test_rng();
+
+        let nonzero_indices: Vec<_> = std::iter::repeat_with(|| Some(rng.next_u64() as usize % K))
+            .take(T)
+            .collect();
+        let one_hot_poly = OneHotPolynomial::<Fr>::from_indices(nonzero_indices, K);
+        let mut dense_poly = one_hot_poly.to_dense_poly();
+
+        let r_address: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
+            .take(LOG_K)
+            .collect();
+        let r_cycle: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
+            .take(LOG_T)
+            .collect();
+
+        let one_hot_sumcheck_state = OneHotSumcheckState::new(&r_address, &r_cycle);
+        let mut one_hot_opening =
+            OneHotPolynomialProverOpening::new(Arc::new(Mutex::new(one_hot_sumcheck_state)));
+        one_hot_opening.initialize(one_hot_poly.clone());
+
+        let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
+        let mut eq = DensePolynomial::new(EqPolynomial::evals(&r_concat));
+
+        // For Gruen testing: create high-to-low version of split eq polynomial
+        use crate::poly::split_eq_poly::GruenSplitEqPolynomialHighToLow;
+        let mut gruen_split_eq = GruenSplitEqPolynomialHighToLow::new(&r_concat);
+        
+        // Pre-compute the polynomial arrays P_k for the Gruen method
+        // In this case, we have a single polynomial (the one-hot polynomial)
+        let mut P_arrays: Vec<DensePolynomial<Fr>> = vec![dense_poly.clone()];
+
+        let mut previous_claim = Fr::zero();
+
+        for round in 0..LOG_K + LOG_T {
+            let one_hot_message = one_hot_opening.compute_prover_message(round, previous_claim);
+            
+            // Compute expected message using Gruen method
+            let mut gruen_message = vec![Fr::zero(), Fr::zero()];
+            
+            if round < LOG_K {
+                // Address rounds - use Gruen formula with E tables
+                // Number of remaining variables after this round
+                let n_minus_i = LOG_K + LOG_T - round;
+                
+                // Compute s_i(0) using the Gruen formula
+                // s_i(0) = sum_{x' in {0,1}^{n-i-1}} E^(i)(x') * P[0||x']
+                for x_prime in 0..(1 << (n_minus_i - 1)) {
+                    // Get E^(i)(x') from the Gruen split eq polynomial
+                    let e_val = gruen_split_eq.get_bound_coeff(x_prime);
+                    
+                    // P[0||x'] - the value at index x' (with 0 prefix for current round)
+                    let p_val_0 = P_arrays[0][x_prime];
+                    gruen_message[0] += e_val * p_val_0;
+                }
+                
+                // // For degree 2 sumcheck: previous_claim = s(0) + s(2)
+                // // Therefore: s(2) = previous_claim - s(0)
+                // gruen_message[1] = previous_claim - expected_message[0];
+            } else {
+                // Cycle rounds - use existing method (same as original)
+                // let mle_half = dense_poly.len() / 2;
+                // gruen_message[0] = (0..mle_half).map(|i| dense_poly[i] * eq[i]).sum();
+                // gruen_message[1] = (0..mle_half)
+                //     .map(|i| {
+                //         let poly_bound_point =
+                //             dense_poly[i + mle_half] + dense_poly[i + mle_half] - dense_poly[i];
+                //         let eq_bound_point = eq[i + mle_half] + eq[i + mle_half] - eq[i];
+                //         poly_bound_point * eq_bound_point
+                //     })
+                //     .sum();
+            }
+            
+            // Original expected message calculation for comparison
+            let mut expected_message = vec![Fr::zero(), Fr::zero()];
+            let mle_half = dense_poly.len() / 2;
+
+            expected_message[0] = (0..mle_half).map(|i| dense_poly[i] * eq[i]).sum();
+            expected_message[1] = (0..mle_half)
+                .map(|i| {
+                    let poly_bound_point =
+                        dense_poly[i + mle_half] + dense_poly[i + mle_half] - dense_poly[i];
+                    let eq_bound_point = eq[i + mle_half] + eq[i + mle_half] - eq[i];
+                    poly_bound_point * eq_bound_point
+                })
+                .sum();
+            
+              // For degree 2 sumcheck: previous_claim = s(0) + s(2)
+                // Therefore: s(2) = previous_claim - s(0)
+                gruen_message[1] = previous_claim - expected_message[0];
+                
+            assert_eq!(
+                one_hot_message, expected_message,
+                "round {round} prover message mismatch with original"
+            );
+            
+            if round > 0 {
+                assert_eq!(
+                    gruen_message, expected_message,
+                    "round {round} Gruen method mismatch with original"
+                );
+    
+            }
+        
+            // Update previous_claim for next round
+            previous_claim = expected_message[0] + expected_message[1];
+
+            let r = Fr::random(&mut rng);
+            one_hot_opening.bind(r, round);
+            dense_poly.bind_parallel(r, BindingOrder::HighToLow);
+            eq.bind_parallel(r, BindingOrder::HighToLow);
+            gruen_split_eq.bind(r);
+            
+            // Bind P arrays
+            for P_k in P_arrays.iter_mut() {
+                P_k.bind_parallel(r, BindingOrder::HighToLow);
+            }
+        }
+        
         assert_eq!(
             one_hot_opening.final_sumcheck_claim(),
             dense_poly[0],
@@ -595,5 +773,23 @@ mod tests {
     #[serial]
     fn evaluate_K_greater_than_T() {
         evaluate_test::<6, 5>();
+    }
+
+    #[test]
+    #[serial]
+    fn sumcheck_gruen_K_less_than_T() {
+        dense_polynomial_equivalence_gruen::<5, 6>();
+    }
+
+    #[test]
+    #[serial]
+    fn sumcheck_gruen_K_equals_T() {
+        dense_polynomial_equivalence_gruen::<6, 6>();
+    }
+
+    #[test]
+    #[serial]
+    fn sumcheck_gruen_K_greater_than_T() {
+        dense_polynomial_equivalence_gruen::<6, 5>();
     }
 }

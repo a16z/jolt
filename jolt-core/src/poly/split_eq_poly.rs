@@ -442,51 +442,41 @@ impl<F: JoltField> GruenSplitEqPolynomialHighToLow<F> {
 
     pub fn get_bound_coeff(&self, index: usize) -> F {
         // This is equivalent to calling merge() and then getting the coefficient at index
-        // For efficiency, we compute it directly
-        let evals = EqPolynomial::evals(&self.w[self.current_index..]);
-        evals[index] * self.current_scalar
+        // For efficiency, we compute it directly using E_in and E_out
+        
+        if self.current_index == 0 {
+            // Initial state - use the cached values
+            let e_in = self.E_in_current();
+            let e_out = self.E_out_current();
+            let e_out_len = e_out.len();
+            let i = index / e_out_len;
+            let j = index % e_out_len;
+            return e_in[i] * e_out[j] * self.current_scalar;
+        }
+        
+        if self.current_index >= self.w.len() {
+            return self.current_scalar;
+        }
+
+        if self.current_index <= self.w.len() / 2 {
+            // Still binding in the first half
+            let e_in = self.E_in_current();
+            let e_out = self.E_out_current();
+            let e_out_len = e_out.len();
+            let i = index / e_out_len;
+            let j = index % e_out_len;
+            e_in[i] * e_out[j] * self.current_scalar
+        } else {
+            // Binding in the second half
+            let e_in = self.E_in_current();
+            let e_out = self.E_out_current();
+            let e_in_len = e_in.len();
+            let j = index / e_in_len;
+            let i = index % e_in_len;
+            e_in[i] * e_out[j] * self.current_scalar
+        }
     }
 
-    pub fn gruen_evals_deg_2(&self, q_0: F, previous_claim: F) -> [F; 2] {
-        // We want to compute the evaluations of the quadratic polynomial s(X) = l(X) * q(X), where
-        // l is linear (the eq polynomial), and q is linear (the polynomial being summed),
-        // at the points {0, 2}.
-        //
-        // At this point, we have:
-        // - the linear eq polynomial, l(X) = a + bX
-        // - the evaluation q(0) = q_0
-        // - the previous round's claim s(0) + s(1) = l(0) * q(0) + l(1) * q(1)
-        //
-        // We need to compute s(0) and s(2).
-
-        // Evaluations of the linear eq polynomial
-        // For high-to-low: eq(w[i], X) evaluated at different points
-        let wi = self.w[self.current_index];
-        let eq_eval_0 = self.current_scalar * (F::one() - wi); // eq(w[i], 0) = (1 - w[i])
-        let eq_eval_1 = self.current_scalar * wi; // eq(w[i], 1) = w[i]
-        let eq_m = eq_eval_1 - eq_eval_0;
-        let eq_eval_2 = eq_eval_1 + eq_m; // eq(w[i], 2) = 2*w[i] - 1
-
-        // We know:
-        // s(0) = l(0) * q(0) = eq_eval_0 * q_0
-        let s_0 = eq_eval_0 * q_0;
-
-        // From previous_claim = s(0) + s(1), we can get s(1)
-        let s_1 = previous_claim - s_0;
-
-        // Since l(1) * q(1) = s(1), we can solve for q(1)
-        let q_1 = s_1 / eq_eval_1;
-
-        // For a linear polynomial q(X) = c + dX where q(0) = c and q(1) = c + d
-        // We have c = q_0 and d = q_1 - q_0
-        // So q(2) = c + 2d = q_0 + 2(q_1 - q_0) = 2*q_1 - q_0
-        let q_2 = q_1 + q_1 - q_0;
-
-        // Finally, s(2) = l(2) * q(2)
-        let s_2 = eq_eval_2 * q_2;
-
-        [s_0, s_2]
-    }
 
     pub fn E_in_current_len(&self) -> usize {
         self.E_in_vec.last().map_or(0, |v| v.len())
@@ -502,6 +492,58 @@ impl<F: JoltField> GruenSplitEqPolynomialHighToLow<F> {
 
     pub fn E_out_current(&self) -> &[F] {
         self.E_out_vec.last().map_or(&[], |v| v.as_slice())
+    }
+
+    pub fn sumcheck_evals_array<const DEGREE: usize>(&self, index: usize) -> [F; DEGREE] {
+        debug_assert!(DEGREE > 0);
+        debug_assert!(index < self.len() / 2);
+
+        let mut evals = [F::zero(); DEGREE];
+        // For high-to-low binding order
+        evals[0] = self.get_bound_coeff(index);
+        if DEGREE == 1 {
+            return evals;
+        }
+        let mut eval = self.get_bound_coeff(index + self.len() / 2);
+        let m = eval - evals[0];
+        for i in 1..DEGREE {
+            eval += m;
+            evals[i] = eval;
+        }
+        evals
+    }
+
+    pub fn gruen_evals_deg_2(&self, q_0: F, previous_claim: F) -> [F; 2] {
+        // For degree 2 sumcheck, we have:
+        // - s(X) = l(X) * q(X) where l is the linear eq polynomial and q is the polynomial being summed
+        // - We need to compute s(0) and s(2)
+        // - Given: q(0) = q_0 and previous_claim = s(0) + s(1)
+        
+        // 1. The witness bit that is about to be bound (for high-to-low, we use current_index)
+        let w_i = self.w[self.current_index];
+    
+        // 2. Compute l(X) = current_scalar * eq(w_i, X) evaluations
+        let eq_eval_1 = self.current_scalar * w_i;          // l(1)
+        let eq_eval_0 = self.current_scalar - eq_eval_1;    // l(0)
+        let eq_m = eq_eval_1 - eq_eval_0;                   // slope
+        let eq_eval_2 = eq_eval_1 + eq_m;                   // l(2) = l(1) + slope
+    
+        // 3. We know s(0) = l(0) * q(0)
+        let s_0 = eq_eval_0 * q_0;
+    
+        // 4. From previous_claim = s(0) + s(1), we get s(1) = previous_claim - s(0)
+        let s_1 = previous_claim - s_0;
+        
+        // 5. Since s(1) = l(1) * q(1), we can solve for q(1)
+        let q_1 = s_1 / eq_eval_1;
+        
+        // 6. For a linear polynomial q(X), we have q(2) = 2*q(1) - q(0)
+        let q_2 = q_1 + q_1 - q_0;
+        
+        // 7. Finally, s(2) = l(2) * q(2)
+        let s_2 = eq_eval_2 * q_2;
+    
+        [s_0, s_2]
     }
 }
 
