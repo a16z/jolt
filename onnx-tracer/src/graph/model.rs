@@ -200,35 +200,20 @@ impl Model {
             let instr = decode_node((idx, n));
             self.tracer.capture_pre_state(instr, inputs.clone());
             if n.is_lookup() {
-                let (mut min, mut max) = (0, 0);
-                for i in &inputs {
-                    max = max.max(i.iter().copied().max().ok_or("missing max")?);
-                    min = min.min(i.iter().copied().min().ok_or("missing min")?);
-                }
-                max_lookup_inputs = max_lookup_inputs.max(max);
-                min_lookup_inputs = min_lookup_inputs.min(min);
-                debug!("max lookup inputs: {max}");
-                debug!("min lookup inputs: {min}");
+                Self::lookup_check(&inputs, &mut max_lookup_inputs, &mut min_lookup_inputs)?;
             }
             match n {
                 NodeType::Node(n) => {
                     // execute the op
-                    let start = instant::Instant::now();
                     let res = Op::<i128>::f(&n.opkind, &inputs)?;
-                    debug!("opkind: {:#?}, instr: {instr:#?}, res: {res:#?}", n.opkind);
-                    let elapsed = start.elapsed();
-                    trace!("op took: {elapsed:?}",);
+                    trace!("opkind: {:#?}, instr: {instr:#?}, res: {res:#?}", n.opkind);
                     // see if any of the intermediate lookup calcs are the max
                     if !res.intermediate_lookups.is_empty() {
-                        let (mut min, mut max) = (0, 0);
-                        for i in &res.intermediate_lookups {
-                            max = max.max(i.clone().into_iter().max().ok_or("missing max")?);
-                            min = min.min(i.clone().into_iter().min().ok_or("missing min")?);
-                        }
-                        max_lookup_inputs = max_lookup_inputs.max(max);
-                        min_lookup_inputs = min_lookup_inputs.min(min);
-                        debug!("intermediate max lookup inputs: {max}",);
-                        debug!("intermediate min lookup inputs: {min}",);
+                        Self::lookup_check(
+                            &res.intermediate_lookups,
+                            &mut max_lookup_inputs,
+                            &mut min_lookup_inputs,
+                        )?;
                     }
                     debug!(
                         "------------ output node int {}: {} \n  ------------ scale: {}",
@@ -448,6 +433,23 @@ impl Model {
             inputs.iter().map(|x| x.dims()).collect::<Vec<_>>()
         );
         Ok(inputs)
+    }
+
+    fn lookup_check(
+        inputs: &[Tensor<i128>],
+        max_lookup_inputs: &mut i128,
+        min_lookup_inputs: &mut i128,
+    ) -> Result<(), Box<dyn Error>> {
+        let (mut min, mut max) = (0, 0);
+        for i in inputs {
+            max = max.max(i.iter().copied().max().ok_or("missing max")?);
+            min = min.min(i.iter().copied().min().ok_or("missing min")?);
+        }
+        *max_lookup_inputs = (*max_lookup_inputs).max(max);
+        *min_lookup_inputs = (*min_lookup_inputs).min(min);
+        debug!("max lookup inputs: {max}");
+        debug!("min lookup inputs: {min}");
+        Ok(())
     }
 
     /// Loads an Onnx model from a specified path.
@@ -1145,12 +1147,9 @@ fn output_state_idx(output_mappings: &[Vec<OutputMapping>]) -> Vec<usize> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        circuit::{
-            ops::{lookup::LookupOp, poly::PolyOp, InputType},
-            utils::F32,
-        },
-        fieldutils::i128_to_felt,
+    use crate::circuit::{
+        ops::{lookup::LookupOp, poly::PolyOp, InputType},
+        utils::F32,
     };
 
     use super::*;
@@ -1258,13 +1257,7 @@ mod tests {
         let result = model.forward(&[x]).unwrap();
         assert_eq!(result.outputs.len(), 1);
 
-        let _out: Vec<i128> = result.outputs[0]
-            .iter()
-            .map(|f| {
-                let f = *f;
-                f
-            })
-            .collect();
+        let _out: Vec<i128> = result.outputs[0].iter().copied().collect();
 
         // TODO(Alberto): Not sure how to handle precision yet
         // sigmoid(-2)≈0.119, sigmoid(0)=0.5, sigmoid(2)≈0.881
