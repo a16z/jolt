@@ -239,6 +239,55 @@ impl Model {
                     results.insert(idx, vec![res.output.clone()]);
                     self.tracer.capture_post_state(res.output);
                 }
+                // --- SubGraph Node Execution ---
+                //
+                // This block handles the execution of a subgraph node (NodeType::SubGraph), which is fundamentally
+                // different from executing a standard node (NodeType::Node). Subgraphs are used for control flow
+                // constructs like ONNX Scan, Loop, or custom nested models, where a portion of the graph is executed
+                // multiple times with varying inputs (e.g., sequence processing, RNNs).
+                //
+                // Why is this needed?
+                // - Standard nodes perform a single computation given their inputs.
+                // - Subgraph nodes encapsulate an entire model that must be executed repeatedly, often with sliced or
+                //   stateful inputs, and may have complex input/output mappings.
+                // - This code ensures correct iteration, input slicing, state management, and output collection for
+                //   subgraph execution.
+                //
+                // Intent & Purpose:
+                // - To simulate the iterative execution of a subgraph as required by ONNX control flow semantics.
+                // - To correctly map parent graph inputs to subgraph inputs, handle state variables, and collect outputs.
+                // - To recursively execute the subgraph and aggregate results, including lookup statistics.
+                //
+                // How it works (Step-by-Step):
+                // 1. Clone the original inputs and input mappings for reference.
+                // 2. Determine the number of iterations required by inspecting the input mappings and dimensions.
+                //    (For example, if an input is chunked along an axis, the number of iterations is dim_size / chunk_size.)
+                // 3. For each iteration:
+                //    a. Slice or update the inputs as specified by the input mappings (e.g., Stacked inputs get a chunk).
+                //    b. Recursively call `model.forward(&inputs)` to execute the subgraph for this iteration.
+                //    c. Track min/max lookup values from subgraph execution for quantization/table sizing.
+                //    d. Map subgraph outputs back to parent graph outputs using output mappings, handling stacking
+                //       (concatenation) and state variables.
+                //    e. Update stateful inputs for the next iteration using output states.
+                // 4. After all iterations, insert the aggregated outputs into the parent graph's results map.
+                //
+                // Key differences from normal node execution:
+                // - Iterative: Subgraphs may execute multiple times, while normal nodes execute once.
+                // - Input/Output Mapping: Inputs/outputs may be sliced, stacked, or carried as state, requiring complex mapping.
+                // - Recursion: Subgraph execution is recursive, calling `forward` on the sub-model.
+                // - State Management: Handles state variables that persist across iterations.
+                // - Output Aggregation: May need to concatenate outputs across iterations (stacked outputs).
+                //
+                // Gotchas:
+                // - Input slicing must match the expected chunk size and axis; mismatches can cause runtime errors.
+                // - State variables must be correctly updated between iterations.
+                // - Output mappings can be complex; ensure correct outlet and axis handling.
+                // - Recursion can lead to stack overflows if subgraphs are deeply nested.
+                //
+                // Summary:
+                // This code is essential for supporting ONNX models with control flow, enabling correct execution of
+                // iterative constructs and nested graphs. It ensures that subgraph semantics are faithfully reproduced,
+                // including input slicing, state management, and output aggregation.
                 NodeType::SubGraph {
                     model,
                     output_mappings,
@@ -345,12 +394,11 @@ impl Model {
                 Ok(results.get(&idx).ok_or(GraphError::MissingResults)?[*outlet].clone())
             })
             .collect::<Result<Vec<_>, GraphError>>()?;
-        let res = ForwardResult {
+        Ok(ForwardResult {
             outputs,
             max_lookup_inputs,
             min_lookup_inputs,
-        };
-        Ok(res)
+        })
     }
 
     /// Gathers the input tensors required for the current node's execution.
