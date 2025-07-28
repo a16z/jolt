@@ -14,8 +14,8 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{
     MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
-use crate::utils::expanding_table::ExpandingTable;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
+use crate::utils::expanding_table::ExpandingTable;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_ec::CurveGroup;
@@ -104,6 +104,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
         let chunk_size = (T / num_chunks).max(1);
         let D = &self.eq_state.lock().unwrap().D;
 
+        let D_full_table = D.merge();
         // Compute G as described in Section 6.3
         let G = polynomial
             .nonzero_indices
@@ -114,7 +115,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                 let mut j = chunk_index * chunk_size;
                 for k in chunk {
                     if let Some(k) = k {
-                        result[*k] += D.get_bound_coeff(j);
+                        result[*k] += D_full_table[j];
                     }
                     j += 1;
                 }

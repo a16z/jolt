@@ -342,14 +342,6 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         };
         DensePolynomial::new(evals)
     }
-
-    /// Get the coefficient at the given index of the bound polynomial.
-    /// TODO(markosg04) optimize this with tensor product?
-    pub fn get_bound_coeff(&self, index: usize) -> F {
-        // For now, use merge() to ensure correctness
-        // TODO: Optimize this by using cached values correctly for both binding orders
-        self.merge().Z[index]
-    }
 }
 
 #[cfg(test)]

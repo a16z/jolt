@@ -652,7 +652,7 @@ where
         claims: Vec<F>,
     ) {
         let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
-        
+
         let shared_eq = Arc::new(Mutex::new(OneHotSumcheckState::new(&r_address, &r_cycle)));
 
         // Add openings to map
