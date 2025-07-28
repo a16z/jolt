@@ -183,7 +183,7 @@ mod tests {
     }
 
     #[test]
-    fn show_keccak_stats() {
+    fn measure_keccak_length() {
         let mut h = KeccakCpuHarness::new();
         h.load_state(&xkcp_vectors::AFTER_ONE_PERMUTATION);
         let bytecode_len = h.trace_keccak_instruction().len();

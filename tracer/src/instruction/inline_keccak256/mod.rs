@@ -97,7 +97,7 @@ struct Keccak256SequenceBuilder {
     round: u32,
     vr: [usize; NEEDED_REGISTERS],
     operand_rs1: usize,
-    operand_rs2: usize,
+    _operand_rs2: usize,
 }
 
 /// `Keccak256SequenceBuilder` is a helper struct for constructing the virtual instruction
@@ -149,7 +149,7 @@ impl Keccak256SequenceBuilder {
             round: 0,
             vr,
             operand_rs1,
-            operand_rs2,
+            _operand_rs2: operand_rs2,
         }
     }
 
