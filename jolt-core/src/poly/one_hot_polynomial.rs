@@ -14,6 +14,7 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{
     MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
+use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::subprotocols::sparse_dense_shout::ExpandingTable;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
@@ -55,22 +56,13 @@ pub struct OneHotPolynomial<F: JoltField> {
 pub struct OneHotSumcheckState<F: JoltField> {
     /// B stores eq(r, k), see Equation (53)
     pub B: MultilinearPolynomial<F>,
-    /// D stores eq(r', j), see Equation (54)
-    pub D: MultilinearPolynomial<F>,
+    /// D stores eq(r', j), see Equation (54) but with Gruen X Dao-Thaler optimizations
+    pub D: GruenSplitEqPolynomial<F>,
     /// F will maintain an array that, at the end of sumcheck round m, has size 2^m
     /// and stores all 2^m values eq((k_1, ..., k_m), (r_1, ..., r_m))
     pub F: ExpandingTable<F>,
     /// The number of variables that have been bound during sumcheck so far
     pub num_variables_bound: usize,
-    /// Gruen version of B for testing
-    #[cfg(test)]
-    pub B_gruen: Option<crate::poly::split_eq_poly::GruenSplitEqPolynomial<F>>,
-    /// Gruen version of D for testing
-    #[cfg(test)]
-    pub D_gruen: Option<crate::poly::split_eq_poly::GruenSplitEqPolynomial<F>>,
-    /// P array for Gruen optimization
-    #[cfg(test)]
-    pub P_arrays: Option<Vec<Vec<F>>>,
 }
 
 impl<F: JoltField> OneHotSumcheckState<F> {
@@ -83,20 +75,10 @@ impl<F: JoltField> OneHotSumcheckState<F> {
         let mut F = ExpandingTable::new(K);
         F.reset(F::one());
         Self {
-            B: MultilinearPolynomial::from(EqPolynomial::evals(r_address)), // Equation (53)
-            D: MultilinearPolynomial::from(EqPolynomial::evals(r_cycle)),   // Equation (54)
+            B: MultilinearPolynomial::from(EqPolynomial::evals(r_address)),
+            D: GruenSplitEqPolynomial::new(r_cycle, BindingOrder::HighToLow),
             F,
             num_variables_bound: 0,
-            #[cfg(test)]
-            B_gruen: Some(
-                crate::poly::split_eq_poly::GruenSplitEqPolynomial::new(r_address, BindingOrder::HighToLow),
-            ),
-            #[cfg(test)]
-            D_gruen: Some(
-                crate::poly::split_eq_poly::GruenSplitEqPolynomial::new(r_cycle, BindingOrder::HighToLow),
-            ),
-            #[cfg(test)]
-            P_arrays: None,
         }
     }
 }
@@ -216,84 +198,45 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
 
             univariate_poly_evals.to_vec()
         } else {
+            // Last log(T) rounds of sumcheck - uses Gruen x Dao-Thaler optimizations
             let H = polynomial.H.as_ref().unwrap();
             let B = &shared_eq.B;
-            let D = &shared_eq.D;
-            let n = H.len() / 2;
+            let d_gruen = &shared_eq.D;
 
-            let univariate_poly_evals: [F; 2] = (0..n)
-                .into_par_iter()
-                .map(|j| {
+            let mut gruen_eval_0 = F::zero();
+
+            if d_gruen.E_in_current_len() == 1 {
+                // E_in is fully bound
+                for j in 0..d_gruen.len() / 2 {
                     let H_evals = H.sumcheck_evals(j, 2, BindingOrder::HighToLow);
-                    let D_evals = D.sumcheck_evals_array::<2>(j, BindingOrder::HighToLow);
-                    [H_evals[0] * D_evals[0], H_evals[1] * D_evals[1]]
-                })
-                .reduce(
-                    || [F::zero(); 2],
-                    |running, new| [running[0] + new[0], running[1] + new[1]],
-                );
+                    let d_eval = d_gruen.E_out_current()[j];
+                    let h_eval = H_evals[0];
+                    gruen_eval_0 += d_eval * h_eval;
+                }
+            } else {
+                // E_in has not been fully bound
+                let num_x_in_bits = d_gruen.E_out_current_len().log_2();
+                let x_bitmask = (1 << num_x_in_bits) - 1;
 
-            #[cfg(test)]
-            {
-                // Test Gruen optimization for log T rounds
-                if let Some(ref d_gruen) = shared_eq.D_gruen {
-                    let mut gruen_eval_0 = F::zero();
-                    if d_gruen.E_in_current_len() == 1 {
-                        // E_in is fully bound
-                        for j in 0..d_gruen.len() / 2 {
-                            let H_evals = H.sumcheck_evals(j, 2, BindingOrder::HighToLow);
-                            let d_eval = d_gruen.E_out_current()[j];
-                            let h_eval = H_evals[0];
-                            gruen_eval_0 += d_eval * h_eval;
-                        }
-                    } else {
-                        // E_in has not been fully bound
-                        let num_x_in_bits = d_gruen.E_out_current_len().log_2();
-                        let x_bitmask = (1 << num_x_in_bits) - 1;
+                for j in 0..d_gruen.len() / 2 {
+                    let H_evals = H.sumcheck_evals(j, 2, BindingOrder::HighToLow);
+                    let x_in = j >> num_x_in_bits;
+                    let x_out = j & x_bitmask;
+                    let d_e_out_eval = d_gruen.E_out_current()[x_out];
+                    let d_e_in_eval = d_gruen.E_in_current()[x_in];
+                    let h_eval = H_evals[0];
 
-                        for j in 0..d_gruen.len() / 2 {
-                            let H_evals = H.sumcheck_evals(j, 2, BindingOrder::HighToLow);
-                            let x_in = j >> num_x_in_bits;
-                            let x_out = j & x_bitmask;
-                            let d_e_out_eval = d_gruen.E_out_current()[x_out];
-                            let d_e_in_eval = d_gruen.E_in_current()[x_in];
-                            let h_eval = H_evals[0];
-
-                            // check if is correct?
-                            // ordering here?
-                            gruen_eval_0 += d_e_out_eval * d_e_in_eval * h_eval;
-                        }
-                    }
-
-                    // Note: For the D polynomial test, we need to account for the fact that
-                    // the final result is multiplied by B.final_sumcheck_claim()
-                    // So we test the pre-multiplication values
-
-                    let eq_r_address_claim = B.final_sumcheck_claim();
-                    println!("ROUND: {:?}", round);
-                    let gruen_test: [F; 2] = d_gruen
-                        .gruen_evals_deg_2(gruen_eval_0, previous_claim / eq_r_address_claim);
-
-                    //    let eq_r_address_claim = B.final_sumcheck_claim();
-
-                    assert_eq!(
-                        univariate_poly_evals[0], gruen_test[0],
-                        "Round {}: Gruen D s(0) mismatch",
-                        round
-                    );
-
-                    assert_eq!(
-                        univariate_poly_evals[1], gruen_test[1],
-                        "Round {}: Gruen D s(2) mismatch",
-                        round
-                    );
+                    gruen_eval_0 += d_e_out_eval * d_e_in_eval * h_eval;
                 }
             }
 
             let eq_r_address_claim = B.final_sumcheck_claim();
+            let gruen_univariate_evals: [F; 2] =
+                d_gruen.gruen_evals_deg_2(gruen_eval_0, previous_claim / eq_r_address_claim);
+
             vec![
-                eq_r_address_claim * univariate_poly_evals[0],
-                eq_r_address_claim * univariate_poly_evals[1],
+                eq_r_address_claim * gruen_univariate_evals[0],
+                eq_r_address_claim * gruen_univariate_evals[1],
             ]
         }
     }
@@ -308,12 +251,6 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                 shared_eq.B.bind_parallel(r, BindingOrder::HighToLow);
                 // Update F for this round (see Equation 55)
                 shared_eq.F.update(r);
-
-                #[cfg(test)]
-                if let Some(ref mut b_gruen) = shared_eq.B_gruen {
-                    b_gruen.bind(r);
-                }
-
                 shared_eq.num_variables_bound += 1;
             }
 
@@ -332,12 +269,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             // Last log(T) rounds of sumcheck
 
             if num_variables_bound <= round {
-                shared_eq.D.bind_parallel(r, BindingOrder::HighToLow);
-
-                #[cfg(test)]
-                if let Some(ref mut d_gruen) = shared_eq.D_gruen {
-                    d_gruen.bind(r);
-                }
+                shared_eq.D.bind(r);
 
                 shared_eq.num_variables_bound += 1;
             }

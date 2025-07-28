@@ -1,6 +1,5 @@
 //! Implements the Dao-Thaler optimization for EQ polynomial evaluations
 //! https://eprint.iacr.org/2024/1210.pdf
-#[cfg(test)]
 use super::dense_mlpoly::DensePolynomial;
 use super::multilinear_polynomial::BindingOrder;
 use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
@@ -9,7 +8,7 @@ use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
 /// A struct holding the equality polynomial evaluations for use in sum-check, when incorporating
 /// both the Gruen and Dao-Thaler optimizations.
 ///
-/// For the `i = 0..n`-th round of sum-check, we want the following invariants:
+/// For the `i = 0..n`-th round of sum-check, we want the following invariants (low to high):
 ///
 /// - `current_index = n - i` (where `n = w.len()`)
 /// - `current_scalar = eq(w[(n - i)..],r[..i])`
@@ -17,8 +16,7 @@ use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
 /// - If `i < n/2`, then `E_in_vec.last().unwrap() = [eq(w[n/2..(n/2 + i + 1)], x) for all x in {0,
 ///   1}^{n/2 - i - 1}]`; else `E_in_vec` is empty
 ///
-/// Note: all current applications of `SplitEqPolynomial` use the `LowToHigh` binding order. This
-/// means that we are iterating over `w` in the reverse order: `w.len()` down to `0`.
+/// Implements both LowToHigh ordering and HighToLow ordering.
 pub struct GruenSplitEqPolynomial<F> {
     pub(crate) current_index: usize,
     pub(crate) current_scalar: F,
@@ -58,18 +56,17 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
             BindingOrder::HighToLow => {
                 // For high-to-low binding, we bind from MSB (index 0) to LSB (index n-1).
                 // The split should be: w_in = first half, w_out = second half
+                // [w_first, w_in, w_out]
                 let (_, wprime) = w.split_first().unwrap();
                 let m = w.len() / 2;
                 let (w_in, w_out) = wprime.split_at(m);
-                // [w_first <- w[0], w_in, w_out]
-
                 let (E_in_vec, E_out_vec) = rayon::join(
                     || EqPolynomial::evals_cached_rev(w_in),
                     || EqPolynomial::evals_cached_rev(w_out),
                 );
 
                 Self {
-                    current_index: 0, // Start from 0 for high-to-low
+                    current_index: 0, // Start from 0 for high-to-low up to w.len() - 1
                     current_scalar: F::one(),
                     w: w.to_vec(),
                     E_in_vec,
@@ -196,7 +193,8 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
                 // multiply `current_scalar` by `eq(w[i], r) = (1 - w[i]) * (1 - r) + w[i] * r`
                 // which is the same as `1 - w[i] - r + 2 * w[i] * r`
                 let prod_w_r = self.w[self.current_index - 1] * r;
-                self.current_scalar *= F::one() - self.w[self.current_index - 1] - r + prod_w_r + prod_w_r;
+                self.current_scalar *=
+                    F::one() - self.w[self.current_index - 1] - r + prod_w_r + prod_w_r;
                 // decrement `current_index`
                 self.current_index -= 1;
                 // pop the last vector from `E_in_vec` or `E_out_vec` (since we don't need it anymore)
@@ -210,7 +208,8 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
                 // multiply `current_scalar` by `eq(w[i], r) = (1 - w[i]) * (1 - r) + w[i] * r`
                 // which is the same as `1 - w[i] - r + 2 * w[i] * r`
                 let prod_w_r = self.w[self.current_index] * r;
-                self.current_scalar *= F::one() - self.w[self.current_index] - r + prod_w_r + prod_w_r;
+                self.current_scalar *=
+                    F::one() - self.w[self.current_index] - r + prod_w_r + prod_w_r;
 
                 // increment `current_index` (going from 0 to n-1)
                 self.current_index += 1;
@@ -229,12 +228,14 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         }
     }
 
-    /// Compute the sumcheck cubic sumcheck evaluations (i.e., the evaluations at {0, 2, 3}) of a
+    /// Compute the cubic sumcheck evaluations (i.e., the evaluations at {0, 2, 3}) of a
     /// polynomial s(X) = l(X) * q(X), where l(X) is the current (linear) eq polynomial and
     /// q(X) = c + dX + eX^2, given the following:
     /// - c, the constant term of q
     /// - e, the quadratic term of q
     /// - the previous round claim, s(0) + s(1)
+    ///
+    /// important: This assumes `LowToHigh` ordering (as used in the stage 5 batching sumcheck)
     pub fn gruen_evals_deg_3(
         &self,
         q_constant: F,
@@ -279,6 +280,13 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         ]
     }
 
+    /// Compute the quadratic sumcheck evaluations (i.e., the evaluations at {0, 2, 3}) of a
+    /// polynomial s(X) = l(X) * q(X), where l(X) is the current (linear) Dao-Thaler eq polynomial and
+    /// q(X) = c + dx
+    /// - c, the constant term of q
+    /// - the previous round claim, s(0) + s(1)
+    ///
+    /// important: This assumes `HighToLow` ordering (as used in the stage 5 batching sumcheck)
     pub fn gruen_evals_deg_2(&self, q_0: F, previous_claim: F) -> [F; 2] {
         // We want to compute the evaluations of the quadratic polynomial s(X) = l(X) * q(X), where
         // l is linear, and q is linear, at the points {0, 2}.
@@ -291,144 +299,58 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         // We have q(0) = c, and we need to compute q(1) and q(2).
 
         // Evaluations of the linear eq polynomial
-        // For high-to-low, we bind from index 0 upward
-        let wi = self.w[self.current_index];
-        let eq_eval_0_old = self.current_scalar * (F::one() - wi);
-
+        // For high-to-low, we bind from index 0 upward, hence we take wi = self.w[self.current_index] here
         let eq_eval_1 = self.current_scalar * self.w[self.current_index];
         let eq_eval_0 = self.current_scalar - eq_eval_1;
 
-        assert_eq!(eq_eval_0_old, eq_eval_0);
-
-        // let eq_eval_1 = self.current_scalar * wi;
+        // slope for eq
         let eq_m = eq_eval_1 - eq_eval_0;
         let eq_eval_2 = eq_eval_1 + eq_m;
 
-        // Evaluations of the linear q polynomial
+        // Evaluations of the linear q(x) polynomial
         let linear_eval_0 = q_0;
         let quadratic_eval_0 = eq_eval_0 * linear_eval_0;
         let quadratic_eval_1 = previous_claim - quadratic_eval_0;
-        // q(1) = c + d
+
+        // get q(1) = c + d:
         let linear_eval_1 = quadratic_eval_1 * eq_eval_1.inverse().unwrap();
+
         // q(2) = c + 2d = 2*q(1) - q(0)
         let linear_eval_2 = (linear_eval_1 + linear_eval_1) - linear_eval_0;
 
         [quadratic_eval_0, eq_eval_2 * linear_eval_2]
     }
 
-    #[cfg(test)]
-    fn to_E1_old(&self) -> Vec<F> {
-        if self.current_index > self.w.len() / 2 {
-            let wi = self.w[self.current_index - 1];
-            let E1_old_odd: Vec<F> = self
-                .E_in_vec
-                .last()
-                .unwrap()
-                .iter()
-                .map(|x| *x * (F::one() - wi))
-                .collect();
-            let E1_old_even: Vec<F> = self
-                .E_in_vec
-                .last()
-                .unwrap()
-                .iter()
-                .map(|x| *x * wi)
-                .collect();
-            // Interleave the two vectors
-            let mut E1_old = vec![];
-            for i in 0..E1_old_odd.len() {
-                E1_old.push(E1_old_odd[i]);
-                E1_old.push(E1_old_even[i]);
-            }
-            E1_old
-        } else {
-            // println!("Don't expect to call this");
-            vec![self.current_scalar; 1]
-        }
-    }
-
-    #[cfg(test)]
     pub fn merge(&self) -> DensePolynomial<F> {
-        match self.binding_order {
+        let evals = match self.binding_order {
             BindingOrder::LowToHigh => {
-                if self.current_index == 0 {
-                    return DensePolynomial::new(vec![self.current_scalar]);
-                }
-
-                let e_in = self.E_in_current();
-                let e_out = self.E_out_current();
-
-                // Low-to-high: remaining variables are w_0...w_{i-1}.
-                // The initial split is w = [w_out, w_in, w_last].
-                // w_out corresponds to lower-order bits of the hypercube, w_in to higher-order.
-                // So e_out is the inner loop, e_in is the outer loop.
-                let mut merged_evals = vec![F::zero(); e_in.len() * e_out.len()];
-                for i in 0..e_in.len() {
-                    for j in 0..e_out.len() {
-                        merged_evals[i * e_out.len() + j] = e_in[i] * e_out[j];
-                    }
-                }
-
-                for val in &mut merged_evals {
-                    *val *= self.current_scalar;
-                }
-
-                DensePolynomial::new(merged_evals)
+                // For low-to-high, current_index tracks how many variables remain unbound
+                // We want eq(w[0..current_index], x)
+                EqPolynomial::evals(&self.w[..self.current_index])
+                    .iter()
+                    .map(|x| *x * self.current_scalar)
+                    .collect()
             }
             BindingOrder::HighToLow => {
-                if self.current_index == 0 {
-                    // Initial state - use the cached values
-                    let e_in = self.E_in_current();
-                    let e_out = self.E_out_current();
-
-                    let mut merged_evals = vec![F::zero(); e_in.len() * e_out.len()];
-                    for i in 0..e_in.len() {
-                        for j in 0..e_out.len() {
-                            merged_evals[i * e_out.len() + j] = e_in[i] * e_out[j] * self.current_scalar;
-                        }
-                    }
-                    return DensePolynomial::new(merged_evals);
-                }
-
-                if self.current_index >= self.w.len() {
-                    return DensePolynomial::new(vec![self.current_scalar]);
-                }
-
-                // For high-to-low, after binding some variables from the first half,
-                // we need to handle the transition correctly
-                if self.current_index <= self.w.len() / 2 {
-                    // Still binding in the first half
-                    let e_in = self.E_in_current();
-                    let e_out = self.E_out_current();
-
-                    let mut merged_evals = vec![F::zero(); e_in.len() * e_out.len()];
-                    for i in 0..e_in.len() {
-                        for j in 0..e_out.len() {
-                            merged_evals[i * e_out.len() + j] = e_in[i] * e_out[j] * self.current_scalar;
-                        }
-                    }
-                    DensePolynomial::new(merged_evals)
-                } else {
-                    // Binding in the second half - need to swap the order
-                    let e_in = self.E_in_current();
-                    let e_out = self.E_out_current();
-
-                    let mut merged_evals = vec![F::zero(); e_in.len() * e_out.len()];
-                    // When binding in the second half, we need to handle the fact that
-                    // E_in now represents a fully bound set (single value)
-                    // The evaluations should be in reverse order
-                    for j in 0..e_out.len() {
-                        for i in 0..e_in.len() {
-                            merged_evals[j * e_in.len() + i] = e_in[i] * e_out[j] * self.current_scalar;
-                        }
-                    }
-                    DensePolynomial::new(merged_evals)
-                }
+                // For high-to-low, current_index tracks how many variables have been bound
+                // We want eq(w[current_index..], x)
+                EqPolynomial::evals(&self.w[self.current_index..])
+                    .iter()
+                    .map(|x| *x * self.current_scalar)
+                    .collect()
             }
-        }
+        };
+        DensePolynomial::new(evals)
+    }
+
+    /// Get the coefficient at the given index of the bound polynomial.
+    /// TODO(markosg04) optimize this with tensor product?
+    pub fn get_bound_coeff(&self, index: usize) -> F {
+        // For now, use merge() to ensure correctness
+        // TODO: Optimize this by using cached values correctly for both binding orders
+        self.merge().Z[index]
     }
 }
-
 
 #[cfg(test)]
 mod tests {
