@@ -49,8 +49,9 @@ impl Tracer {
     /// which would indicate a bug in concurrent trace recording.
     pub fn capture_pre_state(&self, instr: ONNXInstr, inputs: Vec<Tensor<i128>>) {
         let mut cycle = ONNXCycle {
-            instr,
+            instr: instr.clone(),
             memory_state: MemoryState::default(),
+            advice_value: None,
         };
         if instr.ts1.is_some() {
             cycle.memory_state.ts1_val = Some(inputs[0].clone())

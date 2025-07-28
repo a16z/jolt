@@ -438,6 +438,8 @@ impl Node {
             ts2: self.inputs.get(1).map(node_idx),
             // The output tensor is always the current node's index.
             td: Some(self.idx),
+            imm: None,
+            virtual_sequence_remaining: None,
         }
     }
 }
@@ -471,7 +473,7 @@ impl From<&SupportedOp> for ONNXOpcode {
             SupportedOp::Hybrid(hybrid_op) => hybrid_op.into(),
             SupportedOp::Input(input_op) => input_op.into(),
             SupportedOp::Constant(constant) => constant.into(),
-            SupportedOp::RebaseScale(rebase_scale) => (&*rebase_scale.inner).into(),
+            SupportedOp::RebaseScale(rebase_scale) => rebase_scale.into(),
             SupportedOp::Unknown(unknown) => unknown.into(),
             SupportedOp::Rescaled(rescaled) => (&*rescaled.inner).into(),
         }
@@ -863,6 +865,12 @@ impl Op<i128> for RebaseScale {
 
     fn clone_dyn(&self) -> Box<dyn Op<i128>> {
         Box::new(self.clone()) // Forward to the derive(Clone) impl
+    }
+}
+
+impl From<&RebaseScale> for ONNXOpcode {
+    fn from(value: &RebaseScale) -> Self {
+        ONNXOpcode::RebaseScale(Box::new((&*value.inner).into()))
     }
 }
 

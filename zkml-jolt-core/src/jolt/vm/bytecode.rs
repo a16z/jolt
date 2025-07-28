@@ -150,7 +150,7 @@ where
             .iter()
             .map(|instr| {
                 let mut linear_combination = F::zero();
-                linear_combination += instr.opcode.into_bitflag().field_mul(gamma_pows[0]);
+                linear_combination += instr.opcode.clone().into_bitflag().field_mul(gamma_pows[0]);
                 linear_combination += (instr.address as u64).field_mul(gamma_pows[1]);
                 linear_combination +=
                     (instr.ts1.unwrap_or_default() as u64).field_mul(gamma_pows[2]);

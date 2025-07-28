@@ -200,7 +200,7 @@ impl Model {
             // Fetch and Decode
             let mut inputs = Self::node_inputs(idx, n, &results)?;
             let instr = decode_node((idx, n));
-            self.tracer.capture_pre_state(instr, inputs.clone());
+            self.tracer.capture_pre_state(instr.clone(), inputs.clone());
             if n.is_lookup() {
                 Self::lookup_check(&inputs, &mut max_lookup_inputs, &mut min_lookup_inputs)?;
             }

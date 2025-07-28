@@ -13,6 +13,7 @@ use crate::tensor::Tensor;
 pub struct ONNXCycle {
     pub instr: ONNXInstr,
     pub memory_state: MemoryState,
+    pub advice_value: Option<i128>,
 }
 
 impl ONNXCycle {
@@ -20,6 +21,7 @@ impl ONNXCycle {
         ONNXCycle {
             instr: ONNXInstr::no_op(),
             memory_state: MemoryState::default(),
+            advice_value: None,
         }
     }
 }
@@ -31,7 +33,7 @@ pub struct MemoryState {
     pub td_post_val: Option<Tensor<i128>>,
 }
 
-#[derive(Clone, Debug, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 /// Represents a single ONNX instruction parsed from the model.
 /// Represents a single ONNX instruction in the program code.
 ///
@@ -71,6 +73,13 @@ pub struct ONNXInstr {
     /// This is analogous to the `rd` register specifier in RISC-V, indicating
     /// where the result of the operation should be written.
     pub td: Option<usize>,
+    pub imm: Option<i128>,
+    /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
+    /// Jolt paper), then this contains the number of virtual instructions after this
+    /// one in the sequence. I.e. if this is the last instruction in the sequence,
+    /// `virtual_sequence_remaining` will be Some(0); if this is the penultimate instruction
+    /// in the sequence, `virtual_sequence_remaining` will be Some(1); etc.
+    pub virtual_sequence_remaining: Option<usize>,
 }
 
 impl ONNXInstr {
@@ -81,6 +90,8 @@ impl ONNXInstr {
             ts1: None,
             ts2: None,
             td: None,
+            imm: None,
+            virtual_sequence_remaining: None,
         }
     }
 }
@@ -90,7 +101,7 @@ impl ONNXInstr {
 //       This reduced ISA currently includes only the opcodes commonly used in such models.
 //       Future phases should extend this set to support a broader range of ONNX operations.
 
-#[derive(Clone, Hash, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Hash, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 /// Operation code uniquely identifying each ONNX instruction's function
 pub enum ONNXOpcode {
     Noop,
@@ -112,10 +123,35 @@ pub enum ONNXOpcode {
     MeanOfSquares,
     Sigmoid,
     Softmax,
+    RebaseScale(Box<ONNXOpcode>),
+
+    // Virtual instructions
+    VirtualAdvice,
+    VirtualAssertValidSignedRemainder,
+    VirtualAssertValidUnsignedRemainder,
 }
 
 impl ONNXOpcode {
     pub fn into_bitflag(self) -> u64 {
-        1u64 << (self as u8)
+        match self {
+            ONNXOpcode::Noop => 1u64 << 0,
+            ONNXOpcode::Constant => 1u64 << 1,
+            ONNXOpcode::Input => 1u64 << 2,
+            ONNXOpcode::Add => 1u64 << 3,
+            ONNXOpcode::Sub => 1u64 << 4,
+            ONNXOpcode::Mul => 1u64 << 5,
+            ONNXOpcode::Div => 1u64 << 6,
+            ONNXOpcode::Pow => 1u64 << 7,
+            ONNXOpcode::Relu => 1u64 << 8,
+            ONNXOpcode::MatMult => 1u64 << 9,
+            ONNXOpcode::Gather => 1u64 << 10,
+            ONNXOpcode::Transpose => 1u64 << 11,
+            ONNXOpcode::Sqrt => 1u64 << 12,
+            ONNXOpcode::Sum => 1u64 << 13,
+            ONNXOpcode::MeanOfSquares => 1u64 << 14,
+            ONNXOpcode::Sigmoid => 1u64 << 15,
+            ONNXOpcode::Softmax => 1u64 << 16,
+            _ => panic!("ONNXOpcode not implemented in into_bitflag"),
+        }
     }
 }
