@@ -827,12 +827,102 @@ impl Model {
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
-/// A set of ONNX nodes that represent a computational graph.
+/// Represents a parsed computational graph consisting of ONNX nodes, inputs, and outputs.
+///
+/// `ParsedNodes` is the core data structure used to describe the internal representation of a computational graph
+/// after it has been loaded and converted from an ONNX model. It contains all the nodes (operations and subgraphs),
+/// as well as metadata about which nodes are considered inputs and outputs. This struct is central to the execution,
+/// transformation, and analysis of models within this module.
+///
+/// - After loading an ONNX model, the graph is parsed into a `ParsedNodes` instance.
+/// - The [`Model`] struct holds a `ParsedNodes` as its main graph representation.
+/// - During model execution (inference), the `inputs` field is used to map user-provided tensors to the correct nodes,
+///   and the `outputs` field is used to extract the final results after computation.
+/// - When exporting, tracing, or analyzing the model, `ParsedNodes` provides a complete and queryable view of the graph structure.
+///
+/// - Encapsulates the entire computational graph, including all nodes and their relationships.
+/// - Clearly separates the graph's structure (nodes) from its entry points (inputs) and exit points (outputs).
+/// - Enables flexible manipulation, traversal, and execution of the graph for various purposes (inference, optimization, etc.).
+/// - Supports both simple models and complex graphs with subgraphs (e.g., for control flow).
+///
+/// # Example
+/// ```ignore
+/// // Construct a simple graph: input -> add (with a constant) -> output
+/// let mut nodes = BTreeMap::new();
+/// nodes.insert(0, NodeType::Node(input_node));
+/// nodes.insert(1, NodeType::Node(const_node));
+/// nodes.insert(2, NodeType::Node(add_node));
+///
+/// let parsed = ParsedNodes {
+///     nodes,
+///     inputs: vec![0],           // Node 0 is the input node
+///     outputs: vec![(2, 0)],     // Node 2's output (outlet 0) is the model output
+/// };
+///
+/// // Use in a Model:
+/// let model = Model { graph: parsed, tracer: Tracer::default() };
+/// let result = model.forward(&[input_tensor]).unwrap();
+/// println!("Model output: {:?}", result.outputs);
+/// ```
 pub struct ParsedNodes {
     /// The nodes in the graph.
     pub nodes: BTreeMap<usize, NodeType>,
-    inputs: Vec<usize>,
-    outputs: Vec<Outlet>,
+    /// Indices of the input nodes for this computational graph.
+    ///
+    /// # Why we need this field
+    /// This field specifies which nodes in the graph are considered as inputs—i.e., the entry points where external data is fed into the model.
+    /// Each entry in this vector is the unique index (usize) of a node in the `nodes` map that acts as an input node.
+    /// This is essential for:
+    /// - Mapping user-provided input tensors to the correct nodes during model execution.
+    /// - Determining the expected input signature (shapes, types) of the model.
+    /// - Supporting models with multiple inputs (e.g., multi-branch networks).
+    ///
+    /// # What it does
+    /// When running inference, the code uses this vector to know which nodes should receive the input tensors provided by the user.
+    /// The order of indices in this vector determines the order in which input tensors should be supplied.
+    ///
+    /// # Example
+    /// For a simple model: `input -> const -> add`, where "input" is node 0, "const" is node 1, and "add" is node 2,
+    /// the `inputs` field would be: `vec![0]` (only node 0 is an input node).
+    pub inputs: Vec<usize>,
+
+    /// Output nodes and their outlet indices for this computational graph.
+    ///
+    /// # Why we need this field
+    /// This field defines which nodes (and which output slots, if a node has multiple outputs) are considered as the outputs of the model.
+    /// Each entry is a tuple `(node_index, outlet_index)`, where:
+    /// - `node_index` is the index of the node in the `nodes` map.
+    /// - `outlet_index` specifies which output of the node is used (for nodes with multiple outputs).
+    ///
+    /// This is essential for:
+    /// - Collecting the final results after model execution.
+    /// - Supporting models with multiple outputs (e.g., multi-task networks).
+    /// - Mapping the internal graph outputs to the user-facing model outputs.
+    ///
+    /// # What it does
+    /// After executing the graph, the code uses this vector to extract the correct output tensors from the results map.
+    /// The order of entries determines the order of outputs returned to the user.
+    ///
+    /// # Example
+    /// For the model: `input -> const -> add`, where "add" is node 2 and produces a single output at outlet 0,
+    /// the `outputs` field would be: `vec![(2, 0)]` (the output of node 2, outlet 0, is the model's output).
+    ///
+    /// # Usage Example
+    /// ```rust
+    /// // Suppose we have a graph:
+    /// // Node 0: Input
+    /// // Node 1: Constant
+    /// // Node 2: Add (inputs: Node 0, Node 1)
+    /// let parsed_nodes = ParsedNodes {
+    ///     nodes: /* ... */,
+    ///     inputs: vec![0],           // Node 0 is the input node
+    ///     outputs: vec![(2, 0)],     // Node 2's output (outlet 0) is the model output
+    /// };
+    /// // When running inference:
+    /// // - The input tensor is mapped to node 0.
+    /// // - After execution, the output is taken from node 2, outlet 0.
+    /// ```
+    pub outputs: Vec<Outlet>,
 }
 
 impl ParsedNodes {

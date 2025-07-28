@@ -81,8 +81,28 @@ pub type Outlet = (usize, usize);
 pub struct Node {
     /// [Op] i.e what operation this node represents.
     pub opkind: SupportedOp,
-    /// The denominator in the fixed point representation for the node's output.
-    /// Tensors of differing scales should not be combined.
+    /// The fixed-point output scale (denominator) for this node's output tensor.
+    ///
+    /// This value represents the scaling factor (denominator) used in fixed-point quantization for the output tensor of this node.
+    /// In quantized neural networks, real numbers are represented as integers scaled by a fixed denominator ("scale").
+    /// For example, if `out_scale = 1000`, then the integer value `1234` represents the real value `1.234`.
+    ///
+    /// - Ensures all tensors in the computation graph use compatible fixed-point representations.
+    /// - Prevents arithmetic errors when combining or comparing tensors from different nodes.
+    /// - Allows precise control over quantization error and numeric precision.
+    ///
+    /// # How is it calculated?
+    /// - For most nodes, the output scale is determined by the operation and the input scales, following quantization rules.
+    /// - For constants and inputs, it is set during quantization or model import.
+    /// - For nodes that require output scale alignment (e.g., for addition or concatenation), the scale may be "rebased" to a global maximum to ensure consistency.
+    ///
+    /// - Think of this as the "precision" of the node's output: higher values mean more decimal places are preserved.
+    /// - All nodes that directly feed into each other should have matching or compatible `out_scale` values.
+    /// - When debugging quantization issues, mismatches in `out_scale` are a common source of errors.
+    ///
+    /// # Important:
+    /// - Never combine tensors with different `out_scale` values without rescaling.
+    /// - This field is critical for correct, efficient, and numerically stable quantized inference.
     pub out_scale: i32,
     /// A list of [`Outlet`]s representing the sources of input tensors for this node.
     ///
