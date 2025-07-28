@@ -252,7 +252,8 @@ where
 //     Ok((res[0].clone(), res[1].clone()))
 // }
 
-/// input -> const -> add -> sub -> mul -> output
+/// # Program in (opcode, inputs) tuple format:
+/// [(input, []), (const, []), (add, [0, 1]), (sub, [0, 1]), (mul, [2, 3]), (output, [4])]
 pub fn custom_addsubmul_model() -> Model {
     const SCALE: i32 = 7;
     const NODE_OUTPUT_IDX: usize = 0;
