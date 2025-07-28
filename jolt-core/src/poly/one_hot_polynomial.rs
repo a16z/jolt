@@ -65,7 +65,7 @@ pub struct OneHotSumcheckState<F: JoltField> {
     /// Gruen version of B for testing
     #[cfg(test)]
     pub B_gruen: Option<crate::poly::split_eq_poly::GruenSplitEqPolynomialHighToLow<F>>,
-    /// P array for Gruen optimization - stores polynomial values
+    /// P array for Gruen optimization
     #[cfg(test)]
     pub P_arrays: Option<Vec<Vec<F>>>,
 }
@@ -211,14 +211,13 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                 if let Some(ref b_gruen) = shared_eq.B_gruen {
                     let mut gruen_evals = [F::zero(); 2];
                     
-                    // Match the computation pattern of the original code
+   
                     for k_prime in 0..B.len() / 2 {
                         // Get B evaluations at 0 and 2 for this k_prime using Gruen
                         let b_gruen_evals = b_gruen.sumcheck_evals_array::<2>(k_prime);
                         
                         let mut inner_sum = [F::zero(); 2];
                         
-                        // Iterate over k values in the same pattern as the original
                         for (k, &g_k) in G.iter()
                             .enumerate()
                             .skip(k_prime)
@@ -250,11 +249,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                         gruen_evals[1] += b_gruen_evals[1] * inner_sum[1];
                     }
                     
-                    // Use gruen_evals_deg_2 method to compute s(2) from s(0) and previous_claim
-                    // For degree 2 polynomial: previous_claim = s(0) + s(1)
-                    // let gruen_result = b_gruen.gruen_evals_deg_2(univariate_poly_evals[0], previous_claim);
-                    
-                    // Compare with the standard method
+            
                     assert_eq!(
                         univariate_poly_evals[0], gruen_evals[0],
                         "Round {}: Gruen s(0) mismatch", round
@@ -535,14 +530,11 @@ mod tests {
         let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
         let mut eq = DensePolynomial::new(EqPolynomial::evals(&r_concat));
 
-        // For Gruen testing: create high-to-low version of split eq polynomial
         use crate::poly::split_eq_poly::GruenSplitEqPolynomialHighToLow;
         let mut gruen_split_eq = GruenSplitEqPolynomialHighToLow::new(&r_concat);
         
-        // Create a separate copy of dense_poly for Gruen calculation
         let mut dense_poly_gruen = one_hot_poly.to_dense_poly();
 
-        // Verify that the regular eq polynomial and Gruen split eq are equivalent
         let initial_gruen_merged = gruen_split_eq.merge();
         assert_eq!(
             eq.Z[..eq.len()],
@@ -622,12 +614,10 @@ mod tests {
         let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
         let mut eq = DensePolynomial::new(EqPolynomial::evals(&r_concat));
 
-        // For Gruen testing: create high-to-low version of split eq polynomial
         use crate::poly::split_eq_poly::GruenSplitEqPolynomialHighToLow;
         let mut gruen_split_eq = GruenSplitEqPolynomialHighToLow::new(&r_concat);
         
         // Pre-compute the polynomial arrays P_k for the Gruen method
-        // In this case, we have a single polynomial (the one-hot polynomial)
         let mut P_arrays: Vec<DensePolynomial<Fr>> = vec![dense_poly.clone()];
 
         let mut previous_claim = Fr::zero();
@@ -643,7 +633,6 @@ mod tests {
                 
                 let mle_half_gruen = P_arrays[0].len() / 2;
                 
-                // For s(0), we sum over the first half of indices (where current round bit = 0)
                 gruen_message[0] = (0..mle_half_gruen)
                     .map(|i| {
                         // Get the eq evaluation for index i using Gruen's method
@@ -655,10 +644,9 @@ mod tests {
 
                 gruen_message[1] = Fr::from(4u64) * previous_claim - Fr::from(7u64) * gruen_message[0];
             } else {
-                // Cycle rounds - keep empty for now
             }
             
-            // Original expected message calculation for comparison
+            // Original
             let mut expected_message = vec![Fr::zero(), Fr::zero()];
             let mle_half = dense_poly.len() / 2;
 
