@@ -209,53 +209,83 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             {
                 // Test Gruen optimization
                 if let Some(ref b_gruen) = shared_eq.B_gruen {
-                    let mut gruen_evals = [F::zero(); 2];
+                    let mut gruen_eval_0 = F::zero();
                     
-   
-                    for k_prime in 0..B.len() / 2 {
-                        // Get B evaluations at 0 and 2 for this k_prime using Gruen
-                        let b_gruen_evals = b_gruen.sumcheck_evals_array::<2>(k_prime);
-                        
-                        let mut inner_sum = [F::zero(); 2];
-                        
-                        for (k, &g_k) in G.iter()
-                            .enumerate()
-                            .skip(k_prime)
-                            .step_by(B.len() / 2)
-                        {
-                            let k_m = (k >> (num_unbound_address_variables - 1)) & 1;
-                            let f_k = F[k >> num_unbound_address_variables];
-                            let g_times_f = g_k * f_k;
+                    // Check if E_in is fully bound
+                    if b_gruen.E_in_current_len() == 1 {
+                        // E_in is fully bound
+                        for k_prime in 0..b_gruen.len() / 2 {
+                            let b_eval = b_gruen.E_out_current()[k_prime];
                             
-                            // Compute contribution to s(0)
-                            let contrib_0 = match k_m {
-                                0 => g_times_f,
-                                1 => F::zero(),
-                                _ => unreachable!(),
-                            };
+                            let mut inner_sum = F::zero();
                             
-                            // Compute contribution to s(2)
-                            let contrib_2 = match k_m {
-                                0 => -g_times_f,
-                                1 => g_times_f + g_times_f,
-                                _ => unreachable!(),
-                            };
+                            for (k, &g_k) in G.iter()
+                                .enumerate()
+                                .skip(k_prime)
+                                .step_by(b_gruen.len() / 2)
+                            {
+                                let k_m = (k >> (num_unbound_address_variables - 1)) & 1;
+                                let f_k = F[k >> num_unbound_address_variables];
+                                let g_times_f = g_k * f_k;
+                                
+                                // Compute contribution to s(0)
+                                // For c = 0: eq(k_m, 0) = 1 if k_m == 0, else 0
+                                let contrib_0 = match k_m {
+                                    0 => g_times_f,
+                                    1 => F::zero(),
+                                    _ => unreachable!(),
+                                };
+                                
+                                inner_sum += contrib_0;
+                            }
                             
-                            inner_sum[0] += contrib_0;
-                            inner_sum[1] += contrib_2;
+                            gruen_eval_0 += b_eval * inner_sum;
                         }
+                    } else {
+                        // E_in has not been fully bound
+                        let num_x_in_bits = b_gruen.E_in_current_len().log_2();
+                        let x_bitmask = (1 << num_x_in_bits) - 1;
                         
-                        gruen_evals[0] += b_gruen_evals[0] * inner_sum[0];
-                        gruen_evals[1] += b_gruen_evals[1] * inner_sum[1];
+                        for k_prime in 0..b_gruen.len() / 2 {
+                            let x_out = k_prime >> num_x_in_bits;
+                            let x_in = k_prime & x_bitmask;
+                            let b_e_out_eval = b_gruen.E_out_current()[x_out];
+                            let b_e_in_eval = b_gruen.E_in_current()[x_in];
+                            
+                            let mut inner_sum = F::zero();
+                            
+                            for (k, &g_k) in G.iter()
+                                .enumerate()
+                                .skip(k_prime)
+                                .step_by(b_gruen.len() / 2)
+                            {
+                                let k_m = (k >> (num_unbound_address_variables - 1)) & 1;
+                                let f_k = F[k >> num_unbound_address_variables];
+                                let g_times_f = g_k * f_k;
+                                
+                                // Compute contribution to s(0)
+                                // For c = 0: eq(k_m, 0) = 1 if k_m == 0, else 0
+                                let contrib_0 = match k_m {
+                                    0 => g_times_f,
+                                    1 => F::zero(),
+                                    _ => unreachable!(),
+                                };
+                                
+                                inner_sum += contrib_0;
+                            }
+                            
+                            gruen_eval_0 += b_e_out_eval * b_e_in_eval * inner_sum;
+                        }
                     }
+
+                    let gruen_test: [F; 2] = b_gruen.gruen_evals_deg_2(gruen_eval_0, previous_claim);
                     
-            
                     assert_eq!(
-                        univariate_poly_evals[0], gruen_evals[0],
+                        univariate_poly_evals[0], gruen_test[0],
                         "Round {}: Gruen s(0) mismatch", round
                     );
                     assert_eq!(
-                        univariate_poly_evals[1], gruen_evals[1],
+                        univariate_poly_evals[1], gruen_test[1],
                         "Round {}: Gruen s(2) mismatch", round
                     ); 
                 }
