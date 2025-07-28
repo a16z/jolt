@@ -136,7 +136,6 @@ struct Keccak256SequenceBuilder {
 /// The actual Keccak-256 logic is implemented in the `build` method, which generates
 /// the appropriate instruction sequence. This struct is not intended for direct execution,
 /// but rather for constructing instruction traces or emulation flows.
-
 impl Keccak256SequenceBuilder {
     fn new(
         address: u64,
@@ -273,6 +272,7 @@ impl Keccak256SequenceBuilder {
         // We use vr[25..49] as the temporary state B.
 
         // --- 1. Rotate each lane and store in the permuted position in B ---
+        #[allow(clippy::needless_range_loop)] // This is clearer than enumerating
         for x in 0..5 {
             for y in 0..5 {
                 // Get the source lane A[x,y] and its rotation offset.
