@@ -181,4 +181,17 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn show_keccak_stats() {
+        let mut h = KeccakCpuHarness::new();
+        h.load_state(&xkcp_vectors::AFTER_ONE_PERMUTATION);
+        let bytecode_len = h.trace_keccak_instruction().len();
+
+        println!(
+            "Keccak1600: bytecode length {}, {:.2} instructions per byte",
+            bytecode_len,
+            bytecode_len as f64 / 136.0,
+        );
+    }
 }

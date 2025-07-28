@@ -1,10 +1,9 @@
-//! Test utilities for Keccak256 instruction tests
-//!
-//! This module contains Keccak-specific setup code, utilities, and helper functions
-//! to reduce code duplication in the test suite. It relies on the generic
-//! `CpuTestHarness` for the underlying emulator setup.
-
 #[cfg(test)]
+// Test utilities for Keccak256 instruction tests
+//
+// This module contains Keccak-specific setup code, utilities, and helper functions
+// to reduce code duplication in the test suite. It relies on the generic
+// `CpuTestHarness` for the underlying emulator setup.
 use super::*;
 use crate::emulator::mmu::DRAM_BASE;
 use crate::emulator::test_harness::{CpuTestHarness, InstructionTestCase};
@@ -92,9 +91,11 @@ impl KeccakCpuHarness {
         instruction.execute(&mut self.harness.cpu, &mut ());
     }
 
-    pub fn trace_keccak_instruction(&mut self) {
+    pub fn trace_keccak_instruction(&mut self) -> Vec<crate::instruction::RV32IMCycle> {
         let instruction = Self::instruction();
-        instruction.trace(&mut self.harness.cpu, None);
+        let mut trace = Vec::new();
+        instruction.trace(&mut self.harness.cpu, Some(&mut trace));
+        trace
     }
 
     pub fn execute_virtual_sequence(&mut self, sequence: &[RV32IMInstruction]) {
