@@ -5,7 +5,11 @@ use onnx_tracer::{
     trace_types::{MemoryState, ONNXCycle, ONNXInstr, ONNXOpcode},
 };
 
-use crate::jolt::instruction::{VirtualInstructionSequence, virtual_advice::ADVICEInstruction};
+use crate::jolt::instruction::{
+    VirtualInstructionSequence, add::ADD, beq::BEQInstruction, mul::MUL,
+    virtual_advice::ADVICEInstruction, virtual_assert_valid_div0::AssertValidDiv0Instruction,
+    virtual_assert_valid_signed_remainder::AssertValidSignedRemainderInstruction,
+};
 
 /// Perform signed division and return the result
 pub struct DIVInstruction<const WORD_SIZE: usize>;
@@ -78,28 +82,29 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
             advice_value: Some(quotient as i128), // FIXME
         });
 
-        // let r = ADVICEInstruction::<WORD_SIZE>(remainder).lookup_entry();
-        // virtual_trace.push(RVTraceRow {
-        //     instruction: ELFInstruction {
-        //         address: trace_row.instruction.address,
-        //         opcode: RV32IM::VIRTUAL_ADVICE,
-        //         rs1: None,
-        //         rs2: None,
-        //         rd: v_r,
-        //         imm: None,
-        //         virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
-        //     },
-        //     register_state: RegisterState {
-        //         rs1_val: None,
-        //         rs2_val: None,
-        //         rd_post_val: Some(r),
-        //     },
-        //     memory_state: None,
-        //     advice_value: Some(remainder),
-        // });
+        let r = ADVICEInstruction::<WORD_SIZE>(remainder).to_lookup_output();
+        virtual_trace.push(ONNXCycle {
+            instr: ONNXInstr {
+                address: cycle.instr.address,
+                opcode: ONNXOpcode::VirtualAdvice,
+                ts1: None,
+                ts2: None,
+                td: v_r,
+                imm: None,
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+            },
+            memory_state: MemoryState {
+                ts1_val: None,
+                ts2_val: None,
+                td_post_val: Some(Tensor::from(vec![r as i128].into_iter())), // FIXME
+            },
+            advice_value: Some(remainder as i128), // FIXME: not sure i128 is the right type here
+        });
 
-        // let is_valid: u64 = AssertValidSignedRemainderInstruction::<WORD_SIZE>(r, y).lookup_entry();
-        // assert_eq!(is_valid, 1);
+        let is_valid: u64 =
+            AssertValidSignedRemainderInstruction::<WORD_SIZE>(r, y as u64 /* FIXME */)
+                .to_lookup_output();
+        assert_eq!(is_valid, 1);
         // virtual_trace.push(RVTraceRow {
         //     instruction: ELFInstruction {
         //         address: trace_row.instruction.address,
@@ -118,9 +123,27 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
         //     memory_state: None,
         //     advice_value: None,
         // });
+        virtual_trace.push(ONNXCycle {
+            instr: ONNXInstr {
+                address: cycle.instr.address,
+                opcode: ONNXOpcode::VirtualAssertValidSignedRemainder,
+                ts1: v_r,
+                ts2: r_y,
+                td: None,
+                imm: None,
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+            },
+            memory_state: MemoryState {
+                ts1_val: Some(Tensor::from(vec![r as i128].into_iter())),
+                ts2_val: Some(Tensor::from(vec![y as i128].into_iter())),
+                td_post_val: None,
+            },
+            advice_value: None,
+        });
 
-        // let is_valid: u64 = AssertValidDiv0Instruction::<WORD_SIZE>(y, q).lookup_entry();
-        // assert_eq!(is_valid, 1);
+        let is_valid: u64 =
+            AssertValidDiv0Instruction::<WORD_SIZE>(y as u64 /* FIXME */, q).to_lookup_output();
+        assert_eq!(is_valid, 1);
         // virtual_trace.push(RVTraceRow {
         //     instruction: ELFInstruction {
         //         address: trace_row.instruction.address,
@@ -139,28 +162,44 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
         //     memory_state: None,
         //     advice_value: None,
         // });
+        virtual_trace.push(ONNXCycle {
+            instr: ONNXInstr {
+                address: cycle.instr.address,
+                opcode: ONNXOpcode::VirtualAssertValidSignedRemainder,
+                ts1: r_y,
+                ts2: v_q,
+                td: None,
+                imm: None,
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+            },
+            memory_state: MemoryState {
+                ts1_val: Some(Tensor::from(vec![y as i128].into_iter())),
+                ts2_val: Some(Tensor::from(vec![q as i128].into_iter())),
+                td_post_val: None,
+            },
+            advice_value: None,
+        });
 
-        // let q_y = MULInstruction::<WORD_SIZE>(q, y).lookup_entry();
-        // virtual_trace.push(RVTraceRow {
-        //     instruction: ELFInstruction {
-        //         address: trace_row.instruction.address,
-        //         opcode: RV32IM::MUL,
-        //         rs1: v_q,
-        //         rs2: r_y,
-        //         rd: v_qy,
-        //         imm: None,
-        //         virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
-        //     },
-        //     register_state: RegisterState {
-        //         rs1_val: Some(q),
-        //         rs2_val: Some(y),
-        //         rd_post_val: Some(q_y),
-        //     },
-        //     memory_state: None,
-        //     advice_value: None,
-        // });
+        let q_y = MUL::<WORD_SIZE>(q, y as u64 /* FIXME */).to_lookup_output();
+        virtual_trace.push(ONNXCycle {
+            instr: ONNXInstr {
+                address: cycle.instr.address,
+                opcode: ONNXOpcode::Mul,
+                ts1: v_q,
+                ts2: r_y,
+                td: v_qy,
+                imm: None,
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+            },
+            memory_state: MemoryState {
+                ts1_val: Some(Tensor::from(vec![q as i128].into_iter())),
+                ts2_val: Some(Tensor::from(vec![y as i128].into_iter())),
+                td_post_val: Some(Tensor::from(vec![q_y as i128].into_iter())),
+            },
+            advice_value: None,
+        });
 
-        // let add_0 = ADDInstruction::<WORD_SIZE>(q_y, r).lookup_entry();
+        let add_0 = ADD::<WORD_SIZE>(q_y, r).to_lookup_output();
         // virtual_trace.push(RVTraceRow {
         //     instruction: ELFInstruction {
         //         address: trace_row.instruction.address,
@@ -179,8 +218,26 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
         //     memory_state: None,
         //     advice_value: None,
         // });
+        virtual_trace.push(ONNXCycle {
+            instr: ONNXInstr {
+                address: cycle.instr.address,
+                opcode: ONNXOpcode::Add,
+                ts1: v_qy,
+                ts2: v_r,
+                td: v_0,
+                imm: None,
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+            },
+            memory_state: MemoryState {
+                ts1_val: Some(Tensor::from(vec![q_y as i128].into_iter())),
+                ts2_val: Some(Tensor::from(vec![r as i128].into_iter())),
+                td_post_val: Some(Tensor::from(vec![add_0 as i128].into_iter())),
+            },
+            advice_value: None,
+        });
 
-        // let _assert_eq = BEQInstruction::<WORD_SIZE>(add_0, x).lookup_entry();
+        let _assert_eq =
+            BEQInstruction::<WORD_SIZE>(add_0, x as u64 /* FIXME */).to_lookup_output();
         // virtual_trace.push(RVTraceRow {
         //     instruction: ELFInstruction {
         //         address: trace_row.instruction.address,
@@ -199,6 +256,23 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
         //     memory_state: None,
         //     advice_value: None,
         // });
+        virtual_trace.push(ONNXCycle {
+            instr: ONNXInstr {
+                address: cycle.instr.address,
+                opcode: ONNXOpcode::VirtualAssertEq,
+                ts1: v_0,
+                ts2: r_x,
+                td: None,
+                imm: None,
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+            },
+            memory_state: MemoryState {
+                ts1_val: Some(Tensor::from(vec![add_0 as i128].into_iter())),
+                ts2_val: Some(Tensor::from(vec![x as i128].into_iter())),
+                td_post_val: None,
+            },
+            advice_value: None,
+        });
 
         // virtual_trace.push(RVTraceRow {
         //     instruction: ELFInstruction {
@@ -218,6 +292,23 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
         //     memory_state: None,
         //     advice_value: None,
         // });
+        virtual_trace.push(ONNXCycle {
+            instr: ONNXInstr {
+                address: cycle.instr.address,
+                opcode: ONNXOpcode::VirtualMove,
+                ts1: v_q,
+                ts2: None,
+                td: cycle.instr.td,
+                imm: None,
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+            },
+            memory_state: MemoryState {
+                ts1_val: Some(Tensor::from(vec![q as i128].into_iter())),
+                ts2_val: None,
+                td_post_val: Some(Tensor::from(vec![q as i128].into_iter())),
+            },
+            advice_value: None,
+        });
 
         virtual_trace
     }

@@ -128,7 +128,9 @@ pub enum ONNXOpcode {
     // Virtual instructions
     VirtualAdvice,
     VirtualAssertValidSignedRemainder,
-    VirtualAssertValidUnsignedRemainder,
+    VirtualAssertValidDiv0,
+    VirtualMove,
+    VirtualAssertEq,
 }
 
 impl ONNXOpcode {
