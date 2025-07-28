@@ -53,8 +53,8 @@ impl VirtualInstructionSequence for SRL {
         // Virtual registers used in sequence
         let v_bitmask = virtual_register_index(6) as usize;
 
-        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(1);
         let mut sequence = vec![];
+        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(1);
 
         let bitmask = VirtualShiftRightBitmask {
             address: self.address,

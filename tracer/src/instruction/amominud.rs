@@ -84,7 +84,9 @@ impl VirtualInstructionSequence for AMOMINUD {
         let v_sel_rs2 = virtual_register_index(8) as usize;
         let v_sel_rd = virtual_register_index(9) as usize;
         let v_tmp = virtual_register_index(10) as usize;
+
         let mut sequence = vec![];
+        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(7);
 
         let ld = LD {
             address: self.address,
@@ -93,9 +95,10 @@ impl VirtualInstructionSequence for AMOMINUD {
                 rs1: self.operands.rs1,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(6),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(ld.into());
+        virtual_sequence_remaining -= 1;
 
         let sltu = SLTU {
             address: self.address,
@@ -104,9 +107,10 @@ impl VirtualInstructionSequence for AMOMINUD {
                 rs1: self.operands.rs2,
                 rs2: v_rd,
             },
-            virtual_sequence_remaining: Some(5),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(sltu.into());
+        virtual_sequence_remaining -= 1;
 
         let xori = XORI {
             address: self.address,
@@ -115,9 +119,10 @@ impl VirtualInstructionSequence for AMOMINUD {
                 rs1: v_sel_rs2,
                 imm: 1,
             },
-            virtual_sequence_remaining: Some(4),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(xori.into());
+        virtual_sequence_remaining -= 1;
 
         let mul = MUL {
             address: self.address,
@@ -126,9 +131,10 @@ impl VirtualInstructionSequence for AMOMINUD {
                 rs1: v_sel_rs2,
                 rs2: self.operands.rs2,
             },
-            virtual_sequence_remaining: Some(3),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(mul.into());
+        virtual_sequence_remaining -= 1;
 
         let mul = MUL {
             address: self.address,
@@ -137,9 +143,10 @@ impl VirtualInstructionSequence for AMOMINUD {
                 rs1: v_sel_rd,
                 rs2: v_rd,
             },
-            virtual_sequence_remaining: Some(2),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(mul.into());
+        virtual_sequence_remaining -= 1;
 
         let add = ADD {
             address: self.address,
@@ -148,9 +155,10 @@ impl VirtualInstructionSequence for AMOMINUD {
                 rs1: v_tmp,
                 rs2: v_rs2,
             },
-            virtual_sequence_remaining: Some(1),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(add.into());
+        virtual_sequence_remaining -= 1;
 
         let sd = SD {
             address: self.address,
@@ -159,9 +167,10 @@ impl VirtualInstructionSequence for AMOMINUD {
                 rs2: v_rs2,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(1),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(sd.into());
+        virtual_sequence_remaining -= 1;
 
         let vmove = VirtualMove {
             address: self.address,
@@ -170,7 +179,7 @@ impl VirtualInstructionSequence for AMOMINUD {
                 rs1: v_rd,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(0),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(vmove.into());
 

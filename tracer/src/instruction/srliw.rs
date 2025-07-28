@@ -65,8 +65,8 @@ impl VirtualInstructionSequence for SRLIW {
             Xlen::Bit32 => panic!("SRLIW is invalid in 32b mode"),
             Xlen::Bit64 => ((self.operands.imm & 0x1f) + 32, 64),
         };
-        let ones = (1u64 << (len - shift)) - 1;
-        let bitmask = ones << shift;
+        let ones = (1u128 << (len - shift)) - 1;
+        let bitmask = (ones << shift) as u64;
 
         let srl = VirtualSRLI {
             address: self.address,

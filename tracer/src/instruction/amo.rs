@@ -76,8 +76,10 @@ pub fn amo_pre64(
         },
         virtual_sequence_remaining: Some(remaining),
     };
-    sequence.extend(slli.virtual_sequence(Xlen::Bit64));
-    remaining -= 1;
+    let slli_sequence = slli.virtual_sequence(Xlen::Bit64);
+    let slli_sequence_len = slli_sequence.len();
+    sequence.extend(slli_sequence);
+    remaining -= slli_sequence_len;
 
     let srl = SRL {
         address,
@@ -88,8 +90,10 @@ pub fn amo_pre64(
         },
         virtual_sequence_remaining: Some(remaining),
     };
-    sequence.extend(srl.virtual_sequence(Xlen::Bit64));
-    remaining -= 2;
+    let srl_sequence = srl.virtual_sequence(Xlen::Bit64);
+    let srl_sequence_len = srl_sequence.len();
+    sequence.extend(srl_sequence);
+    remaining -= srl_sequence_len;
 
     remaining
 }
@@ -115,7 +119,7 @@ pub fn amo_post64(
             rs1: 0,
             imm: -1i64 as u64,
         },
-        virtual_sequence_remaining: Some(8),
+        virtual_sequence_remaining: Some(remaining),
     };
     sequence.push(ori.into()); // v_mask gets 0xFFFFFFFF_FFFFFFFF
     remaining -= 1;
@@ -127,7 +131,7 @@ pub fn amo_post64(
             rs1: v_mask,
             imm: 32, // Logical right shift by 32 bits
         },
-        virtual_sequence_remaining: Some(7),
+        virtual_sequence_remaining: Some(remaining),
     };
     sequence.push(srli.into()); // v_mask gets 0x00000000_FFFFFFFF
     remaining -= 1;
@@ -141,8 +145,10 @@ pub fn amo_post64(
         },
         virtual_sequence_remaining: Some(remaining),
     };
-    sequence.extend(sll_mask.virtual_sequence(Xlen::Bit64));
-    remaining -= 2;
+    let sll_mask_sequence = sll_mask.virtual_sequence(Xlen::Bit64);
+    let sll_mask_sequence_len = sll_mask_sequence.len();
+    sequence.extend(sll_mask_sequence);
+    remaining -= sll_mask_sequence_len;
 
     let sll_value = SLL {
         address,
@@ -153,8 +159,10 @@ pub fn amo_post64(
         },
         virtual_sequence_remaining: Some(remaining),
     };
-    sequence.extend(sll_value.virtual_sequence(Xlen::Bit64));
-    remaining -= 2;
+    let sll_value_sequence = sll_value.virtual_sequence(Xlen::Bit64);
+    let sll_value_sequence_len = sll_value_sequence.len();
+    sequence.extend(sll_value_sequence);
+    remaining -= sll_value_sequence_len;
 
     let xor = XOR {
         address,
@@ -211,10 +219,16 @@ pub fn amo_post64(
             rs1: v_rd,
             imm: 0,
         },
-        virtual_sequence_remaining: Some(0),
+        virtual_sequence_remaining: Some(remaining),
     };
     sequence.push(signext.into());
-    assert!(remaining == 0);
+
+    assert!(
+        remaining == 0,
+        "sequence: {:?}, remaining: {}",
+        sequence.len(),
+        remaining
+    );
 }
 
 pub fn amo_pre32(
@@ -274,7 +288,6 @@ pub fn amo_post32(
         virtual_sequence_remaining: Some(remaining),
     };
     sequence.push(vmove.into());
-    remaining -= 1;
 
     assert!(
         remaining == 0,

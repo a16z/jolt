@@ -43,8 +43,8 @@ impl RISCVTrace for SLLI {
 
 impl VirtualInstructionSequence for SLLI {
     fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(0);
         let mut sequence = vec![];
+        let virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(0);
 
         let mask = match xlen {
             Xlen::Bit32 => 0x1f, //low 5bits

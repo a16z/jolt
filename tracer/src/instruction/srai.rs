@@ -45,15 +45,15 @@ impl RISCVTrace for SRAI {
 
 impl VirtualInstructionSequence for SRAI {
     fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(0);
         let mut sequence = vec![];
+        let virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(0);
 
         let (shift, len) = match xlen {
             Xlen::Bit32 => (self.operands.imm & 0x1f, 32),
             Xlen::Bit64 => (self.operands.imm & 0x3f, 64),
         };
-        let ones = (1u64 << (len - shift)) - 1;
-        let bitmask = ones << shift;
+        let ones = (1u128 << (len - shift)) - 1;
+        let bitmask = (ones << shift) as u64;
 
         let sra = VirtualSRAI {
             address: self.address,

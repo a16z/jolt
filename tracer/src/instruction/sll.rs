@@ -49,8 +49,8 @@ impl VirtualInstructionSequence for SLL {
         // Virtual registers used in sequence
         let v_pow2 = virtual_register_index(6) as usize;
 
-        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(1);
         let mut sequence = vec![];
+        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(1);
 
         let pow2 = RV32IMInstruction::VirtualPow2(VirtualPow2 {
             address: self.address,

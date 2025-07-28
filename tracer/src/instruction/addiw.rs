@@ -49,6 +49,8 @@ impl RISCVTrace for ADDIW {
 impl VirtualInstructionSequence for ADDIW {
     fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         let mut sequence = vec![];
+        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(1);
+
         let addi = ADDI {
             address: self.address,
             operands: FormatI {
@@ -56,9 +58,10 @@ impl VirtualInstructionSequence for ADDIW {
                 rs1: self.operands.rs1,
                 imm: self.operands.imm,
             },
-            virtual_sequence_remaining: Some(1),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(addi.into());
+        virtual_sequence_remaining -= 1;
 
         let signext = VirtualSignExtend {
             address: self.address,
@@ -67,7 +70,7 @@ impl VirtualInstructionSequence for ADDIW {
                 rs1: self.operands.rd,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(0),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(signext.into());
 

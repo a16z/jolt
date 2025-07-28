@@ -213,8 +213,9 @@ impl AMOMINUW {
         let v_tmp = virtual_register_index(19) as usize;
 
         let mut sequence = vec![];
-        let mut remaining = 23;
-        remaining = amo_pre64(
+        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(23);
+
+        virtual_sequence_remaining = amo_pre64(
             &mut sequence,
             self.address,
             self.operands.rs1,
@@ -222,7 +223,7 @@ impl AMOMINUW {
             v_dword_address,
             v_dword,
             v_shift,
-            remaining,
+            virtual_sequence_remaining,
         );
 
         let ext = VirtualExtend {
@@ -232,10 +233,10 @@ impl AMOMINUW {
                 rs1: self.operands.rs2,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(remaining),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(ext.into());
-        remaining -= 1;
+        virtual_sequence_remaining -= 1;
 
         let ext = VirtualExtend {
             address: self.address,
@@ -244,10 +245,10 @@ impl AMOMINUW {
                 rs1: v_rd,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(remaining),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(ext.into());
-        remaining -= 1;
+        virtual_sequence_remaining -= 1;
 
         let sltu = SLTU {
             address: self.address,
@@ -256,10 +257,10 @@ impl AMOMINUW {
                 rs1: v_rs2,
                 rs2: v_tmp,
             },
-            virtual_sequence_remaining: Some(remaining),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(sltu.into());
-        remaining -= 1;
+        virtual_sequence_remaining -= 1;
 
         let xori = XORI {
             address: self.address,
@@ -268,10 +269,10 @@ impl AMOMINUW {
                 rs1: v_sel_rs2,
                 imm: 1,
             },
-            virtual_sequence_remaining: Some(remaining),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(xori.into());
-        remaining -= 1;
+        virtual_sequence_remaining -= 1;
 
         let mul = MUL {
             address: self.address,
@@ -280,10 +281,10 @@ impl AMOMINUW {
                 rs1: v_sel_rs2,
                 rs2: self.operands.rs2,
             },
-            virtual_sequence_remaining: Some(remaining),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(mul.into());
-        remaining -= 1;
+        virtual_sequence_remaining -= 1;
 
         let mul = MUL {
             address: self.address,
@@ -292,10 +293,10 @@ impl AMOMINUW {
                 rs1: v_sel_rd,
                 rs2: v_rd,
             },
-            virtual_sequence_remaining: Some(remaining),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(mul.into());
-        remaining -= 1;
+        virtual_sequence_remaining -= 1;
 
         let add = ADD {
             address: self.address,
@@ -304,10 +305,10 @@ impl AMOMINUW {
                 rs1: v_tmp,
                 rs2: v_rs2,
             },
-            virtual_sequence_remaining: Some(1),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(add.into());
-        remaining -= 1;
+        virtual_sequence_remaining -= 1;
 
         amo_post64(
             &mut sequence,
@@ -320,7 +321,7 @@ impl AMOMINUW {
             v_word,
             self.operands.rd,
             v_rd,
-            remaining,
+            virtual_sequence_remaining,
         );
 
         sequence

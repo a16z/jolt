@@ -65,8 +65,8 @@ impl VirtualInstructionSequence for SRAIW {
             Xlen::Bit32 => panic!("SRAIW is invalid in 32b mode"),
             Xlen::Bit64 => 64,
         };
-        let ones = (1u64 << (len - shift)) - 1;
-        let bitmask = ones << shift;
+        let ones = (1u128 << (len - shift)) - 1;
+        let bitmask = (ones << shift) as u64;
 
         let sra = VirtualSRAI {
             address: self.address,

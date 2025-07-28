@@ -42,8 +42,8 @@ impl RISCVTrace for SLLIW {
 
 impl VirtualInstructionSequence for SLLIW {
     fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(0);
         let mut sequence = vec![];
+        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(1);
 
         let mask = match xlen {
             Xlen::Bit32 => panic!("SLLIW is invalid in 32b mode"),
@@ -60,6 +60,7 @@ impl VirtualInstructionSequence for SLLIW {
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(mul.into());
+        virtual_sequence_remaining -= 1;
 
         let signext = VirtualSignExtend {
             address: self.address,
@@ -68,7 +69,7 @@ impl VirtualInstructionSequence for SLLIW {
                 rs1: self.operands.rd,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(0),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(signext.into());
 

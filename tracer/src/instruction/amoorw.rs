@@ -81,13 +81,14 @@ impl AMOORW {
         let v_rs2 = virtual_register_index(8) as usize;
 
         let mut sequence = vec![];
-        let mut remaining = 5;
-        remaining = amo_pre32(
+        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(9);
+
+        virtual_sequence_remaining = amo_pre32(
             &mut sequence,
             self.address,
             self.operands.rs1,
             v_rd,
-            remaining,
+            virtual_sequence_remaining,
         );
 
         let or = OR {
@@ -97,10 +98,10 @@ impl AMOORW {
                 rs1: v_rd,
                 rs2: self.operands.rs2,
             },
-            virtual_sequence_remaining: Some(remaining),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(or.into());
-        remaining -= 1;
+        virtual_sequence_remaining -= 1;
 
         amo_post32(
             &mut sequence,
@@ -109,7 +110,7 @@ impl AMOORW {
             self.operands.rs1,
             self.operands.rd,
             v_rd,
-            remaining,
+            virtual_sequence_remaining,
         );
 
         sequence

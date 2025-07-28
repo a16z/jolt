@@ -93,13 +93,14 @@ impl AMOMAXUW {
         let v_tmp = virtual_register_index(11) as usize;
 
         let mut sequence = vec![];
-        let mut remaining = 11;
-        remaining = amo_pre32(
+        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(19);
+
+        virtual_sequence_remaining = amo_pre32(
             &mut sequence,
             self.address,
             self.operands.rs1,
             v_rd,
-            remaining,
+            virtual_sequence_remaining,
         );
 
         let mov = VirtualMove {
@@ -109,10 +110,10 @@ impl AMOMAXUW {
                 rs1: self.operands.rs2,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(remaining),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(mov.into());
-        remaining -= 1;
+        virtual_sequence_remaining -= 1;
 
         let mov = VirtualMove {
             address: self.address,
@@ -121,10 +122,10 @@ impl AMOMAXUW {
                 rs1: v_rd,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(remaining),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(mov.into());
-        remaining -= 1;
+        virtual_sequence_remaining -= 1;
 
         let sltu = SLTU {
             address: self.address,
@@ -133,10 +134,10 @@ impl AMOMAXUW {
                 rs1: v_tmp,
                 rs2: v_rs2,
             },
-            virtual_sequence_remaining: Some(remaining),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(sltu.into());
-        remaining -= 1;
+        virtual_sequence_remaining -= 1;
 
         let xori = XORI {
             address: self.address,
@@ -145,10 +146,10 @@ impl AMOMAXUW {
                 rs1: v_sel_rs2,
                 imm: 1,
             },
-            virtual_sequence_remaining: Some(remaining),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(xori.into());
-        remaining -= 1;
+        virtual_sequence_remaining -= 1;
 
         let mul = MUL {
             address: self.address,
@@ -157,10 +158,10 @@ impl AMOMAXUW {
                 rs1: v_sel_rs2,
                 rs2: self.operands.rs2,
             },
-            virtual_sequence_remaining: Some(remaining),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(mul.into());
-        remaining -= 1;
+        virtual_sequence_remaining -= 1;
 
         let mul = MUL {
             address: self.address,
@@ -169,10 +170,10 @@ impl AMOMAXUW {
                 rs1: v_sel_rd,
                 rs2: v_rd,
             },
-            virtual_sequence_remaining: Some(remaining),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(mul.into());
-        remaining -= 1;
+        virtual_sequence_remaining -= 1;
 
         let add = ADD {
             address: self.address,
@@ -181,10 +182,10 @@ impl AMOMAXUW {
                 rs1: v_tmp,
                 rs2: v_rs2,
             },
-            virtual_sequence_remaining: Some(remaining),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(add.into());
-        remaining -= 1;
+        virtual_sequence_remaining -= 1;
 
         amo_post32(
             &mut sequence,
@@ -193,7 +194,7 @@ impl AMOMAXUW {
             self.operands.rs1,
             self.operands.rd,
             v_rd,
-            remaining,
+            virtual_sequence_remaining,
         );
 
         sequence
