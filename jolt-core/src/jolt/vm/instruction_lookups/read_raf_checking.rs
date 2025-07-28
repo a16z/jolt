@@ -751,11 +751,25 @@ impl<F: JoltField> ReadRafSumcheck<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dag::state_manager::{ProofData, ProofKeys};
+    use crate::subprotocols::sumcheck::BatchedSumcheck;
     use crate::utils::transcript::KeccakTranscript;
+    use crate::{
+        jolt::vm::{
+            bytecode::BytecodePreprocessing, ram::RAMPreprocessing, JoltProverPreprocessing,
+            JoltSharedPreprocessing, JoltVerifierPreprocessing,
+        },
+        poly::commitment::mock::MockCommitScheme,
+    };
     use ark_bn254::Fr;
+    use ark_std::Zero;
+    use common::jolt_device::MemoryLayout;
     use rand::{rngs::StdRng, RngCore, SeedableRng};
+    use std::collections::HashMap;
     use strum::IntoEnumIterator;
-    use tracer::instruction::RV32IMCycle;
+    use tracer::emulator::memory::Memory;
+    use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
+    use tracer::JoltDevice;
 
     const LOG_T: usize = 8;
     const T: usize = 1 << LOG_T;
@@ -828,61 +842,150 @@ mod tests {
         let trace: Vec<_> = (0..T)
             .map(|_| random_instruction(&mut rng, &instruction))
             .collect();
-
-        let mut transcript = KeccakTranscript::new(b"test_transcript");
-        let r_cycle: Vec<Fr> = transcript.challenge_vector(LOG_T);
-        let eq_r_cycle = EqPolynomial::evals(&r_cycle);
-        let gamma: Fr = transcript.challenge_scalar();
-
-        // Create prover state directly
-        let mut prover_state = ReadRafProverState::new(&trace, eq_r_cycle.clone());
-        prover_state.init_phase(0);
-
-        // Create a dummy ReadRafSumcheck instance
-        let mut read_raf_sumcheck = ReadRafSumcheck {
-            gamma,
-            gamma_squared: gamma.square(),
-            prover_state: Some(prover_state),
-            r_cycle: r_cycle.clone(),
-            rv_claim: Fr::from(1234u64),  // dummy claim
-            raf_claim: Fr::from(5678u64), // dummy claim
-            log_T: LOG_T,
+        let bytecode = vec![RV32IMInstruction::NoOp];
+        let bytecode_preprocessing = BytecodePreprocessing::preprocess(bytecode);
+        let memory_layout = MemoryLayout::default();
+        let shared_preprocessing = JoltSharedPreprocessing {
+            bytecode: bytecode_preprocessing,
+            ram: RAMPreprocessing::preprocess(vec![]),
+            memory_layout: memory_layout.clone(),
         };
+        let prover_preprocessing: JoltProverPreprocessing<Fr, MockCommitScheme<Fr>> =
+            JoltProverPreprocessing {
+                generators: (),
+                shared: shared_preprocessing.clone(),
+                field: Default::default(),
+            };
 
-        let input_claim = read_raf_sumcheck.input_claim();
+        let verifier_preprocessing: JoltVerifierPreprocessing<Fr, MockCommitScheme<Fr>> =
+            JoltVerifierPreprocessing {
+                generators: (),
+                shared: shared_preprocessing,
+            };
+        let program_io = JoltDevice {
+            memory_layout,
+            inputs: vec![],
+            outputs: vec![],
+            panic: false,
+        };
+        let prover_accumulator = Rc::new(RefCell::new(ProverOpeningAccumulator::<Fr>::new()));
+        let verifier_accumulator = Rc::new(RefCell::new(VerifierOpeningAccumulator::<Fr>::new()));
+        let prover_transcript = KeccakTranscript::new(b"test_transcript");
+        let verifier_transcript = KeccakTranscript::new(b"test_transcript");
+        let proofs = Rc::new(RefCell::new(HashMap::<
+            ProofKeys,
+            ProofData<Fr, MockCommitScheme<Fr>, _>,
+        >::new()));
+        let commitments = Rc::new(RefCell::new(None));
+        let mut prover_sm = StateManager::new_prover(
+            prover_accumulator.clone(),
+            Rc::new(RefCell::new(prover_transcript)),
+            proofs.clone(),
+            commitments.clone(),
+        );
+        let mut verifier_sm = StateManager::new_verifier(
+            verifier_accumulator.clone(),
+            Rc::new(RefCell::new(verifier_transcript)),
+            proofs.clone(),
+            commitments.clone(),
+        );
+        let final_memory_state = Memory::default();
+        prover_sm.set_prover_data(
+            &prover_preprocessing,
+            trace.clone(),
+            program_io.clone(),
+            final_memory_state,
+        );
+        verifier_sm.set_verifier_data(&verifier_preprocessing, program_io, trace.len());
 
-        // Run sumcheck protocol
-        let previous_claim = input_claim;
-        for round in 0..read_raf_sumcheck.num_rounds() {
-            let prover_message = read_raf_sumcheck.compute_prover_message(round);
+        let r_cycle: Vec<Fr> = prover_sm.transcript.borrow_mut().challenge_vector(LOG_T);
+        let _r_cycle: Vec<Fr> = verifier_sm.transcript.borrow_mut().challenge_vector(LOG_T);
+        let eq_r_cycle = EqPolynomial::evals(&r_cycle);
 
-            // Verify degree bounds
-            assert!(
-                prover_message.len() <= DEGREE,
-                "Prover message exceeds expected degree"
-            );
+        let mut rv_claim = Fr::zero();
+        let mut left_operand_claim = Fr::zero();
+        let mut right_operand_claim = Fr::zero();
 
-            // Generate challenge (in real protocol this would come from verifier)
-            let r_j: Fr = transcript.challenge_scalar();
-            read_raf_sumcheck.bind(r_j, round);
-
-            // Check that the polynomial evaluates correctly at 0 and 1
-            if round < LOG_K {
-                // First log(K) rounds are degree 2
-                assert_eq!(
-                    prover_message.len(),
-                    2,
-                    "First log(K) rounds should be degree 2"
-                );
-                let eval_at_0 = prover_message[0];
-                let eval_at_1 = previous_claim - eval_at_0;
-
-                // Simple sanity check
-                assert_eq!(eval_at_0 + eval_at_1, previous_claim);
+        for (i, cycle) in trace.iter().enumerate() {
+            let lookup_index = LookupQuery::<WORD_SIZE>::to_lookup_index(cycle);
+            let table: Option<LookupTables<WORD_SIZE>> = cycle.lookup_table();
+            if let Some(table) = table {
+                rv_claim += eq_r_cycle[i].mul_u64(table.materialize_entry(lookup_index));
             }
+            let (lo, ro) = LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle);
+            left_operand_claim += eq_r_cycle[i].mul_u64(lo);
+            right_operand_claim += eq_r_cycle[i].mul_u64(ro);
         }
 
-        // Basic test passes if we get here without panicking
+        prover_accumulator.borrow_mut().append_virtual(
+            VirtualPolynomial::LookupOutput,
+            SumcheckId::SpartanOuter,
+            OpeningPoint::new(r_cycle.clone()),
+            rv_claim,
+        );
+        prover_accumulator.borrow_mut().append_virtual(
+            VirtualPolynomial::LeftLookupOperand,
+            SumcheckId::SpartanOuter,
+            OpeningPoint::new(r_cycle.clone()),
+            left_operand_claim,
+        );
+        prover_accumulator.borrow_mut().append_virtual(
+            VirtualPolynomial::RightLookupOperand,
+            SumcheckId::SpartanOuter,
+            OpeningPoint::new(r_cycle.clone()),
+            right_operand_claim,
+        );
+
+        let mut prover_sumcheck = ReadRafSumcheck::new_prover(&mut prover_sm, eq_r_cycle);
+
+        let mut prover_transcript_ref = prover_sm.transcript.borrow_mut();
+
+        let (proof, r_sumcheck) = BatchedSumcheck::prove(
+            vec![&mut prover_sumcheck],
+            Some(prover_accumulator.clone()),
+            &mut *prover_transcript_ref,
+        );
+        drop(prover_transcript_ref);
+
+        // Take claims
+        let prover_acc_borrow = prover_accumulator.borrow();
+        let mut verifier_acc_borrow = verifier_accumulator.borrow_mut();
+
+        for (key, (_, value)) in prover_acc_borrow.evaluation_openings().iter() {
+            let empty_point = OpeningPoint::<BIG_ENDIAN, Fr>::new(vec![]);
+            verifier_acc_borrow
+                .evaluation_openings_mut()
+                .insert(*key, (empty_point, *value));
+        }
+        drop(prover_acc_borrow);
+        drop(verifier_acc_borrow);
+        verifier_accumulator.borrow_mut().append_virtual(
+            VirtualPolynomial::LookupOutput,
+            SumcheckId::SpartanOuter,
+            OpeningPoint::new(r_cycle.clone()),
+        );
+        verifier_accumulator.borrow_mut().append_virtual(
+            VirtualPolynomial::LeftLookupOperand,
+            SumcheckId::SpartanOuter,
+            OpeningPoint::new(r_cycle.clone()),
+        );
+        verifier_accumulator.borrow_mut().append_virtual(
+            VirtualPolynomial::RightLookupOperand,
+            SumcheckId::SpartanOuter,
+            OpeningPoint::new(r_cycle.clone()),
+        );
+
+        let mut verifier_sumcheck = ReadRafSumcheck::new_verifier(&mut verifier_sm);
+
+        let r_sumcheck_verif = BatchedSumcheck::verify(
+            &proof,
+            vec![&mut verifier_sumcheck],
+            Some(verifier_accumulator.clone()),
+            &mut *verifier_sm.transcript.borrow_mut(),
+        )
+        .unwrap();
+
+        assert_eq!(r_sumcheck, r_sumcheck_verif);
     }
 
     #[test]
