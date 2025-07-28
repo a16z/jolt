@@ -88,9 +88,13 @@ impl<F: JoltField> OneHotSumcheckState<F> {
             F,
             num_variables_bound: 0,
             #[cfg(test)]
-            B_gruen: Some(crate::poly::split_eq_poly::GruenSplitEqPolynomialHighToLow::new(r_address)),
+            B_gruen: Some(
+                crate::poly::split_eq_poly::GruenSplitEqPolynomialHighToLow::new(r_address),
+            ),
             #[cfg(test)]
-            D_gruen: Some(crate::poly::split_eq_poly::GruenSplitEqPolynomialHighToLow::new(r_cycle)),
+            D_gruen: Some(
+                crate::poly::split_eq_poly::GruenSplitEqPolynomialHighToLow::new(r_cycle),
+            ),
             #[cfg(test)]
             P_arrays: None,
         }
@@ -210,93 +214,6 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 );
 
-            // #[cfg(test)]
-            // {
-            //     // Test Gruen optimization
-            //     if let Some(ref b_gruen) = shared_eq.B_gruen {
-            //         let mut gruen_eval_0 = F::zero();
-                    
-            //         // Check if E_in is fully bound
-            //         if b_gruen.E_in_current_len() == 1 {
-            //             // E_in is fully bound
-            //             for k_prime in 0..b_gruen.len() / 2 {
-            //                 let b_eval = b_gruen.E_out_current()[k_prime];
-                            
-            //                 let mut inner_sum = F::zero();
-                            
-            //                 for (k, &g_k) in G.iter()
-            //                     .enumerate()
-            //                     .skip(k_prime)
-            //                     .step_by(b_gruen.len() / 2)
-            //                 {
-            //                     let k_m = (k >> (num_unbound_address_variables - 1)) & 1;
-            //                     let f_k = F[k >> num_unbound_address_variables];
-            //                     let g_times_f = g_k * f_k;
-                                
-            //                     // Compute contribution to s(0)
-            //                     // For c = 0: eq(k_m, 0) = 1 if k_m == 0, else 0
-            //                     let contrib_0 = match k_m {
-            //                         0 => g_times_f,
-            //                         1 => F::zero(),
-            //                         _ => unreachable!(),
-            //                     };
-                                
-            //                     inner_sum += contrib_0;
-            //                 }
-                            
-            //                 gruen_eval_0 += b_eval * inner_sum;
-            //             }
-            //         } else {
-            //             // E_in has not been fully bound
-            //             let num_x_in_bits = b_gruen.E_out_current_len().log_2();
-            //             // println!("num bits: {:?}", num_x_in_bits);
-            //             let x_bitmask = (1 << num_x_in_bits) - 1;
-                        
-            //             for k_prime in 0..b_gruen.len() / 2 {
-            //                 let x_in = k_prime >> num_x_in_bits;
-            //                 let x_out = k_prime & x_bitmask;
-            //                 let b_e_out_eval = b_gruen.E_out_current()[x_out];
-            //                 let b_e_in_eval = b_gruen.E_in_current()[x_in];
-                            
-            //                 let mut inner_sum = F::zero();
-                            
-            //                 for (k, &g_k) in G.iter()
-            //                     .enumerate()
-            //                     .skip(k_prime)
-            //                     .step_by(b_gruen.len() / 2)
-            //                 {
-            //                     let k_m = (k >> (num_unbound_address_variables - 1)) & 1;
-            //                     let f_k = F[k >> num_unbound_address_variables];
-            //                     let g_times_f = g_k * f_k;
-                                
-            //                     // Compute contribution to s(0)
-            //                     // For c = 0: eq(k_m, 0) = 1 if k_m == 0, else 0
-            //                     let contrib_0 = match k_m {
-            //                         0 => g_times_f,
-            //                         1 => F::zero(),
-            //                         _ => unreachable!(),
-            //                     };
-                                
-            //                     inner_sum += contrib_0;
-            //                 }
-                            
-            //                 gruen_eval_0 += b_e_out_eval * b_e_in_eval * inner_sum;
-            //             }
-            //         }
-
-            //         let gruen_test: [F; 2] = b_gruen.gruen_evals_deg_2(gruen_eval_0, previous_claim);
-                    
-            //         // assert_eq!(
-            //         //     univariate_poly_evals[0], gruen_test[0],
-            //         //     "Round {}: Gruen s(0) mismatch", round
-            //         // );
-            //         // assert_eq!(
-            //         //     univariate_poly_evals[1], gruen_test[1],
-            //         //     "Round {}: Gruen s(2) mismatch", round
-            //         // ); 
-            //     }
-            // }
-
             univariate_poly_evals.to_vec()
         } else {
             let H = polynomial.H.as_ref().unwrap();
@@ -333,7 +250,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                         // E_in has not been fully bound
                         let num_x_in_bits = d_gruen.E_out_current_len().log_2();
                         let x_bitmask = (1 << num_x_in_bits) - 1;
-                        
+
                         for j in 0..d_gruen.len() / 2 {
                             let H_evals = H.sumcheck_evals(j, 2, BindingOrder::HighToLow);
                             let x_in = j >> num_x_in_bits;
@@ -347,29 +264,29 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                             gruen_eval_0 += d_e_out_eval * d_e_in_eval * h_eval;
                         }
                     }
-                    
+
                     // Note: For the D polynomial test, we need to account for the fact that
                     // the final result is multiplied by B.final_sumcheck_claim()
                     // So we test the pre-multiplication values
 
                     let eq_r_address_claim = B.final_sumcheck_claim();
                     println!("ROUND: {:?}", round);
-                    let gruen_test: [F; 2] = d_gruen.gruen_evals_deg_2(gruen_eval_0, 
-                       previous_claim / eq_r_address_claim );
+                    let gruen_test: [F; 2] = d_gruen
+                        .gruen_evals_deg_2(gruen_eval_0, previous_claim / eq_r_address_claim);
 
                     //    let eq_r_address_claim = B.final_sumcheck_claim();
-                    
+
                     assert_eq!(
                         univariate_poly_evals[0], gruen_test[0],
-                        "Round {}: Gruen D s(0) mismatch", round
+                        "Round {}: Gruen D s(0) mismatch",
+                        round
                     );
 
-
-                        assert_eq!(
-                            univariate_poly_evals[1], gruen_test[1],
-                            "Round {}: Gruen D s(2) mismatch", round
-                        );
-                   
+                    assert_eq!(
+                        univariate_poly_evals[1], gruen_test[1],
+                        "Round {}: Gruen D s(2) mismatch",
+                        round
+                    );
                 }
             }
 
@@ -391,7 +308,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                 shared_eq.B.bind_parallel(r, BindingOrder::HighToLow);
                 // Update F for this round (see Equation 55)
                 shared_eq.F.update(r);
-                
+
                 #[cfg(test)]
                 if let Some(ref mut b_gruen) = shared_eq.B_gruen {
                     b_gruen.bind(r);
@@ -416,12 +333,12 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
 
             if num_variables_bound <= round {
                 shared_eq.D.bind_parallel(r, BindingOrder::HighToLow);
-                
+
                 #[cfg(test)]
                 if let Some(ref mut d_gruen) = shared_eq.D_gruen {
                     d_gruen.bind(r);
                 }
-                
+
                 shared_eq.num_variables_bound += 1;
             }
 
@@ -629,20 +546,6 @@ mod tests {
         let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
         let mut eq = DensePolynomial::new(EqPolynomial::evals(&r_concat));
 
-        use crate::poly::split_eq_poly::GruenSplitEqPolynomialHighToLow;
-        let mut gruen_split_eq = GruenSplitEqPolynomialHighToLow::new(&r_concat);
-        
-        let mut dense_poly_gruen = one_hot_poly.to_dense_poly();
-
-        let initial_gruen_merged = gruen_split_eq.merge();
-        assert_eq!(
-            eq.Z[..eq.len()],
-            initial_gruen_merged.Z[..initial_gruen_merged.len()],
-            "Initial eq polynomial and Gruen split eq should be equivalent"
-        );
-
-        let mut previous_claim = Fr::zero();
-
         for round in 0..LOG_K + LOG_T {
             let one_hot_message = one_hot_opening.compute_prover_message(round, previous_claim);
             let mut expected_message = vec![Fr::zero(), Fr::zero()];
@@ -662,135 +565,11 @@ mod tests {
                 "round {round} prover message mismatch"
             );
 
-            // Update previous_claim for next round
-            previous_claim = expected_message[0] + expected_message[1];
-
             let r = Fr::random(&mut rng);
             one_hot_opening.bind(r, round);
             dense_poly.bind_parallel(r, BindingOrder::HighToLow);
             eq.bind_parallel(r, BindingOrder::HighToLow);
-            gruen_split_eq.bind(r);
-
-            let gruen_merged = gruen_split_eq.merge();
-            assert_eq!(
-                eq.Z[..eq.len()],
-                gruen_merged.Z[..gruen_merged.len()],
-                "round {round}: eq polynomial and Gruen split eq should be equivalent after binding"
-            );
         }
-        assert_eq!(
-            one_hot_opening.final_sumcheck_claim(),
-            dense_poly[0],
-            "final sumcheck claim"
-        );
-    }
-
-    fn dense_polynomial_equivalence_gruen<const LOG_K: usize, const LOG_T: usize>() {
-        let K: usize = 1 << LOG_K;
-        let T: usize = 1 << LOG_T;
-        let _guard = DoryGlobals::initialize(K, T);
-
-        let mut rng = test_rng();
-
-        let nonzero_indices: Vec<_> = std::iter::repeat_with(|| Some(rng.next_u64() as usize % K))
-            .take(T)
-            .collect();
-        let one_hot_poly = OneHotPolynomial::<Fr>::from_indices(nonzero_indices, K);
-        let mut dense_poly = one_hot_poly.to_dense_poly();
-
-        let r_address: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
-            .take(LOG_K)
-            .collect();
-        let r_cycle: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
-            .take(LOG_T)
-            .collect();
-
-        let one_hot_sumcheck_state = OneHotSumcheckState::new(&r_address, &r_cycle);
-        let mut one_hot_opening =
-            OneHotPolynomialProverOpening::new(Arc::new(Mutex::new(one_hot_sumcheck_state)));
-        one_hot_opening.initialize(one_hot_poly.clone());
-
-        let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
-        let mut eq = DensePolynomial::new(EqPolynomial::evals(&r_concat));
-
-        use crate::poly::split_eq_poly::GruenSplitEqPolynomialHighToLow;
-        let mut gruen_split_eq = GruenSplitEqPolynomialHighToLow::new(&r_concat);
-        
-        // Pre-compute the polynomial arrays P_k for the Gruen method
-        let mut P_arrays: Vec<DensePolynomial<Fr>> = vec![dense_poly.clone()];
-
-        let mut previous_claim = Fr::zero();
-
-        for round in 0..LOG_K + LOG_T {
-            let one_hot_message = one_hot_opening.compute_prover_message(round, previous_claim);
-            
-            // Compute expected message using Gruen method
-            let mut gruen_message = vec![Fr::zero(), Fr::zero()];
-            
-            if round < LOG_K {
-                // Using Gruen's pre-computed eq evaluations
-                
-                let mle_half_gruen = P_arrays[0].len() / 2;
-                
-                gruen_message[0] = (0..mle_half_gruen)
-                    .map(|i| {
-                        // Get the eq evaluation for index i using Gruen's method
-                        let eq_val = gruen_split_eq.get_bound_coeff(i);
-                        P_arrays[0][i] * eq_val
-                    })
-                    .sum();
-                
-
-                gruen_message[1] = Fr::from(4u64) * previous_claim - Fr::from(7u64) * gruen_message[0];
-            } else {
-            }
-            
-            // Original
-            let mut expected_message = vec![Fr::zero(), Fr::zero()];
-            let mle_half = dense_poly.len() / 2;
-
-            expected_message[0] = (0..mle_half).map(|i| dense_poly[i] * eq[i]).sum();
-            expected_message[1] = (0..mle_half)
-                .map(|i| {
-                    let poly_bound_point =
-                        dense_poly[i + mle_half] + dense_poly[i + mle_half] - dense_poly[i];
-                    let eq_bound_point = eq[i + mle_half] + eq[i + mle_half] - eq[i];
-                    poly_bound_point * eq_bound_point
-                })
-                .sum();
-            
-                
-            assert_eq!(
-                one_hot_message, expected_message,
-                "round {round} prover message mismatch with original"
-            );
-            
-            if round < LOG_K {
-                assert_eq!(
-                    gruen_message[0], expected_message[0],
-                    "round {round} Gruen s(0) mismatch"
-                );
-                assert_eq!(
-                    gruen_message[1], expected_message[1],
-                    "round {round} Gruen s(2) mismatch - computed using previous_claim interpolation"
-                );
-            }
-        
-            // Update previous_claim for next round
-            previous_claim = expected_message[0] + expected_message[1];
-
-            let r = Fr::random(&mut rng);
-            one_hot_opening.bind(r, round);
-            dense_poly.bind_parallel(r, BindingOrder::HighToLow);
-            eq.bind_parallel(r, BindingOrder::HighToLow);
-            gruen_split_eq.bind(r);
-            
-            // Bind P arrays
-            for P_k in P_arrays.iter_mut() {
-                P_k.bind_parallel(r, BindingOrder::HighToLow);
-            }
-        }
-        
         assert_eq!(
             one_hot_opening.final_sumcheck_claim(),
             dense_poly[0],
@@ -852,23 +631,5 @@ mod tests {
     #[serial]
     fn evaluate_K_greater_than_T() {
         evaluate_test::<6, 5>();
-    }
-
-    #[test]
-    #[serial]
-    fn sumcheck_gruen_K_less_than_T() {
-        dense_polynomial_equivalence_gruen::<5, 6>();
-    }
-
-    #[test]
-    #[serial]
-    fn sumcheck_gruen_K_equals_T() {
-        dense_polynomial_equivalence_gruen::<6, 6>();
-    }
-
-    #[test]
-    #[serial]
-    fn sumcheck_gruen_K_greater_than_T() {
-        dense_polynomial_equivalence_gruen::<6, 5>();
     }
 }

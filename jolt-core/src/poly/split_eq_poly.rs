@@ -339,7 +339,7 @@ impl<F: JoltField> GruenSplitEqPolynomialHighToLow<F> {
         // - First we bind x0
         // - Then x1
         // - Finally x2
-        // 
+        //
         // The split should be: w_in = first half, w_out = second half
 
         let (_, wprime) = w.split_first().unwrap();
@@ -347,7 +347,7 @@ impl<F: JoltField> GruenSplitEqPolynomialHighToLow<F> {
         let m = w.len() / 2;
         let (w_in, w_out) = wprime.split_at(m);
         // [w_first <- w[0], w_in, w_out]
-        
+
         let (E_in_vec, E_out_vec) = rayon::join(
             || EqPolynomial::evals_cached_rev(w_in),
             || EqPolynomial::evals_cached_rev(w_out),
@@ -390,7 +390,7 @@ impl<F: JoltField> GruenSplitEqPolynomialHighToLow<F> {
             // Initial state - use the cached values
             let e_in = self.E_in_current();
             let e_out = self.E_out_current();
-            
+
             let mut merged_evals = vec![F::zero(); e_in.len() * e_out.len()];
             for i in 0..e_in.len() {
                 for j in 0..e_out.len() {
@@ -399,7 +399,7 @@ impl<F: JoltField> GruenSplitEqPolynomialHighToLow<F> {
             }
             return DensePolynomial::new(merged_evals);
         }
-        
+
         if self.current_index >= self.w.len() {
             return DensePolynomial::new(vec![self.current_scalar]);
         }
@@ -410,7 +410,7 @@ impl<F: JoltField> GruenSplitEqPolynomialHighToLow<F> {
             // Still binding in the first half
             let e_in = self.E_in_current();
             let e_out = self.E_out_current();
-            
+
             let mut merged_evals = vec![F::zero(); e_in.len() * e_out.len()];
             for i in 0..e_in.len() {
                 for j in 0..e_out.len() {
@@ -422,7 +422,7 @@ impl<F: JoltField> GruenSplitEqPolynomialHighToLow<F> {
             // Binding in the second half - need to swap the order
             let e_in = self.E_in_current();
             let e_out = self.E_out_current();
-            
+
             let mut merged_evals = vec![F::zero(); e_in.len() * e_out.len()];
             // When binding in the second half, we need to handle the fact that
             // E_in now represents a fully bound set (single value)
@@ -443,7 +443,7 @@ impl<F: JoltField> GruenSplitEqPolynomialHighToLow<F> {
     pub fn get_bound_coeff(&self, index: usize) -> F {
         // This is equivalent to calling merge() and then getting the coefficient at index
         // For efficiency, we compute it directly using E_in and E_out
-        
+
         if self.current_index == 0 {
             // Initial state - need to account for w[0] that was split off
             let e_in = self.E_in_current();
@@ -451,24 +451,24 @@ impl<F: JoltField> GruenSplitEqPolynomialHighToLow<F> {
             let e_out_len = e_out.len();
             let e_in_len = e_in.len();
             let total_half_size = e_in_len * e_out_len;
-            
+
             // Determine which half of the hypercube we're in
             let w0_bit = index / total_half_size;
             let local_index = index % total_half_size;
-            
+
             let i = local_index / e_out_len;
             let j = local_index % e_out_len;
-            
+
             let w0 = self.w[0];
             let eq_w0_eval = if w0_bit == 0 {
-                F::one() - w0  // eq(w[0], 0)
+                F::one() - w0 // eq(w[0], 0)
             } else {
-                w0  // eq(w[0], 1)
+                w0 // eq(w[0], 1)
             };
-            
+
             return eq_w0_eval * e_in[i] * e_out[j] * self.current_scalar;
         }
-        
+
         if self.current_index >= self.w.len() {
             return self.current_scalar;
         }
@@ -491,7 +491,6 @@ impl<F: JoltField> GruenSplitEqPolynomialHighToLow<F> {
             e_in[i] * e_out[j] * self.current_scalar
         }
     }
-
 
     pub fn E_in_current_len(&self) -> usize {
         self.E_in_vec.last().map_or(0, |v| v.len())
@@ -774,26 +773,35 @@ mod tests {
         println!("Initial state debug:");
         println!("  w.len() = {}", w.len());
         println!("  E_in_vec.len() = {}", split_eq_high_to_low.E_in_vec.len());
-        println!("  E_out_vec.len() = {}", split_eq_high_to_low.E_out_vec.len());
-        
+        println!(
+            "  E_out_vec.len() = {}",
+            split_eq_high_to_low.E_out_vec.len()
+        );
+
         // Print all vector lengths in E_in_vec
         for (i, vec) in split_eq_high_to_low.E_in_vec.iter().enumerate() {
             println!("  E_in_vec[{}].len() = {}", i, vec.len());
         }
-        
+
         // Print all vector lengths in E_out_vec
         for (i, vec) in split_eq_high_to_low.E_out_vec.iter().enumerate() {
             println!("  E_out_vec[{}].len() = {}", i, vec.len());
         }
-        
+
         if !split_eq_high_to_low.E_in_vec.is_empty() {
-            println!("  E_in_current().len() = {}", split_eq_high_to_low.E_in_current().len());
+            println!(
+                "  E_in_current().len() = {}",
+                split_eq_high_to_low.E_in_current().len()
+            );
         }
         if !split_eq_high_to_low.E_out_vec.is_empty() {
-            println!("  E_out_current().len() = {}", split_eq_high_to_low.E_out_current().len());
+            println!(
+                "  E_out_current().len() = {}",
+                split_eq_high_to_low.E_out_current().len()
+            );
         }
         println!("  current_index = {}", split_eq_high_to_low.current_index);
-        
+
         // Verify they start equal
         assert_eq!(regular_eq, split_eq_high_to_low.merge());
 

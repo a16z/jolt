@@ -54,7 +54,7 @@ impl<F: JoltField> EqPolynomial<F> {
         // TODO: implement parallel version & determine switchover point
         Self::evals_serial_cached(r, None)
     }
-    
+
     /// Like evals_cached but for high-to-low (reverse) binding order
     pub fn evals_cached_rev(r: &[F]) -> Vec<Vec<F>> {
         Self::evals_serial_cached_rev(r, None)
@@ -119,7 +119,7 @@ impl<F: JoltField> EqPolynomial<F> {
         }
         evals
     }
-    
+
     /// Computes the table of coefficients:
     ///
     ///     `scaling_factor * eq(r, x) for all x in {0, 1}^n`,
