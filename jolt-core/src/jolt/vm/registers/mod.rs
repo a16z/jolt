@@ -2,70 +2,33 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::{
     field::JoltField,
-    jolt::{
-        vm::{
-            registers::read_write_checking::RegistersReadWriteCheckingProof, JoltCommitments,
-            JoltProverPreprocessing,
-        },
-        witness::{CommittedPolynomial, VirtualPolynomial},
-    },
+    jolt::witness::{CommittedPolynomial, VirtualPolynomial},
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
             OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
             BIG_ENDIAN,
         },
     },
-    subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
-    utils::{errors::ProofVerifyError, transcript::Transcript},
+    subprotocols::sumcheck::SumcheckInstance,
 };
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
-use tracer::instruction::RV32IMCycle;
 
 pub mod read_write_checking;
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct RegistersTwistProof<F: JoltField, ProofTranscript: Transcript> {
-    /// Proof for the read-checking and write-checking sumchecks
-    /// (steps 3 and 4 of Figure 9).
-    read_write_checking_proof: RegistersReadWriteCheckingProof<F, ProofTranscript>,
-    /// Proof of the Val-evaluation sumcheck (step 6 of Figure 9).
-    val_evaluation_proof: ValEvaluationProof<F, ProofTranscript>,
-}
 
 #[derive(Default)]
 pub struct RegistersDag {}
 
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct ValEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
-    /// Sumcheck proof for the Val-evaluation sumcheck (steps 6 of Figure 9).
-    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    /// Inc(r_cycle')
-    inc_claim: F,
-    /// wa(r_address, r_cycle')
-    wa_claim: F,
-}
-
 pub struct ValEvaluationProverState<F: JoltField> {
-    /// Inc polynomial
     pub inc: MultilinearPolynomial<F>,
-    /// wa polynomial
     pub wa: MultilinearPolynomial<F>,
-    /// LT polynomial
     pub lt: MultilinearPolynomial<F>,
 }
 
-/// Val-evaluation sumcheck instance implementing SumcheckInstance
 pub(crate) struct ValEvaluationSumcheck<F: JoltField> {
-    // The `r_address` at in the claimed `Val(r_address, r_cycle)`
     pub r_address: Vec<F>,
-    /// Initial claim value
-    pub claimed_evaluation: F,
-    /// The number of rounds (log T)
+    pub input_claim: F,
     pub num_rounds: usize,
-    /// r_cycle used to compute LT evaluation
     pub r_cycle: Vec<F>,
     pub prover_state: Option<ValEvaluationProverState<F>>,
 }
@@ -80,7 +43,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
     }
 
     fn input_claim(&self) -> F {
-        self.claimed_evaluation
+        self.input_claim
     }
 
     #[tracing::instrument(
@@ -219,27 +182,5 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
             SumcheckId::RegistersValEvaluation,
             OpeningPoint::new(r),
         );
-    }
-}
-
-impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTranscript> {
-    #[tracing::instrument(skip_all, name = "RegistersTwistProof::prove")]
-    pub fn prove<PCS: CommitmentScheme<Field = F>>(
-        _preprocessing: &JoltProverPreprocessing<F, PCS>,
-        _trace: &[RV32IMCycle],
-        _opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        _transcript: &mut ProofTranscript,
-    ) -> RegistersTwistProof<F, ProofTranscript> {
-        todo!()
-    }
-
-    pub fn verify<PCS: CommitmentScheme<Field = F>>(
-        &self,
-        _commitments: &JoltCommitments<F, PCS>,
-        _T: usize,
-        _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        _transcript: &mut ProofTranscript,
-    ) -> Result<(), ProofVerifyError> {
-        todo!()
     }
 }

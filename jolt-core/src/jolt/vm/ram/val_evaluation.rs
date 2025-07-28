@@ -18,37 +18,15 @@ use crate::{
             BIG_ENDIAN,
         },
     },
-    subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
+    subprotocols::sumcheck::SumcheckInstance,
     utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct ValEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
-    /// Sumcheck proof for the Val-evaluation sumcheck (steps 6 of Figure 9).
-    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    /// Inc(r_cycle')
-    inc_claim: F,
-    /// wa(r_address, r_cycle')
-    wa_claim: F,
-}
-
 pub struct ValEvaluationProverState<F: JoltField> {
-    /// Inc polynomial
     inc: MultilinearPolynomial<F>,
-    /// wa polynomial
     wa: MultilinearPolynomial<F>,
-    /// LT polynomial
     lt: MultilinearPolynomial<F>,
-}
-
-#[derive(Clone)]
-pub struct ValEvaluationSumcheckClaims<F: JoltField> {
-    /// Inc(r_cycle')
-    inc_claim: F,
-    /// wa(r_address, r_cycle')
-    wa_claim: F,
 }
 
 /// Val-evaluation sumcheck for RAM

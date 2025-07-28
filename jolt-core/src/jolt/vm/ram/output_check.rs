@@ -55,7 +55,7 @@ struct OutputSumcheckProverState<F: JoltField> {
 
 impl<F: JoltField> OutputSumcheckProverState<F> {
     #[tracing::instrument(skip_all, name = "OutputSumcheckProverState::initialize")]
-    fn initialize(
+    fn new(
         initial_ram_state: Vec<u32>,
         final_ram_state: Vec<u32>,
         program_io: &JoltDevice,
@@ -155,7 +155,7 @@ impl<F: JoltField> OutputSumcheck<F> {
             .borrow_mut()
             .challenge_vector(K.log_2());
 
-        let output_sumcheck_prover_state = OutputSumcheckProverState::initialize(
+        let output_sumcheck_prover_state = OutputSumcheckProverState::new(
             initial_ram_state,
             final_ram_state,
             program_io,

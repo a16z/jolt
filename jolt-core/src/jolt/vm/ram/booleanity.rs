@@ -1,6 +1,5 @@
 use std::{cell::RefCell, rc::Rc};
 
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
 use rayon::prelude::*;
 use tracer::instruction::RV32IMCycle;
@@ -22,52 +21,33 @@ use crate::{
         },
         split_eq_poly::GruenSplitEqPolynomial,
     },
-    subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
+    subprotocols::sumcheck::SumcheckInstance,
     utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct BooleanityProof<F, ProofTranscript>
-where
-    F: JoltField,
-    ProofTranscript: Transcript,
-{
-    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    ra_claims: Vec<F>,
-}
 
 struct BooleanityProverState<F: JoltField> {
     /// B polynomial (GruenSplitEqPolynomial)
     B: GruenSplitEqPolynomial<F>,
     /// F array for phase 1
     F: Vec<F>,
-    /// G arrays (precomputed) - one for each decomposed part
+    /// ra(k, r_cycle)
     G: Vec<Vec<F>>,
-    /// D polynomial for phase 2
+    /// eq(r_cycle, j)
     D: MultilinearPolynomial<F>,
-    /// H polynomials for phase 2 - one for each decomposed part
+    /// ra(r'_address, j)
     H: Option<Vec<MultilinearPolynomial<F>>>,
-    /// eq(r, r) value computed at end of phase 1
+    /// eq(r_address, r'_address)
     eq_r_r: F,
-    /// D parameter as in Twist and Shout paper
-    d: usize,
 }
 
 pub struct BooleanitySumcheck<F: JoltField> {
-    /// Number of trace steps
     T: usize,
-    /// D parameter as in Twist and Shout paper
     d: usize,
-    /// r_address challenge
     r_address: Vec<F>,
-    /// r_cycle challenge
     r_cycle: Vec<F>,
-    /// gamma powers for batching
     gamma_powers: Vec<F>,
     prover_state: Option<BooleanityProverState<F>>,
-    /// Current round
     current_round: usize,
-    /// Store trace and memory layout for phase transition
     trace: Option<Vec<RV32IMCycle>>,
     memory_layout: Option<MemoryLayout>,
 }
@@ -162,7 +142,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             D,
             H: None,
             eq_r_r: F::zero(),
-            d,
         };
 
         BooleanitySumcheck {
@@ -271,18 +250,17 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
                 // Compute H polynomials for each decomposed part
                 let trace = self.trace.as_ref().expect("Trace not set");
                 let memory_layout = self.memory_layout.as_ref().expect("Memory layout not set");
-                let d = prover_state.d;
 
-                let mut H_polys = Vec::with_capacity(d);
+                let mut H_polys = Vec::with_capacity(self.d);
 
-                for i in 0..d {
+                for i in 0..self.d {
                     let H_vec: Vec<F> = trace
                         .par_iter()
                         .map(|cycle| {
                             remap_address(cycle.ram_access().address() as u64, memory_layout)
                                 .map_or(F::zero(), |address| {
                                     // Get i-th address chunk
-                                    let address_i = (address >> (NUM_RA_I_VARS * (d - 1 - i)))
+                                    let address_i = (address >> (NUM_RA_I_VARS * (self.d - 1 - i)))
                                         % (1 << NUM_RA_I_VARS);
                                     prover_state.F[address_i as usize]
                                 })
@@ -405,7 +383,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             .expect("Prover state not initialized");
 
         const DEGREE: usize = 3;
-        let d = prover_state.d;
         let m = round + 1;
         let B = &prover_state.B;
 
@@ -533,7 +510,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             .as_ref()
             .expect("H polynomials not initialized");
         const DEGREE: usize = 3;
-        let d = prover_state.d;
 
         let mut univariate_poly_evals = [F::zero(); DEGREE];
 

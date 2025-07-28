@@ -1366,7 +1366,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         let lt = MultilinearPolynomial::from(lt);
 
         let instance = ValEvaluationSumcheck {
-            claimed_evaluation: val_claim,
+            input_claim: val_claim,
             r_address,
             num_rounds: r_cycle.len().pow2().log_2(),
             r_cycle: r_cycle.clone(),
@@ -1396,7 +1396,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         let r_cycle: Vec<F> = r_cycle_slice.into();
 
         let instance = ValEvaluationSumcheck {
-            claimed_evaluation: val_claim,
+            input_claim: val_claim,
             r_address,
             num_rounds: trace_length.log_2(),
             r_cycle,
