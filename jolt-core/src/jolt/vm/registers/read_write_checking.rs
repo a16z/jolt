@@ -57,7 +57,7 @@ struct DataBuffers<F: JoltField> {
 }
 
 struct ReadWriteCheckingProverState<F: JoltField> {
-    trace: Vec<RV32IMCycle>,
+    addresses: Vec<(usize, usize, usize)>,
     chunk_size: usize,
     val_checkpoints: Vec<F>,
     data_buffers: Vec<DataBuffers<F>>,
@@ -189,8 +189,13 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
             })
             .collect();
 
+        let addresses = trace
+            .par_iter()
+            .map(|cycle| (cycle.rs1_read().0, cycle.rs2_read().0, cycle.rd_write().0))
+            .collect::<Vec<_>>();
+
         ReadWriteCheckingProverState {
-            trace: trace.to_vec(),
+            addresses,
             chunk_size,
             val_checkpoints,
             data_buffers,
@@ -302,7 +307,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
     fn phase1_compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         const DEGREE: usize = 3;
         let ReadWriteCheckingProverState {
-            trace,
+            addresses,
             I,
             data_buffers,
             A,
@@ -838,7 +843,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
 
     fn phase1_bind(&mut self, r_j: F, round: usize) {
         let ReadWriteCheckingProverState {
-            trace,
+            addresses,
             I,
             A,
             inc_cycle,
@@ -915,19 +920,18 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
             let span = tracing::span!(tracing::Level::INFO, "Materialize rs1_ra polynomial");
             let _guard = span.enter();
 
-            let num_chunks = trace.len() / *chunk_size;
+            let num_chunks = addresses.len() / *chunk_size;
             let mut rs1_ra_evals: Vec<F> = unsafe_allocate_zero_vec(K * num_chunks);
             rs1_ra_evals
                 .par_chunks_mut(K)
                 .enumerate()
                 .for_each(|(chunk_index, ra_chunk)| {
-                    for (j_bound, cycle) in trace
+                    for (j_bound, (k, _, _)) in addresses
                         [chunk_index * *chunk_size..(chunk_index + 1) * *chunk_size]
                         .iter()
                         .enumerate()
                     {
-                        let k = cycle.rs1_read().0;
-                        ra_chunk[k] += A[j_bound];
+                        ra_chunk[*k] += A[j_bound];
                     }
                 });
             *rs1_ra = Some(MultilinearPolynomial::from(rs1_ra_evals));
@@ -938,19 +942,18 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
             let span = tracing::span!(tracing::Level::INFO, "Materialize rs2_ra polynomial");
             let _guard = span.enter();
 
-            let num_chunks = trace.len() / *chunk_size;
+            let num_chunks = addresses.len() / *chunk_size;
             let mut rs2_ra_evals: Vec<F> = unsafe_allocate_zero_vec(K * num_chunks);
             rs2_ra_evals
                 .par_chunks_mut(K)
                 .enumerate()
                 .for_each(|(chunk_index, ra_chunk)| {
-                    for (j_bound, cycle) in trace
+                    for (j_bound, (_, k, _)) in addresses
                         [chunk_index * *chunk_size..(chunk_index + 1) * *chunk_size]
                         .iter()
                         .enumerate()
                     {
-                        let k = cycle.rs2_read().0;
-                        ra_chunk[k] += A[j_bound];
+                        ra_chunk[*k] += A[j_bound];
                     }
                 });
             *rs2_ra = Some(MultilinearPolynomial::from(rs2_ra_evals));
@@ -961,19 +964,18 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
             let span = tracing::span!(tracing::Level::INFO, "Materialize rd_wa polynomial");
             let _guard = span.enter();
 
-            let num_chunks = trace.len() / *chunk_size;
+            let num_chunks = addresses.len() / *chunk_size;
             let mut rd_wa_evals: Vec<F> = unsafe_allocate_zero_vec(K * num_chunks);
             rd_wa_evals
                 .par_chunks_mut(K)
                 .enumerate()
                 .for_each(|(chunk_index, wa_chunk)| {
-                    for (j_bound, cycle) in trace
+                    for (j_bound, (_, _, k)) in addresses
                         [chunk_index * *chunk_size..(chunk_index + 1) * *chunk_size]
                         .iter()
                         .enumerate()
                     {
-                        let k = cycle.rd_write().0;
-                        wa_chunk[k] += A[j_bound];
+                        wa_chunk[*k] += A[j_bound];
                     }
                 });
             *rd_wa = Some(MultilinearPolynomial::from(rd_wa_evals));

@@ -24,7 +24,7 @@ use crate::{
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
 use rayon::prelude::*;
-use tracer::instruction::{RAMAccess, RV32IMCycle};
+use tracer::instruction::RAMAccess;
 
 /// A collection of vectors that are used in each of the first log(T / num_chunks)
 /// rounds of sumcheck. There is one `DataBuffers` struct per thread/chunk, reused
@@ -50,7 +50,7 @@ struct DataBuffers<F: JoltField> {
 }
 
 struct ReadWriteCheckingProverState<F: JoltField> {
-    trace: Vec<RV32IMCycle>,
+    ram_addresses: Vec<Option<u64>>,
     chunk_size: usize,
     val_checkpoints: Vec<F>,
     data_buffers: Vec<DataBuffers<F>>,
@@ -274,8 +274,18 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
             })
             .collect();
 
+        let ram_addresses = trace
+            .par_iter()
+            .map(|cycle| {
+                remap_address(
+                    cycle.ram_access().address() as u64,
+                    &program_io.memory_layout,
+                )
+            })
+            .collect::<Vec<_>>();
+
         ReadWriteCheckingProverState {
-            trace: trace.to_vec(),
+            ram_addresses,
             chunk_size,
             val_checkpoints,
             data_buffers,
@@ -418,7 +428,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
     fn phase1_compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         const DEGREE: usize = 3;
         let ReadWriteCheckingProverState {
-            trace,
+            ram_addresses,
             I,
             data_buffers,
             A,
@@ -834,7 +844,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             gruens_eq_r_prime,
             chunk_size,
             val_checkpoints,
-            trace,
+            ram_addresses,
             ra,
             val,
             ..
@@ -903,21 +913,19 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             let span = tracing::span!(tracing::Level::INFO, "Materialize ra polynomial");
             let _guard = span.enter();
 
-            let num_chunks = trace.len() / *chunk_size;
+            let num_chunks = ram_addresses.len() / *chunk_size;
             let mut ra_evals: Vec<F> = unsafe_allocate_zero_vec(self.K * num_chunks);
             ra_evals
                 .par_chunks_mut(self.K)
                 .enumerate()
                 .for_each(|(chunk_index, ra_chunk)| {
-                    for (j_bound, cycle) in trace
+                    for (j_bound, address) in ram_addresses
                         [chunk_index * *chunk_size..(chunk_index + 1) * *chunk_size]
                         .iter()
                         .enumerate()
                     {
-                        let ram_op = cycle.ram_access();
-                        if let Some(k) = remap_address(ram_op.address() as u64, &self.memory_layout)
-                        {
-                            ra_chunk[k as usize] += A[j_bound];
+                        if let Some(k) = address {
+                            ra_chunk[*k as usize] += A[j_bound];
                         }
                     }
                 });
