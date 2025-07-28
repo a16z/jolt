@@ -5,6 +5,7 @@ use addiw::ADDIW;
 use addw::ADDW;
 use and::AND;
 use andi::ANDI;
+use andn::ANDN;
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -108,6 +109,7 @@ pub mod addiw;
 pub mod addw;
 pub mod and;
 pub mod andi;
+pub mod andn;
 pub mod auipc;
 pub mod beq;
 pub mod bge;
@@ -431,7 +433,7 @@ macro_rules! define_rv32im_enums {
 
 define_rv32im_enums! {
     instructions: [
-        ADD, ADDI, AND, ANDI, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE, DIV, DIVU,
+        ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE, DIV, DIVU,
         ECALL, FENCE, JAL, JALR, LB, LBU, LD, LH, LHU, LUI, LW, MUL, MULH, MULHSU,
         MULHU, OR, ORI, REM, REMU, SB, SD, SH, SLL, SLLI, SLT, SLTI, SLTIU, SLTU,
         SRA, SRAI, SRL, SRLI, SUB, SW, XOR, XORI,
@@ -627,6 +629,7 @@ impl RV32IMInstruction {
                     (0b101, 0b0100000) => Ok(SRA::new(instr, address, true).into()),
                     (0b110, 0b0000000) => Ok(OR::new(instr, address, true).into()),
                     (0b111, 0b0000000) => Ok(AND::new(instr, address, true).into()),
+                    (0b111, 0b0100000) => Ok(ANDN::new(instr, address, true).into()),
                     // RV32M extension
                     (0b000, 0b0000001) => Ok(MUL::new(instr, address, true).into()),
                     (0b001, 0b0000001) => Ok(MULH::new(instr, address, true).into()),
