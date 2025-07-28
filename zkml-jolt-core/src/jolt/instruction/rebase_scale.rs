@@ -1,3 +1,5 @@
+// TODO
+
 // use common::constants::virtual_register_index;
 // use tracer::{ELFInstruction, RVTraceRow, RegisterState, RV32IM};
 
@@ -47,7 +49,7 @@ impl VirtualInstructionSequence for REBASEInstruction {
         virtual_sequence
     }
 
-    fn sequence_output(x: u64, y: u64) -> u64 {
+    fn sequence_output(_x: u64, _y: u64) -> u64 {
         todo!()
     }
 }

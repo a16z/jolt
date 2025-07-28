@@ -60,7 +60,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
                     (quotient as u64, remainder as u64)
                 }
             }
-            _ => panic!("Unsupported WORD_SIZE: {}", WORD_SIZE),
+            _ => panic!("Unsupported WORD_SIZE: {WORD_SIZE}",),
         };
 
         let q = ADVICEInstruction::<WORD_SIZE>(quotient).to_lookup_output();
@@ -135,7 +135,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
             },
             memory_state: MemoryState {
                 ts1_val: Some(Tensor::from(vec![r as i128].into_iter())),
-                ts2_val: Some(Tensor::from(vec![y as i128].into_iter())),
+                ts2_val: Some(Tensor::from(vec![y].into_iter())),
                 td_post_val: None,
             },
             advice_value: None,
@@ -173,7 +173,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             memory_state: MemoryState {
-                ts1_val: Some(Tensor::from(vec![y as i128].into_iter())),
+                ts1_val: Some(Tensor::from(vec![y].into_iter())),
                 ts2_val: Some(Tensor::from(vec![q as i128].into_iter())),
                 td_post_val: None,
             },
@@ -193,7 +193,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
             },
             memory_state: MemoryState {
                 ts1_val: Some(Tensor::from(vec![q as i128].into_iter())),
-                ts2_val: Some(Tensor::from(vec![y as i128].into_iter())),
+                ts2_val: Some(Tensor::from(vec![y].into_iter())),
                 td_post_val: Some(Tensor::from(vec![q_y as i128].into_iter())),
             },
             advice_value: None,
@@ -268,7 +268,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
             },
             memory_state: MemoryState {
                 ts1_val: Some(Tensor::from(vec![add_0 as i128].into_iter())),
-                ts2_val: Some(Tensor::from(vec![x as i128].into_iter())),
+                ts2_val: Some(Tensor::from(vec![x].into_iter())),
                 td_post_val: None,
             },
             advice_value: None,

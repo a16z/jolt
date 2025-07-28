@@ -1403,8 +1403,7 @@ pub fn quantize_tensor(
     const_value: Tensor<f32>,
     scale: crate::Scale,
 ) -> Result<Tensor<i128>, Box<dyn std::error::Error>> {
-    let mut value = const_value
-        .par_enum_map(|_, x| Ok::<_, TensorError>(quantize_float(&(x).into(), 0.0, scale)?))?;
+    let mut value = const_value.par_enum_map(|_, x| quantize_float(&(x).into(), 0.0, scale))?;
     value.set_scale(scale);
     Ok(value)
 }

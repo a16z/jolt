@@ -1,12 +1,8 @@
-use crate::subprotocols::sparse_dense_shout::TestInstructionTrait;
 use jolt_core::jolt::instruction::{
     CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS,
 };
+use jolt_core::jolt::lookup_table::LookupTables;
 use jolt_core::jolt::lookup_table::equal::EqualTable;
-use jolt_core::jolt::lookup_table::valid_div0::ValidDiv0Table;
-use jolt_core::jolt::lookup_table::{LookupTables, range_check::RangeCheckTable};
-use rand::RngCore;
-use rand::prelude::StdRng;
 use serde::{Deserialize, Serialize};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]

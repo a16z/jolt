@@ -1,20 +1,12 @@
 #[cfg(test)]
 mod e2e_tests {
-    use std::collections::BTreeMap;
-
     use crate::{
         jolt::vm::{JoltProverPreprocessing, JoltSNARK},
         program::ONNXProgram,
     };
     use ark_bn254::Fr;
     use jolt_core::utils::transcript::KeccakTranscript;
-    use onnx_tracer::{
-        custom_addsubmul_model,
-        graph::{model::Model, node::Node},
-        logger::init_logger,
-        model,
-        tensor::Tensor,
-    };
+    use onnx_tracer::{custom_addsubmul_model, logger::init_logger, model, tensor::Tensor};
 
     #[test]
     fn test_addsubmul0() {
@@ -42,7 +34,7 @@ mod e2e_tests {
 
     #[test]
     fn test_custom_addsubmul() {
-        let mut custom_addsubmul_model = custom_addsubmul_model();
+        let custom_addsubmul_model = custom_addsubmul_model();
         let program_bytecode = onnx_tracer::decode_model(custom_addsubmul_model.clone());
         println!("Program code: {program_bytecode:#?}",);
         let execution_trace = onnx_tracer::execution_trace(

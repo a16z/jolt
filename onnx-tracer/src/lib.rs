@@ -40,10 +40,7 @@
 #![allow(clippy::empty_docs)]
 
 use crate::{
-    circuit::{
-        ops::{poly::PolyOp, Constant, Input, InputType},
-        utils::F32,
-    },
+    circuit::ops::{poly::PolyOp, Constant, Input, InputType},
     constants::BYTECODE_PREPEND_NOOP,
     graph::{
         model::{Model, NodeType},
