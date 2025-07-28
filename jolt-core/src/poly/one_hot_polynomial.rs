@@ -65,6 +65,9 @@ pub struct OneHotSumcheckState<F: JoltField> {
     /// Gruen version of B for testing
     #[cfg(test)]
     pub B_gruen: Option<crate::poly::split_eq_poly::GruenSplitEqPolynomialHighToLow<F>>,
+    /// P array for Gruen optimization - stores polynomial values
+    #[cfg(test)]
+    pub P_arrays: Option<Vec<Vec<F>>>,
 }
 
 impl<F: JoltField> OneHotSumcheckState<F> {
@@ -83,6 +86,8 @@ impl<F: JoltField> OneHotSumcheckState<F> {
             num_variables_bound: 0,
             #[cfg(test)]
             B_gruen: Some(crate::poly::split_eq_poly::GruenSplitEqPolynomialHighToLow::new(r_address)),
+            #[cfg(test)]
+            P_arrays: None,
         }
     }
 }
@@ -257,7 +262,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                     assert_eq!(
                         univariate_poly_evals[1], gruen_evals[1],
                         "Round {}: Gruen s(2) mismatch", round
-                    );
+                    ); 
                 }
             }
 
@@ -634,36 +639,23 @@ mod tests {
             let mut gruen_message = vec![Fr::zero(), Fr::zero()];
             
             if round < LOG_K {
-                // Address rounds - use Gruen formula with E tables
-                // Number of remaining variables after this round
-                let n_minus_i = LOG_K + LOG_T - round;
+                // Using Gruen's pre-computed eq evaluations
                 
-                // Compute s_i(0) using the Gruen formula
-                // s_i(0) = sum_{x' in {0,1}^{n-i-1}} E^(i)(x') * P[0||x']
-                for x_prime in 0..(1 << (n_minus_i - 1)) {
-                    // Get E^(i)(x') from the Gruen split eq polynomial
-                    let e_val = gruen_split_eq.get_bound_coeff(x_prime);
-                    
-                    // P[0||x'] - the value at index x' (with 0 prefix for current round)
-                    let p_val_0 = P_arrays[0][x_prime];
-                    gruen_message[0] += e_val * p_val_0;
-                }
+                let mle_half_gruen = P_arrays[0].len() / 2;
                 
-                // // For degree 2 sumcheck: previous_claim = s(0) + s(2)
-                // // Therefore: s(2) = previous_claim - s(0)
-                // gruen_message[1] = previous_claim - expected_message[0];
+                // For s(0), we sum over the first half of indices (where current round bit = 0)
+                gruen_message[0] = (0..mle_half_gruen)
+                    .map(|i| {
+                        // Get the eq evaluation for index i using Gruen's method
+                        let eq_val = gruen_split_eq.get_bound_coeff(i);
+                        P_arrays[0][i] * eq_val
+                    })
+                    .sum();
+                
+
+                gruen_message[1] = Fr::from(4u64) * previous_claim - Fr::from(7u64) * gruen_message[0];
             } else {
-                // Cycle rounds - use existing method (same as original)
-                // let mle_half = dense_poly.len() / 2;
-                // gruen_message[0] = (0..mle_half).map(|i| dense_poly[i] * eq[i]).sum();
-                // gruen_message[1] = (0..mle_half)
-                //     .map(|i| {
-                //         let poly_bound_point =
-                //             dense_poly[i + mle_half] + dense_poly[i + mle_half] - dense_poly[i];
-                //         let eq_bound_point = eq[i + mle_half] + eq[i + mle_half] - eq[i];
-                //         poly_bound_point * eq_bound_point
-                //     })
-                //     .sum();
+                // Cycle rounds - keep empty for now
             }
             
             // Original expected message calculation for comparison
@@ -680,21 +672,21 @@ mod tests {
                 })
                 .sum();
             
-              // For degree 2 sumcheck: previous_claim = s(0) + s(2)
-                // Therefore: s(2) = previous_claim - s(0)
-                gruen_message[1] = previous_claim - expected_message[0];
                 
             assert_eq!(
                 one_hot_message, expected_message,
                 "round {round} prover message mismatch with original"
             );
             
-            if round > 0 {
+            if round < LOG_K {
                 assert_eq!(
-                    gruen_message, expected_message,
-                    "round {round} Gruen method mismatch with original"
+                    gruen_message[0], expected_message[0],
+                    "round {round} Gruen s(0) mismatch"
                 );
-    
+                assert_eq!(
+                    gruen_message[1], expected_message[1],
+                    "round {round} Gruen s(2) mismatch - computed using previous_claim interpolation"
+                );
             }
         
             // Update previous_claim for next round

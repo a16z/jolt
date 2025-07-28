@@ -210,10 +210,6 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         }
     }
 
-    pub fn gruen_evals_deg_2(&self, s_0: F, previous_claim: F) -> [F; 2] {
-        todo!()
-    }
-
     /// Compute the sumcheck cubic sumcheck evaluations (i.e., the evaluations at {0, 2, 3}) of a
     /// polynomial s(X) = l(X) * q(X), where l(X) is the current (linear) eq polynomial and
     /// q(X) = c + dX + eX^2, given the following:
@@ -514,36 +510,34 @@ impl<F: JoltField> GruenSplitEqPolynomialHighToLow<F> {
     }
 
     pub fn gruen_evals_deg_2(&self, q_0: F, previous_claim: F) -> [F; 2] {
-        // For degree 2 sumcheck, we have:
-        // - s(X) = l(X) * q(X) where l is the linear eq polynomial and q is the polynomial being summed
-        // - We need to compute s(0) and s(2)
-        // - Given: q(0) = q_0 and previous_claim = s(0) + s(1)
-        
-        // 1. The witness bit that is about to be bound (for high-to-low, we use current_index)
-        let w_i = self.w[self.current_index];
-    
-        // 2. Compute l(X) = current_scalar * eq(w_i, X) evaluations
-        let eq_eval_1 = self.current_scalar * w_i;          // l(1)
-        let eq_eval_0 = self.current_scalar - eq_eval_1;    // l(0)
-        let eq_m = eq_eval_1 - eq_eval_0;                   // slope
-        let eq_eval_2 = eq_eval_1 + eq_m;                   // l(2) = l(1) + slope
-    
-        // 3. We know s(0) = l(0) * q(0)
-        let s_0 = eq_eval_0 * q_0;
-    
-        // 4. From previous_claim = s(0) + s(1), we get s(1) = previous_claim - s(0)
-        let s_1 = previous_claim - s_0;
-        
-        // 5. Since s(1) = l(1) * q(1), we can solve for q(1)
-        let q_1 = s_1 / eq_eval_1;
-        
-        // 6. For a linear polynomial q(X), we have q(2) = 2*q(1) - q(0)
-        let q_2 = q_1 + q_1 - q_0;
-        
-        // 7. Finally, s(2) = l(2) * q(2)
-        let s_2 = eq_eval_2 * q_2;
-    
-        [s_0, s_2]
+        // We want to compute the evaluations of the quadratic polynomial s(X) = l(X) * q(X), where
+        // l is linear, and q is linear, at the points {0, 2}.
+        //
+        // At this point, we have:
+        // - the linear polynomial, l(X) = a + bX
+        // - the linear polynomial, q(X) = c + dX
+        // - the previous round's claim s(0) + s(1) = a * c + (a + b) * (c + d)
+        //
+        // We have q(0) = c, and we need to compute q(1) and q(2).
+
+        // Evaluations of the linear eq polynomial
+        // For high-to-low, we bind from index 0 upward
+        let wi = self.w[self.current_index];
+        let eq_eval_0 = self.current_scalar * (F::one() - wi);
+        let eq_eval_1 = self.current_scalar * wi;
+        let eq_m = eq_eval_1 - eq_eval_0;
+        let eq_eval_2 = eq_eval_1 + eq_m;
+
+        // Evaluations of the linear q polynomial
+        let linear_eval_0 = q_0;
+        let quadratic_eval_0 = eq_eval_0 * linear_eval_0;
+        let quadratic_eval_1 = previous_claim - quadratic_eval_0;
+        // q(1) = c + d
+        let linear_eval_1 = quadratic_eval_1 / eq_eval_1;
+        // q(2) = c + 2d = 2*q(1) - q(0)
+        let linear_eval_2 = linear_eval_1 + linear_eval_1 - linear_eval_0;
+
+        [quadratic_eval_0, eq_eval_2 * linear_eval_2]
     }
 }
 
