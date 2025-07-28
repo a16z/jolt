@@ -24,7 +24,7 @@ use crate::{
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
 use rayon::prelude::*;
-use tracer::instruction::{RAMAccess, RV32IMCycle};
+use tracer::instruction::RAMAccess;
 
 /// A collection of vectors that are used in each of the first log(T / num_chunks)
 /// rounds of sumcheck. There is one `DataBuffers` struct per thread/chunk, reused
@@ -50,7 +50,7 @@ struct DataBuffers<F: JoltField> {
 }
 
 struct ReadWriteCheckingProverState<F: JoltField> {
-    trace: Vec<RV32IMCycle>,
+    ram_addresses: Vec<Option<u64>>,
     chunk_size: usize,
     val_checkpoints: Vec<F>,
     data_buffers: Vec<DataBuffers<F>>,
@@ -274,8 +274,18 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
             })
             .collect();
 
+        let ram_addresses = trace
+            .par_iter()
+            .map(|cycle| {
+                remap_address(
+                    cycle.ram_access().address() as u64,
+                    &program_io.memory_layout,
+                )
+            })
+            .collect::<Vec<_>>();
+
         ReadWriteCheckingProverState {
-            trace: trace.to_vec(),
+            ram_addresses,
             chunk_size,
             val_checkpoints,
             data_buffers,
@@ -290,11 +300,6 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
     }
 }
 
-struct ReadWriteCheckingVerifierState<F: JoltField> {
-    r_prime: OpeningPoint<BIG_ENDIAN, F>,
-    sumcheck_switch_index: usize,
-}
-
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone, Default)]
 pub struct ReadWriteSumcheckClaims<F: JoltField> {
     pub val_claim: F,
@@ -305,9 +310,10 @@ pub struct ReadWriteSumcheckClaims<F: JoltField> {
 pub struct RamReadWriteChecking<F: JoltField> {
     K: usize,
     T: usize,
-    z: F,
+    gamma: F,
+    r_prime: Option<OpeningPoint<BIG_ENDIAN, F>>,
+    sumcheck_switch_index: usize,
     prover_state: Option<ReadWriteCheckingProverState<F>>,
-    verifier_state: Option<ReadWriteCheckingVerifierState<F>>,
     memory_layout: MemoryLayout,
     rv_claim: F,
     wv_claim: F,
@@ -327,7 +333,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         initial_memory_state: &[u32],
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let z = state_manager.transcript.borrow_mut().challenge_scalar();
+        let gamma = state_manager.transcript.borrow_mut().challenge_scalar();
         let (_, _, program_io, _) = state_manager.get_prover_data();
         let memory_layout = program_io.memory_layout.clone();
 
@@ -349,12 +355,15 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         let prover_state =
             ReadWriteCheckingProverState::initialize(initial_memory_state, K, state_manager);
 
+        let sumcheck_switch_index = prover_state.chunk_size.log_2();
+
         Self {
             K,
             T,
-            z,
+            gamma,
+            r_prime: None,
+            sumcheck_switch_index,
             prover_state: Some(prover_state),
-            verifier_state: None,
             memory_layout,
             rv_claim,
             wv_claim,
@@ -365,7 +374,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         K: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let z = state_manager.transcript.borrow_mut().challenge_scalar();
+        let gamma = state_manager.transcript.borrow_mut().challenge_scalar();
         let (_, program_io, T) = state_manager.get_verifier_data();
         let memory_layout = program_io.memory_layout.clone();
 
@@ -387,11 +396,6 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             _ => panic!("SumcheckSwitchIndex not found"),
         };
 
-        let verifier_state = ReadWriteCheckingVerifierState {
-            sumcheck_switch_index,
-            r_prime,
-        };
-
         let (_, rv_claim) = state_manager
             .get_verifier_accumulator()
             .borrow()
@@ -410,9 +414,10 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         Self {
             K,
             T,
-            z,
+            gamma,
+            r_prime: Some(r_prime),
+            sumcheck_switch_index,
             prover_state: None,
-            verifier_state: Some(verifier_state),
             memory_layout,
             rv_claim,
             wv_claim,
@@ -423,7 +428,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
     fn phase1_compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         const DEGREE: usize = 3;
         let ReadWriteCheckingProverState {
-            trace,
+            ram_addresses,
             I,
             data_buffers,
             A,
@@ -458,10 +463,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
 
                             for j in j_prime << round..(j_prime + 1) << round {
                                 let j_bound = j % (1 << round);
-                                if let Some(k) = remap_address(
-                                    trace[j].ram_access().address() as u64,
-                                    &self.memory_layout,
-                                ) {
+                                if let Some(k) = ram_addresses[j] {
                                     let k = k as usize;
                                     if ra[0][k].is_zero() {
                                         dirty_indices.push(k);
@@ -472,10 +474,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
 
                             for j in (j_prime + 1) << round..(j_prime + 2) << round {
                                 let j_bound = j % (1 << round);
-                                if let Some(k) = remap_address(
-                                    trace[j].ram_access().address() as u64,
-                                    &self.memory_layout,
-                                ) {
+                                if let Some(k) = ram_addresses[j] {
                                     let k = k as usize;
                                     if ra[0][k].is_zero() && ra[1][k].is_zero() {
                                         dirty_indices.push(k);
@@ -526,11 +525,12 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                                     let val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
 
                                     inner_sum_evals[0] += ra_evals[0].mul_0_optimized(
-                                        val_evals[0] + self.z * (inc_cycle_evals[0] + val_evals[0]),
+                                        val_evals[0]
+                                            + self.gamma * (inc_cycle_evals[0] + val_evals[0]),
                                     );
                                     inner_sum_evals[1] += ra_evals[1]
                                         * (val_evals[1]
-                                            + self.z * (inc_cycle_evals[1] + val_evals[1]));
+                                            + self.gamma * (inc_cycle_evals[1] + val_evals[1]));
 
                                     ra[0][k] = F::zero();
                                     ra[1][k] = F::zero();
@@ -580,10 +580,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
 
                             for j in j_prime << round..(j_prime + 1) << round {
                                 let j_bound = j % (1 << round);
-                                if let Some(k) = remap_address(
-                                    trace[j].ram_access().address() as u64,
-                                    &self.memory_layout,
-                                ) {
+                                if let Some(k) = ram_addresses[j] {
                                     let k = k as usize;
                                     if ra[0][k].is_zero() {
                                         dirty_indices.push(k);
@@ -594,10 +591,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
 
                             for j in (j_prime + 1) << round..(j_prime + 2) << round {
                                 let j_bound = j % (1 << round);
-                                if let Some(k) = remap_address(
-                                    trace[j].ram_access().address() as u64,
-                                    &self.memory_layout,
-                                ) {
+                                if let Some(k) = ram_addresses[j] {
                                     let k = k as usize;
                                     if ra[0][k].is_zero() && ra[1][k].is_zero() {
                                         dirty_indices.push(k);
@@ -669,11 +663,12 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                                     let val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
 
                                     inner_sum_evals[0] += ra_evals[0].mul_0_optimized(
-                                        val_evals[0] + self.z * (inc_cycle_evals[0] + val_evals[0]),
+                                        val_evals[0]
+                                            + self.gamma * (inc_cycle_evals[0] + val_evals[0]),
                                     );
                                     inner_sum_evals[1] += ra_evals[1]
                                         * (val_evals[1]
-                                            + self.z * (inc_cycle_evals[1] + val_evals[1]));
+                                            + self.gamma * (inc_cycle_evals[1] + val_evals[1]));
 
                                     ra[0][k] = F::zero();
                                     ra[1][k] = F::zero();
@@ -740,13 +735,13 @@ impl<F: JoltField> RamReadWriteChecking<F> {
 
                         [
                             ra_evals[0].mul_0_optimized(
-                                val_evals[0] + self.z * (inc_evals[0] + val_evals[0]),
+                                val_evals[0] + self.gamma * (inc_evals[0] + val_evals[0]),
                             ),
                             ra_evals[1].mul_0_optimized(
-                                val_evals[1] + self.z * (inc_evals[1] + val_evals[1]),
+                                val_evals[1] + self.gamma * (inc_evals[1] + val_evals[1]),
                             ),
                             ra_evals[2].mul_0_optimized(
-                                val_evals[2] + self.z * (inc_evals[2] + val_evals[2]),
+                                val_evals[2] + self.gamma * (inc_evals[2] + val_evals[2]),
                             ),
                         ]
                     })
@@ -807,9 +802,9 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                 let inc_cycle_eval = inc_cycle.final_sumcheck_claim();
 
                 [
-                    ra_evals[0] * (val_evals[0] + self.z * (val_evals[0] + inc_cycle_eval)),
-                    ra_evals[1] * (val_evals[1] + self.z * (val_evals[1] + inc_cycle_eval)),
-                    ra_evals[2] * (val_evals[2] + self.z * (val_evals[2] + inc_cycle_eval)),
+                    ra_evals[0] * (val_evals[0] + self.gamma * (val_evals[0] + inc_cycle_eval)),
+                    ra_evals[1] * (val_evals[1] + self.gamma * (val_evals[1] + inc_cycle_eval)),
+                    ra_evals[2] * (val_evals[2] + self.gamma * (val_evals[2] + inc_cycle_eval)),
                 ]
             })
             .reduce(
@@ -839,7 +834,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             gruens_eq_r_prime,
             chunk_size,
             val_checkpoints,
-            trace,
+            ram_addresses,
             ra,
             val,
             ..
@@ -908,21 +903,19 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             let span = tracing::span!(tracing::Level::INFO, "Materialize ra polynomial");
             let _guard = span.enter();
 
-            let num_chunks = trace.len() / *chunk_size;
+            let num_chunks = ram_addresses.len() / *chunk_size;
             let mut ra_evals: Vec<F> = unsafe_allocate_zero_vec(self.K * num_chunks);
             ra_evals
                 .par_chunks_mut(self.K)
                 .enumerate()
                 .for_each(|(chunk_index, ra_chunk)| {
-                    for (j_bound, cycle) in trace
+                    for (j_bound, address) in ram_addresses
                         [chunk_index * *chunk_size..(chunk_index + 1) * *chunk_size]
                         .iter()
                         .enumerate()
                     {
-                        let ram_op = cycle.ram_access();
-                        if let Some(k) = remap_address(ram_op.address() as u64, &self.memory_layout)
-                        {
-                            ra_chunk[k as usize] += A[j_bound];
+                        if let Some(k) = address {
+                            ra_chunk[*k as usize] += A[j_bound];
                         }
                     }
                 });
@@ -991,7 +984,7 @@ impl<F: JoltField> SumcheckInstance<F> for RamReadWriteChecking<F> {
     }
 
     fn input_claim(&self) -> F {
-        self.rv_claim + self.z * self.wv_claim
+        self.rv_claim + self.gamma * self.wv_claim
     }
 
     #[tracing::instrument(skip_all, name = "RamReadWriteChecking::compute_prover_message")]
@@ -1023,16 +1016,12 @@ impl<F: JoltField> SumcheckInstance<F> for RamReadWriteChecking<F> {
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         r: &[F],
     ) -> F {
-        let ReadWriteCheckingVerifierState {
-            sumcheck_switch_index,
-            r_prime,
-            ..
-        } = self.verifier_state.as_ref().unwrap();
+        let r_prime = self.r_prime.as_ref().unwrap();
 
         // First `sumcheck_switch_index` rounds bind cycle variables from low to high
-        let mut r_cycle = r[..*sumcheck_switch_index].to_vec();
+        let mut r_cycle = r[..self.sumcheck_switch_index].to_vec();
         // The high-order cycle variables are bound after the switch
-        r_cycle.extend(r[*sumcheck_switch_index..self.T.log_2()].iter().rev());
+        r_cycle.extend(r[self.sumcheck_switch_index..self.T.log_2()].iter().rev());
         let r_cycle = OpeningPoint::<LITTLE_ENDIAN, F>::new(r_cycle);
 
         // eq(r', r_cycle)
@@ -1051,20 +1040,14 @@ impl<F: JoltField> SumcheckInstance<F> for RamReadWriteChecking<F> {
             CommittedPolynomial::RamInc,
             SumcheckId::RamReadWriteChecking,
         );
-        eq_eval_cycle * ra_claim * (val_claim + self.z * (val_claim + inc_claim))
+        eq_eval_cycle * ra_claim * (val_claim + self.gamma * (val_claim + inc_claim))
     }
 
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
-        let sumcheck_switch_index = if let Some(state) = &self.verifier_state {
-            state.sumcheck_switch_index
-        } else {
-            self.prover_state.as_ref().unwrap().chunk_size.log_2()
-        };
-
         // The high-order cycle variables are bound after the switch
-        let mut r_cycle = opening_point[sumcheck_switch_index..self.T.log_2()].to_vec();
+        let mut r_cycle = opening_point[self.sumcheck_switch_index..self.T.log_2()].to_vec();
         // First `sumcheck_switch_index` rounds bind cycle variables from low to high
-        r_cycle.extend(opening_point[..sumcheck_switch_index].iter().rev());
+        r_cycle.extend(opening_point[..self.sumcheck_switch_index].iter().rev());
         // Address variables are bound high-to-low
         let r_address = opening_point[self.T.log_2()..].to_vec();
 

@@ -21,7 +21,6 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
 use ram::RAMPreprocessing;
 use rayon::prelude::*;
-use registers::RegistersTwistProof;
 use std::collections::HashMap;
 use std::{
     fs::File,
@@ -155,7 +154,7 @@ where
     pub trace_length: usize,
     // pub instruction_lookups: LookupsProof<WORD_SIZE, F, PCS, ProofTranscript>,
     // pub ram: RAMTwistProof<F, ProofTranscript>,
-    pub registers: RegistersTwistProof<F, ProofTranscript>,
+    // pub registers: RegistersTwistProof<F, ProofTranscript>,
     pub r1cs: UniformSpartanProof<F, ProofTranscript>,
     pub opening_proof: ReducedOpeningProof<F, PCS, ProofTranscript>,
     pub commitments: JoltCommitments<F, PCS>,
@@ -325,12 +324,12 @@ where
         //     &mut transcript,
         // );
 
-        let registers_proof = RegistersTwistProof::prove(
-            &preprocessing,
-            &trace,
-            &mut opening_accumulator,
-            &mut transcript,
-        );
+        // let registers_proof = RegistersTwistProof::prove(
+        //     &preprocessing,
+        //     &trace,
+        //     &mut opening_accumulator,
+        //     &mut transcript,
+        // );
 
         // let ram_proof = RAMTwistProof::prove(
         //     &preprocessing,
@@ -368,7 +367,7 @@ where
             trace_length,
             // instruction_lookups: instruction_proof,
             // ram: ram_proof,
-            registers: registers_proof,
+            // registers: registers_proof,
             r1cs: r1cs_proof,
             opening_proof,
             commitments: JoltCommitments { commitments },
@@ -466,12 +465,12 @@ where
         //     &mut transcript,
         // )?;
 
-        proof.registers.verify(
-            &proof.commitments,
-            padded_trace_length,
-            &mut opening_accumulator,
-            &mut transcript,
-        )?;
+        // proof.registers.verify(
+        //     &proof.commitments,
+        //     padded_trace_length,
+        //     &mut opening_accumulator,
+        //     &mut transcript,
+        // )?;
 
         // proof.ram.verify(
         //     padded_trace_length,

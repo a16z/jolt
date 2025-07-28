@@ -14,8 +14,8 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{
     MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
+use crate::utils::expanding_table::ExpandingTable;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
-use crate::subprotocols::sparse_dense_shout::ExpandingTable;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_ec::CurveGroup;

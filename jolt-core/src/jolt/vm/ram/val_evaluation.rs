@@ -18,46 +18,15 @@ use crate::{
             BIG_ENDIAN,
         },
     },
-    subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
+    subprotocols::sumcheck::SumcheckInstance,
     utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct ValEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
-    /// Sumcheck proof for the Val-evaluation sumcheck (steps 6 of Figure 9).
-    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    /// Inc(r_cycle')
-    inc_claim: F,
-    /// wa(r_address, r_cycle')
-    wa_claim: F,
-}
-
 pub struct ValEvaluationProverState<F: JoltField> {
-    /// Inc polynomial
     inc: MultilinearPolynomial<F>,
-    /// wa polynomial
     wa: MultilinearPolynomial<F>,
-    /// LT polynomial
     lt: MultilinearPolynomial<F>,
-}
-
-pub struct ValEvaluationVerifierState<F: JoltField> {
-    /// log T
-    num_rounds: usize,
-    /// used to compute LT evaluation
-    r_address: Vec<F>,
-    /// used to compute LT evaluation
-    r_cycle: Vec<F>,
-}
-
-#[derive(Clone)]
-pub struct ValEvaluationSumcheckClaims<F: JoltField> {
-    /// Inc(r_cycle')
-    inc_claim: F,
-    /// wa(r_address, r_cycle')
-    wa_claim: F,
 }
 
 /// Val-evaluation sumcheck for RAM
@@ -66,10 +35,13 @@ pub struct ValEvaluationSumcheck<F: JoltField> {
     claimed_evaluation: F,
     /// Initial evaluation to subtract (for RAM)
     init_eval: F,
-    /// Prover state
+    /// log T
+    num_rounds: usize,
+    /// used to compute LT evaluation
+    r_address: Vec<F>,
+    /// used to compute LT evaluation
+    r_cycle: Vec<F>,
     prover_state: Option<ValEvaluationProverState<F>>,
-    /// Verifier state
-    verifier_state: Option<ValEvaluationVerifierState<F>>,
 }
 
 impl<F: JoltField> ValEvaluationSumcheck<F> {
@@ -134,12 +106,13 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         drop(_guard);
         drop(span);
 
-        // Create the sumcheck instance
         ValEvaluationSumcheck {
             claimed_evaluation,
             init_eval,
+            num_rounds: T.log_2(),
+            r_address: r_address.r.clone(),
+            r_cycle: r_cycle.r.clone(),
             prover_state: Some(ValEvaluationProverState { inc, wa, lt }),
-            verifier_state: None,
         }
     }
 
@@ -159,18 +132,14 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         let val_init: MultilinearPolynomial<F> =
             MultilinearPolynomial::from(initial_ram_state.to_vec());
         let init_eval = val_init.evaluate(&r_address.r);
-        let verifier_state = ValEvaluationVerifierState {
-            num_rounds: T.log_2(),
-            r_cycle: r_cycle.r,
-            r_address: r_address.r,
-        };
 
-        // Create the sumcheck instance
         ValEvaluationSumcheck {
             claimed_evaluation,
             init_eval,
+            num_rounds: T.log_2(),
+            r_address: r_address.r,
+            r_cycle: r_cycle.r,
             prover_state: None,
-            verifier_state: Some(verifier_state),
         }
     }
 }
@@ -181,13 +150,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
     }
 
     fn num_rounds(&self) -> usize {
-        if let Some(prover_state) = &self.prover_state {
-            prover_state.inc.original_len().log_2()
-        } else if let Some(verifier_state) = &self.verifier_state {
-            verifier_state.num_rounds
-        } else {
-            panic!("Neither prover state nor verifier state is initialized");
-        }
+        self.num_rounds
     }
 
     fn input_claim(&self) -> F {
@@ -253,15 +216,10 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         r: &[F],
     ) -> F {
-        let verifier_state = self
-            .verifier_state
-            .as_ref()
-            .expect("Verifier state not initialized");
-
         // Compute LT(r_cycle', r_cycle)
         let mut lt_eval = F::zero();
         let mut eq_term = F::one();
-        for (x, y) in r.iter().zip(verifier_state.r_cycle.iter()) {
+        for (x, y) in r.iter().zip(self.r_cycle.iter()) {
             lt_eval += (F::one() - x) * y * eq_term;
             eq_term *= F::one() - x - y + *x * y + *x * y;
         }

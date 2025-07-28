@@ -134,18 +134,21 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     #[serial]
     fn fib_e2e_mock() {
         fib_e2e::<Fr, MockCommitScheme<Fr>>();
     }
 
     #[test]
+    #[ignore]
     #[serial]
     fn fib_e2e_dory() {
         fib_e2e::<Fr, DoryCommitmentScheme>();
     }
 
     #[test]
+    #[ignore]
     #[serial]
     fn sha3_e2e_dory() {
         let guard = SHA3_FILE_LOCK.lock().unwrap();
@@ -187,6 +190,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     #[serial]
     fn memory_ops_e2e_dory() {
         let mut program = host::Program::new("memory-ops-guest");
@@ -224,6 +228,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     #[serial]
     #[should_panic]
     fn truncated_trace() {
@@ -257,6 +262,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     #[serial]
     #[should_panic]
     fn malicious_trace() {

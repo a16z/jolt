@@ -9,14 +9,14 @@ use crate::{
     },
     field::JoltField,
     jolt::vm::ram::{
-        booleanity::{BooleanityProof, BooleanitySumcheck},
+        booleanity::BooleanitySumcheck,
         hamming_booleanity::HammingBooleanitySumcheck,
-        hamming_weight::{HammingWeightProof, HammingWeightSumcheck},
-        output_check::{OutputProof, OutputSumcheck, ValFinalSumcheck},
-        ra_virtual::{RAProof, RASumcheck},
-        raf_evaluation::{RafEvaluationProof, RafEvaluationSumcheck},
-        read_write_checking::{RamReadWriteChecking, RamReadWriteCheckingProof},
-        val_evaluation::{ValEvaluationProof, ValEvaluationSumcheck},
+        hamming_weight::HammingWeightSumcheck,
+        output_check::{OutputSumcheck, ValFinalSumcheck},
+        ra_virtual::RASumcheck,
+        raf_evaluation::RafEvaluationSumcheck,
+        read_write_checking::RamReadWriteChecking,
+        val_evaluation::ValEvaluationSumcheck,
     },
     poly::commitment::commitment_scheme::CommitmentScheme,
     subprotocols::sumcheck::SumcheckInstance,
@@ -86,22 +86,6 @@ impl RAMPreprocessing {
             bytecode_words,
         }
     }
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct RAMTwistProof<F: JoltField, ProofTranscript: Transcript> {
-    pub(crate) K: usize,
-    /// Proof for the read-checking and write-checking sumchecks
-    /// (steps 3 and 4 of Figure 9).
-    read_write_checking_proof: RamReadWriteCheckingProof<F, ProofTranscript>,
-    /// Proof of the Val-evaluation sumcheck (step 6 of Figure 9).
-    val_evaluation_proof: ValEvaluationProof<F, ProofTranscript>,
-
-    booleanity_proof: BooleanityProof<F, ProofTranscript>,
-    ra_proof: RAProof<F, ProofTranscript>,
-    hamming_weight_proof: HammingWeightProof<F, ProofTranscript>,
-    raf_evaluation_proof: RafEvaluationProof<F, ProofTranscript>,
-    output_proof: OutputProof<F, ProofTranscript>,
 }
 
 /// Returns Some(address) if there was read/write

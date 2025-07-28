@@ -1,5 +1,5 @@
 use crate::jolt::lookup_table::suffixes::left_shift::LeftShiftSuffix;
-use crate::{field::JoltField, subprotocols::sparse_dense_shout::LookupBits};
+use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 use div_by_zero::DivByZeroSuffix;
 use eq::EqSuffix;
 use gt::GreaterThanSuffix;

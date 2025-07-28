@@ -1,6 +1,6 @@
 use crate::jolt::lookup_table::prefixes::left_shift::LeftShiftPrefix;
 use crate::jolt::lookup_table::prefixes::left_shift_helper::LeftShiftHelperPrefix;
-use crate::{field::JoltField, subprotocols::sparse_dense_shout::LookupBits};
+use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 use lsb::LsbPrefix;
 use negative_divisor_equals_remainder::NegativeDivisorEqualsRemainderPrefix;
 use negative_divisor_greater_than_remainder::NegativeDivisorGreaterThanRemainderPrefix;
