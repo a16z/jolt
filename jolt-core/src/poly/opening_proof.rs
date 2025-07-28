@@ -811,6 +811,7 @@ where
                 instance
             })
             .collect();
+
         let (sumcheck_proof, r_sumcheck) = BatchedSumcheck::prove(instances, None, transcript);
 
         let claims: Vec<_> = self

@@ -351,9 +351,11 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                     // Note: For the D polynomial test, we need to account for the fact that
                     // the final result is multiplied by B.final_sumcheck_claim()
                     // So we test the pre-multiplication values
+
+                    let eq_r_address_claim = B.final_sumcheck_claim();
                     println!("ROUND: {:?}", round);
                     let gruen_test: [F; 2] = d_gruen.gruen_evals_deg_2(gruen_eval_0, 
-                       previous_claim);
+                       previous_claim / eq_r_address_claim );
 
                     //    let eq_r_address_claim = B.final_sumcheck_claim();
                     
@@ -361,10 +363,13 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                         univariate_poly_evals[0], gruen_test[0],
                         "Round {}: Gruen D s(0) mismatch", round
                     );
-                    assert_eq!(
-                        univariate_poly_evals[1], gruen_test[1],
-                        "Round {}: Gruen D s(2) mismatch", round
-                    );
+
+
+                        assert_eq!(
+                            univariate_poly_evals[1], gruen_test[1],
+                            "Round {}: Gruen D s(2) mismatch", round
+                        );
+                   
                 }
             }
 

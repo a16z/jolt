@@ -541,15 +541,14 @@ impl<F: JoltField> GruenSplitEqPolynomialHighToLow<F> {
 
         // Evaluations of the linear eq polynomial
         // For high-to-low, we bind from index 0 upward
-        println!("W ARRAY:{:?}", self.w);
         let wi = self.w[self.current_index];
-        let eq_eval_0 = self.current_scalar * (F::one() - wi);
+        let eq_eval_0_old = self.current_scalar * (F::one() - wi);
 
         let eq_eval_1 = self.current_scalar * self.w[self.current_index];
         let eq_eval_0 = self.current_scalar - eq_eval_1;
 
-        println!("wi: {:?}", wi);
-        println!("current_scalar: {:?}", self.current_scalar);
+        assert_eq!(eq_eval_0_old, eq_eval_0);
+
         // let eq_eval_1 = self.current_scalar * wi;
         let eq_m = eq_eval_1 - eq_eval_0;
         let eq_eval_2 = eq_eval_1 + eq_m;
@@ -559,7 +558,7 @@ impl<F: JoltField> GruenSplitEqPolynomialHighToLow<F> {
         let quadratic_eval_0 = eq_eval_0 * linear_eval_0;
         let quadratic_eval_1 = previous_claim - quadratic_eval_0;
         // q(1) = c + d
-        let linear_eval_1 = quadratic_eval_1 / eq_eval_1;
+        let linear_eval_1 = quadratic_eval_1 * eq_eval_1.inverse().unwrap();
         // q(2) = c + 2d = 2*q(1) - q(0)
         let linear_eval_2 = (linear_eval_1 + linear_eval_1) - linear_eval_0;
 
