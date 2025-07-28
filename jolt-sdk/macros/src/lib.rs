@@ -150,12 +150,12 @@ impl MacroBuilder {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #build_verifier_fn_name(
                 preprocessing: jolt::JoltVerifierPreprocessing<jolt::F, jolt::PCS, jolt::ProofTranscript>,
-            ) -> impl Fn(#(#input_types ,)* #output_type, jolt::JoltHyperKZGProof) -> bool + Sync + Send
+            ) -> impl Fn(#(#input_types ,)* #output_type, jolt::JoltProofBundle) -> bool + Sync + Send
             {
                 #imports
                 let preprocessing = std::sync::Arc::new(preprocessing);
 
-                let verify_closure = move |#(#inputs,)* output, proof: jolt::JoltHyperKZGProof| {
+                let verify_closure = move |#(#inputs,)* output, proof: jolt::JoltProofBundle| {
                     let preprocessing = (*preprocessing).clone();
                     let memory_config = MemoryConfig {
                         max_input_size: preprocessing.shared.memory_layout.max_input_size,
@@ -256,6 +256,11 @@ impl MacroBuilder {
         let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
         let stack_size = proc_macro2::Literal::u64_unsuffixed(attributes.stack_size);
         let memory_size = proc_macro2::Literal::u64_unsuffixed(attributes.memory_size);
+
+        let max_memory_size = proc_macro2::Literal::u64_unsuffixed(
+            (attributes.memory_size + attributes.stack_size).next_power_of_two(),
+        );
+        let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
         let imports = self.make_imports();
 
         let fn_name = self.get_func_name();
@@ -284,8 +289,8 @@ impl MacroBuilder {
                         memory_layout,
                         memory_init,
                         1 << 20,
-                        1 << 20,
-                        1 << 24
+                        #max_memory_size,
+                        #max_trace_length,
                     );
 
                 preprocessing
@@ -299,6 +304,11 @@ impl MacroBuilder {
         let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
         let stack_size = proc_macro2::Literal::u64_unsuffixed(attributes.stack_size);
         let memory_size = proc_macro2::Literal::u64_unsuffixed(attributes.memory_size);
+
+        let max_memory_size = proc_macro2::Literal::u64_unsuffixed(
+            (attributes.memory_size + attributes.stack_size).next_power_of_two(),
+        );
+        let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
         let imports = self.make_imports();
 
         let fn_name = self.get_func_name();
@@ -327,8 +337,8 @@ impl MacroBuilder {
                         memory_layout,
                         memory_init,
                         1 << 20,
-                        1 << 20,
-                        1 << 24
+                        #max_memory_size,
+                        #max_trace_length,
                     );
                 let preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
                 preprocessing
@@ -402,7 +412,7 @@ impl MacroBuilder {
                 );
 
 
-                let proof = jolt::JoltHyperKZGProof {
+                let proof = jolt::JoltProofBundle {
                     proof: jolt_proof,
                 };
 
@@ -632,10 +642,10 @@ impl MacroBuilder {
     fn get_prove_output_type(&self) -> TokenStream2 {
         match &self.func.sig.output {
             ReturnType::Default => quote! {
-                ((), jolt::JoltHyperKZGProof)
+                ((), jolt::JoltProofBundle)
             },
             ReturnType::Type(_, ty) => quote! {
-                (#ty, jolt::JoltHyperKZGProof)
+                (#ty, jolt::JoltProofBundle)
             },
         }
     }
@@ -676,22 +686,27 @@ impl MacroBuilder {
     fn make_wasm_function(&self) -> TokenStream2 {
         let fn_name = self.get_func_name();
         let verify_wasm_fn_name = Ident::new(&format!("verify_{fn_name}"), fn_name.span());
+        let attributes = parse_attributes(&self.attr);
+        let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
+        let max_memory_size = proc_macro2::Literal::u64_unsuffixed(
+            (attributes.memory_size + attributes.stack_size).next_power_of_two(),
+        );
 
         quote! {
             #[wasm_bindgen]
             #[cfg(all(target_arch = "wasm32", not(feature = "guest")))]
             pub fn #verify_wasm_fn_name(preprocessing_data: &[u8], proof_bytes: &[u8]) -> bool {
-                use jolt::{Jolt, JoltHyperKZGProof, RV32IJoltVM, ProofTranscript, Serializable};
+                use jolt::{Jolt, JoltProofBundle, RV32IJoltVM, ProofTranscript, Serializable};
 
                 let decoded_preprocessing_data: DecodedData = deserialize_from_bin(preprocessing_data).unwrap();
-                let proof = JoltHyperKZGProof::deserialize_from_bytes(proof_bytes).unwrap();
+                let proof = JoltProofBundle::deserialize_from_bytes(proof_bytes).unwrap();
 
                 let preprocessing = RV32IJoltVM::preprocess(
                     decoded_preprocessing_data.bytecode,
                     decoded_preprocessing_data.memory_init,
                     1 << 20,
-                    1 << 20,
-                    1 << 24,
+                    #max_memory_size,
+                    #max_trace_length,
                 );
 
                 let result = RV32IJoltVM::verify(preprocessing, proof.proof /*, proof.commitments */);
