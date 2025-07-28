@@ -463,10 +463,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
 
                             for j in j_prime << round..(j_prime + 1) << round {
                                 let j_bound = j % (1 << round);
-                                if let Some(k) = remap_address(
-                                    trace[j].ram_access().address() as u64,
-                                    &self.memory_layout,
-                                ) {
+                                if let Some(k) = ram_addresses[j] {
                                     let k = k as usize;
                                     if ra[0][k].is_zero() {
                                         dirty_indices.push(k);
@@ -477,10 +474,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
 
                             for j in (j_prime + 1) << round..(j_prime + 2) << round {
                                 let j_bound = j % (1 << round);
-                                if let Some(k) = remap_address(
-                                    trace[j].ram_access().address() as u64,
-                                    &self.memory_layout,
-                                ) {
+                                if let Some(k) = ram_addresses[j] {
                                     let k = k as usize;
                                     if ra[0][k].is_zero() && ra[1][k].is_zero() {
                                         dirty_indices.push(k);
@@ -531,11 +525,12 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                                     let val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
 
                                     inner_sum_evals[0] += ra_evals[0].mul_0_optimized(
-                                        val_evals[0] + self.z * (inc_cycle_evals[0] + val_evals[0]),
+                                        val_evals[0]
+                                            + self.gamma * (inc_cycle_evals[0] + val_evals[0]),
                                     );
                                     inner_sum_evals[1] += ra_evals[1]
                                         * (val_evals[1]
-                                            + self.z * (inc_cycle_evals[1] + val_evals[1]));
+                                            + self.gamma * (inc_cycle_evals[1] + val_evals[1]));
 
                                     ra[0][k] = F::zero();
                                     ra[1][k] = F::zero();
@@ -585,10 +580,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
 
                             for j in j_prime << round..(j_prime + 1) << round {
                                 let j_bound = j % (1 << round);
-                                if let Some(k) = remap_address(
-                                    trace[j].ram_access().address() as u64,
-                                    &self.memory_layout,
-                                ) {
+                                if let Some(k) = ram_addresses[j] {
                                     let k = k as usize;
                                     if ra[0][k].is_zero() {
                                         dirty_indices.push(k);
@@ -599,10 +591,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
 
                             for j in (j_prime + 1) << round..(j_prime + 2) << round {
                                 let j_bound = j % (1 << round);
-                                if let Some(k) = remap_address(
-                                    trace[j].ram_access().address() as u64,
-                                    &self.memory_layout,
-                                ) {
+                                if let Some(k) = ram_addresses[j] {
                                     let k = k as usize;
                                     if ra[0][k].is_zero() && ra[1][k].is_zero() {
                                         dirty_indices.push(k);
@@ -674,11 +663,12 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                                     let val_evals = [val_j_r[0][k], val_j_r[1][k] - val_j_r[0][k]];
 
                                     inner_sum_evals[0] += ra_evals[0].mul_0_optimized(
-                                        val_evals[0] + self.z * (inc_cycle_evals[0] + val_evals[0]),
+                                        val_evals[0]
+                                            + self.gamma * (inc_cycle_evals[0] + val_evals[0]),
                                     );
                                     inner_sum_evals[1] += ra_evals[1]
                                         * (val_evals[1]
-                                            + self.z * (inc_cycle_evals[1] + val_evals[1]));
+                                            + self.gamma * (inc_cycle_evals[1] + val_evals[1]));
 
                                     ra[0][k] = F::zero();
                                     ra[1][k] = F::zero();

@@ -346,19 +346,19 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                             for j in j_prime << round..(j_prime + 1) << round {
                                 let j_bound = j % (1 << round);
 
-                                let k = trace[j].rs1_read().0;
+                                let k = addresses[j].0;
                                 unsafe {
                                     dirty_indices.insert_unchecked(k);
                                 }
                                 rs1_ra[0][k] += A[j_bound];
 
-                                let k = trace[j].rs2_read().0;
+                                let k = addresses[j].1;
                                 unsafe {
                                     dirty_indices.insert_unchecked(k);
                                 }
                                 rs2_ra[0][k] += A[j_bound];
 
-                                let k = trace[j].rd_write().0;
+                                let k = addresses[j].2;
                                 unsafe {
                                     dirty_indices.insert_unchecked(k);
                                 }
@@ -368,19 +368,19 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                             for j in (j_prime + 1) << round..(j_prime + 2) << round {
                                 let j_bound = j % (1 << round);
 
-                                let k = trace[j].rs1_read().0;
+                                let k = addresses[j].0;
                                 unsafe {
                                     dirty_indices.insert_unchecked(k);
                                 }
                                 rs1_ra[1][k] += A[j_bound];
 
-                                let k = trace[j].rs2_read().0;
+                                let k = addresses[j].1;
                                 unsafe {
                                     dirty_indices.insert_unchecked(k);
                                 }
                                 rs2_ra[1][k] += A[j_bound];
 
-                                let k = trace[j].rd_write().0;
+                                let k = addresses[j].2;
                                 unsafe {
                                     dirty_indices.insert_unchecked(k);
                                 }
@@ -473,12 +473,12 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
 
                             evals[0] += eq_r_prime_eval
                                 * (rd_inner_sum_evals[0]
-                                    + self.z * rs1_inner_sum_evals[0]
-                                    + self.z_squared * rs2_inner_sum_evals[0]);
+                                    + self.gamma * rs1_inner_sum_evals[0]
+                                    + self.gamma_sqr * rs2_inner_sum_evals[0]);
                             evals[1] += eq_r_prime_eval
                                 * (rd_inner_sum_evals[1]
-                                    + self.z * rs1_inner_sum_evals[1]
-                                    + self.z_squared * rs2_inner_sum_evals[1]);
+                                    + self.gamma * rs1_inner_sum_evals[1]
+                                    + self.gamma_sqr * rs2_inner_sum_evals[1]);
                         });
 
                     evals
@@ -520,19 +520,19 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                             for j in j_prime << round..(j_prime + 1) << round {
                                 let j_bound = j % (1 << round);
 
-                                let k = trace[j].rs1_read().0;
+                                let k = addresses[j].0;
                                 unsafe {
                                     dirty_indices.insert_unchecked(k);
                                 }
                                 rs1_ra[0][k] += A[j_bound];
 
-                                let k = trace[j].rs2_read().0;
+                                let k = addresses[j].1;
                                 unsafe {
                                     dirty_indices.insert_unchecked(k);
                                 }
                                 rs2_ra[0][k] += A[j_bound];
 
-                                let k = trace[j].rd_write().0;
+                                let k = addresses[j].2;
                                 unsafe {
                                     dirty_indices.insert_unchecked(k);
                                 }
@@ -542,19 +542,19 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                             for j in (j_prime + 1) << round..(j_prime + 2) << round {
                                 let j_bound = j % (1 << round);
 
-                                let k = trace[j].rs1_read().0;
+                                let k = addresses[j].0;
                                 unsafe {
                                     dirty_indices.insert_unchecked(k);
                                 }
                                 rs1_ra[1][k] += A[j_bound];
 
-                                let k = trace[j].rs2_read().0;
+                                let k = addresses[j].1;
                                 unsafe {
                                     dirty_indices.insert_unchecked(k);
                                 }
                                 rs2_ra[1][k] += A[j_bound];
 
-                                let k = trace[j].rd_write().0;
+                                let k = addresses[j].2;
                                 unsafe {
                                     dirty_indices.insert_unchecked(k);
                                 }
@@ -668,12 +668,12 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
 
                             evals_for_current_E_out[0] += E_in_eval
                                 * (rd_inner_sum_evals[0]
-                                    + self.z * rs1_inner_sum_evals[0]
-                                    + self.z_squared * rs2_inner_sum_evals[0]);
+                                    + self.gamma * rs1_inner_sum_evals[0]
+                                    + self.gamma_sqr * rs2_inner_sum_evals[0]);
                             evals_for_current_E_out[1] += E_in_eval
                                 * (rd_inner_sum_evals[1]
-                                    + self.z * rs1_inner_sum_evals[1]
-                                    + self.z_squared * rs2_inner_sum_evals[1]);
+                                    + self.gamma * rs1_inner_sum_evals[1]
+                                    + self.gamma_sqr * rs2_inner_sum_evals[1]);
                         });
 
                     // Multiply the final running sum by the final value of E_out_eval and add the

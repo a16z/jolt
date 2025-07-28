@@ -395,7 +395,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                     let B_eval = B.E_out_current()[k_prime];
                     let mut coeffs = [F::zero(); DEGREE - 1];
 
-                    for i in 0..d {
+                    for i in 0..self.d {
                         let G_i = &prover_state.G[i];
                         let inner_sum = G_i[k_prime << m..(k_prime + 1) << m]
                             .par_iter()
@@ -422,8 +422,8 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                                 |running, new| [running[0] + new[0], running[1] + new[1]],
                             );
 
-                        coeffs[0] += prover_state.z_powers[i] * inner_sum[0];
-                        coeffs[1] += prover_state.z_powers[i] * inner_sum[1];
+                        coeffs[0] += self.gamma_powers[i] * inner_sum[0];
+                        coeffs[1] += self.gamma_powers[i] * inner_sum[1];
                     }
 
                     [B_eval * coeffs[0], B_eval * coeffs[1]]
@@ -452,7 +452,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                             let B_E_in_eval = B.E_in_current()[x_in];
                             let mut coeffs = [F::zero(); DEGREE - 1];
 
-                            for i in 0..d {
+                            for i in 0..self.d {
                                 let G_i = &prover_state.G[i];
                                 let inner_sum = G_i[k_prime << m..(k_prime + 1) << m]
                                     .par_iter()
@@ -475,8 +475,8 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                                         |running, new| [running[0] + new[0], running[1] + new[1]],
                                     );
 
-                                coeffs[0] += prover_state.gamma_powers[i] * inner_sum[0];
-                                coeffs[1] += prover_state.gamma_powers[i] * inner_sum[1];
+                                coeffs[0] += self.gamma_powers[i] * inner_sum[0];
+                                coeffs[1] += self.gamma_powers[i] * inner_sum[1];
                             }
 
                             [B_E_in_eval * coeffs[0], B_E_in_eval * coeffs[1]]
@@ -530,13 +530,10 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                     H_evals[0][2].square() - H_evals[0][2],
                 ];
 
-                for i in 1..d {
-                    evals[0] +=
-                        prover_state.gamma_powers[i] * (H_evals[i][0].square() - H_evals[i][0]);
-                    evals[1] +=
-                        prover_state.gamma_powers[i] * (H_evals[i][1].square() - H_evals[i][1]);
-                    evals[2] +=
-                        prover_state.gamma_powers[i] * (H_evals[i][2].square() - H_evals[i][2]);
+                for i in 1..self.d {
+                    evals[0] += self.gamma_powers[i] * (H_evals[i][0].square() - H_evals[i][0]);
+                    evals[1] += self.gamma_powers[i] * (H_evals[i][1].square() - H_evals[i][1]);
+                    evals[2] += self.gamma_powers[i] * (H_evals[i][2].square() - H_evals[i][2]);
                 }
 
                 [
