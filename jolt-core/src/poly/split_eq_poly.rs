@@ -2,6 +2,7 @@
 //! https://eprint.iacr.org/2024/1210.pdf
 #[cfg(test)]
 use super::dense_mlpoly::DensePolynomial;
+use super::multilinear_polynomial::BindingOrder;
 use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -24,70 +25,60 @@ pub struct GruenSplitEqPolynomial<F> {
     pub(crate) w: Vec<F>,
     pub(crate) E_in_vec: Vec<Vec<F>>,
     pub(crate) E_out_vec: Vec<Vec<F>>,
-}
-
-/// Old struct for split equality polynomial, without Gruen's optimization
-/// TODO: remove all usage of this struct with the new one
-pub struct SplitEqPolynomial<F> {
-    num_vars: usize,
-    pub(crate) E1: Vec<F>,
-    pub(crate) E1_len: usize,
-    pub(crate) E2: Vec<F>,
-    pub(crate) E2_len: usize,
+    pub(crate) binding_order: BindingOrder,
 }
 
 impl<F: JoltField> GruenSplitEqPolynomial<F> {
     #[tracing::instrument(skip_all, name = "GruenSplitEqPolynomial::new")]
-    pub fn new(w: &[F]) -> Self {
-        let m = w.len() / 2;
-        //   w = [w_out, w_in, w_last]
-        //         ↑      ↑      ↑
-        //         |      |      |
-        //         |      |      last element
-        //         |      second half of remaining elements (for E_in)
-        //         first half of remaining elements (for E_out)
-        let (_, wprime) = w.split_last().unwrap();
-        let (w_out, w_in) = wprime.split_at(m);
-        let (E_out_vec, E_in_vec) = rayon::join(
-            || EqPolynomial::evals_cached(w_out),
-            || EqPolynomial::evals_cached(w_in),
-        );
-        Self {
-            current_index: w.len(),
-            current_scalar: F::one(),
-            w: w.to_vec(),
-            E_in_vec,
-            E_out_vec,
+    pub fn new(w: &[F], binding_order: BindingOrder) -> Self {
+        match binding_order {
+            BindingOrder::LowToHigh => {
+                let m = w.len() / 2;
+                //   w = [w_out, w_in, w_last]
+                //         ↑      ↑      ↑
+                //         |      |      |
+                //         |      |      last element
+                //         |      second half of remaining elements (for E_in)
+                //         first half of remaining elements (for E_out)
+                let (_, wprime) = w.split_last().unwrap();
+                let (w_out, w_in) = wprime.split_at(m);
+                let (E_out_vec, E_in_vec) = rayon::join(
+                    || EqPolynomial::evals_cached(w_out),
+                    || EqPolynomial::evals_cached(w_in),
+                );
+                Self {
+                    current_index: w.len(),
+                    current_scalar: F::one(),
+                    w: w.to_vec(),
+                    E_in_vec,
+                    E_out_vec,
+                    binding_order,
+                }
+            }
+            BindingOrder::HighToLow => {
+                // For high-to-low binding, we bind from MSB (index 0) to LSB (index n-1).
+                // The split should be: w_in = first half, w_out = second half
+                let (_, wprime) = w.split_first().unwrap();
+                let m = w.len() / 2;
+                let (w_in, w_out) = wprime.split_at(m);
+                // [w_first <- w[0], w_in, w_out]
+
+                let (E_in_vec, E_out_vec) = rayon::join(
+                    || EqPolynomial::evals_cached_rev(w_in),
+                    || EqPolynomial::evals_cached_rev(w_out),
+                );
+
+                Self {
+                    current_index: 0, // Start from 0 for high-to-low
+                    current_scalar: F::one(),
+                    w: w.to_vec(),
+                    E_in_vec,
+                    E_out_vec,
+                    binding_order,
+                }
+            }
         }
     }
-
-    #[tracing::instrument(skip_all, name = "GruenSplitEqPolynomial::new_rev")]
-    pub fn new_rev(w: &[F]) -> Self {
-        let mut w_rev = w.to_vec();
-        w_rev.reverse();
-        let w = &w_rev;
-        let m = w.len() / 2;
-        //   w = [w_out, w_in, w_last]
-        //         ↑      ↑      ↑
-        //         |      |      |
-        //         |      |      last element
-        //         |      second half of remaining elements (for E_in)
-        //         first half of remaining elements (for E_out)
-        let (_, wprime) = w.split_last().unwrap();
-        let (w_out, w_in) = wprime.split_at(m);
-        let (E_out_vec, E_in_vec) = rayon::join(
-            || EqPolynomial::evals_cached(w_out),
-            || EqPolynomial::evals_cached(w_in),
-        );
-        Self {
-            current_index: w.len(),
-            current_scalar: F::one(),
-            w: w_rev,
-            E_in_vec,
-            E_out_vec,
-        }
-    }
-
     /// Compute the split equality polynomial for the small value optimization
     ///
     /// The split is done as follows: (here `l = num_small_value_rounds`)
@@ -165,6 +156,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
             w: w.to_vec(),
             E_in_vec: vec![E_in],
             E_out_vec,
+            binding_order: BindingOrder::LowToHigh, // Small value optimization is always low-to-high
         }
     }
 
@@ -173,40 +165,67 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     }
 
     pub fn len(&self) -> usize {
-        1 << self.current_index
+        match self.binding_order {
+            BindingOrder::LowToHigh => 1 << self.current_index,
+            BindingOrder::HighToLow => 1 << (self.w.len() - self.current_index),
+        }
     }
 
     pub fn E_in_current_len(&self) -> usize {
-        self.E_in_vec.last().unwrap().len()
+        self.E_in_vec.last().map_or(0, |v| v.len())
     }
 
     pub fn E_out_current_len(&self) -> usize {
-        self.E_out_vec.last().unwrap().len()
+        self.E_out_vec.last().map_or(0, |v| v.len())
     }
 
     /// Return the last vector from `E1` as a slice
     pub fn E_in_current(&self) -> &[F] {
-        self.E_in_vec.last().unwrap()
+        self.E_in_vec.last().map_or(&[], |v| v.as_slice())
     }
 
     /// Return the last vector from `E2` as a slice
     pub fn E_out_current(&self) -> &[F] {
-        self.E_out_vec.last().unwrap()
+        self.E_out_vec.last().map_or(&[], |v| v.as_slice())
     }
 
     #[tracing::instrument(skip_all, name = "GruenSplitEqPolynomial::bind")]
     pub fn bind(&mut self, r: F) {
-        // multiply `current_scalar` by `eq(w[i], r) = (1 - w[i]) * (1 - r) + w[i] * r`
-        // which is the same as `1 - w[i] - r + 2 * w[i] * r`
-        let prod_w_r = self.w[self.current_index - 1] * r;
-        self.current_scalar *= F::one() - self.w[self.current_index - 1] - r + prod_w_r + prod_w_r;
-        // decrement `current_index`
-        self.current_index -= 1;
-        // pop the last vector from `E_in_vec` or `E_out_vec` (since we don't need it anymore)
-        if self.w.len() / 2 < self.current_index {
-            self.E_in_vec.pop();
-        } else if 0 < self.current_index {
-            self.E_out_vec.pop();
+        match self.binding_order {
+            BindingOrder::LowToHigh => {
+                // multiply `current_scalar` by `eq(w[i], r) = (1 - w[i]) * (1 - r) + w[i] * r`
+                // which is the same as `1 - w[i] - r + 2 * w[i] * r`
+                let prod_w_r = self.w[self.current_index - 1] * r;
+                self.current_scalar *= F::one() - self.w[self.current_index - 1] - r + prod_w_r + prod_w_r;
+                // decrement `current_index`
+                self.current_index -= 1;
+                // pop the last vector from `E_in_vec` or `E_out_vec` (since we don't need it anymore)
+                if self.w.len() / 2 < self.current_index {
+                    self.E_in_vec.pop();
+                } else if 0 < self.current_index {
+                    self.E_out_vec.pop();
+                }
+            }
+            BindingOrder::HighToLow => {
+                // multiply `current_scalar` by `eq(w[i], r) = (1 - w[i]) * (1 - r) + w[i] * r`
+                // which is the same as `1 - w[i] - r + 2 * w[i] * r`
+                let prod_w_r = self.w[self.current_index] * r;
+                self.current_scalar *= F::one() - self.w[self.current_index] - r + prod_w_r + prod_w_r;
+
+                // increment `current_index` (going from 0 to n-1)
+                self.current_index += 1;
+
+                // pop the last vector from `E_in_vec` or `E_out_vec` (since we don't need it anymore)
+                // For high-to-low, we bind variables in the first half first (E_in),
+                // then variables in the second half (E_out)
+                if self.current_index <= self.w.len() / 2 {
+                    // We're binding variables from the first half (E_in)
+                    self.E_in_vec.pop();
+                } else if self.current_index <= self.w.len() {
+                    // We're binding variables from the second half (E_out)
+                    self.E_out_vec.pop();
+                }
+            }
         }
     }
 
@@ -260,273 +279,6 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         ]
     }
 
-    #[cfg(test)]
-    fn to_E1_old(&self) -> Vec<F> {
-        if self.current_index > self.w.len() / 2 {
-            let wi = self.w[self.current_index - 1];
-            let E1_old_odd: Vec<F> = self
-                .E_in_vec
-                .last()
-                .unwrap()
-                .iter()
-                .map(|x| *x * (F::one() - wi))
-                .collect();
-            let E1_old_even: Vec<F> = self
-                .E_in_vec
-                .last()
-                .unwrap()
-                .iter()
-                .map(|x| *x * wi)
-                .collect();
-            // Interleave the two vectors
-            let mut E1_old = vec![];
-            for i in 0..E1_old_odd.len() {
-                E1_old.push(E1_old_odd[i]);
-                E1_old.push(E1_old_even[i]);
-            }
-            E1_old
-        } else {
-            // println!("Don't expect to call this");
-            vec![self.current_scalar; 1]
-        }
-    }
-
-    #[cfg(test)]
-    pub fn merge(&self) -> DensePolynomial<F> {
-        if self.current_index == 0 {
-            return DensePolynomial::new(vec![self.current_scalar]);
-        }
-
-        let e_in = self.E_in_current();
-        let e_out = self.E_out_current();
-
-        // Low-to-high: remaining variables are w_0...w_{i-1}.
-        // The initial split is w = [w_out, w_in, w_last].
-        // w_out corresponds to lower-order bits of the hypercube, w_in to higher-order.
-        // So e_out is the inner loop, e_in is the outer loop.
-        let mut merged_evals = vec![F::zero(); e_in.len() * e_out.len()];
-        for i in 0..e_in.len() {
-            for j in 0..e_out.len() {
-                merged_evals[i * e_out.len() + j] = e_in[i] * e_out[j];
-            }
-        }
-
-        for val in &mut merged_evals {
-            *val *= self.current_scalar;
-        }
-
-        DensePolynomial::new(merged_evals)
-    }
-}
-
-/// GruenSplitEqPolynomial for High-to-Low (MSB to LSB) binding order
-/// This binds variables starting from the most significant bit (index 0) down to the least significant bit
-#[derive(Clone, Debug)]
-pub struct GruenSplitEqPolynomialHighToLow<F> {
-    pub(crate) current_index: usize,
-    pub(crate) current_scalar: F,
-    pub(crate) w: Vec<F>,
-    pub(crate) E_in_vec: Vec<Vec<F>>,
-    pub(crate) E_out_vec: Vec<Vec<F>>,
-}
-
-impl<F: JoltField> GruenSplitEqPolynomialHighToLow<F> {
-    #[tracing::instrument(skip_all, name = "GruenSplitEqPolynomialHighToLow::new")]
-    pub fn new(w: &[F]) -> Self {
-        // For high-to-low binding, we bind from MSB (index 0) to LSB (index n-1).
-        // We need to split the variables appropriately.
-        // For a polynomial with variables [x0, x1, x2], in high-to-low:
-        // - First we bind x0
-        // - Then x1
-        // - Finally x2
-        //
-        // The split should be: w_in = first half, w_out = second half
-
-        let (_, wprime) = w.split_first().unwrap();
-        let (_, wprime) = w.split_first().unwrap();
-        let m = w.len() / 2;
-        let (w_in, w_out) = wprime.split_at(m);
-        // [w_first <- w[0], w_in, w_out]
-
-        let (E_in_vec, E_out_vec) = rayon::join(
-            || EqPolynomial::evals_cached_rev(w_in),
-            || EqPolynomial::evals_cached_rev(w_out),
-        );
-
-        Self {
-            current_index: 0, // Start from 0 for high-to-low
-            current_scalar: F::one(),
-            w: w.to_vec(),
-            E_in_vec,
-            E_out_vec,
-        }
-    }
-
-    #[tracing::instrument(skip_all, name = "GruenSplitEqPolynomialHighToLow::bind")]
-    pub fn bind(&mut self, r: F) {
-        // multiply `current_scalar` by `eq(w[i], r) = (1 - w[i]) * (1 - r) + w[i] * r`
-        // which is the same as `1 - w[i] - r + 2 * w[i] * r`
-        let prod_w_r = self.w[self.current_index] * r;
-        self.current_scalar *= F::one() - self.w[self.current_index] - r + prod_w_r + prod_w_r;
-
-        // increment `current_index` (going from 0 to n-1)
-        self.current_index += 1;
-
-        // pop the last vector from `E_in_vec` or `E_out_vec` (since we don't need it anymore)
-        // For high-to-low, we bind variables in the first half first (E_in),
-        // then variables in the second half (E_out)
-        if self.current_index <= self.w.len() / 2 {
-            // We're binding variables from the first half (E_in)
-            self.E_in_vec.pop();
-        } else if self.current_index <= self.w.len() {
-            // We're binding variables from the second half (E_out)
-            self.E_out_vec.pop();
-        }
-    }
-
-    #[cfg(test)]
-    pub fn merge(&self) -> DensePolynomial<F> {
-        if self.current_index == 0 {
-            // Initial state - use the cached values
-            let e_in = self.E_in_current();
-            let e_out = self.E_out_current();
-
-            let mut merged_evals = vec![F::zero(); e_in.len() * e_out.len()];
-            for i in 0..e_in.len() {
-                for j in 0..e_out.len() {
-                    merged_evals[i * e_out.len() + j] = e_in[i] * e_out[j] * self.current_scalar;
-                }
-            }
-            return DensePolynomial::new(merged_evals);
-        }
-
-        if self.current_index >= self.w.len() {
-            return DensePolynomial::new(vec![self.current_scalar]);
-        }
-
-        // For high-to-low, after binding some variables from the first half,
-        // we need to handle the transition correctly
-        if self.current_index <= self.w.len() / 2 {
-            // Still binding in the first half
-            let e_in = self.E_in_current();
-            let e_out = self.E_out_current();
-
-            let mut merged_evals = vec![F::zero(); e_in.len() * e_out.len()];
-            for i in 0..e_in.len() {
-                for j in 0..e_out.len() {
-                    merged_evals[i * e_out.len() + j] = e_in[i] * e_out[j] * self.current_scalar;
-                }
-            }
-            DensePolynomial::new(merged_evals)
-        } else {
-            // Binding in the second half - need to swap the order
-            let e_in = self.E_in_current();
-            let e_out = self.E_out_current();
-
-            let mut merged_evals = vec![F::zero(); e_in.len() * e_out.len()];
-            // When binding in the second half, we need to handle the fact that
-            // E_in now represents a fully bound set (single value)
-            // The evaluations should be in reverse order
-            for j in 0..e_out.len() {
-                for i in 0..e_in.len() {
-                    merged_evals[j * e_in.len() + i] = e_in[i] * e_out[j] * self.current_scalar;
-                }
-            }
-            DensePolynomial::new(merged_evals)
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        1 << (self.w.len() - self.current_index)
-    }
-
-    pub fn get_bound_coeff(&self, index: usize) -> F {
-        // This is equivalent to calling merge() and then getting the coefficient at index
-        // For efficiency, we compute it directly using E_in and E_out
-
-        if self.current_index == 0 {
-            // Initial state - need to account for w[0] that was split off
-            let e_in = self.E_in_current();
-            let e_out = self.E_out_current();
-            let e_out_len = e_out.len();
-            let e_in_len = e_in.len();
-            let total_half_size = e_in_len * e_out_len;
-
-            // Determine which half of the hypercube we're in
-            let w0_bit = index / total_half_size;
-            let local_index = index % total_half_size;
-
-            let i = local_index / e_out_len;
-            let j = local_index % e_out_len;
-
-            let w0 = self.w[0];
-            let eq_w0_eval = if w0_bit == 0 {
-                F::one() - w0 // eq(w[0], 0)
-            } else {
-                w0 // eq(w[0], 1)
-            };
-
-            return eq_w0_eval * e_in[i] * e_out[j] * self.current_scalar;
-        }
-
-        if self.current_index >= self.w.len() {
-            return self.current_scalar;
-        }
-
-        if self.current_index <= self.w.len() / 2 {
-            // Still binding in the first half
-            let e_in = self.E_in_current();
-            let e_out = self.E_out_current();
-            let e_out_len = e_out.len();
-            let i = index / e_out_len;
-            let j = index % e_out_len;
-            e_in[i] * e_out[j] * self.current_scalar
-        } else {
-            // Binding in the second half
-            let e_in = self.E_in_current();
-            let e_out = self.E_out_current();
-            let e_in_len = e_in.len();
-            let j = index / e_in_len;
-            let i = index % e_in_len;
-            e_in[i] * e_out[j] * self.current_scalar
-        }
-    }
-
-    pub fn E_in_current_len(&self) -> usize {
-        self.E_in_vec.last().map_or(0, |v| v.len())
-    }
-
-    pub fn E_out_current_len(&self) -> usize {
-        self.E_out_vec.last().map_or(0, |v| v.len())
-    }
-
-    pub fn E_in_current(&self) -> &[F] {
-        self.E_in_vec.last().map_or(&[], |v| v.as_slice())
-    }
-
-    pub fn E_out_current(&self) -> &[F] {
-        self.E_out_vec.last().map_or(&[], |v| v.as_slice())
-    }
-
-    pub fn sumcheck_evals_array<const DEGREE: usize>(&self, index: usize) -> [F; DEGREE] {
-        debug_assert!(DEGREE > 0);
-        debug_assert!(index < self.len() / 2);
-
-        let mut evals = [F::zero(); DEGREE];
-        // For high-to-low binding order
-        evals[0] = self.get_bound_coeff(index);
-        if DEGREE == 1 {
-            return evals;
-        }
-        let mut eval = self.get_bound_coeff(index + self.len() / 2);
-        let m = eval - evals[0];
-        for i in 1..DEGREE {
-            eval += m;
-            evals[i] = eval;
-        }
-        evals
-    }
-
     pub fn gruen_evals_deg_2(&self, q_0: F, previous_claim: F) -> [F; 2] {
         // We want to compute the evaluations of the quadratic polynomial s(X) = l(X) * q(X), where
         // l is linear, and q is linear, at the points {0, 2}.
@@ -563,79 +315,120 @@ impl<F: JoltField> GruenSplitEqPolynomialHighToLow<F> {
 
         [quadratic_eval_0, eq_eval_2 * linear_eval_2]
     }
-}
 
-impl<F: JoltField> SplitEqPolynomial<F> {
-    #[tracing::instrument(skip_all, name = "SplitEqPolynomial::new")]
-    pub fn new(w: &[F]) -> Self {
-        let m = w.len() / 2;
-        let (w2, w1) = w.split_at(m);
-        let (E2, E1) = rayon::join(|| EqPolynomial::evals(w2), || EqPolynomial::evals(w1));
-        let E1_len = E1.len();
-        let E2_len = E2.len();
-        Self {
-            num_vars: w.len(),
-            E1,
-            E1_len,
-            E2,
-            E2_len,
-        }
-    }
-
-    pub fn get_num_vars(&self) -> usize {
-        self.num_vars
-    }
-
-    pub fn len(&self) -> usize {
-        if self.E1_len == 1 {
-            self.E2_len
+    #[cfg(test)]
+    fn to_E1_old(&self) -> Vec<F> {
+        if self.current_index > self.w.len() / 2 {
+            let wi = self.w[self.current_index - 1];
+            let E1_old_odd: Vec<F> = self
+                .E_in_vec
+                .last()
+                .unwrap()
+                .iter()
+                .map(|x| *x * (F::one() - wi))
+                .collect();
+            let E1_old_even: Vec<F> = self
+                .E_in_vec
+                .last()
+                .unwrap()
+                .iter()
+                .map(|x| *x * wi)
+                .collect();
+            // Interleave the two vectors
+            let mut E1_old = vec![];
+            for i in 0..E1_old_odd.len() {
+                E1_old.push(E1_old_odd[i]);
+                E1_old.push(E1_old_even[i]);
+            }
+            E1_old
         } else {
-            self.E1_len * self.E2_len
-        }
-    }
-
-    #[tracing::instrument(skip_all, name = "SplitEqPolynomial::bind")]
-    pub fn bind(&mut self, r: F) {
-        if self.E1_len == 1 {
-            // E_1 is already completely bound, so we bind E_2
-            let n = self.E2_len / 2;
-            for i in 0..n {
-                self.E2[i] = self.E2[2 * i] + r * (self.E2[2 * i + 1] - self.E2[2 * i]);
-            }
-            self.E2_len = n;
-        } else {
-            // Bind E_1
-            let n = self.E1_len / 2;
-            for i in 0..n {
-                self.E1[i] = self.E1[2 * i] + r * (self.E1[2 * i + 1] - self.E1[2 * i]);
-            }
-            self.E1_len = n;
-
-            // If E_1 is now completely bound, we will be switching over to the
-            // linear-time sumcheck prover, using E_1 * E_2:
-            if self.E1_len == 1 {
-                self.E2[..self.E2_len]
-                    .iter_mut()
-                    .for_each(|eval| *eval *= self.E1[0]);
-            }
+            // println!("Don't expect to call this");
+            vec![self.current_scalar; 1]
         }
     }
 
     #[cfg(test)]
     pub fn merge(&self) -> DensePolynomial<F> {
-        if self.E1_len == 1 {
-            DensePolynomial::new(self.E2[..self.E2_len].to_vec())
-        } else {
-            let mut merged = vec![];
-            for i in 0..self.E2_len {
-                for j in 0..self.E1_len {
-                    merged.push(self.E2[i] * self.E1[j])
+        match self.binding_order {
+            BindingOrder::LowToHigh => {
+                if self.current_index == 0 {
+                    return DensePolynomial::new(vec![self.current_scalar]);
+                }
+
+                let e_in = self.E_in_current();
+                let e_out = self.E_out_current();
+
+                // Low-to-high: remaining variables are w_0...w_{i-1}.
+                // The initial split is w = [w_out, w_in, w_last].
+                // w_out corresponds to lower-order bits of the hypercube, w_in to higher-order.
+                // So e_out is the inner loop, e_in is the outer loop.
+                let mut merged_evals = vec![F::zero(); e_in.len() * e_out.len()];
+                for i in 0..e_in.len() {
+                    for j in 0..e_out.len() {
+                        merged_evals[i * e_out.len() + j] = e_in[i] * e_out[j];
+                    }
+                }
+
+                for val in &mut merged_evals {
+                    *val *= self.current_scalar;
+                }
+
+                DensePolynomial::new(merged_evals)
+            }
+            BindingOrder::HighToLow => {
+                if self.current_index == 0 {
+                    // Initial state - use the cached values
+                    let e_in = self.E_in_current();
+                    let e_out = self.E_out_current();
+
+                    let mut merged_evals = vec![F::zero(); e_in.len() * e_out.len()];
+                    for i in 0..e_in.len() {
+                        for j in 0..e_out.len() {
+                            merged_evals[i * e_out.len() + j] = e_in[i] * e_out[j] * self.current_scalar;
+                        }
+                    }
+                    return DensePolynomial::new(merged_evals);
+                }
+
+                if self.current_index >= self.w.len() {
+                    return DensePolynomial::new(vec![self.current_scalar]);
+                }
+
+                // For high-to-low, after binding some variables from the first half,
+                // we need to handle the transition correctly
+                if self.current_index <= self.w.len() / 2 {
+                    // Still binding in the first half
+                    let e_in = self.E_in_current();
+                    let e_out = self.E_out_current();
+
+                    let mut merged_evals = vec![F::zero(); e_in.len() * e_out.len()];
+                    for i in 0..e_in.len() {
+                        for j in 0..e_out.len() {
+                            merged_evals[i * e_out.len() + j] = e_in[i] * e_out[j] * self.current_scalar;
+                        }
+                    }
+                    DensePolynomial::new(merged_evals)
+                } else {
+                    // Binding in the second half - need to swap the order
+                    let e_in = self.E_in_current();
+                    let e_out = self.E_out_current();
+
+                    let mut merged_evals = vec![F::zero(); e_in.len() * e_out.len()];
+                    // When binding in the second half, we need to handle the fact that
+                    // E_in now represents a fully bound set (single value)
+                    // The evaluations should be in reverse order
+                    for j in 0..e_out.len() {
+                        for i in 0..e_in.len() {
+                            merged_evals[j * e_in.len() + i] = e_in[i] * e_out[j] * self.current_scalar;
+                        }
+                    }
+                    DensePolynomial::new(merged_evals)
                 }
             }
-            DensePolynomial::new(merged)
         }
     }
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -644,7 +437,7 @@ mod tests {
     use ark_std::test_rng;
 
     #[test]
-    fn bind() {
+    fn bind_low_high() {
         const NUM_VARS: usize = 3;
         let mut rng = test_rng();
         let w: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
@@ -652,7 +445,7 @@ mod tests {
             .collect();
 
         let mut regular_eq = DensePolynomial::new(EqPolynomial::evals(&w));
-        let mut split_eq = GruenSplitEqPolynomial::new(&w);
+        let mut split_eq = GruenSplitEqPolynomial::new(&w, BindingOrder::LowToHigh);
         assert_eq!(regular_eq, split_eq.merge());
 
         println!("\n=== Initial state ===");
@@ -727,36 +520,7 @@ mod tests {
     }
 
     #[test]
-    fn bind_rev() {
-        const NUM_VARS: usize = 10;
-        let mut rng = test_rng();
-        let w: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
-            .take(NUM_VARS)
-            .collect();
-
-        // Create regular polynomial with original w
-        // @TODO(markosg04) this fails when trying to use regular_eq high to low
-        let mut regular_eq = DensePolynomial::new(EqPolynomial::evals(&w));
-
-        // Create split eq polynomial using new_rev with original w
-        let mut split_eq_rev = GruenSplitEqPolynomial::new_rev(&w);
-
-        // Verify they start equal
-        assert_eq!(regular_eq, split_eq_rev.merge());
-
-        // Bind with same random values
-        for _ in 0..NUM_VARS {
-            let r = Fr::random(&mut rng);
-            regular_eq.bound_poly_var_top(&r);
-            split_eq_rev.bind(r);
-
-            let merged = split_eq_rev.merge();
-            assert_eq!(regular_eq.Z[..regular_eq.len()], merged.Z[..merged.len()]);
-        }
-    }
-
-    #[test]
-    fn bind_new() {
+    fn bind_high_low() {
         const NUM_VARS: usize = 3;
         let mut rng = test_rng();
         let w: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
@@ -767,7 +531,7 @@ mod tests {
         let mut regular_eq = DensePolynomial::new(EqPolynomial::evals(&w));
 
         // Create high-to-low split eq polynomial
-        let mut split_eq_high_to_low = GruenSplitEqPolynomialHighToLow::new(&w);
+        let mut split_eq_high_to_low = GruenSplitEqPolynomial::new(&w, BindingOrder::HighToLow);
 
         // Debug initial state
         println!("Initial state debug:");
@@ -855,65 +619,6 @@ mod tests {
             assert_eq!(regular_eq.Z[..regular_eq.len()], merged.Z[..merged.len()]);
         }
         println!("\n=== High-to-Low test completed successfully ===");
-    }
-
-    #[test]
-    fn equal_old_and_new_split_eq() {
-        const NUM_VARS: usize = 15;
-        let mut rng = test_rng();
-        let w: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
-            .take(NUM_VARS)
-            .collect();
-
-        let mut old_split_eq = SplitEqPolynomial::new(&w);
-        let mut new_split_eq = GruenSplitEqPolynomial::new(&w);
-
-        assert_eq!(old_split_eq.get_num_vars(), new_split_eq.get_num_vars());
-        assert_eq!(old_split_eq.len(), new_split_eq.len());
-        assert_eq!(old_split_eq.E1, *new_split_eq.to_E1_old());
-        assert_eq!(old_split_eq.E2, *new_split_eq.E_out_current());
-        assert_eq!(old_split_eq.merge(), new_split_eq.merge());
-        // Show that they are the same after binding
-        for i in (0..NUM_VARS).rev() {
-            let r = Fr::random(&mut rng);
-            old_split_eq.bind(r);
-            new_split_eq.bind(r);
-            assert_eq!(old_split_eq.merge(), new_split_eq.merge());
-            if NUM_VARS / 2 < i {
-                assert_eq!(old_split_eq.E1_len, new_split_eq.E_in_current_len() * 2);
-                assert_eq!(old_split_eq.E2_len, new_split_eq.E_out_current_len());
-            } else if i > 0 {
-                assert_eq!(old_split_eq.E1_len, new_split_eq.E_in_current_len());
-                assert_eq!(old_split_eq.E2_len, new_split_eq.E_out_current_len() * 2);
-            }
-        }
-    }
-
-    #[test]
-    fn bench_old_and_new_split_eq() {
-        let mut rng = test_rng();
-        for num_vars in 5..30 {
-            let w: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
-                .take(num_vars)
-                .collect();
-            println!("Testing for {num_vars} variables");
-
-            let start_old_split_eq_time = std::time::Instant::now();
-            let _old_split_eq = SplitEqPolynomial::new(&w);
-            let end_old_split_eq_time = std::time::Instant::now();
-            println!(
-                "Time taken for creating old split eq: {:?}",
-                end_old_split_eq_time.duration_since(start_old_split_eq_time)
-            );
-
-            let start_new_split_eq_time = std::time::Instant::now();
-            let _new_split_eq = GruenSplitEqPolynomial::new(&w);
-            let end_new_split_eq_time = std::time::Instant::now();
-            println!(
-                "Time taken for creating new split eq: {:?}",
-                end_new_split_eq_time.duration_since(start_new_split_eq_time)
-            );
-        }
     }
 
     #[test]

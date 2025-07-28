@@ -157,7 +157,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         drop(_guard);
         drop(span);
 
-        let B = GruenSplitEqPolynomial::new(&r_address);
+        let B = GruenSplitEqPolynomial::new(&r_address, BindingOrder::LowToHigh);
         let D = MultilinearPolynomial::from(eq_r_cycle.to_vec());
 
         let mut F: Vec<F> = unsafe_allocate_zero_vec(K);

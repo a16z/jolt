@@ -64,10 +64,10 @@ pub struct OneHotSumcheckState<F: JoltField> {
     pub num_variables_bound: usize,
     /// Gruen version of B for testing
     #[cfg(test)]
-    pub B_gruen: Option<crate::poly::split_eq_poly::GruenSplitEqPolynomialHighToLow<F>>,
+    pub B_gruen: Option<crate::poly::split_eq_poly::GruenSplitEqPolynomial<F>>,
     /// Gruen version of D for testing
     #[cfg(test)]
-    pub D_gruen: Option<crate::poly::split_eq_poly::GruenSplitEqPolynomialHighToLow<F>>,
+    pub D_gruen: Option<crate::poly::split_eq_poly::GruenSplitEqPolynomial<F>>,
     /// P array for Gruen optimization
     #[cfg(test)]
     pub P_arrays: Option<Vec<Vec<F>>>,
@@ -89,11 +89,11 @@ impl<F: JoltField> OneHotSumcheckState<F> {
             num_variables_bound: 0,
             #[cfg(test)]
             B_gruen: Some(
-                crate::poly::split_eq_poly::GruenSplitEqPolynomialHighToLow::new(r_address),
+                crate::poly::split_eq_poly::GruenSplitEqPolynomial::new(r_address, BindingOrder::HighToLow),
             ),
             #[cfg(test)]
             D_gruen: Some(
-                crate::poly::split_eq_poly::GruenSplitEqPolynomialHighToLow::new(r_cycle),
+                crate::poly::split_eq_poly::GruenSplitEqPolynomial::new(r_cycle, BindingOrder::HighToLow),
             ),
             #[cfg(test)]
             P_arrays: None,
@@ -547,7 +547,8 @@ mod tests {
         let mut eq = DensePolynomial::new(EqPolynomial::evals(&r_concat));
 
         for round in 0..LOG_K + LOG_T {
-            let one_hot_message = one_hot_opening.compute_prover_message(round, previous_claim);
+            // TODO(markosg04) fix this previous_claim usage
+            let one_hot_message = one_hot_opening.compute_prover_message(round, Fr::zero());
             let mut expected_message = vec![Fr::zero(), Fr::zero()];
             let mle_half = dense_poly.len() / 2;
 

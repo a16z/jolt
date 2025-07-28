@@ -261,7 +261,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
 
         // @TODO(markosg04) eventually we want to get rid of eq_r_prime completely, requires Gruen for log(k) rounds
         let eq_r_prime = MultilinearPolynomial::from(EqPolynomial::evals(&r_prime.r));
-        let gruens_eq_r_prime = GruenSplitEqPolynomial::new(&r_prime.r);
+        let gruens_eq_r_prime = GruenSplitEqPolynomial::new(&r_prime.r, BindingOrder::LowToHigh);
         let inc_cycle = CommittedPolynomial::RamInc.generate_witness(preprocessing, trace);
 
         let data_buffers: Vec<DataBuffers<F>> = (0..num_chunks)
