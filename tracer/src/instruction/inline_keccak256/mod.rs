@@ -15,6 +15,7 @@ use crate::instruction::addi::ADDI;
 /// Keccak256 differs from SHA3-256 (not implemented here) in the padding scheme.
 use crate::instruction::and::AND;
 use crate::instruction::andi::ANDI;
+use crate::instruction::andn::ANDN;
 use crate::instruction::format::format_i::FormatI;
 use crate::instruction::format::format_r::FormatR;
 use crate::instruction::format::format_s::FormatS;
@@ -303,18 +304,15 @@ impl Keccak256SequenceBuilder {
                 let two_next = 25 + self.lane((x + 2) % 5, y);
 
                 // Define scratch registers for intermediate results.
-                let not_next = self.vr[65];
-                let not_next_and_two_next = self.vr[66];
+                let not_next_and_two_next = self.vr[65]; // reuse scratch
 
                 // Get the register for the lane we are updating in the main state A.
                 let dest_a_reg = self.lane(x, y);
 
                 // Implement A[x,y] ^= (~A[x+1,y] & A[x+2,y])
-                // 1. not_next = ~A[x+1,y]
-                self.not64(Reg(next), not_next);
-                // 2. not_next_and_two_next = not_next & A[x+2,y]
-                self.and64(Reg(not_next), Reg(two_next), not_next_and_two_next);
-                // 3. A[x,y] ^= not_next_and_two_next
+                // 1. not_next_and_two_next = A[x+2,y] & ~A[x+1,y] using ANDN
+                self.andn64(Reg(two_next), Reg(next), not_next_and_two_next);
+                // 2. A[x,y] ^= not_next_and_two_next
                 self.xor64(Reg(current), Reg(not_next_and_two_next), dest_a_reg);
             }
         }
@@ -481,6 +479,28 @@ impl Keccak256SequenceBuilder {
     /// AND two 64-bit numbers.
     fn and64(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
         self.and(rs1, rs2, rd)
+    }
+
+    /// A & ~B via the ANDN instruction (bit clear).
+    fn andn64(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
+        match (rs1, rs2) {
+            (Reg(rs1), Reg(rs2)) => {
+                let andn = ANDN {
+                    address: self.address,
+                    operands: FormatR { rd, rs1, rs2 },
+                    virtual_sequence_remaining: Some(0),
+                };
+                self.sequence.push(andn.into());
+                Reg(rd)
+            }
+            (Imm(imm1), Imm(imm2)) => Imm(imm1 & !imm2),
+            // Fallback to NOT + AND when immediates are mixed.
+            (Reg(_), Imm(_)) | (Imm(_), Reg(_)) => {
+                let tmp_not = self.vr[69]; // extra scratch
+                let not_rs2 = self.not64(rs2, tmp_not);
+                self.and64(rs1, not_rs2, rd)
+            }
+        }
     }
 
     /// NOT a 64-bit number (by XORing with u64::MAX).
