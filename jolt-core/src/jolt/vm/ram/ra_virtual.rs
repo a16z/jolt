@@ -45,7 +45,6 @@ pub struct RASumcheck<F: JoltField> {
     d: usize,
     /// Length of the trace
     T: usize,
-    /// Prover state
     prover_state: Option<RAProverState<F>>,
 }
 
