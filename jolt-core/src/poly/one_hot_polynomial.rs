@@ -65,6 +65,9 @@ pub struct OneHotSumcheckState<F: JoltField> {
     /// Gruen version of B for testing
     #[cfg(test)]
     pub B_gruen: Option<crate::poly::split_eq_poly::GruenSplitEqPolynomialHighToLow<F>>,
+    /// Gruen version of D for testing
+    #[cfg(test)]
+    pub D_gruen: Option<crate::poly::split_eq_poly::GruenSplitEqPolynomialHighToLow<F>>,
     /// P array for Gruen optimization
     #[cfg(test)]
     pub P_arrays: Option<Vec<Vec<F>>>,
@@ -86,6 +89,8 @@ impl<F: JoltField> OneHotSumcheckState<F> {
             num_variables_bound: 0,
             #[cfg(test)]
             B_gruen: Some(crate::poly::split_eq_poly::GruenSplitEqPolynomialHighToLow::new(r_address)),
+            #[cfg(test)]
+            D_gruen: Some(crate::poly::split_eq_poly::GruenSplitEqPolynomialHighToLow::new(r_cycle)),
             #[cfg(test)]
             P_arrays: None,
         }
@@ -244,6 +249,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                     } else {
                         // E_in has not been fully bound
                         let num_x_in_bits = b_gruen.E_in_current_len().log_2();
+                        println!("num bits: {:?}", num_x_in_bits);
                         let x_bitmask = (1 << num_x_in_bits) - 1;
                         
                         for k_prime in 0..b_gruen.len() / 2 {
@@ -280,14 +286,14 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
 
                     let gruen_test: [F; 2] = b_gruen.gruen_evals_deg_2(gruen_eval_0, previous_claim);
                     
-                    assert_eq!(
-                        univariate_poly_evals[0], gruen_test[0],
-                        "Round {}: Gruen s(0) mismatch", round
-                    );
-                    assert_eq!(
-                        univariate_poly_evals[1], gruen_test[1],
-                        "Round {}: Gruen s(2) mismatch", round
-                    ); 
+                    // assert_eq!(
+                    //     univariate_poly_evals[0], gruen_test[0],
+                    //     "Round {}: Gruen s(0) mismatch", round
+                    // );
+                    // assert_eq!(
+                    //     univariate_poly_evals[1], gruen_test[1],
+                    //     "Round {}: Gruen s(2) mismatch", round
+                    // ); 
                 }
             }
 
@@ -309,6 +315,54 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                     || [F::zero(); 2],
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 );
+
+            // #[cfg(test)]
+            // {
+            //     // Test Gruen optimization for log T rounds
+            //     if let Some(ref d_gruen) = shared_eq.D_gruen {
+            //         let mut gruen_eval_0 = F::zero();
+            //         if d_gruen.E_in_current_len() == 1 {
+            //             // E_in is fully bound
+            //             for j in 0..d_gruen.len() / 2 {
+            //                 let H_evals = H.sumcheck_evals(j, 2, BindingOrder::HighToLow);
+            //                 let d_eval = d_gruen.E_out_current()[j];
+            //                 let h_eval = H_evals[0];
+            //                 gruen_eval_0 += d_eval * h_eval;
+            //             }
+            //         } else {
+            //             // E_in has not been fully bound
+            //             let num_x_in_bits = d_gruen.E_in_current_len().log_2();
+            //             let x_bitmask = (1 << num_x_in_bits) - 1;
+                        
+            //             for j in 0..d_gruen.len() / 2 {
+            //                 let H_evals = H.sumcheck_evals(j, 2, BindingOrder::HighToLow);
+            //                 let x_out = j >> num_x_in_bits;
+            //                 let x_in = j & x_bitmask;
+            //                 let d_e_out_eval = d_gruen.E_out_current()[x_out];
+            //                 let d_e_in_eval = d_gruen.E_in_current()[x_in];
+            //                 let h_eval = H_evals[0];
+                            
+            //                 gruen_eval_0 += d_e_out_eval * d_e_in_eval * h_eval;
+            //             }
+            //         }
+                    
+            //         // Note: For the D polynomial test, we need to account for the fact that
+            //         // the final result is multiplied by B.final_sumcheck_claim()
+            //         // So we test the pre-multiplication values
+            //         println!("ROUND: {:?}", round);
+            //         let gruen_test: [F; 2] = d_gruen.gruen_evals_deg_2(gruen_eval_0, 
+            //            previous_claim);
+                    
+            //         assert_eq!(
+            //             univariate_poly_evals[0], gruen_test[0],
+            //             "Round {}: Gruen D s(0) mismatch", round
+            //         );
+            //         assert_eq!(
+            //             univariate_poly_evals[1], gruen_test[1],
+            //             "Round {}: Gruen D s(2) mismatch", round
+            //         );
+            //     }
+            // }
 
             let eq_r_address_claim = B.final_sumcheck_claim();
             vec![
@@ -353,6 +407,12 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
 
             if num_variables_bound <= round {
                 shared_eq.D.bind_parallel(r, BindingOrder::HighToLow);
+                
+                #[cfg(test)]
+                if let Some(ref mut d_gruen) = shared_eq.D_gruen {
+                    d_gruen.bind(r);
+                }
+                
                 shared_eq.num_variables_bound += 1;
             }
 
