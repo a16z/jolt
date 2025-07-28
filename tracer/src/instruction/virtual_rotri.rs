@@ -40,7 +40,6 @@ impl RISCVTrace for VirtualROTRI {}
 #[cfg(test)]
 mod tests {
     use crate::emulator::cpu::Cpu;
-    use crate::emulator::default_terminal::DefaultTerminal;
     use crate::emulator::mmu::DRAM_BASE;
     use crate::instruction::format::format_virtual_right_shift_i::FormatVirtualRightShiftI;
     use crate::instruction::virtual_rotri::VirtualROTRI;
@@ -175,7 +174,7 @@ mod tests {
 
     use crate::emulator::cpu::Xlen;
     use crate::emulator::test_harness::CpuTestHarness;
-    use crate::instruction::{RISCVInstruction, RISCVTrace};
+    use crate::instruction::RISCVTrace;
     use rand::{rngs::StdRng, Rng, SeedableRng};
 
     /// Helper that returns a VirtualROTRI with random operands respecting XLEN
