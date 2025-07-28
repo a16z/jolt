@@ -1,5 +1,5 @@
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
-use crate::{field::JoltField, subprotocols::sparse_dense_shout::LookupBits};
+use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
 /// Left-shifts the left operand according to the bitmask given by
 /// the right operand.

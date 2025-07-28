@@ -5,7 +5,9 @@ use ark_std::test_rng;
 use rayon::prelude::*;
 
 pub mod errors;
+pub mod expanding_table;
 pub mod gaussian_elimination;
+pub mod lookup_bits;
 pub mod math;
 pub mod profiling;
 pub mod small_value;
