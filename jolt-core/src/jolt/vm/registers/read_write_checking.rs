@@ -1,10 +1,8 @@
-use crate::dag::state_manager::StateManager;
-use crate::jolt::vm::registers::{RegistersDag, ValEvaluationProverState, ValEvaluationSumcheck};
+use crate::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::jolt::witness::VirtualPolynomial;
 use crate::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN};
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::{
-    dag::stage::SumcheckStages,
     field::{JoltField, OptimizedMul},
     jolt::{vm::JoltProverPreprocessing, witness::CommittedPolynomial},
     poly::{
@@ -63,11 +61,11 @@ struct ReadWriteCheckingProverState<F: JoltField> {
     data_buffers: Vec<DataBuffers<F>>,
     I: Vec<Vec<(usize, usize, F, F)>>,
     A: Vec<F>,
-    eq_r_prime: MultilinearPolynomial<F>,
     gruens_eq_r_prime: GruenSplitEqPolynomial<F>,
     inc_cycle: MultilinearPolynomial<F>,
     // The following polynomials are instantiated after
     // the first phase
+    eq_r_prime: Option<MultilinearPolynomial<F>>,
     rs1_ra: Option<MultilinearPolynomial<F>>,
     rs2_ra: Option<MultilinearPolynomial<F>>,
     rd_wa: Option<MultilinearPolynomial<F>>,
@@ -173,7 +171,6 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         drop(_guard);
         drop(span);
 
-        let eq_r_prime = MultilinearPolynomial::from(EqPolynomial::evals(r_prime));
         let gruens_eq_r_prime = GruenSplitEqPolynomial::new(r_prime, BindingOrder::LowToHigh);
         let inc_cycle = CommittedPolynomial::RdInc.generate_witness(preprocessing, trace);
 
@@ -201,9 +198,9 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
             data_buffers,
             I,
             A,
-            eq_r_prime,
             gruens_eq_r_prime,
             inc_cycle,
+            eq_r_prime: None,
             rs1_ra: None,
             rs2_ra: None,
             rd_wa: None,
@@ -215,10 +212,10 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone, Default)]
 pub struct ReadWriteSumcheckClaims<F: JoltField> {
     pub val_claim: F,
-    rs1_ra_claim: F,
-    rs2_ra_claim: F,
-    rd_wa_claim: F,
-    inc_claim: F,
+    pub rs1_ra_claim: F,
+    pub rs2_ra_claim: F,
+    pub rd_wa_claim: F,
+    pub inc_claim: F,
 }
 
 /// Claims for register read/write values from Spartan
@@ -235,72 +232,98 @@ pub struct RegistersReadWriteChecking<F: JoltField> {
     gamma_sqr: F,
     sumcheck_switch_index: usize,
     prover_state: Option<ReadWriteCheckingProverState<F>>,
-    claims: Option<ReadWriteSumcheckClaims<F>>,
-    // TODO(moodlezoup): Wire these claims in from Spartan
-    rs1_rv_claim: F,
-    rs2_rv_claim: F,
-    rd_wv_claim: F,
+    input_claim: F,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct RegistersReadWriteCheckingProof<F: JoltField, ProofTranscript: Transcript> {
     sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     sumcheck_switch_index: usize,
-    pub claims: ReadWriteSumcheckClaims<F>,
-    // TODO(moodlezoup): Wire these claims in from Spartan
-    rs1_rv_claim: F,
-    rs2_rv_claim: F,
-    rd_wv_claim: F,
 }
 
 impl<F: JoltField> RegistersReadWriteChecking<F> {
-    fn new_prover_stage<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        preprocessing: &JoltProverPreprocessing<F, PCS>,
-        trace: &[RV32IMCycle],
-        transcript: &mut ProofTranscript,
-        r_prime: &[F],
-        rs1_rv_claim: F,
-        rs2_rv_claim: F,
-        rd_wv_claim: F,
+    pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let T = trace.len();
-        let gamma = transcript.challenge_scalar();
+        let (preprocessing, trace, _, _) = state_manager.get_prover_data();
+        let accumulator = state_manager.get_prover_accumulator();
 
-        let prover_state = ReadWriteCheckingProverState::initialize(preprocessing, trace, r_prime);
+        let (r_cycle, rs1_rv_claim) = accumulator
+            .borrow()
+            .get_virtual_polynomial_opening(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);
+        let (_, rs2_rv_claim) = accumulator
+            .borrow()
+            .get_virtual_polynomial_opening(VirtualPolynomial::Rs2Value, SumcheckId::SpartanOuter);
+        let (_, rd_wv_claim) = accumulator.borrow().get_virtual_polynomial_opening(
+            VirtualPolynomial::RdWriteValue,
+            SumcheckId::SpartanOuter,
+        );
+
+        let transcript = &mut *state_manager.transcript.borrow_mut();
+        let gamma: F = transcript.challenge_scalar();
+        let input_claim = rd_wv_claim + gamma * rs1_rv_claim + gamma.square() * rs2_rv_claim;
+
+        let prover_state =
+            ReadWriteCheckingProverState::initialize(preprocessing, trace, &r_cycle.r);
+
+        let T = trace.len();
+        let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
+        let chunk_size = T / num_chunks;
+        let sumcheck_switch_index = chunk_size.log_2();
+        // HACK: Both the RAM and registers Twist instances use the same switch index;
+        // it may already be in the state manager at this point.
+        state_manager.proofs.borrow_mut().insert(
+            ProofKeys::TwistSumcheckSwitchIndex,
+            ProofData::SumcheckSwitchIndex(sumcheck_switch_index),
+        );
 
         Self {
             T,
             gamma,
             gamma_sqr: gamma.square(),
-            sumcheck_switch_index: prover_state.chunk_size.log_2(),
+            sumcheck_switch_index,
             prover_state: Some(prover_state),
-            claims: None,
-            rs1_rv_claim,
-            rs2_rv_claim,
-            rd_wv_claim,
+            input_claim,
         }
     }
 
-    fn new_verifier_stage<ProofTranscript: Transcript>(
-        transcript: &mut ProofTranscript,
-        value_claims: ReadWriteValueClaims<F>,
-        trace_length: usize,
-        chunk_size: usize,
-        sumcheck_claims: ReadWriteSumcheckClaims<F>,
+    pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let T = trace_length;
-        let gamma = transcript.challenge_scalar();
+        let (_, _, trace_length) = state_manager.get_verifier_data();
+        let accumulator = state_manager.get_verifier_accumulator();
+
+        let (_, rs1_rv_claim) = accumulator
+            .borrow()
+            .get_virtual_polynomial_opening(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);
+        let (_, rs2_rv_claim) = accumulator
+            .borrow()
+            .get_virtual_polynomial_opening(VirtualPolynomial::Rs2Value, SumcheckId::SpartanOuter);
+        let (_, rd_wv_claim) = accumulator.borrow().get_virtual_polynomial_opening(
+            VirtualPolynomial::RdWriteValue,
+            SumcheckId::SpartanOuter,
+        );
+
+        let transcript = &mut *state_manager.transcript.borrow_mut();
+        let gamma: F = transcript.challenge_scalar();
+        let input_claim = rd_wv_claim + gamma * rs1_rv_claim + gamma.square() * rs2_rv_claim;
+
+        let sumcheck_switch_index = match state_manager
+            .proofs
+            .borrow()
+            .get(&ProofKeys::TwistSumcheckSwitchIndex)
+        {
+            Some(ProofData::SumcheckSwitchIndex(index)) => *index,
+            _ => panic!("SumcheckSwitchIndex not found"),
+        };
 
         Self {
-            T,
+            T: trace_length,
             gamma,
             gamma_sqr: gamma.square(),
-            sumcheck_switch_index: chunk_size.log_2(),
+            sumcheck_switch_index,
             prover_state: None,
-            claims: Some(sumcheck_claims),
-            rs1_rv_claim: value_claims.rs1_rv_claim,
-            rs2_rv_claim: value_claims.rs2_rv_claim,
-            rd_wv_claim: value_claims.rd_wv_claim,
+            input_claim,
         }
     }
 
@@ -713,6 +736,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
         let rs2_ra = rs2_ra.as_ref().unwrap();
         let rd_wa = rd_wa.as_ref().unwrap();
         let val = val.as_ref().unwrap();
+        let eq_r_prime = eq_r_prime.as_ref().unwrap();
 
         let univariate_poly_evals = (0..eq_r_prime.len() / 2)
             .into_par_iter()
@@ -797,7 +821,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
 
         // Cycle variables are fully bound, so:
         // eq(r', r_cycle) is a constant
-        let eq_r_prime_eval = eq_r_prime.final_sumcheck_claim();
+        let eq_r_prime_eval = eq_r_prime.as_ref().unwrap().final_sumcheck_claim();
         // ...and Inc(r_cycle) is a constant
         let inc_eval = inc_cycle.final_sumcheck_claim();
 
@@ -847,8 +871,8 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
             I,
             A,
             inc_cycle,
-            eq_r_prime,
             gruens_eq_r_prime,
+            eq_r_prime,
             chunk_size,
             val_checkpoints,
             rs1_ra,
@@ -895,7 +919,6 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
         drop(_inner_guard);
         drop(inner_span);
 
-        eq_r_prime.bind_parallel(r_j, BindingOrder::LowToHigh);
         gruens_eq_r_prime.bind(r_j);
         inc_cycle.bind_parallel(r_j, BindingOrder::LowToHigh);
 
@@ -1001,6 +1024,16 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
 
             drop(_guard);
             drop(span);
+
+            let span = tracing::span!(tracing::Level::INFO, "Materialize eq polynomial");
+            let _guard = span.enter();
+
+            let eq_evals: Vec<F> =
+                EqPolynomial::evals(&gruens_eq_r_prime.w[..gruens_eq_r_prime.current_index])
+                    .par_iter()
+                    .map(|x| *x * gruens_eq_r_prime.current_scalar)
+                    .collect();
+            *eq_r_prime = Some(MultilinearPolynomial::from(eq_evals))
         }
     }
 
@@ -1018,6 +1051,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
         let rs2_ra = rs2_ra.as_mut().unwrap();
         let rd_wa = rd_wa.as_mut().unwrap();
         let val = val.as_mut().unwrap();
+        let eq_r_prime = eq_r_prime.as_mut().unwrap();
 
         [rs1_ra, rs2_ra, rd_wa, val, inc_cycle, eq_r_prime]
             .into_par_iter()
@@ -1055,7 +1089,7 @@ impl<F: JoltField> SumcheckInstance<F> for RegistersReadWriteChecking<F> {
     }
 
     fn input_claim(&self) -> F {
-        self.rd_wv_claim + self.gamma * self.rs1_rv_claim + self.gamma_sqr * self.rs2_rv_claim
+        self.input_claim
     }
 
     #[tracing::instrument(skip_all, name = "RegistersReadWriteChecking::compute_prover_message")]
@@ -1088,26 +1122,45 @@ impl<F: JoltField> SumcheckInstance<F> for RegistersReadWriteChecking<F> {
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         r: &[F],
     ) -> F {
+        let accumulator = accumulator.as_ref().unwrap();
+
         // First `sumcheck_switch_index` rounds bind cycle variables from low to high
         let mut r_cycle = r[..self.sumcheck_switch_index].to_vec();
         // The high-order cycle variables are bound after the switch
         r_cycle.extend(r[self.sumcheck_switch_index..self.T.log_2()].iter().rev());
         let r_cycle = OpeningPoint::<LITTLE_ENDIAN, F>::new(r_cycle);
         let (r_prime, _) = accumulator
-            .as_ref()
-            .unwrap()
             .borrow()
             .get_virtual_polynomial_opening(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);
 
         // eq(r', r_cycle)
         let eq_eval_cycle = EqPolynomial::mle_endian(&r_prime, &r_cycle);
 
-        let claims = self.claims.as_ref().unwrap();
+        let (_, val_claim) = accumulator.borrow().get_virtual_polynomial_opening(
+            VirtualPolynomial::RegistersVal,
+            SumcheckId::RegistersReadWriteChecking,
+        );
+        let (_, rs1_ra_claim) = accumulator.borrow().get_virtual_polynomial_opening(
+            VirtualPolynomial::Rs1Ra,
+            SumcheckId::RegistersReadWriteChecking,
+        );
+        let (_, rs2_ra_claim) = accumulator.borrow().get_virtual_polynomial_opening(
+            VirtualPolynomial::Rs2Ra,
+            SumcheckId::RegistersReadWriteChecking,
+        );
+        let (_, rd_wa_claim) = accumulator.borrow().get_virtual_polynomial_opening(
+            VirtualPolynomial::RdWa,
+            SumcheckId::RegistersReadWriteChecking,
+        );
+        let (_, inc_claim) = accumulator.borrow().get_committed_polynomial_opening(
+            CommittedPolynomial::RdInc,
+            SumcheckId::RegistersReadWriteChecking,
+        );
 
         eq_eval_cycle
-            * (claims.rd_wa_claim * (claims.inc_claim + claims.val_claim)
-                + self.gamma * claims.rs1_ra_claim * claims.val_claim
-                + self.gamma_sqr * claims.rs2_ra_claim * claims.val_claim)
+            * (rd_wa_claim * (inc_claim + val_claim)
+                + self.gamma * rs1_ra_claim * val_claim
+                + self.gamma_sqr * rs2_ra_claim * val_claim)
     }
 
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
@@ -1206,202 +1259,5 @@ impl<F: JoltField> SumcheckInstance<F> for RegistersReadWriteChecking<F> {
             SumcheckId::RegistersReadWriteChecking,
             r_cycle.r,
         );
-    }
-}
-
-impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
-    SumcheckStages<F, ProofTranscript, PCS> for RegistersDag
-{
-    fn stage2_prover_instances(
-        &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        let (preprocessing, trace, _, _) = state_manager.get_prover_data();
-
-        let accumulator = state_manager.get_prover_accumulator();
-        let (r_cycle, rs1_rv_claim) = accumulator
-            .borrow()
-            .get_virtual_polynomial_opening(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);
-        let (_, rs2_rv_claim) = accumulator
-            .borrow()
-            .get_virtual_polynomial_opening(VirtualPolynomial::Rs2Value, SumcheckId::SpartanOuter);
-        let (_, rd_wv_claim) = accumulator.borrow().get_virtual_polynomial_opening(
-            VirtualPolynomial::RdWriteValue,
-            SumcheckId::SpartanOuter,
-        );
-
-        let transcript = &mut *state_manager.transcript.borrow_mut();
-
-        let instance = RegistersReadWriteChecking::new_prover_stage(
-            preprocessing,
-            trace,
-            transcript,
-            &r_cycle.r,
-            rs1_rv_claim,
-            rs2_rv_claim,
-            rd_wv_claim,
-        );
-
-        vec![Box::new(instance)]
-    }
-
-    fn stage2_verifier_instances(
-        &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        let (_, _, trace_length) = state_manager.get_verifier_data();
-
-        let accumulator = state_manager.get_verifier_accumulator();
-
-        // @TODO(markosg04) make this less verbose
-        // Fetch the claim values from the spartan z openings
-        let (_, rs1_rv_claim) = accumulator
-            .borrow()
-            .get_virtual_polynomial_opening(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);
-        let (_, rs2_rv_claim) = accumulator
-            .borrow()
-            .get_virtual_polynomial_opening(VirtualPolynomial::Rs2Value, SumcheckId::SpartanOuter);
-        let (_, rd_wv_claim) = accumulator.borrow().get_virtual_polynomial_opening(
-            VirtualPolynomial::RdWriteValue,
-            SumcheckId::SpartanOuter,
-        );
-
-        let (_, val_claim) = accumulator.borrow().get_virtual_polynomial_opening(
-            VirtualPolynomial::RegistersVal,
-            SumcheckId::RegistersReadWriteChecking,
-        );
-        let (_, rs1_ra_claim) = accumulator.borrow().get_virtual_polynomial_opening(
-            VirtualPolynomial::Rs1Ra,
-            SumcheckId::RegistersReadWriteChecking,
-        );
-        let (_, rs2_ra_claim) = accumulator.borrow().get_virtual_polynomial_opening(
-            VirtualPolynomial::Rs2Ra,
-            SumcheckId::RegistersReadWriteChecking,
-        );
-        let (_, rd_wa_claim) = accumulator.borrow().get_virtual_polynomial_opening(
-            VirtualPolynomial::RdWa,
-            SumcheckId::RegistersReadWriteChecking,
-        );
-        let (_, inc_claim) = accumulator.borrow().get_committed_polynomial_opening(
-            CommittedPolynomial::RdInc,
-            SumcheckId::RegistersReadWriteChecking,
-        );
-
-        let transcript = &mut *state_manager.transcript.borrow_mut();
-
-        let num_chunks = rayon::current_num_threads()
-            .next_power_of_two()
-            .min(trace_length);
-        let chunk_size = trace_length / num_chunks;
-
-        let value_claims = ReadWriteValueClaims {
-            rs1_rv_claim,
-            rs2_rv_claim,
-            rd_wv_claim,
-        };
-
-        let sumcheck_claims = ReadWriteSumcheckClaims {
-            val_claim,
-            rs1_ra_claim,
-            rs2_ra_claim,
-            rd_wa_claim,
-            inc_claim,
-        };
-
-        let instance = RegistersReadWriteChecking::new_verifier_stage(
-            transcript,
-            value_claims,
-            trace_length,
-            chunk_size,
-            sumcheck_claims,
-        );
-
-        vec![Box::new(instance)]
-    }
-
-    fn stage3_prover_instances(
-        &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        let (preprocessing, trace, _, _) = state_manager.get_prover_data();
-
-        let accumulator = state_manager.get_prover_accumulator();
-
-        // Get val_claim from the accumulator (from stage 2 RegistersReadWriteChecking)
-        let (opening_point, val_claim) = accumulator.borrow().get_virtual_polynomial_opening(
-            VirtualPolynomial::RegistersVal,
-            SumcheckId::RegistersReadWriteChecking,
-        );
-
-        // The opening point is r_address || r_cycle
-        let r_address_len = REGISTER_COUNT.ilog2() as usize;
-        let (r_address_slice, r_cycle_slice) = opening_point.split_at(r_address_len);
-        let r_address: Vec<F> = r_address_slice.into();
-        let r_cycle: Vec<F> = r_cycle_slice.into();
-
-        let inc = CommittedPolynomial::RdInc.generate_witness(preprocessing, trace);
-
-        let eq_r_address = EqPolynomial::evals(&r_address);
-        let wa: Vec<F> = trace
-            .par_iter()
-            .map(|cycle| {
-                let instr = cycle.instruction().normalize();
-                eq_r_address[instr.operands.rd]
-            })
-            .collect();
-        let wa = MultilinearPolynomial::from(wa);
-
-        let T = r_cycle.len().pow2();
-        let mut lt: Vec<F> = unsafe_allocate_zero_vec(T);
-        for (i, r) in r_cycle.iter().rev().enumerate() {
-            let (evals_left, evals_right) = lt.split_at_mut(1 << i);
-            evals_left
-                .par_iter_mut()
-                .zip(evals_right.par_iter_mut())
-                .for_each(|(x, y)| {
-                    *y = *x * r;
-                    *x += *r - *y;
-                });
-        }
-        let lt = MultilinearPolynomial::from(lt);
-
-        let instance = ValEvaluationSumcheck {
-            input_claim: val_claim,
-            r_address,
-            num_rounds: r_cycle.len().pow2().log_2(),
-            r_cycle: r_cycle.clone(),
-            prover_state: Some(ValEvaluationProverState { inc, wa, lt }),
-        };
-
-        vec![Box::new(instance)]
-    }
-
-    fn stage3_verifier_instances(
-        &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        let (_, _, trace_length) = state_manager.get_verifier_data();
-
-        let accumulator = state_manager.get_verifier_accumulator();
-        // Get val_claim from the accumulator (from stage 2 RegistersReadWriteChecking)
-        let (opening_point, val_claim) = accumulator.borrow().get_virtual_polynomial_opening(
-            VirtualPolynomial::RegistersVal,
-            SumcheckId::RegistersReadWriteChecking,
-        );
-
-        // The opening point is r_address || r_cycle
-        let r_address_len = REGISTER_COUNT.ilog2() as usize;
-        let (r_address_slice, r_cycle_slice) = opening_point.split_at(r_address_len);
-        let r_address: Vec<F> = r_address_slice.into();
-        let r_cycle: Vec<F> = r_cycle_slice.into();
-
-        let instance = ValEvaluationSumcheck {
-            input_claim: val_claim,
-            r_address,
-            num_rounds: trace_length.log_2(),
-            r_cycle,
-            prover_state: None,
-        };
-        vec![Box::new(instance)]
     }
 }

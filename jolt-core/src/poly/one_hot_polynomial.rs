@@ -322,7 +322,9 @@ impl<F: JoltField> OneHotPolynomial<F> {
         let (r_left, r_right) = r.split_at(self.num_rows().log_2());
         let eq_left = EqPolynomial::evals(r_left);
         let eq_right = EqPolynomial::evals(r_right);
-        self.vector_matrix_product(&eq_left)
+        let mut left_product = unsafe_allocate_zero_vec(eq_right.len());
+        self.vector_matrix_product(&eq_left, F::one(), &mut left_product);
+        left_product
             .into_par_iter()
             .zip_eq(eq_right.par_iter())
             .map(|(l, r)| l * r)
@@ -415,35 +417,52 @@ impl<F: JoltField> OneHotPolynomial<F> {
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPolynomial::vector_matrix_product")]
-    pub fn vector_matrix_product(&self, left_vec: &[F]) -> Vec<F> {
+    pub fn vector_matrix_product(&self, left_vec: &[F], coeff: F, result: &mut [F]) {
         let T = DoryGlobals::get_T();
         let num_columns = DoryGlobals::get_num_columns();
+        debug_assert_eq!(result.len(), num_columns);
         let row_len = num_columns;
-        let num_chunks = rayon::current_num_threads().next_power_of_two();
-        let chunk_size = std::cmp::max(1, num_columns / num_chunks);
 
-        // TODO(moodlezoup): Optimize this
-        let mut result = unsafe_allocate_zero_vec(num_columns);
-        result
-            .par_chunks_mut(chunk_size)
-            .enumerate()
-            .for_each(|(chunk_index, chunk)| {
-                let min_col_index = chunk_index * chunk_size;
-                let max_col_index = min_col_index + chunk_size;
-                for (t, k) in self.nonzero_indices.iter().enumerate() {
-                    if let Some(k) = k {
-                        let global_index = *k as u128 * T as u128 + t as u128;
-                        let col_index = (global_index % row_len as u128) as usize;
-                        // If this coefficient falls in the chunk of rows corresponding
-                        // to `chunk_index`, compute its contribution to the result.
-                        if col_index >= min_col_index && col_index < max_col_index {
-                            let row_index = (global_index / row_len as u128) as usize;
-                            chunk[col_index % chunk_size] += left_vec[row_index];
+        if T >= row_len {
+            // This is the typical case (T >= K)
+            let rows_per_k = T / row_len;
+            result
+                .par_iter_mut()
+                .enumerate()
+                .for_each(|(col_index, dest)| {
+                    let mut col_dot_product = F::zero();
+                    for (row_offset, t) in (col_index..T).step_by(row_len).enumerate() {
+                        if let Some(k) = self.nonzero_indices[t] {
+                            let row_index = k * rows_per_k + row_offset;
+                            col_dot_product += left_vec[row_index];
                         }
                     }
-                }
-            });
-        result
+                    *dest += coeff * col_dot_product;
+                });
+        } else {
+            let num_chunks = rayon::current_num_threads().next_power_of_two();
+            let chunk_size = std::cmp::max(1, num_columns / num_chunks);
+
+            result
+                .par_chunks_mut(chunk_size)
+                .enumerate()
+                .for_each(|(chunk_index, chunk)| {
+                    let min_col_index = chunk_index * chunk_size;
+                    let max_col_index = min_col_index + chunk_size;
+                    for (t, k) in self.nonzero_indices.iter().enumerate() {
+                        if let Some(k) = k {
+                            let global_index = *k as u128 * T as u128 + t as u128;
+                            let col_index = (global_index % row_len as u128) as usize;
+                            // If this coefficient falls in the chunk of rows corresponding
+                            // to `chunk_index`, compute its contribution to the result.
+                            if col_index >= min_col_index && col_index < max_col_index {
+                                let row_index = (global_index / row_len as u128) as usize;
+                                chunk[col_index % chunk_size] += coeff * left_vec[row_index];
+                            }
+                        }
+                    }
+                });
+        }
     }
 }
 

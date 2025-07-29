@@ -56,9 +56,11 @@ struct ReadWriteCheckingProverState<F: JoltField> {
     data_buffers: Vec<DataBuffers<F>>,
     I: Vec<Vec<(usize, usize, F, F)>>,
     A: Vec<F>,
-    eq_r_prime: MultilinearPolynomial<F>,
     gruens_eq_r_prime: GruenSplitEqPolynomial<F>,
     inc_cycle: MultilinearPolynomial<F>,
+    // The following polynomials are instantiated after
+    // the first phase
+    eq_r_prime: Option<MultilinearPolynomial<F>>,
     ra: Option<MultilinearPolynomial<F>>,
     val: Option<MultilinearPolynomial<F>>,
 }
@@ -85,9 +87,10 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = T / num_chunks;
 
-        // HACK
+        // HACK: Both the RAM and registers Twist instances use the same switch index;
+        // it may already be in the state manager at this point.
         state_manager.proofs.borrow_mut().insert(
-            ProofKeys::RamSumcheckSwitchIndex,
+            ProofKeys::TwistSumcheckSwitchIndex,
             ProofData::SumcheckSwitchIndex(chunk_size.log_2()),
         );
 
@@ -259,9 +262,8 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         drop(_guard);
         drop(span);
 
-        // @TODO(markosg04) eventually we want to get rid of eq_r_prime completely, requires Gruen for log(k) rounds
-        let eq_r_prime = MultilinearPolynomial::from(EqPolynomial::evals(&r_prime.r));
         let gruens_eq_r_prime = GruenSplitEqPolynomial::new(&r_prime.r, BindingOrder::LowToHigh);
+
         let inc_cycle = CommittedPolynomial::RamInc.generate_witness(preprocessing, trace);
 
         let data_buffers: Vec<DataBuffers<F>> = (0..num_chunks)
@@ -291,9 +293,9 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
             data_buffers,
             I,
             A,
-            eq_r_prime,
             gruens_eq_r_prime,
             inc_cycle,
+            eq_r_prime: None,
             ra: None,
             val: None,
         }
@@ -390,7 +392,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         let sumcheck_switch_index = match state_manager
             .proofs
             .borrow()
-            .get(&ProofKeys::RamSumcheckSwitchIndex)
+            .get(&ProofKeys::TwistSumcheckSwitchIndex)
         {
             Some(ProofData::SumcheckSwitchIndex(index)) => *index,
             _ => panic!("SumcheckSwitchIndex not found"),
@@ -715,6 +717,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         } = self.prover_state.as_ref().unwrap();
         let ra = ra.as_ref().unwrap();
         let val = val.as_ref().unwrap();
+        let eq_r_prime = eq_r_prime.as_ref().unwrap();
 
         let univariate_poly_evals = (0..eq_r_prime.len() / 2)
             .into_par_iter()
@@ -791,7 +794,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
 
         // Cycle variables are fully bound, so:
         // eq(r', r_cycle) is a constant
-        let eq_r_prime_eval = eq_r_prime.final_sumcheck_claim();
+        let eq_r_prime_eval = eq_r_prime.as_ref().unwrap().final_sumcheck_claim();
         // ...and wv(r_cycle) is a constant
 
         let evals = (0..ra.len() / 2)
@@ -878,7 +881,6 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         drop(_inner_guard);
         drop(inner_span);
 
-        eq_r_prime.bind_parallel(r_j, BindingOrder::LowToHigh);
         gruens_eq_r_prime.bind(r_j);
         inc_cycle.bind_parallel(r_j, BindingOrder::LowToHigh);
 
@@ -942,6 +944,16 @@ impl<F: JoltField> RamReadWriteChecking<F> {
 
             drop(_guard);
             drop(span);
+
+            let span = tracing::span!(tracing::Level::INFO, "Materialize eq polynomial");
+            let _guard = span.enter();
+
+            let eq_evals: Vec<F> =
+                EqPolynomial::evals(&gruens_eq_r_prime.w[..gruens_eq_r_prime.current_index])
+                    .par_iter()
+                    .map(|x| *x * gruens_eq_r_prime.current_scalar)
+                    .collect();
+            *eq_r_prime = Some(MultilinearPolynomial::from(eq_evals))
         }
     }
 
@@ -955,6 +967,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         } = self.prover_state.as_mut().unwrap();
         let ra = ra.as_mut().unwrap();
         let val = val.as_mut().unwrap();
+        let eq_r_prime = eq_r_prime.as_mut().unwrap();
 
         [ra, val, inc_cycle, eq_r_prime]
             .into_par_iter()
