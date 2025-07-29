@@ -132,17 +132,12 @@ impl<F: JoltField> RLCPolynomial<F> {
                 )
             })
             .collect();
+        let result_slice: &mut [F] =
+            unsafe { std::slice::from_raw_parts_mut(result.as_mut_ptr() as *mut F, result.len()) };
 
         // Compute the vector-matrix product for one-hot polynomials
         for (coeff, poly) in self.one_hot_rlc.iter() {
-            // TODO(moodlezoup): Pass result by mutable reference to
-            // poly.vector_matrix_product
-            result
-                .par_iter_mut()
-                .zip(poly.vector_matrix_product(left_vec).into_par_iter())
-                .for_each(|(result, new)| {
-                    result.0 += new * coeff;
-                });
+            poly.vector_matrix_product(left_vec, *coeff, result_slice);
         }
 
         result
