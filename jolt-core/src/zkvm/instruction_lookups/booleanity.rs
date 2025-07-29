@@ -35,8 +35,6 @@ struct BooleanityProverState<F: JoltField> {
     H: Option<[MultilinearPolynomial<F>; D]>,
     F: Vec<F>,
     eq_r_r: Option<F>,
-    eq_km_c: [[F; 3]; 2],
-    eq_km_c_squared: [[F; 3]; 2],
 }
 
 pub struct BooleanitySumcheck<F: JoltField> {
@@ -125,24 +123,6 @@ impl<F: JoltField> BooleanityProverState<F> {
                 .collect()
         });
 
-        // EQ(k_m, c) for k_m \in {0, 1} and c \in {0, 2, 3}
-        let eq_km_c: [[F; DEGREE]; 2] = [
-            [
-                F::one(),        // eq(0, 0) = 0 * 0 + (1 - 0) * (1 - 0)
-                F::from_i64(-1), // eq(0, 2) = 0 * 2 + (1 - 0) * (1 - 2)
-                F::from_i64(-2), // eq(0, 3) = 0 * 3 + (1 - 0) * (1 - 3)
-            ],
-            [
-                F::zero(),     // eq(1, 0) = 1 * 0 + (1 - 1) * (1 - 0)
-                F::from_u8(2), // eq(1, 2) = 1 * 2 + (1 - 1) * (1 - 2)
-                F::from_u8(3), // eq(1, 3) = 1 * 3 + (1 - 1) * (1 - 3)
-            ],
-        ];
-        // EQ(k_m, c)^2 for k_m \in {0, 1} and c \in {0, 2, 3}
-        let eq_km_c_squared: [[F; DEGREE]; 2] = [
-            [F::one(), F::one(), F::from_u8(4)],
-            [F::zero(), F::from_u8(4), F::from_u8(9)],
-        ];
         BooleanityProverState {
             B,
             D: MultilinearPolynomial::from(eq_r_cycle),
@@ -151,8 +131,6 @@ impl<F: JoltField> BooleanityProverState<F> {
             H: None,
             F,
             eq_r_r: None,
-            eq_km_c,
-            eq_km_c_squared,
         }
     }
 }

@@ -22,7 +22,6 @@ use crate::{
     },
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::jolt_device::MemoryLayout;
 use rayon::prelude::*;
 use tracer::instruction::RAMAccess;
 
@@ -316,7 +315,6 @@ pub struct RamReadWriteChecking<F: JoltField> {
     r_prime: Option<OpeningPoint<BIG_ENDIAN, F>>,
     sumcheck_switch_index: usize,
     prover_state: Option<ReadWriteCheckingProverState<F>>,
-    memory_layout: MemoryLayout,
     rv_claim: F,
     wv_claim: F,
 }
@@ -336,8 +334,6 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         let gamma = state_manager.transcript.borrow_mut().challenge_scalar();
-        let (_, _, program_io, _) = state_manager.get_prover_data();
-        let memory_layout = program_io.memory_layout.clone();
 
         let (_, rv_claim) = state_manager
             .get_prover_accumulator()
@@ -366,7 +362,6 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             r_prime: None,
             sumcheck_switch_index,
             prover_state: Some(prover_state),
-            memory_layout,
             rv_claim,
             wv_claim,
         }
@@ -377,8 +372,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         let gamma = state_manager.transcript.borrow_mut().challenge_scalar();
-        let (_, program_io, T) = state_manager.get_verifier_data();
-        let memory_layout = program_io.memory_layout.clone();
+        let (_, _, T) = state_manager.get_verifier_data();
 
         let r_prime = state_manager
             .get_verifier_accumulator()
@@ -420,7 +414,6 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             r_prime: Some(r_prime),
             sumcheck_switch_index,
             prover_state: None,
-            memory_layout,
             rv_claim,
             wv_claim,
         }

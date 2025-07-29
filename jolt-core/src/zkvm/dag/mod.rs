@@ -5,95 +5,108 @@ pub mod state_manager;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::host;
     use crate::poly::commitment::dory::DoryCommitmentScheme;
-    use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
-    use crate::utils::transcript::{KeccakTranscript, Transcript};
-    use crate::zkvm::{Jolt, JoltProverPreprocessing, RV32IMJoltVM};
+    use crate::zkvm::dag::jolt_dag::JoltDAG;
+    use crate::zkvm::dag::state_manager::StateManager;
+    use crate::zkvm::{Jolt, JoltRV32IM, JoltVerifierPreprocessing};
     use ark_bn254::Fr;
-    use std::cell::RefCell;
-    use std::collections::BTreeMap;
-    use std::rc::Rc;
+    use serial_test::serial;
     use tracer;
     use tracer::instruction::RV32IMCycle;
 
     #[test]
-    fn test_dag_fib_e2e() {
+    #[serial]
+    #[should_panic]
+    fn truncated_trace() {
         let mut program = host::Program::new("fibonacci-guest");
-        let inputs = postcard::to_stdvec(&100u32).unwrap();
         let (bytecode, init_memory_state) = program.decode();
-        let (mut trace, final_memory_state, mut io_device) = program.trace(&inputs);
+        let inputs = postcard::to_stdvec(&9u8).unwrap();
+        let (mut trace, final_memory_state, mut program_io) = program.trace(&inputs);
+        trace.truncate(100);
+        program_io.outputs[0] = 0; // change the output to 0
 
-        // Preprocessing
-        let preprocessing: JoltProverPreprocessing<Fr, DoryCommitmentScheme> =
-            RV32IMJoltVM::prover_preprocess(
-                bytecode.clone(),
-                io_device.memory_layout.clone(),
-                init_memory_state,
-                1 << 16,
-                1 << 16,
-                1 << 16,
-            );
+        let preprocessing = JoltRV32IM::prover_preprocess(
+            bytecode.clone(),
+            program_io.memory_layout.clone(),
+            init_memory_state,
+            1 << 16,
+        );
 
         // Setup trace length and padding
         let padded_trace_length = (trace.len() + 1).next_power_of_two();
         trace.resize(padded_trace_length, RV32IMCycle::NoOp);
 
         // truncate trailing zeros on device outputs
-        io_device.outputs.truncate(
-            io_device
+        program_io.outputs.truncate(
+            program_io
                 .outputs
                 .iter()
                 .rposition(|&b| b != 0)
                 .map_or(0, |pos| pos + 1),
         );
 
-        // State manager components
-        let prover_accumulator_pre_wrap = ProverOpeningAccumulator::<Fr>::new();
-        let verifier_accumulator_pre_wrap = VerifierOpeningAccumulator::<Fr>::new();
-
-        let prover_accumulator = Rc::new(RefCell::new(prover_accumulator_pre_wrap));
-        let verifier_accumulator = Rc::new(RefCell::new(verifier_accumulator_pre_wrap));
-        let prover_transcript = Rc::new(RefCell::new(KeccakTranscript::new(b"Jolt")));
-        let verifier_transcript = Rc::new(RefCell::new(KeccakTranscript::new(b"Jolt")));
-        let proofs = Rc::new(RefCell::new(BTreeMap::new()));
-        let commitments = Rc::new(RefCell::new(vec![]));
-
-        // Create state managers
-        let mut prover_state_manager = state_manager::StateManager::new_prover(
-            prover_accumulator,
-            prover_transcript.clone(),
-            proofs.clone(),
-            commitments.clone(),
-        );
-        prover_state_manager.set_prover_data(
+        let state_manager = StateManager::new_prover(
             &preprocessing,
-            trace.clone(),
-            io_device.clone(),
-            final_memory_state.clone(),
+            trace,
+            program_io.clone(),
+            final_memory_state,
+        );
+        let proof = JoltDAG::prove(state_manager).ok().unwrap();
+
+        let verifier_preprocessing =
+            JoltVerifierPreprocessing::<Fr, DoryCommitmentScheme>::from(&preprocessing);
+        let _verification_result =
+            JoltRV32IM::verify(&verifier_preprocessing, proof, program_io, None);
+    }
+
+    #[test]
+    #[serial]
+    #[should_panic]
+    fn malicious_trace() {
+        let mut program = host::Program::new("fibonacci-guest");
+        let inputs = postcard::to_stdvec(&1u8).unwrap();
+        let (bytecode, init_memory_state) = program.decode();
+        let (mut trace, final_memory_state, mut program_io) = program.trace(&inputs);
+
+        // Since the preprocessing is done with the original memory layout, the verifier should fail
+        let preprocessing = JoltRV32IM::prover_preprocess(
+            bytecode.clone(),
+            program_io.memory_layout.clone(),
+            init_memory_state,
+            1 << 16,
         );
 
-        let mut verifier_state_manager = state_manager::StateManager::new_verifier(
-            verifier_accumulator,
-            verifier_transcript.clone(),
-            proofs,
-            commitments,
+        // change memory address of output & termination bit to the same address as input
+        // changes here should not be able to spoof the verifier result
+        program_io.memory_layout.output_start = program_io.memory_layout.input_start;
+        program_io.memory_layout.output_end = program_io.memory_layout.input_end;
+        program_io.memory_layout.termination = program_io.memory_layout.input_start;
+
+        // Setup trace length and padding
+        let padded_trace_length = (trace.len() + 1).next_power_of_two();
+        trace.resize(padded_trace_length, RV32IMCycle::NoOp);
+
+        // truncate trailing zeros on device outputs
+        program_io.outputs.truncate(
+            program_io
+                .outputs
+                .iter()
+                .rposition(|&b| b != 0)
+                .map_or(0, |pos| pos + 1),
         );
 
-        let verifier_preprocessing = crate::zkvm::JoltVerifierPreprocessing::from(&preprocessing);
-        verifier_state_manager.set_verifier_data(&verifier_preprocessing, io_device, trace.len());
+        let state_manager = StateManager::new_prover(
+            &preprocessing,
+            trace,
+            program_io.clone(),
+            final_memory_state,
+        );
+        let proof = JoltDAG::prove(state_manager).ok().unwrap();
 
-        let mut dag = jolt_dag::JoltDAG::new(prover_state_manager, verifier_state_manager);
-
-        if let Err(e) = dag.prove() {
-            panic!("DAG prove failed: {e}");
-        }
-
-        if let Err(e) = dag.verify() {
-            panic!("DAG verify failed: {e}");
-        }
-
-        println!("DAG fib_e2e OK!");
+        let verifier_preprocessing =
+            JoltVerifierPreprocessing::<Fr, DoryCommitmentScheme>::from(&preprocessing);
+        let _verification_result =
+            JoltRV32IM::verify(&verifier_preprocessing, proof, program_io, None);
     }
 }

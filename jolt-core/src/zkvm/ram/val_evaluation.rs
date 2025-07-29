@@ -38,8 +38,6 @@ pub struct ValEvaluationSumcheck<F: JoltField> {
     /// log T
     num_rounds: usize,
     /// used to compute LT evaluation
-    r_address: Vec<F>,
-    /// used to compute LT evaluation
     r_cycle: Vec<F>,
     prover_state: Option<ValEvaluationProverState<F>>,
 }
@@ -110,7 +108,6 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
             claimed_evaluation,
             init_eval,
             num_rounds: T.log_2(),
-            r_address: r_address.r.clone(),
             r_cycle: r_cycle.r.clone(),
             prover_state: Some(ValEvaluationProverState { inc, wa, lt }),
         }
@@ -137,7 +134,6 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
             claimed_evaluation,
             init_eval,
             num_rounds: T.log_2(),
-            r_address: r_address.r,
             r_cycle: r_cycle.r,
             prover_state: None,
         }

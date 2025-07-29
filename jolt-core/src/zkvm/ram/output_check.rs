@@ -19,14 +19,14 @@ use crate::{
     utils::{expanding_table::ExpandingTable, math::Math, transcript::Transcript},
     zkvm::dag::state_manager::StateManager,
     zkvm::{
+        ram::remap_address,
         witness::{CommittedPolynomial, VirtualPolynomial},
-        {ram::remap_address, JoltProverPreprocessing},
     },
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::RAM_START_ADDRESS;
 use rayon::prelude::*;
-use tracer::{instruction::RV32IMCycle, JoltDevice};
+use tracer::JoltDevice;
 
 struct OutputSumcheckProverState<F: JoltField> {
     /// Val(k, 0)
@@ -104,15 +104,6 @@ struct OutputSumcheckVerifierState<F: JoltField> {
     program_io: JoltDevice,
 }
 
-impl<F: JoltField> OutputSumcheckVerifierState<F> {
-    fn initialize(r_address: &[F], program_io: &JoltDevice) -> Self {
-        Self {
-            r_address: r_address.to_vec(),
-            program_io: program_io.clone(),
-        }
-    }
-}
-
 /// Proves that the final RAM state is consistent with the claimed
 /// program output.
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
@@ -131,7 +122,6 @@ pub struct OutputProof<F: JoltField, ProofTranscript: Transcript> {
 /// inputs/outputs are stored (io_range).
 pub struct OutputSumcheck<F: JoltField> {
     K: usize,
-    T: usize,
     verifier_state: Option<OutputSumcheckVerifierState<F>>,
     prover_state: Option<OutputSumcheckProverState<F>>,
 }
@@ -143,9 +133,8 @@ impl<F: JoltField> OutputSumcheck<F> {
         final_ram_state: Vec<u32>,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (_, trace, program_io, _) = state_manager.get_prover_data();
+        let (_, _, program_io, _) = state_manager.get_prover_data();
         let K = final_ram_state.len();
-        let T = trace.len();
 
         let r_address = state_manager
             .transcript
@@ -161,7 +150,6 @@ impl<F: JoltField> OutputSumcheck<F> {
 
         OutputSumcheck {
             K,
-            T,
             verifier_state: None,
             prover_state: Some(output_sumcheck_prover_state),
         }
@@ -171,7 +159,7 @@ impl<F: JoltField> OutputSumcheck<F> {
         K: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (_, program_io, T) = state_manager.get_verifier_data();
+        let (_, program_io, _) = state_manager.get_verifier_data();
 
         let r_address = state_manager
             .transcript
@@ -185,7 +173,6 @@ impl<F: JoltField> OutputSumcheck<F> {
 
         OutputSumcheck {
             K,
-            T,
             verifier_state: Some(output_sumcheck_verifier_state),
             prover_state: None,
         }
@@ -358,63 +345,6 @@ impl<F: JoltField> SumcheckInstance<F> for OutputSumcheck<F> {
 struct ValFinalSumcheckProverState<F: JoltField> {
     inc: MultilinearPolynomial<F>,
     wa: MultilinearPolynomial<F>,
-}
-
-impl<F: JoltField> ValFinalSumcheckProverState<F> {
-    #[tracing::instrument(skip_all, name = "ValFinalSumcheckProverState::initialize")]
-    fn initialize<PCS: CommitmentScheme<Field = F>>(
-        preprocessing: &JoltProverPreprocessing<F, PCS>,
-        trace: &[RV32IMCycle],
-        output_sumcheck_prover_state: &OutputSumcheckProverState<F>,
-    ) -> Self {
-        // For RAM, ra = wa but for the sake of intuition we'll call
-        // this `write_addresses`
-        let write_addresses: Vec<_> = trace
-            .par_iter()
-            .map(|cycle| {
-                remap_address(
-                    cycle.ram_access().address() as u64,
-                    &preprocessing.shared.memory_layout,
-                )
-                .map(|k| k as usize)
-            })
-            .collect();
-
-        // wa(r_address, j)
-        let eq_table = &output_sumcheck_prover_state.eq_table;
-        let wa_r_address: Vec<_> = write_addresses
-            .par_iter()
-            .map(|k| k.map_or(F::zero(), |k| eq_table[k]))
-            .collect();
-        let inc = CommittedPolynomial::RamInc.generate_witness(preprocessing, trace);
-
-        #[cfg(test)]
-        {
-            let OutputSumcheckProverState {
-                val_init,
-                val_final,
-                ..
-            } = &output_sumcheck_prover_state;
-            // Check that Val_init(r), wa(r, j), and Inc(j) are consistent with
-            // the claim Val_final(r)
-            let expected = val_final.final_sumcheck_claim();
-            let actual = val_init.final_sumcheck_claim()
-                + wa_r_address
-                    .par_iter()
-                    .enumerate()
-                    .map(|(j, wa)| inc.get_coeff(j) * wa)
-                    .sum::<F>();
-            assert_eq!(
-                expected, actual,
-                "Val_final(r_address) ≠ Val_init(r_address) + \\sum_j wa(r_address, j) * Inc(j)"
-            );
-        }
-
-        Self {
-            inc,
-            wa: wa_r_address.into(),
-        }
-    }
 }
 
 /// This sumcheck virtualizes Val_final(k) as:

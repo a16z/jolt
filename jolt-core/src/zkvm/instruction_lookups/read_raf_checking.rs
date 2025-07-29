@@ -753,7 +753,6 @@ mod tests {
     use super::*;
     use crate::subprotocols::sumcheck::BatchedSumcheck;
     use crate::utils::transcript::KeccakTranscript;
-    use crate::zkvm::dag::state_manager::{ProofData, ProofKeys};
     use crate::{
         poly::commitment::mock::MockCommitScheme,
         zkvm::{
@@ -765,7 +764,6 @@ mod tests {
     use ark_std::Zero;
     use common::jolt_device::MemoryLayout;
     use rand::{rngs::StdRng, RngCore, SeedableRng};
-    use std::collections::BTreeMap;
     use strum::IntoEnumIterator;
     use tracer::emulator::memory::Memory;
     use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
@@ -868,35 +866,20 @@ mod tests {
             outputs: vec![],
             panic: false,
         };
-        let prover_accumulator = Rc::new(RefCell::new(ProverOpeningAccumulator::<Fr>::new()));
-        let verifier_accumulator = Rc::new(RefCell::new(VerifierOpeningAccumulator::<Fr>::new()));
-        let prover_transcript = KeccakTranscript::new(b"test_transcript");
-        let verifier_transcript = KeccakTranscript::new(b"test_transcript");
-        let proofs = Rc::new(RefCell::new(BTreeMap::<
-            ProofKeys,
-            ProofData<Fr, MockCommitScheme<Fr>, _>,
-        >::new()));
-        let commitments = Rc::new(RefCell::new(vec![]));
-        let mut prover_sm = StateManager::new_prover(
-            prover_accumulator.clone(),
-            Rc::new(RefCell::new(prover_transcript)),
-            proofs.clone(),
-            commitments.clone(),
-        );
-        let mut verifier_sm = StateManager::new_verifier(
-            verifier_accumulator.clone(),
-            Rc::new(RefCell::new(verifier_transcript)),
-            proofs.clone(),
-            commitments.clone(),
-        );
         let final_memory_state = Memory::default();
-        prover_sm.set_prover_data(
+
+        let mut prover_sm = StateManager::<'_, Fr, KeccakTranscript, _>::new_prover(
             &prover_preprocessing,
             trace.clone(),
             program_io.clone(),
             final_memory_state,
         );
-        verifier_sm.set_verifier_data(&verifier_preprocessing, program_io, trace.len());
+        let mut verifier_sm = StateManager::<'_, Fr, KeccakTranscript, _>::new_verifier(
+            &verifier_preprocessing,
+            program_io,
+            trace.len(),
+            1 << 8,
+        );
 
         let r_cycle: Vec<Fr> = prover_sm.transcript.borrow_mut().challenge_vector(LOG_T);
         let _r_cycle: Vec<Fr> = verifier_sm.transcript.borrow_mut().challenge_vector(LOG_T);
@@ -917,6 +900,7 @@ mod tests {
             right_operand_claim += eq_r_cycle[i].mul_u64(ro);
         }
 
+        let prover_accumulator = prover_sm.get_prover_accumulator();
         prover_accumulator.borrow_mut().append_virtual(
             VirtualPolynomial::LookupOutput,
             SumcheckId::SpartanOuter,
@@ -949,6 +933,7 @@ mod tests {
 
         // Take claims
         let prover_acc_borrow = prover_accumulator.borrow();
+        let verifier_accumulator = verifier_sm.get_verifier_accumulator();
         let mut verifier_acc_borrow = verifier_accumulator.borrow_mut();
 
         for (key, (_, value)) in prover_acc_borrow.evaluation_openings().iter() {
@@ -959,6 +944,7 @@ mod tests {
         }
         drop(prover_acc_borrow);
         drop(verifier_acc_borrow);
+
         verifier_accumulator.borrow_mut().append_virtual(
             VirtualPolynomial::LookupOutput,
             SumcheckId::SpartanOuter,

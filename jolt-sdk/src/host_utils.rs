@@ -6,9 +6,7 @@ pub use common::jolt_device::{MemoryConfig, MemoryLayout};
 pub use jolt_core::host;
 pub use jolt_core::jolt::lookup_table;
 pub use jolt_core::jolt::vm::{
-    rv32im_vm::{
-        JoltProofBundle, JoltTranscript, RV32IMJoltProof, RV32IMJoltVM, Serializable, PCS,
-    },
+    rv32im_vm::{JoltProofBundle, JoltRV32IM, JoltTranscript, RV32IMJoltProof, Serializable, PCS},
     Jolt, JoltProof, JoltProverPreprocessing, JoltVerifierPreprocessing,
 };
 pub use tracer;

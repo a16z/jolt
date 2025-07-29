@@ -2,7 +2,6 @@ use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::rc::Rc;
 use std::sync::Arc;
-use tracer::instruction::RV32IMCycle;
 use tracing::{span, Level};
 
 use crate::field::JoltField;
@@ -24,7 +23,6 @@ use crate::zkvm::r1cs::inputs::ALL_R1CS_INPUTS;
 use crate::zkvm::r1cs::inputs::COMMITTED_R1CS_INPUTS;
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
-use crate::zkvm::JoltProverPreprocessing;
 
 use crate::utils::small_value::NUM_SVO_ROUNDS;
 use crate::utils::transcript::Transcript;
@@ -104,21 +102,6 @@ where
         UniformSpartanKey::from_builder(constraint_builder)
     }
 
-    #[tracing::instrument(skip_all, name = "Spartan::prove")]
-    pub fn prove<PCS>(
-        _preprocessing: &JoltProverPreprocessing<F, PCS>,
-        _constraint_builder: &CombinedUniformBuilder<F>,
-        _key: UniformSpartanKey<F>,
-        _trace: &[RV32IMCycle],
-        _opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        _transcript: &mut ProofTranscript,
-    ) -> Result<Self, SpartanError>
-    where
-        PCS: CommitmentScheme<Field = F>,
-    {
-        todo!()
-    }
-
     #[tracing::instrument(skip_all)]
     fn prove_outer_sumcheck(
         num_rounds_x: usize,
@@ -136,21 +119,6 @@ where
             tau,
             transcript,
         )
-    }
-
-    #[tracing::instrument(skip_all, name = "Spartan::verify")]
-    pub fn verify<PCS>(
-        &self,
-        _key: UniformSpartanKey<F>,
-        _commitments: &JoltCommitments<F, PCS>,
-        _opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        _transcript: &mut ProofTranscript,
-    ) -> Result<(), SpartanError>
-    where
-        PCS: CommitmentScheme<Field = F>,
-        ProofTranscript: Transcript,
-    {
-        todo!()
     }
 }
 

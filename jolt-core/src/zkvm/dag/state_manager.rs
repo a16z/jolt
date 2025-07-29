@@ -13,6 +13,7 @@ use crate::utils::transcript::Transcript;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::zkvm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
 use num_derive::FromPrimitive;
+use rayon::prelude::*;
 use tracer::emulator::memory::Memory;
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
 use tracer::JoltDevice;
@@ -26,14 +27,12 @@ pub enum ProofKeys {
     Stage4Sumcheck,
     ReducedOpeningProof,
     TwistSumcheckSwitchIndex,
-    RamK,
 }
 
 pub enum ProofData<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> {
     SumcheckProof(SumcheckInstanceProof<F, ProofTranscript>),
     ReducedOpeningProof(ReducedOpeningProof<F, PCS, ProofTranscript>),
     SumcheckSwitchIndex(usize),
-    RamK(usize),
 }
 
 pub type Proofs<F, PCS, ProofTranscript> = BTreeMap<ProofKeys, ProofData<F, PCS, ProofTranscript>>;
@@ -42,10 +41,9 @@ pub struct ProverState<'a, F: JoltField, PCS>
 where
     PCS: CommitmentScheme<Field = F>,
 {
-    pub preprocessing: Option<&'a JoltProverPreprocessing<F, PCS>>,
-    pub trace: Option<Vec<RV32IMCycle>>,
-    pub program_io: Option<JoltDevice>,
-    pub final_memory_state: Option<Memory>,
+    pub preprocessing: &'a JoltProverPreprocessing<F, PCS>,
+    pub trace: Vec<RV32IMCycle>,
+    pub final_memory_state: Memory,
     pub accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
 }
 
@@ -53,9 +51,8 @@ pub struct VerifierState<'a, F: JoltField, PCS>
 where
     PCS: CommitmentScheme<Field = F>,
 {
-    pub preprocessing: Option<&'a JoltVerifierPreprocessing<F, PCS>>,
-    pub program_io: Option<JoltDevice>,
-    pub trace_length: Option<usize>,
+    pub preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
+    pub trace_length: usize,
     pub accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
 }
 
@@ -68,83 +65,83 @@ pub struct StateManager<
     pub transcript: Rc<RefCell<ProofTranscript>>,
     pub proofs: Rc<RefCell<Proofs<F, PCS, ProofTranscript>>>,
     pub commitments: Rc<RefCell<Vec<PCS::Commitment>>>,
+    pub ram_K: usize,
+    pub program_io: JoltDevice,
     pub prover_state: Option<ProverState<'a, F, PCS>>,
-    verifier_state: Option<VerifierState<'a, F, PCS>>,
+    pub verifier_state: Option<VerifierState<'a, F, PCS>>,
 }
 
 impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
     StateManager<'a, F, ProofTranscript, PCS>
 {
     pub fn new_prover(
-        prover_accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
-        transcript: Rc<RefCell<ProofTranscript>>,
-        proofs: Rc<RefCell<Proofs<F, PCS, ProofTranscript>>>,
-        commitments: Rc<RefCell<Vec<PCS::Commitment>>>,
+        preprocessing: &'a JoltProverPreprocessing<F, PCS>,
+        trace: Vec<RV32IMCycle>,
+        program_io: JoltDevice,
+        final_memory_state: Memory,
     ) -> Self {
+        let opening_accumulator = ProverOpeningAccumulator::new();
+        let opening_accumulator = Rc::new(RefCell::new(opening_accumulator));
+        let transcript = Rc::new(RefCell::new(ProofTranscript::new(b"Jolt")));
+        let proofs = Rc::new(RefCell::new(BTreeMap::new()));
+        let commitments = Rc::new(RefCell::new(vec![]));
+
+        // Calculate K for DoryGlobals initialization
+        let ram_K = trace
+            .par_iter()
+            .filter_map(|cycle| {
+                crate::zkvm::ram::remap_address(
+                    cycle.ram_access().address() as u64,
+                    &preprocessing.shared.memory_layout,
+                )
+            })
+            .max()
+            .unwrap_or(0)
+            .next_power_of_two() as usize;
+
         Self {
             transcript,
             proofs,
             commitments,
+            program_io,
+            ram_K,
             prover_state: Some(ProverState {
-                preprocessing: None,
-                trace: None,
-                program_io: None,
-                final_memory_state: None,
-                accumulator: prover_accumulator,
+                preprocessing,
+                trace,
+                final_memory_state,
+                accumulator: opening_accumulator,
             }),
             verifier_state: None,
         }
     }
 
+    /// Only used in tests; in practice, the verifier state manager is
+    /// constructed using `JoltProof::to_verifier_state_manager`
+    #[cfg(test)]
     pub fn new_verifier(
-        verifier_accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
-        transcript: Rc<RefCell<ProofTranscript>>,
-        proofs: Rc<RefCell<Proofs<F, PCS, ProofTranscript>>>,
-        commitments: Rc<RefCell<Vec<PCS::Commitment>>>,
-    ) -> Self {
-        Self {
-            transcript,
-            proofs,
-            commitments,
-            prover_state: None,
-            verifier_state: Some(VerifierState {
-                preprocessing: None,
-                program_io: None,
-                trace_length: None,
-                accumulator: verifier_accumulator,
-            }),
-        }
-    }
-
-    pub fn set_prover_data(
-        &mut self,
-        preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        trace: Vec<RV32IMCycle>,
-        program_io: JoltDevice,
-        final_memory_state: Memory,
-    ) {
-        if let Some(ref mut prover_state) = self.prover_state {
-            prover_state.preprocessing = Some(preprocessing);
-            prover_state.trace = Some(trace);
-            prover_state.program_io = Some(program_io);
-            prover_state.final_memory_state = Some(final_memory_state);
-        } else {
-            panic!("Prover state not initialized");
-        }
-    }
-
-    pub fn set_verifier_data(
-        &mut self,
         preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
         program_io: JoltDevice,
         trace_length: usize,
-    ) {
-        if let Some(ref mut verifier_state) = self.verifier_state {
-            verifier_state.preprocessing = Some(preprocessing);
-            verifier_state.program_io = Some(program_io);
-            verifier_state.trace_length = Some(trace_length);
-        } else {
-            panic!("Verifier state not initialized");
+        ram_K: usize,
+    ) -> Self {
+        let opening_accumulator = VerifierOpeningAccumulator::new();
+        let opening_accumulator = Rc::new(RefCell::new(opening_accumulator));
+        let transcript = Rc::new(RefCell::new(ProofTranscript::new(b"Jolt")));
+        let proofs = Rc::new(RefCell::new(BTreeMap::new()));
+        let commitments = Rc::new(RefCell::new(vec![]));
+
+        StateManager {
+            transcript,
+            proofs,
+            commitments,
+            program_io,
+            ram_K,
+            prover_state: None,
+            verifier_state: Some(VerifierState {
+                preprocessing,
+                trace_length,
+                accumulator: opening_accumulator,
+            }),
         }
     }
 
@@ -158,16 +155,10 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
     ) {
         if let Some(ref prover_state) = self.prover_state {
             (
-                prover_state.preprocessing.expect("Preprocessing not set"),
-                prover_state.trace.as_ref().expect("Trace not set"),
-                prover_state
-                    .program_io
-                    .as_ref()
-                    .expect("Program IO not set"),
-                prover_state
-                    .final_memory_state
-                    .as_ref()
-                    .expect("Final memory state not set"),
+                &prover_state.preprocessing,
+                &prover_state.trace,
+                &self.program_io,
+                &prover_state.final_memory_state,
             )
         } else {
             panic!("Prover state not initialized");
@@ -177,12 +168,9 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
     pub fn get_verifier_data(&self) -> (&'a JoltVerifierPreprocessing<F, PCS>, &JoltDevice, usize) {
         if let Some(ref verifier_state) = self.verifier_state {
             (
-                verifier_state.preprocessing.expect("Preprocessing not set"),
-                verifier_state
-                    .program_io
-                    .as_ref()
-                    .expect("Program IO not set"),
-                verifier_state.trace_length.expect("Trace length not set"),
+                &verifier_state.preprocessing,
+                &self.program_io,
+                verifier_state.trace_length,
             )
         } else {
             panic!("Verifier state not initialized");
@@ -191,19 +179,9 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
 
     pub fn get_bytecode(&self) -> &[RV32IMInstruction] {
         if let Some(ref verifier_state) = self.verifier_state {
-            &verifier_state
-                .preprocessing
-                .expect("Preprocessing not set")
-                .shared
-                .bytecode
-                .bytecode
+            &verifier_state.preprocessing.shared.bytecode.bytecode
         } else if let Some(ref prover_state) = self.prover_state {
-            &prover_state
-                .preprocessing
-                .expect("Preprocessing not set")
-                .shared
-                .bytecode
-                .bytecode
+            &prover_state.preprocessing.shared.bytecode.bytecode
         } else {
             panic!("Neither prover nor verifier state initialized");
         }
@@ -274,6 +252,41 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
                 .accumulator
                 .borrow()
                 .get_committed_polynomial_opening(polynomial, sumcheck)
+        } else {
+            panic!("Neither prover nor verifier state initialized");
+        }
+    }
+
+    pub fn fiat_shamir_preamble(&mut self) {
+        let transcript = self.get_transcript();
+        transcript
+            .borrow_mut()
+            .append_u64(self.program_io.memory_layout.max_input_size);
+        transcript
+            .borrow_mut()
+            .append_u64(self.program_io.memory_layout.max_output_size);
+        transcript
+            .borrow_mut()
+            .append_u64(self.program_io.memory_layout.memory_size);
+        transcript
+            .borrow_mut()
+            .append_bytes(&self.program_io.inputs);
+        transcript
+            .borrow_mut()
+            .append_bytes(&self.program_io.outputs);
+        transcript
+            .borrow_mut()
+            .append_u64(self.program_io.panic as u64);
+        transcript.borrow_mut().append_u64(self.ram_K as u64);
+
+        if let Some(ref verifier_state) = self.verifier_state {
+            transcript
+                .borrow_mut()
+                .append_u64(verifier_state.trace_length as u64);
+        } else if let Some(ref prover_state) = self.prover_state {
+            transcript
+                .borrow_mut()
+                .append_u64(prover_state.trace.len() as u64);
         } else {
             panic!("Neither prover nor verifier state initialized");
         }

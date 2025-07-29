@@ -78,6 +78,13 @@ where
         MockCommitment::default()
     }
 
+    fn combine_hints(
+        _hints: Vec<Self::OpeningProofHint>,
+        _coeffs: &[Self::Field],
+    ) -> Self::OpeningProofHint {
+        ()
+    }
+
     fn prove<ProofTranscript: Transcript>(
         _setup: &Self::ProverSetup,
         _poly: &MultilinearPolynomial<Self::Field>,

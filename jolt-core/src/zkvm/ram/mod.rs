@@ -7,10 +7,7 @@ use crate::{
     poly::commitment::commitment_scheme::CommitmentScheme,
     subprotocols::sumcheck::SumcheckInstance,
     utils::{math::Math, transcript::Transcript},
-    zkvm::dag::{
-        stage::SumcheckStages,
-        state_manager::{ProofData, ProofKeys, StateManager},
-    },
+    zkvm::dag::{stage::SumcheckStages, state_manager::StateManager},
     zkvm::ram::{
         booleanity::BooleanitySumcheck,
         hamming_booleanity::HammingBooleanitySumcheck,
@@ -250,10 +247,7 @@ impl RamDag {
         let (preprocessing, program_io, T) = state_manager.get_verifier_data();
         let ram_preprocessing = &preprocessing.shared.ram;
 
-        let K = match state_manager.proofs.borrow().get(&ProofKeys::RamK) {
-            Some(ProofData::RamK(K)) => *K,
-            _ => panic!("RAM K not set"),
-        };
+        let K = state_manager.ram_K;
 
         let mut initial_memory_state = vec![0; K];
         // Copy bytecode

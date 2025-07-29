@@ -23,7 +23,7 @@ use crate::{
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::transcript::Transcript,
     zkvm::{
-        dag::state_manager::{ProofData, ProofKeys, Proofs, StateManager},
+        dag::state_manager::{ProofData, ProofKeys, Proofs, StateManager, VerifierState},
         witness::{CommittedPolynomial, VirtualPolynomial},
         JoltVerifierPreprocessing,
     },
@@ -34,6 +34,8 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     opening_claims: Claims<F>,
     commitments: Vec<PCS::Commitment>,
     proofs: Proofs<F, PCS, FS>,
+    trace_length: usize,
+    ram_K: usize,
 }
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F, PCS, FS> {
@@ -42,20 +44,22 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
         let openings = std::mem::take(&mut prover_state.accumulator.borrow_mut().openings);
         let commitments = state_manager.commitments.take();
         let proofs = state_manager.proofs.take();
+        let trace_length = prover_state.trace.len();
+        let ram_K = state_manager.ram_K;
 
         Self {
             opening_claims: Claims(openings),
             commitments,
             proofs,
+            trace_length,
+            ram_K,
         }
     }
 
     pub fn to_verifier_state_manager<'a>(
         self,
         preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
-        io_device: JoltDevice,
-        trace_len: usize,
-        transcript: Rc<RefCell<FS>>,
+        program_io: JoltDevice,
     ) -> StateManager<'a, F, FS, PCS> {
         let mut opening_accumulator = VerifierOpeningAccumulator::<F>::new();
         // Populate claims in the verifier accumulator
@@ -67,16 +71,21 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
 
         let proofs = Rc::new(RefCell::new(self.proofs));
         let commitments = Rc::new(RefCell::new(self.commitments));
+        let transcript = Rc::new(RefCell::new(FS::new(b"Jolt")));
 
-        let mut verifier_state_manager = StateManager::new_verifier(
-            Rc::new(RefCell::new(opening_accumulator)),
+        StateManager {
             transcript,
             proofs,
             commitments,
-        );
-        verifier_state_manager.set_verifier_data(preprocessing, io_device, trace_len);
-
-        verifier_state_manager
+            program_io,
+            ram_K: self.ram_K,
+            prover_state: None,
+            verifier_state: Some(VerifierState {
+                preprocessing,
+                trace_length: self.trace_length,
+                accumulator: Rc::new(RefCell::new(opening_accumulator)),
+            }),
+        }
     }
 }
 
@@ -314,10 +323,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
                 2u8.serialize_with_mode(&mut writer, compress)?;
                 idx.serialize_with_mode(&mut writer, compress)
             }
-            ProofData::RamK(k) => {
-                3u8.serialize_with_mode(&mut writer, compress)?;
-                k.serialize_with_mode(&mut writer, compress)
-            }
         }
     }
 
@@ -326,7 +331,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             ProofData::SumcheckProof(proof) => proof.serialized_size(compress),
             ProofData::ReducedOpeningProof(proof) => proof.serialized_size(compress),
             ProofData::SumcheckSwitchIndex(idx) => idx.serialized_size(compress),
-            ProofData::RamK(k) => k.serialized_size(compress),
         }
     }
 }
@@ -362,10 +366,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
             2 => {
                 let idx = usize::deserialize_with_mode(&mut reader, compress, validate)?;
                 Ok(ProofData::SumcheckSwitchIndex(idx))
-            }
-            3 => {
-                let k = usize::deserialize_with_mode(&mut reader, compress, validate)?;
-                Ok(ProofData::RamK(k))
             }
             _ => Err(SerializationError::InvalidData),
         }
