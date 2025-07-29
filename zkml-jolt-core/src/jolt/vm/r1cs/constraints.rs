@@ -23,5 +23,53 @@ impl<F: JoltField> R1CSConstraints<F> for JoltONNXConstraints {
             JoltONNXR1CSInputs::LeftInstructionInput,
             JoltONNXR1CSInputs::LeftLookupOperand,
         );
+
+        // If AddOperands {
+        //     assert!(RightLookupOperand == LeftInstructionInput + RightInstructionInput)
+        // }
+        cs.constrain_eq_conditional(
+            JoltONNXR1CSInputs::OpFlags(CircuitFlags::AddOperands),
+            JoltONNXR1CSInputs::RightLookupOperand,
+            JoltONNXR1CSInputs::LeftInstructionInput + JoltONNXR1CSInputs::RightInstructionInput,
+        );
+
+        // If SubtractOperands {
+        //     assert!(RightLookupOperand == LeftInstructionInput - RightInstructionInput)
+        // }
+        cs.constrain_eq_conditional(
+            JoltONNXR1CSInputs::OpFlags(CircuitFlags::SubtractOperands),
+            JoltONNXR1CSInputs::RightLookupOperand,
+            // Converts from unsigned to twos-complement representation
+            JoltONNXR1CSInputs::LeftInstructionInput - JoltONNXR1CSInputs::RightInstructionInput
+                + (0xffffffffi64 + 1),
+        );
+
+        // if MultiplyOperands {
+        //     assert!(RightLookupOperand == Rs1Value * Rs2Value)
+        // }
+        cs.constrain_prod(
+            JoltONNXR1CSInputs::RightInstructionInput,
+            JoltONNXR1CSInputs::LeftInstructionInput,
+            JoltONNXR1CSInputs::Product,
+        );
+        cs.constrain_eq_conditional(
+            JoltONNXR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands),
+            JoltONNXR1CSInputs::RightLookupOperand,
+            JoltONNXR1CSInputs::Product,
+        );
+
+        // if Rd != 0 && WriteLookupOutputToRD {
+        //     assert!(RdWriteValue == LookupOutput)
+        // }
+        cs.constrain_prod(
+            JoltONNXR1CSInputs::Rd,
+            JoltONNXR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD),
+            JoltONNXR1CSInputs::WriteLookupOutputToRD,
+        );
+        cs.constrain_eq_conditional(
+            JoltONNXR1CSInputs::WriteLookupOutputToRD,
+            JoltONNXR1CSInputs::RdWriteValue,
+            JoltONNXR1CSInputs::LookupOutput,
+        );
     }
 }

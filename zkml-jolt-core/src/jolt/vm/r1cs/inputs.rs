@@ -4,20 +4,16 @@
     clippy::too_many_arguments
 )]
 
-use crate::jolt::vm::JoltProverPreprocessing;
-
 use super::spartan::UniformSpartanProof;
+use crate::jolt::vm::JoltProverPreprocessing;
 use jolt_core::field::JoltField;
-use jolt_core::impl_r1cs_input_lc_conversions;
 use jolt_core::jolt::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
-use jolt_core::jolt::witness::CommittedPolynomials;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::r1cs::key::UniformSpartanKey;
 use jolt_core::r1cs::ops::{LC, Term, Variable};
 use jolt_core::utils::transcript::Transcript;
 use onnx_tracer::trace_types::ONNXCycle;
-use rayon::prelude::*;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
@@ -29,13 +25,13 @@ pub struct R1CSProof<F: JoltField, ProofTranscript: Transcript> {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum JoltONNXR1CSInputs {
-    PC, // Virtual (bytecode raf)
+    // PC, // Virtual (bytecode raf)
     // UnexpandedPC, // Virtual (bytecode rv)
     Rd, // Virtual (bytecode rv)
     // Imm,          // Virtual (bytecode rv)
     // RamAddress,   // Virtual (RAM raf)
-    Rs1Value, // Virtual (registers rv)
-    Rs2Value, // Virtual (registers rv)
+    // Rs1Value, // Virtual (registers rv)
+    // Rs2Value, // Virtual (registers rv)
     RdWriteValue,
     // RamReadValue, // Virtual (RAM rv)
     // RamWriteValue,
@@ -55,20 +51,20 @@ pub enum JoltONNXR1CSInputs {
 
 /// This const serves to define a canonical ordering over inputs (and thus indices
 /// for each input). This is needed for sumcheck.
-pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs; 15] = [
+pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs; 12] = [
     JoltONNXR1CSInputs::LeftInstructionInput,
     JoltONNXR1CSInputs::RightInstructionInput,
     JoltONNXR1CSInputs::Product,
     JoltONNXR1CSInputs::WriteLookupOutputToRD,
     // JoltONNXR1CSInputs::WritePCtoRD,
     // JoltONNXR1CSInputs::ShouldBranch,
-    JoltONNXR1CSInputs::PC,
+    // JoltONNXR1CSInputs::PC,
     // JoltONNXR1CSInputs::UnexpandedPC,
     JoltONNXR1CSInputs::Rd,
     // JoltONNXR1CSInputs::Imm,
     // JoltONNXR1CSInputs::RamAddress,
-    JoltONNXR1CSInputs::Rs1Value,
-    JoltONNXR1CSInputs::Rs2Value,
+    // JoltONNXR1CSInputs::Rs1Value,
+    // JoltONNXR1CSInputs::Rs2Value,
     JoltONNXR1CSInputs::RdWriteValue,
     // JoltONNXR1CSInputs::RamReadValue,
     // JoltONNXR1CSInputs::RamWriteValue,
@@ -222,12 +218,12 @@ impl JoltONNXR1CSInputs {
             //             .collect();
             //         coeffs.into()
             //     }
-            //     JoltONNXR1CSInputs::LeftInstructionInput => {
-            //         CommittedPolynomials::LeftInstructionInput.generate_witness(preprocessing, trace)
-            //     }
-            //     JoltONNXR1CSInputs::RightInstructionInput => {
-            //         CommittedPolynomials::RightInstructionInput.generate_witness(preprocessing, trace)
-            //     }
+            // JoltONNXR1CSInputs::LeftInstructionInput => {
+            //     CommittedPolynomials::LeftInstructionInput.generate_witness(preprocessing, trace)
+            // }
+            // JoltONNXR1CSInputs::RightInstructionInput => {
+            //     CommittedPolynomials::RightInstructionInput.generate_witness(preprocessing, trace)
+            // }
             //     JoltONNXR1CSInputs::LeftLookupOperand => {
             //         let coeffs: Vec<u64> = trace
             //             .par_iter()
