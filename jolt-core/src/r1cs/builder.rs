@@ -66,7 +66,7 @@ impl Constraint {
 
 #[derive(Default)]
 pub struct R1CSBuilder {
-    pub(crate) constraints: Vec<Constraint>,
+    pub constraints: Vec<Constraint>,
 }
 
 impl R1CSBuilder {
@@ -255,10 +255,10 @@ impl R1CSBuilder {
 // TODO(sragss): Detailed documentation with wiki.
 pub struct CombinedUniformBuilder<F: JoltField> {
     _field: PhantomData<F>,
-    pub(crate) uniform_builder: R1CSBuilder,
+    pub uniform_builder: R1CSBuilder,
 
     /// Padded to the nearest power of 2
-    pub(crate) uniform_repeat: usize, // TODO(JP): Remove padding of steps
+    pub uniform_repeat: usize, // TODO(JP): Remove padding of steps
 }
 
 impl<F: JoltField> CombinedUniformBuilder<F> {
