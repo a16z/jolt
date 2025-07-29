@@ -72,8 +72,32 @@ mod e2e_tests {
     };
     use ark_bn254::Fr;
     use jolt_core::jolt::instruction::LookupQuery;
+    use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
     use jolt_core::utils::transcript::KeccakTranscript;
     use onnx_tracer::{custom_addsubmul_model, logger::init_logger, model, tensor::Tensor};
+
+    type PCS = DoryCommitmentScheme<KeccakTranscript>;
+    #[test]
+    fn test_custom_addsubmul() {
+        // --- Preprocessing ---
+        let custom_addsubmul_model = custom_addsubmul_model();
+        let program_bytecode = onnx_tracer::decode_model(custom_addsubmul_model.clone());
+        println!("Program code: {program_bytecode:#?}",);
+        let pp: JoltProverPreprocessing<Fr, PCS, KeccakTranscript> =
+            JoltSNARK::prover_preprocess(program_bytecode);
+
+        // --- Proving ---
+        let execution_trace = onnx_tracer::execution_trace(
+            custom_addsubmul_model,
+            &Tensor::new(Some(&[10]), &[1]).unwrap(),
+        );
+        println!("Execution trace: {execution_trace:#?}",);
+        let snark: JoltSNARK<Fr, PCS, KeccakTranscript> =
+            JoltSNARK::prove(pp.clone(), execution_trace);
+
+        // --- Verification ---
+        snark.verify((&pp).into()).unwrap();
+    }
 
     #[test]
     fn test_addsubmul0() {
@@ -97,18 +121,6 @@ mod e2e_tests {
 
         // // --- Verification ---
         // snark.verify((&pp).into()).unwrap();
-    }
-
-    #[test]
-    fn test_custom_addsubmul() {
-        let custom_addsubmul_model = custom_addsubmul_model();
-        let program_bytecode = onnx_tracer::decode_model(custom_addsubmul_model.clone());
-        println!("Program code: {program_bytecode:#?}",);
-        let execution_trace = onnx_tracer::execution_trace(
-            custom_addsubmul_model,
-            &Tensor::new(Some(&[10]), &[1]).unwrap(),
-        );
-        println!("Execution trace: {execution_trace:#?}",);
     }
 
     // TODO(Forpee): refactor duplicate code in these tests

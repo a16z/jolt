@@ -86,13 +86,14 @@ impl CommittedPolynomials {
             .0
     }
 
-    pub fn generate_witness<F, ProofTranscript>(
+    pub fn generate_witness<F, PCS, ProofTranscript>(
         &self,
-        preprocessing: &JoltProverPreprocessing<F, ProofTranscript>,
+        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
         trace: &[ONNXCycle],
     ) -> MultilinearPolynomial<F>
     where
         F: JoltField,
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
         ProofTranscript: Transcript,
     {
         match self {

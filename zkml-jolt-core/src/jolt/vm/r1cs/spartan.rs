@@ -117,7 +117,7 @@ where
 
     #[tracing::instrument(skip_all, name = "Spartan::prove")]
     pub fn prove<PCS>(
-        preprocessing: &JoltProverPreprocessing<F, ProofTranscript>,
+        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
         constraint_builder: &CombinedUniformBuilder<F>,
         key: &UniformSpartanKey<F>,
         trace: &[ONNXCycle],

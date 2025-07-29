@@ -128,7 +128,7 @@ impl JoltONNXR1CSInputs {
     pub fn generate_witness<F, PCS, ProofTranscript>(
         &self,
         trace: &[ONNXCycle],
-        preprocessing: &JoltProverPreprocessing<F, ProofTranscript>,
+        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
     ) -> MultilinearPolynomial<F>
     where
         F: JoltField,
