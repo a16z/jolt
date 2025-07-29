@@ -6,7 +6,7 @@ pub mod state_manager;
 mod tests {
     use super::*;
     use crate::host;
-    use crate::jolt::vm::{rv32i_vm::RV32IJoltVM, Jolt, JoltProverPreprocessing};
+    use crate::jolt::vm::{rv32im_vm::RV32IMJoltVM, Jolt, JoltProverPreprocessing};
     use crate::poly::commitment::dory::DoryCommitmentScheme;
     use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
     use crate::utils::transcript::{KeccakTranscript, Transcript};
@@ -26,7 +26,7 @@ mod tests {
 
         // Preprocessing
         let preprocessing: JoltProverPreprocessing<Fr, DoryCommitmentScheme> =
-            RV32IJoltVM::prover_preprocess(
+            RV32IMJoltVM::prover_preprocess(
                 bytecode.clone(),
                 io_device.memory_layout.clone(),
                 init_memory_state,

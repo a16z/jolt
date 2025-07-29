@@ -4,7 +4,7 @@
 use crate::dag::{jolt_dag, state_manager};
 use crate::field::JoltField;
 use crate::host;
-use crate::jolt::vm::rv32i_vm::RV32IJoltVM;
+use crate::jolt::vm::rv32im_vm::RV32IMJoltVM;
 use crate::jolt::vm::{Jolt, JoltProverPreprocessing, JoltVerifierPreprocessing};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::{DoryCommitmentScheme as Dory, DoryGlobals};
@@ -271,7 +271,7 @@ where
         let (trace, final_memory_state, io_device) = program.trace(&inputs);
         let (bytecode, init_memory_state) = program.decode();
 
-        let preprocessing: JoltProverPreprocessing<F, PCS> = RV32IJoltVM::prover_preprocess(
+        let preprocessing: JoltProverPreprocessing<F, PCS> = RV32IMJoltVM::prover_preprocess(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
@@ -280,7 +280,7 @@ where
             1 << 24,
         );
 
-        let (jolt_proof, program_io, _) = <RV32IJoltVM as Jolt<32, _, PCS, _>>::prove(
+        let (jolt_proof, program_io, _) = <RV32IMJoltVM as Jolt<32, _, PCS, _>>::prove(
             io_device,
             trace,
             final_memory_state,
@@ -303,7 +303,7 @@ where
         serialize_and_print_size(" jolt_proof.opening_proof", &jolt_proof.opening_proof);
 
         let verification_result =
-            RV32IJoltVM::verify(verifier_preprocessing, jolt_proof, program_io, None);
+            RV32IMJoltVM::verify(verifier_preprocessing, jolt_proof, program_io, None);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -336,7 +336,7 @@ where
         let (mut trace, final_memory_state, mut io_device) = program.trace(&inputs);
         let (bytecode, init_memory_state) = program.decode();
 
-        let preprocessing: JoltProverPreprocessing<F, PCS> = RV32IJoltVM::prover_preprocess(
+        let preprocessing: JoltProverPreprocessing<F, PCS> = RV32IMJoltVM::prover_preprocess(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
@@ -428,7 +428,7 @@ where
         let (mut trace, final_memory_state, mut io_device) = program.trace(&inputs);
         let (bytecode, init_memory_state) = program.decode();
 
-        let preprocessing: JoltProverPreprocessing<F, PCS> = RV32IJoltVM::prover_preprocess(
+        let preprocessing: JoltProverPreprocessing<F, PCS> = RV32IMJoltVM::prover_preprocess(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,

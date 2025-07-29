@@ -1,5 +1,5 @@
 use common::constants;
-use jolt_core::jolt::vm::rv32i_vm;
+use jolt_core::jolt::vm::rv32im_vm;
 
 /// Groups the constants used for a specific instruction set / decomposition strategy / memory
 /// layout. Jolt currently just has one of these, but we abstract over them here for future
@@ -26,8 +26,8 @@ pub trait JoltParameterSet {
 pub struct RV32IParameterSet;
 
 impl JoltParameterSet for RV32IParameterSet {
-    const C: usize = rv32i_vm::C;
-    const M: usize = rv32i_vm::M;
+    const C: usize = rv32im_vm::C;
+    const M: usize = rv32im_vm::M;
     const MAX_INPUT_SIZE: u64 = constants::DEFAULT_MAX_INPUT_SIZE;
     const MAX_OUTPUT_SIZE: u64 = constants::DEFAULT_MAX_OUTPUT_SIZE;
 }
