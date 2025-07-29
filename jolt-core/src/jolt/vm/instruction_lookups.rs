@@ -57,6 +57,7 @@ where
     ra_claims: [F; 4],
     add_sub_mul_flag_claim: F,
     flag_claims: Vec<F>,
+    eq_eval_cycle: F,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
@@ -104,6 +105,7 @@ where
             add_sub_mul_flag_claim,
             flag_claims,
             eq_r_cycle,
+            eq_eval_cycle,
         ) = prove_sparse_dense_shout::<WORD_SIZE, _, _>(trace, &r_cycle, transcript);
         let read_checking_proof = ReadCheckingProof {
             sumcheck_proof: read_checking_sumcheck,
@@ -111,6 +113,7 @@ where
             ra_claims,
             add_sub_mul_flag_claim,
             flag_claims,
+            eq_eval_cycle,
         };
 
         // TODO(moodlezoup): Openings
@@ -166,11 +169,11 @@ where
         verify_sparse_dense_shout::<WORD_SIZE, _, _>(
             &self.read_checking_proof.sumcheck_proof,
             self.log_T,
-            r_cycle.clone(),
             self.read_checking_proof.rv_claim,
             self.read_checking_proof.ra_claims,
             self.read_checking_proof.add_sub_mul_flag_claim,
             &self.read_checking_proof.flag_claims,
+            self.read_checking_proof.eq_eval_cycle,
             transcript,
         )?;
 
