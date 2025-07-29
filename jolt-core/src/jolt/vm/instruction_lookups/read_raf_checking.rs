@@ -563,7 +563,7 @@ impl<F: JoltField> ReadRafProverState<F> {
                                     let t = suffix.suffix_mle::<WORD_SIZE>(suffix_bits);
                                     if t != 0 {
                                         let u = self.u_evals[*j];
-                                        poly.Z[prefix_bits % M] += u.mul_u64(t as u64);
+                                        poly.Z[prefix_bits % M] += u.mul_u64(t);
                                     }
                                 }
                             });
@@ -632,7 +632,7 @@ impl<F: JoltField> ReadRafProverState<F> {
                         .suffixes()
                         .iter()
                         .map(|suffix| {
-                            F::from_u32(suffix.suffix_mle::<WORD_SIZE>(LookupBits::new(0, 0)))
+                            F::from_u64(suffix.suffix_mle::<WORD_SIZE>(LookupBits::new(0, 0)))
                         })
                         .collect();
                     *val += table.combine(&prefixes, &suffixes);
@@ -712,7 +712,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         let (eval_0, eval_2_left, eval_2_right) = (0..len / 2)
             .into_par_iter()
             .flat_map_iter(|b| {
-                let b = LookupBits::new(b as u64, log_len - 1);
+                let b = LookupBits::new(b as u128, log_len - 1);
                 let prefixes_c0: Vec<_> = Prefixes::iter()
                     .map(|prefix| {
                         prefix.prefix_mle::<WORD_SIZE, F>(&ps.prefix_checkpoints, r_x, 0, b, j)
@@ -914,7 +914,7 @@ mod tests {
             }
             let (lo, ro) = LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle);
             left_operand_claim += eq_r_cycle[i].mul_u64(lo);
-            right_operand_claim += eq_r_cycle[i].mul_u64(ro);
+            right_operand_claim += eq_r_cycle[i] * Fr::from_u128(ro);
         }
 
         prover_accumulator.borrow_mut().append_virtual(

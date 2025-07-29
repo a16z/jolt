@@ -122,6 +122,19 @@ impl JoltField for ark_bn254::Fr {
         }
     }
 
+    fn from_u128(val: u128) -> Self {
+        if val <= u16::MAX as u128 {
+            <Self as JoltField>::from_u16(val as u16)
+        } else if val <= u32::MAX as u128 {
+            <Self as JoltField>::from_u32(val as u32)
+        } else if val <= u64::MAX as u128 {
+            <Self as JoltField>::from_u64(val as u64)
+        } else {
+            let bigint = BigInt::new([val as u64, (val >> 64) as u64, 0, 0]);
+            <Self as ark_ff::PrimeField>::from_bigint(bigint).unwrap()
+        }
+    }
+
     fn to_u64(&self) -> Option<u64> {
         let bigint = self.into_bigint();
         let limbs: &[u64] = bigint.as_ref();
@@ -159,6 +172,11 @@ impl JoltField for ark_bn254::Fr {
     #[inline(always)]
     fn mul_i128(&self, n: i128) -> Self {
         ark_ff::Fp::mul_i128(*self, n)
+    }
+
+    #[inline(always)]
+    fn mul_u128(&self, n: u128) -> Self {
+        ark_ff::Fp::mul_u128(*self, n)
     }
 }
 

@@ -872,6 +872,17 @@ where
                 .collect(),
             MultilinearPolynomial::RLC(poly) => poly.commit_rows(&bases),
             MultilinearPolynomial::OneHot(poly) => poly.commit_rows(&bases),
+            MultilinearPolynomial::U128Scalars(poly) => poly
+                .coeffs
+                .par_chunks(row_len)
+                .map(|row| {
+                    // TODO(moodlezoup): This can be optimized
+                    let scalars: Vec<_> = row.iter().map(|x| F::from_u128(*x)).collect();
+                    JoltGroupWrapper(
+                        VariableBaseMSM::msm_field_elements(&bases, &scalars, None).unwrap(),
+                    )
+                })
+                .collect(),
         }
     }
 

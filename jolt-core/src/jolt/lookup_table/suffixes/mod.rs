@@ -45,7 +45,7 @@ pub mod xor;
 pub trait SparseDenseSuffix: 'static + Sync {
     /// Evaluates the MLE for this suffix on the bitvector `b`, where
     /// `b` represents `b.len()` variables, each assuming a Boolean value.
-    fn suffix_mle(b: LookupBits) -> u32;
+    fn suffix_mle(b: LookupBits) -> u64;
 }
 
 /// An enum containing all suffixes used by Jolt's instruction lookup tables.
@@ -78,7 +78,7 @@ pub type SuffixEval<F: JoltField> = F;
 impl Suffixes {
     /// Evaluates the MLE for this suffix on the bitvector `b`, where
     /// `b` represents `b.len()` variables, each assuming a Boolean value.
-    pub fn suffix_mle<const WORD_SIZE: usize>(&self, b: LookupBits) -> u32 {
+    pub fn suffix_mle<const WORD_SIZE: usize>(&self, b: LookupBits) -> u64 {
         match self {
             Suffixes::One => OneSuffix::suffix_mle(b),
             Suffixes::And => AndSuffix::suffix_mle(b),

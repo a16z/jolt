@@ -12,7 +12,7 @@ use crate::{field::JoltField, jolt::lookup_table::suffixes::Suffixes, utils::uni
 pub struct UnsignedGreaterThanEqualTable<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for UnsignedGreaterThanEqualTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+    fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
         match WORD_SIZE {
             #[cfg(test)]

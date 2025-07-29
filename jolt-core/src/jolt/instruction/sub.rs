@@ -26,14 +26,14 @@ impl InstructionFlags for SUB {
 }
 
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<SUB> {
-    fn to_lookup_operands(&self) -> (u64, u64) {
+    fn to_lookup_operands(&self) -> (u64, u128) {
         let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
         let x = x as u128;
         let y = (1u128 << WORD_SIZE) - y as u128;
-        (0, (x + y) as u64)
+        (0, x + y)
     }
 
-    fn to_lookup_index(&self) -> u64 {
+    fn to_lookup_index(&self) -> u128 {
         LookupQuery::<WORD_SIZE>::to_lookup_operands(self).1
     }
 

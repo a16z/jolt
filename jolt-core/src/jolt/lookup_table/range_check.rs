@@ -10,8 +10,8 @@ use crate::field::JoltField;
 pub struct RangeCheckTable<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for RangeCheckTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
-        index % (1 << WORD_SIZE)
+    fn materialize_entry(&self, index: u128) -> u64 {
+        (index % (1u128 << WORD_SIZE)) as u64
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {

@@ -120,7 +120,7 @@ impl<F: JoltField> BooleanityProverState<F> {
                 .par_iter()
                 .map(|cycle| {
                     let lookup_index = LookupQuery::<32>::to_lookup_index(cycle);
-                    ((lookup_index >> (LOG_K_CHUNK * (D - 1 - i))) % K_CHUNK as u64) as usize
+                    ((lookup_index >> (LOG_K_CHUNK * (D - 1 - i))) % K_CHUNK as u128) as usize
                 })
                 .collect()
         });

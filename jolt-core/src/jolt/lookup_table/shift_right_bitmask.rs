@@ -14,9 +14,9 @@ use crate::utils::math::Math;
 pub struct ShiftRightBitmaskTable<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for ShiftRightBitmaskTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
-        let shift = index % WORD_SIZE as u64;
-        let ones = (1 << (WORD_SIZE - shift as usize)) - 1;
+    fn materialize_entry(&self, index: u128) -> u64 {
+        let shift = (index % WORD_SIZE as u128) as usize;
+        let ones = (1 << (WORD_SIZE - shift)) - 1;
         ones << shift
     }
 
@@ -28,7 +28,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for ShiftRightBitmaskTable<WORD_SIZ
             result += F::from_u64(bitmask)
                 * EqPolynomial::mle(
                     &r[r.len() - WORD_SIZE.log_2()..],
-                    &index_to_field_bitvector(shift as u64, WORD_SIZE.log_2()),
+                    &index_to_field_bitvector(shift as u128, WORD_SIZE.log_2()),
                 );
         }
         result

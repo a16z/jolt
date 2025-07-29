@@ -35,7 +35,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<LUI> {
         }
     }
 
-    fn to_lookup_index(&self) -> u64 {
+    fn to_lookup_index(&self) -> u128 {
         LookupQuery::<WORD_SIZE>::to_lookup_operands(self).1
     }
 

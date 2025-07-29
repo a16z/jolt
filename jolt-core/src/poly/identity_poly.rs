@@ -7,6 +7,7 @@ use crate::poly::prefix_suffix::{
     CacheablePolynomial, CachedPolynomial, Prefix, PrefixCheckpoints, PrefixPolynomial,
     PrefixRegistry, PrefixSuffixPolynomial, SuffixPolynomial,
 };
+use crate::utils::lookup_bits::LookupBits;
 use crate::utils::math::Math;
 use crate::utils::uninterleave_bits;
 
@@ -136,25 +137,25 @@ impl<F: JoltField> PrefixPolynomial<F> for IdentityPolynomial<F> {
 }
 
 impl<F: JoltField> SuffixPolynomial<F> for IdentityPolynomial<F> {
-    fn suffix_mle(&self, index: u64, suffix_len: usize) -> u64 {
-        debug_assert!(suffix_len.is_even());
-        index
+    fn suffix_mle(&self, b: LookupBits) -> u128 {
+        debug_assert!(b.len().is_even());
+        u128::from(b)
     }
 }
 
 pub struct ShiftSuffixPolynomial;
 impl<F: JoltField> SuffixPolynomial<F> for ShiftSuffixPolynomial {
-    fn suffix_mle(&self, _index: u64, suffix_len: usize) -> u64 {
-        debug_assert!(suffix_len.is_even());
-        1 << suffix_len
+    fn suffix_mle(&self, b: LookupBits) -> u128 {
+        debug_assert!(b.len().is_even());
+        1 << b.len()
     }
 }
 
 pub struct ShiftHalfSuffixPolynomial;
 impl<F: JoltField> SuffixPolynomial<F> for ShiftHalfSuffixPolynomial {
-    fn suffix_mle(&self, _index: u64, suffix_len: usize) -> u64 {
-        debug_assert!(suffix_len.is_even());
-        1 << (suffix_len / 2)
+    fn suffix_mle(&self, b: LookupBits) -> u128 {
+        debug_assert!(b.len().is_even());
+        1 << (b.len() / 2)
     }
 }
 
@@ -248,11 +249,11 @@ impl<F: JoltField> PolynomialEvaluation<F> for OperandPolynomial<F> {
         );
 
         let mut evals = vec![F::zero(); degree];
-        let (left, right) = uninterleave_bits(index as u64);
+        let (left, right) = uninterleave_bits(index as u128);
 
         let index = match self.side {
-            OperandSide::Left => F::from_u32(left),
-            OperandSide::Right => F::from_u32(right),
+            OperandSide::Left => F::from_u64(left),
+            OperandSide::Right => F::from_u64(right),
         };
 
         if self.num_bound_vars.is_even() {
@@ -331,13 +332,13 @@ impl<F: JoltField> PrefixSuffixPolynomial<F, 2> for OperandPolynomial<F> {
 }
 
 impl<F: JoltField> SuffixPolynomial<F> for OperandPolynomial<F> {
-    fn suffix_mle(&self, index: u64, suffix_len: usize) -> u64 {
-        debug_assert!(suffix_len.is_even());
+    fn suffix_mle(&self, b: LookupBits) -> u128 {
+        debug_assert!(b.len().is_even());
         debug_assert!(self.num_bound_vars.is_even());
-        let (left, right) = uninterleave_bits(index);
+        let (left, right) = b.uninterleave();
         match self.side {
-            OperandSide::Left => left as u64,
-            OperandSide::Right => right as u64,
+            OperandSide::Left => u128::from(left),
+            OperandSide::Right => u128::from(right),
         }
     }
 }
@@ -533,9 +534,9 @@ mod tests {
             eval_point.reverse();
 
             // Use uninterleave_bits to match the polynomial's implementation
-            let (left, right) = uninterleave_bits(i as u64);
-            let expected_r = Fr::from_u32(right);
-            let expected_l = Fr::from_u32(left);
+            let (left, right) = uninterleave_bits(i as u128);
+            let expected_r = Fr::from_u64(right);
+            let expected_l = Fr::from_u64(left);
 
             assert_eq!(
                 ro_poly.evaluate(&eval_point),
@@ -559,10 +560,10 @@ mod tests {
         let mut lo_poly = OperandPolynomial::<Fr>::new(NUM_VARS, OperandSide::Right);
 
         // Create reference polynomial with evaluations
-        let (reference_evals_r, reference_evals_l): (Vec<Fr>, Vec<Fr>) = (0u64..(1 << NUM_VARS))
+        let (reference_evals_r, reference_evals_l): (Vec<Fr>, Vec<Fr>) = (0u128..(1 << NUM_VARS))
             .map(|i| {
                 let (right, left) = uninterleave_bits(i);
-                (Fr::from_u32(right), Fr::from_u32(left))
+                (Fr::from_u64(right), Fr::from_u64(left))
             })
             .collect();
         let mut reference_poly_r = MultilinearPolynomial::from(reference_evals_r);

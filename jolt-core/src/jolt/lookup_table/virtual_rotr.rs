@@ -12,7 +12,7 @@ use crate::utils::uninterleave_bits;
 pub struct VirtualRotrTable<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for VirtualRotrTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+    fn materialize_entry(&self, index: u128) -> u64 {
         let (x_bits, y_bits) = uninterleave_bits(index);
 
         let mut prod_one_plus_y = 1;
@@ -28,7 +28,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for VirtualRotrTable<WORD_SIZE> {
             prod_one_plus_y *= 1 + y;
         });
 
-        (first_sum + second_sum) as u64
+        first_sum + second_sum
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
@@ -80,7 +80,7 @@ impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for VirtualRot
     }
 
     #[cfg(test)]
-    fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u64 {
+    fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u128 {
         super::test::gen_bitmask_lookup_index(rng)
     }
 }

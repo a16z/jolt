@@ -10,7 +10,7 @@ use crate::{field::JoltField, utils::uninterleave_bits};
 pub struct ValidUnsignedRemainderTable<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for ValidUnsignedRemainderTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+    fn materialize_entry(&self, index: u128) -> u64 {
         let (remainder, divisor) = uninterleave_bits(index);
         (divisor == 0 || remainder < divisor).into()
     }

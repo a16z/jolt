@@ -26,12 +26,12 @@ impl InstructionFlags for JAL {
 }
 
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<JAL> {
-    fn to_lookup_operands(&self) -> (u64, u64) {
+    fn to_lookup_operands(&self) -> (u64, u128) {
         let (pc, imm) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
-        (0, (pc as i64 + imm) as u64)
+        (0, (pc as i128 + imm as i128) as u128)
     }
 
-    fn to_lookup_index(&self) -> u64 {
+    fn to_lookup_index(&self) -> u128 {
         LookupQuery::<WORD_SIZE>::to_lookup_operands(self).1
     }
 
