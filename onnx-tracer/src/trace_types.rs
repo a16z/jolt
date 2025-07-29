@@ -2,9 +2,10 @@
 //! Used to format the bytecode and define each instr flags and memory access patterns.
 //! Used by the runtime to generate an execution trace for ONNX runtime execution.
 
-use serde::{Deserialize, Serialize};
-
 use crate::tensor::Tensor;
+use serde::{Deserialize, Serialize};
+use strum::EnumCount;
+use strum_macros::EnumCount as EnumCountMacro;
 
 /// Represents a step in the execution trace, where an execution trace is a `Vec<ONNXCycle>`.
 /// Records what the VM did at a cycle of execution.
@@ -23,6 +24,14 @@ impl ONNXCycle {
             memory_state: MemoryState::default(),
             advice_value: None,
         }
+    }
+
+    pub fn td_write(&self) -> i128 {
+        self.memory_state
+            .td_post_val
+            .as_ref()
+            .map(|t| t.inner[0])
+            .unwrap_or(0)
     }
 }
 
@@ -80,6 +89,175 @@ pub struct ONNXInstr {
     /// `virtual_sequence_remaining` will be Some(0); if this is the penultimate instruction
     /// in the sequence, `virtual_sequence_remaining` will be Some(1); etc.
     pub virtual_sequence_remaining: Option<usize>,
+}
+
+/// Boolean flags used in Jolt's R1CS constraints (`opflags` in the Jolt paper).
+/// Note that the flags below deviate somewhat from those described in Appendix A.1
+/// of the Jolt paper.
+#[derive(Clone, Copy, Debug, PartialEq, EnumCountMacro)]
+pub enum CircuitFlags {
+    /// 1 if the first instruction operand is the program counter; 0 otherwise.
+    LeftOperandIsPC,
+    // /// 1 if the second instruction operand is `imm`; 0 otherwise.
+    // RightOperandIsImm,
+    /// 1 if the first instruction operand is RS1 value; 0 otherwise.
+    LeftOperandIsRs1Value,
+    /// 1 if the first instruction operand is RS2 value; 0 otherwise.
+    RightOperandIsRs2Value,
+    /// 1 if the first lookup operand is the sum of the two instruction operands.
+    AddOperands,
+    /// 1 if the first lookup operand is the difference between the two instruction operands.
+    SubtractOperands,
+    /// 1 if the first lookup operand is the product of the two instruction operands.
+    MultiplyOperands,
+    // /// 1 if the instruction is a load (i.e. `LW`)
+    // Load,
+    // /// 1 if the instruction is a store (i.e. `SW`)
+    // Store,
+    // /// 1 if the instruction is a jump (i.e. `JAL`, `JALR`)
+    // Jump,
+    // /// 1 if the instruction is a branch (i.e. `BEQ`, `BNE`, etc.)
+    // Branch,
+    /// 1 if the lookup output is to be stored in `rd` at the end of the step.
+    WriteLookupOutputToRD,
+    // /// 1 if the instruction is "inline", as defined in Section 6.1 of the Jolt paper.
+    // InlineSequenceInstruction,
+    // /// 1 if the instruction is an assert, as defined in Section 6.1.1 of the Jolt paper.
+    // Assert,
+    // /// Used in virtual sequences; the program counter should be the same for the full sequence.
+    // DoNotUpdateUnexpandedPC,
+    // /// Is (virtual) advice instruction
+    // Advice,
+}
+
+pub const NUM_CIRCUIT_FLAGS: usize = CircuitFlags::COUNT;
+
+impl ONNXInstr {
+    #[rustfmt::skip]
+    pub fn to_circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
+        let mut flags = [false; NUM_CIRCUIT_FLAGS];
+
+        // flags[CircuitFlags::LeftOperandIsPC as usize] = matches!(
+        //     self.opcode,
+        //     RV32IM::JAL | RV32IM::LUI | RV32IM::AUIPC,
+        // );
+
+        // flags[CircuitFlags::RightOperandIsImm as usize] = matches!(
+        //     self.opcode,
+        //     RV32IM::ADDI
+        //     | RV32IM::XORI
+        //     | RV32IM::ORI
+        //     | RV32IM::ANDI
+        //     | RV32IM::SLLI
+        //     | RV32IM::SRLI
+        //     | RV32IM::SRAI
+        //     | RV32IM::SLTI
+        //     | RV32IM::SLTIU
+        //     | RV32IM::AUIPC
+        //     | RV32IM::JAL
+        //     | RV32IM::JALR
+        //     | RV32IM::SW
+        //     | RV32IM::LW
+        //     | RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT
+        //     | RV32IM::VIRTUAL_ASSERT_WORD_ALIGNMENT,
+        // );
+
+        // flags[CircuitFlags::Load as usize] = matches!(
+        //     self.opcode,
+        //     RV32IM::LW,
+        // );
+
+        // flags[CircuitFlags::Store as usize] = matches!(
+        //     self.opcode,
+        //     RV32IM::SW,
+        // );
+
+        // flags[CircuitFlags::Jump as usize] = matches!(
+        //     self.opcode,
+        //     RV32IM::JAL | RV32IM::JALR,
+        // );
+
+        // flags[CircuitFlags::Branch as usize] = matches!(
+        //     self.opcode,
+        //     RV32IM::BEQ | RV32IM::BNE | RV32IM::BLT | RV32IM::BGE | RV32IM::BLTU | RV32IM::BGEU,
+        // );
+
+        // // Stores, branches, jumps, and asserts do not store the lookup output to rd (they may update rd in other ways)
+        // flags[CircuitFlags::WriteLookupOutputToRD as usize] = !matches!(
+        //     self.opcode,
+        //     RV32IM::SW
+        //     | RV32IM::LW
+        //     | RV32IM::BEQ
+        //     | RV32IM::BNE
+        //     | RV32IM::BLT
+        //     | RV32IM::BGE
+        //     | RV32IM::BLTU
+        //     | RV32IM::BGEU
+        //     | RV32IM::JAL
+        //     | RV32IM::JALR
+        //     | RV32IM::LUI
+        //     | RV32IM::VIRTUAL_ASSERT_EQ
+        //     | RV32IM::VIRTUAL_ASSERT_LTE
+        //     | RV32IM::VIRTUAL_ASSERT_VALID_DIV0
+        //     | RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER
+        //     | RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER
+        //     | RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT
+        //     | RV32IM::VIRTUAL_ASSERT_WORD_ALIGNMENT
+        // );
+
+        // flags[CircuitFlags::ConcatLookupQueryChunks as usize] = matches!(
+        //     self.opcode,
+        //     RV32IM::XOR
+        //     | RV32IM::XORI
+        //     | RV32IM::OR
+        //     | RV32IM::ORI
+        //     | RV32IM::AND
+        //     | RV32IM::ANDI
+        //     | RV32IM::SLL
+        //     | RV32IM::SRL
+        //     | RV32IM::SRA
+        //     | RV32IM::SLLI
+        //     | RV32IM::SRLI
+        //     | RV32IM::SRAI
+        //     | RV32IM::SLT
+        //     | RV32IM::SLTU
+        //     | RV32IM::SLTI
+        //     | RV32IM::SLTIU
+        //     | RV32IM::BEQ
+        //     | RV32IM::BNE
+        //     | RV32IM::BLT
+        //     | RV32IM::BGE
+        //     | RV32IM::BLTU
+        //     | RV32IM::BGEU
+        //     | RV32IM::VIRTUAL_ASSERT_EQ
+        //     | RV32IM::VIRTUAL_ASSERT_LTE
+        //     | RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER
+        //     | RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER
+        //     | RV32IM::VIRTUAL_ASSERT_VALID_DIV0,
+        // );
+
+        // flags[CircuitFlags::Virtual as usize] = self.virtual_sequence_remaining.is_some();
+
+        // flags[CircuitFlags::Assert as usize] = matches!(self.opcode,
+        //     RV32IM::VIRTUAL_ASSERT_EQ                        |
+        //     RV32IM::VIRTUAL_ASSERT_LTE                       |
+        //     RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT        |
+        //     RV32IM::VIRTUAL_ASSERT_WORD_ALIGNMENT            |
+        //     RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER    |
+        //     RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER  |
+        //     RV32IM::VIRTUAL_ASSERT_VALID_DIV0
+        // );
+
+        // // All instructions in virtual sequence are mapped from the same
+        // // ELF address. Thus if an instruction is virtual (and not the last one
+        // // in its sequence), then we should *not* update the PC.
+        // flags[CircuitFlags::DoNotUpdatePC as usize] = match self.virtual_sequence_remaining {
+        //     Some(i) => i != 0,
+        //     None => false
+        // };
+
+        flags
+    }
 }
 
 impl ONNXInstr {

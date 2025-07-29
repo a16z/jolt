@@ -1,8 +1,8 @@
 use jolt_core::{
     field::JoltField,
-    jolt::instruction::CircuitFlags,
     r1cs::{builder::R1CSBuilder, constraints::R1CSConstraints},
 };
+use onnx_tracer::trace_types::CircuitFlags;
 
 use crate::jolt::vm::r1cs::inputs::JoltONNXR1CSInputs;
 

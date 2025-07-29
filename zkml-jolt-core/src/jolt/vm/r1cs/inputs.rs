@@ -7,13 +7,14 @@
 use super::spartan::UniformSpartanProof;
 use crate::jolt::vm::JoltProverPreprocessing;
 use jolt_core::field::JoltField;
-use jolt_core::jolt::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
+use jolt_core::jolt::instruction::{InstructionFlags, LookupQuery};
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::r1cs::key::UniformSpartanKey;
 use jolt_core::r1cs::ops::{LC, Term, Variable};
 use jolt_core::utils::transcript::Transcript;
-use onnx_tracer::trace_types::ONNXCycle;
+use onnx_tracer::trace_types::{CircuitFlags, ONNXCycle};
+use rayon::prelude::*;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
@@ -186,10 +187,13 @@ impl JoltONNXR1CSInputs {
             //         let coeffs: Vec<u64> = trace.par_iter().map(|cycle| cycle.rs2_read().1).collect();
             //         coeffs.into()
             //     }
-            //     JoltONNXR1CSInputs::RdWriteValue => {
-            //         let coeffs: Vec<u64> = trace.par_iter().map(|cycle| cycle.rd_write().2).collect();
-            //         coeffs.into()
-            //     }
+            JoltONNXR1CSInputs::RdWriteValue => {
+                let coeffs: Vec<F> = trace
+                    .par_iter()
+                    .map(|cycle| F::from_i128(cycle.td_write()))
+                    .collect();
+                coeffs.into()
+            }
             //     JoltONNXR1CSInputs::RamReadValue => {
             //         let coeffs: Vec<u64> = trace
             //             .par_iter()
@@ -286,14 +290,13 @@ impl JoltONNXR1CSInputs {
             //     JoltONNXR1CSInputs::ShouldBranch => {
             //         CommittedPolynomials::ShouldBranch.generate_witness(preprocessing, trace)
             //     }
-            //     JoltONNXR1CSInputs::OpFlags(flag) => {
-            //         // TODO(moodlezoup): Boolean polynomial
-            //         let coeffs: Vec<u8> = trace
-            //             .par_iter()
-            //             .map(|cycle| cycle.instruction().circuit_flags()[*flag as usize] as u8)
-            //             .collect();
-            //         coeffs.into()
-            //     }
+            JoltONNXR1CSInputs::OpFlags(flag) => {
+                let coeffs: Vec<u8> = trace
+                    .par_iter()
+                    .map(|cycle| cycle.instr.to_circuit_flags()[*flag as usize] as u8)
+                    .collect();
+                coeffs.into()
+            }
             _ => unimplemented!(),
         }
     }
