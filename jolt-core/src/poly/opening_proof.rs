@@ -16,17 +16,17 @@ use super::{
     commitment::commitment_scheme::CommitmentScheme,
     eq_poly::EqPolynomial,
     multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
+    split_eq_poly::GruenSplitEqPolynomial,
 };
 use crate::{
     field::JoltField,
     jolt::witness::{CommittedPolynomial, VirtualPolynomial},
     poly::{
-        dense_mlpoly::DensePolynomial,
         multilinear_polynomial::PolynomialEvaluation,
         one_hot_polynomial::{OneHotPolynomialProverOpening, OneHotSumcheckState},
     },
     subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance, SumcheckInstanceProof},
-    utils::{errors::ProofVerifyError, transcript::Transcript},
+    utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
 };
 
 pub type Endianness = bool;
@@ -158,13 +158,13 @@ pub type Openings<F> = HashMap<OpeningId, (OpeningPoint<BIG_ENDIAN, F>, F)>;
 
 pub struct SharedEqPolynomial<F: JoltField> {
     num_variables_bound: usize,
-    eq_poly: DensePolynomial<F>,
+    eq_poly: GruenSplitEqPolynomial<F>,
 }
 
-impl<F: JoltField> From<Vec<F>> for SharedEqPolynomial<F> {
-    fn from(eq_evals: Vec<F>) -> Self {
+impl<F: JoltField> SharedEqPolynomial<F> {
+    fn new_gruen(opening_point: &[F]) -> Self {
         Self {
-            eq_poly: DensePolynomial::new(eq_evals),
+            eq_poly: GruenSplitEqPolynomial::new(opening_point, BindingOrder::HighToLow),
             num_variables_bound: 0,
         }
     }
@@ -193,34 +193,71 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
         skip_all,
         name = "DensePolynomialProverOpening::compute_prover_message"
     )]
-    fn compute_prover_message(&mut self, _: usize) -> Vec<F> {
-        let eq_poly = &self.eq_poly.lock().unwrap().eq_poly;
+    fn compute_prover_message(&mut self, _round: usize, previous_claim: F) -> Vec<F> {
+        let shared_eq = self.eq_poly.lock().unwrap();
         let polynomial = self.polynomial.as_ref().unwrap();
+        let gruen_eq = &shared_eq.eq_poly;
+        
+        // Compute q(0) = sum of polynomial(i) * eq(r, i) for i in [0, mle_half)
         let mle_half = polynomial.len() / 2;
-        let eval_0: F = (0..mle_half)
-            .into_par_iter()
-            .map(|i| polynomial.get_bound_coeff(i) * eq_poly[i])
-            .sum();
-        let eval_2: F = (0..mle_half)
-            .into_par_iter()
-            .map(|i| {
-                let poly_bound_point = polynomial.get_bound_coeff(i + mle_half)
-                    + polynomial.get_bound_coeff(i + mle_half)
-                    - polynomial.get_bound_coeff(i);
-                let eq_bound_point = eq_poly[i + mle_half] + eq_poly[i + mle_half] - eq_poly[i];
-                poly_bound_point * eq_bound_point
-            })
-            .sum();
-        vec![eval_0, eval_2]
+        let q_0 = if gruen_eq.E_in_current_len() <= 1 {
+            // E_in is fully bound or nearly fully bound
+            (0..mle_half)
+                .into_par_iter()
+                .map(|j| {
+                    let eq_eval = if j < gruen_eq.E_out_current_len() {
+                        gruen_eq.E_out_current()[j]
+                    } else {
+                        // Handle the case where we're beyond the current E_out size
+                        F::zero()
+                    };
+                    let poly_eval = polynomial.get_bound_coeff(j);
+                    eq_eval * poly_eval
+                })
+                .sum()
+        } else {
+            // E_in has not been fully bound - use split representation
+            let num_x_out = gruen_eq.E_out_current_len();
+            let num_x_out_bits = if num_x_out > 1 { num_x_out.log_2() } else { 0 };
+            let d_e_in = gruen_eq.E_in_current();
+            let d_e_out = gruen_eq.E_out_current();
+            
+            (0..mle_half)
+                .into_par_iter()
+                .map(|j| {
+                    let x_out = if num_x_out_bits > 0 {
+                        j & ((1 << num_x_out_bits) - 1)
+                    } else {
+                        0usize
+                    };
+                    let x_in = if num_x_out_bits > 0 {
+                        j >> num_x_out_bits
+                    } else {
+                        j
+                    };
+                    
+                    let eq_eval = if x_in < d_e_in.len() && x_out < d_e_out.len() {
+                        d_e_in[x_in] * d_e_out[x_out]
+                    } else {
+                        F::zero()
+                    };
+                    let poly_eval = polynomial.get_bound_coeff(j);
+                    eq_eval * poly_eval
+                })
+                .sum()
+        };
+        
+        // Use gruen_evals_deg_2 to compute the evaluations efficiently
+        let gruen_univariate_evals = gruen_eq.gruen_evals_deg_2(q_0, previous_claim);
+        
+        vec![gruen_univariate_evals[0], gruen_univariate_evals[1]]
     }
 
     #[tracing::instrument(skip_all, name = "DensePolynomialProverOpening::bind")]
     fn bind(&mut self, r_j: F, round: usize) {
         let mut shared_eq = self.eq_poly.lock().unwrap();
         if shared_eq.num_variables_bound <= round {
-            shared_eq
-                .eq_poly
-                .bind_parallel(r_j, BindingOrder::HighToLow);
+            shared_eq.eq_poly.bind(r_j);
             shared_eq.num_variables_bound += 1;
         }
 
@@ -457,7 +494,7 @@ where
         debug_assert!(round < self.num_rounds());
         let prover_state = self.prover_state.as_mut().unwrap();
         match prover_state {
-            ProverOpening::Dense(opening) => opening.compute_prover_message(round),
+            ProverOpening::Dense(opening) => opening.compute_prover_message(round, previous_claim),
             ProverOpening::OneHot(opening) => opening.compute_prover_message(round, previous_claim),
         }
     }
@@ -622,7 +659,9 @@ where
         claims: &[F],
     ) {
         assert_eq!(polynomials.len(), claims.len());
-        let eq_evals = EqPolynomial::evals(&opening_point);
+        
+        // Use Gruen optimization for the eq polynomial
+        let shared_eq = Arc::new(Mutex::new(SharedEqPolynomial::new_gruen(&opening_point)));
 
         // Add openings to map
         for (label, claim) in polynomials.iter().zip(claims.iter()) {
@@ -635,7 +674,7 @@ where
         let sumcheck = OpeningProofReductionSumcheck::new_prover_instance_dense(
             polynomials,
             sumcheck,
-            Arc::new(Mutex::new(eq_evals.into())),
+            shared_eq,
             opening_point,
             claims.to_vec(),
         );
