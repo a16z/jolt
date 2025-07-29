@@ -4,7 +4,6 @@ use crate::{
     tensor::{Tensor, TensorError, TensorType},
     trace_types::ONNXOpcode,
 };
-use halo2curves::ff::PrimeField;
 use log::warn;
 use serde::{Deserialize, Serialize};
 use std::{any::Any, error::Error};
@@ -22,14 +21,14 @@ pub mod poly;
 
 /// A struct representing the result of a forward pass.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct ForwardResult<F: PrimeField + TensorType + PartialOrd> {
+pub struct ForwardResult<F: TensorType + PartialOrd> {
     pub(crate) output: Tensor<F>,
     pub(crate) intermediate_lookups: Vec<Tensor<i128>>,
 }
 
 // /// A trait representing operations that can be represented as constraints in a
 // circuit.
-pub trait Op<F: PrimeField + TensorType + PartialOrd>: std::fmt::Debug + Send + Sync + Any {
+pub trait Op<F: TensorType + PartialOrd>: std::fmt::Debug + Send + Sync + Any {
     /// Matches a [Op] to an operation in the `tensor::ops` module.     
     fn f(&self, x: &[Tensor<F>]) -> Result<ForwardResult<F>, TensorError>;
     /// Returns a string representation of the operation.
@@ -92,7 +91,7 @@ pub trait Op<F: PrimeField + TensorType + PartialOrd>: std::fmt::Debug + Send + 
     //   }
 }
 
-impl<F: PrimeField + TensorType + PartialOrd> Clone for Box<dyn Op<F>> {
+impl<F: TensorType + PartialOrd> Clone for Box<dyn Op<F>> {
     fn clone(&self) -> Self {
         self.clone_dyn()
     }
@@ -165,7 +164,7 @@ impl From<&Input> for ONNXOpcode {
     }
 }
 
-impl<F: PrimeField + TensorType + PartialOrd> Op<F> for Input {
+impl<F: TensorType + PartialOrd> Op<F> for Input {
     fn out_scale(&self, _: Vec<crate::Scale>) -> Result<crate::Scale, Box<dyn Error>> {
         Ok(self.scale)
     }
@@ -198,7 +197,7 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for Input {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Unknown;
 
-impl<F: PrimeField + TensorType + PartialOrd> Op<F> for Unknown {
+impl<F: TensorType + PartialOrd> Op<F> for Unknown {
     fn out_scale(&self, _: Vec<crate::Scale>) -> Result<crate::Scale, Box<dyn Error>> {
         Ok(0)
     }
@@ -227,20 +226,20 @@ impl From<&Unknown> for ONNXOpcode {
 
 ///
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct Constant<F: PrimeField + TensorType + PartialOrd> {
+pub struct Constant<F: TensorType + PartialOrd> {
     ///
     pub quantized_values: Tensor<F>,
     ///
     pub raw_values: Tensor<f32>,
 }
 
-impl<F: PrimeField + TensorType + PartialOrd> From<&Constant<F>> for ONNXOpcode {
+impl<F: TensorType + PartialOrd> From<&Constant<F>> for ONNXOpcode {
     fn from(_: &Constant<F>) -> Self {
         ONNXOpcode::Constant
     }
 }
 
-impl<F: PrimeField + TensorType + PartialOrd> Constant<F> {
+impl<F: TensorType + PartialOrd + From<i128>> Constant<F> {
     ///
     pub fn new(mut quantized_values: Tensor<F>, mut raw_values: Tensor<f32>) -> Self {
         // dims.len == 1 for both quantized and raw values, then reshape to [1, dims[0]]
@@ -259,7 +258,10 @@ impl<F: PrimeField + TensorType + PartialOrd> Constant<F> {
     }
     /// Rebase the scale of the constant
     pub fn rebase_scale(&mut self, new_scale: crate::Scale) -> Result<(), Box<dyn Error>> {
-        self.quantized_values = quantize_tensor(self.raw_values.clone(), new_scale)?;
+        self.quantized_values = quantize_tensor(self.raw_values.clone(), new_scale)?
+            .into_iter()
+            .map(|x| x.into())
+            .collect();
         Ok(())
     }
 
@@ -269,7 +271,7 @@ impl<F: PrimeField + TensorType + PartialOrd> Constant<F> {
     }
 }
 
-impl<F: PrimeField + TensorType + PartialOrd> Op<F> for Constant<F> {
+impl<F: TensorType + PartialOrd + Send + Sync> Op<F> for Constant<F> {
     fn as_any(&self) -> &dyn Any {
         self
     }

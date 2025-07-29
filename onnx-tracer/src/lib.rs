@@ -1,21 +1,58 @@
-//! A library for turning computational graphs, such as neural networks, into
-//! ZK-circuits.
+//! # zkml-jolt ONNX Tracer Library
+//!
+//! This library provides utilities for converting computational graphs, such as neural networks in ONNX format, into ZK-circuits suitable for zero-knowledge proof systems. It is designed to facilitate the extraction, transformation, and tracing of ONNX models for use in the Jolt zkVM and proof system.
+//!
+//! ## Overview
+//!
+//! The main components of the library include:
+//!
+//! - **circuit**: Methods for configuring tensor operations and assigning values to them in a Halo2 circuit.
+//! - **fieldutils**: Utilities for converting between Halo2 Field types and integers.
+//! - **graph**: Methods for loading ONNX format models and automatically laying them out in a Halo2 circuit.
+//! - **constants**: Constants used throughout the library, including bytecode and configuration values.
+//! - **logger**: Logging utilities.
+//! - **tensor**: Multi-dimensional tensor implementation and utilities.
+//! - **trace_types**: Types representing execution traces and instructions for ONNX models.
+//!
+//! ## Key Functions
+//!
+//! - `decode`: Given a file path, decodes the ONNX model binary into a vector of `ONNXInstr`, representing the program code for the zkVM.
+//! - `trace`: Provides an API to obtain the execution trace for an ONNX model and its inference input, producing a step-by-step record of VM state transitions.
+//! - `execution_trace`: Internal function that runs the model and extracts its execution trace.
+//! - `model`: Loads an ONNX model from a file path and returns a `Model` instance for further processing.
+//! - `decode_node`: Converts a `NodeType` and its program counter into an `ONNXInstr`, used during decoding.
+//!
+//! ## Configuration
+//!
+//! - `RunArgs`: Struct containing parameters specific to a proving run, such as batch size, scale multipliers, and quantization denominators. Implements `Default` for easy initialization.
+//! - `parse_key_val`: Utility function for parsing key-value pairs from strings, used for command-line argument parsing.
+//!
+//! ## Usage
+//!
+//! This library is intended for use in systems that require verifiable execution of neural network inference, such as zkML applications. It provides the necessary abstractions to load ONNX models, trace their execution, and prepare them for zero-knowledge proof generation.
+//!
+//! ## Extensibility
+//!
+//! The library is modular, allowing for extension and customization of tensor operations, model loading, and execution tracing. Advanced configuration options are available via `RunArgs` for fine-tuning proving runs.
 
 // we allow this for our dynamic range based indexing scheme
 #![allow(clippy::single_range_in_vec_init)]
 #![allow(clippy::empty_docs)]
 
 use crate::{
+    circuit::ops::{poly::PolyOp, Constant, Input, InputType},
     constants::BYTECODE_PREPEND_NOOP,
-    fieldutils::i128_to_felt,
-    graph::model::{Model, NodeType},
+    graph::{
+        model::{Model, NodeType},
+        node::{Node, SupportedOp},
+    },
     tensor::Tensor,
     trace_types::{ONNXCycle, ONNXInstr},
 };
 use clap::Args;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fs::File, path::PathBuf};
-
+use std::collections::BTreeMap;
+use std::{fs::File, path::PathBuf};
 /// Methods for configuring tensor operations and assigning values to them in a Halo2
 /// circuit.
 pub mod circuit;
@@ -39,7 +76,13 @@ pub type Scale = i32;
 /// # Returns
 /// A vector of [`ONNXInstr`] representing the program code.
 pub fn decode(model_path: &PathBuf) -> Vec<ONNXInstr> {
-    decode_nodes(0, &model(model_path).graph.nodes)
+    decode_model(model(model_path))
+}
+
+/// Converts a [`Model`] into a vector of [`ONNXInstr`].
+/// This function extracts the nodes from the model and decodes them into [`ONNXInstr`]'s.
+pub fn decode_model(model: Model) -> Vec<ONNXInstr> {
+    model.graph.nodes.iter().map(decode_node).collect()
 }
 
 /// Provides a simple API to obtain the execution trace for an ONNX model.
@@ -53,11 +96,11 @@ pub fn trace(model_path: &PathBuf, input: &Tensor<i128>) -> Vec<ONNXCycle> {
 }
 
 /// Given a model and input extract the execution trace
-fn execution_trace(model: Model, input: &Tensor<i128>) -> Vec<ONNXCycle> {
+pub fn execution_trace(model: Model, input: &Tensor<i128>) -> Vec<ONNXCycle> {
     // Run the model with the provided inputs.
     // The internal model tracer will automatically capture the execution trace during the forward pass
     let _ = model
-        .forward(&[input.map(i128_to_felt)])
+        .forward(&[input.clone()])
         .expect("Failed to run model");
     let execution_trace = model.tracer.execution_trace.borrow().clone();
     execution_trace
@@ -65,7 +108,7 @@ fn execution_trace(model: Model, input: &Tensor<i128>) -> Vec<ONNXCycle> {
 
 /// Given a file path, load the ONNX model and return a [`Model`].
 /// This function is used to initialize the model for further processing.
-fn model(model_path: &PathBuf) -> Model {
+pub fn model(model_path: &PathBuf) -> Model {
     let mut file = File::open(model_path).expect("Failed to open ONNX model");
     // Default RunArgs (batch_size=1 by default)
     let run_args = RunArgs::default();
@@ -78,22 +121,14 @@ fn model(model_path: &PathBuf) -> Model {
 ///
 /// # NOTE:
 /// Adds 1 to pc to account for prepended no-op
-pub fn decode_nodes(offset: usize, nodes: &BTreeMap<usize, NodeType>) -> Vec<ONNXInstr> {
-    let mut new_offset = offset;
-
-    nodes.iter().flat_map(|(pc, node)| {
-        match node {
-            NodeType::Node(node) => {
-                new_offset += 1;
-                vec![node.decode(*pc + offset + BYTECODE_PREPEND_NOOP)]
-            }
-            NodeType::SubGraph { model, .. } => {
-                decode_nodes(new_offset, &model.graph.nodes)
-            }
+pub fn decode_node((pc, node): (&usize, &NodeType)) -> ONNXInstr {
+    match node {
+        NodeType::Node(node) => node.decode(*pc + BYTECODE_PREPEND_NOOP),
+        NodeType::SubGraph { .. } => {
+            todo!()
         }
-    }).collect()
+    }
 }
-
 
 /// Parameters specific to a proving run
 #[derive(Debug, Args, Deserialize, Serialize, Clone, PartialEq, PartialOrd)]
@@ -213,3 +248,92 @@ where
 //     }
 //     Ok((res[0].clone(), res[1].clone()))
 // }
+
+/// # Program in (opcode, inputs) tuple format:
+/// [(input, []), (const, []), (add, [0, 1]), (sub, [0, 1]), (mul, [2, 3]), (output, [4])]
+pub fn custom_addsubmul_model() -> Model {
+    const SCALE: i32 = 7;
+    const NODE_OUTPUT_IDX: usize = 0;
+    let mut custom_addsubmul_model = Model::default();
+    let mut nodes = BTreeMap::new();
+
+    // input node
+    let input_node = Node {
+        opkind: SupportedOp::Input(Input {
+            scale: 7,
+            datum_type: InputType::F32,
+        }),
+        out_scale: SCALE,
+        inputs: vec![],
+        out_dims: vec![1],
+        idx: 0,
+        num_uses: 2,
+    };
+
+    // constant node
+    let mut const_tensor = Tensor::new(Some(&[402i128]), &[1, 1]).unwrap();
+    const_tensor.set_scale(7);
+    let const_node = Node {
+        opkind: SupportedOp::Constant(Constant {
+            quantized_values: const_tensor,
+            raw_values: Tensor::new(Some(&[]), &[0]).unwrap(),
+        }),
+        out_scale: SCALE,
+        inputs: vec![],
+        out_dims: vec![1],
+        idx: 1,
+        num_uses: 2,
+    };
+
+    // add node
+    let add_node = Node {
+        opkind: SupportedOp::Linear(PolyOp::Add),
+        out_scale: SCALE,
+        inputs: vec![
+            (input_node.idx, NODE_OUTPUT_IDX),
+            (const_node.idx, NODE_OUTPUT_IDX),
+        ],
+        out_dims: vec![1],
+        idx: 2,
+        num_uses: 1,
+    };
+
+    // sub node
+    let sub_node = Node {
+        opkind: SupportedOp::Linear(PolyOp::Sub),
+        out_scale: SCALE,
+        inputs: vec![
+            (input_node.idx, NODE_OUTPUT_IDX),
+            (const_node.idx, NODE_OUTPUT_IDX),
+        ],
+        out_dims: vec![1],
+        idx: 3,
+        num_uses: 1,
+    };
+
+    // mul node
+    let mul_node = Node {
+        opkind: SupportedOp::Linear(PolyOp::Mult),
+        out_scale: SCALE,
+        inputs: vec![
+            (add_node.idx, NODE_OUTPUT_IDX),
+            (sub_node.idx, NODE_OUTPUT_IDX),
+        ],
+        out_dims: vec![1],
+        idx: 4,
+        num_uses: 1,
+    };
+
+    // Insert nodes into the model
+    nodes.insert(input_node.idx, NodeType::Node(input_node));
+    nodes.insert(const_node.idx, NodeType::Node(const_node));
+    nodes.insert(add_node.idx, NodeType::Node(add_node));
+    nodes.insert(sub_node.idx, NodeType::Node(sub_node));
+    nodes.insert(mul_node.idx, NodeType::Node(mul_node));
+    custom_addsubmul_model.graph.nodes = nodes;
+
+    // Set inputs and outputs
+    custom_addsubmul_model.graph.inputs = vec![0 /* input_node.idx */];
+    custom_addsubmul_model.graph.outputs = vec![(4 /* mul_node.idx */, 0)];
+    custom_addsubmul_model
+}

@@ -35,6 +35,7 @@
 //! - The `trace_types` module for ONNX instruction and opcode representations.
 //!
 //! By abstracting the details of node construction, scale management, and operation decoding, this module enables robust and efficient handling of ONNX models in privacy-preserving and quantized computation settings.
+
 use crate::graph::{model::NodeType, vars::VarScales};
 use crate::trace_types::{ONNXInstr, ONNXOpcode};
 use crate::{
@@ -42,14 +43,12 @@ use crate::{
         hybrid::HybridOp, lookup::LookupOp, poly::PolyOp, Constant, ForwardResult, Input, Op,
         Unknown,
     },
-    fieldutils::{felt_to_i128, i128_to_felt},
     graph::utilities::{
         multiplier_to_scale, new_op_from_onnx, node_output_shapes, quantize_tensor,
         scale_to_multiplier,
     },
     tensor::{Tensor, TensorError},
 };
-use halo2curves::bn256::Fr as Fp;
 use log::{trace, warn};
 use std::fmt::Debug;
 use std::{collections::BTreeMap, error::Error, fmt};
@@ -82,8 +81,28 @@ pub type Outlet = (usize, usize);
 pub struct Node {
     /// [Op] i.e what operation this node represents.
     pub opkind: SupportedOp,
-    /// The denominator in the fixed point representation for the node's output.
-    /// Tensors of differing scales should not be combined.
+    /// The fixed-point output scale (denominator) for this node's output tensor.
+    ///
+    /// This value represents the scaling factor (denominator) used in fixed-point quantization for the output tensor of this node.
+    /// In quantized neural networks, real numbers are represented as integers scaled by a fixed denominator ("scale").
+    /// For example, if `out_scale = 1000`, then the integer value `1234` represents the real value `1.234`.
+    ///
+    /// - Ensures all tensors in the computation graph use compatible fixed-point representations.
+    /// - Prevents arithmetic errors when combining or comparing tensors from different nodes.
+    /// - Allows precise control over quantization error and numeric precision.
+    ///
+    /// # How is it calculated?
+    /// - For most nodes, the output scale is determined by the operation and the input scales, following quantization rules.
+    /// - For constants and inputs, it is set during quantization or model import.
+    /// - For nodes that require output scale alignment (e.g., for addition or concatenation), the scale may be "rebased" to a global maximum to ensure consistency.
+    ///
+    /// - Think of this as the "precision" of the node's output: higher values mean more decimal places are preserved.
+    /// - All nodes that directly feed into each other should have matching or compatible `out_scale` values.
+    /// - When debugging quantization issues, mismatches in `out_scale` are a common source of errors.
+    ///
+    /// # Important:
+    /// - Never combine tensors with different `out_scale` values without rescaling.
+    /// - This field is critical for correct, efficient, and numerically stable quantized inference.
     pub out_scale: i32,
     /// A list of [`Outlet`]s representing the sources of input tensors for this node.
     ///
@@ -395,14 +414,6 @@ impl Node {
     }
 }
 
-fn display_vector<T: fmt::Debug>(v: &Vec<T>) -> String {
-    if !v.is_empty() {
-        format!("{v:?}",)
-    } else {
-        String::new()
-    }
-}
-
 impl Node {
     /// Decodes the current [Node] into an [ONNXInstr] at the specified `address`.
     ///
@@ -438,18 +449,281 @@ impl Node {
     where
         for<'a> &'a T: Into<ONNXOpcode> + Debug,
     {
+        // Helper fn to extract the node-idx from the Outlet type
         let node_idx = |(idx, _): &(usize, usize)| *idx;
         ONNXInstr {
             address,
             opcode: op.into(),
             ts1: self.inputs.first().map(node_idx),
             ts2: self.inputs.get(1).map(node_idx),
+            // The output tensor is always the current node's index.
+            td: Some(self.idx),
+            imm: None,
+            virtual_sequence_remaining: None,
         }
     }
 }
 
-fn display_opkind(v: &SupportedOp) -> String {
-    v.as_string()
+/// A single operation in a [crate::graph::Model].
+#[derive(Clone, Debug, PartialEq)]
+pub enum SupportedOp {
+    /// A linear operation.
+    Linear(PolyOp<i128>),
+    /// A nonlinear operation.
+    Nonlinear(LookupOp),
+    /// A hybrid operation.
+    Hybrid(HybridOp),
+    /// An input node (e.g., model input or placeholder).
+    Input(Input),
+    /// A constant value node (e.g., weights, biases, or fixed tensors).
+    Constant(Constant<i128>),
+    /// An unknown or unsupported operation.
+    Unknown(Unknown),
+    /// An operation whose inputs have been rescaled for homogeneity.
+    Rescaled(Rescaled),
+    /// An operation whose output scale has been rebased to match the global scale.
+    RebaseScale(RebaseScale),
+}
+
+impl From<&SupportedOp> for ONNXOpcode {
+    fn from(op: &SupportedOp) -> Self {
+        match op {
+            SupportedOp::Linear(poly_op) => poly_op.into(),
+            SupportedOp::Nonlinear(lookup_op) => lookup_op.into(),
+            SupportedOp::Hybrid(hybrid_op) => hybrid_op.into(),
+            SupportedOp::Input(input_op) => input_op.into(),
+            SupportedOp::Constant(constant) => constant.into(),
+            SupportedOp::RebaseScale(rebase_scale) => rebase_scale.into(),
+            SupportedOp::Unknown(unknown) => unknown.into(),
+            SupportedOp::Rescaled(rescaled) => (&*rescaled.inner).into(),
+        }
+    }
+}
+
+impl SupportedOp {
+    ///
+    pub fn is_lookup(&self) -> bool {
+        match self {
+            SupportedOp::Nonlinear(_) => true,
+            SupportedOp::RebaseScale(op) => op.inner.is_lookup(),
+            _ => false,
+        }
+    }
+    ///
+    pub fn get_input(&self) -> Option<Input> {
+        match self {
+            SupportedOp::Input(op) => Some(op.clone()),
+            _ => None,
+        }
+    }
+
+    ///
+    pub fn get_rebased(&self) -> Option<&RebaseScale> {
+        match self {
+            SupportedOp::RebaseScale(op) => Some(op),
+            _ => None,
+        }
+    }
+
+    ///
+    pub fn get_lookup(&self) -> Option<&LookupOp> {
+        match self {
+            SupportedOp::Nonlinear(op) => Some(op),
+            _ => None,
+        }
+    }
+
+    ///
+    pub fn get_constant(&self) -> Option<&Constant<i128>> {
+        match self {
+            SupportedOp::Constant(op) => Some(op),
+            _ => None,
+        }
+    }
+
+    ///
+    pub fn get_mutable_constant(&mut self) -> Option<&mut Constant<i128>> {
+        match self {
+            SupportedOp::Constant(op) => Some(op),
+            _ => None,
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn homogenous_rescale(
+        &self,
+        in_scales: Vec<crate::Scale>,
+    ) -> Result<Box<dyn Op<i128>>, Box<dyn Error>> {
+        use crate::graph::utilities::homogenize_input_scales;
+
+        let inputs_to_scale = self.requires_homogenous_input_scales();
+        // creates a rescaled op if the inputs are not homogenous
+        let op = self.clone_dyn();
+        homogenize_input_scales(op, in_scales, inputs_to_scale)
+    }
+
+    /// Since each associated value of `SupportedOp` implements `Op`, let's define a
+    /// helper method to retrieve it.
+    fn as_op(&self) -> &dyn Op<i128> {
+        match self {
+            SupportedOp::Linear(op) => op,
+            SupportedOp::Nonlinear(op) => op,
+            SupportedOp::Hybrid(op) => op,
+            SupportedOp::Input(op) => op,
+            SupportedOp::Constant(op) => op,
+            SupportedOp::Unknown(op) => op,
+            SupportedOp::Rescaled(op) => op,
+            SupportedOp::RebaseScale(op) => op,
+        }
+    }
+
+    pub fn gen_node(&self, inputs: Vec<Outlet>, out_dims: Vec<usize>, idx: usize) -> Node {
+        match self {
+            SupportedOp::Input(op) => Node {
+                opkind: self.clone(),
+                out_scale: <Input as Op<i128>>::out_scale(op, vec![]).unwrap(),
+                inputs,
+                out_dims,
+                idx,
+                num_uses: 1,
+            },
+            SupportedOp::Linear(op) => Node {
+                opkind: self.clone(),
+                out_scale: op.out_scale(vec![1, 1]).unwrap(),
+                inputs,
+                out_dims,
+                idx,
+                num_uses: 1,
+            },
+            SupportedOp::Constant(op) => Node {
+                opkind: self.clone(),
+                out_scale: op.out_scale(vec![1]).unwrap(),
+                inputs,
+                out_dims,
+                idx,
+                num_uses: 1,
+            },
+            SupportedOp::Nonlinear(op) => Node {
+                opkind: self.clone(),
+                out_scale: <LookupOp as Op<i128>>::out_scale(op, vec![1]).unwrap(),
+                inputs,
+                out_dims,
+                idx,
+                num_uses: 1,
+            },
+            SupportedOp::Hybrid(op) => Node {
+                opkind: self.clone(),
+                out_scale: <HybridOp as Op<i128>>::out_scale(op, vec![1]).unwrap(),
+                inputs,
+                out_dims,
+                idx,
+                num_uses: 1,
+            },
+            SupportedOp::Unknown(_) => Node {
+                opkind: self.clone(),
+                out_scale: 0,
+                inputs,
+                out_dims,
+                idx,
+                num_uses: 1,
+            },
+            SupportedOp::Rescaled(op) => Node {
+                opkind: self.clone(),
+                out_scale: <Rescaled as Op<i128>>::out_scale(op, vec![1]).unwrap(),
+                inputs,
+                out_dims,
+                idx,
+                num_uses: 1,
+            },
+            SupportedOp::RebaseScale(op) => Node {
+                opkind: self.clone(),
+                out_scale: <RebaseScale as Op<i128>>::out_scale(op, vec![1]).unwrap(),
+                inputs,
+                out_dims,
+                idx,
+                num_uses: 1,
+            },
+        }
+    }
+}
+
+impl From<Box<dyn Op<i128>>> for SupportedOp {
+    fn from(value: Box<dyn Op<i128>>) -> Self {
+        if let Some(op) = value.as_any().downcast_ref::<PolyOp<i128>>() {
+            return SupportedOp::Linear(op.clone());
+        };
+
+        if let Some(op) = value.as_any().downcast_ref::<LookupOp>() {
+            return SupportedOp::Nonlinear(*op);
+        };
+
+        if let Some(op) = value.as_any().downcast_ref::<HybridOp>() {
+            return SupportedOp::Hybrid(op.clone());
+        };
+
+        if let Some(op) = value.as_any().downcast_ref::<Input>() {
+            return SupportedOp::Input(op.clone());
+        };
+
+        if let Some(op) = value.as_any().downcast_ref::<Constant<i128>>() {
+            return SupportedOp::Constant(op.clone());
+        };
+
+        if let Some(op) = value.as_any().downcast_ref::<Unknown>() {
+            return SupportedOp::Unknown(op.clone());
+        };
+        if let Some(op) = value.as_any().downcast_ref::<Rescaled>() {
+            return SupportedOp::Rescaled(op.clone());
+        };
+        if let Some(op) = value.as_any().downcast_ref::<RebaseScale>() {
+            return SupportedOp::RebaseScale(op.clone());
+        };
+
+        log::error!("Unsupported op type");
+        log::warn!("defaulting to Unknown");
+        SupportedOp::Unknown(Unknown {})
+    }
+}
+
+impl Op<i128> for SupportedOp {
+    fn f(
+        &self,
+        inputs: &[Tensor<i128>],
+    ) -> Result<ForwardResult<i128>, crate::tensor::TensorError> {
+        self.as_op().f(inputs)
+    }
+
+    fn is_input(&self) -> bool {
+        self.as_op().is_input()
+    }
+
+    fn is_constant(&self) -> bool {
+        self.as_op().is_constant()
+    }
+
+    fn requires_homogenous_input_scales(&self) -> Vec<usize> {
+        self.as_op().requires_homogenous_input_scales()
+    }
+
+    fn clone_dyn(&self) -> Box<dyn Op<i128>> {
+        self.as_op().clone_dyn()
+    }
+
+    fn as_string(&self) -> String {
+        self.as_op().as_string()
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn required_lookups(&self) -> Vec<LookupOp> {
+        self.as_op().required_lookups()
+    }
+
+    fn out_scale(&self, in_scales: Vec<crate::Scale>) -> Result<crate::Scale, Box<dyn Error>> {
+        self.as_op().out_scale(in_scales)
+    }
 }
 
 /// A wrapper for an operation that has been rescaled.
@@ -461,22 +735,22 @@ pub struct Rescaled {
     pub scale: Vec<(usize, u128)>,
 }
 
-impl Op<Fp> for Rescaled {
+impl Op<i128> for Rescaled {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
-    fn f(&self, x: &[Tensor<Fp>]) -> Result<ForwardResult<Fp>, TensorError> {
+    fn f(&self, x: &[Tensor<i128>]) -> Result<ForwardResult<i128>, TensorError> {
         if self.scale.len() != x.len() {
             return Err(TensorError::DimMismatch("rescaled inputs".to_string()));
         }
         let mut rescaled_inputs = vec![];
         let inputs = &mut x.to_vec();
         for (i, ri) in inputs.iter_mut().enumerate() {
-            let mult_tensor = Tensor::from([Fp::from(self.scale[i].1 as u64)].into_iter());
+            let mult_tensor = Tensor::from([self.scale[i].1 as i128].into_iter());
             let res = (ri.clone() * mult_tensor)?;
             rescaled_inputs.push(res);
         }
-        Op::<Fp>::f(&*self.inner, &rescaled_inputs)
+        Op::<i128>::f(&*self.inner, &rescaled_inputs)
     }
 
     fn as_string(&self) -> String {
@@ -490,10 +764,10 @@ impl Op<Fp> for Rescaled {
             .map(|(a, b)| a + multiplier_to_scale(b.1 as f64))
             .collect();
 
-        Op::<Fp>::out_scale(&*self.inner, in_scales)
+        Op::<i128>::out_scale(&*self.inner, in_scales)
     }
 
-    fn clone_dyn(&self) -> Box<dyn Op<Fp>> {
+    fn clone_dyn(&self) -> Box<dyn Op<i128>> {
         Box::new(self.clone()) // Forward to the derive(Clone) impl
     }
 }
@@ -574,15 +848,15 @@ impl RebaseScale {
     }
 }
 
-impl Op<Fp> for RebaseScale {
+impl Op<i128> for RebaseScale {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
-    fn f(&self, x: &[Tensor<Fp>]) -> Result<ForwardResult<Fp>, TensorError> {
-        let mut res = Op::<Fp>::f(&*self.inner, x)?;
-        let ri = res.output.map(felt_to_i128);
+    fn f(&self, x: &[Tensor<i128>]) -> Result<ForwardResult<i128>, TensorError> {
+        let mut res = Op::<i128>::f(&*self.inner, x)?;
+        let ri = res.output;
         let rescaled = crate::tensor::ops::nonlinearities::const_div(&ri, self.multiplier);
-        res.output = rescaled.map(i128_to_felt);
+        res.output = rescaled;
 
         res.intermediate_lookups.push(ri);
 
@@ -609,283 +883,14 @@ impl Op<Fp> for RebaseScale {
         lookups
     }
 
-    fn clone_dyn(&self) -> Box<dyn Op<Fp>> {
+    fn clone_dyn(&self) -> Box<dyn Op<i128>> {
         Box::new(self.clone()) // Forward to the derive(Clone) impl
     }
 }
 
-/// A single operation in a [crate::graph::Model].
-#[derive(Clone, Debug, PartialEq)]
-pub enum SupportedOp {
-    /// A linear operation.
-    Linear(PolyOp<Fp>),
-    /// A nonlinear operation.
-    Nonlinear(LookupOp),
-    /// A hybrid operation.
-    Hybrid(HybridOp),
-    /// An input node (e.g., model input or placeholder).
-    Input(Input),
-    /// A constant value node (e.g., weights, biases, or fixed tensors).
-    Constant(Constant<Fp>),
-    /// An unknown or unsupported operation.
-    Unknown(Unknown),
-    /// An operation whose inputs have been rescaled for homogeneity.
-    Rescaled(Rescaled),
-    /// An operation whose output scale has been rebased to match the global scale.
-    RebaseScale(RebaseScale),
-}
-
-impl From<&SupportedOp> for ONNXOpcode {
-    fn from(op: &SupportedOp) -> Self {
-        match op {
-            SupportedOp::Linear(poly_op) => poly_op.into(),
-            SupportedOp::Nonlinear(lookup_op) => lookup_op.into(),
-            SupportedOp::Hybrid(hybrid_op) => hybrid_op.into(),
-            SupportedOp::Input(input_op) => input_op.into(),
-            SupportedOp::Constant(constant) => constant.into(),
-            SupportedOp::RebaseScale(rebase_scale) => (&*rebase_scale.inner).into(),
-            SupportedOp::Unknown(unknown) => unknown.into(),
-            SupportedOp::Rescaled(rescaled) => (&*rescaled.inner).into(),
-        }
-    }
-}
-
-impl SupportedOp {
-    ///
-    pub fn is_lookup(&self) -> bool {
-        match self {
-            SupportedOp::Nonlinear(_) => true,
-            SupportedOp::RebaseScale(op) => op.inner.is_lookup(),
-            _ => false,
-        }
-    }
-    ///
-    pub fn get_input(&self) -> Option<Input> {
-        match self {
-            SupportedOp::Input(op) => Some(op.clone()),
-            _ => None,
-        }
-    }
-
-    ///
-    pub fn get_rebased(&self) -> Option<&RebaseScale> {
-        match self {
-            SupportedOp::RebaseScale(op) => Some(op),
-            _ => None,
-        }
-    }
-
-    ///
-    pub fn get_lookup(&self) -> Option<&LookupOp> {
-        match self {
-            SupportedOp::Nonlinear(op) => Some(op),
-            _ => None,
-        }
-    }
-
-    ///
-    pub fn get_constant(&self) -> Option<&Constant<Fp>> {
-        match self {
-            SupportedOp::Constant(op) => Some(op),
-            _ => None,
-        }
-    }
-
-    ///
-    pub fn get_mutable_constant(&mut self) -> Option<&mut Constant<Fp>> {
-        match self {
-            SupportedOp::Constant(op) => Some(op),
-            _ => None,
-        }
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn homogenous_rescale(
-        &self,
-        in_scales: Vec<crate::Scale>,
-    ) -> Result<Box<dyn Op<Fp>>, Box<dyn Error>> {
-        use crate::graph::utilities::homogenize_input_scales;
-
-        let inputs_to_scale = self.requires_homogenous_input_scales();
-        // creates a rescaled op if the inputs are not homogenous
-        let op = self.clone_dyn();
-        homogenize_input_scales(op, in_scales, inputs_to_scale)
-    }
-
-    /// Since each associated value of `SupportedOp` implements `Op`, let's define a
-    /// helper method to retrieve it.
-    fn as_op(&self) -> &dyn Op<Fp> {
-        match self {
-            SupportedOp::Linear(op) => op,
-            SupportedOp::Nonlinear(op) => op,
-            SupportedOp::Hybrid(op) => op,
-            SupportedOp::Input(op) => op,
-            SupportedOp::Constant(op) => op,
-            SupportedOp::Unknown(op) => op,
-            SupportedOp::Rescaled(op) => op,
-            SupportedOp::RebaseScale(op) => op,
-        }
-    }
-
-    pub fn gen_node(&self, inputs: Vec<Outlet>, out_dims: Vec<usize>, idx: usize) -> Node {
-        match self {
-            SupportedOp::Input(op) => {
-                Node {
-                    opkind: self.clone(),
-                    out_scale: <Input as Op<Fp>>::out_scale(op, vec![]).unwrap(),
-                    inputs,
-                    out_dims,
-                    idx,
-                    num_uses: 1,
-                }
-            },
-            SupportedOp::Linear(op) => {
-                Node {
-                    opkind: self.clone(),
-                    out_scale: op.out_scale(vec![1, 1]).unwrap(),
-                    inputs,
-                    out_dims,
-                    idx,
-                    num_uses: 1,
-                }
-            },
-            SupportedOp::Constant(op) => {
-                Node {
-                    opkind: self.clone(),
-                    out_scale: op.out_scale(vec![1]).unwrap(),
-                    inputs,
-                    out_dims,
-                    idx,
-                    num_uses: 1,
-                }
-            },
-            SupportedOp::Nonlinear(op) => {
-                Node {
-                    opkind: self.clone(),
-                    out_scale: <LookupOp as Op<Fp>>::out_scale(op, vec![1]).unwrap(),
-                    inputs,
-                    out_dims,
-                    idx,
-                    num_uses: 1,
-                }
-            },
-            SupportedOp::Hybrid(op) => {
-                Node {
-                    opkind: self.clone(),
-                    out_scale: <HybridOp as Op<Fp>>::out_scale(op, vec![1]).unwrap(),
-                    inputs,
-                    out_dims,
-                    idx,
-                    num_uses: 1,
-                }
-            },
-            SupportedOp::Unknown(_) => {
-                Node {
-                    opkind: self.clone(),
-                    out_scale: 0,
-                    inputs,
-                    out_dims,
-                    idx,
-                    num_uses: 1,
-                }
-            },
-            SupportedOp::Rescaled(op) => {
-                Node {
-                    opkind: self.clone(),
-                    out_scale: <Rescaled as Op<Fp>>::out_scale(op, vec![1]).unwrap(),
-                    inputs,
-                    out_dims,
-                    idx,
-                    num_uses: 1,
-                }
-            },
-            SupportedOp::RebaseScale(op) => {
-                Node {
-                    opkind: self.clone(),
-                    out_scale: <RebaseScale as Op<Fp>>::out_scale(op, vec![1]).unwrap(),
-                    inputs,
-                    out_dims,
-                    idx,
-                    num_uses: 1,
-                }
-            },
-        }
-    }
-}
-
-impl From<Box<dyn Op<Fp>>> for SupportedOp {
-    fn from(value: Box<dyn Op<Fp>>) -> Self {
-        if let Some(op) = value.as_any().downcast_ref::<PolyOp<Fp>>() {
-            return SupportedOp::Linear(op.clone());
-        };
-
-        if let Some(op) = value.as_any().downcast_ref::<LookupOp>() {
-            return SupportedOp::Nonlinear(*op);
-        };
-
-        if let Some(op) = value.as_any().downcast_ref::<HybridOp>() {
-            return SupportedOp::Hybrid(op.clone());
-        };
-
-        if let Some(op) = value.as_any().downcast_ref::<Input>() {
-            return SupportedOp::Input(op.clone());
-        };
-
-        if let Some(op) = value.as_any().downcast_ref::<Constant<Fp>>() {
-            return SupportedOp::Constant(op.clone());
-        };
-
-        if let Some(op) = value.as_any().downcast_ref::<Unknown>() {
-            return SupportedOp::Unknown(op.clone());
-        };
-        if let Some(op) = value.as_any().downcast_ref::<Rescaled>() {
-            return SupportedOp::Rescaled(op.clone());
-        };
-        if let Some(op) = value.as_any().downcast_ref::<RebaseScale>() {
-            return SupportedOp::RebaseScale(op.clone());
-        };
-
-        log::error!("Unsupported op type");
-        log::warn!("defaulting to Unknown");
-        SupportedOp::Unknown(Unknown {})
-    }
-}
-
-impl Op<Fp> for SupportedOp {
-    fn f(&self, inputs: &[Tensor<Fp>]) -> Result<ForwardResult<Fp>, crate::tensor::TensorError> {
-        self.as_op().f(inputs)
-    }
-
-    fn is_input(&self) -> bool {
-        self.as_op().is_input()
-    }
-
-    fn is_constant(&self) -> bool {
-        self.as_op().is_constant()
-    }
-
-    fn requires_homogenous_input_scales(&self) -> Vec<usize> {
-        self.as_op().requires_homogenous_input_scales()
-    }
-
-    fn clone_dyn(&self) -> Box<dyn Op<Fp>> {
-        self.as_op().clone_dyn()
-    }
-
-    fn as_string(&self) -> String {
-        self.as_op().as_string()
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn required_lookups(&self) -> Vec<LookupOp> {
-        self.as_op().required_lookups()
-    }
-
-    fn out_scale(&self, in_scales: Vec<crate::Scale>) -> Result<crate::Scale, Box<dyn Error>> {
-        self.as_op().out_scale(in_scales)
+impl From<&RebaseScale> for ONNXOpcode {
+    fn from(value: &RebaseScale) -> Self {
+        ONNXOpcode::RebaseScale(Box::new((&*value.inner).into()))
     }
 }
 
@@ -919,7 +924,7 @@ impl Tabled for Node {
             self.opkind
                 .required_lookups()
                 .iter()
-                .map(<LookupOp as Op<Fp>>::as_string)
+                .map(<LookupOp as Op<i128>>::as_string)
                 .collect_vec()
         )));
         fields
@@ -967,7 +972,7 @@ impl PartialEq for Node {
 /// rescale_const_with_single_use(constant, input_scales, constant_node.num_uses())?;
 /// ```
 fn rescale_const_with_single_use(
-    constant: &mut Constant<Fp>,
+    constant: &mut Constant<i128>,
     in_scales: Vec<crate::Scale>,
     num_uses: usize,
 ) -> Result<(), Box<dyn Error>> {
@@ -980,4 +985,16 @@ fn rescale_const_with_single_use(
         }
     }
     Ok(())
+}
+
+fn display_vector<T: fmt::Debug>(v: &Vec<T>) -> String {
+    if !v.is_empty() {
+        format!("{v:?}",)
+    } else {
+        String::new()
+    }
+}
+
+fn display_opkind(v: &SupportedOp) -> String {
+    v.as_string()
 }

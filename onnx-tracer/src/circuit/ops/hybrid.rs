@@ -1,11 +1,11 @@
+use std::ops::{Add, Mul, Neg, Sub};
+
 use super::*;
 use crate::{
     circuit::{self, ops::chip::Tolerance, utils},
-    fieldutils::{felt_to_i128, i128_to_felt},
     tensor::{self, Tensor, TensorError, TensorType},
     trace_types::ONNXOpcode,
 };
-use halo2curves::ff::PrimeField;
 use serde::{Deserialize, Serialize};
 use tract_onnx::prelude::tract_itertools::Itertools;
 
@@ -84,7 +84,24 @@ impl From<&HybridOp> for ONNXOpcode {
     }
 }
 
-impl<F: PrimeField + TensorType + PartialOrd> Op<F> for HybridOp {
+impl<
+        F: TensorType
+            + PartialOrd
+            + Add<Output = F>
+            + Ord
+            + Send
+            + Sync
+            + Sub
+            + From<u32>
+            + From<i128>
+            + Mul<Output = F>
+            + Sub<Output = F>
+            + Neg<Output = F>
+            + std::iter::Sum,
+    > Op<F> for HybridOp
+where
+    i128: std::convert::From<F>,
+{
     ///
     fn requires_homogenous_input_scales(&self) -> Vec<usize> {
         match self {
@@ -100,8 +117,8 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for HybridOp {
     }
     /// Matches a [Op] to an operation in the `tensor::ops` module.
     fn f(&self, inputs: &[Tensor<F>]) -> Result<ForwardResult<F>, TensorError> {
-        let x = inputs[0].clone().map(|x| felt_to_i128(x));
-
+        let x = inputs[0].clone();
+        let x = x.map(|x| i128::from(x));
         let (res, intermediate_lookups) = match &self {
             HybridOp::ReduceMax { axes, .. } => {
                 let res = tensor::ops::max_axes(&x, axes)?;
@@ -154,7 +171,7 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for HybridOp {
                     let res = tensor::ops::gather(&x, idx, *dim)?;
                     (res.clone(), vec![])
                 } else {
-                    let y = inputs[1].clone().map(|x| felt_to_i128(x));
+                    let y = inputs[1].clone().map(|x| i128::from(x));
                     let indices = Tensor::from(0..x.dims()[*dim] as i128);
                     let inter_equals: Vec<Tensor<i128>> = vec![indices.clone(), -indices];
                     let res = tensor::ops::gather(&x, &y.map(|x| x as usize), *dim)?;
@@ -197,7 +214,7 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for HybridOp {
                     let res = tensor::ops::gather_elements(&x, idx, *dim)?;
                     (res.clone(), vec![])
                 } else {
-                    let y = inputs[1].clone().map(|x| felt_to_i128(x));
+                    let y = inputs[1].clone().map(|x| i128::from(x));
                     let indices = Tensor::from(0..x.dims()[*dim] as i128);
                     let inter_equals: Vec<Tensor<i128>> = vec![indices.clone(), -indices];
                     let res = tensor::ops::gather_elements(&x, &y.map(|x| x as usize), *dim)?;
@@ -207,12 +224,12 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for HybridOp {
             HybridOp::ScatterElements { dim, constant_idx } => {
                 if let Some(idx) = constant_idx {
                     log::debug!("idx: {}", idx.show());
-                    let src = inputs[1].clone().map(|x| felt_to_i128(x));
+                    let src = inputs[1].clone().map(|x| i128::from(x));
                     let res = tensor::ops::scatter(&x, idx, &src, *dim)?;
                     (res.clone(), vec![])
                 } else {
-                    let idx = inputs[1].clone().map(|x| felt_to_i128(x) as usize);
-                    let src = inputs[2].clone().map(|x| felt_to_i128(x));
+                    let idx = inputs[1].clone().map(|x| i128::from(x) as usize);
+                    let src = inputs[2].clone().map(|x| i128::from(x));
                     let indices = Tensor::from(0..x.dims()[*dim] as i128);
                     let inter_equals: Vec<Tensor<i128>> = vec![indices.clone(), -indices];
                     let res = tensor::ops::scatter(&x, &idx, &src, *dim)?;
@@ -248,36 +265,36 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for HybridOp {
                 tensor::ops::nonlinearities::softmax_axes(&x, scale.into(), axes)
             }
             HybridOp::RangeCheck(tol) => {
-                let y = inputs[1].clone().map(|x| felt_to_i128(x));
+                let y = inputs[1].clone().map(|x| i128::from(x));
                 (
                     tensor::ops::nonlinearities::range_check_percent(&[x, y], 128, 128, tol.val),
                     vec![],
                 )
             }
             HybridOp::Greater => {
-                let y = inputs[1].clone().map(|x| felt_to_i128(x));
+                let y = inputs[1].clone().map(|x| i128::from(x));
                 tensor::ops::greater(&x, &y)?
             }
             HybridOp::GreaterEqual => {
-                let y = inputs[1].clone().map(|x| felt_to_i128(x));
+                let y = inputs[1].clone().map(|x| i128::from(x));
                 tensor::ops::greater_equal(&x, &y)?
             }
             HybridOp::Less => {
-                let y = inputs[1].clone().map(|x| felt_to_i128(x));
+                let y = inputs[1].clone().map(|x| i128::from(x));
                 tensor::ops::less(&x, &y)?
             }
             HybridOp::LessEqual => {
-                let y = inputs[1].clone().map(|x| felt_to_i128(x));
+                let y = inputs[1].clone().map(|x| i128::from(x));
                 tensor::ops::less_equal(&x, &y)?
             }
             HybridOp::Equals => {
-                let y = inputs[1].clone().map(|x| felt_to_i128(x));
+                let y = inputs[1].clone().map(|x| i128::from(x));
                 tensor::ops::equals(&x, &y)?
             }
         };
 
         // convert back to felt
-        let output = res.map(|x| i128_to_felt(x));
+        let output = res.map(|x| F::from(x));
 
         Ok(ForwardResult {
             output,

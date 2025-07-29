@@ -2,12 +2,10 @@ use super::Op;
 use super::*;
 use crate::{
     circuit::utils,
-    fieldutils::{felt_to_i128, i128_to_felt},
     graph::utilities::{multiplier_to_scale, scale_to_multiplier},
     tensor::{self, Tensor, TensorError, TensorType},
     trace_types::ONNXOpcode,
 };
-use halo2curves::ff::PrimeField;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 
@@ -78,14 +76,19 @@ impl LookupOp {
     }
 }
 
-impl<F: PrimeField + TensorType + PartialOrd> Op<F> for LookupOp {
+impl<F: TensorType + PartialOrd> Op<F> for LookupOp
+where
+    i128: std::convert::From<F>,
+    F: From<i128>,
+{
     /// Returns a reference to the Any trait.
     fn as_any(&self) -> &dyn Any {
         self
     }
     /// Matches a [Op] to an operation in the `tensor::ops` module.
     fn f(&self, x: &[Tensor<F>]) -> Result<ForwardResult<F>, TensorError> {
-        let x = x[0].clone().map(|x| felt_to_i128(x));
+        let x = x[0].clone();
+        let x = x.map(|x| i128::from(x));
         let res = match &self {
             LookupOp::Abs => Ok(tensor::ops::abs(&x)?),
             LookupOp::Ceil { scale } => Ok(tensor::ops::nonlinearities::ceil(&x, scale.into())),
@@ -162,7 +165,7 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for LookupOp {
             LookupOp::Tanh { scale } => Ok(tensor::ops::nonlinearities::tanh(&x, scale.into())),
         }?;
 
-        let output = res.map(|x| i128_to_felt(x));
+        let output = res.map(|x| F::from(x));
 
         Ok(ForwardResult {
             output,
