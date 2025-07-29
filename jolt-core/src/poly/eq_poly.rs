@@ -55,6 +55,11 @@ impl<F: JoltField> EqPolynomial<F> {
         Self::evals_serial_cached(r, None)
     }
 
+    /// Same as evals_cached but for high-to-low (reverse) binding order
+    pub fn evals_cached_rev(r: &[F]) -> Vec<Vec<F>> {
+        Self::evals_serial_cached_rev(r, None)
+    }
+
     /// Computes the table of coefficients:
     ///     scaling_factor * eq(r, x) for all x in {0, 1}^n
     /// serially. More efficient for short `r`.
@@ -92,6 +97,24 @@ impl<F: JoltField> EqPolynomial<F> {
                 evals[j + 1][i] = scalar * r[j];
                 evals[j + 1][i - 1] = scalar - evals[j + 1][i];
             }
+        }
+        evals
+    }
+    /// evals_serial_cached but for "high to low" ordering, used specifically in the Gruen x Dao Thaler optimization.
+    fn evals_serial_cached_rev(r: &[F], scaling_factor: Option<F>) -> Vec<Vec<F>> {
+        let rev_r = r.iter().rev().collect::<Vec<_>>();
+        let mut evals: Vec<Vec<F>> = (0..r.len() + 1)
+            .map(|i| vec![scaling_factor.unwrap_or(F::one()); 1 << i])
+            .collect();
+        let mut size = 1;
+        for j in 0..r.len() {
+            for i in 0..size {
+                let scalar = evals[j][i];
+                let multiple = 1 << j;
+                evals[j + 1][i + multiple] = scalar * *rev_r[j];
+                evals[j + 1][i] = scalar - evals[j + 1][i + multiple];
+            }
+            size *= 2;
         }
         evals
     }

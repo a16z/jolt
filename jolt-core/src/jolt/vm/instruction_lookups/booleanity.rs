@@ -110,7 +110,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
 
 impl<F: JoltField> BooleanityProverState<F> {
     fn new(trace: &[RV32IMCycle], eq_r_cycle: Vec<F>, G: [Vec<F>; D], r_address: &[F]) -> Self {
-        let B = GruenSplitEqPolynomial::new(r_address);
+        let B = GruenSplitEqPolynomial::new(r_address, BindingOrder::LowToHigh);
 
         let mut F: Vec<F> = unsafe_allocate_zero_vec(K_CHUNK);
         F[0] = F::one();

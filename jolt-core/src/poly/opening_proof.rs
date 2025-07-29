@@ -453,12 +453,12 @@ where
         self.input_claims[0]
     }
 
-    fn compute_prover_message(&mut self, round: usize, _previous_claim: F) -> Vec<F> {
+    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         debug_assert!(round < self.num_rounds());
         let prover_state = self.prover_state.as_mut().unwrap();
         match prover_state {
             ProverOpening::Dense(opening) => opening.compute_prover_message(round),
-            ProverOpening::OneHot(opening) => opening.compute_prover_message(round),
+            ProverOpening::OneHot(opening) => opening.compute_prover_message(round, previous_claim),
         }
     }
 
@@ -652,6 +652,7 @@ where
         claims: Vec<F>,
     ) {
         let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
+
         let shared_eq = Arc::new(Mutex::new(OneHotSumcheckState::new(&r_address, &r_cycle)));
 
         // Add openings to map
@@ -808,6 +809,7 @@ where
                 instance
             })
             .collect();
+
         let (sumcheck_proof, r_sumcheck) = BatchedSumcheck::prove(instances, None, transcript);
 
         let claims: Vec<_> = self

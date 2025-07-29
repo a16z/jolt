@@ -277,7 +277,7 @@ where
             init_memory_state,
             1 << 18,
             1 << 18,
-            1 << 20,
+            1 << 24,
         );
 
         let (jolt_proof, program_io, _) = <RV32IJoltVM as Jolt<32, _, PCS, _>>::prove(
