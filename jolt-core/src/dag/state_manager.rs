@@ -1,9 +1,9 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use crate::field::JoltField;
-use crate::jolt::vm::{JoltCommitments, JoltProverPreprocessing, JoltVerifierPreprocessing};
+use crate::jolt::vm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
 use crate::jolt::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::opening_proof::{
@@ -12,13 +12,15 @@ use crate::poly::opening_proof::{
 };
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::utils::transcript::Transcript;
+use num_derive::FromPrimitive;
 use tracer::emulator::memory::Memory;
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
 use tracer::JoltDevice;
 
-#[derive(Hash, PartialEq, Eq, Clone, Debug)]
+#[derive(PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, FromPrimitive)]
+#[repr(u8)]
 pub enum ProofKeys {
-    SpartanOuterSumcheck,
+    Stage1Sumcheck,
     Stage2Sumcheck,
     Stage3Sumcheck,
     Stage4Sumcheck,
@@ -28,14 +30,13 @@ pub enum ProofKeys {
 }
 
 pub enum ProofData<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> {
-    SpartanOuterData(SumcheckInstanceProof<F, ProofTranscript>),
-    BatchableSumcheckData(SumcheckInstanceProof<F, ProofTranscript>),
+    SumcheckProof(SumcheckInstanceProof<F, ProofTranscript>),
     ReducedOpeningProof(ReducedOpeningProof<F, PCS, ProofTranscript>),
     SumcheckSwitchIndex(usize),
     RamK(usize),
 }
 
-pub type Proofs<F, PCS, ProofTranscript> = HashMap<ProofKeys, ProofData<F, PCS, ProofTranscript>>;
+pub type Proofs<F, PCS, ProofTranscript> = BTreeMap<ProofKeys, ProofData<F, PCS, ProofTranscript>>;
 
 pub struct ProverState<'a, F: JoltField, PCS>
 where
@@ -66,8 +67,8 @@ pub struct StateManager<
 > {
     pub transcript: Rc<RefCell<ProofTranscript>>,
     pub proofs: Rc<RefCell<Proofs<F, PCS, ProofTranscript>>>,
-    pub commitments: Rc<RefCell<Option<JoltCommitments<F, PCS>>>>,
-    prover_state: Option<ProverState<'a, F, PCS>>,
+    pub commitments: Rc<RefCell<Vec<PCS::Commitment>>>,
+    pub prover_state: Option<ProverState<'a, F, PCS>>,
     verifier_state: Option<VerifierState<'a, F, PCS>>,
 }
 
@@ -78,7 +79,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         prover_accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
         transcript: Rc<RefCell<ProofTranscript>>,
         proofs: Rc<RefCell<Proofs<F, PCS, ProofTranscript>>>,
-        commitments: Rc<RefCell<Option<JoltCommitments<F, PCS>>>>,
+        commitments: Rc<RefCell<Vec<PCS::Commitment>>>,
     ) -> Self {
         Self {
             transcript,
@@ -99,7 +100,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         verifier_accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
         transcript: Rc<RefCell<ProofTranscript>>,
         proofs: Rc<RefCell<Proofs<F, PCS, ProofTranscript>>>,
-        commitments: Rc<RefCell<Option<JoltCommitments<F, PCS>>>>,
+        commitments: Rc<RefCell<Vec<PCS::Commitment>>>,
     ) -> Self {
         Self {
             transcript,
@@ -228,16 +229,12 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         }
     }
 
-    pub fn get_commitments(&self) -> JoltCommitments<F, PCS> {
-        self.commitments
-            .borrow()
-            .as_ref()
-            .expect("Commitments not set")
-            .clone()
+    pub fn get_commitments(&self) -> Rc<RefCell<Vec<PCS::Commitment>>> {
+        self.commitments.clone()
     }
 
-    pub fn set_commitments(&self, commitments: JoltCommitments<F, PCS>) {
-        *self.commitments.borrow_mut() = Some(commitments);
+    pub fn set_commitments(&self, commitments: Vec<PCS::Commitment>) {
+        *self.commitments.borrow_mut() = commitments;
     }
 
     /// Gets the opening for a given virtual polynomial from whichever accumulator is available.

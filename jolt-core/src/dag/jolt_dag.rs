@@ -7,17 +7,16 @@ use crate::jolt::vm::bytecode::BytecodeDag;
 use crate::jolt::vm::instruction_lookups::LookupsDag;
 use crate::jolt::vm::ram::{RamDag, NUM_RA_I_VARS};
 use crate::jolt::vm::registers::RegistersDag;
-use crate::jolt::vm::JoltCommitments;
 use crate::jolt::witness::{AllCommittedPolynomials, CommittedPolynomial};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::DoryGlobals;
-use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
 use crate::r1cs::spartan::SpartanDag;
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance};
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::Transcript;
 use anyhow::Context;
 use rayon::prelude::*;
+
 pub struct JoltDAG<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
 {
     prover_state_manager: StateManager<'a, F, ProofTranscript, PCS>,
@@ -77,9 +76,10 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         // Append commitments to transcript
         let commitments = self.prover_state_manager.get_commitments();
         let transcript = self.prover_state_manager.get_transcript();
-        for commitment in commitments.commitments.iter() {
+        for commitment in commitments.borrow().iter() {
             transcript.borrow_mut().append_serializable(commitment);
         }
+        drop(commitments);
 
         // Stage 1:
         let span = tracing::span!(tracing::Level::INFO, "Stage 1 sumchecks");
@@ -123,7 +123,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
 
         self.prover_state_manager.proofs.borrow_mut().insert(
             ProofKeys::Stage2Sumcheck,
-            ProofData::BatchableSumcheckData(stage2_proof),
+            ProofData::SumcheckProof(stage2_proof),
         );
 
         drop_in_background_thread(stage2_instances);
@@ -154,7 +154,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
 
         self.prover_state_manager.proofs.borrow_mut().insert(
             ProofKeys::Stage3Sumcheck,
-            ProofData::BatchableSumcheckData(stage3_proof),
+            ProofData::SumcheckProof(stage3_proof),
         );
 
         drop_in_background_thread(stage3_instances);
@@ -183,7 +183,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
 
         self.prover_state_manager.proofs.borrow_mut().insert(
             ProofKeys::Stage4Sumcheck,
-            ProofData::BatchableSumcheckData(stage4_proof),
+            ProofData::SumcheckProof(stage4_proof),
         );
 
         drop_in_background_thread(stage4_instances);
@@ -257,12 +257,12 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         // Append commitments to transcript
         let commitments = self.verifier_state_manager.get_commitments();
         let transcript = self.verifier_state_manager.get_transcript();
-        for commitment in commitments.commitments.iter() {
+        for commitment in commitments.borrow().iter() {
             transcript.borrow_mut().append_serializable(commitment);
         }
 
-        // Receive opening claims from prover's accumulator
-        self.receive_claims().context("Receive claims")?;
+        // // Receive opening claims from prover's accumulator
+        // self.receive_claims().context("Receive claims")?;
 
         // Stage 1:
         let (preprocessing, _, trace_length) = self.verifier_state_manager.get_verifier_data();
@@ -292,7 +292,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             .get(&ProofKeys::Stage2Sumcheck)
             .expect("Stage 2 sumcheck proof not found");
         let stage2_proof = match stage2_proof_data {
-            ProofData::BatchableSumcheckData(proof) => proof,
+            ProofData::SumcheckProof(proof) => proof,
             _ => panic!("Invalid proof type for stage 2"),
         };
 
@@ -325,7 +325,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             .get(&ProofKeys::Stage3Sumcheck)
             .expect("Stage 3 sumcheck proof not found");
         let stage3_proof = match stage3_proof_data {
-            ProofData::BatchableSumcheckData(proof) => proof,
+            ProofData::SumcheckProof(proof) => proof,
             _ => panic!("Invalid proof type for stage 3"),
         };
 
@@ -354,7 +354,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             .get(&ProofKeys::Stage4Sumcheck)
             .expect("Stage 4 sumcheck proof not found");
         let stage4_proof = match stage4_proof_data {
-            ProofData::BatchableSumcheckData(proof) => proof,
+            ProofData::SumcheckProof(proof) => proof,
             _ => panic!("Invalid proof type for stage 4"),
         };
 
@@ -379,7 +379,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         for polynomial in AllCommittedPolynomials::iter() {
             commitments_map.insert(
                 *polynomial,
-                commitments.commitments[polynomial.to_index()].clone(),
+                commitments.borrow()[polynomial.to_index()].clone(),
             );
         }
         let accumulator = self.verifier_state_manager.get_verifier_accumulator();
@@ -392,24 +392,6 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
                 &mut *transcript.borrow_mut(),
             )
             .context("Stage 5")?;
-
-        Ok(())
-    }
-
-    fn receive_claims(&mut self) -> Result<(), anyhow::Error> {
-        let prover_accumulator = self.prover_state_manager.get_prover_accumulator();
-        let verifier_accumulator = self.verifier_state_manager.get_verifier_accumulator();
-
-        // Copy only the claims from prover to verifier
-        let prover_acc_borrow = prover_accumulator.borrow();
-        let mut verifier_acc_borrow = verifier_accumulator.borrow_mut();
-
-        for (key, (_, value)) in prover_acc_borrow.evaluation_openings().iter() {
-            let empty_point = OpeningPoint::<BIG_ENDIAN, F>::new(vec![]);
-            verifier_acc_borrow
-                .evaluation_openings_mut()
-                .insert(*key, (empty_point, *value));
-        }
 
         Ok(())
     }
@@ -436,9 +418,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             hint_map.insert(*poly, hint);
         }
 
-        let jolt_commitments = JoltCommitments { commitments };
-
-        self.prover_state_manager.set_commitments(jolt_commitments);
+        self.prover_state_manager.set_commitments(commitments);
 
         drop_in_background_thread(committed_polys);
 

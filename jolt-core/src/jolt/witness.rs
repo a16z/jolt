@@ -1,16 +1,22 @@
 #![allow(static_mut_refs)]
 
+use std::sync::LazyLock;
+
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
+use strum::IntoEnumIterator;
 use tracer::instruction::RV32IMCycle;
 
 use crate::{
     field::JoltField,
-    jolt::vm::{
-        instruction_lookups,
-        ram::{compute_d_parameter, remap_address, NUM_RA_I_VARS},
-        JoltProverPreprocessing,
+    jolt::{
+        lookup_table::LookupTables,
+        vm::{
+            instruction_lookups,
+            ram::{compute_d_parameter, remap_address, NUM_RA_I_VARS},
+            JoltProverPreprocessing,
+        },
     },
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
@@ -140,6 +146,7 @@ impl CommittedPolynomial {
         }
     }
 
+    // TODO(moodlezoup): return Result<Self>
     pub fn from_index(index: usize) -> Self {
         unsafe {
             ALL_COMMITTED_POLYNOMIALS
@@ -148,6 +155,7 @@ impl CommittedPolynomial {
         }
     }
 
+    // TODO(moodlezoup): return Result<usize>
     pub fn to_index(&self) -> usize {
         unsafe {
             ALL_COMMITTED_POLYNOMIALS
@@ -344,7 +352,7 @@ impl CommittedPolynomial {
     }
 }
 
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord)]
 pub enum VirtualPolynomial {
     SpartanAz,
     SpartanBz,
@@ -364,11 +372,9 @@ pub enum VirtualPolynomial {
     Rs1Ra,
     Rs2Ra,
     RdWa,
-    OpFlags(CircuitFlags),
     LookupOutput,
     InstructionRaf,
     InstructionRafFlag,
-    LookupTableFlag(usize),
     RegistersVal,
     RamAddress,
     RamRa,
@@ -378,4 +384,65 @@ pub enum VirtualPolynomial {
     RamValInit,
     RamValFinal,
     RamHammingWeight,
+    OpFlags(CircuitFlags),
+    LookupTableFlag(usize),
+}
+
+pub static ALL_VIRTUAL_POLYNOMIALS: LazyLock<Vec<VirtualPolynomial>> = LazyLock::new(|| {
+    let mut polynomials = vec![
+        VirtualPolynomial::SpartanAz,
+        VirtualPolynomial::SpartanBz,
+        VirtualPolynomial::SpartanCz,
+        VirtualPolynomial::PC,
+        VirtualPolynomial::UnexpandedPC,
+        VirtualPolynomial::NextPC,
+        VirtualPolynomial::NextUnexpandedPC,
+        VirtualPolynomial::NextIsNoop,
+        VirtualPolynomial::LeftLookupOperand,
+        VirtualPolynomial::RightLookupOperand,
+        VirtualPolynomial::Rd,
+        VirtualPolynomial::Imm,
+        VirtualPolynomial::Rs1Value,
+        VirtualPolynomial::Rs2Value,
+        VirtualPolynomial::RdWriteValue,
+        VirtualPolynomial::Rs1Ra,
+        VirtualPolynomial::Rs2Ra,
+        VirtualPolynomial::RdWa,
+        VirtualPolynomial::LookupOutput,
+        VirtualPolynomial::InstructionRaf,
+        VirtualPolynomial::InstructionRafFlag,
+        VirtualPolynomial::RegistersVal,
+        VirtualPolynomial::RamAddress,
+        VirtualPolynomial::RamRa,
+        VirtualPolynomial::RamReadValue,
+        VirtualPolynomial::RamWriteValue,
+        VirtualPolynomial::RamVal,
+        VirtualPolynomial::RamValInit,
+        VirtualPolynomial::RamValFinal,
+        VirtualPolynomial::RamHammingWeight,
+    ];
+    for flag in CircuitFlags::iter() {
+        polynomials.push(VirtualPolynomial::OpFlags(flag));
+    }
+    for table in LookupTables::iter() {
+        polynomials.push(VirtualPolynomial::LookupTableFlag(
+            LookupTables::<32>::enum_index(&table),
+        ));
+    }
+
+    polynomials
+});
+
+impl VirtualPolynomial {
+    pub fn from_index(index: usize) -> Self {
+        ALL_VIRTUAL_POLYNOMIALS[index]
+    }
+
+    pub fn to_index(&self) -> usize {
+        ALL_VIRTUAL_POLYNOMIALS
+            .iter()
+            .find_position(|poly| *poly == self)
+            .unwrap()
+            .0
+    }
 }

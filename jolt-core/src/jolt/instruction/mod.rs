@@ -39,7 +39,7 @@ pub trait LookupQuery<const WORD_SIZE: usize> {
 /// Boolean flags used in Jolt's R1CS constraints (`opflags` in the Jolt paper).
 /// Note that the flags below deviate somewhat from those described in Appendix A.1
 /// of the Jolt paper.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, EnumCountMacro, EnumIter)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, EnumCountMacro, EnumIter, PartialOrd, Ord)]
 pub enum CircuitFlags {
     /// 1 if the first instruction operand is the program counter; 0 otherwise.
     LeftOperandIsPC,

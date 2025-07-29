@@ -765,7 +765,7 @@ mod tests {
     use ark_std::Zero;
     use common::jolt_device::MemoryLayout;
     use rand::{rngs::StdRng, RngCore, SeedableRng};
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
     use strum::IntoEnumIterator;
     use tracer::emulator::memory::Memory;
     use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
@@ -872,7 +872,7 @@ mod tests {
         let verifier_accumulator = Rc::new(RefCell::new(VerifierOpeningAccumulator::<Fr>::new()));
         let prover_transcript = KeccakTranscript::new(b"test_transcript");
         let verifier_transcript = KeccakTranscript::new(b"test_transcript");
-        let proofs = Rc::new(RefCell::new(HashMap::<
+        let proofs = Rc::new(RefCell::new(BTreeMap::<
             ProofKeys,
             ProofData<Fr, MockCommitScheme<Fr>, _>,
         >::new()));
@@ -954,7 +954,7 @@ mod tests {
         for (key, (_, value)) in prover_acc_borrow.evaluation_openings().iter() {
             let empty_point = OpeningPoint::<BIG_ENDIAN, Fr>::new(vec![]);
             verifier_acc_borrow
-                .evaluation_openings_mut()
+                .openings_mut()
                 .insert(*key, (empty_point, *value));
         }
         drop(prover_acc_borrow);

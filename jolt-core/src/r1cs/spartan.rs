@@ -741,8 +741,8 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 
         // Append the outer sumcheck proof to the state manager
         state_manager.proofs.borrow_mut().insert(
-            ProofKeys::SpartanOuterSumcheck,
-            ProofData::SpartanOuterData(outer_sumcheck_proof),
+            ProofKeys::Stage1Sumcheck,
+            ProofData::SumcheckProof(outer_sumcheck_proof),
         );
 
         let num_cycles = key.num_steps;
@@ -809,12 +809,12 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         let proofs = state_manager.proofs.borrow();
         let proof_data = {
             proofs
-                .get(&ProofKeys::SpartanOuterSumcheck)
+                .get(&ProofKeys::Stage1Sumcheck)
                 .expect("Outer sumcheck proof not found")
         };
 
         let outer_sumcheck_proof = match proof_data {
-            ProofData::SpartanOuterData(proof) => proof,
+            ProofData::SumcheckProof(proof) => proof,
             _ => panic!("Invalid proof data type"),
         };
 

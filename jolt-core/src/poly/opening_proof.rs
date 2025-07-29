@@ -4,9 +4,10 @@
 //! can use a sumcheck to reduce multiple opening proofs (multiple polynomials, not
 //! necessarily of the same size, each opened at a different point) into a single opening.
 
+use num_derive::FromPrimitive;
 use rayon::prelude::*;
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     sync::{Arc, Mutex},
 };
 
@@ -33,7 +34,7 @@ pub type Endianness = bool;
 pub const BIG_ENDIAN: Endianness = false;
 pub const LITTLE_ENDIAN: Endianness = true;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct OpeningPoint<const E: Endianness, F: JoltField> {
     pub r: Vec<F>,
 }
@@ -123,7 +124,8 @@ where
     }
 }
 
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, FromPrimitive)]
+#[repr(u8)]
 pub enum SumcheckId {
     SpartanOuter,
     SpartanInner,
@@ -148,13 +150,13 @@ pub enum SumcheckId {
     OpeningReduction,
 }
 
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord)]
 pub enum OpeningId {
     Committed(CommittedPolynomial, SumcheckId),
     Virtual(VirtualPolynomial, SumcheckId),
 }
 
-pub type Openings<F> = HashMap<OpeningId, (OpeningPoint<BIG_ENDIAN, F>, F)>;
+pub type Openings<F> = BTreeMap<OpeningId, (OpeningPoint<BIG_ENDIAN, F>, F)>;
 
 pub struct SharedEqPolynomial<F: JoltField> {
     num_variables_bound: usize,
@@ -583,7 +585,7 @@ where
     pub fn new() -> Self {
         Self {
             sumchecks: vec![],
-            openings: HashMap::new(),
+            openings: BTreeMap::new(),
             // #[cfg(test)]
             // joint_commitment: None,
         }
@@ -742,7 +744,7 @@ where
         // Combines the individual polynomials into the RLC that will be used for the
         // batched opening proof.
         let joint_poly = {
-            let mut rlc_map = HashMap::new();
+            let mut rlc_map = BTreeMap::new();
             for (gamma, sumcheck) in gamma_powers.iter().zip(self.sumchecks.iter()) {
                 for (coeff, polynomial) in
                     sumcheck.rlc_coeffs.iter().zip(sumcheck.polynomials.iter())
@@ -778,7 +780,7 @@ where
         // Compute the opening proof hint for the reduced opening by homomorphically combining
         // the hints for the individual sumchecks.
         let hint = {
-            let mut rlc_map = HashMap::new();
+            let mut rlc_map = BTreeMap::new();
             for (gamma, sumcheck) in gamma_powers.iter().zip(self.sumchecks.iter()) {
                 for (coeff, polynomial) in
                     sumcheck.rlc_coeffs.iter().zip(sumcheck.polynomials.iter())
@@ -864,7 +866,7 @@ where
     pub fn new() -> Self {
         Self {
             sumchecks: vec![],
-            openings: HashMap::new(),
+            openings: BTreeMap::new(),
             #[cfg(test)]
             prover_opening_accumulator: None,
         }
@@ -881,11 +883,7 @@ where
         self.sumchecks.len()
     }
 
-    pub fn evaluation_openings(&self) -> &Openings<F> {
-        &self.openings
-    }
-
-    pub fn evaluation_openings_mut(&mut self) -> &mut Openings<F> {
+    pub fn openings_mut(&mut self) -> &mut Openings<F> {
         &mut self.openings
     }
 

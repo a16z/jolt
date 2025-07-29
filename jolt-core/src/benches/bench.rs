@@ -18,7 +18,7 @@ use rand_core::RngCore;
 use rand_distr::{Distribution, Zipf};
 use serde::Serialize;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 use tracer;
 use tracer::instruction::RV32IMCycle;
@@ -366,7 +366,7 @@ where
             crate::poly::opening_proof::ProverOpeningAccumulator::<F>::new();
         let prover_accumulator = Rc::new(RefCell::new(prover_accumulator_pre_wrap));
         let prover_transcript = Rc::new(RefCell::new(ProofTranscript::new(b"Jolt")));
-        let proofs = Rc::new(RefCell::new(HashMap::new()));
+        let proofs = Rc::new(RefCell::new(BTreeMap::new()));
         let commitments = Rc::new(RefCell::new(None));
 
         // Create prover state manager
@@ -459,7 +459,7 @@ where
             crate::poly::opening_proof::ProverOpeningAccumulator::<F>::new();
         let prover_accumulator = Rc::new(RefCell::new(prover_accumulator_pre_wrap));
         let prover_transcript = Rc::new(RefCell::new(ProofTranscript::new(b"Jolt")));
-        let proofs = Rc::new(RefCell::new(HashMap::new()));
+        let proofs = Rc::new(RefCell::new(BTreeMap::new()));
         let commitments = Rc::new(RefCell::new(None));
 
         // Create prover state manager

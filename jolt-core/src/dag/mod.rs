@@ -1,4 +1,5 @@
 pub mod jolt_dag;
+pub mod proof_serialization;
 pub mod stage;
 pub mod state_manager;
 
@@ -12,7 +13,7 @@ mod tests {
     use crate::utils::transcript::{KeccakTranscript, Transcript};
     use ark_bn254::Fr;
     use std::cell::RefCell;
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
     use std::rc::Rc;
     use tracer;
     use tracer::instruction::RV32IMCycle;
@@ -56,8 +57,8 @@ mod tests {
         let verifier_accumulator = Rc::new(RefCell::new(verifier_accumulator_pre_wrap));
         let prover_transcript = Rc::new(RefCell::new(KeccakTranscript::new(b"Jolt")));
         let verifier_transcript = Rc::new(RefCell::new(KeccakTranscript::new(b"Jolt")));
-        let proofs = Rc::new(RefCell::new(HashMap::new()));
-        let commitments = Rc::new(RefCell::new(None));
+        let proofs = Rc::new(RefCell::new(BTreeMap::new()));
+        let commitments = Rc::new(RefCell::new(vec![]));
 
         // Create state managers
         let mut prover_state_manager = state_manager::StateManager::new_prover(
