@@ -207,7 +207,8 @@ impl Model {
             match n {
                 NodeType::Node(n) => {
                     // Execute
-                    let res = Op::<i128>::f(&n.opkind, &inputs)?;
+                    let mut res = Op::<i128>::f(&n.opkind, &inputs)?;
+                    res.output.reshape(&n.out_dims)?;
                     debug!("opkind: {:#?}, instr: {instr:#?}, res: {res:#?}", n.opkind);
                     // see if any of the intermediate lookup calcs are the max
                     if !res.intermediate_lookups.is_empty() {

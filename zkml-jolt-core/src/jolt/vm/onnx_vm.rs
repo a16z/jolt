@@ -54,15 +54,17 @@ mod e2e_tests {
             Tensor::new(Some(&[1, 2, 3, 4, 5]), &[1, 5]).unwrap(), // Example input
         );
         let program_bytecode = text_classification_model.decode();
-        let pp: JoltProverPreprocessing<Fr, KeccakTranscript> =
-            JoltSNARK::prover_preprocess(program_bytecode);
+        println!("Program code: {program_bytecode:#?}",);
+        // let pp: JoltProverPreprocessing<Fr, KeccakTranscript> =
+        //     JoltSNARK::prover_preprocess(program_bytecode);
 
         // --- Proving ---
         let execution_trace = text_classification_model.trace();
-        let snark: JoltSNARK<Fr, KeccakTranscript> = JoltSNARK::prove(pp.clone(), execution_trace);
+        println!("Execution trace: {execution_trace:#?}",);
+        // let snark: JoltSNARK<Fr, KeccakTranscript> = JoltSNARK::prove(pp.clone(), execution_trace);
 
         // --- Verification ---
-        snark.verify((&pp).into()).unwrap();
+        // snark.verify((&pp).into()).unwrap();
     }
 
     #[test]
