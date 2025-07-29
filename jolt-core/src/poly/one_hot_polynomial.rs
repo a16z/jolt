@@ -11,9 +11,7 @@ use crate::msm::VariableBaseMSM;
 use crate::poly::commitment::dory::{DoryGlobals, JoltGroupWrapper};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::multilinear_polynomial::{
-    MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-};
+use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialBinding};
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::utils::expanding_table::ExpandingTable;
 use crate::utils::math::Math;
@@ -204,32 +202,38 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             let B = &shared_eq.B;
             let d_gruen = &shared_eq.D;
 
-            let mut gruen_eval_0 = F::zero();
-
-            if d_gruen.E_in_current_len() == 1 {
+            let gruen_eval_0 = if d_gruen.E_in_current_len() == 1 {
                 // E_in is fully bound
-                for j in 0..d_gruen.len() / 2 {
-                    let H_evals = H.sumcheck_evals(j, 2, BindingOrder::HighToLow);
-                    let d_eval = d_gruen.E_out_current()[j];
-                    let h_eval = H_evals[0];
-                    gruen_eval_0 += d_eval * h_eval;
-                }
+                (0..d_gruen.len() / 2)
+                    .into_par_iter()
+                    .map(|j| {
+                        let d_eval = d_gruen.E_out_current()[j];
+                        let h_eval = H.Z[j];
+                        d_eval * h_eval
+                    })
+                    .sum()
             } else {
                 // E_in has not been fully bound
-                let num_x_in_bits = d_gruen.E_out_current_len().log_2();
-                let x_bitmask = (1 << num_x_in_bits) - 1;
+                let num_x_out = d_gruen.E_out_current_len();
+                let num_x_in = d_gruen.E_in_current_len();
+                let num_x_out_bits = num_x_out.log_2();
 
-                for j in 0..d_gruen.len() / 2 {
-                    let H_evals = H.sumcheck_evals(j, 2, BindingOrder::HighToLow);
-                    let x_in = j >> num_x_in_bits;
-                    let x_out = j & x_bitmask;
-                    let d_e_out_eval = d_gruen.E_out_current()[x_out];
-                    let d_e_in_eval = d_gruen.E_in_current()[x_in];
-                    let h_eval = H_evals[0];
-
-                    gruen_eval_0 += d_e_out_eval * d_e_in_eval * h_eval;
-                }
-            }
+                (0..num_x_out)
+                    .into_par_iter()
+                    .map(|x_out| {
+                        let mut inner_sum = F::zero();
+                        for x_in in 0..num_x_in {
+                            let j = (x_in << num_x_out_bits) | x_out;
+                            if j < d_gruen.len() / 2 {
+                                let d_e_in_eval = d_gruen.E_in_current()[x_in];
+                                let h_eval = H.Z[j];
+                                inner_sum += d_e_in_eval * h_eval;
+                            }
+                        }
+                        inner_sum * d_gruen.E_out_current()[x_out]
+                    })
+                    .sum()
+            };
 
             let eq_r_address_claim = B.final_sumcheck_claim();
             let gruen_univariate_evals: [F; 2] =

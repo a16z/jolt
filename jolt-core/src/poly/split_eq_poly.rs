@@ -352,7 +352,7 @@ mod tests {
 
     #[test]
     fn bind_low_high() {
-        const NUM_VARS: usize = 3;
+        const NUM_VARS: usize = 10;
         let mut rng = test_rng();
         let w: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
             .take(NUM_VARS)
@@ -362,177 +362,39 @@ mod tests {
         let mut split_eq = GruenSplitEqPolynomial::new(&w, BindingOrder::LowToHigh);
         assert_eq!(regular_eq, split_eq.merge());
 
-        println!("\n=== Initial state ===");
-        println!("w vector length: {}", w.len());
-        println!("Regular EQ poly len: {}", regular_eq.len());
-        println!("Split EQ state:");
-        println!("  current_index: {}", split_eq.current_index);
-        println!("  current_scalar: {:?}", split_eq.current_scalar);
-        println!("  w length: {}", split_eq.w.len());
-        println!("  E_in_vec length: {}", split_eq.E_in_vec.len());
-        println!("  E_out_vec length: {}", split_eq.E_out_vec.len());
-        if !split_eq.E_in_vec.is_empty() {
-            println!("  E_in_vec[0] length: {}", split_eq.E_in_vec[0].len());
-        }
-        if !split_eq.E_out_vec.is_empty() {
-            println!("  E_out_vec[0] length: {}", split_eq.E_out_vec[0].len());
-        }
-        println!(
-            "First few evals of regular_eq: {:?}",
-            &regular_eq.Z[..8.min(regular_eq.len())]
-        );
-
         for i in 0..NUM_VARS {
-            println!("\n=== Iteration {} ===", i + 1);
             let r = Fr::random(&mut rng);
-            println!("Binding with r = {:?}", r);
-
-            println!("Before binding:");
-            println!("  Regular EQ len: {}", regular_eq.len());
-            println!(
-                "  Split EQ - current_index: {}, current_scalar: {:?}",
-                split_eq.current_index, split_eq.current_scalar
-            );
-            println!(
-                "  E_in_vec.len(): {}, E_out_vec.len(): {}",
-                split_eq.E_in_vec.len(),
-                split_eq.E_out_vec.len()
-            );
-
             regular_eq.bound_poly_var_bot(&r);
             split_eq.bind(r);
 
-            println!("After binding:");
-            println!("  Regular EQ len: {}", regular_eq.len());
-            println!(
-                "  Split EQ - current_index: {}, current_scalar: {:?}",
-                split_eq.current_index, split_eq.current_scalar
-            );
-            println!(
-                "  E_in_vec.len(): {}, E_out_vec.len(): {}",
-                split_eq.E_in_vec.len(),
-                split_eq.E_out_vec.len()
-            );
-
             let merged = split_eq.merge();
-            println!("  Merged poly len: {}", merged.len());
-
-            if regular_eq.len() <= 8 {
-                println!(
-                    "  Regular EQ evals: {:?}",
-                    &regular_eq.Z[..regular_eq.len()]
-                );
-                println!("  Merged evals: {:?}", &merged.Z[..merged.len()]);
-            } else {
-                println!("  First 4 regular EQ evals: {:?}", &regular_eq.Z[..4]);
-                println!("  First 4 merged evals: {:?}", &merged.Z[..4]);
-            }
-
             assert_eq!(regular_eq.Z[..regular_eq.len()], merged.Z[..merged.len()]);
         }
-        println!("\n=== Test completed successfully ===");
     }
 
     #[test]
     fn bind_high_low() {
-        const NUM_VARS: usize = 3;
+        const NUM_VARS: usize = 10;
         let mut rng = test_rng();
         let w: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
             .take(NUM_VARS)
             .collect();
 
-        // Create regular polynomial with original w
         let mut regular_eq = DensePolynomial::new(EqPolynomial::evals(&w));
-
-        // Create high-to-low split eq polynomial
         let mut split_eq_high_to_low = GruenSplitEqPolynomial::new(&w, BindingOrder::HighToLow);
-
-        // Debug initial state
-        println!("Initial state debug:");
-        println!("  w.len() = {}", w.len());
-        println!("  E_in_vec.len() = {}", split_eq_high_to_low.E_in_vec.len());
-        println!(
-            "  E_out_vec.len() = {}",
-            split_eq_high_to_low.E_out_vec.len()
-        );
-
-        // Print all vector lengths in E_in_vec
-        for (i, vec) in split_eq_high_to_low.E_in_vec.iter().enumerate() {
-            println!("  E_in_vec[{}].len() = {}", i, vec.len());
-        }
-
-        // Print all vector lengths in E_out_vec
-        for (i, vec) in split_eq_high_to_low.E_out_vec.iter().enumerate() {
-            println!("  E_out_vec[{}].len() = {}", i, vec.len());
-        }
-
-        if !split_eq_high_to_low.E_in_vec.is_empty() {
-            println!(
-                "  E_in_current().len() = {}",
-                split_eq_high_to_low.E_in_current().len()
-            );
-        }
-        if !split_eq_high_to_low.E_out_vec.is_empty() {
-            println!(
-                "  E_out_current().len() = {}",
-                split_eq_high_to_low.E_out_current().len()
-            );
-        }
-        println!("  current_index = {}", split_eq_high_to_low.current_index);
 
         // Verify they start equal
         assert_eq!(regular_eq, split_eq_high_to_low.merge());
 
-        println!("\n=== Testing High-to-Low binding ===");
-        println!("w vector length: {}", w.len());
-        println!("Regular EQ poly initial len: {}", regular_eq.len());
-        println!("Split EQ High-to-Low state:");
-        println!("  current_index: {}", split_eq_high_to_low.current_index);
-        println!(
-            "  current_scalar: {:?}",
-            split_eq_high_to_low.current_scalar
-        );
-
         // Bind with same random values, but regular_eq uses top and split uses new high-to-low
         for i in 0..NUM_VARS {
-            println!("\n=== Iteration {} ===", i + 1);
             let r = Fr::random(&mut rng);
-            println!("Binding with r = {:?}", r);
-
-            println!("Before binding:");
-            println!("  Regular EQ len: {}", regular_eq.len());
-            println!(
-                "  Split EQ - current_index: {}",
-                split_eq_high_to_low.current_index
-            );
-
             regular_eq.bound_poly_var_top(&r);
             split_eq_high_to_low.bind(r);
-
-            println!("After binding:");
-            println!("  Regular EQ len: {}", regular_eq.len());
-            println!(
-                "  Split EQ - current_index: {}",
-                split_eq_high_to_low.current_index
-            );
-
             let merged = split_eq_high_to_low.merge();
-            println!("  Merged poly len: {}", merged.len());
-
-            if regular_eq.len() <= 8 {
-                println!(
-                    "  Regular EQ evals: {:?}",
-                    &regular_eq.Z[..regular_eq.len()]
-                );
-                println!("  Merged evals: {:?}", &merged.Z[..merged.len()]);
-            } else {
-                println!("  First 4 regular EQ evals: {:?}", &regular_eq.Z[..4]);
-                println!("  First 4 merged evals: {:?}", &merged.Z[..4]);
-            }
 
             assert_eq!(regular_eq.Z[..regular_eq.len()], merged.Z[..merged.len()]);
         }
-        println!("\n=== High-to-Low test completed successfully ===");
     }
 
     #[test]
