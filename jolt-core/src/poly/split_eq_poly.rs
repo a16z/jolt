@@ -362,7 +362,7 @@ mod tests {
         let mut split_eq = GruenSplitEqPolynomial::new(&w, BindingOrder::LowToHigh);
         assert_eq!(regular_eq, split_eq.merge());
 
-        for i in 0..NUM_VARS {
+        for _ in 0..NUM_VARS {
             let r = Fr::random(&mut rng);
             regular_eq.bound_poly_var_bot(&r);
             split_eq.bind(r);
@@ -387,7 +387,7 @@ mod tests {
         assert_eq!(regular_eq, split_eq_high_to_low.merge());
 
         // Bind with same random values, but regular_eq uses top and split uses new high-to-low
-        for i in 0..NUM_VARS {
+        for _ in 0..NUM_VARS {
             let r = Fr::random(&mut rng);
             regular_eq.bound_poly_var_top(&r);
             split_eq_high_to_low.bind(r);
