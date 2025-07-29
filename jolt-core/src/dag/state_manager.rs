@@ -23,7 +23,7 @@ pub enum ProofKeys {
     Stage3Sumcheck,
     Stage4Sumcheck,
     ReducedOpeningProof,
-    RamSumcheckSwitchIndex,
+    TwistSumcheckSwitchIndex,
     RamK,
 }
 

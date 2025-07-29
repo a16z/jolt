@@ -85,9 +85,10 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = T / num_chunks;
 
-        // HACK
+        // HACK: Both the RAM and registers Twist instances use the same switch index;
+        // it may already be in the state manager at this point.
         state_manager.proofs.borrow_mut().insert(
-            ProofKeys::RamSumcheckSwitchIndex,
+            ProofKeys::TwistSumcheckSwitchIndex,
             ProofData::SumcheckSwitchIndex(chunk_size.log_2()),
         );
 
@@ -390,7 +391,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         let sumcheck_switch_index = match state_manager
             .proofs
             .borrow()
-            .get(&ProofKeys::RamSumcheckSwitchIndex)
+            .get(&ProofKeys::TwistSumcheckSwitchIndex)
         {
             Some(ProofData::SumcheckSwitchIndex(index)) => *index,
             _ => panic!("SumcheckSwitchIndex not found"),
