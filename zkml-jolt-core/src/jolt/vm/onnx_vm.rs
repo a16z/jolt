@@ -67,10 +67,7 @@ mod e2e_tests {
     use crate::subprotocols::sparse_dense_shout::TestInstructionTrait;
 
     use crate::{
-        jolt::{
-            instruction::add::ADD,
-            vm::{JoltProverPreprocessing, JoltSNARK, onnx_vm::ONNXLookup},
-        },
+        jolt::vm::{JoltProverPreprocessing, JoltSNARK, onnx_vm::ONNXLookup},
         program::ONNXProgram,
     };
     use ark_bn254::Fr;

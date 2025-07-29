@@ -9,7 +9,7 @@ use crate::jolt::lookup_trace::LookupTrace;
 use crate::jolt::vm::JoltProverPreprocessing;
 use crate::jolt::witness::CommittedPolynomials;
 use jolt_core::field::JoltField;
-use jolt_core::jolt::instruction::{InstructionFlags, LookupQuery};
+use jolt_core::jolt::instruction::LookupQuery;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::r1cs::key::UniformSpartanKey;

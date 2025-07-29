@@ -19,8 +19,6 @@ use jolt_core::{
     utils::small_value::NUM_SVO_ROUNDS,
 };
 use onnx_tracer::trace_types::ONNXCycle;
-use serde::Deserialize;
-use serde::Serialize;
 use std::marker::PhantomData;
 use thiserror::Error;
 use tracing::{Level, span};
