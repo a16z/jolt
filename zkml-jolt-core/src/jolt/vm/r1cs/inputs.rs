@@ -5,7 +5,9 @@
 )]
 
 use super::spartan::UniformSpartanProof;
+use crate::jolt::lookup_trace::LookupTrace;
 use crate::jolt::vm::JoltProverPreprocessing;
+use crate::jolt::witness::CommittedPolynomials;
 use jolt_core::field::JoltField;
 use jolt_core::jolt::instruction::{InstructionFlags, LookupQuery};
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
@@ -158,13 +160,10 @@ impl JoltONNXR1CSInputs {
             //             .collect();
             //         coeffs.into()
             //     }
-            //     JoltONNXR1CSInputs::Rd => {
-            //         let coeffs: Vec<u8> = trace
-            //             .par_iter()
-            //             .map(|cycle| cycle.rd_write().0 as u8)
-            //             .collect();
-            //         coeffs.into()
-            //     }
+            JoltONNXR1CSInputs::Rd => {
+                let coeffs: Vec<u8> = trace.par_iter().map(|cycle| cycle.td() as u8).collect();
+                coeffs.into()
+            }
             //     JoltONNXR1CSInputs::Imm => {
             //         let coeffs: Vec<i64> = trace
             //             .par_iter()
@@ -222,42 +221,48 @@ impl JoltONNXR1CSInputs {
             //             .collect();
             //         coeffs.into()
             //     }
-            // JoltONNXR1CSInputs::LeftInstructionInput => {
-            //     CommittedPolynomials::LeftInstructionInput.generate_witness(preprocessing, trace)
-            // }
-            // JoltONNXR1CSInputs::RightInstructionInput => {
-            //     CommittedPolynomials::RightInstructionInput.generate_witness(preprocessing, trace)
-            // }
-            //     JoltONNXR1CSInputs::LeftLookupOperand => {
-            //         let coeffs: Vec<u64> = trace
-            //             .par_iter()
-            //             .map(|cycle| LookupQuery::<32>::to_lookup_operands(cycle).0)
-            //             .collect();
-            //         coeffs.into()
-            //     }
-            //     JoltONNXR1CSInputs::RightLookupOperand => {
-            //         let coeffs: Vec<u64> = trace
-            //             .par_iter()
-            //             .map(|cycle| LookupQuery::<32>::to_lookup_operands(cycle).1)
-            //             .collect();
-            //         coeffs.into()
-            //     }
-            //     JoltONNXR1CSInputs::Product => {
-            //         CommittedPolynomials::Product.generate_witness(preprocessing, trace)
-            //     }
-            //     JoltONNXR1CSInputs::WriteLookupOutputToRD => {
-            //         CommittedPolynomials::WriteLookupOutputToRD.generate_witness(preprocessing, trace)
-            //     }
+            JoltONNXR1CSInputs::LeftInstructionInput => {
+                CommittedPolynomials::LeftInstructionInput.generate_witness(preprocessing, trace)
+            }
+            JoltONNXR1CSInputs::RightInstructionInput => {
+                CommittedPolynomials::RightInstructionInput.generate_witness(preprocessing, trace)
+            }
+            JoltONNXR1CSInputs::LeftLookupOperand => {
+                let coeffs: Vec<u64> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        LookupQuery::<64>::to_lookup_operands(&cycle.to_lookup().unwrap() /* TODO: Remove this unwrap, figure out how lasso handle no-ops */).0
+                    })
+                    .collect();
+                coeffs.into()
+            }
+            JoltONNXR1CSInputs::RightLookupOperand => {
+                let coeffs: Vec<u64> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        LookupQuery::<64>::to_lookup_operands(&cycle.to_lookup().unwrap() /* TODO: Remove this unwrap, figure out how lasso handle no-ops */).1
+                    })
+                    .collect();
+                coeffs.into()
+            }
+            JoltONNXR1CSInputs::Product => {
+                CommittedPolynomials::Product.generate_witness(preprocessing, trace)
+            }
+            JoltONNXR1CSInputs::WriteLookupOutputToRD => {
+                CommittedPolynomials::WriteLookupOutputToRD.generate_witness(preprocessing, trace)
+            }
             //     JoltONNXR1CSInputs::WritePCtoRD => {
             //         CommittedPolynomials::WritePCtoRD.generate_witness(preprocessing, trace)
             //     }
-            //     JoltONNXR1CSInputs::LookupOutput => {
-            //         let coeffs: Vec<u64> = trace
-            //             .par_iter()
-            //             .map(LookupQuery::<32>::to_lookup_output)
-            //             .collect();
-            //         coeffs.into()
-            //     }
+            JoltONNXR1CSInputs::LookupOutput => {
+                let coeffs: Vec<u64> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        LookupQuery::<64>::to_lookup_output(&cycle.to_lookup().unwrap() /* TODO: Remove this unwrap, figure out how lasso handle no-ops */)
+                    })
+                    .collect();
+                coeffs.into()
+            }
             //     JoltONNXR1CSInputs::NextUnexpandedPC => {
             //         let coeffs: Vec<u64> = trace
             //             .par_iter()

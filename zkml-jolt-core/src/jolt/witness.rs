@@ -1,10 +1,10 @@
 use itertools::Itertools;
-use onnx_tracer::trace_types::ONNXCycle;
+use onnx_tracer::trace_types::{CircuitFlags, ONNXCycle};
 use rayon::prelude::*;
 
 use jolt_core::{
     field::JoltField,
-    jolt::vm::{JoltProverPreprocessing, ram::remap_address},
+    jolt::vm::ram::remap_address,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         multilinear_polynomial::MultilinearPolynomial, one_hot_polynomial::OneHotPolynomial,
@@ -12,7 +12,9 @@ use jolt_core::{
     utils::transcript::Transcript,
 };
 
-use jolt_core::jolt::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
+use jolt_core::jolt::instruction::{InstructionFlags, LookupQuery};
+
+use crate::jolt::{lookup_trace::LookupTrace, vm::JoltProverPreprocessing};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum CommittedPolynomials {
@@ -84,53 +86,56 @@ impl CommittedPolynomials {
             .0
     }
 
-    pub fn generate_witness<F, PCS, ProofTranscript>(
+    pub fn generate_witness<F, ProofTranscript>(
         &self,
-        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
+        preprocessing: &JoltProverPreprocessing<F, ProofTranscript>,
         trace: &[ONNXCycle],
     ) -> MultilinearPolynomial<F>
     where
         F: JoltField,
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
         ProofTranscript: Transcript,
     {
         match self {
-            //     CommittedPolynomials::LeftInstructionInput => {
-            //         let coeffs: Vec<u64> = trace
-            //             .par_iter()
-            //             .map(|cycle| LookupQuery::<32>::to_instruction_inputs(cycle).0)
-            //             .collect();
-            //         coeffs.into()
-            //     }
-            //     CommittedPolynomials::RightInstructionInput => {
-            //         let coeffs: Vec<i64> = trace
-            //             .par_iter()
-            //             .map(|cycle| LookupQuery::<32>::to_instruction_inputs(cycle).1)
-            //             .collect();
-            //         coeffs.into()
-            //     }
-            //     CommittedPolynomials::Product => {
-            //         let coeffs: Vec<u64> = trace
-            //             .par_iter()
-            //             .map(|cycle| {
-            //                 let (left_input, right_input) =
-            //                     LookupQuery::<32>::to_instruction_inputs(cycle);
-            //                 left_input * right_input as u64
-            //             })
-            //             .collect();
-            //         coeffs.into()
-            //     }
-            //     CommittedPolynomials::WriteLookupOutputToRD => {
-            //         let coeffs: Vec<u8> = trace
-            //             .par_iter()
-            //             .map(|cycle| {
-            //                 let flag = cycle.instruction().circuit_flags()
-            //                     [CircuitFlags::WriteLookupOutputToRD as usize];
-            //                 (cycle.rd_write().0 as u8) * (flag as u8)
-            //             })
-            //             .collect();
-            //         coeffs.into()
-            //     }
+            CommittedPolynomials::LeftInstructionInput => {
+                let coeffs: Vec<u64> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        LookupQuery::<64>::to_instruction_inputs(&cycle.to_lookup().unwrap() /* TODO: Remove this unwrap, figure out how lasso handle no-ops */).0
+                    })
+                    .collect();
+                coeffs.into()
+            }
+            CommittedPolynomials::RightInstructionInput => {
+                let coeffs: Vec<i64> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        LookupQuery::<64>::to_instruction_inputs(&cycle.to_lookup().unwrap() /* TODO: Remove this unwrap, figure out how lasso handle no-ops */).1
+                    })
+                    .collect();
+                coeffs.into()
+            }
+            CommittedPolynomials::Product => {
+                let coeffs: Vec<u64> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        let (left_input, right_input) =
+                            LookupQuery::<64>::to_instruction_inputs(&cycle.to_lookup().unwrap() /* TODO: Remove this unwrap, figure out how lasso handle no-ops */);
+                        left_input * right_input as u64
+                    })
+                    .collect();
+                coeffs.into()
+            }
+            CommittedPolynomials::WriteLookupOutputToRD => {
+                let coeffs: Vec<u8> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        let flag = cycle.instr.to_circuit_flags()
+                            [CircuitFlags::WriteLookupOutputToRD as usize];
+                        (cycle.td_write() as u8) * (flag as u8)
+                    })
+                    .collect();
+                coeffs.into()
+            }
             //     CommittedPolynomials::WritePCtoRD => {
             //         let coeffs: Vec<u8> = trace
             //             .par_iter()

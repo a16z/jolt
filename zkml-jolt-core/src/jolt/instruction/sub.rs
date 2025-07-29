@@ -5,8 +5,9 @@ use jolt_core::jolt::instruction::{
 use jolt_core::jolt::lookup_table::{LookupTables, range_check::RangeCheckTable};
 use rand::RngCore;
 use rand::prelude::StdRng;
+use serde::{Deserialize, Serialize};
 
-#[derive(Default)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SUB<const WORD_SIZE: usize>(pub u64, pub u64);
 
 impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for SUB<WORD_SIZE> {

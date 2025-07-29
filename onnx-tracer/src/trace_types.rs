@@ -26,9 +26,30 @@ impl ONNXCycle {
         }
     }
 
+    pub fn td(&self) -> usize {
+        self.instr.td.unwrap_or(0)
+    }
+
+    // HACKS(Forpee)
     pub fn td_write(&self) -> i128 {
         self.memory_state
             .td_post_val
+            .as_ref()
+            .map(|t| t.inner[0])
+            .unwrap_or(0)
+    }
+
+    pub fn ts1_val(&self) -> i128 {
+        self.memory_state
+            .ts1_val
+            .as_ref()
+            .map(|t| t.inner[0])
+            .unwrap_or(0)
+    }
+
+    pub fn ts2_val(&self) -> i128 {
+        self.memory_state
+            .ts2_val
             .as_ref()
             .map(|t| t.inner[0])
             .unwrap_or(0)

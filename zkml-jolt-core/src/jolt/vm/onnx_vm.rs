@@ -1,10 +1,80 @@
+use jolt_core::jolt::instruction::LookupQuery;
+
+use crate::jolt::instruction::{add::ADD, mul::MUL, sub::SUB};
+
+const WORD_SIZE: usize = 64;
+
+macro_rules! define_lookup_enum {
+    (
+        enum $enum_name:ident,
+        const $word_size:ident,
+        trait $trait_name:ident,
+        $($variant:ident : $inner:ty),+ $(,)?
+    ) => {
+        #[derive(Debug)]
+        pub enum $enum_name {
+            $(
+                $variant($inner),
+            )+
+        }
+
+        impl $trait_name<$word_size> for $enum_name {
+            fn to_instruction_inputs(&self) -> (u64, i64) {
+                match self {
+                    $(
+                        $enum_name::$variant(inner) => inner.to_instruction_inputs(),
+                    )+
+                }
+            }
+
+            fn to_lookup_index(&self) -> u64 {
+                match self {
+                    $(
+                        $enum_name::$variant(inner) => inner.to_lookup_index(),
+                    )+
+                }
+            }
+
+            fn to_lookup_operands(&self) -> (u64, u64) {
+                match self {
+                    $(
+                        $enum_name::$variant(inner) => inner.to_lookup_operands(),
+                    )+
+                }
+            }
+
+            fn to_lookup_output(&self) -> u64 {
+                match self {
+                    $(
+                        $enum_name::$variant(inner) => inner.to_lookup_output(),
+                    )+
+                }
+            }
+        }
+    };
+}
+
+define_lookup_enum!(
+    enum ONNXLookup,
+    const WORD_SIZE,
+    trait LookupQuery,
+    Add: ADD<WORD_SIZE>,
+    Sub: SUB<WORD_SIZE>,
+    Mul: MUL<WORD_SIZE>,
+);
 #[cfg(test)]
 mod e2e_tests {
+    use crate::subprotocols::sparse_dense_shout::TestInstructionTrait;
+
     use crate::{
-        jolt::vm::{JoltProverPreprocessing, JoltSNARK},
+        jolt::{
+            instruction::add::ADD,
+            vm::{JoltProverPreprocessing, JoltSNARK, onnx_vm::ONNXLookup},
+        },
         program::ONNXProgram,
     };
     use ark_bn254::Fr;
+    use jolt_core::jolt::instruction::LookupQuery;
     use jolt_core::utils::transcript::KeccakTranscript;
     use onnx_tracer::{custom_addsubmul_model, logger::init_logger, model, tensor::Tensor};
 
