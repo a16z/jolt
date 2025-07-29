@@ -3,8 +3,8 @@ use tracer::JoltDevice;
 
 use crate::{
     field::JoltField,
-    jolt::vm::ram::remap_address,
     poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
+    zkvm::ram::remap_address,
 };
 
 pub struct ProgramIOPolynomial<F: JoltField> {

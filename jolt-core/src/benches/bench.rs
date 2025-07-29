@@ -1,17 +1,17 @@
 #![allow(unused_imports)]
 #![allow(clippy::extra_unused_type_parameters)]
 
-use crate::dag::{jolt_dag, state_manager};
 use crate::field::JoltField;
 use crate::host;
-use crate::jolt::vm::rv32im_vm::RV32IMJoltVM;
-use crate::jolt::vm::{Jolt, JoltProverPreprocessing, JoltVerifierPreprocessing};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::{DoryCommitmentScheme as Dory, DoryGlobals};
 use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::subprotocols::twist::{TwistAlgorithm, TwistProof};
 use crate::utils::math::Math;
 use crate::utils::transcript::{KeccakTranscript, Transcript};
+use crate::zkvm::dag::{jolt_dag, state_manager};
+use crate::zkvm::RV32IMJoltVM;
+use crate::zkvm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
 use ark_bn254::{Bn254, Fr};
 use ark_std::test_rng;
 use rand_core::RngCore;
@@ -367,7 +367,7 @@ where
         let prover_accumulator = Rc::new(RefCell::new(prover_accumulator_pre_wrap));
         let prover_transcript = Rc::new(RefCell::new(ProofTranscript::new(b"Jolt")));
         let proofs = Rc::new(RefCell::new(BTreeMap::new()));
-        let commitments = Rc::new(RefCell::new(None));
+        let commitments = Rc::new(RefCell::new(vec![]));
 
         // Create prover state manager
         let mut prover_state_manager = state_manager::StateManager::new_prover(
@@ -460,7 +460,7 @@ where
         let prover_accumulator = Rc::new(RefCell::new(prover_accumulator_pre_wrap));
         let prover_transcript = Rc::new(RefCell::new(ProofTranscript::new(b"Jolt")));
         let proofs = Rc::new(RefCell::new(BTreeMap::new()));
-        let commitments = Rc::new(RefCell::new(None));
+        let commitments = Rc::new(RefCell::new(vec![]));
 
         // Create prover state manager
         let mut prover_state_manager = state_manager::StateManager::new_prover(

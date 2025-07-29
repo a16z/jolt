@@ -21,13 +21,13 @@ use super::{
 };
 use crate::{
     field::JoltField,
-    jolt::witness::{CommittedPolynomial, VirtualPolynomial},
     poly::{
         multilinear_polynomial::PolynomialEvaluation,
         one_hot_polynomial::{OneHotPolynomialProverOpening, OneHotSumcheckState},
     },
     subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance, SumcheckInstanceProof},
     utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
+    zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
 
 pub type Endianness = bool;
