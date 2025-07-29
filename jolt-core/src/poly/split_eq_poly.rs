@@ -242,6 +242,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         q_quadratic_coeff: F,
         s_0_plus_s_1: F,
     ) -> [F; 3] {
+        assert_eq!(self.binding_order, BindingOrder::LowToHigh);
         // We want to compute the evaluations of the cubic polynomial s(X) = l(X) * q(X), where
         // l is linear, and q is quadratic, at the points {0, 2, 3}.
         //
@@ -288,6 +289,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     ///
     /// important: This assumes `HighToLow` ordering (as used in the stage 5 batching sumcheck)
     pub fn gruen_evals_deg_2(&self, q_0: F, previous_claim: F) -> [F; 2] {
+        assert_eq!(self.binding_order, BindingOrder::HighToLow);
         // We want to compute the evaluations of the quadratic polynomial s(X) = l(X) * q(X), where
         // l is linear, and q is linear, at the points {0, 2}.
         //

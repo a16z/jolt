@@ -56,6 +56,8 @@ pub struct OneHotSumcheckState<F: JoltField> {
     pub B: MultilinearPolynomial<F>,
     /// D stores eq(r', j), see Equation (54) but with Gruen X Dao-Thaler optimizations
     pub D: GruenSplitEqPolynomial<F>,
+    /// Pre-computed merged D coefficients for G computation
+    pub D_coeffs_for_G: Vec<F>,
     /// F will maintain an array that, at the end of sumcheck round m, has size 2^m
     /// and stores all 2^m values eq((k_1, ..., k_m), (r_1, ..., r_m))
     pub F: ExpandingTable<F>,
@@ -72,9 +74,12 @@ impl<F: JoltField> OneHotSumcheckState<F> {
         // See Equation (55)
         let mut F = ExpandingTable::new(K);
         F.reset(F::one());
+        let D = GruenSplitEqPolynomial::new(r_cycle, BindingOrder::HighToLow);
+        let D_coeffs_for_G = D.merge().Z;
         Self {
             B: MultilinearPolynomial::from(EqPolynomial::evals(r_address)),
-            D: GruenSplitEqPolynomial::new(r_cycle, BindingOrder::HighToLow),
+            D,
+            D_coeffs_for_G,
             F,
             num_variables_bound: 0,
         }
@@ -100,9 +105,8 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
         let T = polynomial.nonzero_indices.len();
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = (T / num_chunks).max(1);
-        let D = &self.eq_state.lock().unwrap().D;
+        let D_coeffs_for_G = &self.eq_state.lock().unwrap().D_coeffs_for_G;
 
-        let D_full_table = D.merge();
         // Compute G as described in Section 6.3
         let G = polynomial
             .nonzero_indices
@@ -113,7 +117,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                 let mut j = chunk_index * chunk_size;
                 for k in chunk {
                     if let Some(k) = k {
-                        result[*k] += D_full_table[j];
+                        result[*k] += D_coeffs_for_G[j];
                     }
                     j += 1;
                 }
@@ -215,22 +219,18 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             } else {
                 // E_in has not been fully bound
                 let num_x_out = d_gruen.E_out_current_len();
-                let num_x_in = d_gruen.E_in_current_len();
                 let num_x_out_bits = num_x_out.log_2();
+                let d_e_in = d_gruen.E_in_current();
+                let d_e_out = d_gruen.E_out_current();
+                let max_j = d_gruen.len() / 2;
 
-                (0..num_x_out)
+                (0..max_j)
                     .into_par_iter()
-                    .map(|x_out| {
-                        let mut inner_sum = F::zero();
-                        for x_in in 0..num_x_in {
-                            let j = (x_in << num_x_out_bits) | x_out;
-                            if j < d_gruen.len() / 2 {
-                                let d_e_in_eval = d_gruen.E_in_current()[x_in];
-                                let h_eval = H.Z[j];
-                                inner_sum += d_e_in_eval * h_eval;
-                            }
-                        }
-                        inner_sum * d_gruen.E_out_current()[x_out]
+                    .map(|j| {
+                        let x_out = j & ((1 << num_x_out_bits) - 1);
+                        let x_in = j >> num_x_out_bits;
+                        let h_eval = H.Z[j];
+                        d_e_in[x_in] * d_e_out[x_out] * h_eval
                     })
                     .sum()
             };
