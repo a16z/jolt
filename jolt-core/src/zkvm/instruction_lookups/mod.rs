@@ -24,12 +24,12 @@ pub mod booleanity;
 pub mod hamming_weight;
 pub mod read_raf_checking;
 
-pub const WORD_SIZE: usize = 32;
+pub const WORD_SIZE: usize = 64;
 const LOG_K: usize = WORD_SIZE * 2;
-const PHASES: usize = 4;
+const PHASES: usize = 8;
 const LOG_M: usize = LOG_K / PHASES;
 const M: usize = 1 << LOG_M;
-pub const D: usize = 8;
+pub const D: usize = 16;
 pub const LOG_K_CHUNK: usize = LOG_K / D;
 pub const K_CHUNK: usize = 1 << LOG_K_CHUNK;
 const RA_PER_LOG_M: usize = LOG_M / LOG_K_CHUNK;
