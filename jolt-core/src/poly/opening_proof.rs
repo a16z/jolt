@@ -197,59 +197,43 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
         let shared_eq = self.eq_poly.lock().unwrap();
         let polynomial = self.polynomial.as_ref().unwrap();
         let gruen_eq = &shared_eq.eq_poly;
-        
+
         // Compute q(0) = sum of polynomial(i) * eq(r, i) for i in [0, mle_half)
         let mle_half = polynomial.len() / 2;
         let q_0 = if gruen_eq.E_in_current_len() <= 1 {
-            // E_in is fully bound or nearly fully bound
+            // E_in is fully bound
             (0..mle_half)
                 .into_par_iter()
                 .map(|j| {
-                    let eq_eval = if j < gruen_eq.E_out_current_len() {
-                        gruen_eq.E_out_current()[j]
-                    } else {
-                        // Handle the case where we're beyond the current E_out size
-                        F::zero()
-                    };
+                    let eq_eval = gruen_eq.E_out_current()[j];
                     let poly_eval = polynomial.get_bound_coeff(j);
                     eq_eval * poly_eval
                 })
                 .sum()
         } else {
-            // E_in has not been fully bound - use split representation
             let num_x_out = gruen_eq.E_out_current_len();
-            let num_x_out_bits = if num_x_out > 1 { num_x_out.log_2() } else { 0 };
+            let num_x_in = gruen_eq.E_in_current_len();
             let d_e_in = gruen_eq.E_in_current();
             let d_e_out = gruen_eq.E_out_current();
-            
-            (0..mle_half)
+
+            (0..num_x_in)
                 .into_par_iter()
-                .map(|j| {
-                    let x_out = if num_x_out_bits > 0 {
-                        j & ((1 << num_x_out_bits) - 1)
-                    } else {
-                        0usize
-                    };
-                    let x_in = if num_x_out_bits > 0 {
-                        j >> num_x_out_bits
-                    } else {
-                        j
-                    };
-                    
-                    let eq_eval = if x_in < d_e_in.len() && x_out < d_e_out.len() {
-                        d_e_in[x_in] * d_e_out[x_out]
-                    } else {
-                        F::zero()
-                    };
-                    let poly_eval = polynomial.get_bound_coeff(j);
-                    eq_eval * poly_eval
+                .map(|x_in| {
+                    let inner_sum: F = (0..num_x_out)
+                        .into_par_iter()
+                        .map(|x_out| {
+                            let j = (x_in << num_x_out.log_2()) | x_out;
+                            let poly_eval = polynomial.get_bound_coeff(j);
+                            d_e_out[x_out] * poly_eval
+                        })
+                        .sum();
+                    d_e_in[x_in] * inner_sum
                 })
                 .sum()
         };
-        
-        // Use gruen_evals_deg_2 to compute the evaluations efficiently
+
         let gruen_univariate_evals = gruen_eq.gruen_evals_deg_2(q_0, previous_claim);
-        
+
         vec![gruen_univariate_evals[0], gruen_univariate_evals[1]]
     }
 
@@ -659,7 +643,7 @@ where
         claims: &[F],
     ) {
         assert_eq!(polynomials.len(), claims.len());
-        
+
         // Use Gruen optimization for the eq polynomial
         let shared_eq = Arc::new(Mutex::new(SharedEqPolynomial::new_gruen(&opening_point)));
 
