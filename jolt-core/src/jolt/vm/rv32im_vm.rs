@@ -64,12 +64,12 @@ pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
     }
 }
 
-pub type ProofTranscript = KeccakTranscript;
+pub type JoltTranscript = KeccakTranscript;
 pub type PCS = DoryCommitmentScheme;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltProofBundle {
-    pub proof: RV32IMJoltProof<Fr, PCS, ProofTranscript>,
+    pub proof: RV32IMJoltProof<Fr, PCS, JoltTranscript>,
 }
 
 impl Serializable for JoltProofBundle {}

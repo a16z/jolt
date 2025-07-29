@@ -557,7 +557,7 @@ impl MacroBuilder {
                 JoltProverPreprocessing,
                 JoltVerifierPreprocessing,
                 Jolt,
-                ProofTranscript,
+                JoltTranscript,
                 RV32IMJoltVM,
                 RV32IMJoltProof,
                 MemoryConfig,
@@ -696,7 +696,7 @@ impl MacroBuilder {
             #[wasm_bindgen]
             #[cfg(all(target_arch = "wasm32", not(feature = "guest")))]
             pub fn #verify_wasm_fn_name(preprocessing_data: &[u8], proof_bytes: &[u8]) -> bool {
-                use jolt::{Jolt, JoltProofBundle, RV32IMJoltVM, ProofTranscript, Serializable};
+                use jolt::{Jolt, JoltProofBundle, RV32IMJoltVM, JoltTranscript, Serializable};
 
                 let decoded_preprocessing_data: DecodedData = deserialize_from_bin(preprocessing_data).unwrap();
                 let proof = JoltProofBundle::deserialize_from_bytes(proof_bytes).unwrap();

@@ -7,7 +7,7 @@ pub use jolt_core::host;
 pub use jolt_core::jolt::lookup_table;
 pub use jolt_core::jolt::vm::{
     rv32im_vm::{
-        JoltProofBundle, ProofTranscript, RV32IMJoltProof, RV32IMJoltVM, Serializable, PCS,
+        JoltProofBundle, JoltTranscript, RV32IMJoltProof, RV32IMJoltVM, Serializable, PCS,
     },
     Jolt, JoltProof, JoltProverPreprocessing, JoltVerifierPreprocessing,
 };
