@@ -30,43 +30,43 @@ pub enum CommittedPolynomials {
     /// Whether the current instruction should write the lookup output to
     /// the destination register
     WriteLookupOutputToRD,
-    /// Whether the current instruction should write the program counter to
-    /// the destination register
-    WritePCtoRD,
-    /// Whether the current instruction triggers a branch
-    ShouldBranch,
-    /*  Twist/Shout witnesses */
-    /// One-hot ra polynomial for the bytecode instance of Shout
-    BytecodeRa,
-    /// One-hot ra/wa polynomial for the RAM instance of Twist
-    /// Note that for RAM, ra and wa are the same polynomial because
-    /// there is at most one load or store per cycle.
-    /// d = 1 right now hence we only ever use RamRa(0) for now.
-    RamRa(usize),
-    /// Inc polynomial for the registers instance of Twist
-    RdInc,
-    /// Inc polynomial for the RAM instance of Twist
-    RamInc,
-    /// One-hot ra polynomial for the instruction lookups instance of Shout.
-    /// There are four (d=4) of these polynomials, `InstructionRa(0) .. InstructionRa(3)`
-    InstructionRa(usize),
+    // /// Whether the current instruction should write the program counter to
+    // /// the destination register
+    // WritePCtoRD,
+    // /// Whether the current instruction triggers a branch
+    // ShouldBranch,
+    // /*  Twist/Shout witnesses */
+    // /// One-hot ra polynomial for the bytecode instance of Shout
+    // BytecodeRa,
+    // /// One-hot ra/wa polynomial for the RAM instance of Twist
+    // /// Note that for RAM, ra and wa are the same polynomial because
+    // /// there is at most one load or store per cycle.
+    // /// d = 1 right now hence we only ever use RamRa(0) for now.
+    // RamRa(usize),
+    // /// Inc polynomial for the registers instance of Twist
+    // RdInc,
+    // /// Inc polynomial for the RAM instance of Twist
+    // RamInc,
+    // /// One-hot ra polynomial for the instruction lookups instance of Shout.
+    // /// There are four (d=4) of these polynomials, `InstructionRa(0) .. InstructionRa(3)`
+    // InstructionRa(usize),
 }
 
-pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 14] = [
+pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 4] = [
     CommittedPolynomials::LeftInstructionInput,
     CommittedPolynomials::RightInstructionInput,
     CommittedPolynomials::Product,
     CommittedPolynomials::WriteLookupOutputToRD,
-    CommittedPolynomials::WritePCtoRD,
-    CommittedPolynomials::ShouldBranch,
-    CommittedPolynomials::BytecodeRa,
-    CommittedPolynomials::RamRa(0),
-    CommittedPolynomials::RdInc,
-    CommittedPolynomials::RamInc,
-    CommittedPolynomials::InstructionRa(0),
-    CommittedPolynomials::InstructionRa(1),
-    CommittedPolynomials::InstructionRa(2),
-    CommittedPolynomials::InstructionRa(3),
+    // CommittedPolynomials::WritePCtoRD,
+    // CommittedPolynomials::ShouldBranch,
+    // CommittedPolynomials::BytecodeRa,
+    // CommittedPolynomials::RamRa(0),
+    // CommittedPolynomials::RdInc,
+    // CommittedPolynomials::RamInc,
+    // CommittedPolynomials::InstructionRa(0),
+    // CommittedPolynomials::InstructionRa(1),
+    // CommittedPolynomials::InstructionRa(2),
+    // CommittedPolynomials::InstructionRa(3),
 ];
 
 impl CommittedPolynomials {
