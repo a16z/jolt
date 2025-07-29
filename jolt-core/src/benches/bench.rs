@@ -213,7 +213,7 @@ where
     PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 {
-    prove_example::<u32, PCS, F, ProofTranscript>("fibonacci-guest", &400000u32)
+    prove_example::<u32, PCS, F, ProofTranscript>("fibonacci-guest", &600000u32)
 }
 
 fn fibonacci_dag<F, PCS, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
@@ -277,7 +277,7 @@ where
             init_memory_state,
             1 << 18,
             1 << 18,
-            1 << 20,
+            1 << 24,
         );
 
         let (jolt_proof, program_io, _) = <RV32IJoltVM as Jolt<32, _, PCS, _>>::prove(
