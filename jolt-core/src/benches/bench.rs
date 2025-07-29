@@ -213,7 +213,7 @@ where
     PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 {
-    prove_example::<u32, PCS, F, ProofTranscript>("fibonacci-guest", &600000u32)
+    prove_example::<u32, PCS, F, ProofTranscript>("fibonacci-guest", &400000u32)
 }
 
 fn fibonacci_dag<F, PCS, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
@@ -222,7 +222,7 @@ where
     PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 {
-    prove_example_dag::<u32, PCS, F, ProofTranscript>("fibonacci-guest", &40000u32)
+    prove_example_dag::<u32, PCS, F, ProofTranscript>("fibonacci-guest", &600000u32)
 }
 
 fn sha2<F, PCS, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
@@ -342,7 +342,7 @@ where
             init_memory_state,
             1 << 18,
             1 << 18,
-            1 << 20,
+            1 << 24,
         );
 
         let trace_length = trace.len();
