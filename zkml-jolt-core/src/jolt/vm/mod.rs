@@ -12,6 +12,7 @@ use std::marker::PhantomData;
 
 pub mod bytecode;
 pub mod onnx_vm;
+pub mod r1cs;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct JoltProverPreprocessing<F, ProofTranscript>

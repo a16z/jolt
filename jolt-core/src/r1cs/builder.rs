@@ -272,16 +272,16 @@ impl<F: JoltField> CombinedUniformBuilder<F> {
     }
 
     /// Number of constraint rows per step, padded to the next power of two.
-    pub(super) fn padded_rows_per_step(&self) -> usize {
+    pub fn padded_rows_per_step(&self) -> usize {
         self.uniform_builder.constraints.len().next_power_of_two()
     }
 
     /// Total number of rows used across all repeated constraints. Not padded to nearest power of two.
-    pub(super) fn constraint_rows(&self) -> usize {
+    pub fn constraint_rows(&self) -> usize {
         self.uniform_repeat * self.padded_rows_per_step()
     }
 
-    pub(super) fn uniform_repeat(&self) -> usize {
+    pub fn uniform_repeat(&self) -> usize {
         self.uniform_repeat
     }
 
