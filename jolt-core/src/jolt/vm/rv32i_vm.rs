@@ -80,8 +80,6 @@ impl Serializable for JoltProofBundle {}
 
 #[cfg(test)]
 mod tests {
-    use ark_bn254::Fr;
-
     use crate::field::JoltField;
     use crate::host;
     use crate::jolt::vm::rv32i_vm::{Jolt, RV32IJoltVM};
@@ -89,6 +87,7 @@ mod tests {
     use crate::poly::commitment::commitment_scheme::CommitmentScheme;
     use crate::poly::commitment::dory::DoryCommitmentScheme;
     use crate::poly::commitment::mock::MockCommitScheme;
+    use ark_bn254::Fr;
     use serial_test::serial;
 
     use crate::utils::transcript::{KeccakTranscript, Transcript};
@@ -157,6 +156,51 @@ mod tests {
         let mut program = host::Program::new("sha3-guest");
         let (bytecode, init_memory_state) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
+        let (trace, final_memory_state, io_device) = program.trace(&inputs);
+        drop(guard);
+
+        let preprocessing = RV32IJoltVM::prover_preprocess(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            init_memory_state,
+            1 << 16,
+            1 << 16,
+            1 << 16,
+        );
+        let (jolt_proof, jolt_commitments, debug_info) =
+            <RV32IJoltVM as Jolt<
+                32,
+                Fr,
+                DoryCommitmentScheme<KeccakTranscript>,
+                KeccakTranscript,
+            >>::prove(io_device, trace, final_memory_state, preprocessing.clone());
+
+        let verifier_preprocessing = JoltVerifierPreprocessing::<
+            Fr,
+            DoryCommitmentScheme<KeccakTranscript>,
+            KeccakTranscript,
+        >::from(&preprocessing);
+        let verification_result = RV32IJoltVM::verify(
+            verifier_preprocessing,
+            jolt_proof,
+            jolt_commitments,
+            debug_info,
+        );
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn sha3_chain_e2e_dory() {
+        let guard = SHA3_FILE_LOCK.lock().unwrap();
+        let mut program = host::Program::new("sha3-chain-guest");
+        let (bytecode, init_memory_state) = program.decode();
+        let mut inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
+        inputs.append(&mut postcard::to_stdvec(&2u32).unwrap());
         let (trace, final_memory_state, io_device) = program.trace(&inputs);
         drop(guard);
 

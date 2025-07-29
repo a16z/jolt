@@ -2093,6 +2093,7 @@ dependencies = [
  "serde",
  "serial_test",
  "sha3",
+ "smallvec",
  "strum",
  "strum_macros",
  "sys-info",

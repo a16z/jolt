@@ -137,8 +137,8 @@ impl R1CSBuilder {
 
         let constraint = Constraint {
             a: condition.clone(),
-            b: (result_true - result_false.clone()),
-            c: (alleged_result - result_false),
+            b: result_true - result_false.clone(),
+            c: alleged_result - result_false,
         };
         self.constraints.push(constraint);
     }

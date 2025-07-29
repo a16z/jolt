@@ -140,6 +140,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
         );
 
         let eq_rx_constr = EqPolynomial::evals(r_constr);
+
         let num_vars_padded = self.uniform_r1cs.num_vars.next_power_of_two();
         // The constant column is at position num_vars (within the padded allocation)
         let constant_column = self.uniform_r1cs.num_vars;
