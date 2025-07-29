@@ -26,6 +26,7 @@ pub enum MultilinearPolynomial<F: JoltField> {
     U16Scalars(CompactPolynomial<u16, F>),
     U32Scalars(CompactPolynomial<u32, F>),
     U64Scalars(CompactPolynomial<u64, F>),
+    U128Scalars(CompactPolynomial<u128, F>),
     I64Scalars(CompactPolynomial<i64, F>),
     RLC(RLCPolynomial<F>),
     OneHot(OneHotPolynomial<F>),
@@ -84,6 +85,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.coeffs.len(),
             MultilinearPolynomial::U64Scalars(poly) => poly.coeffs.len(),
             MultilinearPolynomial::I64Scalars(poly) => poly.coeffs.len(),
+            MultilinearPolynomial::U128Scalars(poly) => poly.coeffs.len(),
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
@@ -97,6 +99,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.len(),
             MultilinearPolynomial::U64Scalars(poly) => poly.len(),
             MultilinearPolynomial::I64Scalars(poly) => poly.len(),
+            MultilinearPolynomial::U128Scalars(poly) => poly.len(),
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
@@ -109,6 +112,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.get_num_vars(),
             MultilinearPolynomial::U64Scalars(poly) => poly.get_num_vars(),
             MultilinearPolynomial::I64Scalars(poly) => poly.get_num_vars(),
+            MultilinearPolynomial::U128Scalars(poly) => poly.get_num_vars(),
             MultilinearPolynomial::OneHot(poly) => poly.get_num_vars(),
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
@@ -134,6 +138,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                     MultilinearPolynomial::U32Scalars(poly) => poly.mul_add(*coeff, result),
                     MultilinearPolynomial::U64Scalars(poly) => poly.mul_add(*coeff, result),
                     MultilinearPolynomial::I64Scalars(poly) => poly.mul_add(*coeff, result),
+                    MultilinearPolynomial::U128Scalars(poly) => poly.mul_add(*coeff, result),
                     MultilinearPolynomial::OneHot(poly) => poly.mul_add(*coeff, result),
                     _ => unimplemented!("Unexpected polynomial type"),
                 };
@@ -201,6 +206,12 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                                 *rlc += poly_eval.field_mul(*coeff);
                             }
                         }
+                        MultilinearPolynomial::U128Scalars(poly) => {
+                            let poly_evals = &poly.coeffs[index..];
+                            for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
+                                *rlc += poly_eval.field_mul(*coeff);
+                            }
+                        }
                         _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
                     }
                 }
@@ -219,6 +230,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U16Scalars(poly) => F::from_u16(poly.coeffs[index]),
             MultilinearPolynomial::U32Scalars(poly) => F::from_u32(poly.coeffs[index]),
             MultilinearPolynomial::U64Scalars(poly) => F::from_u64(poly.coeffs[index]),
+            MultilinearPolynomial::U128Scalars(poly) => F::from_u128(poly.coeffs[index]),
             MultilinearPolynomial::I64Scalars(poly) => F::from_i64(poly.coeffs[index]),
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
@@ -233,6 +245,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => i64::from(poly.coeffs[index]),
             MultilinearPolynomial::U64Scalars(poly) => i64::try_from(poly.coeffs[index]).unwrap(),
             MultilinearPolynomial::I64Scalars(poly) => poly.coeffs[index],
+            MultilinearPolynomial::U128Scalars(poly) => i64::try_from(poly.coeffs[index]).unwrap(),
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
@@ -246,6 +259,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => i128::from(poly.coeffs[index]),
             MultilinearPolynomial::U64Scalars(poly) => i128::from(poly.coeffs[index]),
             MultilinearPolynomial::I64Scalars(poly) => i128::from(poly.coeffs[index]),
+            MultilinearPolynomial::U128Scalars(poly) => i128::try_from(poly.coeffs[index]).unwrap(),
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
@@ -289,6 +303,13 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                     poly.bound_coeffs[index]
                 } else {
                     F::from_i64(poly.coeffs[index])
+                }
+            }
+            MultilinearPolynomial::U128Scalars(poly) => {
+                if poly.is_bound() {
+                    poly.bound_coeffs[index]
+                } else {
+                    F::from_u128(poly.coeffs[index])
                 }
             }
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
@@ -341,6 +362,12 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                 .map(|(a, b)| a.field_mul(*b))
                 .sum(),
             MultilinearPolynomial::I64Scalars(poly) => poly
+                .coeffs
+                .par_iter()
+                .zip_eq(other.par_iter())
+                .map(|(a, b)| a.field_mul(*b))
+                .sum(),
+            MultilinearPolynomial::U128Scalars(poly) => poly
                 .coeffs
                 .par_iter()
                 .zip_eq(other.par_iter())
@@ -432,6 +459,13 @@ impl<F: JoltField> From<Vec<i64>> for MultilinearPolynomial<F> {
     }
 }
 
+impl<F: JoltField> From<Vec<u128>> for MultilinearPolynomial<F> {
+    fn from(coeffs: Vec<u128>) -> Self {
+        let poly = CompactPolynomial::from_coeffs(coeffs);
+        Self::U128Scalars(poly)
+    }
+}
+
 impl<'a, F: JoltField> TryFrom<&'a MultilinearPolynomial<F>> for &'a DensePolynomial<F> {
     type Error = (); // TODO(moodlezoup)
 
@@ -498,6 +532,17 @@ impl<'a, F: JoltField> TryFrom<&'a MultilinearPolynomial<F>> for &'a CompactPoly
     }
 }
 
+impl<'a, F: JoltField> TryFrom<&'a MultilinearPolynomial<F>> for &'a CompactPolynomial<u128, F> {
+    type Error = (); // TODO(moodlezoup)
+
+    fn try_from(poly: &'a MultilinearPolynomial<F>) -> Result<Self, Self::Error> {
+        match poly {
+            MultilinearPolynomial::U128Scalars(poly) => Ok(poly),
+            _ => Err(()),
+        }
+    }
+}
+
 pub trait PolynomialBinding<F: JoltField> {
     /// Returns whether or not the polynomial has been bound (in a sumcheck)
     fn is_bound(&self) -> bool;
@@ -537,6 +582,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.is_bound(),
             MultilinearPolynomial::U64Scalars(poly) => poly.is_bound(),
             MultilinearPolynomial::I64Scalars(poly) => poly.is_bound(),
+            MultilinearPolynomial::U128Scalars(poly) => poly.is_bound(),
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
@@ -550,6 +596,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.bind(r, order),
             MultilinearPolynomial::U64Scalars(poly) => poly.bind(r, order),
             MultilinearPolynomial::I64Scalars(poly) => poly.bind(r, order),
+            MultilinearPolynomial::U128Scalars(poly) => poly.bind(r, order),
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
@@ -563,6 +610,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.bind_parallel(r, order),
             MultilinearPolynomial::U64Scalars(poly) => poly.bind_parallel(r, order),
             MultilinearPolynomial::I64Scalars(poly) => poly.bind_parallel(r, order),
+            MultilinearPolynomial::U128Scalars(poly) => poly.bind_parallel(r, order),
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
@@ -578,6 +626,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.final_sumcheck_claim(),
             MultilinearPolynomial::U64Scalars(poly) => poly.final_sumcheck_claim(),
             MultilinearPolynomial::I64Scalars(poly) => poly.final_sumcheck_claim(),
+            MultilinearPolynomial::U128Scalars(poly) => poly.final_sumcheck_claim(),
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
@@ -593,6 +642,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.optimised_evaluate(r),
             MultilinearPolynomial::U64Scalars(poly) => poly.optimised_evaluate(r),
             MultilinearPolynomial::I64Scalars(poly) => poly.optimised_evaluate(r),
+            MultilinearPolynomial::U128Scalars(poly) => poly.optimised_evaluate(r),
             MultilinearPolynomial::OneHot(poly) => poly.evaluate(r),
             _ => unimplemented!("Unsupported MultilinearPolynomial variant"),
         }
@@ -736,6 +786,7 @@ mod tests {
                 MultilinearPolynomial::U16Scalars(poly) => poly.coeffs_as_field_elements(),
                 MultilinearPolynomial::U32Scalars(poly) => poly.coeffs_as_field_elements(),
                 MultilinearPolynomial::U64Scalars(poly) => poly.coeffs_as_field_elements(),
+                MultilinearPolynomial::U128Scalars(poly) => poly.coeffs_as_field_elements(),
                 MultilinearPolynomial::LargeScalars(poly) => poly.evals(),
                 _ => {
                     panic!("Unexpected MultilinearPolynomial variant");

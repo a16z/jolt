@@ -10,7 +10,7 @@ use crate::field::JoltField;
 pub struct MovsignTable<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for MovsignTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+    fn materialize_entry(&self, index: u128) -> u64 {
         let sign_bit = 1 << (2 * WORD_SIZE - 1);
         if index & sign_bit != 0 {
             (1 << WORD_SIZE) - 1

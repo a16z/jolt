@@ -36,12 +36,12 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualShiftR
         }
     }
 
-    fn to_lookup_operands(&self) -> (u64, u64) {
+    fn to_lookup_operands(&self) -> (u64, u128) {
         let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
-        (0, x + y as u64)
+        (0, x as u128 + y as u128)
     }
 
-    fn to_lookup_index(&self) -> u64 {
+    fn to_lookup_index(&self) -> u128 {
         LookupQuery::<WORD_SIZE>::to_lookup_operands(self).1
     }
 
@@ -50,17 +50,17 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualShiftR
         match WORD_SIZE {
             #[cfg(test)]
             8 => {
-                let shift = y % 8;
+                let shift = (y % 8) as u64;
                 let ones = (1u64 << (8 - shift)) - 1;
                 ones << shift
             }
             32 => {
-                let shift = y % 32;
+                let shift = (y % 32) as u64;
                 let ones = (1u64 << (32 - shift)) - 1;
                 ones << shift
             }
             64 => {
-                let shift = y % 64;
+                let shift = (y % 64) as u64;
                 let ones = (1u128 << (64 - shift)) - 1;
                 (ones << shift) as u64
             }

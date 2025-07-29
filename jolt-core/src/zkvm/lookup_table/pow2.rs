@@ -12,8 +12,8 @@ use crate::zkvm::lookup_table::prefixes::Prefixes;
 pub struct Pow2Table<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for Pow2Table<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
-        1 << (index % WORD_SIZE as u64)
+    fn materialize_entry(&self, index: u128) -> u64 {
+        1 << (index % WORD_SIZE as u128) as u64
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {

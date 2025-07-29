@@ -281,8 +281,11 @@ impl<F: JoltField> SumcheckInstance<F> for OutputSumcheck<F> {
                 program_io.memory_layout.input_start,
                 &program_io.memory_layout,
             )
-            .unwrap(),
-            remap_address(RAM_START_ADDRESS, &program_io.memory_layout).unwrap(),
+            .unwrap()
+            .into(),
+            remap_address(RAM_START_ADDRESS, &program_io.memory_layout)
+                .unwrap()
+                .into(),
         );
         let val_io = ProgramIOPolynomial::new(program_io);
 

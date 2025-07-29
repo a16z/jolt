@@ -91,6 +91,14 @@ impl AllCommittedPolynomials {
             CommittedPolynomial::InstructionRa(5),
             CommittedPolynomial::InstructionRa(6),
             CommittedPolynomial::InstructionRa(7),
+            CommittedPolynomial::InstructionRa(8),
+            CommittedPolynomial::InstructionRa(9),
+            CommittedPolynomial::InstructionRa(10),
+            CommittedPolynomial::InstructionRa(11),
+            CommittedPolynomial::InstructionRa(12),
+            CommittedPolynomial::InstructionRa(13),
+            CommittedPolynomial::InstructionRa(14),
+            CommittedPolynomial::InstructionRa(15),
         ];
         for i in 0..ram_d {
             polynomials.push(CommittedPolynomial::RamRa(i));
@@ -340,7 +348,7 @@ impl CommittedPolynomial {
                         let k = (lookup_index
                             >> (instruction_lookups::LOG_K_CHUNK
                                 * (instruction_lookups::D - 1 - i)))
-                            % instruction_lookups::K_CHUNK as u64;
+                            % instruction_lookups::K_CHUNK as u128;
                         Some(k as usize)
                     })
                     .collect();

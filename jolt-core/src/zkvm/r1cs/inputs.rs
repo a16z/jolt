@@ -301,7 +301,7 @@ impl JoltR1CSInputs {
                 coeffs.into()
             }
             JoltR1CSInputs::RightLookupOperand => {
-                let coeffs: Vec<u64> = trace
+                let coeffs: Vec<u128> = trace
                     .par_iter()
                     .map(|cycle| LookupQuery::<32>::to_lookup_operands(cycle).1)
                     .collect();

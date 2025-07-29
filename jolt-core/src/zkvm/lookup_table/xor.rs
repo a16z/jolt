@@ -11,9 +11,9 @@ use super::JoltLookupTable;
 pub struct XorTable<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for XorTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+    fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
-        (x ^ y) as u64
+        x ^ y
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {

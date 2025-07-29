@@ -99,7 +99,7 @@ fn compute_ra_evals<F: JoltField>(trace: &[RV32IMCycle], eq_r_cycle: &[F]) -> [V
             for cycle in trace_chunk {
                 let mut lookup_index = LookupQuery::<WORD_SIZE>::to_lookup_index(cycle);
                 for i in (0..D).rev() {
-                    let k = lookup_index % K_CHUNK as u64;
+                    let k = lookup_index % K_CHUNK as u128;
                     result[i][k as usize] += eq_r_cycle[j];
                     lookup_index >>= LOG_K_CHUNK;
                 }

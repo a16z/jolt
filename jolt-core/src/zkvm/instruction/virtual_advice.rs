@@ -28,17 +28,17 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualAdvice
         (0, 0)
     }
 
-    fn to_lookup_operands(&self) -> (u64, u64) {
+    fn to_lookup_operands(&self) -> (u64, u128) {
         match WORD_SIZE {
             #[cfg(test)]
-            8 => (0, self.instruction.advice as u8 as u64),
-            32 => (0, self.instruction.advice as u32 as u64),
-            64 => (0, self.instruction.advice),
+            8 => (0, self.instruction.advice as u8 as u128),
+            32 => (0, self.instruction.advice as u32 as u128),
+            64 => (0, self.instruction.advice as u128),
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }
 
-    fn to_lookup_index(&self) -> u64 {
+    fn to_lookup_index(&self) -> u128 {
         LookupQuery::<WORD_SIZE>::to_lookup_operands(self).1
     }
 

@@ -11,12 +11,12 @@ use crate::{field::JoltField, utils::uninterleave_bits};
 pub struct ValidDiv0Table<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for ValidDiv0Table<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+    fn materialize_entry(&self, index: u128) -> u64 {
         let (divisor, quotient) = uninterleave_bits(index);
         if divisor == 0 {
             match WORD_SIZE {
-                8 => (quotient == u8::MAX as u32).into(),
-                32 => (quotient == u32::MAX).into(),
+                8 => (quotient == u8::MAX as u64).into(),
+                32 => (quotient == u32::MAX as u64).into(),
                 _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
             }
         } else {

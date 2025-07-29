@@ -21,7 +21,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for EqualTable<WORD_SIZE> {
             .product()
     }
 
-    fn materialize_entry(&self, index: u64) -> u64 {
+    fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
         (x == y).into()
     }
