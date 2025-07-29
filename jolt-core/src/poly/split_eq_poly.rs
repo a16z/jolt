@@ -1,6 +1,5 @@
-//! Implements the Dao-Thaler optimization for EQ polynomial evaluations
+//! Implements the Dao-Thaler + Gruen optimization for EQ polynomial evaluations
 //! https://eprint.iacr.org/2024/1210.pdf
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 use super::dense_mlpoly::DensePolynomial;
 use super::multilinear_polynomial::BindingOrder;
@@ -330,18 +329,18 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
             BindingOrder::LowToHigh => {
                 // For low-to-high, current_index tracks how many variables remain unbound
                 // We want eq(w[0..current_index], x)
-                EqPolynomial::evals(&self.w[..self.current_index])
-                    .par_iter()
-                    .map(|x| *x * self.current_scalar)
-                    .collect()
+                EqPolynomial::evals_parallel(
+                    &self.w[..self.current_index],
+                    Some(self.current_scalar),
+                )
             }
             BindingOrder::HighToLow => {
                 // For high-to-low, current_index tracks how many variables have been bound
                 // We want eq(w[current_index..], x)
-                EqPolynomial::evals(&self.w[self.current_index..])
-                    .par_iter()
-                    .map(|x| *x * self.current_scalar)
-                    .collect()
+                EqPolynomial::evals_parallel(
+                    &self.w[self.current_index..],
+                    Some(self.current_scalar),
+                )
             }
         };
         DensePolynomial::new(evals)
