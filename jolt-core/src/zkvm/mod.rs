@@ -278,8 +278,7 @@ where
 
 pub struct JoltRV32IM;
 impl Jolt<Fr, DoryCommitmentScheme, KeccakTranscript> for JoltRV32IM {}
-
-pub type RV32IMJoltProof<F, PCS, ProofTranscript> = JoltProof<F, PCS, ProofTranscript>;
+pub type RV32IMJoltProof = JoltProof<Fr, DoryCommitmentScheme, KeccakTranscript>;
 
 use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::utils::transcript::KeccakTranscript;
@@ -322,16 +321,7 @@ pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
     }
 }
 
-pub type JoltTranscript = KeccakTranscript;
-pub type PCS = DoryCommitmentScheme;
-
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct JoltProofBundle {
-    pub proof: RV32IMJoltProof<Fr, PCS, JoltTranscript>,
-}
-
-impl Serializable for JoltProofBundle {}
-// impl Serializable for RV32IMJoltProof<Fr, PCS, JoltTranscript> {}
+impl Serializable for RV32IMJoltProof {}
 
 // ==================== TEST ====================
 
