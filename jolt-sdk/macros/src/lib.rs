@@ -167,6 +167,7 @@ impl MacroBuilder {
                         max_output_size: preprocessing.shared.memory_layout.max_output_size,
                         stack_size: preprocessing.shared.memory_layout.stack_size,
                         memory_size: preprocessing.shared.memory_layout.memory_size,
+                        bytecode_size: Some(preprocessing.shared.memory_layout.bytecode_size),
                     };
                     let mut io_device = JoltDevice::new(&memory_config);
 
@@ -274,12 +275,13 @@ impl MacroBuilder {
             {
                 #imports
 
-                let (bytecode, memory_init) = program.decode();
+                let (bytecode, memory_init, bytecode_size) = program.decode();
                 let memory_config = MemoryConfig {
                     max_input_size: #max_input_size,
                     max_output_size: #max_output_size,
                     stack_size: #stack_size,
                     memory_size: #memory_size,
+                    bytecode_size: Some(bytecode_size),
                 };
                 let memory_layout = MemoryLayout::new(&memory_config);
 
@@ -316,12 +318,13 @@ impl MacroBuilder {
             {
                 #imports
 
-                let (bytecode, memory_init) = program.decode();
+                let (bytecode, memory_init, bytecode_size) = program.decode();
                 let memory_config = MemoryConfig {
                     max_input_size: #max_input_size,
                     max_output_size: #max_output_size,
                     stack_size: #stack_size,
                     memory_size: #memory_size,
+                    bytecode_size: Some(bytecode_size),
                 };
                 let memory_layout = MemoryLayout::new(&memory_config);
 
@@ -417,6 +420,8 @@ impl MacroBuilder {
             max_output_size: attributes.max_output_size,
             stack_size: attributes.stack_size,
             memory_size: attributes.memory_size,
+            // Not needed for the main function, but we need the io region information from MemoryLayout.
+            bytecode_size: Some(0),
         });
         let input_start = memory_layout.input_start;
         let output_start = memory_layout.output_start;
