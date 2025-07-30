@@ -1,10 +1,121 @@
+use crate::jolt::vm::r1cs::inputs::JoltONNXR1CSInputs;
+use crate::jolt::vm::r1cs::key::UniformR1CS;
+use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::r1cs::builder::Constraint;
 use jolt_core::r1cs::ops::{LC, Term, Variable};
 use jolt_core::{field::JoltField, r1cs::key::SparseConstraints};
+use std::fmt::Write as _;
 use std::marker::PhantomData;
 
-use crate::jolt::vm::r1cs::inputs::JoltONNXR1CSInputs;
-use crate::jolt::vm::r1cs::key::UniformR1CS;
+pub trait R1CSConstraintFormatter {
+    fn format_constraint<F: JoltField>(
+        &self,
+        f: &mut String,
+        flattened_polynomials: &[MultilinearPolynomial<F>],
+        step_index: usize,
+    ) -> std::fmt::Result;
+}
+
+impl R1CSConstraintFormatter for Constraint {
+    fn format_constraint<F: JoltField>(
+        &self,
+        f: &mut String,
+        flattened_polynomials: &[MultilinearPolynomial<F>],
+        step_index: usize,
+    ) -> std::fmt::Result {
+        use std::fmt::Write as _;
+
+        self.a.format_lc(f)?;
+        write!(f, " ⋅ ")?;
+        self.b.format_lc(f)?;
+        write!(f, " == ")?;
+        self.c.format_lc(f)?;
+        writeln!(f)?;
+
+        let mut terms = Vec::new();
+        for term in self
+            .a
+            .terms()
+            .iter()
+            .chain(self.b.terms().iter())
+            .chain(self.c.terms().iter())
+        {
+            if !terms.contains(term) {
+                terms.push(*term);
+            }
+        }
+
+        for term in terms {
+            match term.0 {
+                Variable::Input(var_index) => {
+                    writeln!(
+                        f,
+                        "    {:?} = {}",
+                        JoltONNXR1CSInputs::from_index(var_index),
+                        flattened_polynomials[var_index].get_coeff(step_index)
+                    )?;
+                }
+                Variable::Constant => {}
+            }
+        }
+
+        Ok(())
+    }
+}
+
+pub trait FormatLC {
+    fn format_lc(&self, f: &mut String) -> std::fmt::Result;
+}
+
+impl FormatLC for LC {
+    fn format_lc(&self, f: &mut String) -> std::fmt::Result {
+        if self.0.is_empty() {
+            write!(f, "0")
+        } else {
+            if self.0.len() > 1 {
+                write!(f, "(")?;
+            }
+            for (index, term) in self.0.iter().enumerate() {
+                if term.1 == 0 {
+                    continue;
+                }
+                if index > 0 {
+                    if term.1 < 0 {
+                        write!(f, " - ")?;
+                    } else {
+                        write!(f, " + ")?;
+                    }
+                }
+                term.format_term(f)?;
+            }
+            if self.0.len() > 1 {
+                write!(f, ")")?;
+            }
+            Ok(())
+        }
+    }
+}
+
+pub trait FormatTerm {
+    fn format_term(&self, f: &mut String) -> std::fmt::Result;
+}
+
+impl FormatTerm for Term {
+    fn format_term(&self, f: &mut String) -> std::fmt::Result {
+        match self.0 {
+            Variable::Input(var_index) => match self.1.abs() {
+                1 => write!(f, "{:?}", JoltONNXR1CSInputs::from_index(var_index)),
+                _ => write!(
+                    f,
+                    "{}⋅{:?}",
+                    self.1,
+                    JoltONNXR1CSInputs::from_index(var_index)
+                ),
+            },
+            Variable::Constant => write!(f, "{}", self.1),
+        }
+    }
+}
 
 #[derive(Default)]
 pub struct R1CSBuilder {

@@ -30,7 +30,7 @@ impl Term {
 
 /// Linear Combination of terms.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct LC(Vec<Term>);
+pub struct LC(pub Vec<Term>);
 
 impl LC {
     pub fn new(terms: Vec<Term>) -> Self {

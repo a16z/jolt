@@ -117,8 +117,6 @@ pub struct ONNXInstr {
 /// of the Jolt paper.
 #[derive(Clone, Copy, Debug, PartialEq, EnumCountMacro)]
 pub enum CircuitFlags {
-    /// 1 if the first instruction operand is the program counter; 0 otherwise.
-    LeftOperandIsPC,
     // /// 1 if the second instruction operand is `imm`; 0 otherwise.
     // RightOperandIsImm,
     /// 1 if the first instruction operand is RS1 value; 0 otherwise.
@@ -158,124 +156,41 @@ impl ONNXInstr {
     pub fn to_circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
 
-        // flags[CircuitFlags::LeftOperandIsPC as usize] = matches!(
-        //     self.opcode,
-        //     RV32IM::JAL | RV32IM::LUI | RV32IM::AUIPC,
-        // );
+        flags[CircuitFlags::LeftOperandIsRs1Value as usize] = matches!(
+            self.opcode,
+            ONNXOpcode::Add
+            | ONNXOpcode::Sub
+            | ONNXOpcode::Mul
+        );
 
-        // flags[CircuitFlags::RightOperandIsImm as usize] = matches!(
-        //     self.opcode,
-        //     RV32IM::ADDI
-        //     | RV32IM::XORI
-        //     | RV32IM::ORI
-        //     | RV32IM::ANDI
-        //     | RV32IM::SLLI
-        //     | RV32IM::SRLI
-        //     | RV32IM::SRAI
-        //     | RV32IM::SLTI
-        //     | RV32IM::SLTIU
-        //     | RV32IM::AUIPC
-        //     | RV32IM::JAL
-        //     | RV32IM::JALR
-        //     | RV32IM::SW
-        //     | RV32IM::LW
-        //     | RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT
-        //     | RV32IM::VIRTUAL_ASSERT_WORD_ALIGNMENT,
-        // );
+        flags[CircuitFlags::RightOperandIsRs2Value as usize] = matches!(
+            self.opcode,
+            ONNXOpcode::Add
+            | ONNXOpcode::Sub
+            | ONNXOpcode::Mul
+        );
 
-        // flags[CircuitFlags::Load as usize] = matches!(
-        //     self.opcode,
-        //     RV32IM::LW,
-        // );
+        flags[CircuitFlags::AddOperands as usize] = matches!(
+            self.opcode,
+            ONNXOpcode::Add,
+        );
 
-        // flags[CircuitFlags::Store as usize] = matches!(
-        //     self.opcode,
-        //     RV32IM::SW,
-        // );
+        flags[CircuitFlags::SubtractOperands as usize] = matches!(
+            self.opcode,
+            ONNXOpcode::Sub,
+        );
 
-        // flags[CircuitFlags::Jump as usize] = matches!(
-        //     self.opcode,
-        //     RV32IM::JAL | RV32IM::JALR,
-        // );
+        flags[CircuitFlags::MultiplyOperands as usize] = matches!(
+            self.opcode,
+            ONNXOpcode::Mul,
+        );
 
-        // flags[CircuitFlags::Branch as usize] = matches!(
-        //     self.opcode,
-        //     RV32IM::BEQ | RV32IM::BNE | RV32IM::BLT | RV32IM::BGE | RV32IM::BLTU | RV32IM::BGEU,
-        // );
-
-        // // Stores, branches, jumps, and asserts do not store the lookup output to rd (they may update rd in other ways)
-        // flags[CircuitFlags::WriteLookupOutputToRD as usize] = !matches!(
-        //     self.opcode,
-        //     RV32IM::SW
-        //     | RV32IM::LW
-        //     | RV32IM::BEQ
-        //     | RV32IM::BNE
-        //     | RV32IM::BLT
-        //     | RV32IM::BGE
-        //     | RV32IM::BLTU
-        //     | RV32IM::BGEU
-        //     | RV32IM::JAL
-        //     | RV32IM::JALR
-        //     | RV32IM::LUI
-        //     | RV32IM::VIRTUAL_ASSERT_EQ
-        //     | RV32IM::VIRTUAL_ASSERT_LTE
-        //     | RV32IM::VIRTUAL_ASSERT_VALID_DIV0
-        //     | RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER
-        //     | RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER
-        //     | RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT
-        //     | RV32IM::VIRTUAL_ASSERT_WORD_ALIGNMENT
-        // );
-
-        // flags[CircuitFlags::ConcatLookupQueryChunks as usize] = matches!(
-        //     self.opcode,
-        //     RV32IM::XOR
-        //     | RV32IM::XORI
-        //     | RV32IM::OR
-        //     | RV32IM::ORI
-        //     | RV32IM::AND
-        //     | RV32IM::ANDI
-        //     | RV32IM::SLL
-        //     | RV32IM::SRL
-        //     | RV32IM::SRA
-        //     | RV32IM::SLLI
-        //     | RV32IM::SRLI
-        //     | RV32IM::SRAI
-        //     | RV32IM::SLT
-        //     | RV32IM::SLTU
-        //     | RV32IM::SLTI
-        //     | RV32IM::SLTIU
-        //     | RV32IM::BEQ
-        //     | RV32IM::BNE
-        //     | RV32IM::BLT
-        //     | RV32IM::BGE
-        //     | RV32IM::BLTU
-        //     | RV32IM::BGEU
-        //     | RV32IM::VIRTUAL_ASSERT_EQ
-        //     | RV32IM::VIRTUAL_ASSERT_LTE
-        //     | RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER
-        //     | RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER
-        //     | RV32IM::VIRTUAL_ASSERT_VALID_DIV0,
-        // );
-
-        // flags[CircuitFlags::Virtual as usize] = self.virtual_sequence_remaining.is_some();
-
-        // flags[CircuitFlags::Assert as usize] = matches!(self.opcode,
-        //     RV32IM::VIRTUAL_ASSERT_EQ                        |
-        //     RV32IM::VIRTUAL_ASSERT_LTE                       |
-        //     RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT        |
-        //     RV32IM::VIRTUAL_ASSERT_WORD_ALIGNMENT            |
-        //     RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER    |
-        //     RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER  |
-        //     RV32IM::VIRTUAL_ASSERT_VALID_DIV0
-        // );
-
-        // // All instructions in virtual sequence are mapped from the same
-        // // ELF address. Thus if an instruction is virtual (and not the last one
-        // // in its sequence), then we should *not* update the PC.
-        // flags[CircuitFlags::DoNotUpdatePC as usize] = match self.virtual_sequence_remaining {
-        //     Some(i) => i != 0,
-        //     None => false
-        // };
+        flags[CircuitFlags::WriteLookupOutputToRD as usize] = matches!(
+            self.opcode,
+            ONNXOpcode::Add
+            | ONNXOpcode::Sub
+            | ONNXOpcode::Mul
+        );
 
         flags
     }

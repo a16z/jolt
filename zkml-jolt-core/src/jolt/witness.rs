@@ -148,7 +148,7 @@ impl CommittedPolynomials {
                     .map(|cycle| {
                         let flag = cycle.instr.to_circuit_flags()
                             [CircuitFlags::WriteLookupOutputToRD as usize];
-                        (cycle.td_write() as u8) * (flag as u8)
+                        (cycle.td() as u8) * (flag as u8)
                     })
                     .collect();
                 coeffs.into()
