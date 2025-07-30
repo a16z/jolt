@@ -1,5 +1,5 @@
 use rayon::prelude::*;
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, mem, rc::Rc};
 use tracer::instruction::RV32IMCycle;
 
 use super::{D, K_CHUNK, LOG_K_CHUNK};
@@ -17,7 +17,11 @@ use crate::{
         split_eq_poly::GruenSplitEqPolynomial,
     },
     subprotocols::sumcheck::SumcheckInstance,
-    utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
+    utils::{
+        math::Math,
+        thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
+        transcript::Transcript,
+    },
     zkvm::dag::state_manager::StateManager,
     zkvm::{
         instruction::LookupQuery,
@@ -30,10 +34,10 @@ const DEGREE: usize = 3;
 struct BooleanityProverState<F: JoltField> {
     B: GruenSplitEqPolynomial<F>,
     D: GruenSplitEqPolynomial<F>,
-    G: [Vec<F>; D],
-    H_indices: [Vec<usize>; D],
+    G: Option<[Vec<F>; D]>,
+    H_indices: Option<[Vec<usize>; D]>,
     H: Option<[MultilinearPolynomial<F>; D]>,
-    F: Vec<F>,
+    F: Option<Vec<F>>,
     eq_r_r: Option<F>,
 }
 
@@ -125,10 +129,10 @@ impl<F: JoltField> BooleanityProverState<F> {
         BooleanityProverState {
             B,
             D: GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh),
-            G,
-            H_indices,
+            G: Some(G),
+            H_indices: Some(H_indices),
             H: None,
-            F,
+            F: Some(F),
             eq_r_r: None,
         }
     }
@@ -169,7 +173,8 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
             // Phase 1: Bind B and update F
             ps.B.bind(r_j);
             // Update F for this round (see Equation 55)
-            let (F_left, F_right) = ps.F.split_at_mut(1 << round);
+            let F = ps.F.as_mut().expect("F not initialized");
+            let (F_left, F_right) = F.split_at_mut(1 << round);
             F_left
                 .par_iter_mut()
                 .zip(F_right.par_iter_mut())
@@ -178,14 +183,25 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
                     *x -= *y;
                 });
             if round == LOG_K_CHUNK - 1 {
+                let mut h_indices = ps.H_indices.take().expect("H_indices not initialized");
+                let f_ref = ps.F.as_ref().expect("F not initialized");
                 ps.H = Some(std::array::from_fn(|i| {
-                    let coeffs: Vec<F> = std::mem::take(&mut ps.H_indices[i])
+                    let coeffs: Vec<F> = std::mem::take(&mut h_indices[i])
                         .into_par_iter()
-                        .map(|j| ps.F[j])
+                        .map(|j| f_ref[j])
                         .collect();
                     MultilinearPolynomial::from(coeffs)
                 }));
                 ps.eq_r_r = Some(ps.B.current_scalar);
+
+                // Drop G arrays, F array, and remaining H_indices as they're no longer needed in phase 2
+                if let Some(g) = ps.G.take() {
+                    drop_in_background_thread(g);
+                }
+                if let Some(f) = ps.F.take() {
+                    drop_in_background_thread(f);
+                }
+                drop_in_background_thread(h_indices);
             }
         } else {
             // Phase 2: Bind D and H
@@ -293,14 +309,15 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                         .into_par_iter()
                         .map(|k| {
                             let k_m = k >> (m - 1);
-                            let F_k = p.F[k % (1 << (m - 1))];
+                            let F_k = p.F.as_ref().unwrap()[k % (1 << (m - 1))];
                             let k_G = (k_prime << m) + k;
-                            let G_times_F =
-                                p.G.iter()
-                                    .zip(self.gamma.iter())
-                                    .map(|(g, gamma)| g[k_G] * gamma)
-                                    .sum::<F>()
-                                    * F_k;
+                            let G_ref = p.G.as_ref().unwrap();
+                            let G_times_F = G_ref
+                                .iter()
+                                .zip(self.gamma.iter())
+                                .map(|(g, gamma)| g[k_G] * gamma)
+                                .sum::<F>()
+                                * F_k;
 
                             // For c \in {0, infty} compute:
                             // G[k] * (F[k_1, ...., k_{m-1}, c]^2 - F[k_1, ...., k_{m-1}, c])
@@ -346,14 +363,15 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                                 .into_par_iter()
                                 .map(|k| {
                                     let k_m = k >> (m - 1);
-                                    let F_k = p.F[k % (1 << (m - 1))];
+                                    let F_k = p.F.as_ref().unwrap()[k % (1 << (m - 1))];
                                     let k_G = (k_prime << m) + k;
-                                    let G_times_F =
-                                        p.G.iter()
-                                            .zip(self.gamma.iter())
-                                            .map(|(g, gamma)| g[k_G] * gamma)
-                                            .sum::<F>()
-                                            * F_k;
+                                    let G_ref = p.G.as_ref().unwrap();
+                                    let G_times_F = G_ref
+                                        .iter()
+                                        .zip(self.gamma.iter())
+                                        .map(|(g, gamma)| g[k_G] * gamma)
+                                        .sum::<F>()
+                                        * F_k;
 
                                     let eval_infty = G_times_F * F_k;
                                     let eval_0 = if k_m == 0 {

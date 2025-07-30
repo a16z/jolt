@@ -17,7 +17,11 @@ use crate::{
         split_eq_poly::GruenSplitEqPolynomial,
     },
     subprotocols::sumcheck::SumcheckInstance,
-    utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
+    utils::{
+        math::Math,
+        thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
+        transcript::Transcript,
+    },
     zkvm::dag::state_manager::StateManager,
     zkvm::{
         ram::{compute_d_parameter, remap_address, NUM_RA_I_VARS},
@@ -29,9 +33,9 @@ struct BooleanityProverState<F: JoltField> {
     /// B polynomial (GruenSplitEqPolynomial)
     B: GruenSplitEqPolynomial<F>,
     /// F array for phase 1
-    F: Vec<F>,
+    F: Option<Vec<F>>,
     /// ra(k, r_cycle)
-    G: Vec<Vec<F>>,
+    G: Option<Vec<Vec<F>>>,
     /// eq(r_cycle, j) - using Gruen optimization
     D: GruenSplitEqPolynomial<F>,
     /// ra(r'_address, j)
@@ -51,6 +55,8 @@ pub struct BooleanitySumcheck<F: JoltField> {
     trace: Option<Vec<RV32IMCycle>>,
     memory_layout: Option<MemoryLayout>,
 }
+
+use std::mem;
 
 impl<F: JoltField> BooleanitySumcheck<F> {
     #[tracing::instrument(skip_all, name = "RamBooleanitySumcheck::new_prover")]
@@ -137,8 +143,8 @@ impl<F: JoltField> BooleanitySumcheck<F> {
 
         let prover_state = BooleanityProverState {
             B,
-            F,
-            G: G_arrays,
+            F: Some(F),
+            G: Some(G_arrays),
             D,
             H: None,
             eq_r_r: F::zero(),
@@ -234,7 +240,8 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
             prover_state.B.bind(r_j);
 
             // Update F for this round (see Equation 55)
-            let (F_left, F_right) = prover_state.F.split_at_mut(1 << round);
+            let F = prover_state.F.as_mut().expect("F not initialized");
+            let (F_left, F_right) = F.split_at_mut(1 << round);
             F_left
                 .par_iter_mut()
                 .zip(F_right.par_iter_mut())
@@ -262,7 +269,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
                                     // Get i-th address chunk
                                     let address_i = (address >> (NUM_RA_I_VARS * (self.d - 1 - i)))
                                         % (1 << NUM_RA_I_VARS);
-                                    prover_state.F[address_i as usize]
+                                    prover_state.F.as_ref().unwrap()[address_i as usize]
                                 })
                         })
                         .collect();
@@ -270,6 +277,14 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
                 }
 
                 prover_state.H = Some(H_polys);
+
+                // Drop G arrays and F array as they're no longer needed in phase 2
+                if let Some(g) = prover_state.G.take() {
+                    drop_in_background_thread(g);
+                }
+                if let Some(f) = prover_state.F.take() {
+                    drop_in_background_thread(f);
+                }
             }
         } else {
             // Phase 2: Bind D and all H polynomials
@@ -392,13 +407,13 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                     let mut coeffs = [F::zero(); DEGREE - 1];
 
                     for i in 0..self.d {
-                        let G_i = &prover_state.G[i];
+                        let G_i = &prover_state.G.as_ref().unwrap()[i];
                         let inner_sum = G_i[k_prime << m..(k_prime + 1) << m]
                             .par_iter()
                             .enumerate()
                             .map(|(k, &G_k)| {
                                 let k_m = k >> (m - 1);
-                                let F_k = prover_state.F[k % (1 << (m - 1))];
+                                let F_k = prover_state.F.as_ref().unwrap()[k % (1 << (m - 1))];
                                 let G_times_F = G_k * F_k;
 
                                 // For c \in {0, infty} compute:
@@ -449,13 +464,14 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                             let mut coeffs = [F::zero(); DEGREE - 1];
 
                             for i in 0..self.d {
-                                let G_i = &prover_state.G[i];
+                                let G_i = &prover_state.G.as_ref().unwrap()[i];
                                 let inner_sum = G_i[k_prime << m..(k_prime + 1) << m]
                                     .par_iter()
                                     .enumerate()
                                     .map(|(k, &G_k)| {
                                         let k_m = k >> (m - 1);
-                                        let F_k = prover_state.F[k % (1 << (m - 1))];
+                                        let F_k =
+                                            prover_state.F.as_ref().unwrap()[k % (1 << (m - 1))];
                                         let G_times_F = G_k * F_k;
 
                                         let eval_infty = G_times_F * F_k;

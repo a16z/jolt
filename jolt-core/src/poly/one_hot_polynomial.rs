@@ -3,8 +3,6 @@
 //! `opening_proof.rs`. In particular, this implementation is _not_ used
 //! in the Twist/Shout PIOP implementations in Jolt.
 
-use std::sync::{Arc, Mutex};
-
 use super::multilinear_polynomial::BindingOrder;
 use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
@@ -15,9 +13,11 @@ use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialBindi
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::utils::expanding_table::ExpandingTable;
 use crate::utils::math::Math;
+use crate::utils::thread::drop_in_background_thread;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_ec::CurveGroup;
 use rayon::prelude::*;
+use std::sync::{Arc, Mutex};
 
 /// Represents a one-hot multilinear polynomial (ra/wa) used
 /// in Twist/Shout. Perhaps somewhat unintuitively, the implementation
@@ -57,7 +57,7 @@ pub struct OneHotSumcheckState<F: JoltField> {
     /// D stores eq(r', j), see Equation (54) but with Gruen X Dao-Thaler optimizations
     pub D: GruenSplitEqPolynomial<F>,
     /// Pre-computed merged D coefficients for G computation
-    pub D_coeffs_for_G: Vec<F>,
+    pub D_coeffs_for_G: Option<Vec<F>>,
     /// F will maintain an array that, at the end of sumcheck round m, has size 2^m
     /// and stores all 2^m values eq((k_1, ..., k_m), (r_1, ..., r_m))
     pub F: ExpandingTable<F>,
@@ -79,7 +79,7 @@ impl<F: JoltField> OneHotSumcheckState<F> {
         Self {
             B: MultilinearPolynomial::from(EqPolynomial::evals(r_address)),
             D,
-            D_coeffs_for_G,
+            D_coeffs_for_G: Some(D_coeffs_for_G),
             F,
             num_variables_bound: 0,
         }
@@ -105,7 +105,9 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
         let T = polynomial.nonzero_indices.len();
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = (T / num_chunks).max(1);
-        let D_coeffs_for_G = &self.eq_state.lock().unwrap().D_coeffs_for_G;
+
+        let binding = self.eq_state.lock().unwrap();
+        let D_coeffs_for_G = binding.D_coeffs_for_G.as_ref().unwrap();
 
         // Compute G as described in Section 6.3
         let G = polynomial
@@ -136,6 +138,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
 
         polynomial.G = Some(G);
         self.polynomial = Some(polynomial);
+        // D_coeffs_for_G was already taken and consumed, no need to set to None
     }
 
     #[tracing::instrument(
@@ -269,6 +272,15 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                         .map(|&k| k.map_or(F::zero(), |k| F[k]))
                         .collect::<Vec<_>>(),
                 ));
+
+                // Drop G array as it's no longer needed in phase 2
+                if let Some(g) = polynomial.G.take() {
+                    drop_in_background_thread(g);
+                }
+
+                // Also drop D_coeffs_for_G since we're done with initialization
+                drop(shared_eq);
+                self.eq_state.lock().unwrap().D_coeffs_for_G = None;
             }
         } else {
             // Last log(T) rounds of sumcheck
