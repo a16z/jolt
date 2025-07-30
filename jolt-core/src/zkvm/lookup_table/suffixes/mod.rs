@@ -19,6 +19,7 @@ use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 use and::AndSuffix;
 use lower_word::LowerWordSuffix;
 use one::OneSuffix;
+use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
 use xor::XorSuffix;
 
@@ -39,6 +40,7 @@ pub mod right_shift;
 pub mod right_shift_helper;
 pub mod right_shift_padding;
 pub mod sign_extension;
+pub mod two_lsb;
 pub mod upper_word;
 pub mod xor;
 
@@ -71,6 +73,7 @@ pub enum Suffixes {
     RightShiftHelper,
     SignExtension,
     LeftShift,
+    TwoLsb,
 }
 
 pub type SuffixEval<F: JoltField> = F;
@@ -99,6 +102,7 @@ impl Suffixes {
             Suffixes::RightShiftHelper => RightShiftHelperSuffix::suffix_mle(b),
             Suffixes::SignExtension => SignExtensionSuffix::<WORD_SIZE>::suffix_mle(b),
             Suffixes::LeftShift => LeftShiftSuffix::suffix_mle(b),
+            Suffixes::TwoLsb => TwoLsbSuffix::suffix_mle(b),
         }
     }
 }

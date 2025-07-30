@@ -26,6 +26,7 @@ use valid_unsigned_remainder::ValidUnsignedRemainderTable;
 use virtual_rotr::VirtualRotrTable;
 use virtual_sra::VirtualSRATable;
 use virtual_srl::VirtualSRLTable;
+use word_alignment::WordAlignmentTable;
 use xor::XorTable;
 
 use crate::field::JoltField;
@@ -83,6 +84,7 @@ pub mod valid_unsigned_remainder;
 pub mod virtual_rotr;
 pub mod virtual_sra;
 pub mod virtual_srl;
+pub mod word_alignment;
 pub mod xor;
 
 #[cfg(test)]
@@ -110,6 +112,7 @@ pub enum LookupTables<const WORD_SIZE: usize> {
     ValidUnsignedRemainder(ValidUnsignedRemainderTable<WORD_SIZE>),
     ValidDiv0(ValidDiv0Table<WORD_SIZE>),
     HalfwordAlignment(HalfwordAlignmentTable<WORD_SIZE>),
+    WordAlignment(WordAlignmentTable<WORD_SIZE>),
     Pow2(Pow2Table<WORD_SIZE>),
     ShiftRightBitmask(ShiftRightBitmaskTable<WORD_SIZE>),
     VirtualSRL(VirtualSRLTable<WORD_SIZE>),
@@ -144,6 +147,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::ValidUnsignedRemainder(table) => table.materialize(),
             LookupTables::ValidDiv0(table) => table.materialize(),
             LookupTables::HalfwordAlignment(table) => table.materialize(),
+            LookupTables::WordAlignment(table) => table.materialize(),
             LookupTables::Pow2(table) => table.materialize(),
             LookupTables::ShiftRightBitmask(table) => table.materialize(),
             LookupTables::VirtualSRL(table) => table.materialize(),
@@ -171,6 +175,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::ValidUnsignedRemainder(table) => table.materialize_entry(index),
             LookupTables::ValidDiv0(table) => table.materialize_entry(index),
             LookupTables::HalfwordAlignment(table) => table.materialize_entry(index),
+            LookupTables::WordAlignment(table) => table.materialize_entry(index),
             LookupTables::Pow2(table) => table.materialize_entry(index),
             LookupTables::ShiftRightBitmask(table) => table.materialize_entry(index),
             LookupTables::VirtualSRL(table) => table.materialize_entry(index),
@@ -198,6 +203,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::ValidUnsignedRemainder(table) => table.evaluate_mle(r),
             LookupTables::ValidDiv0(table) => table.evaluate_mle(r),
             LookupTables::HalfwordAlignment(table) => table.evaluate_mle(r),
+            LookupTables::WordAlignment(table) => table.evaluate_mle(r),
             LookupTables::Pow2(table) => table.evaluate_mle(r),
             LookupTables::ShiftRightBitmask(table) => table.evaluate_mle(r),
             LookupTables::VirtualSRL(table) => table.evaluate_mle(r),
@@ -225,6 +231,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::ValidUnsignedRemainder(table) => table.suffixes(),
             LookupTables::ValidDiv0(table) => table.suffixes(),
             LookupTables::HalfwordAlignment(table) => table.suffixes(),
+            LookupTables::WordAlignment(table) => table.suffixes(),
             LookupTables::Pow2(table) => table.suffixes(),
             LookupTables::ShiftRightBitmask(table) => table.suffixes(),
             LookupTables::VirtualSRL(table) => table.suffixes(),
@@ -256,6 +263,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::ValidUnsignedRemainder(table) => table.combine(prefixes, suffixes),
             LookupTables::ValidDiv0(table) => table.combine(prefixes, suffixes),
             LookupTables::HalfwordAlignment(table) => table.combine(prefixes, suffixes),
+            LookupTables::WordAlignment(table) => table.combine(prefixes, suffixes),
             LookupTables::Pow2(table) => table.combine(prefixes, suffixes),
             LookupTables::ShiftRightBitmask(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualSRL(table) => table.combine(prefixes, suffixes),

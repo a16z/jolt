@@ -27,6 +27,7 @@ use num::FromPrimitive;
 use or::OrPrefix;
 use right_is_zero::RightOperandIsZeroPrefix;
 use right_msb::RightMsbPrefix;
+use two_lsb::TwoLsbPrefix;
 use upper_word::UpperWordPrefix;
 use xor::XorPrefix;
 
@@ -51,6 +52,7 @@ pub mod right_is_zero;
 pub mod right_msb;
 pub mod right_shift;
 pub mod sign_extension;
+pub mod two_lsb;
 pub mod upper_word;
 pub mod xor;
 
@@ -118,6 +120,7 @@ pub enum Prefixes {
     SignExtension,
     LeftShift,
     LeftShiftHelper,
+    TwoLsb,
 }
 
 #[derive(Clone, Copy)]
@@ -222,6 +225,7 @@ impl Prefixes {
             Prefixes::LeftShiftHelper => {
                 LeftShiftHelperPrefix::prefix_mle(checkpoints, r_x, c, b, j)
             }
+            Prefixes::TwoLsb => TwoLsbPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
         };
         PrefixEval(eval)
     }
@@ -358,6 +362,9 @@ impl Prefixes {
             }
             Prefixes::LeftShiftHelper => {
                 LeftShiftHelperPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::TwoLsb => {
+                TwoLsbPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
         }
     }
