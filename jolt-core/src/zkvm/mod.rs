@@ -199,6 +199,7 @@ where
         }
     }
 
+    #[allow(clippy::type_complexity)]
     fn prove(
         preprocessing: &JoltProverPreprocessing<F, PCS>,
         program: &mut Program,
@@ -209,7 +210,7 @@ where
         JoltDevice,
         Option<ProverDebugInfo<F, FS, PCS>>,
     ) {
-        let (mut trace, final_memory_state, mut program_io) = program.trace(&inputs);
+        let (mut trace, final_memory_state, mut program_io) = program.trace(inputs);
 
         // Setup trace length and padding
         let padded_trace_length = (trace.len() + 1).next_power_of_two();

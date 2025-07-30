@@ -155,7 +155,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
     ) {
         if let Some(ref prover_state) = self.prover_state {
             (
-                &prover_state.preprocessing,
+                prover_state.preprocessing,
                 &prover_state.trace,
                 &self.program_io,
                 &prover_state.final_memory_state,
@@ -168,7 +168,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
     pub fn get_verifier_data(&self) -> (&'a JoltVerifierPreprocessing<F, PCS>, &JoltDevice, usize) {
         if let Some(ref verifier_state) = self.verifier_state {
             (
-                &verifier_state.preprocessing,
+                verifier_state.preprocessing,
                 &self.program_io,
                 verifier_state.trace_length,
             )

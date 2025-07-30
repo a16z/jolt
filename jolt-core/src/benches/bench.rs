@@ -26,16 +26,12 @@ pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()
         BenchType::Sha3 => sha3(),
         BenchType::Sha2Chain => sha2_chain(),
         BenchType::Fibonacci => fibonacci(),
-        BenchType::Shout => shout::<Fr, KeccakTranscript>(),
+        BenchType::Shout => shout(),
         BenchType::Twist => twist::<Fr, KeccakTranscript>(),
     }
 }
 
-fn shout<F, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
-where
-    F: JoltField,
-    ProofTranscript: Transcript,
-{
+fn shout() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     todo!()
 }
 

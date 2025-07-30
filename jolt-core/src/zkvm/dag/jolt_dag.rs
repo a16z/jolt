@@ -22,6 +22,7 @@ use rayon::prelude::*;
 pub enum JoltDAG {}
 
 impl JoltDAG {
+    #[allow(clippy::type_complexity)]
     pub fn prove<
         'a,
         F: JoltField,
