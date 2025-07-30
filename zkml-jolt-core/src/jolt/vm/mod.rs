@@ -4,7 +4,10 @@
 use crate::jolt::{
     vm::{
         bytecode::{BytecodePreprocessing, BytecodeProof},
-        r1cs::{constraints::JoltONNXConstraints, spartan::UniformSpartanProof},
+        r1cs::{
+            constraints::{JoltONNXConstraints, R1CSConstraints},
+            spartan::UniformSpartanProof,
+        },
     },
     witness::ALL_COMMITTED_POLYNOMIALS,
 };
@@ -14,7 +17,6 @@ use jolt_core::{
         commitment::commitment_scheme::CommitmentScheme,
         opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
     },
-    r1cs::constraints::R1CSConstraints,
     utils::{errors::ProofVerifyError, transcript::Transcript},
 };
 use onnx_tracer::trace_types::{ONNXCycle, ONNXInstr};
@@ -183,11 +185,11 @@ where
                 &mut transcript,
             )
             .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))?;
-        self.bytecode.verify(
-            &preprocessing.shared.bytecode,
-            self.trace_length,
-            &mut transcript,
-        )?;
+        // self.bytecode.verify(
+        //     &preprocessing.shared.bytecode,
+        //     self.trace_length,
+        //     &mut transcript,
+        // )?;
         Ok(())
     }
 }

@@ -1,10 +1,23 @@
-use jolt_core::{
-    field::JoltField,
-    r1cs::{builder::R1CSBuilder, constraints::R1CSConstraints},
-};
+use jolt_core::field::JoltField;
 use onnx_tracer::trace_types::CircuitFlags;
 
-use crate::jolt::vm::r1cs::inputs::JoltONNXR1CSInputs;
+use crate::jolt::vm::r1cs::{
+    builder::{CombinedUniformBuilder, R1CSBuilder},
+    inputs::JoltONNXR1CSInputs,
+};
+
+pub trait R1CSConstraints<F: JoltField> {
+    fn construct_constraints(padded_trace_length: usize) -> CombinedUniformBuilder<F> {
+        let mut uniform_builder = R1CSBuilder::new();
+        Self::uniform_constraints(&mut uniform_builder);
+
+        CombinedUniformBuilder::construct(uniform_builder, padded_trace_length)
+    }
+    /// Constructs Jolt's uniform constraints.
+    /// Uniform constraints are constraints that hold for each step of
+    /// the execution trace.
+    fn uniform_constraints(builder: &mut R1CSBuilder);
+}
 
 pub struct JoltONNXConstraints;
 impl<F: JoltField> R1CSConstraints<F> for JoltONNXConstraints {

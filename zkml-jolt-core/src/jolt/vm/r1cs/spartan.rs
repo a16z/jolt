@@ -8,8 +8,6 @@ use jolt_core::poly::multilinear_polynomial::{
 };
 use jolt_core::poly::opening_proof::ProverOpeningAccumulator;
 use jolt_core::poly::opening_proof::VerifierOpeningAccumulator;
-use jolt_core::r1cs::builder::CombinedUniformBuilder;
-use jolt_core::r1cs::key::UniformSpartanKey;
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_core::utils::math::Math;
 use jolt_core::utils::transcript::Transcript;
@@ -26,7 +24,9 @@ use tracing::{Level, span};
 use rayon::prelude::*;
 
 use crate::jolt::vm::JoltProverPreprocessing;
+use crate::jolt::vm::r1cs::builder::CombinedUniformBuilder;
 use crate::jolt::vm::r1cs::inputs::{ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS};
+use crate::jolt::vm::r1cs::key::UniformSpartanKey;
 
 #[derive(Clone, Debug)]
 pub struct OuterSumcheckClaims<F: JoltField> {
