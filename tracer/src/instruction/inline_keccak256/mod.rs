@@ -12,6 +12,7 @@
 ///
 /// Keccak256 refers to the specific variant where the rate is 1088 bits and the capacity is 512 bits.
 /// Keccak256 differs from SHA3-256 (not implemented here) in the padding scheme.
+use crate::instruction::addi:ADDI;
 use crate::instruction::and::AND;
 use crate::instruction::andi::ANDI;
 use crate::instruction::andn::ANDN;
