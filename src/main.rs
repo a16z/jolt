@@ -199,22 +199,22 @@ lto = "fat"
 [dependencies]
 jolt-sdk = { git = "https://github.com/a16z/jolt", features = ["host"] }
 guest = { path = "./guest" }
-ark-serialize = "0.5.0"
 
 [features]
 icicle = ["jolt-sdk/icicle"]
 
 [patch.crates-io]
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
-ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
-ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 "#;
 
 const HOST_MAIN: &str = r#"pub fn main() {
     let target_dir = "/tmp/jolt-guest-targets";
-    let program = guest::compile_fib(target_dir);
+    let mut program = guest::compile_fib(target_dir);
 
-    let prover_preprocessing = guest::preprocess_prover_fib(&program);
+    let prover_preprocessing = guest::preprocess_prover_fib(&mut program);
     let verifier_preprocessing = guest::verifier_preprocessing_from_prover_fib(&prover_preprocessing);
 
     let prove_fib = guest::build_prover_fib(program, prover_preprocessing);
@@ -244,7 +244,7 @@ jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt" }
 
 const GUEST_LIB: &str = r#"#![cfg_attr(feature = "guest", no_std)]
 
-#[jolt::provable]
+#[jolt::provable(memory_size = 10240, max_trace_length = 65536)]
 fn fib(n: u32) -> u128 {
     let mut a: u128 = 0;
     let mut b: u128 = 1;
