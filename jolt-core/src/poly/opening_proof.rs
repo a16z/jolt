@@ -1,12 +1,14 @@
 //! This is a port of the sumcheck-based batch opening proof protocol implemented
 //! in Nova: https://github.com/microsoft/Nova/blob/2772826ba296b66f1cd5deecf7aca3fd1d10e1f4/src/spartan/snark.rs#L410-L424
+//! and such code is Copyright (c) Microsoft Corporation.
 //! For additively homomorphic commitment schemes (including Zeromorph, HyperKZG) we
 //! can use a sumcheck to reduce multiple opening proofs (multiple polynomials, not
 //! necessarily of the same size, each opened at a different point) into a single opening.
 
+use num_derive::FromPrimitive;
 use rayon::prelude::*;
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     sync::{Arc, Mutex},
 };
 
@@ -16,24 +18,24 @@ use super::{
     commitment::commitment_scheme::CommitmentScheme,
     eq_poly::EqPolynomial,
     multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
+    split_eq_poly::GruenSplitEqPolynomial,
 };
 use crate::{
     field::JoltField,
-    jolt::witness::{CommittedPolynomial, VirtualPolynomial},
     poly::{
-        dense_mlpoly::DensePolynomial,
         multilinear_polynomial::PolynomialEvaluation,
         one_hot_polynomial::{OneHotPolynomialProverOpening, OneHotSumcheckState},
     },
     subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance, SumcheckInstanceProof},
-    utils::{errors::ProofVerifyError, transcript::Transcript},
+    utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
+    zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
 
 pub type Endianness = bool;
 pub const BIG_ENDIAN: Endianness = false;
 pub const LITTLE_ENDIAN: Endianness = true;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct OpeningPoint<const E: Endianness, F: JoltField> {
     pub r: Vec<F>,
 }
@@ -123,7 +125,8 @@ where
     }
 }
 
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, FromPrimitive)]
+#[repr(u8)]
 pub enum SumcheckId {
     SpartanOuter,
     SpartanInner,
@@ -148,23 +151,23 @@ pub enum SumcheckId {
     OpeningReduction,
 }
 
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord)]
 pub enum OpeningId {
     Committed(CommittedPolynomial, SumcheckId),
     Virtual(VirtualPolynomial, SumcheckId),
 }
 
-pub type Openings<F> = HashMap<OpeningId, (OpeningPoint<BIG_ENDIAN, F>, F)>;
+pub type Openings<F> = BTreeMap<OpeningId, (OpeningPoint<BIG_ENDIAN, F>, F)>;
 
 pub struct SharedEqPolynomial<F: JoltField> {
     num_variables_bound: usize,
-    eq_poly: DensePolynomial<F>,
+    eq_poly: GruenSplitEqPolynomial<F>,
 }
 
-impl<F: JoltField> From<Vec<F>> for SharedEqPolynomial<F> {
-    fn from(eq_evals: Vec<F>) -> Self {
+impl<F: JoltField> SharedEqPolynomial<F> {
+    fn new_gruen(opening_point: &[F]) -> Self {
         Self {
-            eq_poly: DensePolynomial::new(eq_evals),
+            eq_poly: GruenSplitEqPolynomial::new(opening_point, BindingOrder::HighToLow),
             num_variables_bound: 0,
         }
     }
@@ -193,34 +196,55 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
         skip_all,
         name = "DensePolynomialProverOpening::compute_prover_message"
     )]
-    fn compute_prover_message(&mut self, _: usize) -> Vec<F> {
-        let eq_poly = &self.eq_poly.lock().unwrap().eq_poly;
+    fn compute_prover_message(&mut self, _round: usize, previous_claim: F) -> Vec<F> {
+        let shared_eq = self.eq_poly.lock().unwrap();
         let polynomial = self.polynomial.as_ref().unwrap();
+        let gruen_eq = &shared_eq.eq_poly;
+
+        // Compute q(0) = sum of polynomial(i) * eq(r, i) for i in [0, mle_half)
         let mle_half = polynomial.len() / 2;
-        let eval_0: F = (0..mle_half)
-            .into_par_iter()
-            .map(|i| polynomial.get_bound_coeff(i) * eq_poly[i])
-            .sum();
-        let eval_2: F = (0..mle_half)
-            .into_par_iter()
-            .map(|i| {
-                let poly_bound_point = polynomial.get_bound_coeff(i + mle_half)
-                    + polynomial.get_bound_coeff(i + mle_half)
-                    - polynomial.get_bound_coeff(i);
-                let eq_bound_point = eq_poly[i + mle_half] + eq_poly[i + mle_half] - eq_poly[i];
-                poly_bound_point * eq_bound_point
-            })
-            .sum();
-        vec![eval_0, eval_2]
+        let q_0 = if gruen_eq.E_in_current_len() <= 1 {
+            // E_in is fully bound
+            (0..mle_half)
+                .into_par_iter()
+                .map(|j| {
+                    let eq_eval = gruen_eq.E_out_current()[j];
+                    let poly_eval = polynomial.get_bound_coeff(j);
+                    eq_eval * poly_eval
+                })
+                .sum()
+        } else {
+            let num_x_out = gruen_eq.E_out_current_len();
+            let num_x_in = gruen_eq.E_in_current_len();
+            let d_e_in = gruen_eq.E_in_current();
+            let d_e_out = gruen_eq.E_out_current();
+
+            (0..num_x_in)
+                .into_par_iter()
+                .map(|x_in| {
+                    let inner_sum: F = (0..num_x_out)
+                        .into_par_iter()
+                        .map(|x_out| {
+                            let j = (x_in << num_x_out.log_2()) | x_out;
+                            let poly_eval = polynomial.get_bound_coeff(j);
+                            d_e_out[x_out] * poly_eval
+                        })
+                        .sum();
+                    d_e_in[x_in] * inner_sum
+                })
+                .sum()
+        };
+
+        let gruen_univariate_evals = gruen_eq.gruen_evals_deg_2(q_0, previous_claim);
+
+        vec![gruen_univariate_evals[0], gruen_univariate_evals[1]]
     }
 
     #[tracing::instrument(skip_all, name = "DensePolynomialProverOpening::bind")]
     fn bind(&mut self, r_j: F, round: usize) {
         let mut shared_eq = self.eq_poly.lock().unwrap();
         if shared_eq.num_variables_bound <= round {
-            shared_eq
-                .eq_poly
-                .bind_parallel(r_j, BindingOrder::HighToLow);
+            shared_eq.eq_poly.bind(r_j);
             shared_eq.num_variables_bound += 1;
         }
 
@@ -457,7 +481,7 @@ where
         debug_assert!(round < self.num_rounds());
         let prover_state = self.prover_state.as_mut().unwrap();
         match prover_state {
-            ProverOpening::Dense(opening) => opening.compute_prover_message(round),
+            ProverOpening::Dense(opening) => opening.compute_prover_message(round, previous_claim),
             ProverOpening::OneHot(opening) => opening.compute_prover_message(round, previous_claim),
         }
     }
@@ -562,7 +586,7 @@ where
     pub fn new() -> Self {
         Self {
             sumchecks: vec![],
-            openings: HashMap::new(),
+            openings: BTreeMap::new(),
             // #[cfg(test)]
             // joint_commitment: None,
         }
@@ -622,7 +646,9 @@ where
         claims: &[F],
     ) {
         assert_eq!(polynomials.len(), claims.len());
-        let eq_evals = EqPolynomial::evals(&opening_point);
+
+        // Use Gruen optimization for the eq polynomial
+        let shared_eq = Arc::new(Mutex::new(SharedEqPolynomial::new_gruen(&opening_point)));
 
         // Add openings to map
         for (label, claim) in polynomials.iter().zip(claims.iter()) {
@@ -635,7 +661,7 @@ where
         let sumcheck = OpeningProofReductionSumcheck::new_prover_instance_dense(
             polynomials,
             sumcheck,
-            Arc::new(Mutex::new(eq_evals.into())),
+            shared_eq,
             opening_point,
             claims.to_vec(),
         );
@@ -719,7 +745,7 @@ where
         // Combines the individual polynomials into the RLC that will be used for the
         // batched opening proof.
         let joint_poly = {
-            let mut rlc_map = HashMap::new();
+            let mut rlc_map = BTreeMap::new();
             for (gamma, sumcheck) in gamma_powers.iter().zip(self.sumchecks.iter()) {
                 for (coeff, polynomial) in
                     sumcheck.rlc_coeffs.iter().zip(sumcheck.polynomials.iter())
@@ -746,16 +772,10 @@ where
         #[cfg(test)]
         let joint_commitment = PCS::commit(&joint_poly, pcs_setup).0;
 
-        #[cfg(not(test))]
-        {
-            let sumchecks = std::mem::take(&mut self.sumchecks);
-            crate::utils::thread::drop_in_background_thread(sumchecks);
-        }
-
         // Compute the opening proof hint for the reduced opening by homomorphically combining
         // the hints for the individual sumchecks.
         let hint = {
-            let mut rlc_map = HashMap::new();
+            let mut rlc_map = BTreeMap::new();
             for (gamma, sumcheck) in gamma_powers.iter().zip(self.sumchecks.iter()) {
                 for (coeff, polynomial) in
                     sumcheck.rlc_coeffs.iter().zip(sumcheck.polynomials.iter())
@@ -783,6 +803,12 @@ where
 
         // Reduced opening proof
         let joint_opening_proof = PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, hint, transcript);
+
+        #[cfg(not(test))]
+        {
+            let sumchecks = std::mem::take(&mut self.sumchecks);
+            crate::utils::thread::drop_in_background_thread(sumchecks);
+        }
 
         ReducedOpeningProof {
             sumcheck_proof,
@@ -841,7 +867,7 @@ where
     pub fn new() -> Self {
         Self {
             sumchecks: vec![],
-            openings: HashMap::new(),
+            openings: BTreeMap::new(),
             #[cfg(test)]
             prover_opening_accumulator: None,
         }
@@ -858,11 +884,7 @@ where
         self.sumchecks.len()
     }
 
-    pub fn evaluation_openings(&self) -> &Openings<F> {
-        &self.openings
-    }
-
-    pub fn evaluation_openings_mut(&mut self) -> &mut Openings<F> {
+    pub fn openings_mut(&mut self) -> &mut Openings<F> {
         &mut self.openings
     }
 

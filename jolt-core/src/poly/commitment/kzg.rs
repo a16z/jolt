@@ -201,7 +201,6 @@ where
         assert!(polys
             .par_iter()
             .all(|s| s.borrow().len() == polys[0].borrow().len()));
-        assert!(polys[0].borrow().len() <= g1_powers.len());
 
         if let Some(invalid) = polys
             .iter()
@@ -289,8 +288,7 @@ where
             ));
         }
 
-        let c =
-            <P::G1 as VariableBaseMSM>::msm(&pk.g1_powers()[..poly.original_len()], poly, None)?;
+        let c = <P::G1 as VariableBaseMSM>::msm(&pk.g1_powers()[..poly.original_len()], poly)?;
         Ok(c.into_affine())
     }
 

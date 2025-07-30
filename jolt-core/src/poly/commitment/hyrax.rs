@@ -159,7 +159,6 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxOpen
         let homomorphically_derived_commitment: G = VariableBaseMSM::msm(
             &G::normalize_batch(&commitment.row_commitments),
             &MultilinearPolynomial::from(L),
-            None,
         )
         .unwrap();
 

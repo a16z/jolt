@@ -17,11 +17,7 @@ where
     Self::ScalarField: JoltField,
 {
     #[tracing::instrument(skip_all)]
-    fn msm<U>(
-        bases: &[Self::MulBase],
-        poly: &U,
-        _max_num_bits: Option<usize>,
-    ) -> Result<Self, ProofVerifyError>
+    fn msm<U>(bases: &[Self::MulBase], poly: &U) -> Result<Self, ProofVerifyError>
     where
         U: Borrow<MultilinearPolynomial<Self::ScalarField>> + Sync,
     {
@@ -168,7 +164,7 @@ where
     {
         polys
             .par_iter()
-            .map(|poly| VariableBaseMSM::msm(bases, poly, None).unwrap())
+            .map(|poly| VariableBaseMSM::msm(&bases[..poly.borrow().len()], poly).unwrap())
             .collect()
     }
 
@@ -178,7 +174,10 @@ where
     ) -> Vec<Self> {
         polys
             .par_iter()
-            .map(|poly| VariableBaseMSM::msm_field_elements(bases, &poly.coeffs, None).unwrap())
+            .map(|poly| {
+                VariableBaseMSM::msm_field_elements(&bases[..poly.coeffs.len()], &poly.coeffs, None)
+                    .unwrap()
+            })
             .collect()
     }
 }

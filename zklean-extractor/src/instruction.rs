@@ -1,6 +1,6 @@
 use jolt_core::{
     field::JoltField,
-    jolt::{instruction::JoltInstruction, vm::rv32i_vm::RV32I},
+    jolt::{instruction::JoltInstruction, vm::rv32im_vm::RV32I},
 };
 use strum::IntoEnumIterator as _;
 

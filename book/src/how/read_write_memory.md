@@ -81,7 +81,7 @@ that only perform word-aligned accesses.
 1. `ADDI` `rs1`, --, `imm`, $v_0$   `// Compute the memory address being accessed`
 1. `ANDI` $v_0$, --, `(1 << 32) - 4`, $v_1$   `// Mask out the lower bits to obtain the word-aligned address`
 1. `LW` $v_1$, --, 0, $v_2$   `// Load the full word`
-1. `XORI` $v_2$, --, `0b11`, $v_3$   `// Compute the number of bytes to shift the word (in the lower 2 bits)`
+1. `XORI` $v_0$, --, `0b11`, $v_3$   `// Compute the number of bytes to shift the word (in the lower 2 bits)`
 1. `SLLI` $v_3$, --, 3, $v_3$   `// Compute the number of bits to shift the word (in the lower 5 bits)`
 1. `SLL` $v_2$, $v_3$, --, `rd`   `// Shift the word so that the desired byte is left-aligned`
 1. `SRAI` `rd`, --, 24, `rd`   `// Right arithmetic shift to sign-extend and right-align the byte`
@@ -91,7 +91,7 @@ that only perform word-aligned accesses.
 1. `ADDI` `rs1`, --, `imm`, $v_0$   `// Compute the memory address being accessed`
 1. `ANDI` $v_0$, --, `(1 << 32) - 4`, $v_1$   `// Mask out the lower bits to obtain the word-aligned address`
 1. `LW` $v_1$, --, 0, $v_2$   `// Load the full word`
-1. `XORI` $v_2$, --, `0b11`, $v_3$   `// Compute the number of bytes to shift the word (in the lower 2 bits)`
+1. `XORI` $v_0$, --, `0b11`, $v_3$   `// Compute the number of bytes to shift the word (in the lower 2 bits)`
 1. `SLLI` $v_3$, --, 3, $v_3$   `// Compute the number of bits to shift the word (in the lower 5 bits)`
 1. `SLL` $v_2$, $v_3$, --, `rd`   `// Shift the word so that the desired byte is left-aligned`
 1. `SRLI` `rd`, --, 24, `rd`   `// Right logical shift to zero-extend and right-align the byte`
@@ -102,7 +102,7 @@ that only perform word-aligned accesses.
 1. `ADDI` `rs1`, --, `imm`, $v_0$   `// Compute the memory address being accessed`
 1. `ANDI` $v_0$, --, `(1 << 32) - 4`, $v_1$   `// Mask out the lower bits to obtain the word-aligned address`
 1. `LW` $v_1$, --, 0, $v_2$   `// Load the full word`
-1. `XORI` $v_2$, --, `0b10`, $v_3$   `// Compute the number of bytes to shift the word (in the lower 2 bits)`
+1. `XORI` $v_0$, --, `0b10`, $v_3$   `// Compute the number of bytes to shift the word (in the lower 2 bits)`
 1. `SLLI` $v_3$, --, 3, $v_3$   `// Compute the number of bits to shift the word (in the lower 5 bits)`
 1. `SLL` $v_2$, $v_3$, --, `rd`   `// Shift the word so that the desired halfword is left-aligned`
 1. `SRAI` `rd`, --, 16, `rd`   `// Right arithmetic shift to sign-extend and right-align the halfword`
@@ -113,7 +113,7 @@ that only perform word-aligned accesses.
 1. `ADDI` `rs1`, --, `imm`, $v_0$   `// Compute the memory address being accessed`
 1. `ANDI` $v_0$, --, `(1 << 32) - 4`, $v_1$   `// Mask out the lower bits to obtain the word-aligned address`
 1. `LW` $v_1$, --, 0, $v_2$   `// Load the full word`
-1. `XORI` $v_2$, --, `0b10`, $v_3$   `// Compute the number of bytes to shift the word (in the lower 2 bits)`
+1. `XORI` $v_0$, --, `0b10`, $v_3$   `// Compute the number of bytes to shift the word (in the lower 2 bits)`
 1. `SLLI` $v_3$, --, 3, $v_3$   `// Compute the number of bits to shift the word (in the lower 5 bits)`
 1. `SLL` $v_2$, $v_3$, --, `rd`   `// Shift the word so that the desired halfword is left-aligned`
 1. `SRLI` `rd`, --, 16, `rd`   `// Right logical shift to zero-extend and right-align the halfword`

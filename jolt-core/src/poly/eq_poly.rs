@@ -121,7 +121,7 @@ impl<F: JoltField> EqPolynomial<F> {
 
     /// Computes the table of coefficients:
     ///
-    ///     `scaling_factor * eq(r, x) for all x in {0, 1}^n`,
+    /// scaling_factor * eq(r, x) for all x in {0, 1}^n
     ///
     /// computing biggest layers of the dynamic programming tree in parallel.
     #[tracing::instrument(skip_all, "EqPolynomial::evals_parallel")]

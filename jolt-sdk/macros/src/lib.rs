@@ -62,13 +62,18 @@ impl MacroBuilder {
     fn build(&mut self) -> TokenStream {
         let build_prover_fn = self.make_build_prover_fn();
         let build_verifier_fn = self.make_build_verifier_fn();
-        let execute_fn = self.make_execute_function();
         let analyze_fn = self.make_analyze_function();
         let compile_fn = self.make_compile_func();
         let preprocess_prover_fn = self.make_preprocess_prover_func();
         let preprocess_verifier_fn = self.make_preprocess_verifier_func();
         let verifier_preprocess_from_prover_fn = self.make_preprocess_from_prover_func();
         let prove_fn = self.make_prove_func();
+
+        let attributes = parse_attributes(&self.attr);
+        let mut execute_fn = quote! {};
+        if !attributes.guest_only {
+            execute_fn = self.make_execute_function();
+        }
 
         let main_fn = if let Some(func) = self.get_func_selector() {
             if *self.get_func_name() == func {
@@ -150,12 +155,12 @@ impl MacroBuilder {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #build_verifier_fn_name(
                 preprocessing: jolt::JoltVerifierPreprocessing<jolt::F, jolt::PCS>,
-            ) -> impl Fn(#(#input_types ,)* #output_type, jolt::JoltProofBundle) -> bool + Sync + Send
+            ) -> impl Fn(#(#input_types ,)* #output_type, jolt::RV32IMJoltProof) -> bool + Sync + Send
             {
                 #imports
                 let preprocessing = std::sync::Arc::new(preprocessing);
 
-                let verify_closure = move |#(#inputs,)* output, proof: jolt::JoltProofBundle| {
+                let verify_closure = move |#(#inputs,)* output, proof: jolt::RV32IMJoltProof| {
                     let preprocessing = (*preprocessing).clone();
                     let memory_config = MemoryConfig {
                         max_input_size: preprocessing.shared.memory_layout.max_input_size,
@@ -163,12 +168,12 @@ impl MacroBuilder {
                         stack_size: preprocessing.shared.memory_layout.stack_size,
                         memory_size: preprocessing.shared.memory_layout.memory_size,
                     };
-                    let mut io_device = tracer::JoltDevice::new(&memory_config);
+                    let mut io_device = JoltDevice::new(&memory_config);
 
                     #(#set_program_args;)*
                     io_device.outputs.append(&mut jolt::postcard::to_stdvec(&output).unwrap());
 
-                    RV32IJoltVM::verify(preprocessing, proof.proof, /*proof.commitments,*/ io_device, None).is_ok()
+                    JoltRV32IM::verify(&preprocessing, proof, io_device, None).is_ok()
                 };
 
                 verify_closure
@@ -256,10 +261,6 @@ impl MacroBuilder {
         let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
         let stack_size = proc_macro2::Literal::u64_unsuffixed(attributes.stack_size);
         let memory_size = proc_macro2::Literal::u64_unsuffixed(attributes.memory_size);
-
-        let max_memory_size = proc_macro2::Literal::u64_unsuffixed(
-            (attributes.memory_size + attributes.stack_size).next_power_of_two(),
-        );
         let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
         let imports = self.make_imports();
 
@@ -284,12 +285,10 @@ impl MacroBuilder {
 
                 // TODO(moodlezoup): Feed in size parameters via macro
                 let preprocessing: JoltProverPreprocessing<jolt::F, jolt::PCS> =
-                    RV32IJoltVM::prover_preprocess(
+                    JoltRV32IM::prover_preprocess(
                         bytecode,
                         memory_layout,
                         memory_init,
-                        1 << 20,
-                        #max_memory_size,
                         #max_trace_length,
                     );
 
@@ -304,10 +303,6 @@ impl MacroBuilder {
         let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
         let stack_size = proc_macro2::Literal::u64_unsuffixed(attributes.stack_size);
         let memory_size = proc_macro2::Literal::u64_unsuffixed(attributes.memory_size);
-
-        let max_memory_size = proc_macro2::Literal::u64_unsuffixed(
-            (attributes.memory_size + attributes.stack_size).next_power_of_two(),
-        );
         let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
         let imports = self.make_imports();
 
@@ -332,12 +327,10 @@ impl MacroBuilder {
 
                 // TODO(moodlezoup): Feed in size parameters via macro
                 let prover_preprocessing: JoltProverPreprocessing<jolt::F, jolt::PCS> =
-                    RV32IJoltVM::prover_preprocess(
+                    JoltRV32IM::prover_preprocess(
                         bytecode,
                         memory_layout,
                         memory_init,
-                        1 << 20,
-                        #max_memory_size,
                         #max_trace_length,
                     );
                 let preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
@@ -401,22 +394,16 @@ impl MacroBuilder {
                 let mut input_bytes = vec![];
                 #(#set_program_args;)*
 
-                let (trace, final_memory_state, io_device) = program.trace(&input_bytes);
-                #handle_return
-
-                let (jolt_proof, output_io_device, _) = RV32IJoltVM::prove(
-                    io_device,
-                    trace,
-                    final_memory_state,
-                    preprocessing,
+                let (jolt_proof, io_device, _) = JoltRV32IM::prove(
+                    &preprocessing,
+                    &mut program,
+                    &input_bytes,
+                    None
                 );
 
+                #handle_return
 
-                let proof = jolt::JoltProofBundle {
-                    proof: jolt_proof,
-                };
-
-                (ret_val, proof)
+                (ret_val, jolt_proof)
             }
         }
     }
@@ -552,17 +539,16 @@ impl MacroBuilder {
         quote! {
             #[cfg(not(feature = "guest"))]
             use jolt::{
+                Jolt,
                 JoltField,
                 host::Program,
                 JoltProverPreprocessing,
                 JoltVerifierPreprocessing,
-                Jolt,
-                ProofTranscript,
-                RV32IJoltVM,
-                RV32IJoltProof,
+                JoltRV32IM,
+                RV32IMJoltProof,
                 MemoryConfig,
                 MemoryLayout,
-                tracer,
+                JoltDevice,
             };
         }
     }
@@ -642,10 +628,10 @@ impl MacroBuilder {
     fn get_prove_output_type(&self) -> TokenStream2 {
         match &self.func.sig.output {
             ReturnType::Default => quote! {
-                ((), jolt::JoltProofBundle)
+                ((), jolt::RV32IMJoltProof)
             },
             ReturnType::Type(_, ty) => quote! {
-                (#ty, jolt::JoltProofBundle)
+                (#ty, jolt::RV32IMJoltProof)
             },
         }
     }
@@ -683,33 +669,29 @@ impl MacroBuilder {
         parse_attributes(&self.attr).wasm
     }
 
+    // TODO(moodlezoup): fix this
     fn make_wasm_function(&self) -> TokenStream2 {
         let fn_name = self.get_func_name();
         let verify_wasm_fn_name = Ident::new(&format!("verify_{fn_name}"), fn_name.span());
         let attributes = parse_attributes(&self.attr);
         let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
-        let max_memory_size = proc_macro2::Literal::u64_unsuffixed(
-            (attributes.memory_size + attributes.stack_size).next_power_of_two(),
-        );
 
         quote! {
             #[wasm_bindgen]
             #[cfg(all(target_arch = "wasm32", not(feature = "guest")))]
             pub fn #verify_wasm_fn_name(preprocessing_data: &[u8], proof_bytes: &[u8]) -> bool {
-                use jolt::{Jolt, JoltProofBundle, RV32IJoltVM, ProofTranscript, Serializable};
+                use jolt::{RV32IMJoltProof, JoltRV32IM, Serializable};
 
                 let decoded_preprocessing_data: DecodedData = deserialize_from_bin(preprocessing_data).unwrap();
-                let proof = JoltProofBundle::deserialize_from_bytes(proof_bytes).unwrap();
+                let proof = RV32IMJoltProof::deserialize_from_bytes(proof_bytes).unwrap();
 
-                let preprocessing = RV32IJoltVM::preprocess(
+                let preprocessing = JoltRV32IM::preprocess(
                     decoded_preprocessing_data.bytecode,
                     decoded_preprocessing_data.memory_init,
-                    1 << 20,
-                    #max_memory_size,
                     #max_trace_length,
                 );
 
-                let result = RV32IJoltVM::verify(preprocessing, proof.proof /*, proof.commitments */);
+                let result = JoltRV32IM::verify(&preprocessing, proof);
                 result.is_ok()
             }
         }

@@ -134,7 +134,7 @@ fn step_emulator(emulator: &mut Emulator, prev_pc: &mut u64, trace: Option<&mut 
 
 #[tracing::instrument(skip_all)]
 fn setup_emulator(elf_contents: Vec<u8>, inputs: &[u8], memory_config: &MemoryConfig) -> Emulator {
-    let term = DefaultTerminal::new();
+    let term = DefaultTerminal::default();
     let mut emulator = Emulator::new(Box::new(term));
     emulator.update_xlen(get_xlen());
 

@@ -61,6 +61,7 @@ where
     ) -> (Self::Commitment, Self::OpeningProofHint) {
         (MockCommitment::default(), ())
     }
+
     fn batch_commit<P>(polys: &[P], gens: &Self::ProverSetup) -> Vec<Self::Commitment>
     where
         P: Borrow<MultilinearPolynomial<Self::Field>>,
@@ -76,6 +77,13 @@ where
         _coeffs: &[Self::Field],
     ) -> Self::Commitment {
         MockCommitment::default()
+    }
+
+    fn combine_hints(
+        _hints: Vec<Self::OpeningProofHint>,
+        _coeffs: &[Self::Field],
+    ) -> Self::OpeningProofHint {
+        ()
     }
 
     fn prove<ProofTranscript: Transcript>(
