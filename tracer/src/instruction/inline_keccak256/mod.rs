@@ -1,4 +1,3 @@
-use crate::instruction::addi::ADDI;
 /// This file contains Keccak256-specific logic to be used in the Keccak256 inline:
 /// 1) Prover: Keccak256SequenceBuilder expands the inline to a list of RV instructions.
 /// 2) Host: Rust reference implementation to be called by jolt-sdk.
