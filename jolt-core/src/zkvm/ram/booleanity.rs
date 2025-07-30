@@ -2,7 +2,6 @@ use std::{cell::RefCell, rc::Rc};
 
 use common::jolt_device::MemoryLayout;
 use rayon::prelude::*;
-use tracer::instruction::RV32IMCycle;
 
 use crate::{
     field::JoltField,
@@ -52,11 +51,9 @@ pub struct BooleanitySumcheck<F: JoltField> {
     gamma_powers: Vec<F>,
     prover_state: Option<BooleanityProverState<F>>,
     current_round: usize,
-    trace: Option<Vec<RV32IMCycle>>,
+    addresses: Option<Vec<Option<u64>>>,
     memory_layout: Option<MemoryLayout>,
 }
-
-use std::mem;
 
 impl<F: JoltField> BooleanitySumcheck<F> {
     #[tracing::instrument(skip_all, name = "RamBooleanitySumcheck::new_prover")]
@@ -98,21 +95,27 @@ impl<F: JoltField> BooleanitySumcheck<F> {
 
         // TODO(moodlezoup): `G_arrays` is identical to `F_arrays` in `hamming_weight.rs`
         let mut G_arrays = Vec::with_capacity(d);
+
+        // First pass: extract addresses in parallel
+        let addresses: Vec<Option<u64>> = trace
+            .par_iter()
+            .map(|cycle| remap_address(cycle.ram_access().address() as u64, memory_layout))
+            .collect();
+
+        // Second pass: compute G arrays using extracted addresses
         for i in 0..d {
-            let G: Vec<F> = trace
+            let G: Vec<F> = addresses
                 .par_chunks(chunk_size)
                 .enumerate()
-                .map(|(chunk_index, trace_chunk)| {
+                .map(|(chunk_index, address_chunk)| {
                     let mut local_array = unsafe_allocate_zero_vec(1 << NUM_RA_I_VARS);
                     let mut j = chunk_index * chunk_size;
-                    for cycle in trace_chunk {
-                        if let Some(address) =
-                            remap_address(cycle.ram_access().address() as u64, memory_layout)
-                        {
+                    for address_opt in address_chunk {
+                        if let Some(address) = address_opt {
                             // For each address, add eq_r_cycle[j] to each corresponding chunk
                             // This maintains the property that sum of all ra values for an address equals 1
                             let address_i =
-                                (address >> (NUM_RA_I_VARS * (d - 1 - i))) % (1 << NUM_RA_I_VARS);
+                                (*address >> (NUM_RA_I_VARS * (d - 1 - i))) % (1 << NUM_RA_I_VARS);
                             local_array[address_i as usize] += eq_r_cycle[j];
                         }
                         j += 1;
@@ -158,7 +161,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             gamma_powers,
             prover_state: Some(prover_state),
             current_round: 0,
-            trace: Some(trace.to_vec()),
+            addresses: Some(addresses),
             memory_layout: Some(memory_layout.clone()),
         }
     }
@@ -198,7 +201,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             gamma_powers,
             prover_state: None,
             current_round: 0,
-            trace: None,
+            addresses: None,
             memory_layout: Some(memory_layout.clone()),
         }
     }
@@ -255,22 +258,20 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
                 prover_state.eq_r_r = prover_state.B.current_scalar;
 
                 // Compute H polynomials for each decomposed part
-                let trace = self.trace.as_ref().expect("Trace not set");
-                let memory_layout = self.memory_layout.as_ref().expect("Memory layout not set");
+                let addresses = self.addresses.as_ref().expect("Addresses not set");
 
                 let mut H_polys = Vec::with_capacity(self.d);
 
                 for i in 0..self.d {
-                    let H_vec: Vec<F> = trace
+                    let H_vec: Vec<F> = addresses
                         .par_iter()
-                        .map(|cycle| {
-                            remap_address(cycle.ram_access().address() as u64, memory_layout)
-                                .map_or(F::zero(), |address| {
-                                    // Get i-th address chunk
-                                    let address_i = (address >> (NUM_RA_I_VARS * (self.d - 1 - i)))
-                                        % (1 << NUM_RA_I_VARS);
-                                    prover_state.F.as_ref().unwrap()[address_i as usize]
-                                })
+                        .map(|address_opt| {
+                            address_opt.map_or(F::zero(), |address| {
+                                // Get i-th address chunk
+                                let address_i = (address >> (NUM_RA_I_VARS * (self.d - 1 - i)))
+                                    % (1 << NUM_RA_I_VARS);
+                                prover_state.F.as_ref().unwrap()[address_i as usize]
+                            })
                         })
                         .collect();
                     H_polys.push(MultilinearPolynomial::from(H_vec));
@@ -284,6 +285,14 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
                 }
                 if let Some(f) = prover_state.F.take() {
                     drop_in_background_thread(f);
+                }
+
+                // Drop addresses and memory_layout as they're no longer needed in phase 2
+                if let Some(addresses) = self.addresses.take() {
+                    drop_in_background_thread(addresses);
+                }
+                if let Some(memory_layout) = self.memory_layout.take() {
+                    drop_in_background_thread(memory_layout);
                 }
             }
         } else {

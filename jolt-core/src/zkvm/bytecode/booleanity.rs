@@ -7,7 +7,6 @@ use crate::poly::opening_proof::{
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
-use std::mem;
 
 use crate::{
     field::JoltField,
