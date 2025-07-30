@@ -43,6 +43,7 @@ impl BytecodePreprocessing {
         let mut virtual_address = 1; // Account for no-op instruction prepended to bytecode
         for instruction in bytecode.iter() {
             if instruction.normalize().address == 0 {
+                virtual_address += 1;
                 // ignore unimplemented instructions
                 continue;
             }
