@@ -32,9 +32,12 @@ mod e2e_tests {
     #[test]
     fn test_medium_classification() {
         init_logger();
+        let mut input_vector = vec![846, 3, 195, 4, 374, 14, 259];
+        input_vector.resize(100, 0); // Resize to match the input shape
+
         let text_classification = ONNXProgram {
-            model_path: "../onnx-tracer/models/medium_text_classification/network.onnx".into(),
-            inputs: Tensor::new(Some(&[1, 2, 3, 4, 5]), &[1, 5]).unwrap(), // Example input
+            model_path: "/home/antoine/Documents/projets/Novanet/onnx/zkml-jolt/onnx-tracer/models/medium_text_classification/network.onnx".into(),
+            inputs: Tensor::new(Some(&input_vector), &[1, 100]).unwrap(), // Example input
         };
         let program_bytecode = text_classification.decode();
         println!("Program code: {program_bytecode:#?}",);

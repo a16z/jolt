@@ -1,32 +1,72 @@
+import pandas as pd
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from sklearn.metrics import classification_report, confusion_matrix
+import json
+from collections import Counter
 
-# Dummy data (unchanged)
-texts = [
-    "I love this", "This is great", "Happy with the result",
-    "I hate this", "This is bad", "Not satisfied"
-]
-labels = torch.tensor([1, 1, 1, 0, 0, 0], dtype=torch.long)  # switch to long for CE
+# =====================
+# 1. Load dataset
+# =====================
+df = pd.read_csv("Spam_SMS.csv")  # Change to your actual CSV filename
 
-# build vocab & inputs (same as before)
-vocab = {}
-def tokenize(text):
-    tokens = text.lower().split()
-    ids = []
-    for token in tokens:
-        if token not in vocab:
-            vocab[token] = len(vocab) + 1
-        ids.append(vocab[token])
-    return ids
+# Map status: "ham" -> 0, "spam" -> 1
+label_map = {"ham": 0, "spam": 1}
+df["label"] = df["Class"].map(label_map)
 
-max_len = 5
-input_ids = [tokenize(t) for t in texts]
-padded = np.zeros((len(texts), max_len), dtype=np.int64)
-for i, seq in enumerate(input_ids):
-    padded[i, :len(seq)] = seq[:max_len]
-X = torch.tensor(padded)
+# Extract data
+texts = df["Message"].astype(str).tolist()
+labels = torch.tensor(df["label"].values, dtype=torch.long)
+
+# Split into train/test
+train_texts, test_texts, train_labels, test_labels = train_test_split(
+    texts, labels, test_size=0.2, random_state=42
+)
+
+# =====================
+# 2. Tokenization & Vocab
+# =====================
+
+max_len = 100  # max number of words per SMS
+
+def build_vocab(texts, max_vocab_size=1000):
+    # Count all tokens
+    counter = Counter()
+    for text in texts:
+        tokens = text.lower().split()
+        counter.update(tokens)
+
+    # Take top max_vocab_size tokens
+    most_common = counter.most_common(max_vocab_size)
+    
+    # Assign IDs starting from 1 (0 reserved for padding/unknown)
+    vocab = {word: idx+1 for idx, (word, _) in enumerate(most_common)}
+    return vocab
+
+def pad_sequences(texts):
+    input_ids = []
+    for t in texts:
+        tokens = t.lower().split()
+        ids = []
+        for token in tokens:
+            ids.append(vocab.get(token, 0))  # 0 for unknown tokens
+        input_ids.append(ids)
+
+    padded = np.zeros((len(texts), max_len), dtype=np.int64)
+    for i, seq in enumerate(input_ids):
+        padded[i, :min(len(seq), max_len)] = seq[:max_len]
+    return torch.tensor(padded)
+
+vocab = build_vocab(train_texts, max_vocab_size=1000)
+
+X_train = pad_sequences(train_texts)
+X_test = pad_sequences(test_texts)
+y_train = train_labels
+y_test = test_labels
 
 class MediumTextClassifier(nn.Module):
     def __init__(self, vocab_size, embed_dim=16, hidden_dim=32):
@@ -56,26 +96,71 @@ class MediumTextClassifier(nn.Module):
         probs = F.softmax(logits, dim=1)          # Softmax
         return probs
 
-# instantiate, train
+# =====================
+# 4. Training
+# =====================
 model = MediumTextClassifier(len(vocab))
-optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
-criterion = nn.CrossEntropyLoss()
+class_counts = torch.bincount(y_train)
+total = len(y_train)
+weights = total / (2.0 * class_counts.float())  # inverse frequency
+print("Class distribution:", class_counts.tolist())
+print("Loss weights:", weights.tolist())
 
-for epoch in range(20):
-    out = model(X)
-    loss = criterion(out, labels)
+criterion = nn.CrossEntropyLoss(weight=weights)
+optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+
+epochs = 100
+for epoch in range(epochs):
+    model.train()
+    out = model(X_train)
+    loss = criterion(out, y_train)
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
-    if epoch % 5 == 0:
-        print(f"Epoch {epoch}, Loss: {loss.item():.4f}")
 
-# Export to ONNX (float32)
+    # Training accuracy
+    preds = out.argmax(dim=1)
+    acc = (preds == y_train).float().mean().item()
+    print(f"Epoch {epoch+1}/{epochs} - Loss: {loss.item():.4f} - Train Acc: {acc:.2f}")
+
+# =====================
+# 5. Evaluation
+# =====================
+model.eval()
+with torch.no_grad():
+    test_logits = model(X_test)
+    test_preds = test_logits.argmax(dim=1)
+
+# Metrics
+acc = accuracy_score(y_test, test_preds)
+prec = precision_score(y_test, test_preds)
+rec = recall_score(y_test, test_preds)
+f1 = f1_score(y_test, test_preds)
+
+print("\nTest Metrics:")
+print(f"Accuracy:  {acc:.2f}")
+print(f"Precision: {prec:.2f}")
+print(f"Recall:    {rec:.2f}")
+print(f"F1-score:  {f1:.2f}")
+
+preds = model(X_test).argmax(dim=1)
+print(confusion_matrix(y_test, preds))
+print(classification_report(y_test, preds, target_names=["ham", "spam"]))
+
+# =====================
+# Save vocabulary
+# =====================
+with open("vocab.json", "w") as f:
+    json.dump(vocab, f)
+
+# =====================
+# 6. Export to ONNX
+# =====================
 dummy_input = torch.randint(1, len(vocab)+1, (1, max_len))
 torch.onnx.export(
-    model, dummy_input, "medium_text_classification.onnx",
+    model, dummy_input, "network.onnx",
     input_names=["input"], output_names=["probs"],
     dynamic_axes={"input": {0: "batch_size"}, "probs": {0: "batch_size"}},
     opset_version=15
 )
-print("✅ Exported ONNX model with richer ISA ops to medium_text_classification.onnx")
+print("\n✅ Exported ONNX model to network.onnx")
