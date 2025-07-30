@@ -85,7 +85,7 @@ lto = "off"
 
 [profile.release]
 debug = 1
-# lto = "fat"
+lto = "fat"
 
 [profile.build-fast]
 inherits = "release"

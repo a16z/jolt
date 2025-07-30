@@ -61,6 +61,7 @@ where
     ) -> (Self::Commitment, Self::OpeningProofHint) {
         (MockCommitment::default(), ())
     }
+
     fn batch_commit<P>(polys: &[P], gens: &Self::ProverSetup) -> Vec<Self::Commitment>
     where
         P: Borrow<MultilinearPolynomial<Self::Field>>,

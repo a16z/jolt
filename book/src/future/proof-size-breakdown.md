@@ -6,7 +6,7 @@ Here is the breakdown of contributors to proof size:
 
 <OL>
 <LI> In Jolt, we commit to about 250 polynomials and produce just one HyperKZG evaluation proof. 
-  It's one group element (about 32 bytes) per commitment, and an evaluation proof is a couple of dozen group group elements.
+  It's one group element (about 32 bytes) per commitment, and an evaluation proof is a couple of dozen group elements.
   So this is about 9 KBs total. 
 
   With some engineering headaches we could go below 9 KBs by committing to some of the 250 polynomials as a single, larger

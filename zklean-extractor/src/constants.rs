@@ -1,5 +1,5 @@
-use common::constants;
-use jolt_core::jolt::vm::rv32im_vm;
+use common::{constants, rv_trace::MemoryConfig};
+use jolt_core::jolt::vm::rv32i_vm;
 
 /// Groups the constants used for a specific instruction set / decomposition strategy / memory
 /// layout. Jolt currently just has one of these, but we abstract over them here for future
@@ -15,10 +15,8 @@ pub trait JoltParameterSet {
     /// from `C` and `LOG_M`, since those constants need to be able to decompose a pair of
     /// `WORD_SIZE` registers
     const WORD_SIZE: usize = (Self::LOG_M * Self::C) / 2;
-    /// The maximum number of input wires in the memory layout
-    const MAX_INPUT_SIZE: u64;
-    /// The maximum number of output wires in the memory layout
-    const MAX_OUTPUT_SIZE: u64;
+    /// The memory config to use
+    const MEMORY_CONFIG: MemoryConfig;
 }
 
 /// The parameters used by Jolt for 32-bit risc-v
@@ -26,8 +24,12 @@ pub trait JoltParameterSet {
 pub struct RV32IParameterSet;
 
 impl JoltParameterSet for RV32IParameterSet {
-    const C: usize = rv32im_vm::C;
-    const M: usize = rv32im_vm::M;
-    const MAX_INPUT_SIZE: u64 = constants::DEFAULT_MAX_INPUT_SIZE;
-    const MAX_OUTPUT_SIZE: u64 = constants::DEFAULT_MAX_OUTPUT_SIZE;
+    const C: usize = rv32i_vm::C;
+    const M: usize = rv32i_vm::M;
+    const MEMORY_CONFIG: MemoryConfig = MemoryConfig {
+        max_input_size: constants::DEFAULT_MAX_INPUT_SIZE,
+        max_output_size: constants::DEFAULT_MAX_OUTPUT_SIZE,
+        stack_size: constants::DEFAULT_STACK_SIZE,
+        memory_size: constants::DEFAULT_MEMORY_SIZE,
+    };
 }

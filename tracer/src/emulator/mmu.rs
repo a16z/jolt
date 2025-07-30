@@ -1037,7 +1037,7 @@ pub struct MemoryWrapper {
 impl MemoryWrapper {
     fn new() -> Self {
         MemoryWrapper {
-            memory: Memory::new(),
+            memory: Memory::default(),
         }
     }
 
@@ -1130,7 +1130,7 @@ mod test_mmu {
     const MEM_CAPACITY: u64 = 1024 * 1024;
 
     fn setup_mmu(capacity: u64) -> Mmu {
-        let terminal = Box::new(DummyTerminal::new());
+        let terminal = Box::new(DummyTerminal::default());
         let mut mmu = Mmu::new(Xlen::Bit64, terminal);
 
         mmu.init_memory(capacity);

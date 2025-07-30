@@ -1,63 +1,48 @@
 # Groth16 Recursion
 Jolt's verifier with no proof composition is expensive. We [estimate](on-chain-verifier.md) about 2 million gas to verify within the EVM. Further, the short-term [continuations plan](https://jolt.a16zcrypto.com/future/continuations.html) causes a linear blowup depending on the count of monolithic trace chunks proven.
 
-To solve these two issues we're aiming to add a configuration option to the Jolt prover with a post processing step, which creates a Groth16 proof of the Jolt verifier for constant proof size / cost (~280k gas on EVM) regardless of continuation chunk count or opening proof cost. This technique is industry standard. (An added benefit of this proof composition is that it will render 
-Jolt proofs [zero-knowledge](zk.md)). 
+To solve these two issues we're aiming to add a configuration option to the Jolt prover with a post processing step, which creates a Groth16 proof of the Jolt verifier for constant proof size / cost (~280k gas on EVM) regardless of continuation chunk count or opening proof cost. This technique is industry standard. (An added benefit of this proof composition is that it will render Jolt proofs [zero-knowledge](zk.md)).
 
-We call directly representing the Jolt verifier (with HyperKZG polynomial commitment scheme) 
-as constraints to then feeding those constraints into Groth16 "naive composition". Unfortunately, this naive procedure
-will result 
-in over a hundred millions of constraints. Applying Groth16 
-to such a large constraint system will result in far more latency than we'd like, (and may even be impossible over the BN254 scalar field
-because that field only supports FFTs of length $2^{27}$. 
-Below, we describe alternate ways forward. 
+
+We call directly representing the Jolt verifier (with HyperKZG polynomial commitment scheme) as constraints to then feeding those constraints into Groth16 "naive composition". Unfortunately, this naive procedure would result in over a hundred million constraints. Applying Groth16 to such a large constraint system will result in far more latency than we'd like, (and may even be impossible over the BN254 scalar field because that field only supports FFTs of length $2^{27}$. Below, we describe alternate ways forward.
+
 
 # Cost accounting for naive composition
 
-In naive composition, the bulk of the constraints are devoted
-to implementing the [~150 scalar multiplications done by the Jolt verifier](on-chain-verifier.md) 
-(or more accurately, ~150 scalar multiplications will be the dominant verifier cost once we finish all optimizations that
-are now in progress). 
+In naive composition, the bulk of the constraints are devoted to implementing the [~150 scalar multiplications done by the Jolt verifier](on-chain-verifier.md) (or more accurately, ~150 scalar multiplications will be the dominant verifier cost once we finish all optimizations that are now in progress).
 
-Each scalar multiplication costs about 400 group operations, each of which costs about 10 field multiplications,
-so that's about $150 \cdot 400 \cdot 10=600k$ field multiplications.
-The real killer is that these field multiplications must be done non-natively in constraints, due to the fact
-that that BN254 does not have a pairing-friendly  "sister curve" (i.e., a curve whose scalar field matches the BN254 base field).
-This means that each of the $600k$ field multiplications costs thousands of constraints. 
+Each scalar multiplication costs about 400 group operations, each of which costs about 10 field multiplications, so that's about $150 \cdot 400 \cdot 10=600k$ field multiplications. The real killer is that these field multiplications must be done non-natively in constraints, due to the fact that BN254 does not have a pairing-friendly "sister curve" (i.e., a curve whose scalar field matches the BN254 base field). This means that each of the $600k$ field multiplications costs thousands of constraints.
 
-On top of the above, the two pairings done by the HyperKZG verifier, implemented non-natively in constraints, 
-should cost about 6 million constraints. 
+On top of the above, the two pairings done by the HyperKZG verifier, implemented non-natively in constraints,
+should cost about 6 million constraints.
 
 We do expect advances in representing non-native field arithmetic in constraints to bring the above numbers
-down some, but not nearly enough to make naive composition sensible. 
+down some, but not nearly enough to make naive composition sensible.
 
 # A first step to reducing gas costs
 
-A simple first approach to reducing gas costs is to leave all scalar multiplications and HyperKZG-evaluation-proof-checking done by the Jolt verifier out of the composition, doing those directly on-chain. 
+A simple first approach to reducing gas costs is to leave all scalar multiplications and HyperKZG-evaluation-proof-checking done by the Jolt verifier out of the composition, doing those directly on-chain.
 
 This would reduce gas costs to slightly over 1 million, and ensure that Groth16 is run only on a few million constraints
 (perhaps even less, given upcoming advances in representing non-native field arithmetic in constraints).
 
-# A way forward 
+# A way forward
 
 Here is our plan to bring on-chain Jolt verification down to a couple hundred thousand gas.
 
 First, represent the Jolt verifier (with HyperKZG-over-BN254 as the polynomial commitment scheme) as an R1CS instance over the Grumpkin scalar field, and apply Spartan (with Hyrax-over-Grumpkin as the polynomial commitment) to this R1CS. This R1CS will only have a few hundred thousand constraints. This is because all scalar multiplications and pairings done by the Jolt verifier are native over Grumpkin's scalar field. (The constraint system is also highly uniform, which can benefit both the Spartan prover and verifier, though it will be so small that this is probably not worth the trouble)
 
-The field operations done by the Jolt verifier in the various invocations of the sum-check protocol need to be represented non-natively in these R1CS constraints, but since there are only about 2,000 such field operations they still only cost perhaps 5 million constraints in total. See the [Testudo](https://eprint.iacr.org/2023/961) paper for a similar approach and associated calculations. This constraint system may be big enough to be worth leveraging its uniformity when we apply Spartan to it. 
+The field operations done by the Jolt verifier in the various invocations of the sum-check protocol need to be represented non-natively in these R1CS constraints, but since there are only about 2,000 such field operations they still only cost perhaps 5 million constraints in total. See the [Testudo](https://eprint.iacr.org/2023/961) paper for a similar approach and associated calculations. This constraint system may be big enough to be worth leveraging its uniformity when we apply Spartan to it.
 
-We further expect upcoming advances in 
-methods for addressing non-native field arithmetic (and/or more careful optimizations of the Jolt verifier) to bring this down to under 2 million constraints. 
+We further expect upcoming advances in methods for addressing non-native field arithmetic (and/or more careful optimizations of the Jolt verifier) to bring this down to under 2 million constraints.
 
-But the Spartan proof is still too big to post on-chain. So, second, represent the Spartan verifier as an R1CS instance over the BN254 scalar field, and apply Groth16 to this R1CS. This the proof
-posted and verified on-chain. 
+But the Spartan proof is still too big to post on-chain. So, second, represent the Spartan verifier as an R1CS instance over the BN254 scalar field, and apply Groth16 to this R1CS. This is the proof posted and verified on-chain.
 
-The Spartan verifier only does at most a couple of hundred field operations (since there's only two sum-check invocations in Spartan, and the second sum-check invocation can be especially tiny for highly uniform constraint systems) and $2 \cdot \sqrt{n}$ scalar multiplications where $n$ is the number of columns (i.e., witness variables) in the R1CS instance.
-$2 \sqrt{n}$ here will be on the order of 3,000, perhaps less. Each (128-bit) scalar multiplication (which are done natively in this R1CS) yields about $2,000$ constraints. So that's 6 million constraints being fed to Groth16.
+The Spartan verifier only does at most a couple of hundred field operations (since there's only two sum-check invocations in Spartan, and the second sum-check invocation can be especially tiny for highly uniform constraint systems) and $2 \cdot \sqrt{n}$ scalar multiplications where $n$ is the number of columns (i.e., witness variables) in the R1CS instance. $2 \sqrt{n}$ here will be on the order of 3,000, perhaps less. Each (128-bit) scalar multiplication (which are done natively in this R1CS) yields about $2,000$ constraints. So that's 6 million constraints being fed to Groth16.
 
-The calculation above is slightly delicate, because running Groth16 on 6 million constraints would be fine for many settings, but, say, 50 million constraints would not be. We do think 6 million is about the right estimate for this approach, especially given that 2,000 field operations for the Jolt verifier is a conservative estimate. 
+The calculation above is slightly delicate, because running Groth16 on 6 million constraints would be fine for many settings, but, say, 50 million constraints would not be. We do think 6 million is about the right estimate for this approach, especially given that 2,000 field operations for the Jolt verifier is a conservative estimate.
 
-(Note that [some works](https://eprint.iacr.org/2024/1131.pdf) have dramatically overestimated the number of constraints needed to represent the Jolt-with-HyperKZG verifier as on the order of 2 billion, perhaps because they considered directly composing Jolt-with-HyperKZG with Groth16, which necessitates representing the HyperKZG verifier with non-native field arithmetic. The two-step composition proposed here avoids this overhead, leading to just 2-5 million constraints.) 
+(Note that [some works](https://eprint.iacr.org/2024/1131.pdf) have dramatically overestimated the number of constraints needed to represent the Jolt-with-HyperKZG verifier as on the order of 2 billion, perhaps because they considered directly composing Jolt-with-HyperKZG with Groth16, which necessitates representing the HyperKZG verifier with non-native field arithmetic. The two-step composition proposed here avoids this overhead, leading to just 2-5 million constraints.)
 
 
 ## Details of the Jolt-with-HyperKZG verifier

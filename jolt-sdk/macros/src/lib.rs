@@ -62,13 +62,18 @@ impl MacroBuilder {
     fn build(&mut self) -> TokenStream {
         let build_prover_fn = self.make_build_prover_fn();
         let build_verifier_fn = self.make_build_verifier_fn();
-        let execute_fn = self.make_execute_function();
         let analyze_fn = self.make_analyze_function();
         let compile_fn = self.make_compile_func();
         let preprocess_prover_fn = self.make_preprocess_prover_func();
         let preprocess_verifier_fn = self.make_preprocess_verifier_func();
         let verifier_preprocess_from_prover_fn = self.make_preprocess_from_prover_func();
         let prove_fn = self.make_prove_func();
+
+        let attributes = parse_attributes(&self.attr);
+        let mut execute_fn = quote! {};
+        if !attributes.guest_only {
+            execute_fn = self.make_execute_function();
+        }
 
         let main_fn = if let Some(func) = self.get_func_selector() {
             if *self.get_func_name() == func {
@@ -388,7 +393,6 @@ impl MacroBuilder {
 
                 let mut input_bytes = vec![];
                 #(#set_program_args;)*
-
 
                 let (jolt_proof, io_device, _) = JoltRV32IM::prove(
                     &preprocessing,
