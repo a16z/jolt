@@ -27,7 +27,7 @@ pub mod read_raf_checking;
 pub const WORD_SIZE: usize = 64;
 const LOG_K: usize = WORD_SIZE * 2;
 const PHASES: usize = 8;
-const LOG_M: usize = LOG_K / PHASES;
+pub const LOG_M: usize = LOG_K / PHASES;
 const M: usize = 1 << LOG_M;
 pub const D: usize = 16;
 pub const LOG_K_CHUNK: usize = LOG_K / D;

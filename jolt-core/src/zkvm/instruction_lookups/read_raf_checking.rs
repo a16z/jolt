@@ -761,7 +761,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
 /// Computes the bit-length of the suffix, for the current (`j`th) round
 /// of sumcheck.
 pub fn current_suffix_len(j: usize) -> usize {
-    LOG_K - (j / LOG_K_CHUNK + 1) * LOG_K_CHUNK
+    LOG_K - (j / LOG_M + 1) * LOG_M
 }
 
 #[cfg(test)]
@@ -914,7 +914,7 @@ mod tests {
             }
             let (lo, ro) = LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle);
             left_operand_claim += eq_r_cycle[i].mul_u64(lo);
-            right_operand_claim += eq_r_cycle[i] * Fr::from_u128(ro);
+            right_operand_claim += eq_r_cycle[i].mul_u128(ro);
         }
 
         let prover_accumulator = prover_sm.get_prover_accumulator();

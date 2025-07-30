@@ -44,16 +44,6 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualSRLI> 
         }
     }
 
-    fn to_lookup_operands(&self) -> (u64, u128) {
-        let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
-        (x, y as u128)
-    }
-
-    fn to_lookup_index(&self) -> u128 {
-        let (x, y) = LookupQuery::<WORD_SIZE>::to_lookup_operands(self);
-        x as u128 | (y << WORD_SIZE)
-    }
-
     fn to_lookup_output(&self) -> u64 {
         use crate::utils::lookup_bits::LookupBits;
         let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);

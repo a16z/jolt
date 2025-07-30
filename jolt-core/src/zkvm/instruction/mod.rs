@@ -23,7 +23,7 @@ pub trait LookupQuery<const WORD_SIZE: usize> {
     /// (e.g. ADD, MUL) the instruction inputs are combined to form a single lookup operand.
     fn to_lookup_operands(&self) -> (u64, u128) {
         let (x, y) = self.to_instruction_inputs();
-        (x, y as u128)
+        (x, (y as u64) as u128)
     }
 
     /// Converts this instruction's operands into a lookup index (as used in sparse-dense Shout).
