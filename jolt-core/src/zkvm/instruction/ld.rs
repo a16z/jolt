@@ -1,16 +1,16 @@
-use tracer::instruction::{lw::LW, RISCVCycle};
+use tracer::instruction::{ld::LD, RISCVCycle};
 
 use crate::zkvm::lookup_table::LookupTables;
 
 use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
-impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for LW {
+impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for LD {
     fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
         None
     }
 }
 
-impl InstructionFlags for LW {
+impl InstructionFlags for LD {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
         flags[CircuitFlags::Load as usize] = true;
@@ -22,7 +22,7 @@ impl InstructionFlags for LW {
     }
 }
 
-impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<LW> {
+impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<LD> {
     fn to_instruction_inputs(&self) -> (u64, i64) {
         (0, 0)
     }

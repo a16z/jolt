@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
+    instruction::ld::LD,
 };
 
 use super::andi::ANDI;
@@ -10,7 +11,6 @@ use super::format::format_i::FormatI;
 use super::format::format_load::FormatLoad;
 use super::format::format_r::FormatR;
 use super::format::format_virtual_halfword_alignment::HalfwordAlignFormat;
-use super::ld::LD;
 use super::slli::SLLI;
 use super::srl::SRL;
 use super::virtual_assert_word_alignment::VirtualAssertWordAlignment;
