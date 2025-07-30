@@ -6,8 +6,11 @@ use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
+use crate::poly::opening_proof::{
+    OpeningPoint, ProverOpeningAccumulator, VerifierOpeningAccumulator, BIG_ENDIAN,
+};
 use crate::poly::spartan_interleaved_poly::SpartanInterleavedPolynomial;
-use crate::poly::split_eq_poly::{GruenSplitEqPolynomial, SplitEqPolynomial};
+use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::r1cs::builder::Constraint;
 use crate::utils::errors::ProofVerifyError;
@@ -17,75 +20,15 @@ use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 use ark_serialize::*;
 use rayon::prelude::*;
+use std::cell::RefCell;
 use std::marker::PhantomData;
-
-pub trait Bindable<F: JoltField>: Sync {
-    fn bind(&mut self, r: F);
-}
-
-/// Batched cubic sumcheck used in grand products
-pub trait BatchedCubicSumcheck<F, ProofTranscript>: Bindable<F>
-where
-    F: JoltField,
-    ProofTranscript: Transcript,
-{
-    fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F>;
-    fn final_claims(&self) -> (F, F);
-
-    #[cfg(test)]
-    fn sumcheck_sanity_check(&self, eq_poly: &SplitEqPolynomial<F>, round_claim: F);
-
-    #[tracing::instrument(skip_all, name = "BatchedCubicSumcheck::prove_sumcheck")]
-    fn prove_sumcheck(
-        &mut self,
-        claim: &F,
-        eq_poly: &mut SplitEqPolynomial<F>,
-        transcript: &mut ProofTranscript,
-    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, (F, F)) {
-        let num_rounds = eq_poly.get_num_vars();
-
-        let mut previous_claim = *claim;
-        let mut r: Vec<F> = Vec::new();
-        let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
-
-        for _ in 0..num_rounds {
-            #[cfg(test)]
-            self.sumcheck_sanity_check(eq_poly, previous_claim);
-
-            let cubic_poly = self.compute_cubic(eq_poly, previous_claim);
-            let compressed_poly = cubic_poly.compress();
-            // append the prover's message to the transcript
-            compressed_poly.append_to_transcript(transcript);
-            // derive the verifier's challenge for the next round
-            let r_j = transcript.challenge_scalar();
-
-            r.push(r_j);
-            // bind polynomials to verifier's challenge
-            self.bind(r_j);
-            eq_poly.bind(r_j);
-
-            previous_claim = cubic_poly.evaluate(&r_j);
-            cubic_polys.push(compressed_poly);
-        }
-
-        #[cfg(test)]
-        self.sumcheck_sanity_check(eq_poly, previous_claim);
-
-        debug_assert_eq!(eq_poly.len(), 1);
-
-        (
-            SumcheckInstanceProof::new(cubic_polys),
-            r,
-            self.final_claims(),
-        )
-    }
-}
+use std::rc::Rc;
 
 /// Trait for a sumcheck instance that can be batched with other instances.
 ///
 /// This trait defines the interface needed to participate in the `BatchedSumcheck` protocol,
 /// which reduces verifier cost and proof size by batching multiple sumcheck protocols.
-pub trait BatchableSumcheckInstance<F: JoltField, ProofTranscript: Transcript> {
+pub trait SumcheckInstance<F: JoltField>: Send + Sync {
     /// Returns the maximum degree of the sumcheck polynomial.
     fn degree(&self) -> usize;
 
@@ -94,47 +37,65 @@ pub trait BatchableSumcheckInstance<F: JoltField, ProofTranscript: Transcript> {
 
     /// Returns the initial claim of this sumcheck instance, i.e.
     /// input_claim = \sum_{x \in \{0, 1}^N} P(x)
-    fn input_claim(&self) -> F;
+    fn input_claim(&self) -> F; // TODO(moodlezoup): maybe pass this an Option<Rc<RefCell<ProverOpeningAccumulator<F>>>>
 
     /// Computes the prover's message for a specific round of the sumcheck protocol.
     /// Returns the evaluations of the sumcheck polynomial at 0, 2, 3, ..., degree.
     /// The point evaluation at 1 can be interpolated using the previous round's claim.
-    fn compute_prover_message(&mut self, round: usize) -> Vec<F>;
+    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F>;
 
     /// Binds this sumcheck instance to the verifier's challenge from a specific round.
     /// This updates the internal state to prepare for the next round.
     fn bind(&mut self, r_j: F, round: usize);
 
-    /// Caches polynomial opening claims needed after the sumcheck protocol completes.
-    /// These openings will later be proven using either an opening proof or another sumcheck.
-    fn cache_openings(&mut self);
-
     /// Computes the expected output claim given the verifier's challenges.
     /// This is used to verify the final result of the sumcheck protocol.
-    fn expected_output_claim(&self, r: &[F]) -> F;
+    fn expected_output_claim(
+        &self,
+        opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+        r: &[F],
+    ) -> F;
 
     /// Proves a single sumcheck instance.
-    fn prove_single(
+    fn prove_single<ProofTranscript: Transcript>(
         &mut self,
-        transcript: &mut ProofTranscript,
+        _transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>)
     where
         Self: Sized,
     {
-        BatchedSumcheck::prove(vec![self], transcript)
+        todo!()
+        // BatchedSumcheck::prove(vec![self], transcript)
     }
 
     /// Verifies a single sumcheck instance.
-    fn verify_single(
+    fn verify_single<ProofTranscript: Transcript>(
         &self,
-        proof: &SumcheckInstanceProof<F, ProofTranscript>,
-        transcript: &mut ProofTranscript,
+        _proof: &SumcheckInstanceProof<F, ProofTranscript>,
+        _transcript: &mut ProofTranscript,
     ) -> Result<Vec<F>, ProofVerifyError>
     where
         Self: Sized,
     {
-        BatchedSumcheck::verify(proof, vec![self], transcript)
+        todo!()
+        // BatchedSumcheck::verify(proof, vec![self], transcript)
     }
+
+    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F>;
+
+    /// Caches polynomial opening claims needed after the sumcheck protocol completes.
+    /// These openings will later be proven using either an opening proof or another sumcheck.
+    fn cache_openings_prover(
+        &self,
+        accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    );
+
+    fn cache_openings_verifier(
+        &self,
+        accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    );
 }
 
 /// Implements the standard technique for batching parallel sumchecks to reduce
@@ -145,7 +106,8 @@ pub trait BatchableSumcheckInstance<F: JoltField, ProofTranscript: Transcript> {
 pub enum BatchedSumcheck {}
 impl BatchedSumcheck {
     pub fn prove<F: JoltField, ProofTranscript: Transcript>(
-        mut sumcheck_instances: Vec<&mut dyn BatchableSumcheckInstance<F, ProofTranscript>>,
+        mut sumcheck_instances: Vec<&mut dyn SumcheckInstance<F>>,
+        opening_accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F>>>>,
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>) {
         let max_num_rounds = sumcheck_instances
@@ -171,7 +133,7 @@ impl BatchedSumcheck {
                 let num_rounds = sumcheck.num_rounds();
                 sumcheck
                     .input_claim()
-                    .mul_u64(1 << (max_num_rounds - num_rounds))
+                    .mul_pow_2(max_num_rounds - num_rounds)
             })
             .collect();
 
@@ -182,7 +144,7 @@ impl BatchedSumcheck {
             .map(|(claim, coeff)| *claim * coeff)
             .sum();
 
-        let mut r: Vec<F> = Vec::with_capacity(max_num_rounds);
+        let mut r_sumcheck: Vec<F> = Vec::with_capacity(max_num_rounds);
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(max_num_rounds);
 
         for round in 0..max_num_rounds {
@@ -200,13 +162,13 @@ impl BatchedSumcheck {
                         let num_rounds = sumcheck.num_rounds();
                         let scaled_input_claim = sumcheck
                             .input_claim()
-                            .mul_u64(1 << (remaining_rounds - num_rounds - 1));
+                            .mul_pow_2(remaining_rounds - num_rounds - 1);
                         // Constant polynomial
                         UniPoly::from_coeff(vec![scaled_input_claim])
                     } else {
                         let offset = max_num_rounds - sumcheck.num_rounds();
                         let mut univariate_poly_evals =
-                            sumcheck.compute_prover_message(round - offset);
+                            sumcheck.compute_prover_message(round - offset, *previous_claim);
                         univariate_poly_evals.insert(1, *previous_claim - univariate_poly_evals[0]);
                         UniPoly::from_evals(&univariate_poly_evals)
                     }
@@ -228,7 +190,7 @@ impl BatchedSumcheck {
             // append the prover's message to the transcript
             compressed_poly.append_to_transcript(transcript);
             let r_j = transcript.challenge_scalar();
-            r.push(r_j);
+            r_sumcheck.push(r_j);
 
             // Cache individual claims for this round
             individual_claims
@@ -262,18 +224,37 @@ impl BatchedSumcheck {
             compressed_polys.push(compressed_poly);
         }
 
-        for sumcheck in sumcheck_instances.iter_mut() {
-            // Cache polynomial opening claims, to be proven using either an
-            // opening proof or sumcheck (in the case of virtual polynomials).
-            sumcheck.cache_openings();
+        if let Some(opening_accumulator) = opening_accumulator {
+            let max_num_rounds = sumcheck_instances
+                .iter()
+                .map(|sumcheck| sumcheck.num_rounds())
+                .max()
+                .unwrap();
+
+            for sumcheck in sumcheck_instances.iter() {
+                // If a sumcheck instance has fewer than `max_num_rounds`,
+                // we wait until there are <= `sumcheck.num_rounds()` left
+                // before binding its variables.
+                // So, the sumcheck *actually* uses just the last `sumcheck.num_rounds()`
+                // values of `r_sumcheck`.
+                let r_slice = &r_sumcheck[max_num_rounds - sumcheck.num_rounds()..];
+
+                // Cache polynomial opening claims, to be proven using either an
+                // opening proof or sumcheck (in the case of virtual polynomials).
+                sumcheck.cache_openings_prover(
+                    opening_accumulator.clone(),
+                    sumcheck.normalize_opening_point(r_slice),
+                );
+            }
         }
 
-        (SumcheckInstanceProof::new(compressed_polys), r)
+        (SumcheckInstanceProof::new(compressed_polys), r_sumcheck)
     }
 
     pub fn verify<F: JoltField, ProofTranscript: Transcript>(
         proof: &SumcheckInstanceProof<F, ProofTranscript>,
-        sumcheck_instances: Vec<&dyn BatchableSumcheckInstance<F, ProofTranscript>>,
+        sumcheck_instances: Vec<&dyn SumcheckInstance<F>>,
+        opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         transcript: &mut ProofTranscript,
     ) -> Result<Vec<F>, ProofVerifyError> {
         let max_degree = sumcheck_instances
@@ -305,7 +286,7 @@ impl BatchedSumcheck {
                 let num_rounds = sumcheck.num_rounds();
                 sumcheck
                     .input_claim()
-                    .mul_u64(1 << (max_num_rounds - num_rounds))
+                    .mul_pow_2(max_num_rounds - num_rounds)
                     * coeff
             })
             .sum();
@@ -323,7 +304,17 @@ impl BatchedSumcheck {
                 // So, the sumcheck *actually* uses just the last `sumcheck.num_rounds()`
                 // values of `r_sumcheck`.
                 let r_slice = &r_sumcheck[max_num_rounds - sumcheck.num_rounds()..];
-                sumcheck.expected_output_claim(r_slice) * coeff
+
+                if let Some(opening_accumulator) = &opening_accumulator {
+                    // Cache polynomial opening claims, to be proven using either an
+                    // opening proof or sumcheck (in the case of virtual polynomials).
+                    sumcheck.cache_openings_verifier(
+                        opening_accumulator.clone(),
+                        sumcheck.normalize_opening_point(r_slice),
+                    );
+                }
+
+                sumcheck.expected_output_claim(opening_accumulator.clone(), r_slice) * coeff
             })
             .sum();
 
@@ -467,7 +458,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                 tau,
             );
 
-        let mut eq_poly = GruenSplitEqPolynomial::new(tau);
+        let mut eq_poly = GruenSplitEqPolynomial::new(tau, BindingOrder::LowToHigh);
 
         process_svo_sumcheck_rounds::<NUM_SVO_ROUNDS, F, ProofTranscript>(
             &accums_zero,
@@ -725,7 +716,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         assert_eq!(self.compressed_polys.len(), num_rounds);
         for i in 0..self.compressed_polys.len() {
             // verify degree bound
-            if self.compressed_polys[i].degree() != degree_bound {
+            if self.compressed_polys[i].degree() > degree_bound {
                 return Err(ProofVerifyError::InvalidInputLength(
                     degree_bound,
                     self.compressed_polys[i].degree(),

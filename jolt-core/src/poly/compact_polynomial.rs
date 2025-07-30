@@ -94,6 +94,21 @@ impl SmallScalar for i64 {
         self.abs_diff(other)
     }
 }
+impl SmallScalar for u128 {
+    #[inline]
+    fn field_mul<F: JoltField>(&self, n: F) -> F {
+        n.mul_u128(*self)
+    }
+    #[inline]
+    fn to_field<F: JoltField>(self) -> F {
+        F::from_u128(self)
+    }
+    #[inline]
+    fn abs_diff_u64(self, other: Self) -> u64 {
+        let diff = self.abs_diff(other);
+        diff.try_into().unwrap_or(u64::MAX)
+    }
+}
 
 /// Compact polynomials are used to store coefficients of small scalars.
 /// They have two representations:

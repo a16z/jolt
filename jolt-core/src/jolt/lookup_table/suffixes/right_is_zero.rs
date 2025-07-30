@@ -1,4 +1,4 @@
-use crate::subprotocols::sparse_dense_shout::LookupBits;
+use crate::utils::lookup_bits::LookupBits;
 
 use super::SparseDenseSuffix;
 
@@ -6,7 +6,7 @@ use super::SparseDenseSuffix;
 pub enum RightOperandIsZeroSuffix {}
 
 impl SparseDenseSuffix for RightOperandIsZeroSuffix {
-    fn suffix_mle(b: LookupBits) -> u32 {
+    fn suffix_mle(b: LookupBits) -> u64 {
         let (_, y) = b.uninterleave();
         (u64::from(y) == 0).into()
     }

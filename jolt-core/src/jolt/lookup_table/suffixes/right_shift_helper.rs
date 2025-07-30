@@ -1,4 +1,4 @@
-use crate::subprotocols::sparse_dense_shout::LookupBits;
+use crate::utils::lookup_bits::LookupBits;
 
 use super::SparseDenseSuffix;
 
@@ -8,7 +8,7 @@ use super::SparseDenseSuffix;
 pub enum RightShiftHelperSuffix {}
 
 impl SparseDenseSuffix for RightShiftHelperSuffix {
-    fn suffix_mle(b: LookupBits) -> u32 {
+    fn suffix_mle(b: LookupBits) -> u64 {
         let (_, y) = b.uninterleave();
         1 << y.leading_ones()
     }

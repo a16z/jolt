@@ -120,7 +120,6 @@ pub fn trace_checkpoints(
     (checkpoints, emulator_trace_iter.get_jolt_device())
 }
 
-#[tracing::instrument(skip_all)]
 fn step_emulator(emulator: &mut Emulator, prev_pc: &mut u64, trace: Option<&mut Vec<RV32IMCycle>>) {
     let pc = emulator.get_cpu().read_pc();
     // This is a trick to see if the program has terminated by throwing itself

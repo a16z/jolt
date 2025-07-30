@@ -12,7 +12,7 @@ use crate::jolt::lookup_table::prefixes::Prefixes;
 pub struct HalfwordAlignmentTable<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for HalfwordAlignmentTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+    fn materialize_entry(&self, index: u128) -> u64 {
         index.is_multiple_of(2).into()
     }
 

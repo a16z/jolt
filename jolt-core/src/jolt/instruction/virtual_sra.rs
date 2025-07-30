@@ -41,11 +41,21 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualSRA> {
         }
     }
 
-    fn to_lookup_output(&self) -> u64 {
-        use crate::subprotocols::sparse_dense_shout::LookupBits;
+    fn to_lookup_operands(&self) -> (u64, u128) {
         let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
-        let mut x = LookupBits::new(x, WORD_SIZE);
-        let mut y = LookupBits::new(y as u64, WORD_SIZE);
+        (x, y as u128)
+    }
+
+    fn to_lookup_index(&self) -> u128 {
+        let (x, y) = LookupQuery::<WORD_SIZE>::to_lookup_operands(self);
+        x as u128 | (y << WORD_SIZE)
+    }
+
+    fn to_lookup_output(&self) -> u64 {
+        use crate::utils::lookup_bits::LookupBits;
+        let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
+        let mut x = LookupBits::new(x as u128, WORD_SIZE);
+        let mut y = LookupBits::new(y as u64 as u128, WORD_SIZE);
 
         let sign_bit = if x.leading_ones() == 0 { 0 } else { 1 };
         let mut entry = 0;

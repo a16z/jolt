@@ -316,6 +316,26 @@ impl Cpu {
         self.pc
     }
 
+    /// Sets the reservation address for atomic memory operations
+    pub fn set_reservation(&mut self, address: u64) {
+        self.reservation = address;
+        self.is_reservation_set = true;
+    }
+
+    /// Clears the reservation for atomic memory operations
+    pub fn clear_reservation(&mut self) {
+        self.is_reservation_set = false;
+    }
+
+    /// Checks if a reservation is set for the given address
+    pub fn has_reservation(&self, address: u64) -> bool {
+        self.is_reservation_set && self.reservation == address
+    }
+
+    pub fn is_reservation_set(&self) -> bool {
+        self.is_reservation_set
+    }
+
     /// Runs program one cycle. Fetch, decode, and execution are completed in a cycle so far.
     pub fn tick(&mut self, trace: Option<&mut Vec<RV32IMCycle>>) {
         let instruction_address = self.pc;

@@ -6,17 +6,17 @@ use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
 use crate::field::JoltField;
 use crate::jolt::lookup_table::prefixes::Prefixes;
-use crate::subprotocols::sparse_dense_shout::LookupBits;
+use crate::utils::lookup_bits::LookupBits;
 use crate::utils::uninterleave_bits;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct VirtualSRATable<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for VirtualSRATable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+    fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
-        let mut x = LookupBits::new(x as u64, WORD_SIZE);
-        let mut y = LookupBits::new(y as u64, WORD_SIZE);
+        let mut x = LookupBits::new(x as u128, WORD_SIZE);
+        let mut y = LookupBits::new(y as u128, WORD_SIZE);
 
         let sign_bit = if x.leading_ones() == 0 { 0 } else { 1 };
         let mut entry = 0;
@@ -70,7 +70,7 @@ impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for VirtualSRA
     }
 
     #[cfg(test)]
-    fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u64 {
+    fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u128 {
         super::test::gen_bitmask_lookup_index(rng)
     }
 }

@@ -9,7 +9,7 @@ use crate::{
     utils::{errors::ProofVerifyError, transcript::AppendToTranscript},
 };
 
-pub trait CommitmentScheme<ProofTranscript: Transcript>: Clone + Sync + Send + 'static {
+pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     type Field: JoltField + Sized;
     type ProverSetup: Clone + Sync + Send + Debug + CanonicalSerialize + CanonicalDeserialize;
     type VerifierSetup: Clone + Sync + Send + Debug + CanonicalSerialize + CanonicalDeserialize;
@@ -24,6 +24,10 @@ pub trait CommitmentScheme<ProofTranscript: Transcript>: Clone + Sync + Send + '
         + Clone;
     type Proof: Sync + Send + CanonicalSerialize + CanonicalDeserialize + Clone + Debug;
     type BatchedProof: Sync + Send + CanonicalSerialize + CanonicalDeserialize;
+    /// A hint that helps the prover compute an opening proof. Typically some byproduct of
+    /// the commitment computation, e.g. for Dory the Pedersen commitments to the rows can be
+    /// used as a hint for the opening proof.
+    type OpeningProofHint: Sync + Send + Clone + Debug;
 
     fn setup_prover(max_len: usize) -> Self::ProverSetup;
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup;
@@ -31,28 +35,38 @@ pub trait CommitmentScheme<ProofTranscript: Transcript>: Clone + Sync + Send + '
     fn commit(
         poly: &MultilinearPolynomial<Self::Field>,
         setup: &Self::ProverSetup,
-    ) -> Self::Commitment;
+    ) -> (Self::Commitment, Self::OpeningProofHint);
     fn batch_commit<U>(polys: &[U], gens: &Self::ProverSetup) -> Vec<Self::Commitment>
     where
         U: Borrow<MultilinearPolynomial<Self::Field>> + Sync;
 
     /// Homomorphically combines multiple commitments into a single commitment, computed as a
     /// linear combination with the given coefficients.
-    fn combine_commitments(
-        _commitments: &[&Self::Commitment],
+    fn combine_commitments<C: Borrow<Self::Commitment>>(
+        _commitments: &[C],
         _coeffs: &[Self::Field],
     ) -> Self::Commitment {
         todo!("`combine_commitments` should be on a separate `AdditivelyHomomorphic` trait")
     }
 
-    fn prove(
+    /// Homomorphically combines multiple opening proof hints into a single hint, computed as a
+    /// linear combination with the given coefficients.
+    fn combine_hints(
+        _hints: Vec<Self::OpeningProofHint>,
+        _coeffs: &[Self::Field],
+    ) -> Self::OpeningProofHint {
+        unimplemented!()
+    }
+
+    fn prove<ProofTranscript: Transcript>(
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
+        hint: Self::OpeningProofHint,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof;
 
-    fn verify(
+    fn verify<ProofTranscript: Transcript>(
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
         transcript: &mut ProofTranscript,
@@ -64,9 +78,7 @@ pub trait CommitmentScheme<ProofTranscript: Transcript>: Clone + Sync + Send + '
     fn protocol_name() -> &'static [u8];
 }
 
-pub trait StreamingCommitmentScheme<ProofTranscript: Transcript>:
-    CommitmentScheme<ProofTranscript>
-{
+pub trait StreamingCommitmentScheme: CommitmentScheme {
     type State<'a>; // : Clone + Debug;
 
     fn initialize<'a>(size: usize, setup: &'a Self::ProverSetup) -> Self::State<'a>;

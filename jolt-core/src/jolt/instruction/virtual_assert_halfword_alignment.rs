@@ -28,12 +28,12 @@ impl InstructionFlags for VirtualAssertHalfwordAlignment {
 }
 
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualAssertHalfwordAlignment> {
-    fn to_lookup_operands(&self) -> (u64, u64) {
+    fn to_lookup_operands(&self) -> (u64, u128) {
         let (address, offset) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
-        (0, (address as i64 + offset) as u64)
+        (0, (address as i128 + offset as i128) as u128)
     }
 
-    fn to_lookup_index(&self) -> u64 {
+    fn to_lookup_index(&self) -> u128 {
         LookupQuery::<WORD_SIZE>::to_lookup_operands(self).1
     }
 

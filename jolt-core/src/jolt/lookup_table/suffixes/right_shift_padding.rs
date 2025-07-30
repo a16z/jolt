@@ -1,4 +1,4 @@
-use crate::{subprotocols::sparse_dense_shout::LookupBits, utils::math::Math};
+use crate::{utils::lookup_bits::LookupBits, utils::math::Math};
 
 use super::SparseDenseSuffix;
 
@@ -15,13 +15,13 @@ use super::SparseDenseSuffix;
 pub enum RightShiftPaddingSuffix<const WORD_SIZE: usize> {}
 
 impl<const WORD_SIZE: usize> SparseDenseSuffix for RightShiftPaddingSuffix<WORD_SIZE> {
-    fn suffix_mle(b: LookupBits) -> u32 {
+    fn suffix_mle(b: LookupBits) -> u64 {
         if b.len() == 0 {
             // Handled by prefix
             return 1;
         }
         let (_, shift) = b.split(WORD_SIZE.log_2());
-        let shift = u32::from(shift);
+        let shift = u64::from(shift);
         // Subtract 1 to avoid shift overflow; `RightShiftPaddingPrefix::prefix_mle`
         // will return 2 to compensate
         1 << (WORD_SIZE - 1 - shift as usize)

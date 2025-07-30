@@ -13,6 +13,7 @@ use shift_right_bitmask::ShiftRightBitmaskTable;
 use signed_greater_than_equal::SignedGreaterThanEqualTable;
 use signed_less_than::SignedLessThanTable;
 use std::marker::Sync;
+use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 use suffixes::{SuffixEval, Suffixes};
 use unsigned_greater_than_equal::UnsignedGreaterThanEqualTable;
@@ -36,11 +37,13 @@ pub trait JoltLookupTable: Clone + Debug + Send + Sync + Serialize {
     /// Materializes the entire lookup table for this instruction (assuming an 8-bit word size).
     #[cfg(test)]
     fn materialize(&self) -> Vec<u64> {
-        (0..1 << 16).map(|i| self.materialize_entry(i)).collect()
+        (0..1 << 16)
+            .map(|i| self.materialize_entry(i as u128))
+            .collect()
     }
 
     /// Materialize the entry at the given `index` in the lookup table for this instruction.
-    fn materialize_entry(&self, index: u64) -> u64;
+    fn materialize_entry(&self, index: u128) -> u64;
 
     /// Evaluates the MLE of this lookup table on the given point `r`.
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F;
@@ -50,8 +53,8 @@ pub trait PrefixSuffixDecomposition<const WORD_SIZE: usize>: JoltLookupTable + D
     fn suffixes(&self) -> Vec<Suffixes>;
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F;
     #[cfg(test)]
-    fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u64 {
-        rand::RngCore::next_u64(rng)
+    fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u128 {
+        rand::Rng::gen(rng)
     }
 }
 
@@ -84,6 +87,8 @@ pub mod xor;
 
 #[cfg(test)]
 pub mod test;
+
+pub const NUM_LOOKUP_TABLES: usize = LookupTables::<32>::COUNT;
 
 #[derive(Copy, Clone, Debug, From, Serialize, Deserialize, EnumIter, EnumCountMacro)]
 #[repr(u8)]
@@ -147,7 +152,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
         }
     }
 
-    pub fn materialize_entry(&self, index: u64) -> u64 {
+    pub fn materialize_entry(&self, index: u128) -> u64 {
         match self {
             LookupTables::RangeCheck(table) => table.materialize_entry(index),
             LookupTables::And(table) => table.materialize_entry(index),

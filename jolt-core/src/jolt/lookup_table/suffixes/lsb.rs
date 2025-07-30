@@ -1,4 +1,4 @@
-use crate::subprotocols::sparse_dense_shout::LookupBits;
+use crate::utils::lookup_bits::LookupBits;
 
 use super::SparseDenseSuffix;
 
@@ -6,11 +6,11 @@ use super::SparseDenseSuffix;
 pub enum LsbSuffix {}
 
 impl SparseDenseSuffix for LsbSuffix {
-    fn suffix_mle(b: LookupBits) -> u32 {
+    fn suffix_mle(b: LookupBits) -> u64 {
         if b.len() == 0 {
             1
         } else {
-            (u64::from(b) & 1) as u32
+            (u128::from(b) & 1) as u64
         }
     }
 }

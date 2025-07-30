@@ -1,8 +1,6 @@
-use crate::{
-    field::JoltField,
-    subprotocols::sparse_dense_shout::{current_suffix_len, LookupBits},
-    utils::math::Math,
-};
+use crate::jolt::vm::bytecode::read_raf_checking::current_suffix_len;
+use crate::utils::math::Math;
+use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 

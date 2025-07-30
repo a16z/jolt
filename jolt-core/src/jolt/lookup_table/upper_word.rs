@@ -10,8 +10,8 @@ use crate::field::JoltField;
 pub struct UpperWordTable<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for UpperWordTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
-        index >> WORD_SIZE
+    fn materialize_entry(&self, index: u128) -> u64 {
+        (index >> WORD_SIZE) as u64
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {

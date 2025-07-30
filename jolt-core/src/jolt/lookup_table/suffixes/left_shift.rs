@@ -1,4 +1,4 @@
-use crate::subprotocols::sparse_dense_shout::LookupBits;
+use crate::utils::lookup_bits::LookupBits;
 
 use super::SparseDenseSuffix;
 
@@ -9,9 +9,9 @@ use super::SparseDenseSuffix;
 pub enum LeftShiftSuffix {}
 
 impl SparseDenseSuffix for LeftShiftSuffix {
-    fn suffix_mle(b: LookupBits) -> u32 {
+    fn suffix_mle(b: LookupBits) -> u64 {
         let (x, y) = b.uninterleave();
-        let (x, y_u) = (u32::from(x), u32::from(y));
+        let (x, y_u) = (u64::from(x), u64::from(y));
         // We remove bits of x that have 1 in y
         let x = x & !y_u;
         x.unbounded_shl(y.leading_ones())

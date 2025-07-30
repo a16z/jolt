@@ -10,7 +10,7 @@ use crate::{field::JoltField, utils::uninterleave_bits};
 pub struct UnsignedLessThanEqualTable<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for UnsignedLessThanEqualTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+    fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
         (x <= y).into()
     }
