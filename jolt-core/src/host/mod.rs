@@ -107,9 +107,9 @@ impl Program {
             ];
 
             let toolchain = if self.std {
-                "riscv32im-jolt-zkvm-elf"
+                "riscv64imac-jolt-zkvm-elf"
             } else {
-                "riscv32im-unknown-none-elf"
+                "riscv64imac-unknown-none-elf"
             };
 
             let mut envs = vec![("CARGO_ENCODED_RUSTFLAGS", rust_flags.join("\x1f"))];

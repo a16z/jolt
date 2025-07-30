@@ -1,4 +1,4 @@
-pub const XLEN: usize = 32;
+pub const XLEN: usize = 64;
 const RISCV_REGISTER_COUNT: u64 = 32;
 const VIRTUAL_REGISTER_COUNT: u64 = 32; //  see Section 6.1 of Jolt paper
 pub const REGISTER_COUNT: u64 = RISCV_REGISTER_COUNT + VIRTUAL_REGISTER_COUNT;

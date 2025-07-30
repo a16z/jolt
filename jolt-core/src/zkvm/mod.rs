@@ -342,8 +342,6 @@ pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
 
 impl Serializable for RV32IMJoltProof {}
 
-// ==================== TEST ====================
-
 #[cfg(test)]
 mod tests {
     use ark_bn254::Fr;
