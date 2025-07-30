@@ -539,7 +539,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 )
         } else {
-            // E_in has not been fully bound - use nested structure like phase 1
+            // E_in has not been fully bound - use nested structure
             let num_x_in_bits = D.E_in_current_len().log_2();
             let x_bitmask = (1 << num_x_in_bits) - 1;
             let chunk_size = 1 << num_x_in_bits;
