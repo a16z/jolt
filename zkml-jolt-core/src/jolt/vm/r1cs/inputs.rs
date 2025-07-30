@@ -312,30 +312,30 @@ impl JoltONNXR1CSInputs {
     }
 }
 
-impl Into<Variable> for JoltONNXR1CSInputs {
-    fn into(self) -> Variable {
-        Variable::Input(self.to_index())
+impl From<JoltONNXR1CSInputs> for Variable {
+    fn from(input: JoltONNXR1CSInputs) -> Variable {
+        Variable::Input(input.to_index())
     }
 }
 
-impl Into<Term> for JoltONNXR1CSInputs {
-    fn into(self) -> Term {
-        Term(Variable::Input(self.to_index()), 1)
+impl From<JoltONNXR1CSInputs> for Term {
+    fn from(input: JoltONNXR1CSInputs) -> Term {
+        Term(Variable::Input(input.to_index()), 1)
     }
 }
 
-impl Into<LC> for JoltONNXR1CSInputs {
-    fn into(self) -> LC {
-        Term(Variable::Input(self.to_index()), 1).into()
+impl From<JoltONNXR1CSInputs> for LC {
+    fn from(input: JoltONNXR1CSInputs) -> LC {
+        Term(Variable::Input(input.to_index()), 1).into()
     }
 }
 
 /// Newtype wrapper to allow conversion from a vector of inputs to LC.
 pub struct InputVec(pub Vec<JoltONNXR1CSInputs>);
 
-impl Into<LC> for InputVec {
-    fn into(self) -> LC {
-        let terms: Vec<Term> = self.0.into_iter().map(Into::into).collect();
+impl From<InputVec> for LC {
+    fn from(input_vec: InputVec) -> LC {
+        let terms: Vec<Term> = input_vec.0.into_iter().map(Into::into).collect();
         LC::new(terms)
     }
 }

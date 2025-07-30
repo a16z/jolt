@@ -9,18 +9,18 @@ pub struct SpartanInterleavedPolynomial<F: JoltField> {
     /// A sparse vector representing the (interleaved) coefficients in the Az, Bz, Cz
     /// polynomials used in the first Spartan sumcheck. Before the polynomial is bound
     /// the first time, all the coefficients can be represented by `i128`s.
-    pub(crate) unbound_coeffs: Vec<SparseCoefficient<i128>>,
+    pub unbound_coeffs: Vec<SparseCoefficient<i128>>,
     /// A sparse vector representing the (interleaved) coefficients in the Az, Bz, Cz
     /// polynomials used in the first Spartan sumcheck. Once the polynomial has been
     /// bound, we switch to using `bound_coeffs` instead of `unbound_coeffs`, because
     /// coefficients will be full-width field elements rather than `i128`s.
-    pub(crate) bound_coeffs: Vec<SparseCoefficient<F>>,
+    pub bound_coeffs: Vec<SparseCoefficient<F>>,
     /// A reused buffer where bound values are written to during `bind`.
     /// With every bind, `coeffs` and `binding_scratch_space` are swapped.
-    binding_scratch_space: Vec<SparseCoefficient<F>>,
+    pub binding_scratch_space: Vec<SparseCoefficient<F>>,
     /// The length of one of the Az, Bz, or Cz polynomials if it were represented by
     /// a single dense vector.
-    dense_len: usize,
+    pub dense_len: usize,
 }
 
 impl<F: JoltField> SpartanInterleavedPolynomial<F> {
