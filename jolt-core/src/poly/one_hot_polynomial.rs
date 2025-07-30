@@ -279,21 +279,18 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                         .collect::<Vec<_>>(),
                 ));
 
-                // Drop G array as it's no longer needed in phase 2
+                // Drop data structures not needed for phase 2
                 if let Some(g) = polynomial.G.take() {
                     drop_in_background_thread(g);
                 }
 
-                // Drop nonzero_indices as it's no longer needed in phase 2
                 drop_in_background_thread(nonzero_indices);
 
-                // Also drop D_coeffs_for_G since we're done with initialization
                 drop(shared_eq);
                 self.eq_state.lock().unwrap().D_coeffs_for_G = None;
             }
         } else {
             // Last log(T) rounds of sumcheck
-
             if num_variables_bound <= round {
                 shared_eq.D.bind(r);
 

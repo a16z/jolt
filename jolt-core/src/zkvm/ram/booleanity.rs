@@ -96,13 +96,11 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         // TODO(moodlezoup): `G_arrays` is identical to `F_arrays` in `hamming_weight.rs`
         let mut G_arrays = Vec::with_capacity(d);
 
-        // First pass: extract addresses in parallel
         let addresses: Vec<Option<u64>> = trace
             .par_iter()
             .map(|cycle| remap_address(cycle.ram_access().address() as u64, memory_layout))
             .collect();
 
-        // Second pass: compute G arrays using extracted addresses
         for i in 0..d {
             let G: Vec<F> = addresses
                 .par_chunks(chunk_size)
