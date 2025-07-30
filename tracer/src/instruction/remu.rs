@@ -42,7 +42,7 @@ impl REMU {
 
 impl RISCVTrace for REMU {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let mut virtual_sequence = self.virtual_sequence();
+        let mut virtual_sequence = self.virtual_sequence(cpu.xlen);
         if let RV32IMInstruction::VirtualAdvice(instr) = &mut virtual_sequence[0] {
             instr.advice = if cpu.unsigned_data(cpu.x[self.operands.rs2]) == 0 {
                 match cpu.xlen {
@@ -78,7 +78,7 @@ impl RISCVTrace for REMU {
 }
 
 impl VirtualInstructionSequence for REMU {
-    fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
+    fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_0 = virtual_register_index(0) as usize;
         let v_q = virtual_register_index(1) as usize;
@@ -86,22 +86,25 @@ impl VirtualInstructionSequence for REMU {
         let v_qy = virtual_register_index(3) as usize;
 
         let mut sequence = vec![];
+        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(7);
 
         let advice = VirtualAdvice {
             address: self.address,
             operands: FormatJ { rd: v_q, imm: 0 },
-            virtual_sequence_remaining: Some(6),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
             advice: 0,
         };
         sequence.push(advice.into());
+        virtual_sequence_remaining -= 1;
 
         let advice = VirtualAdvice {
             address: self.address,
             operands: FormatJ { rd: v_r, imm: 0 },
-            virtual_sequence_remaining: Some(5),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
             advice: 0,
         };
         sequence.push(advice.into());
+        virtual_sequence_remaining -= 1;
 
         let mul = MUL {
             address: self.address,
@@ -110,9 +113,10 @@ impl VirtualInstructionSequence for REMU {
                 rs1: v_q,
                 rs2: self.operands.rs2,
             },
-            virtual_sequence_remaining: Some(4),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(mul.into());
+        virtual_sequence_remaining -= 1;
 
         let assert_remainder = VirtualAssertValidUnsignedRemainder {
             address: self.address,
@@ -121,9 +125,10 @@ impl VirtualInstructionSequence for REMU {
                 rs2: self.operands.rs2,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(3),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(assert_remainder.into());
+        virtual_sequence_remaining -= 1;
 
         let assert_lte = VirtualAssertLTE {
             address: self.address,
@@ -132,9 +137,10 @@ impl VirtualInstructionSequence for REMU {
                 rs2: self.operands.rs1,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(2),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(assert_lte.into());
+        virtual_sequence_remaining -= 1;
 
         let add = ADD {
             address: self.address,
@@ -143,9 +149,10 @@ impl VirtualInstructionSequence for REMU {
                 rs1: v_qy,
                 rs2: v_r,
             },
-            virtual_sequence_remaining: Some(1),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(add.into());
+        virtual_sequence_remaining -= 1;
 
         let assert_eq = VirtualAssertEQ {
             address: self.address,
@@ -154,9 +161,10 @@ impl VirtualInstructionSequence for REMU {
                 rs2: self.operands.rs1,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(1),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(assert_eq.into());
+        virtual_sequence_remaining -= 1;
 
         let virtual_move = VirtualMove {
             address: self.address,
@@ -165,7 +173,7 @@ impl VirtualInstructionSequence for REMU {
                 rs1: v_r,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(0),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(virtual_move.into());
 

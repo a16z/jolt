@@ -17,6 +17,7 @@ use super::{
     virtual_assert_eq::VirtualAssertEQ,
     virtual_assert_valid_div0::VirtualAssertValidDiv0,
     virtual_assert_valid_signed_remainder::VirtualAssertValidSignedRemainder,
+    virtual_change_divisor::VirtualChangeDivisor,
     virtual_move::VirtualMove,
     RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
 };
@@ -56,12 +57,8 @@ impl RISCVTrace for DIV {
                 } else if x == cpu.most_negative() && y == -1 {
                     (x as u32 as u64, 0)
                 } else {
-                    let mut quotient = x as i32 / y as i32;
-                    let mut remainder = x as i32 % y as i32;
-                    if (remainder < 0 && (y as i32) > 0) || (remainder > 0 && (y as i32) < 0) {
-                        remainder += y as i32;
-                        quotient -= 1;
-                    }
+                    let quotient = x as i32 / y as i32;
+                    let remainder = x as i32 % y as i32;
                     (quotient as u32 as u64, remainder as u32 as u64)
                 }
             }
@@ -71,18 +68,14 @@ impl RISCVTrace for DIV {
                 } else if x == cpu.most_negative() && y == -1 {
                     (x as u64, 0)
                 } else {
-                    let mut quotient = x / y;
-                    let mut remainder = x % y;
-                    if (remainder < 0 && y > 0) || (remainder > 0 && y < 0) {
-                        remainder += y;
-                        quotient -= 1;
-                    }
+                    let quotient = x / y;
+                    let remainder = x % y;
                     (quotient as u64, remainder as u64)
                 }
             }
         };
 
-        let mut virtual_sequence = self.virtual_sequence();
+        let mut virtual_sequence = self.virtual_sequence(cpu.xlen);
         if let RV32IMInstruction::VirtualAdvice(instr) = &mut virtual_sequence[0] {
             instr.advice = quotient;
         } else {
@@ -103,30 +96,46 @@ impl RISCVTrace for DIV {
 }
 
 impl VirtualInstructionSequence for DIV {
-    fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
+    fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_0 = virtual_register_index(0) as usize;
         let v_q = virtual_register_index(1) as usize;
         let v_r = virtual_register_index(2) as usize;
         let v_qy = virtual_register_index(3) as usize;
+        let v_rs2 = virtual_register_index(4) as usize;
 
         let mut sequence = vec![];
+        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(8);
 
         let advice = VirtualAdvice {
             address: self.address,
             operands: FormatJ { rd: v_q, imm: 0 },
-            virtual_sequence_remaining: Some(7),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
             advice: 0,
         };
         sequence.push(advice.into());
+        virtual_sequence_remaining -= 1;
 
         let advice = VirtualAdvice {
             address: self.address,
             operands: FormatJ { rd: v_r, imm: 0 },
-            virtual_sequence_remaining: Some(6),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
             advice: 0,
         };
         sequence.push(advice.into());
+        virtual_sequence_remaining -= 1;
+
+        let change_divisor = VirtualChangeDivisor {
+            address: self.address,
+            operands: FormatR {
+                rd: v_rs2,
+                rs1: self.operands.rs1,
+                rs2: self.operands.rs2,
+            },
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+        };
+        sequence.push(change_divisor.into());
+        virtual_sequence_remaining -= 1;
 
         let is_valid = VirtualAssertValidSignedRemainder {
             address: self.address,
@@ -135,9 +144,10 @@ impl VirtualInstructionSequence for DIV {
                 rs2: self.operands.rs2,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(5),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(is_valid.into());
+        virtual_sequence_remaining -= 1;
 
         let is_valid = VirtualAssertValidDiv0 {
             address: self.address,
@@ -146,20 +156,22 @@ impl VirtualInstructionSequence for DIV {
                 rs2: v_q,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(4),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(is_valid.into());
+        virtual_sequence_remaining -= 1;
 
         let mul = MUL {
             address: self.address,
             operands: FormatR {
                 rd: v_qy,
                 rs1: v_q,
-                rs2: self.operands.rs2,
+                rs2: v_rs2,
             },
-            virtual_sequence_remaining: Some(3),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(mul.into());
+        virtual_sequence_remaining -= 1;
 
         let add = ADD {
             address: self.address,
@@ -168,9 +180,10 @@ impl VirtualInstructionSequence for DIV {
                 rs1: v_qy,
                 rs2: v_r,
             },
-            virtual_sequence_remaining: Some(2),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(add.into());
+        virtual_sequence_remaining -= 1;
 
         let assert_eq = VirtualAssertEQ {
             address: self.address,
@@ -179,9 +192,10 @@ impl VirtualInstructionSequence for DIV {
                 rs2: self.operands.rs1,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(1),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(assert_eq.into());
+        virtual_sequence_remaining -= 1;
 
         let virtual_move = VirtualMove {
             address: self.address,
@@ -190,7 +204,7 @@ impl VirtualInstructionSequence for DIV {
                 rs1: v_q,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(0),
+            virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
         sequence.push(virtual_move.into());
 

@@ -1,10 +1,18 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
+use super::amo::{amo_post32, amo_post64, amo_pre32, amo_pre64};
+use super::xor::XOR;
+use super::RV32IMInstruction;
+use super::VirtualInstructionSequence;
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+};
+use common::constants::virtual_register_index;
 
 use super::{
     format::{format_r::FormatR, InstructionFormat},
-    RAMAtomic, RISCVInstruction, RISCVTrace,
+    RAMAtomic, RISCVInstruction, RISCVTrace, RV32IMCycle,
 };
 
 declare_riscv_instr!(
@@ -47,4 +55,113 @@ impl AMOXORW {
     }
 }
 
-impl RISCVTrace for AMOXORW {}
+impl RISCVTrace for AMOXORW {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+        let virtual_sequence = self.virtual_sequence(cpu.xlen);
+        let mut trace = trace;
+        for instr in virtual_sequence {
+            // In each iteration, create a new Option containing a re-borrowed reference
+            instr.trace(cpu, trace.as_deref_mut());
+        }
+    }
+}
+
+impl VirtualInstructionSequence for AMOXORW {
+    fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+        match xlen {
+            Xlen::Bit32 => self.virtual_sequence_32(xlen),
+            Xlen::Bit64 => self.virtual_sequence_64(xlen),
+        }
+    }
+}
+
+impl AMOXORW {
+    fn virtual_sequence_32(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+        let v_rd = virtual_register_index(7) as usize;
+        let v_rs2 = virtual_register_index(8) as usize;
+
+        let mut sequence = vec![];
+        let mut remaining = 5;
+        remaining = amo_pre32(
+            &mut sequence,
+            self.address,
+            self.operands.rs1,
+            v_rd,
+            remaining,
+        );
+
+        let xor = XOR {
+            address: self.address,
+            operands: FormatR {
+                rd: v_rs2,
+                rs1: v_rd,
+                rs2: self.operands.rs2,
+            },
+            virtual_sequence_remaining: Some(remaining),
+        };
+        sequence.push(xor.into());
+        remaining -= 1;
+
+        amo_post32(
+            &mut sequence,
+            self.address,
+            v_rs2,
+            self.operands.rs1,
+            self.operands.rd,
+            v_rd,
+            remaining,
+        );
+
+        sequence
+    }
+
+    fn virtual_sequence_64(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+        // Virtual registers used in sequence
+        let v_mask = virtual_register_index(10) as usize;
+        let v_dword_address = virtual_register_index(11) as usize;
+        let v_dword = virtual_register_index(12) as usize;
+        let v_word = virtual_register_index(13) as usize;
+        let v_shift = virtual_register_index(14) as usize;
+        let v_rd = virtual_register_index(15) as usize;
+        let v_rs2 = virtual_register_index(16) as usize;
+
+        let mut sequence = vec![];
+        let mut remaining = 17;
+        remaining = amo_pre64(
+            &mut sequence,
+            self.address,
+            self.operands.rs1,
+            v_rd,
+            v_dword_address,
+            v_dword,
+            v_shift,
+            remaining,
+        );
+        let xor = XOR {
+            address: self.address,
+            operands: FormatR {
+                rd: v_rs2,
+                rs1: v_rd,
+                rs2: self.operands.rs2,
+            },
+            virtual_sequence_remaining: Some(remaining),
+        };
+        sequence.push(xor.into());
+        remaining -= 1;
+        amo_post64(
+            &mut sequence,
+            self.address,
+            v_rs2,
+            v_dword_address,
+            v_dword,
+            v_shift,
+            v_mask,
+            v_word,
+            self.operands.rd,
+            v_rd,
+            remaining,
+        );
+
+        sequence
+    }
+}

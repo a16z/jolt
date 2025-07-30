@@ -102,7 +102,7 @@ pub struct Cpu {
     active_markers: FnvHashMap<u32, ActiveMarker>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum Xlen {
     Bit32,
     Bit64, // @TODO: Support Bit128
@@ -289,12 +289,12 @@ impl Cpu {
     /// # Arguments
     /// * `xlen`
     pub fn update_xlen(&mut self, xlen: Xlen) {
-        self.xlen = xlen.clone();
+        self.xlen = xlen;
         self.unsigned_data_mask = match xlen {
             Xlen::Bit32 => 0xffffffff,
             Xlen::Bit64 => 0xffffffffffffffff,
         };
-        self.mmu.update_xlen(xlen.clone());
+        self.mmu.update_xlen(xlen);
     }
 
     /// Reads integer register content

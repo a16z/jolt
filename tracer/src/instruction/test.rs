@@ -81,3 +81,216 @@
 //         }
 //     }
 // }
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        emulator::cpu::Xlen,
+        instruction::{
+            RISCVInstruction, RV32IMInstruction, VirtualInstructionSequence, ADDIW, ADDW, AMOADDD,
+            AMOADDW, AMOANDD, AMOANDW, AMOMAXD, AMOMAXUD, AMOMAXUW, AMOMAXW, AMOMIND, AMOMINUD,
+            AMOMINUW, AMOMINW, AMOORD, AMOORW, AMOSWAPD, AMOSWAPW, AMOXORD, AMOXORW, DIV, DIVU,
+            DIVUW, DIVW, LB, LBU, LH, LHU, LW, LWU, MULH, MULHSU, MULW, REM, REMU, REMUW, REMW, SB,
+            SH, SHA256, SHA256INIT, SLL, SLLI, SLLIW, SLLW, SRA, SRAI, SRAIW, SRAW, SRL, SRLI,
+            SRLIW, SRLW, SUBW, SW,
+        },
+    };
+    use std::any::type_name;
+
+    fn validate_sequence_ordering(sequence: &[RV32IMInstruction]) -> Result<(), String> {
+        let expected_remaining = sequence.len();
+
+        for (index, instr) in sequence.iter().enumerate() {
+            let normalized = instr.normalize();
+            let current_remaining = normalized.virtual_sequence_remaining;
+
+            if current_remaining.is_none() {
+                return Err(format!("Instruction {index} has no remaining"));
+            }
+
+            let current = current_remaining.unwrap();
+
+            if (current + index + 1) != expected_remaining {
+                return Err(format!(
+                    "Invalid remaining at index {}: expected {}, got {}",
+                    index,
+                    expected_remaining - index - 1,
+                    current
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    // Get the type name at runtime
+    fn get_instruction_name<T: RISCVInstruction>(_instance: &T) -> &'static str {
+        type_name::<T>().split("::").last().unwrap_or("Unknown")
+    }
+
+    trait VirtualInstructionSequenceWrapper {
+        fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction>;
+        fn get_type_name(&self) -> &'static str;
+    }
+
+    impl<T> VirtualInstructionSequenceWrapper for T
+    where
+        T: VirtualInstructionSequence + RISCVInstruction,
+    {
+        fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+            self.virtual_sequence(xlen)
+        }
+
+        fn get_type_name(&self) -> &'static str {
+            get_instruction_name(self)
+        }
+    }
+
+    #[test]
+    fn test_remaining() {
+        println!("{}", get_instruction_name(&DIV::new(0, 0, false)));
+
+        let xlen_32 = Xlen::Bit32;
+        let instruction_pairs_32: Vec<Box<dyn VirtualInstructionSequenceWrapper>> = vec![
+            Box::new(DIV::new(0, 0, false)),
+            Box::new(DIVU::new(0, 0, false)),
+            Box::new(LB::new(0, 0, false)),
+            Box::new(LBU::new(0, 0, false)),
+            Box::new(LH::new(0, 0, false)),
+            Box::new(LHU::new(0, 0, false)),
+            Box::new(MULH::new(0, 0, false)),
+            Box::new(MULHSU::new(0, 0, false)),
+            Box::new(REM::new(0, 0, false)),
+            Box::new(REMU::new(0, 0, false)),
+            Box::new(SB::new(0, 0, false)),
+            Box::new(SH::new(0, 0, false)),
+            Box::new(SLL::new(0, 0, false)),
+            Box::new(SLLI::new(0, 0, false)),
+            Box::new(SRA::new(0, 0, false)),
+            Box::new(SRAI::new(0, 0, false)),
+            Box::new(SRL::new(0, 0, false)),
+            Box::new(SRLI::new(0, 0, false)),
+            Box::new(SHA256::new(0, 0, false)),
+            Box::new(SHA256INIT::new(0, 0, false)),
+        ];
+
+        let xlen_64 = Xlen::Bit64;
+        let instruction_sequence_pairs_64: Vec<Box<dyn VirtualInstructionSequenceWrapper>> = vec![
+            Box::new(ADDIW::new(0, 0, false)),
+            Box::new(ADDW::new(0, 0, false)),
+            Box::new(AMOADDD::new(0, 0, false)),
+            Box::new(AMOADDW::new(0, 0, false)),
+            Box::new(AMOANDD::new(0, 0, false)),
+            Box::new(AMOANDW::new(0, 0, false)),
+            Box::new(AMOMAXD::new(0, 0, false)),
+            Box::new(AMOMAXUD::new(0, 0, false)),
+            Box::new(AMOMAXUW::new(0, 0, false)),
+            Box::new(AMOMAXW::new(0, 0, false)),
+            Box::new(AMOMIND::new(0, 0, false)),
+            Box::new(AMOMINUD::new(0, 0, false)),
+            Box::new(AMOMINUW::new(0, 0, false)),
+            Box::new(AMOMINW::new(0, 0, false)),
+            Box::new(AMOORD::new(0, 0, false)),
+            Box::new(AMOORW::new(0, 0, false)),
+            Box::new(AMOSWAPD::new(0, 0, false)),
+            Box::new(AMOSWAPW::new(0, 0, false)),
+            Box::new(AMOXORD::new(0, 0, false)),
+            Box::new(AMOXORW::new(0, 0, false)),
+            Box::new(DIV::new(0, 0, false)),
+            Box::new(DIVU::new(0, 0, false)),
+            Box::new(DIVUW::new(0, 0, false)),
+            Box::new(DIVW::new(0, 0, false)),
+            Box::new(LB::new(0, 0, false)),
+            Box::new(LBU::new(0, 0, false)),
+            Box::new(LH::new(0, 0, false)),
+            Box::new(LHU::new(0, 0, false)),
+            Box::new(LW::new(0, 0, false)),
+            Box::new(LWU::new(0, 0, false)),
+            Box::new(MULH::new(0, 0, false)),
+            Box::new(MULHSU::new(0, 0, false)),
+            Box::new(MULW::new(0, 0, false)),
+            Box::new(REM::new(0, 0, false)),
+            Box::new(REMU::new(0, 0, false)),
+            Box::new(REMUW::new(0, 0, false)),
+            Box::new(REMW::new(0, 0, false)),
+            Box::new(SB::new(0, 0, false)),
+            Box::new(SH::new(0, 0, false)),
+            Box::new(SLLI::new(0, 0, false)),
+            Box::new(SLLIW::new(0, 0, false)),
+            Box::new(SLL::new(0, 0, false)),
+            Box::new(SLLW::new(0, 0, false)),
+            Box::new(SRAI::new(0, 0, false)),
+            Box::new(SRAIW::new(0, 0, false)),
+            Box::new(SRA::new(0, 0, false)),
+            Box::new(SRAW::new(0, 0, false)),
+            Box::new(SRLI::new(0, 0, false)),
+            Box::new(SRLIW::new(0, 0, false)),
+            Box::new(SRL::new(0, 0, false)),
+            Box::new(SRLW::new(0, 0, false)),
+            Box::new(SUBW::new(0, 0, false)),
+            Box::new(SW::new(0, 0, false)),
+        ];
+
+        let mut failures_32 = Vec::new();
+        for instruction in instruction_pairs_32 {
+            let sequence = instruction.virtual_sequence(xlen_32);
+            if sequence.is_empty() {
+                continue;
+            }
+
+            if let Err(e) = validate_sequence_ordering(&sequence) {
+                failures_32.push(format!(
+                    "32-bit instruction {}: {}",
+                    instruction.get_type_name(),
+                    e
+                ));
+            }
+        }
+
+        let mut failures_64 = Vec::new();
+        for instruction in instruction_sequence_pairs_64 {
+            let sequence = instruction.virtual_sequence(xlen_64);
+            if sequence.is_empty() {
+                continue;
+            }
+
+            if let Err(e) = validate_sequence_ordering(&sequence) {
+                failures_64.push(format!(
+                    "64-bit instruction {}: {}",
+                    instruction.get_type_name(),
+                    e
+                ));
+            }
+        }
+
+        // Report all failures
+        let total_failures = failures_32.len() + failures_64.len();
+        assert!(
+            total_failures == 0,
+            "Found {} virtual sequence validation failures:\n{}{}",
+            total_failures,
+            if !failures_32.is_empty() {
+                format!(
+                    "\n32-bit instruction failures:\n{}",
+                    failures_32
+                        .iter()
+                        .map(|f| format!("  - {f}\n"))
+                        .collect::<String>()
+                )
+            } else {
+                String::new()
+            },
+            if !failures_64.is_empty() {
+                format!(
+                    "\n64-bit instruction failures:\n{}",
+                    failures_64
+                        .iter()
+                        .map(|f| format!("  - {f}\n"))
+                        .collect::<String>()
+                )
+            } else {
+                String::new()
+            }
+        );
+    }
+}
