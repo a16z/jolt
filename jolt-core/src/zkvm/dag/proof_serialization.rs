@@ -34,7 +34,7 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     opening_claims: Claims<F>,
     commitments: Vec<PCS::Commitment>,
     proofs: Proofs<F, PCS, FS>,
-    trace_length: usize,
+    pub trace_length: usize,
     ram_K: usize,
 }
 

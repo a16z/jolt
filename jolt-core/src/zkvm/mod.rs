@@ -12,6 +12,8 @@ use tracer::{
     JoltDevice,
 };
 
+#[cfg(test)]
+use crate::poly::commitment::dory::DoryGlobals;
 use crate::{
     field::JoltField,
     host::Program,
@@ -138,6 +140,7 @@ where
     }
 }
 
+#[allow(dead_code)]
 pub struct ProverDebugInfo<F, ProofTranscript, PCS>
 where
     F: JoltField,
@@ -223,11 +226,11 @@ where
 
         let state_manager =
             StateManager::new_prover(preprocessing, trace, program_io.clone(), final_memory_state);
-        let proof = JoltDAG::prove(state_manager, write_proof_to_file)
+        let (proof, debug_info) = JoltDAG::prove(state_manager, write_proof_to_file)
             .ok()
             .unwrap();
 
-        (proof, program_io, None)
+        (proof, program_io, debug_info)
     }
 
     fn verify(
@@ -236,29 +239,14 @@ where
         mut program_io: JoltDevice,
         _debug_info: Option<ProverDebugInfo<F, FS, PCS>>,
     ) -> Result<(), ProofVerifyError> {
-        // #[cfg(test)]
-        // {
-        //     if let Some(debug_info) = _debug_info {
-        //         transcript.compare_to(debug_info.transcript);
-        //         opening_accumulator.compare_to(debug_info.opening_accumulator);
-        //     }
-        // }
-
-        // #[cfg(test)]
-        // let K = [
-        //     preprocessing.shared.bytecode.code_size,
-        //     // proof.ram.K,
-        //     1 << 16, // K for instruction lookups Shout
-        // ]
-        // .into_iter()
-        // .max()
-        // .unwrap();
-        // #[cfg(test)]
-        // let T = proof.trace_length.next_power_of_two();
-        // // Need to initialize globals because the verifier computes commitments
-        // // in `VerifierOpeningAccumulator::append` inside of a `#[cfg(test)]` block
-        // #[cfg(test)]
-        // let _guard = DoryGlobals::initialize(K, T);
+        #[cfg(test)]
+        let K = 1 << NUM_RA_I_VARS;
+        #[cfg(test)]
+        let T = proof.trace_length.next_power_of_two();
+        // Need to initialize globals because the verifier computes commitments
+        // in `VerifierOpeningAccumulator::append` inside of a `#[cfg(test)]` block
+        #[cfg(test)]
+        let _guard = DoryGlobals::initialize(K, T);
 
         // truncate trailing zeros on device outputs
         program_io.outputs.truncate(
@@ -270,6 +258,19 @@ where
         );
 
         let state_manager = proof.to_verifier_state_manager(preprocessing, program_io);
+
+        #[cfg(test)]
+        {
+            if let Some(debug_info) = _debug_info {
+                let mut transcript = state_manager.transcript.borrow_mut();
+                transcript.compare_to(debug_info.transcript);
+                let opening_accumulator = state_manager.get_verifier_accumulator();
+                opening_accumulator
+                    .borrow_mut()
+                    .compare_to(debug_info.opening_accumulator);
+            }
+        }
+
         JoltDAG::verify(state_manager).expect("Verification failed");
 
         Ok(())

@@ -52,7 +52,7 @@ mod tests {
             program_io.clone(),
             final_memory_state,
         );
-        let proof = JoltDAG::prove(state_manager, None).ok().unwrap();
+        let (proof, _) = JoltDAG::prove(state_manager, None).ok().unwrap();
 
         let verifier_preprocessing =
             JoltVerifierPreprocessing::<Fr, DoryCommitmentScheme>::from(&preprocessing);
@@ -102,7 +102,7 @@ mod tests {
             program_io.clone(),
             final_memory_state,
         );
-        let proof = JoltDAG::prove(state_manager, None).ok().unwrap();
+        let (proof, _) = JoltDAG::prove(state_manager, None).ok().unwrap();
 
         let verifier_preprocessing =
             JoltVerifierPreprocessing::<Fr, DoryCommitmentScheme>::from(&preprocessing);

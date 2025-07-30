@@ -15,6 +15,7 @@ use crate::zkvm::r1cs::spartan::SpartanDag;
 use crate::zkvm::ram::{RamDag, NUM_RA_I_VARS};
 use crate::zkvm::registers::RegistersDag;
 use crate::zkvm::witness::{AllCommittedPolynomials, CommittedPolynomial};
+use crate::zkvm::ProverDebugInfo;
 use anyhow::Context;
 use rayon::prelude::*;
 
@@ -29,7 +30,13 @@ impl JoltDAG {
     >(
         mut state_manager: StateManager<'a, F, ProofTranscript, PCS>,
         write_proof_to_file: Option<&str>,
-    ) -> Result<JoltProof<F, PCS, ProofTranscript>, anyhow::Error> {
+    ) -> Result<
+        (
+            JoltProof<F, PCS, ProofTranscript>,
+            Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
+        ),
+        anyhow::Error,
+    > {
         state_manager.fiat_shamir_preamble();
 
         // Initialize DoryGlobals at the beginning to keep it alive for the entire proof
@@ -188,13 +195,25 @@ impl JoltDAG {
             ProofData::ReducedOpeningProof(opening_proof),
         );
 
-        let proof = JoltProof::from_prover_state_manager(state_manager);
+        #[cfg(test)]
+        let debug_info = {
+            let transcript = state_manager.transcript.take();
+            let opening_accumulator = state_manager.get_prover_accumulator().borrow().clone();
+            Some(ProverDebugInfo {
+                transcript,
+                opening_accumulator,
+                prover_setup: preprocessing.generators.clone(),
+            })
+        };
+        #[cfg(not(test))]
+        let debug_info = None;
 
+        let proof = JoltProof::from_prover_state_manager(state_manager);
         if let Some(file_name) = write_proof_to_file {
             serialize_and_print_size(file_name, &proof);
         }
 
-        Ok(proof)
+        Ok((proof, debug_info))
     }
 
     pub fn verify<
