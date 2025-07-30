@@ -367,7 +367,9 @@ impl MacroBuilder {
                 let ret_val = ();
             },
             ReturnType::Type(_, ty) => quote! {
-                let ret_val = jolt::postcard::from_bytes::<#ty>(&io_device.outputs).unwrap();
+                let mut outputs = io_device.outputs.clone();
+                outputs.resize(preprocessing.shared.memory_layout.max_output_size as usize, 0);
+                let ret_val = jolt::postcard::from_bytes::<#ty>(&outputs).unwrap();
             },
         };
 
