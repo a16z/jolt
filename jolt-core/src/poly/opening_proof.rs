@@ -617,7 +617,7 @@ where
         let (point, claim) = self
             .openings
             .get(&OpeningId::Virtual(polynomial, sumcheck))
-            .unwrap();
+            .unwrap_or_else(|| panic!("opening for {sumcheck:?} {polynomial:?} not found"));
         (point.clone(), *claim)
     }
 
@@ -629,7 +629,7 @@ where
         let (point, claim) = self
             .openings
             .get(&OpeningId::Committed(polynomial, sumcheck))
-            .unwrap();
+            .unwrap_or_else(|| panic!("opening for {sumcheck:?} {polynomial:?} not found"));
         (point.clone(), *claim)
     }
 

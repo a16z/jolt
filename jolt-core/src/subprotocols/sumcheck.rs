@@ -56,31 +56,6 @@ pub trait SumcheckInstance<F: JoltField>: Send + Sync {
         r: &[F],
     ) -> F;
 
-    /// Proves a single sumcheck instance.
-    fn prove_single<ProofTranscript: Transcript>(
-        &mut self,
-        _transcript: &mut ProofTranscript,
-    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>)
-    where
-        Self: Sized,
-    {
-        todo!()
-        // BatchedSumcheck::prove(vec![self], transcript)
-    }
-
-    /// Verifies a single sumcheck instance.
-    fn verify_single<ProofTranscript: Transcript>(
-        &self,
-        _proof: &SumcheckInstanceProof<F, ProofTranscript>,
-        _transcript: &mut ProofTranscript,
-    ) -> Result<Vec<F>, ProofVerifyError>
-    where
-        Self: Sized,
-    {
-        todo!()
-        // BatchedSumcheck::verify(proof, vec![self], transcript)
-    }
-
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F>;
 
     /// Caches polynomial opening claims needed after the sumcheck protocol completes.
@@ -96,6 +71,79 @@ pub trait SumcheckInstance<F: JoltField>: Send + Sync {
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     );
+}
+
+pub enum SingleSumcheck {}
+impl SingleSumcheck {
+    /// Proves a single sumcheck instance.
+    pub fn prove<F: JoltField, ProofTranscript: Transcript>(
+        sumcheck_instance: &mut dyn SumcheckInstance<F>,
+        opening_accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F>>>>,
+        transcript: &mut ProofTranscript,
+    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>) {
+        let num_rounds = sumcheck_instance.num_rounds();
+        let mut r_sumcheck: Vec<F> = Vec::with_capacity(num_rounds);
+        let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
+
+        let mut previous_claim = sumcheck_instance.input_claim();
+        for round in 0..num_rounds {
+            let mut univariate_poly_evals =
+                sumcheck_instance.compute_prover_message(round, previous_claim);
+            univariate_poly_evals.insert(1, previous_claim - univariate_poly_evals[0]);
+            let univariate_poly = UniPoly::from_evals(&univariate_poly_evals);
+
+            // append the prover's message to the transcript
+            let compressed_poly = univariate_poly.compress();
+            compressed_poly.append_to_transcript(transcript);
+            compressed_polys.push(compressed_poly);
+
+            let r_j = transcript.challenge_scalar();
+            r_sumcheck.push(r_j);
+
+            // Cache claim for this round
+            previous_claim = univariate_poly.evaluate(&r_j);
+
+            sumcheck_instance.bind(r_j, round);
+        }
+
+        if let Some(opening_accumulator) = opening_accumulator {
+            // Cache polynomial opening claims, to be proven using either an
+            // opening proof or sumcheck (in the case of virtual polynomials).
+            sumcheck_instance.cache_openings_prover(
+                opening_accumulator,
+                sumcheck_instance.normalize_opening_point(&r_sumcheck),
+            );
+        }
+
+        (SumcheckInstanceProof::new(compressed_polys), r_sumcheck)
+    }
+
+    /// Verifies a single sumcheck instance.
+    pub fn verify<F: JoltField, ProofTranscript: Transcript>(
+        sumcheck_instance: &dyn SumcheckInstance<F>,
+        proof: &SumcheckInstanceProof<F, ProofTranscript>,
+        opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+        transcript: &mut ProofTranscript,
+    ) -> Result<Vec<F>, ProofVerifyError> {
+        let (output_claim, r) = proof.verify(
+            sumcheck_instance.input_claim(),
+            sumcheck_instance.num_rounds(),
+            sumcheck_instance.degree(),
+            transcript,
+        )?;
+
+        if output_claim != sumcheck_instance.expected_output_claim(opening_accumulator.clone(), &r)
+        {
+            return Err(ProofVerifyError::SumcheckVerificationError);
+        }
+
+        sumcheck_instance.cache_openings_verifier(
+            opening_accumulator.unwrap(),
+            sumcheck_instance.normalize_opening_point(&r),
+        );
+
+        Ok(r)
+    }
 }
 
 /// Implements the standard technique for batching parallel sumchecks to reduce
@@ -319,7 +367,7 @@ impl BatchedSumcheck {
             .sum();
 
         if output_claim != expected_output_claim {
-            return Err(ProofVerifyError::BatchedSumcheckError);
+            return Err(ProofVerifyError::SumcheckVerificationError);
         }
 
         Ok(r_sumcheck)
