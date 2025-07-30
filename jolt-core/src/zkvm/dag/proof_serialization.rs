@@ -371,3 +371,14 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
         }
     }
 }
+
+#[allow(dead_code)]
+pub fn serialize_and_print_size(file_name: &str, item: &impl CanonicalSerialize) {
+    use std::fs::File;
+    let mut file = File::create(file_name).unwrap();
+    item.serialize_compressed(&mut file).unwrap();
+    let file_size_bytes = file.metadata().unwrap().len();
+    let file_size_kb = file_size_bytes as f64 / 1024.0;
+    println!("Proof written to {file_name}");
+    println!("Proof size: {file_size_kb:.1} kB");
+}

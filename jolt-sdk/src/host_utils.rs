@@ -5,8 +5,8 @@ pub use jolt_core::{field::JoltField, poly::commitment::hyperkzg::HyperKZG};
 pub use common::jolt_device::{MemoryConfig, MemoryLayout};
 pub use jolt_core::host;
 pub use jolt_core::jolt::lookup_table;
-pub use jolt_core::jolt::vm::{
-    rv32im_vm::{JoltProofBundle, JoltRV32IM, JoltTranscript, RV32IMJoltProof, Serializable, PCS},
-    Jolt, JoltProof, JoltProverPreprocessing, JoltVerifierPreprocessing,
+pub use jolt_core::zkvm::{
+    Jolt, JoltProof, JoltProofBundle, JoltProverPreprocessing, JoltRV32IM, JoltTranscript,
+    JoltVerifierPreprocessing, RV32IMJoltProof, Serializable, PCS,
 };
 pub use tracer;

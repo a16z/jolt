@@ -1,27 +1,14 @@
-#![allow(unused_imports)]
-#![allow(clippy::extra_unused_type_parameters)]
-
 use crate::field::JoltField;
 use crate::host;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::commitment::dory::{DoryCommitmentScheme as Dory, DoryGlobals};
-use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::subprotocols::twist::{TwistAlgorithm, TwistProof};
 use crate::utils::math::Math;
 use crate::utils::transcript::{KeccakTranscript, Transcript};
-use crate::zkvm::dag::{jolt_dag, state_manager};
+use crate::zkvm::JoltVerifierPreprocessing;
 use crate::zkvm::{Jolt, JoltRV32IM};
-use crate::zkvm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
-use ark_bn254::{Bn254, Fr};
+use ark_bn254::Fr;
 use ark_std::test_rng;
 use rand_core::RngCore;
 use rand_distr::{Distribution, Zipf};
-use serde::Serialize;
-use std::cell::RefCell;
-use std::collections::BTreeMap;
-use std::rc::Rc;
-use tracer;
-use tracer::instruction::RV32IMCycle;
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
 pub enum BenchType {
@@ -33,7 +20,6 @@ pub enum BenchType {
     Twist,
 }
 
-#[allow(unreachable_patterns)] // good errors on new BenchTypes
 pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     match bench_type {
         BenchType::Sha2 => sha2(),
@@ -42,7 +28,6 @@ pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()
         BenchType::Fibonacci => fibonacci(),
         BenchType::Shout => shout::<Fr, KeccakTranscript>(),
         BenchType::Twist => twist::<Fr, KeccakTranscript>(),
-        _ => panic!("BenchType does not have a mapping"),
     }
 }
 
@@ -127,10 +112,7 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 }
 
 fn sha2() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    prove_example(
-        "sha2-guest",
-        postcard::to_stdvec(&vec![5u8; 10000]).unwrap(),
-    )
+    prove_example("sha2-guest", postcard::to_stdvec(&vec![5u8; 2048]).unwrap())
 }
 
 fn sha3() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
@@ -144,37 +126,25 @@ fn sha2_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     prove_example("sha2-chain-guest", inputs)
 }
 
-#[allow(dead_code)]
-fn serialize_and_print_size(name: &str, item: &impl ark_serialize::CanonicalSerialize) {
-    use std::fs::File;
-    let mut file = File::create("temp_file").unwrap();
-    item.serialize_compressed(&mut file).unwrap();
-    let file_size_bytes = file.metadata().unwrap().len();
-    let file_size_kb = file_size_bytes as f64 / 1024.0;
-    println!("{name:<30} : {file_size_kb:.3} kB");
-}
-
 fn prove_example(
     example_name: &str,
     serialized_input: Vec<u8>,
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     let mut tasks = Vec::new();
     let mut program = host::Program::new(example_name);
-    let (_, _, io_device) = program.trace(&serialized_input);
+    let (bytecode, init_memory_state) = program.decode();
+    let (_, _, program_io) = program.trace(&serialized_input);
 
     let task = move || {
-        let (bytecode, init_memory_state) = program.decode();
-
         let preprocessing = JoltRV32IM::prover_preprocess(
             bytecode.clone(),
-            io_device.memory_layout.clone(),
+            program_io.memory_layout.clone(),
             init_memory_state,
             1 << 24,
         );
 
         let (jolt_proof, program_io, _) =
-            JoltRV32IM::prove(&preprocessing, &mut program, &serialized_input);
-        serialize_and_print_size("Proof size", &jolt_proof);
+            JoltRV32IM::prove(&preprocessing, &mut program, &serialized_input, None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =

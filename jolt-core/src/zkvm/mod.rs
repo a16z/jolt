@@ -200,6 +200,7 @@ where
         preprocessing: &JoltProverPreprocessing<F, PCS>,
         program: &mut Program,
         inputs: &[u8],
+        write_proof_to_file: Option<&str>,
     ) -> (
         JoltProof<F, PCS, FS>,
         JoltDevice,
@@ -222,7 +223,9 @@ where
 
         let state_manager =
             StateManager::new_prover(preprocessing, trace, program_io.clone(), final_memory_state);
-        let proof = JoltDAG::prove(state_manager).ok().unwrap();
+        let proof = JoltDAG::prove(state_manager, write_proof_to_file)
+            .ok()
+            .unwrap();
 
         (proof, program_io, None)
     }
@@ -362,7 +365,7 @@ mod tests {
             1 << 16,
         );
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IMMockPCS::prove(&preprocessing, &mut program, &inputs);
+            JoltRV32IMMockPCS::prove(&preprocessing, &mut program, &inputs, None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
@@ -378,7 +381,7 @@ mod tests {
     #[serial]
     fn fib_e2e_dory() {
         let mut program = host::Program::new("fibonacci-guest");
-        let inputs = postcard::to_stdvec(&9u32).unwrap();
+        let inputs = postcard::to_stdvec(&100u32).unwrap();
         let (bytecode, init_memory_state) = program.decode();
         let (_, _, io_device) = program.trace(&inputs);
 
@@ -389,7 +392,7 @@ mod tests {
             1 << 16,
         );
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IM::prove(&preprocessing, &mut program, &inputs);
+            JoltRV32IM::prove(&preprocessing, &mut program, &inputs, None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
@@ -416,7 +419,34 @@ mod tests {
             1 << 16,
         );
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IM::prove(&preprocessing, &mut program, &inputs);
+            JoltRV32IM::prove(&preprocessing, &mut program, &inputs, None);
+
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        let verification_result =
+            JoltRV32IM::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn sha2_e2e_dory() {
+        let mut program = host::Program::new("sha2-guest");
+        let (bytecode, init_memory_state) = program.decode();
+        let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
+        let (_, _, io_device) = program.trace(&inputs);
+
+        let preprocessing = JoltRV32IM::prover_preprocess(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            init_memory_state,
+            1 << 16,
+        );
+        let (jolt_proof, io_device, debug_info) =
+            JoltRV32IM::prove(&preprocessing, &mut program, &inputs, None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
@@ -442,7 +472,7 @@ mod tests {
             1 << 16,
         );
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IM::prove(&preprocessing, &mut program, &[]);
+            JoltRV32IM::prove(&preprocessing, &mut program, &[], None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =

@@ -771,12 +771,6 @@ where
         #[cfg(test)]
         let joint_commitment = PCS::commit(&joint_poly, pcs_setup).0;
 
-        #[cfg(not(test))]
-        {
-            let sumchecks = std::mem::take(&mut self.sumchecks);
-            crate::utils::thread::drop_in_background_thread(sumchecks);
-        }
-
         // Compute the opening proof hint for the reduced opening by homomorphically combining
         // the hints for the individual sumchecks.
         let hint = {
@@ -808,6 +802,12 @@ where
 
         // Reduced opening proof
         let joint_opening_proof = PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, hint, transcript);
+
+        #[cfg(not(test))]
+        {
+            let sumchecks = std::mem::take(&mut self.sumchecks);
+            crate::utils::thread::drop_in_background_thread(sumchecks);
+        }
 
         ReducedOpeningProof {
             sumcheck_proof,
