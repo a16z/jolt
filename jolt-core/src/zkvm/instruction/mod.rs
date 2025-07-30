@@ -1,6 +1,6 @@
 use std::ops::{Index, IndexMut};
 
-use crate::jolt::vm::instruction_lookups::WORD_SIZE;
+use crate::zkvm::instruction_lookups::WORD_SIZE;
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};

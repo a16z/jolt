@@ -11,14 +11,24 @@ pub struct RangeCheckTable<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for RangeCheckTable<WORD_SIZE> {
     fn materialize_entry(&self, index: u128) -> u64 {
-        (index % (1u128 << WORD_SIZE)) as u64
+        if WORD_SIZE == 64 {
+            index as u64
+        } else {
+            (index % (1u128 << WORD_SIZE)) as u64
+        }
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
         debug_assert_eq!(r.len(), 2 * WORD_SIZE);
         let mut result = F::zero();
         for i in 0..WORD_SIZE {
-            result += F::from_u64(1 << (WORD_SIZE - 1 - i)) * r[WORD_SIZE + i];
+            let shift = WORD_SIZE - 1 - i;
+            if shift < 64 {
+                result += F::from_u64(1u64 << shift) * r[WORD_SIZE + i];
+            } else {
+                // For shift >= 64, we need to use u128
+                result += F::from_u128(1u128 << shift) * r[WORD_SIZE + i];
+            }
         }
         result
     }
@@ -41,13 +51,14 @@ mod test {
     use ark_bn254::Fr;
 
     use super::RangeCheckTable;
+    use crate::zkvm::instruction_lookups::WORD_SIZE;
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, RangeCheckTable<32>>();
+        prefix_suffix_test::<WORD_SIZE, Fr, RangeCheckTable<WORD_SIZE>>();
     }
 
     #[test]
@@ -57,6 +68,6 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, RangeCheckTable<32>>();
+        lookup_table_mle_random_test::<Fr, RangeCheckTable<WORD_SIZE>>();
     }
 }

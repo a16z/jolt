@@ -44,6 +44,21 @@ impl<const WORD_SIZE: usize> JoltLookupTable for ValidSignedRemainderTable<WORD_
                         .into()
                 }
             }
+            64 => {
+                let (remainder, divisor) = (x as i64, y as i64);
+                let is_remainder_zero = remainder == 0;
+                let is_divisor_zero = divisor == 0;
+
+                if is_remainder_zero || is_divisor_zero {
+                    1
+                } else {
+                    let remainder_sign = remainder >> (WORD_SIZE - 1);
+                    let divisor_sign = divisor >> (WORD_SIZE - 1);
+                    (remainder.unsigned_abs() < divisor.unsigned_abs()
+                        && remainder_sign == divisor_sign)
+                        .into()
+                }
+            }
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }
@@ -115,6 +130,7 @@ impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
 mod test {
     use ark_bn254::Fr;
 
+    use crate::zkvm::instruction_lookups::WORD_SIZE;
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
@@ -128,11 +144,11 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, ValidSignedRemainderTable<32>>();
+        lookup_table_mle_random_test::<Fr, ValidSignedRemainderTable<WORD_SIZE>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, ValidSignedRemainderTable<32>>();
+        prefix_suffix_test::<WORD_SIZE, Fr, ValidSignedRemainderTable<WORD_SIZE>>();
     }
 }

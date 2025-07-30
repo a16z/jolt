@@ -8,6 +8,10 @@ pub enum LowerWordSuffix<const WORD_SIZE: usize> {}
 
 impl<const WORD_SIZE: usize> SparseDenseSuffix for LowerWordSuffix<WORD_SIZE> {
     fn suffix_mle(b: LookupBits) -> u64 {
-        (u128::from(b) % (1 << WORD_SIZE)) as u64
+        if WORD_SIZE == 64 {
+            u128::from(b) as u64
+        } else {
+            (u128::from(b) % (1 << WORD_SIZE)) as u64
+        }
     }
 }

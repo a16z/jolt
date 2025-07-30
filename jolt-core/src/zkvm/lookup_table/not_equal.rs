@@ -17,6 +17,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for NotEqualTable<WORD_SIZE> {
             #[cfg(test)]
             8 => (x != y).into(),
             32 => (x != y).into(),
+            64 => (x != y).into(),
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }
@@ -42,6 +43,7 @@ impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for NotEqualTa
 mod test {
     use ark_bn254::Fr;
 
+    use crate::zkvm::instruction_lookups::WORD_SIZE;
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
@@ -55,11 +57,11 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, NotEqualTable<32>>();
+        lookup_table_mle_random_test::<Fr, NotEqualTable<WORD_SIZE>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, NotEqualTable<32>>();
+        prefix_suffix_test::<WORD_SIZE, Fr, NotEqualTable<WORD_SIZE>>();
     }
 }

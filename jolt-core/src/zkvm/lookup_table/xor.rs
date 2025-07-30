@@ -46,6 +46,7 @@ impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for XorTable<W
 mod test {
     use ark_bn254::Fr;
 
+    use crate::zkvm::instruction_lookups::WORD_SIZE;
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
@@ -54,7 +55,7 @@ mod test {
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, XorTable<32>>();
+        prefix_suffix_test::<WORD_SIZE, Fr, XorTable<WORD_SIZE>>();
     }
 
     #[test]
@@ -64,6 +65,6 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, XorTable<32>>();
+        lookup_table_mle_random_test::<Fr, XorTable<WORD_SIZE>>();
     }
 }

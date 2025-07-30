@@ -90,6 +90,7 @@ mod test {
     use ark_bn254::Fr;
 
     use super::VirtualRotrTable;
+    use crate::zkvm::instruction_lookups::WORD_SIZE;
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
@@ -101,11 +102,11 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, VirtualRotrTable<32>>();
+        lookup_table_mle_random_test::<Fr, VirtualRotrTable<WORD_SIZE>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, VirtualRotrTable<32>>();
+        prefix_suffix_test::<WORD_SIZE, Fr, VirtualRotrTable<WORD_SIZE>>();
     }
 }

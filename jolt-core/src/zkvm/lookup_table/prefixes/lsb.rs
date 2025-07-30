@@ -11,7 +11,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for LsbPrefix<WO
             // in the log(K)th round, `c` corresponds to the LSB
             debug_assert_eq!(b.len(), 0);
             F::from_u32(c)
-        } else if current_suffix_len(2 * WORD_SIZE, j) == 0 {
+        } else if current_suffix_len(j) == 0 {
             // in the (log(K)-1)th round, the LSB of `b` is the LSB
             F::from_u32(u32::from(b) & 1)
         } else {

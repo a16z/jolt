@@ -52,7 +52,7 @@ impl LookupBits {
     }
 
     pub fn leading_ones(&self) -> u32 {
-        self.bits.wrapping_shl(64 - self.len as u32).leading_ones()
+        self.bits.wrapping_shl(128 - self.len as u32).leading_ones()
     }
 }
 

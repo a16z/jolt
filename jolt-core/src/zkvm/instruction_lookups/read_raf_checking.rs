@@ -758,6 +758,12 @@ impl<F: JoltField> ReadRafSumcheck<F> {
     }
 }
 
+/// Computes the bit-length of the suffix, for the current (`j`th) round
+/// of sumcheck.
+pub fn current_suffix_len(j: usize) -> usize {
+    LOG_K - (j / LOG_K_CHUNK + 1) * LOG_K_CHUNK
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

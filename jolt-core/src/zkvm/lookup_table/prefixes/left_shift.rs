@@ -22,7 +22,7 @@ impl<F: JoltField, const WORD_SIZE: usize> SparseDensePrefix<F> for LeftShiftPre
             result += r_x
                 * (F::one() - F::from_u8(c as u8))
                 * prod_one_plus_y
-                * F::from_u32(1 << (WORD_SIZE - 1 - j / 2));
+                * F::from_u64(1 << (WORD_SIZE - 1 - j / 2));
             prod_one_plus_y *= F::from_u8(1 + c as u8);
         } else {
             let y_msb = b.pop_msb();
@@ -33,10 +33,10 @@ impl<F: JoltField, const WORD_SIZE: usize> SparseDensePrefix<F> for LeftShiftPre
         }
 
         let (x, y) = b.uninterleave();
-        let (x, y_u) = (u32::from(x), u32::from(y));
+        let (x, y_u) = (u64::from(x), u64::from(y));
         let x = x & !y_u;
         let shift = (y.leading_ones() as usize + WORD_SIZE - 1 - j / 2 - y.len()) as u32;
-        result += F::from_u32(x.unbounded_shl(shift)) * prod_one_plus_y;
+        result += F::from_u64(x.unbounded_shl(shift)) * prod_one_plus_y;
 
         result
     }

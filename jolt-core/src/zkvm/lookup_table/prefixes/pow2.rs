@@ -14,7 +14,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for Pow2Prefix<W
         b: LookupBits,
         j: usize,
     ) -> F {
-        if current_suffix_len(2 * WORD_SIZE, j) != 0 {
+        if current_suffix_len(j) != 0 {
             // Handled by suffix
             return F::one();
         }
@@ -51,7 +51,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for Pow2Prefix<W
         r_y: F,
         j: usize,
     ) -> PrefixCheckpoint<F> {
-        if current_suffix_len(2 * WORD_SIZE, j) != 0 {
+        if current_suffix_len(j) != 0 {
             return Some(F::one()).into();
         }
 

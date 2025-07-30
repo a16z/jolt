@@ -43,6 +43,7 @@ mod test {
     use ark_bn254::Fr;
 
     use super::Pow2Table;
+    use crate::zkvm::instruction_lookups::WORD_SIZE;
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
@@ -54,11 +55,11 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, Pow2Table<32>>();
+        lookup_table_mle_random_test::<Fr, Pow2Table<WORD_SIZE>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, Pow2Table<32>>();
+        prefix_suffix_test::<WORD_SIZE, Fr, Pow2Table<WORD_SIZE>>();
     }
 }

@@ -16,6 +16,7 @@ use crate::{
     },
     utils::math::Math,
     zkvm::{
+        instruction_lookups::{self, WORD_SIZE},
         lookup_table::LookupTables,
         {instruction_lookups, ram::remap_address, JoltProverPreprocessing},
     },
@@ -202,14 +203,14 @@ impl CommittedPolynomial {
             CommittedPolynomial::LeftInstructionInput => {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
-                    .map(|cycle| LookupQuery::<32>::to_instruction_inputs(cycle).0)
+                    .map(|cycle| LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle).0)
                     .collect();
                 coeffs.into()
             }
             CommittedPolynomial::RightInstructionInput => {
                 let coeffs: Vec<i64> = trace
                     .par_iter()
-                    .map(|cycle| LookupQuery::<32>::to_instruction_inputs(cycle).1)
+                    .map(|cycle| LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle).1)
                     .collect();
                 coeffs.into()
             }
@@ -218,7 +219,7 @@ impl CommittedPolynomial {
                     .par_iter()
                     .map(|cycle| {
                         let (left_input, right_input) =
-                            LookupQuery::<32>::to_instruction_inputs(cycle);
+                            LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle);
                         left_input * right_input as u64
                     })
                     .collect();
@@ -251,7 +252,7 @@ impl CommittedPolynomial {
                     .map(|cycle| {
                         let is_branch =
                             cycle.instruction().circuit_flags()[CircuitFlags::Branch as usize];
-                        (LookupQuery::<32>::to_lookup_output(cycle) as u8) * is_branch as u8
+                        (LookupQuery::<WORD_SIZE>::to_lookup_output(cycle) as u8) * is_branch as u8
                     })
                     .collect();
                 coeffs.into()
@@ -344,7 +345,7 @@ impl CommittedPolynomial {
                 let addresses: Vec<_> = trace
                     .par_iter()
                     .map(|cycle| {
-                        let lookup_index = LookupQuery::<32>::to_lookup_index(cycle);
+                        let lookup_index = LookupQuery::<WORD_SIZE>::to_lookup_index(cycle);
                         let k = (lookup_index
                             >> (instruction_lookups::LOG_K_CHUNK
                                 * (instruction_lookups::D - 1 - i)))
