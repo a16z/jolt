@@ -97,15 +97,15 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
             })
             .collect();
 
-        // #[cfg(test)]
-        // {
-        //     // Check that indices are monotonically increasing
-        //     let mut prev_index = unbound_coeffs[0].index;
-        //     for coeff in unbound_coeffs[1..].iter() {
-        //         assert!(coeff.index > prev_index);
-        //         prev_index = coeff.index;
-        //     }
-        // }
+        #[cfg(test)]
+        {
+            // Check that indices are monotonically increasing
+            let mut prev_index = unbound_coeffs[0].index;
+            for coeff in unbound_coeffs[1..].iter() {
+                assert!(coeff.index > prev_index);
+                prev_index = coeff.index;
+            }
+        }
 
         Self {
             unbound_coeffs,

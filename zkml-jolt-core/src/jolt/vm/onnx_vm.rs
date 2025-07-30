@@ -81,7 +81,7 @@ mod e2e_tests {
         // --- Preprocessing ---
         let custom_addsubmul_model = custom_addsubmul_model();
         let program_bytecode = onnx_tracer::decode_model(custom_addsubmul_model.clone());
-        println!("Program code: {program_bytecode:#?}",);
+        println!("Program code: {program_bytecode:#?}");
         let pp: JoltProverPreprocessing<Fr, PCS, KeccakTranscript> =
             JoltSNARK::prover_preprocess(program_bytecode);
 
@@ -90,7 +90,7 @@ mod e2e_tests {
             custom_addsubmul_model,
             &Tensor::new(Some(&[60]), &[1]).unwrap(),
         );
-        println!("Execution trace: {execution_trace:#?}",);
+        println!("Execution trace: {execution_trace:#?}");
         let snark: JoltSNARK<Fr, PCS, KeccakTranscript> =
             JoltSNARK::prove(pp.clone(), execution_trace);
 
