@@ -520,16 +520,16 @@ impl<F: JoltField> BooleanitySumcheck<F> {
 
                     for i in 0..self.d {
                         let h_poly = &h_polys[i];
-                        
-                        let h_0 = h_poly.get_bound_coeff(2 * j_prime);      // h(0)
-                        let h_1 = h_poly.get_bound_coeff(2 * j_prime + 1);  // h(1)
-                        
+
+                        let h_0 = h_poly.get_bound_coeff(2 * j_prime); // h(0)
+                        let h_1 = h_poly.get_bound_coeff(2 * j_prime + 1); // h(1)
+
                         // For c = 0: h(0)^2 - h(0)
                         coeffs[0] += self.gamma_powers[i] * (h_0.square() - h_0);
-                        
+
                         // For quadratic coefficient: b^2 where b = h(1) - h(0) is the linear coefficient
-                        let b = h_1 - h_0;  // Linear coefficient of h
-                        coeffs[1] += self.gamma_powers[i] * b.square();  // Quadratic coefficient of h^2 - h
+                        let b = h_1 - h_0; // Linear coefficient of h
+                        coeffs[1] += self.gamma_powers[i] * b.square(); // Quadratic coefficient of h^2 - h
                     }
 
                     [D_eval * coeffs[0], D_eval * coeffs[1]]
@@ -539,38 +539,49 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 )
         } else {
-            // E_in has not been fully bound
-            let num_x_in = D.E_in_current_len();
-            let num_x_in_bits = num_x_in.log_2();
-            let D_E_in = D.E_in_current();
-            let D_E_out = D.E_out_current();
-            let max_j = D.len() / 2;
+            // E_in has not been fully bound - use nested structure like phase 1
+            let num_x_in_bits = D.E_in_current_len().log_2();
+            let x_bitmask = (1 << num_x_in_bits) - 1;
+            let chunk_size = 1 << num_x_in_bits;
 
-            (0..max_j)
-                .into_par_iter()
-                .map(|j_prime| {
-                    // For LowToHigh: lower bits index into E_in (rightmost vars)
-                    let x_in = j_prime & ((1 << num_x_in_bits) - 1);
-                    let x_out = j_prime >> num_x_in_bits;
-                    let D_eval = D_E_in[x_in] * D_E_out[x_out];
+            (0..D.len() / 2)
+                .collect::<Vec<_>>()
+                .par_chunks(chunk_size)
+                .enumerate()
+                .map(|(x_out, chunk)| {
+                    let D_E_out_eval = D.E_out_current()[x_out];
 
-                    let mut coeffs = [F::zero(); DEGREE - 1];
+                    let chunk_evals = chunk
+                        .par_iter()
+                        .map(|j_prime| {
+                            let x_in = j_prime & x_bitmask;
+                            let D_E_in_eval = D.E_in_current()[x_in];
+                            let mut coeffs = [F::zero(); DEGREE - 1];
 
-                    for i in 0..self.d {
-                        let h_poly = &h_polys[i];
-                        
-                        let h_0 = h_poly.get_bound_coeff(2 * j_prime);      // h(0)
-                        let h_1 = h_poly.get_bound_coeff(2 * j_prime + 1);  // h(1)
-                        
-                        // For c = 0: h(0)^2 - h(0)
-                        coeffs[0] += self.gamma_powers[i] * (h_0.square() - h_0);
-                        
-                        // For quadratic coefficient: b^2 where b = h(1) - h(0) is the linear coefficient
-                        let b = h_1 - h_0;  // Linear coefficient of h
-                        coeffs[1] += self.gamma_powers[i] * b.square();  // Quadratic coefficient of h^2 - h
-                    }
+                            for i in 0..self.d {
+                                let h_poly = &h_polys[i];
 
-                    [D_eval * coeffs[0], D_eval * coeffs[1]]
+                                let h_0 = h_poly.get_bound_coeff(2 * j_prime); // h(0)
+                                let h_1 = h_poly.get_bound_coeff(2 * j_prime + 1); // h(1)
+
+                                // For c = 0: h(0)^2 - h(0)
+                                coeffs[0] += self.gamma_powers[i] * (h_0.square() - h_0);
+
+                                // For quadratic coefficient: b^2 where b = h(1) - h(0) is the linear coefficient
+                                let b = h_1 - h_0; // Linear coefficient of h
+                                coeffs[1] += self.gamma_powers[i] * b.square(); // Quadratic coefficient of h^2 - h
+                            }
+
+                            // Inner D contribution
+                            [D_E_in_eval * coeffs[0], D_E_in_eval * coeffs[1]]
+                        })
+                        .reduce(
+                            || [F::zero(); DEGREE - 1],
+                            |running, new| [running[0] + new[0], running[1] + new[1]],
+                        );
+
+                    // Outer D contribution
+                    [D_E_out_eval * chunk_evals[0], D_E_out_eval * chunk_evals[1]]
                 })
                 .reduce(
                     || [F::zero(); DEGREE - 1],

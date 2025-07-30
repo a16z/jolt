@@ -403,16 +403,16 @@ impl<F: JoltField> BooleanitySumcheck<F> {
 
                     for i in 0..D {
                         let h_poly = &H[i];
-                        
-                        let h_0 = h_poly.get_bound_coeff(2 * j_prime);      // h(0)
-                        let h_1 = h_poly.get_bound_coeff(2 * j_prime + 1);  // h(1)
-                        
+
+                        let h_0 = h_poly.get_bound_coeff(2 * j_prime); // h(0)
+                        let h_1 = h_poly.get_bound_coeff(2 * j_prime + 1); // h(1)
+
                         // For c = 0: h(0)^2 - h(0)
                         coeffs[0] += self.gamma[i] * (h_0.square() - h_0);
-                        
+
                         // For quadratic coefficient: b^2 where b = h(1) - h(0) is the linear coefficient
-                        let b = h_1 - h_0;  // Linear coefficient of h
-                        coeffs[1] += self.gamma[i] * b.square();  // Quadratic coefficient of h^2 - h
+                        let b = h_1 - h_0; // Linear coefficient of h
+                        coeffs[1] += self.gamma[i] * b.square(); // Quadratic coefficient of h^2 - h
                     }
 
                     [D_eval * coeffs[0], D_eval * coeffs[1]]
@@ -443,16 +443,16 @@ impl<F: JoltField> BooleanitySumcheck<F> {
 
                             for i in 0..D {
                                 let h_poly = &H[i];
-                                
-                                let h_0 = h_poly.get_bound_coeff(2 * j_prime);      // h(0)
-                                let h_1 = h_poly.get_bound_coeff(2 * j_prime + 1);  // h(1)
-                                
+
+                                let h_0 = h_poly.get_bound_coeff(2 * j_prime); // h(0)
+                                let h_1 = h_poly.get_bound_coeff(2 * j_prime + 1); // h(1)
+
                                 // For c = 0: h(0)^2 - h(0)
                                 coeffs[0] += self.gamma[i] * (h_0.square() - h_0);
-                                
+
                                 // For quadratic coefficient: b^2 where b = h(1) - h(0) is the linear coefficient
-                                let b = h_1 - h_0;  // Linear coefficient of h
-                                coeffs[1] += self.gamma[i] * b.square();  // Quadratic coefficient of h^2 - h
+                                let b = h_1 - h_0; // Linear coefficient of h
+                                coeffs[1] += self.gamma[i] * b.square(); // Quadratic coefficient of h^2 - h
                             }
 
                             [D_E_in_eval * coeffs[0], D_E_in_eval * coeffs[1]]
