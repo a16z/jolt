@@ -77,7 +77,9 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
             }
         }
     }
-    /// Compute the split equality polynomial for the small value optimization
+
+    /// ```ignore (idk why it tries to run doctest)
+    ///  Compute the split equality polynomial for the small value optimization
     ///
     /// The split is done as follows: (here `l = num_small_value_rounds`)
     ///

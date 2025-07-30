@@ -289,8 +289,7 @@ where
             ));
         }
 
-        let c =
-            <P::G1 as VariableBaseMSM>::msm(&pk.g1_powers()[..poly.original_len()], poly, None)?;
+        let c = <P::G1 as VariableBaseMSM>::msm(&pk.g1_powers()[..poly.original_len()], poly)?;
         Ok(c.into_affine())
     }
 

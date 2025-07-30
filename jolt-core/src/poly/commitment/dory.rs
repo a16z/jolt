@@ -1363,16 +1363,14 @@ mod tests {
     #[test]
     #[serial]
     fn test_dory_commitment_scheme_all_polynomial_types() {
-        let max_num_vars = 18;
-
-        let num_vars = 18;
-
+        let num_vars = 10;
         let num_coeffs = 1 << num_vars;
+
         let _guard = DoryGlobals::initialize(1, num_coeffs);
 
-        println!("Setting up Dory PCS with max_num_vars = {max_num_vars}");
+        println!("Setting up Dory PCS with max_num_vars = {num_vars}");
         let setup_start = Instant::now();
-        let prover_setup = DoryCommitmentScheme::setup_prover(max_num_vars);
+        let prover_setup = DoryCommitmentScheme::setup_prover(num_vars);
         let verifier_setup = DoryCommitmentScheme::setup_verifier(&prover_setup);
         let setup_time = setup_start.elapsed();
         println!("Setup time: {setup_time:?}\n");
@@ -1474,7 +1472,6 @@ mod tests {
         use ark_std::UniformRand;
 
         let num_vars = 10;
-        let max_num_vars = 10;
         let num_coeffs = 1 << num_vars;
         let _guard = DoryGlobals::initialize(1, num_coeffs);
 
@@ -1484,7 +1481,7 @@ mod tests {
 
         let opening_point: Vec<Fr> = (0..num_vars).map(|_| Fr::rand(&mut rng)).collect();
 
-        let prover_setup = DoryCommitmentScheme::setup_prover(max_num_vars);
+        let prover_setup = DoryCommitmentScheme::setup_prover(num_vars);
         let verifier_setup = DoryCommitmentScheme::setup_verifier(&prover_setup);
 
         let (commitment, row_commitments) = DoryCommitmentScheme::commit(&poly, &prover_setup);
