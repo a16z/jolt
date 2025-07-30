@@ -86,10 +86,8 @@ mod e2e_tests {
             JoltSNARK::prover_preprocess(program_bytecode);
 
         // --- Proving ---
-        let execution_trace = onnx_tracer::execution_trace(
-            custom_addsubmul_model,
-            &Tensor::new(Some(&[60]), &[1]).unwrap(),
-        );
+        let input = Tensor::new(Some(&[60]), &[1]).unwrap();
+        let execution_trace = onnx_tracer::execution_trace(custom_addsubmul_model, &input);
         println!("Execution trace: {execution_trace:#?}");
         let snark: JoltSNARK<Fr, PCS, KeccakTranscript> =
             JoltSNARK::prove(pp.clone(), execution_trace);

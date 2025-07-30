@@ -117,8 +117,6 @@ pub struct ONNXInstr {
 /// of the Jolt paper.
 #[derive(Clone, Copy, Debug, PartialEq, EnumCountMacro)]
 pub enum CircuitFlags {
-    // /// 1 if the second instruction operand is `imm`; 0 otherwise.
-    // RightOperandIsImm,
     /// 1 if the first instruction operand is RS1 value; 0 otherwise.
     LeftOperandIsRs1Value,
     /// 1 if the first instruction operand is RS2 value; 0 otherwise.
@@ -129,14 +127,6 @@ pub enum CircuitFlags {
     SubtractOperands,
     /// 1 if the first lookup operand is the product of the two instruction operands.
     MultiplyOperands,
-    // /// 1 if the instruction is a load (i.e. `LW`)
-    // Load,
-    // /// 1 if the instruction is a store (i.e. `SW`)
-    // Store,
-    // /// 1 if the instruction is a jump (i.e. `JAL`, `JALR`)
-    // Jump,
-    // /// 1 if the instruction is a branch (i.e. `BEQ`, `BNE`, etc.)
-    // Branch,
     /// 1 if the lookup output is to be stored in `rd` at the end of the step.
     WriteLookupOutputToRD,
     // /// 1 if the instruction is "inline", as defined in Section 6.1 of the Jolt paper.

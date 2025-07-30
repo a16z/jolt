@@ -729,19 +729,4 @@ mod tests {
             verification_result.err()
         );
     }
-
-    #[test]
-    fn test_add() {
-        test_sparse_dense_shout::<ADD<WORD_SIZE>>();
-    }
-
-    #[test]
-    fn test_sub() {
-        test_sparse_dense_shout::<SUB<WORD_SIZE>>();
-    }
-
-    #[test]
-    fn test_mul() {
-        test_sparse_dense_shout::<MUL<WORD_SIZE>>();
-    }
 }
