@@ -348,6 +348,8 @@ impl Keccak256SequenceBuilder {
         }
     }
 
+    // TODO(dwong): Refactor non-keccak-specific helpers below into inline_helpers module.
+
     /// Load a 64-bit immediate value into a register
     /// This is needed because RISC-V instructions can only handle small immediates
     fn load_64bit_immediate(&mut self, value: u64, rd: usize) {
