@@ -64,19 +64,18 @@ define_lookup_enum!(
 );
 #[cfg(test)]
 mod e2e_tests {
-    use crate::subprotocols::sparse_dense_shout::TestInstructionTrait;
 
     use crate::{
-        jolt::vm::{JoltProverPreprocessing, JoltSNARK, onnx_vm::ONNXLookup},
+        jolt::vm::{JoltProverPreprocessing, JoltSNARK},
         program::ONNXProgram,
     };
     use ark_bn254::Fr;
-    use jolt_core::jolt::instruction::LookupQuery;
     use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
     use jolt_core::utils::transcript::KeccakTranscript;
     use onnx_tracer::{custom_addsubmul_model, logger::init_logger, model, tensor::Tensor};
 
     type PCS = DoryCommitmentScheme<KeccakTranscript>;
+
     #[test]
     fn test_custom_addsubmul() {
         // --- Preprocessing ---

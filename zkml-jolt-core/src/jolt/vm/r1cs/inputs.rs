@@ -308,7 +308,6 @@ impl JoltONNXR1CSInputs {
                     .collect();
                 coeffs.into()
             }
-            _ => unimplemented!(),
         }
     }
 }

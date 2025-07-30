@@ -1,19 +1,8 @@
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::poly::{
-    multilinear_polynomial::MultilinearPolynomial,
-    sparse_interleaved_poly::SparseCoefficient,
-    split_eq_poly::SplitEqPolynomial,
-    unipoly::{CompressedUniPoly, UniPoly},
+    multilinear_polynomial::MultilinearPolynomial, sparse_interleaved_poly::SparseCoefficient,
 };
-use jolt_core::{
-    field::{JoltField, OptimizedMul},
-    r1cs::builder::Constraint,
-    utils::{
-        math::Math,
-        transcript::{AppendToTranscript, Transcript},
-    },
-};
-use rayon::prelude::*;
+use jolt_core::{field::JoltField, r1cs::builder::Constraint};
 
 #[derive(Default, Debug, Clone)]
 pub struct SpartanInterleavedPolynomial<F: JoltField> {
@@ -62,7 +51,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                     az_coeff = constraint
                     .a
                     .evaluate_row(flattened_polynomials, step_index);
-                    if !(az_coeff == 0) {
+                    if az_coeff != 0 {
                     coeffs.push((global_index, az_coeff).into());
                     }
                 }
@@ -72,7 +61,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                     bz_coeff = constraint
                     .b
                     .evaluate_row(flattened_polynomials, step_index);
-                    if !(bz_coeff == 0) {
+                    if bz_coeff != 0 {
                     coeffs.push((global_index + 1, bz_coeff).into());
                     }
                 }
@@ -98,7 +87,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                     }
                 }
                 // Cz = Az ⊙ Cz
-                if !(az_coeff == 0) && !(bz_coeff == 0) {
+                if az_coeff != 0 && bz_coeff != 0 {
                     let cz_coeff = az_coeff * bz_coeff;
                     coeffs.push((global_index + 2, cz_coeff).into());
                 }
@@ -126,7 +115,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
         }
     }
 
-    fn uninterleave(&self) -> (DensePolynomial<F>, DensePolynomial<F>, DensePolynomial<F>) {
+    fn _uninterleave(&self) -> (DensePolynomial<F>, DensePolynomial<F>, DensePolynomial<F>) {
         let mut az = vec![F::zero(); self.dense_len];
         let mut bz = vec![F::zero(); self.dense_len];
         let mut cz = vec![F::zero(); self.dense_len];

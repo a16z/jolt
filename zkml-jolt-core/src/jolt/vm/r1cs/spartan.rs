@@ -1,20 +1,16 @@
 use jolt_core::field::JoltField;
-use jolt_core::jolt::vm::JoltCommitments;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::multilinear_polynomial::PolynomialEvaluation;
 use jolt_core::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding,
 };
-use jolt_core::poly::opening_proof::ProverOpeningAccumulator;
-use jolt_core::poly::opening_proof::VerifierOpeningAccumulator;
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_core::utils::math::Math;
 use jolt_core::utils::transcript::Transcript;
 use jolt_core::{
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPlusOnePolynomial},
     subprotocols::sumcheck::BatchableSumcheckInstance,
-    utils::small_value::NUM_SVO_ROUNDS,
 };
 use onnx_tracer::trace_types::ONNXCycle;
 use std::marker::PhantomData;
@@ -25,7 +21,7 @@ use rayon::prelude::*;
 
 use crate::jolt::vm::JoltProverPreprocessing;
 use crate::jolt::vm::r1cs::builder::CombinedUniformBuilder;
-use crate::jolt::vm::r1cs::inputs::{ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS};
+use crate::jolt::vm::r1cs::inputs::ALL_R1CS_INPUTS;
 use crate::jolt::vm::r1cs::key::UniformSpartanKey;
 use crate::jolt::vm::r1cs::spartan_interleaved_poly::SpartanInterleavedPolynomial;
 
@@ -120,10 +116,10 @@ where
     pub fn prove<PCS>(
         preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
         constraint_builder: &CombinedUniformBuilder<F>,
-        key: &UniformSpartanKey<F>,
+        _key: &UniformSpartanKey<F>,
         trace: &[ONNXCycle],
         // opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
-        transcript: &mut ProofTranscript,
+        _transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError>
     where
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
@@ -360,7 +356,7 @@ where
             + inner_sumcheck_RLC.square() * self.outer_sumcheck_claims.2;
 
         let num_cycles_bits = key.num_steps.log_2();
-        let (r_cycle, rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
+        let (_r_cycle, rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
         let inner_sumcheck = InnerSumcheck::<F>::new_verifier(
             claim_inner_joint,
@@ -644,26 +640,26 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
     }
 }
 
-struct PCSumcheckProverState<F: JoltField> {
-    unexpanded_pc_poly: MultilinearPolynomial<F>,
-    pc_poly: MultilinearPolynomial<F>,
-    eq_plus_one_poly: MultilinearPolynomial<F>,
-    r: F,
-}
+// struct PCSumcheckProverState<F: JoltField> {
+//     unexpanded_pc_poly: MultilinearPolynomial<F>,
+//     pc_poly: MultilinearPolynomial<F>,
+//     eq_plus_one_poly: MultilinearPolynomial<F>,
+//     r: F,
+// }
 
-struct PCSumcheckVerifierState<F: JoltField> {
-    r_cycle: Vec<F>,
-    r: F,
-    unexpanded_pc_eval_at_shift_r: F,
-    pc_eval_at_shift_r: F,
-}
+// struct PCSumcheckVerifierState<F: JoltField> {
+//     r_cycle: Vec<F>,
+//     r: F,
+//     unexpanded_pc_eval_at_shift_r: F,
+//     pc_eval_at_shift_r: F,
+// }
 
-pub struct PCSumcheck<F: JoltField> {
-    input_claim: F,
-    prover_state: Option<PCSumcheckProverState<F>>,
-    verifier_state: Option<PCSumcheckVerifierState<F>>,
-    cached_claims: Option<(F, F)>, // (unexpanded_pc_eval, pc_eval)
-}
+// pub struct PCSumcheck<F: JoltField> {
+//     input_claim: F,
+//     prover_state: Option<PCSumcheckProverState<F>>,
+//     verifier_state: Option<PCSumcheckVerifierState<F>>,
+//     cached_claims: Option<(F, F)>, // (unexpanded_pc_eval, pc_eval)
+// }
 
 // impl<F: JoltField> PCSumcheck<F> {
 //     pub fn new_prover(

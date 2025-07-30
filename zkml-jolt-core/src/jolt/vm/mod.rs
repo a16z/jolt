@@ -1,15 +1,12 @@
 //! A state-of-the-art zkVM, called Jolt, which turns almost everything a VM does into reads and writes to memory.
 //! This includes the “fetch-decode-execute” logic of the VM.
 
-use crate::jolt::{
-    vm::{
-        bytecode::{BytecodePreprocessing, BytecodeProof},
-        r1cs::{
-            constraints::{JoltONNXConstraints, R1CSConstraints},
-            spartan::UniformSpartanProof,
-        },
+use crate::jolt::vm::{
+    bytecode::{BytecodePreprocessing, BytecodeProof},
+    r1cs::{
+        constraints::{JoltONNXConstraints, R1CSConstraints},
+        spartan::UniformSpartanProof,
     },
-    witness::ALL_COMMITTED_POLYNOMIALS,
 };
 use jolt_core::{
     field::JoltField,
@@ -20,7 +17,6 @@ use jolt_core::{
     utils::{errors::ProofVerifyError, transcript::Transcript},
 };
 use onnx_tracer::trace_types::{ONNXCycle, ONNXInstr};
-use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 
@@ -122,7 +118,7 @@ where
         trace.resize(trace.len().next_power_of_two(), ONNXCycle::no_op());
         let padded_trace_length = trace.len();
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
-        let mut opening_accumulator: ProverOpeningAccumulator<F, PCS, ProofTranscript> =
+        let mut _opening_accumulator: ProverOpeningAccumulator<F, PCS, ProofTranscript> =
             ProverOpeningAccumulator::new();
         // let committed_polys: Vec<_> = ALL_COMMITTED_POLYNOMIALS
         //     .par_iter()
@@ -142,7 +138,7 @@ where
         );
         transcript.append_scalar(&spartan_key.vk_digest);
 
-        let r1cs = UniformSpartanProof::prove::<PCS>(
+        let _ = UniformSpartanProof::prove::<PCS>(
             &preprocessing,
             &constraint_builder,
             &spartan_key,
@@ -169,7 +165,7 @@ where
         preprocessing: JoltVerifierPreprocessing<F, PCS, ProofTranscript>,
     ) -> Result<(), ProofVerifyError> {
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
-        let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS, ProofTranscript> =
+        let mut _opening_accumulator: VerifierOpeningAccumulator<F, PCS, ProofTranscript> =
             VerifierOpeningAccumulator::new();
         // Regenerate the uniform Spartan key
         let padded_trace_length = self.trace_length.next_power_of_two();
