@@ -23,12 +23,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for RangeCheckTable<WORD_SIZE> {
         let mut result = F::zero();
         for i in 0..WORD_SIZE {
             let shift = WORD_SIZE - 1 - i;
-            if shift < 64 {
-                result += F::from_u64(1u64 << shift) * r[WORD_SIZE + i];
-            } else {
-                // For shift >= 64, we need to use u128
-                result += F::from_u128(1u128 << shift) * r[WORD_SIZE + i];
-            }
+            result += F::from_u128(1u128 << shift) * r[WORD_SIZE + i];
         }
         result
     }

@@ -26,8 +26,8 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for Pow2Prefix<W
 
         let mut result = F::from_u64(1 << (b % WORD_SIZE));
         let mut num_bits = b.len();
-        let mut shift = 1 << (1 << num_bits);
-        result *= F::from_u32(1 + (shift - 1) * c);
+        let mut shift = 1u64 << (1u64 << num_bits);
+        result *= F::from_u64(1 + (shift - 1) * c as u64);
 
         // Shift amount is [c, b]
         if b.len() == WORD_SIZE.log_2() - 1 {
@@ -38,7 +38,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for Pow2Prefix<W
         num_bits += 1;
         shift = 1 << (1 << num_bits);
         if let Some(r_x) = r_x {
-            result *= F::one() + F::from_u32(shift - 1) * r_x;
+            result *= F::one() + F::from_u64(shift - 1) * r_x;
         }
 
         result *= checkpoints[Prefixes::Pow2].unwrap_or(F::one());
