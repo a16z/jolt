@@ -271,7 +271,7 @@ pub fn custom_addsubmul_model() -> Model {
     };
 
     // constant node
-    let mut const_tensor = Tensor::new(Some(&[402i128]), &[1, 1]).unwrap();
+    let mut const_tensor = Tensor::new(Some(&[50i128]), &[1, 1]).unwrap();
     const_tensor.set_scale(7);
     let const_node = Node {
         opkind: SupportedOp::Constant(Constant {

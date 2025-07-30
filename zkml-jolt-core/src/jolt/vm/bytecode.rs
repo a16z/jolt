@@ -156,6 +156,7 @@ where
                     (instr.ts1.unwrap_or_default() as u64).field_mul(gamma_pows[2]);
                 linear_combination +=
                     (instr.ts2.unwrap_or_default() as u64).field_mul(gamma_pows[3]);
+                // TODO: Add td
                 linear_combination
             })
             .collect()

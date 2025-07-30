@@ -54,7 +54,7 @@ pub enum JoltONNXR1CSInputs {
 
 /// This const serves to define a canonical ordering over inputs (and thus indices
 /// for each input). This is needed for sumcheck.
-pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs; 12] = [
+pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs; 13] = [
     JoltONNXR1CSInputs::LeftInstructionInput,
     JoltONNXR1CSInputs::RightInstructionInput,
     JoltONNXR1CSInputs::Product,
@@ -87,7 +87,7 @@ pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs; 12] = [
     // JoltONNXR1CSInputs::OpFlags(CircuitFlags::Store),
     // JoltONNXR1CSInputs::OpFlags(CircuitFlags::Jump),
     // JoltONNXR1CSInputs::OpFlags(CircuitFlags::Branch),
-    // JoltONNXR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD),
+    JoltONNXR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD),
     // JoltONNXR1CSInputs::OpFlags(CircuitFlags::InlineSequenceInstruction),
     // JoltONNXR1CSInputs::OpFlags(CircuitFlags::Assert),
     // JoltONNXR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC),
@@ -187,10 +187,7 @@ impl JoltONNXR1CSInputs {
             //         coeffs.into()
             //     }
             JoltONNXR1CSInputs::RdWriteValue => {
-                let coeffs: Vec<F> = trace
-                    .par_iter()
-                    .map(|cycle| F::from_i128(cycle.td_write()))
-                    .collect();
+                let coeffs: Vec<u64> = trace.par_iter().map(|cycle| cycle.td_write()).collect();
                 coeffs.into()
             }
             //     JoltONNXR1CSInputs::RamReadValue => {
@@ -231,7 +228,10 @@ impl JoltONNXR1CSInputs {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
                     .map(|cycle| {
-                        LookupQuery::<64>::to_lookup_operands(&cycle.to_lookup().unwrap() /* TODO: Remove this unwrap, figure out how lasso handle no-ops */).0
+                        cycle
+                            .to_lookup()
+                            .map(|lookup| LookupQuery::<64>::to_lookup_operands(&lookup).0)
+                            .unwrap_or(0)
                     })
                     .collect();
                 coeffs.into()
@@ -240,7 +240,10 @@ impl JoltONNXR1CSInputs {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
                     .map(|cycle| {
-                        LookupQuery::<64>::to_lookup_operands(&cycle.to_lookup().unwrap() /* TODO: Remove this unwrap, figure out how lasso handle no-ops */).1
+                        cycle
+                            .to_lookup()
+                            .map(|lookup| LookupQuery::<64>::to_lookup_operands(&lookup).1)
+                            .unwrap_or(0)
                     })
                     .collect();
                 coeffs.into()
@@ -258,7 +261,10 @@ impl JoltONNXR1CSInputs {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
                     .map(|cycle| {
-                        LookupQuery::<64>::to_lookup_output(&cycle.to_lookup().unwrap() /* TODO: Remove this unwrap, figure out how lasso handle no-ops */)
+                        cycle
+                            .to_lookup()
+                            .map(|lookup| LookupQuery::<64>::to_lookup_output(&lookup))
+                            .unwrap_or_default()
                     })
                     .collect();
                 coeffs.into()

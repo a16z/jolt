@@ -89,7 +89,7 @@ mod e2e_tests {
         // --- Proving ---
         let execution_trace = onnx_tracer::execution_trace(
             custom_addsubmul_model,
-            &Tensor::new(Some(&[10]), &[1]).unwrap(),
+            &Tensor::new(Some(&[60]), &[1]).unwrap(),
         );
         println!("Execution trace: {execution_trace:#?}",);
         let snark: JoltSNARK<Fr, PCS, KeccakTranscript> =

@@ -1,15 +1,24 @@
 //! A state-of-the-art zkVM, called Jolt, which turns almost everything a VM does into reads and writes to memory.
 //! This includes the “fetch-decode-execute” logic of the VM.
 
-use crate::jolt::vm::bytecode::{BytecodePreprocessing, BytecodeProof};
+use crate::jolt::{
+    vm::{
+        bytecode::{BytecodePreprocessing, BytecodeProof},
+        r1cs::{constraints::JoltONNXConstraints, spartan::UniformSpartanProof},
+    },
+    witness::ALL_COMMITTED_POLYNOMIALS,
+};
 use jolt_core::{
     field::JoltField,
     poly::{
-        commitment::commitment_scheme::CommitmentScheme, opening_proof::ProverOpeningAccumulator,
+        commitment::commitment_scheme::CommitmentScheme,
+        opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
     },
+    r1cs::constraints::R1CSConstraints,
     utils::{errors::ProofVerifyError, transcript::Transcript},
 };
 use onnx_tracer::trace_types::{ONNXCycle, ONNXInstr};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 
@@ -67,6 +76,7 @@ where
 {
     pub trace_length: usize,
     bytecode: BytecodeProof<F, ProofTranscript>,
+    r1cs: UniformSpartanProof<F, ProofTranscript>,
     _p: PhantomData<PCS>,
 }
 
@@ -112,10 +122,39 @@ where
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
         let mut opening_accumulator: ProverOpeningAccumulator<F, PCS, ProofTranscript> =
             ProverOpeningAccumulator::new();
+        // let committed_polys: Vec<_> = ALL_COMMITTED_POLYNOMIALS
+        //     .par_iter()
+        //     .map(|poly| poly.generate_witness(&preprocessing, &trace))
+        //     .collect();
+        // let commitments: Vec<_> = committed_polys
+        //     .par_iter()
+        //     .map(|poly| PCS::commit(poly, &preprocessing.generators))
+        //     .collect();
+        // for commitment in commitments.iter() {
+        //     transcript.append_serializable(commitment);
+        // }
+        let constraint_builder = JoltONNXConstraints::construct_constraints(padded_trace_length);
+        let spartan_key = UniformSpartanProof::<F, ProofTranscript>::setup(
+            &constraint_builder,
+            padded_trace_length,
+        );
+        transcript.append_scalar(&spartan_key.vk_digest);
+
+        let r1cs = UniformSpartanProof::prove::<PCS>(
+            &preprocessing,
+            &constraint_builder,
+            &spartan_key,
+            &trace,
+            // &mut opening_accumulator,
+            &mut transcript,
+        )
+        .ok()
+        .unwrap();
         let bytecode_proof =
             BytecodeProof::prove(&preprocessing.shared.bytecode, &trace, &mut transcript);
         JoltSNARK {
-            trace_length: padded_trace_length,
+            trace_length,
+            r1cs,
             bytecode: bytecode_proof,
             _p: PhantomData,
         }
@@ -127,6 +166,23 @@ where
         preprocessing: JoltVerifierPreprocessing<F, PCS, ProofTranscript>,
     ) -> Result<(), ProofVerifyError> {
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
+        let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS, ProofTranscript> =
+            VerifierOpeningAccumulator::new();
+        // Regenerate the uniform Spartan key
+        let padded_trace_length = self.trace_length.next_power_of_two();
+        let r1cs_builder = JoltONNXConstraints::construct_constraints(padded_trace_length);
+        let spartan_key =
+            UniformSpartanProof::<F, ProofTranscript>::setup(&r1cs_builder, padded_trace_length);
+        transcript.append_scalar(&spartan_key.vk_digest);
+
+        self.r1cs
+            .verify::<PCS>(
+                &spartan_key,
+                // &self.commitments,
+                // &mut opening_accumulator,
+                &mut transcript,
+            )
+            .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))?;
         self.bytecode.verify(
             &preprocessing.shared.bytecode,
             self.trace_length,

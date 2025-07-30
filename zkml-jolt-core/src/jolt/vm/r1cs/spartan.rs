@@ -121,7 +121,7 @@ where
         constraint_builder: &CombinedUniformBuilder<F>,
         key: &UniformSpartanKey<F>,
         trace: &[ONNXCycle],
-        opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
+        // opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<Self, SpartanError>
     where
@@ -219,25 +219,25 @@ where
         //     transcript,
         // );
 
-        // Only non-virtual (i.e. committed) polynomials' openings are
-        // proven using the PCS opening proof. Virtual polynomial openings
-        // are proven in some subsequent sumcheck.
-        let committed_polys: Vec<_> = COMMITTED_R1CS_INPUTS
-            .iter()
-            .map(|input| &input_polys[input.to_index()])
-            .collect();
-        let committed_poly_claims: Vec<_> = COMMITTED_R1CS_INPUTS
-            .iter()
-            .map(|input| claimed_witness_evals[input.to_index()])
-            .collect();
+        // // Only non-virtual (i.e. committed) polynomials' openings are
+        // // proven using the PCS opening proof. Virtual polynomial openings
+        // // are proven in some subsequent sumcheck.
+        // let committed_polys: Vec<_> = COMMITTED_R1CS_INPUTS
+        //     .iter()
+        //     .map(|input| &input_polys[input.to_index()])
+        //     .collect();
+        // let committed_poly_claims: Vec<_> = COMMITTED_R1CS_INPUTS
+        //     .iter()
+        //     .map(|input| claimed_witness_evals[input.to_index()])
+        //     .collect();
 
-        opening_accumulator.append_dense(
-            &committed_polys,
-            chis,
-            r_cycle.to_vec(),
-            &committed_poly_claims,
-            transcript,
-        );
+        // opening_accumulator.append_dense(
+        //     &committed_polys,
+        //     chis,
+        //     r_cycle.to_vec(),
+        //     &committed_poly_claims,
+        //     transcript,
+        // );
 
         let outer_sumcheck_claims = (
             outer_sumcheck_claims[0],
@@ -303,8 +303,8 @@ where
     pub fn verify<PCS>(
         &self,
         key: &UniformSpartanKey<F>,
-        commitments: &JoltCommitments<F, PCS, ProofTranscript>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
+        // commitments: &JoltCommitments<F, PCS, ProofTranscript>,
+        // opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError>
     where
@@ -395,22 +395,22 @@ where
         //     .map_err(|_| SpartanError::InvalidShiftSumcheckProof)?;
 
         // TODO(moodlezoup): Relies on ordering of commitments
-        let r1cs_input_commitments = &commitments
-            .commitments
-            .iter()
-            .take(COMMITTED_R1CS_INPUTS.len())
-            .collect::<Vec<_>>();
+        // let r1cs_input_commitments = &commitments
+        //     .commitments
+        //     .iter()
+        //     .take(COMMITTED_R1CS_INPUTS.len())
+        //     .collect::<Vec<_>>();
 
-        let claims: Vec<_> = COMMITTED_R1CS_INPUTS
-            .iter()
-            .map(|input| self.claimed_witness_evals[input.to_index()])
-            .collect();
-        opening_accumulator.append(
-            r1cs_input_commitments,
-            r_cycle.to_vec(),
-            &claims,
-            transcript,
-        );
+        // let claims: Vec<_> = COMMITTED_R1CS_INPUTS
+        //     .iter()
+        //     .map(|input| self.claimed_witness_evals[input.to_index()])
+        //     .collect();
+        // opening_accumulator.append(
+        //     r1cs_input_commitments,
+        //     r_cycle.to_vec(),
+        //     &claims,
+        //     transcript,
+        // );
 
         Ok(())
     }

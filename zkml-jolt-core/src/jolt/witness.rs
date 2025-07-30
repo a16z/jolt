@@ -101,7 +101,10 @@ impl CommittedPolynomials {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
                     .map(|cycle| {
-                        LookupQuery::<64>::to_instruction_inputs(&cycle.to_lookup().unwrap() /* TODO: Remove this unwrap, figure out how lasso handle no-ops */).0
+                        cycle
+                            .to_lookup()
+                            .map(|lookup| LookupQuery::<64>::to_instruction_inputs(&lookup).0)
+                            .unwrap_or_default()
                     })
                     .collect();
                 coeffs.into()
@@ -110,7 +113,10 @@ impl CommittedPolynomials {
                 let coeffs: Vec<i64> = trace
                     .par_iter()
                     .map(|cycle| {
-                        LookupQuery::<64>::to_instruction_inputs(&cycle.to_lookup().unwrap() /* TODO: Remove this unwrap, figure out how lasso handle no-ops */).1
+                        cycle
+                            .to_lookup()
+                            .map(|lookup| LookupQuery::<64>::to_instruction_inputs(&lookup).1)
+                            .unwrap_or_default()
                     })
                     .collect();
                 coeffs.into()
@@ -119,9 +125,19 @@ impl CommittedPolynomials {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
                     .map(|cycle| {
-                        let (left_input, right_input) =
-                            LookupQuery::<64>::to_instruction_inputs(&cycle.to_lookup().unwrap() /* TODO: Remove this unwrap, figure out how lasso handle no-ops */);
-                        left_input * right_input as u64
+                        cycle
+                            .to_lookup()
+                            .map(|lookup| {
+                                let (left_input, right_input) =
+                                    LookupQuery::<64>::to_instruction_inputs(&lookup);
+                                if left_input.checked_mul(right_input as u64).is_none() {
+                                    panic!(
+                                        "At cycle {cycle:?} Overflow in multiplication: {left_input} * {right_input}"
+                                    );
+                                }
+                                left_input * right_input as u64
+                            })
+                            .unwrap_or_default()
                     })
                     .collect();
                 coeffs.into()
