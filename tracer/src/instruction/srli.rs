@@ -50,9 +50,14 @@ impl VirtualInstructionSequence for SRLI {
         let virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(0);
         let mut sequence = vec![];
 
-        // TODO: this only works for Xlen = 32
-        let shift = self.operands.imm % 32;
-        let ones = (1u64 << (32 - shift)) - 1;
+        // Determine word size based on immediate value and instruction encoding
+        // For SRLI: RV32 uses 5-bit immediates (0-31), RV64 uses 6-bit immediates (0-63)
+        let is_64bit = self.operands.imm > 31;
+        let word_size = if is_64bit { 64 } else { 32 };
+        let shift_mask = if is_64bit { 0x3f } else { 0x1f };
+
+        let shift = self.operands.imm & shift_mask;
+        let ones = (1u64 << (word_size - shift)) - 1;
         let bitmask = ones << shift;
 
         let srl = VirtualSRLI {
