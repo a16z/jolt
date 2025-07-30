@@ -2,10 +2,11 @@ use std::time::Instant;
 
 pub fn main() {
     let target_dir = "/tmp/jolt-guest-targets";
-    let program = guest::compile_alloc(target_dir);
+    let mut program = guest::compile_alloc(target_dir);
 
-    let prover_preprocessing = guest::preprocess_prover_alloc(&program);
-    let verifier_preprocessing = guest::preprocess_verifier_alloc(&program);
+    let prover_preprocessing = guest::preprocess_prover_alloc(&mut program);
+    let verifier_preprocessing =
+        guest::verifier_preprocessing_from_prover_alloc(&prover_preprocessing);
 
     let prove_alloc = guest::build_prover_alloc(program, prover_preprocessing);
     let verify_alloc = guest::build_verifier_alloc(verifier_preprocessing);

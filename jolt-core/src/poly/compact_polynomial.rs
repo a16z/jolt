@@ -147,6 +147,57 @@ impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
     pub fn coeffs_as_field_elements(&self) -> Vec<F> {
         self.coeffs.par_iter().map(|x| x.to_field()).collect()
     }
+    // Faster evaluation based on
+    // https://randomwalks.xyz/publish/fast_polynomial_evaluation.html
+    // Shaves a factor of 2 from run time.
+    pub fn optimised_evaluate(&self, r: &[F]) -> F {
+        // Copied over from eq_poly
+        // If the number of variables are greater
+        // than 2^16 -- use parallel evaluate
+        // Below that it's better to just do things linearly.
+        const PARALLEL_THRESHOLD: usize = 16;
+        // r must have a value for each variable
+        assert_eq!(r.len(), self.get_num_vars());
+        let m = r.len();
+        if m < PARALLEL_THRESHOLD {
+            self.evaluate_optimised_serial(r)
+        } else {
+            self.evaluate_optimised_parallel(r)
+        }
+    }
+
+    fn evaluate_optimised_serial(&self, r: &[F]) -> F {
+        let mut current: Vec<F> = self.coeffs.iter().map(|&c| c.to_field()).collect();
+        let m = r.len();
+        for i in (0..m).rev() {
+            let stride = 1 << i;
+            let r_val = r[m - 1 - i];
+            for j in 0..stride {
+                let f0 = current[j];
+                let f1 = current[j + stride];
+                current[j] = f0 + (f1 - f0) * (r_val);
+            }
+        }
+        current[0]
+    }
+    fn evaluate_optimised_parallel(&self, r: &[F]) -> F {
+        let mut current: Vec<F> = self.coeffs.par_iter().map(|&c| c.to_field()).collect();
+        let m = r.len();
+        for i in (0..m).rev() {
+            let stride = 1 << i;
+            let r_val = r[m - 1 - i];
+            let (evals_left, evals_right) = current.split_at_mut(stride);
+            let (evals_right, _) = evals_right.split_at_mut(stride);
+
+            evals_left
+                .par_iter_mut()
+                .zip(evals_right.par_iter())
+                .for_each(|(x, y)| {
+                    *x = *x + r_val * (*y - *x);
+                });
+        }
+        current[0]
+    }
 }
 
 impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T, F> {

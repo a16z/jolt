@@ -7,6 +7,7 @@
     - [Guests and Hosts](./usage/guests_hosts.md)
         - [Guests](./usage/guests.md)
         - [Hosts](./usage/hosts.md)
+        - [Guest Profiling](./usage/guest_profiling.md)
     - [Allocators](./usage/allocators.md)
     - [Standard Library](./usage/stdlib.md)
     - [WASM Support](./usage/wasm_support.md)

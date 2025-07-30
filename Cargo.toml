@@ -25,7 +25,6 @@ members = [
     "jolt-core",
     "tracer",
     "common",
-    "zklean-extractor",
     "jolt-sdk",
     "jolt-sdk/macros",
     "examples/collatz",
@@ -77,6 +76,7 @@ toml_edit = "0.22.14"
 
 jolt-sdk = { path = "./jolt-sdk" }
 jolt-core = { path = "./jolt-core" }
+tracer = { path = "./tracer" }
 common = { path = "./common" }
 
 [profile.test]
@@ -97,9 +97,10 @@ inherits = "release"
 debug = false
 
 [patch.crates-io]
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
-ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
-ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]

@@ -1,5 +1,7 @@
 #![allow(clippy::too_many_arguments)]
+#![allow(clippy::uninlined_format_args)]
 use crate::poly::eq_poly::EqPolynomial;
+use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized};
 
@@ -249,6 +251,66 @@ impl<F: JoltField> DensePolynomial<F> {
         compute_dotproduct(&self.Z, &chis)
     }
 
+    // Faster evaluation based on
+    // https://randomwalks.xyz/publish/fast_polynomial_evaluation.html
+    // Shaves a factor of 2 from run time.
+    pub fn optimised_evaluate(&self, r: &[F]) -> F {
+        // Copied over from eq_poly
+        // If the number of variables are greater
+        // than 2^16 -- use parallel evaluate
+        // Below that it's better to just do things linearly.
+        const PARALLEL_THRESHOLD: usize = 16;
+
+        // r must have a value for each variable
+        assert_eq!(r.len(), self.get_num_vars());
+        let m = r.len();
+        if m < PARALLEL_THRESHOLD {
+            self.evaluate_optimised_serial(r)
+        } else {
+            self.evaluate_optimised_parallel(r)
+        }
+    }
+
+    fn evaluate_optimised_serial(&self, r: &[F]) -> F {
+        let mut current = self.Z.clone();
+
+        let m = r.len();
+        for i in (0..m).rev() {
+            let stride = 1 << i;
+
+            for j in 0..stride {
+                let f0 = current[j];
+                let f1 = current[j + stride];
+                current[j] = f0 + r[m - 1 - i] * (f1 - f0);
+            }
+            // No benefit to truncating really.
+            //current.truncate(stride);
+        }
+        current[0]
+    }
+
+    fn evaluate_optimised_parallel(&self, r: &[F]) -> F {
+        let mut current: Vec<_> = self.Z.par_iter().cloned().collect();
+        let m = r.len();
+        // Invoking the same parallelisation structure
+        // currently in evaluating in Lagrange bases.
+        // See eq_poly::evals()
+        for i in (0..m).rev() {
+            let stride = 1 << i;
+            let r_val = r[m - 1 - i];
+            let (evals_left, evals_right) = current.split_at_mut(stride);
+            let (evals_right, _) = evals_right.split_at_mut(stride);
+
+            evals_left
+                .par_iter_mut()
+                .zip(evals_right.par_iter())
+                .for_each(|(x, y)| {
+                    *x = *x + r_val * (*y - *x);
+                });
+        }
+        current[0]
+    }
+
     pub fn evaluate_at_chi(&self, chis: &[F]) -> F {
         compute_dotproduct(&self.Z, chis)
     }
@@ -301,6 +363,55 @@ impl<F: JoltField> Index<usize> for DensePolynomial<F> {
     #[inline(always)]
     fn index(&self, _index: usize) -> &F {
         &(self.Z[_index])
+    }
+}
+
+impl<F: JoltField> PolynomialEvaluation<F> for DensePolynomial<F> {
+    fn evaluate(&self, r: &[F]) -> F {
+        self.evaluate(r)
+    }
+
+    fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<F>, Vec<F>) {
+        let eq = EqPolynomial::evals(r);
+        let evals: Vec<F> = polys
+            .into_par_iter()
+            .map(|&poly| poly.evaluate_at_chi_low_optimized(&eq))
+            .collect();
+        (evals, eq)
+    }
+
+    fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F> {
+        debug_assert!(degree > 0);
+        debug_assert!(index < self.len() / 2);
+
+        let mut evals = vec![F::zero(); degree];
+        match order {
+            BindingOrder::HighToLow => {
+                evals[0] = self[index];
+                if degree == 1 {
+                    return evals;
+                }
+                let mut eval = self[index + self.len() / 2];
+                let m = eval - evals[0];
+                for i in 1..degree {
+                    eval += m;
+                    evals[i] = eval;
+                }
+            }
+            BindingOrder::LowToHigh => {
+                evals[0] = self[2 * index];
+                if degree == 1 {
+                    return evals;
+                }
+                let mut eval = self[2 * index + 1];
+                let m = eval - evals[0];
+                for i in 1..degree {
+                    eval += m;
+                    evals[i] = eval;
+                }
+            }
+        };
+        evals
     }
 }
 
@@ -366,6 +477,62 @@ mod tests {
         // g(5, 10) = 8*(1 - 5)(1 - 10) + 8*(1 - 5)(10) + 8*(5)(1-10) + 8*(5)(10) = 96 + -16 + -72 + 96  = 8
         assert_eq!(
             dense_poly.evaluate(vec![Fr::from(3), Fr::from(4)].as_slice()),
+            Fr::from(8)
+        );
+    }
+    #[test]
+    fn compare_random_evaluations() {
+        // Compares optimised polynomial evaluation
+        // with the old polynomial evaluation
+        use rand_chacha::ChaCha20Rng;
+        use rand_core::SeedableRng;
+
+        let mut rng = ChaCha20Rng::seed_from_u64(42);
+
+        for &exp in &[2, 4, 6, 8] {
+            let num_evals = 1 << exp; // must be a power of 2
+            let num_vars = exp;
+
+            // Generate random coefficients for the multilinear polynomial
+            let evals: Vec<Fr> = (0..num_evals).map(|_| Fr::random(&mut rng)).collect();
+            let poly = DensePolynomial::<Fr>::new(evals);
+
+            // Try 10 random evaluation points
+            for _ in 0..10 {
+                let eval_point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
+
+                let eval1 = poly.evaluate(&eval_point);
+                let eval2 = poly.optimised_evaluate(&eval_point);
+
+                assert_eq!(
+                    eval1, eval2,
+                    "Mismatch at point {:?} for num_vars = {}: eval = {:?}, opt = {:?}",
+                    eval_point, num_vars, eval1, eval2
+                );
+            }
+        }
+    }
+    #[test]
+    fn fast_evaluation() {
+        // Uses the above test with the new polynomial evaluation
+        // algorithm.
+        let num_evals = 4;
+        let mut evals: Vec<Fr> = Vec::with_capacity(num_evals);
+        for _ in 0..num_evals {
+            evals.push(Fr::from(8));
+        }
+        let dense_poly: DensePolynomial<Fr> = DensePolynomial::new(evals.clone());
+
+        // Evaluate at 3:
+        // (0, 0) = 1
+        // (0, 1) = 1
+        // (1, 0) = 1
+        // (1, 1) = 1
+        // g(x_0,x_1) => c_0*(1 - x_0)(1 - x_1) + c_1*(1-x_0)(x_1) + c_2*(x_0)(1-x_1) + c_3*(x_0)(x_1)
+        // g(3, 4) = 8*(1 - 3)(1 - 4) + 8*(1-3)(4) + 8*(3)(1-4) + 8*(3)(4) = 48 + -64 + -72 + 96  = 8
+        // g(5, 10) = 8*(1 - 5)(1 - 10) + 8*(1 - 5)(10) + 8*(5)(1-10) + 8*(5)(10) = 96 + -16 + -72 + 96  = 8
+        assert_eq!(
+            dense_poly.optimised_evaluate(vec![Fr::from(3), Fr::from(4)].as_slice()),
             Fr::from(8)
         );
     }

@@ -5,7 +5,7 @@ use sha3::{Digest, Keccak256};
 use std::borrow::Borrow;
 
 /// Represents the current state of the protocol's Fiat-Shamir transcript.
-#[derive(Clone)]
+#[derive(Default, Clone)]
 pub struct KeccakTranscript {
     /// Ethereum-compatible 256-bit running state
     pub state: [u8; 32],
@@ -218,7 +218,7 @@ impl Transcript for KeccakTranscript {
     }
 }
 
-pub trait Transcript: Clone + Sync + Send + 'static {
+pub trait Transcript: Default + Clone + Sync + Send + 'static {
     fn new(label: &'static [u8]) -> Self;
     #[cfg(test)]
     fn compare_to(&mut self, other: Self);

@@ -8,28 +8,19 @@ use std::{
     process::Command,
 };
 
-use rayon::prelude::*;
-
 use common::{
     constants::{
         DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
     },
-    rv_trace::JoltDevice,
+    jolt_device::{JoltDevice, MemoryConfig},
 };
-pub use tracer::ELFInstruction;
+use rayon::prelude::*;
+use tracer::{
+    emulator::memory::Memory,
+    instruction::{RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence},
+};
 
-use crate::{
-    field::JoltField,
-    jolt::{
-        instruction::{
-            div::DIVInstruction, divu::DIVUInstruction, lb::LBInstruction, lbu::LBUInstruction,
-            lh::LHInstruction, lhu::LHUInstruction, mulh::MULHInstruction,
-            mulhsu::MULHSUInstruction, rem::REMInstruction, remu::REMUInstruction,
-            sb::SBInstruction, sh::SHInstruction, VirtualInstructionSequence,
-        },
-        vm::{bytecode::BytecodeRow, rv32i_vm::RV32I, JoltTraceStep},
-    },
-};
+use crate::field::JoltField;
 
 use self::analyze::ProgramSummary;
 #[cfg(not(target_arch = "wasm32"))]
@@ -164,88 +155,72 @@ impl Program {
         }
     }
 
-    pub fn decode(&self) -> (Vec<ELFInstruction>, Vec<(u64, u8)>) {
+    pub fn decode(&mut self) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>) {
+        self.build(DEFAULT_TARGET_DIR);
         let elf = self.elf.as_ref().unwrap();
         let mut elf_file =
             File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
-        tracer::decode(&elf_contents)
+        let (mut instructions, raw_bytes) = tracer::decode(&elf_contents);
+        // Expand virtual sequences
+        instructions = instructions
+            .into_par_iter()
+            .flat_map_iter(|instr| match instr {
+                RV32IMInstruction::DIV(div) => div.virtual_sequence(),
+                RV32IMInstruction::DIVU(divu) => divu.virtual_sequence(),
+                RV32IMInstruction::LB(lb) => lb.virtual_sequence(),
+                RV32IMInstruction::LBU(lbu) => lbu.virtual_sequence(),
+                RV32IMInstruction::LH(lh) => lh.virtual_sequence(),
+                RV32IMInstruction::LHU(lhu) => lhu.virtual_sequence(),
+                RV32IMInstruction::MULH(mulh) => mulh.virtual_sequence(),
+                RV32IMInstruction::MULHSU(mulhsu) => mulhsu.virtual_sequence(),
+                RV32IMInstruction::REM(rem) => rem.virtual_sequence(),
+                RV32IMInstruction::REMU(remu) => remu.virtual_sequence(),
+                RV32IMInstruction::SB(sb) => sb.virtual_sequence(),
+                RV32IMInstruction::SH(sh) => sh.virtual_sequence(),
+                RV32IMInstruction::SLL(sll) => sll.virtual_sequence(),
+                RV32IMInstruction::SLLI(slli) => slli.virtual_sequence(),
+                RV32IMInstruction::SRA(sra) => sra.virtual_sequence(),
+                RV32IMInstruction::SRAI(srai) => srai.virtual_sequence(),
+                RV32IMInstruction::SRL(srl) => srl.virtual_sequence(),
+                RV32IMInstruction::SRLI(srli) => srli.virtual_sequence(),
+                RV32IMInstruction::SHA256(sha256) => sha256.virtual_sequence(),
+                RV32IMInstruction::SHA256INIT(sha256init) => sha256init.virtual_sequence(),
+                _ => vec![instr],
+            })
+            .collect();
+
+        (instructions, raw_bytes)
     }
 
     // TODO(moodlezoup): Make this generic over InstructionSet
     #[tracing::instrument(skip_all, name = "Program::trace")]
-    pub fn trace(&mut self, inputs: &[u8]) -> (JoltDevice, Vec<JoltTraceStep<RV32I>>) {
+    pub fn trace(&mut self, inputs: &[u8]) -> (Vec<RV32IMCycle>, Memory, JoltDevice) {
         self.build(DEFAULT_TARGET_DIR);
         let elf = self.elf.as_ref().unwrap();
         let mut elf_file =
             File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
-        let memory_config = common::rv_trace::MemoryConfig {
+        let memory_config = MemoryConfig {
             memory_size: self.memory_size,
             stack_size: self.stack_size,
             max_input_size: self.max_input_size,
             max_output_size: self.max_output_size,
         };
-        let (raw_trace, io_device) = tracer::trace(elf_contents, inputs, &memory_config);
-
-        let trace: Vec<_> = raw_trace
-            .into_par_iter()
-            .flat_map(|row| match row.instruction.opcode {
-                tracer::RV32IM::MULH => MULHInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::MULHSU => MULHSUInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::DIV => DIVInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::DIVU => DIVUInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::REM => REMInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::REMU => REMUInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::SH => SHInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::SB => SBInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::LBU => LBUInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::LHU => LHUInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::LB => LBInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::LH => LHInstruction::<32>::virtual_trace(row),
-                _ => vec![row],
-            })
-            .map(|row| {
-                let instruction_lookup = RV32I::try_from(&row).ok();
-
-                JoltTraceStep {
-                    instruction_lookup,
-                    bytecode_row: BytecodeRow::from_instruction::<RV32I>(&row.instruction),
-                    memory_ops: (&row).into(),
-                    circuit_flags: row.instruction.to_circuit_flags(),
-                }
-            })
-            .collect();
-
-        (io_device, trace)
+        tracer::trace(elf_contents, inputs, &memory_config)
     }
 
     pub fn trace_analyze<F: JoltField>(mut self, inputs: &[u8]) -> ProgramSummary {
-        self.build(DEFAULT_TARGET_DIR);
-        let elf = self.elf.as_ref().unwrap();
-        let mut elf_file =
-            File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
-        let mut elf_contents = Vec::new();
-        elf_file.read_to_end(&mut elf_contents).unwrap();
-        let memory_config = common::rv_trace::MemoryConfig {
-            memory_size: self.memory_size,
-            stack_size: self.stack_size,
-            max_input_size: self.max_input_size,
-            max_output_size: self.max_output_size,
-        };
-        let (raw_trace, _) = tracer::trace(elf_contents, inputs, &memory_config);
-
-        let (bytecode, memory_init) = self.decode();
-        let (io_device, processed_trace) = self.trace(inputs);
+        let (bytecode, init_memory_state) = self.decode();
+        let (trace, _, io_device) = self.trace(inputs);
 
         ProgramSummary {
-            raw_trace,
+            trace,
             bytecode,
-            memory_init,
+            memory_init: init_memory_state,
             io_device,
-            processed_trace,
         }
     }
 

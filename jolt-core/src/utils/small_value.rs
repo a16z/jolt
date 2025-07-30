@@ -768,7 +768,7 @@ pub mod svo_helpers {
             );
             debug_assert!(
                 !ternary_point_info_table[k_target_idx].is_binary,
-                "Target for temp_tA[{i_temp_tA}] (k={k_target_idx}) is unexpectedly binary.",
+                "Target for temp_tA[{i_temp_tA}] (k={k_target_idx}) is unexpectedly binary."
             );
 
             let az_val = get_extended_eval::<NUM_SVO_ROUNDS, NUM_TERNARY_POINTS_CONST>(
@@ -1591,8 +1591,7 @@ mod tests {
         }
         assert_eq!(
             temp_tA_new, temp_tA_old,
-            "Mismatch for NUM_SVO_ROUNDS = {} with patterned data",
-            num_svo_rounds
+            "Mismatch for NUM_SVO_ROUNDS = {num_svo_rounds} with patterned data"
         );
 
         // Test with all zeros for binary evals
@@ -1646,8 +1645,7 @@ mod tests {
         }
         assert_eq!(
             temp_tA_new_zeros, temp_tA_old_zeros,
-            "Mismatch for NUM_SVO_ROUNDS = {} with zero data",
-            num_svo_rounds
+            "Mismatch for NUM_SVO_ROUNDS = {num_svo_rounds} with zero data"
         );
 
         // Test with e_in_val = 0
@@ -1700,8 +1698,7 @@ mod tests {
         }
         assert_eq!(
             temp_tA_new_zero_e, temp_tA_old_zero_e,
-            "Mismatch for NUM_SVO_ROUNDS = {} with zero e_in_val",
-            num_svo_rounds
+            "Mismatch for NUM_SVO_ROUNDS = {num_svo_rounds} with zero e_in_val"
         );
         for val in temp_tA_new_zero_e {
             // Confirm they are all zero
@@ -1739,11 +1736,7 @@ mod tests {
 
         let mut E_out_vec: Vec<Vec<TestField>> = Vec::with_capacity(num_svo_rounds);
         for s_e in 0..num_svo_rounds {
-            let num_suffix_vars = if num_svo_rounds > s_e + 1 {
-                num_svo_rounds - (s_e + 1)
-            } else {
-                0
-            };
+            let num_suffix_vars = num_svo_rounds.saturating_sub(s_e + 1);
             let num_e_entries_for_x_out = 1 << num_suffix_vars;
             let total_e_entries = (x_out_val + 10) * num_e_entries_for_x_out;
             let mut e_s: Vec<TestField> = Vec::with_capacity(total_e_entries);
@@ -1815,13 +1808,11 @@ mod tests {
 
         assert_eq!(
             accums_zero_new, accums_zero_old,
-            "accums_zero mismatch for N={}",
-            num_svo_rounds
+            "accums_zero mismatch for N={num_svo_rounds}"
         );
         assert_eq!(
             accums_infty_new, accums_infty_old,
-            "accums_infty mismatch for N={}",
-            num_svo_rounds
+            "accums_infty mismatch for N={num_svo_rounds}"
         );
     }
 

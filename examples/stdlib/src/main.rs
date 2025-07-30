@@ -2,10 +2,11 @@ use std::time::Instant;
 
 pub fn main() {
     let target_dir = "/tmp/jolt-guest-targets";
-    let program = guest::compile_int_to_string(target_dir);
+    let mut program = guest::compile_int_to_string(target_dir);
 
-    let prover_preprocessing = guest::preprocess_prover_int_to_string(&program);
-    let verifier_preprocessing = guest::preprocess_verifier_int_to_string(&program);
+    let prover_preprocessing = guest::preprocess_prover_int_to_string(&mut program);
+    let verifier_preprocessing =
+        guest::verifier_preprocessing_from_prover_int_to_string(&prover_preprocessing);
 
     let prove = guest::build_prover_int_to_string(program, prover_preprocessing);
     let verify = guest::build_verifier_int_to_string(verifier_preprocessing);
@@ -16,10 +17,11 @@ pub fn main() {
     let is_valid = verify(81, output, proof);
     println!("int to string valid: {is_valid}");
 
-    let program = guest::compile_string_concat(target_dir);
+    let mut program = guest::compile_string_concat(target_dir);
 
-    let prover_preprocessing = guest::preprocess_prover_string_concat(&program);
-    let verifier_preprocessing = guest::preprocess_verifier_string_concat(&program);
+    let prover_preprocessing = guest::preprocess_prover_string_concat(&mut program);
+    let verifier_preprocessing =
+        guest::verifier_preprocessing_from_prover_string_concat(&prover_preprocessing);
 
     let prove = guest::build_prover_string_concat(program, prover_preprocessing);
     let verify = guest::build_verifier_string_concat(verifier_preprocessing);

@@ -5,8 +5,8 @@ use std::time::Instant;
 pub fn main() {
     // An overflowing stack should fail to prove.
     let target_dir = "/tmp/jolt-guest-targets";
-    let program = guest::compile_overflow_stack(target_dir);
-    let prover_preprocessing = guest::preprocess_prover_overflow_stack(&program);
+    let mut program = guest::compile_overflow_stack(target_dir);
+    let prover_preprocessing = guest::preprocess_prover_overflow_stack(&mut program);
     let prove_overflow_stack = guest::build_prover_overflow_stack(program, prover_preprocessing);
 
     let res = panic::catch_unwind(|| {
@@ -17,8 +17,8 @@ pub fn main() {
     handle_result(res);
 
     // now lets try to overflow the heap, should also panic
-    let program = guest::compile_overflow_heap(target_dir);
-    let prover_preprocessing = guest::preprocess_prover_overflow_heap(&program);
+    let mut program = guest::compile_overflow_heap(target_dir);
+    let prover_preprocessing = guest::preprocess_prover_overflow_heap(&mut program);
     let prove_overflow_heap = guest::build_prover_overflow_heap(program, prover_preprocessing);
 
     let res = panic::catch_unwind(|| {
@@ -28,12 +28,14 @@ pub fn main() {
 
     // valid case for stack allocation, calls overflow_stack() under the hood
     // but with stack_size=8192
-    let program = guest::compile_allocate_stack_with_increased_size(target_dir);
+    let mut program = guest::compile_allocate_stack_with_increased_size(target_dir);
 
     let prover_preprocessing =
-        guest::preprocess_prover_allocate_stack_with_increased_size(&program);
+        guest::preprocess_prover_allocate_stack_with_increased_size(&mut program);
     let verifier_preprocessing =
-        guest::preprocess_verifier_allocate_stack_with_increased_size(&program);
+        guest::verifier_preprocessing_from_prover_allocate_stack_with_increased_size(
+            &prover_preprocessing,
+        );
 
     let prove_allocate_stack_with_increased_size =
         guest::build_prover_allocate_stack_with_increased_size(program, prover_preprocessing);

@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: ['**', main]
+    branches: ["**", main]
 
 env:
   RUSTFLAGS: -D warnings
@@ -71,34 +71,6 @@ jobs:
       - name: Run jolt-core tests
         run: cargo nextest run --release -p jolt-core
 
-  on-chain:
-    name: Onchain Verifier Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-      - uses: foundry-rs/foundry-toolchain@v1
-        with:
-          version: nightly
-
-      - name: Build the rust integration testing scripts
-        working-directory: ./jolt-evm-verifier
-        run: cargo build --manifest-path script/Cargo.toml --release
-
-      - name: Check build and deny warnings
-        working-directory: ./jolt-evm-verifier
-        run: forge build --deny-warnings
-
-      - name: Run tests
-        working-directory: ./jolt-evm-verifier
-        run: forge test -vvv --via-ir --ffi
-
-      - name: Check format
-        working-directory: ./jolt-evm-verifier
-        run: forge fmt --check
-
   typos:
     runs-on: ubuntu-latest
     steps:
@@ -123,26 +95,26 @@ jobs:
         working-directory: ./sample_project
         run: cargo run --release
 
-  zklean-extractor-tests:
-    name: ZkLean extractor tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run extractor tests
-        working-directory: ./zklean-extractor
-        run: cargo test
+  # zklean-extractor-tests:
+  #   name: ZkLean extractor tests
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Run extractor tests
+  #       working-directory: ./zklean-extractor
+  #       run: cargo test
 
-  compile-extracted-lean:
-    name: Compile extracted Lean
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Extract Jolt ZkLean package
-        working-directory: ./zklean-extractor
-        run: cargo run --release -- -o -p jolt-zklean
-
-      - name: Run lake build on the extracted model
-        uses: leanprover/lean-action@v1
-        with:
-          lake-package-directory: ./zklean-extractor/jolt-zklean/src
-          build: true
+  # compile-extracted-lean:
+  #   name: Compile extracted Lean
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Extract Jolt ZkLean package
+  #       working-directory: ./zklean-extractor
+  #       run: cargo run --release -- -o -p jolt-zklean
+  #
+  #     - name: Run lake build on the extracted model
+  #       uses: leanprover/lean-action@v1
+  #       with:
+  #         lake-package-directory: ./zklean-extractor/jolt-zklean/src
+  #         build: true

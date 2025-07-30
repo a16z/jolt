@@ -3,10 +3,11 @@ use std::time::Instant;
 pub fn main() {
     // Prove/verify convergence for a single number:
     let target_dir = "/tmp/jolt-guest-targets";
-    let program = guest::compile_collatz_convergence(target_dir);
+    let mut program = guest::compile_collatz_convergence(target_dir);
 
-    let prover_preprocessing = guest::preprocess_prover_collatz_convergence(&program);
-    let verifier_preprocessing = guest::preprocess_verifier_collatz_convergence(&program);
+    let prover_preprocessing = guest::preprocess_prover_collatz_convergence(&mut program);
+    let verifier_preprocessing =
+        guest::verifier_preprocessing_from_prover_collatz_convergence(&prover_preprocessing);
 
     let prove_collatz_single =
         guest::build_prover_collatz_convergence(program, prover_preprocessing);
@@ -22,10 +23,10 @@ pub fn main() {
     println!("valid: {is_valid}");
 
     // Prove/verify convergence for a range of numbers:
-    let program = guest::compile_collatz_convergence_range(target_dir);
+    let mut program = guest::compile_collatz_convergence_range(target_dir);
 
-    let prover_preprocessing = guest::preprocess_prover_collatz_convergence_range(&program);
-    let verifier_preprocessing = guest::preprocess_verifier_collatz_convergence_range(&program);
+    let prover_preprocessing = guest::preprocess_prover_collatz_convergence_range(&mut program);
+    let verifier_preprocessing = guest::preprocess_verifier_collatz_convergence_range(&mut program);
 
     let prove_collatz_convergence =
         guest::build_prover_collatz_convergence_range(program, prover_preprocessing);

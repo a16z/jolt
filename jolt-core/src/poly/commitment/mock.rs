@@ -5,7 +5,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use crate::{
     field::JoltField,
-    poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
+    poly::multilinear_polynomial::MultilinearPolynomial,
     utils::{
         errors::ProofVerifyError,
         transcript::{AppendToTranscript, Transcript},
@@ -15,13 +15,13 @@ use crate::{
 use super::commitment_scheme::CommitmentScheme;
 
 #[derive(Clone)]
-pub struct MockCommitScheme<F: JoltField, ProofTranscript: Transcript> {
-    _marker: PhantomData<(F, ProofTranscript)>,
+pub struct MockCommitScheme<F: JoltField> {
+    _marker: PhantomData<F>,
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize, Default, Debug, PartialEq)]
+#[derive(Default, Debug, PartialEq, Clone, CanonicalDeserialize, CanonicalSerialize)]
 pub struct MockCommitment<F: JoltField> {
-    poly: MultilinearPolynomial<F>,
+    _field: PhantomData<F>,
 }
 
 impl<F: JoltField> AppendToTranscript for MockCommitment<F> {
@@ -30,44 +30,67 @@ impl<F: JoltField> AppendToTranscript for MockCommitment<F> {
     }
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Clone, Debug)]
 pub struct MockProof<F: JoltField> {
     opening_point: Vec<F>,
 }
 
-impl<F, ProofTranscript> CommitmentScheme<ProofTranscript> for MockCommitScheme<F, ProofTranscript>
+impl<F> CommitmentScheme for MockCommitScheme<F>
 where
     F: JoltField,
-    ProofTranscript: Transcript,
 {
     type Field = F;
-    type Setup = ();
+    type ProverSetup = ();
+    type VerifierSetup = ();
     type Commitment = MockCommitment<F>;
     type Proof = MockProof<F>;
     type BatchedProof = MockProof<F>;
+    type OpeningProofHint = ();
 
-    fn setup(_max_poly_len: usize) -> Self::Setup {}
+    fn setup_prover(_max_len: usize) -> Self::ProverSetup {}
 
-    fn srs_size(_setup: &Self::Setup) -> usize {
+    fn setup_verifier(_setup: &Self::ProverSetup) -> Self::VerifierSetup {}
+
+    fn srs_size(_setup: &Self::ProverSetup) -> usize {
         1 << 10
     }
 
-    fn commit(poly: &MultilinearPolynomial<Self::Field>, _setup: &Self::Setup) -> Self::Commitment {
-        MockCommitment { poly: poly.clone() }
+    fn commit(
+        _poly: &MultilinearPolynomial<Self::Field>,
+        _setup: &Self::ProverSetup,
+    ) -> (Self::Commitment, Self::OpeningProofHint) {
+        (MockCommitment::default(), ())
     }
-    fn batch_commit<P>(polys: &[P], setup: &Self::Setup) -> Vec<Self::Commitment>
+
+    fn batch_commit<P>(polys: &[P], gens: &Self::ProverSetup) -> Vec<Self::Commitment>
     where
         P: Borrow<MultilinearPolynomial<Self::Field>>,
     {
         polys
             .iter()
-            .map(|poly| Self::commit(poly.borrow(), setup))
+            .map(|poly| Self::commit(poly.borrow(), gens).0)
             .collect()
     }
-    fn prove(
-        _setup: &Self::Setup,
+
+    fn combine_commitments<C: Borrow<Self::Commitment>>(
+        _commitments: &[C],
+        _coeffs: &[Self::Field],
+    ) -> Self::Commitment {
+        MockCommitment::default()
+    }
+
+    fn combine_hints(
+        _hints: Vec<Self::OpeningProofHint>,
+        _coeffs: &[Self::Field],
+    ) -> Self::OpeningProofHint {
+        ()
+    }
+
+    fn prove<ProofTranscript: Transcript>(
+        _setup: &Self::ProverSetup,
         _poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[Self::Field],
+        _: Self::OpeningProofHint,
         _transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         MockProof {
@@ -75,30 +98,14 @@ where
         }
     }
 
-    fn combine_commitments(
-        commitments: &[&Self::Commitment],
-        coeffs: &[Self::Field],
-    ) -> Self::Commitment {
-        let polys: Vec<_> = commitments
-            .iter()
-            .map(|commitment| &commitment.poly)
-            .collect();
-
-        MockCommitment {
-            poly: MultilinearPolynomial::linear_combination(&polys, coeffs),
-        }
-    }
-
-    fn verify(
+    fn verify<ProofTranscript: Transcript>(
         proof: &Self::Proof,
-        _setup: &Self::Setup,
+        _setup: &Self::VerifierSetup,
         _transcript: &mut ProofTranscript,
         opening_point: &[Self::Field],
-        opening: &Self::Field,
-        commitment: &Self::Commitment,
+        _opening: &Self::Field,
+        _commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
-        let evaluation = commitment.poly.evaluate(opening_point);
-        assert_eq!(evaluation, *opening);
         assert_eq!(proof.opening_point, opening_point);
         Ok(())
     }

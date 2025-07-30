@@ -2,16 +2,17 @@ use std::time::Instant;
 
 pub fn main() {
     let target_dir = "/tmp/jolt-guest-targets";
-    let program = guest::compile_sha2_chain(target_dir);
+    let mut program = guest::compile_sha2_chain(target_dir);
 
-    let prover_preprocessing = guest::preprocess_prover_sha2_chain(&program);
-    let verifier_preprocessing = guest::preprocess_verifier_sha2_chain(&program);
+    let prover_preprocessing = guest::preprocess_prover_sha2_chain(&mut program);
+    let verifier_preprocessing =
+        guest::verifier_preprocessing_from_prover_sha2_chain(&prover_preprocessing);
 
     let prove_sha2_chain = guest::build_prover_sha2_chain(program, prover_preprocessing);
     let verify_sha2_chain = guest::build_verifier_sha2_chain(verifier_preprocessing);
 
     let input = [5u8; 32];
-    let iters = 100;
+    let iters = 1000;
     let native_output = guest::sha2_chain(input, iters);
     let now = Instant::now();
     let (output, proof) = prove_sha2_chain(input, iters);
