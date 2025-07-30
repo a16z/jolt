@@ -32,8 +32,8 @@ struct BooleanityProverState<F: JoltField> {
     F: Vec<F>,
     /// ra(k, r_cycle)
     G: Vec<Vec<F>>,
-    /// eq(r_cycle, j)
-    D: MultilinearPolynomial<F>,
+    /// eq(r_cycle, j) - using Gruen optimization
+    D: GruenSplitEqPolynomial<F>,
     /// ra(r'_address, j)
     H: Option<Vec<MultilinearPolynomial<F>>>,
     /// eq(r_address, r'_address)
@@ -130,7 +130,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         drop(span);
 
         let B = GruenSplitEqPolynomial::new(&r_address, BindingOrder::LowToHigh);
-        let D = MultilinearPolynomial::from(eq_r_cycle.to_vec());
+        let D = GruenSplitEqPolynomial::new(&r_cycle, BindingOrder::LowToHigh);
 
         let mut F: Vec<F> = unsafe_allocate_zero_vec(K);
         F[0] = F::one();
@@ -218,7 +218,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
             self.compute_phase1_message(round, previous_claim)
         } else {
             // Phase 2: Last log(T) rounds
-            self.compute_phase2_message(round - NUM_RA_I_VARS)
+            self.compute_phase2_message(round - NUM_RA_I_VARS, previous_claim)
         }
     }
 
@@ -278,15 +278,11 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
                 .as_mut()
                 .expect("H polynomials not initialized");
 
-            // Bind D and all H polynomials in parallel
-            rayon::join(
-                || prover_state.D.bind_parallel(r_j, BindingOrder::LowToHigh),
-                || {
-                    h_polys
-                        .par_iter_mut()
-                        .for_each(|h_poly| h_poly.bind_parallel(r_j, BindingOrder::LowToHigh))
-                },
-            );
+            // Bind D and all H polynomials
+            prover_state.D.bind(r_j);
+            h_polys
+                .par_iter_mut()
+                .for_each(|h_poly| h_poly.bind_parallel(r_j, BindingOrder::LowToHigh));
         }
 
         self.current_round += 1;
@@ -500,7 +496,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
     }
 
     /// Compute prover message for phase 2 (last log(T) rounds)
-    fn compute_phase2_message(&self, _round: usize) -> Vec<F> {
+    fn compute_phase2_message(&self, _round: usize, previous_claim: F) -> Vec<F> {
         let prover_state = self
             .prover_state
             .as_ref()
@@ -511,51 +507,98 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             .expect("H polynomials not initialized");
         const DEGREE: usize = 3;
 
-        let mut univariate_poly_evals = [F::zero(); DEGREE];
+        let D = &prover_state.D;
 
-        (0..prover_state.D.len() / 2)
-            .into_par_iter()
-            .map(|i| {
-                let D_evals = prover_state
-                    .D
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
-                let H_evals = h_polys
-                    .iter()
-                    .map(|h| h.sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh))
-                    .collect::<Vec<_>>();
+        // Compute quadratic coefficients
+        let quadratic_coeffs: [F; DEGREE - 1] = if D.E_in_current_len() == 1 {
+            // E_in is fully bound
+            (0..D.len() / 2)
+                .into_par_iter()
+                .map(|j_prime| {
+                    let D_eval = D.E_out_current()[j_prime];
+                    let mut coeffs = [F::zero(); DEGREE - 1];
 
-                let mut evals = [
-                    H_evals[0][0].square() - H_evals[0][0],
-                    H_evals[0][1].square() - H_evals[0][1],
-                    H_evals[0][2].square() - H_evals[0][2],
-                ];
+                    for i in 0..self.d {
+                        let h_poly = &h_polys[i];
 
-                for i in 1..self.d {
-                    evals[0] += self.gamma_powers[i] * (H_evals[i][0].square() - H_evals[i][0]);
-                    evals[1] += self.gamma_powers[i] * (H_evals[i][1].square() - H_evals[i][1]);
-                    evals[2] += self.gamma_powers[i] * (H_evals[i][2].square() - H_evals[i][2]);
-                }
+                        let h_0 = h_poly.get_bound_coeff(2 * j_prime); // h(0)
+                        let h_1 = h_poly.get_bound_coeff(2 * j_prime + 1); // h(1)
 
-                [
-                    D_evals[0] * evals[0],
-                    D_evals[1] * evals[1],
-                    D_evals[2] * evals[2],
-                ]
-            })
-            .reduce(
-                || [F::zero(); DEGREE],
-                |running, new| {
-                    [
-                        running[0] + new[0],
-                        running[1] + new[1],
-                        running[2] + new[2],
-                    ]
-                },
-            )
-            .into_iter()
-            .enumerate()
-            .for_each(|(i, val)| univariate_poly_evals[i] = prover_state.eq_r_r * val);
+                        // For c = 0: h(0)^2 - h(0)
+                        coeffs[0] += self.gamma_powers[i] * (h_0.square() - h_0);
 
-        univariate_poly_evals.to_vec()
+                        // For quadratic coefficient: b^2 where b = h(1) - h(0) is the linear coefficient
+                        let b = h_1 - h_0; // Linear coefficient of h
+                        coeffs[1] += self.gamma_powers[i] * b.square(); // Quadratic coefficient of h^2 - h
+                    }
+
+                    [D_eval * coeffs[0], D_eval * coeffs[1]]
+                })
+                .reduce(
+                    || [F::zero(); DEGREE - 1],
+                    |running, new| [running[0] + new[0], running[1] + new[1]],
+                )
+        } else {
+            // E_in has not been fully bound - use nested structure
+            let num_x_in_bits = D.E_in_current_len().log_2();
+            let x_bitmask = (1 << num_x_in_bits) - 1;
+            let chunk_size = 1 << num_x_in_bits;
+
+            (0..D.len() / 2)
+                .collect::<Vec<_>>()
+                .par_chunks(chunk_size)
+                .enumerate()
+                .map(|(x_out, chunk)| {
+                    let D_E_out_eval = D.E_out_current()[x_out];
+
+                    let chunk_evals = chunk
+                        .par_iter()
+                        .map(|j_prime| {
+                            let x_in = j_prime & x_bitmask;
+                            let D_E_in_eval = D.E_in_current()[x_in];
+                            let mut coeffs = [F::zero(); DEGREE - 1];
+
+                            for i in 0..self.d {
+                                let h_poly = &h_polys[i];
+
+                                let h_0 = h_poly.get_bound_coeff(2 * j_prime); // h(0)
+                                let h_1 = h_poly.get_bound_coeff(2 * j_prime + 1); // h(1)
+
+                                // For c = 0: h(0)^2 - h(0)
+                                coeffs[0] += self.gamma_powers[i] * (h_0.square() - h_0);
+
+                                // For quadratic coefficient: b^2 where b = h(1) - h(0) is the linear coefficient
+                                let b = h_1 - h_0; // Linear coefficient of h
+                                coeffs[1] += self.gamma_powers[i] * b.square(); // Quadratic coefficient of h^2 - h
+                            }
+
+                            // Inner D contribution
+                            [D_E_in_eval * coeffs[0], D_E_in_eval * coeffs[1]]
+                        })
+                        .reduce(
+                            || [F::zero(); DEGREE - 1],
+                            |running, new| [running[0] + new[0], running[1] + new[1]],
+                        );
+
+                    // Outer D contribution
+                    [D_E_out_eval * chunk_evals[0], D_E_out_eval * chunk_evals[1]]
+                })
+                .reduce(
+                    || [F::zero(); DEGREE - 1],
+                    |running, new| [running[0] + new[0], running[1] + new[1]],
+                )
+        };
+
+        // Adjust the previous claim by dividing out eq_r_r
+        let adjusted_claim = previous_claim / prover_state.eq_r_r;
+
+        let gruen_evals =
+            D.gruen_evals_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], adjusted_claim);
+
+        vec![
+            prover_state.eq_r_r * gruen_evals[0],
+            prover_state.eq_r_r * gruen_evals[1],
+            prover_state.eq_r_r * gruen_evals[2],
+        ]
     }
 }

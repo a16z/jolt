@@ -57,7 +57,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         let F = compute_ra_evals(trace, &eq_r_cycle);
 
         let read_raf = ReadRafSumcheck::new_prover(sm, eq_r_cycle.clone());
-        let booleanity = BooleanitySumcheck::new_prover(sm, eq_r_cycle, F.clone());
+        let booleanity = BooleanitySumcheck::new_prover(sm, F.clone());
         let hamming_weight = HammingWeightSumcheck::new_prover(sm, F);
 
         vec![
