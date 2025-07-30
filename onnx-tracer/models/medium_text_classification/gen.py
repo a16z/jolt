@@ -159,6 +159,7 @@ with open("vocab.json", "w") as f:
 dummy_input = torch.randint(1, len(vocab)+1, (1, max_len))
 torch.onnx.export(
     model, dummy_input, "network.onnx",
+    model, dummy_input, "network.onnx",
     input_names=["input"], output_names=["probs"],
     dynamic_axes={"input": {0: "batch_size"}, "probs": {0: "batch_size"}},
     opset_version=15

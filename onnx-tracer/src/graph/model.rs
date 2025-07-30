@@ -1,19 +1,14 @@
 use super::node::*;
 use crate::{
     circuit::ops::{Input, Op, Unknown},
-    decode_nodes,
-    fieldutils::felt_to_i128,
+    decode_node,
     graph::{
-        input::GraphData,
-        tracer::Tracer,
-        utilities::{node_output_shapes, scale_to_multiplier},
-        vars::VarScales,
+        input::GraphData, tracer::Tracer, utilities::node_output_shapes, vars::VarScales,
         GraphError,
     },
     tensor::Tensor,
     RunArgs,
 };
-use halo2curves::bn256::Fr as Fp;
 use log::{debug, trace};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -103,7 +98,7 @@ impl Model {
     /// - Input tensors must be in the correct order and shape.
     /// - This function does not perform any hardware-accelerated inference; it executes the model using the internal Rust implementation.
     /// - Handles both standard nodes and subgraphs (e.g., for ONNX Scan/Loop constructs).
-    pub fn forward(&self, model_inputs: &[Tensor<Fp>]) -> Result<ForwardResult, Box<dyn Error>> {
+    pub fn forward(&self, model_inputs: &[Tensor<i128>]) -> Result<ForwardResult, Box<dyn Error>> {
         // A map that stores the output tensors of each node in the computation graph.
         //
         // # Purpose
@@ -150,7 +145,7 @@ impl Model {
         // 5. Summary:
         //    - This structure allows us to efficiently store and retrieve all intermediate and final outputs of the computation graph,
         //      supporting both single-output and multi-output nodes, and ensuring deterministic iteration order.
-        let mut results: BTreeMap<&usize, Vec<Tensor<Fp>>> = BTreeMap::new();
+        let mut results: BTreeMap<&usize, Vec<Tensor<i128>>> = BTreeMap::new();
         let mut max_lookup_inputs = 0;
         let mut min_lookup_inputs = 0;
         // Retrieves the shapes of all input tensors for the current computational graph.
@@ -200,106 +195,87 @@ impl Model {
             results.insert(input_idx, vec![input]);
         }
 
-        let instr = decode_nodes(0, &self.graph.nodes);
-        self.tracer.capture_pre_state(instr);
-
+        // --- Fetch Decode Execute ---
         for (idx, n) in self.graph.nodes.iter() {
-            // Gathers the input tensors required for the current node's execution.
-            //
-            // # Intent
-            // This code block prepares the list of input tensors (`inputs`) that will be fed into the current node's operation.
-            // For each node in the graph, we must collect its input tensors from the results of previously executed nodes.
-            //
-            // # Why this code is needed
-            // In a computational graph, each node may depend on the outputs of other nodes (its inputs).
-            // Before executing a node, we must gather all its required input tensors in the correct order.
-            // This ensures that the node receives the correct data for computation, and is essential for correct model execution.
-            //
-            // # How it works
-            // - Initializes an empty `inputs` vector.
-            // - If the current node is an input node, retrieves its tensor from the `results` map.
-            // - Otherwise, iterates over the node's input connections (each a tuple of node index and outlet).
-            //   For each input:
-            //     - Looks up the output tensor of the source node from the `results` map.
-            //     - Pushes the required output (by outlet index) into the `inputs` vector.
-            //   - If any required input is missing, returns an error.
-            //
-            // # What it does
-            // After this block, `inputs` contains the tensors that should be passed to the current node's operation,
-            // in the order expected by the node. This enables the subsequent execution of the node's computation.
-            let mut inputs = vec![];
-            if n.is_input() {
-                let t = results.get(idx).ok_or(GraphError::MissingResults)?[0].clone();
-                inputs.push(t);
-            } else {
-                for (idx, outlet) in n.inputs().iter() {
-                    match results.get(&idx) {
-                        Some(value) => inputs.push(value[*outlet].clone()),
-                        None => return Err(Box::new(GraphError::MissingNode(*idx))),
-                    }
-                }
-            };
-            debug!("executing {}: {}", idx, n.as_str());
-            debug!("dims: {:?}", n.out_dims());
-            debug!(
-                "input_dims: {:?}",
-                inputs.iter().map(|x| x.dims()).collect::<Vec<_>>()
-            );
+            // Fetch and Decode
+            let mut inputs = Self::node_inputs(idx, n, &results)?;
+            let instr = decode_node((idx, n));
+            self.tracer.capture_pre_state(instr.clone(), inputs.clone());
             if n.is_lookup() {
-                let (mut min, mut max) = (0, 0);
-                for i in &inputs {
-                    max = max.max(
-                        i.iter()
-                            .map(|x| felt_to_i128(*x))
-                            .max()
-                            .ok_or("missing max")?,
-                    );
-                    min = min.min(
-                        i.iter()
-                            .map(|x| felt_to_i128(*x))
-                            .min()
-                            .ok_or("missing min")?,
-                    );
-                }
-                max_lookup_inputs = max_lookup_inputs.max(max);
-                min_lookup_inputs = min_lookup_inputs.min(min);
-                debug!("max lookup inputs: {max}");
-                debug!("min lookup inputs: {min}");
+                Self::lookup_check(&inputs, &mut max_lookup_inputs, &mut min_lookup_inputs)?;
             }
             match n {
                 NodeType::Node(n) => {
-                    // execute the op
-                    let start = instant::Instant::now();
-                    let mut res = Op::<Fp>::f(&n.opkind, &inputs)?;
+                    // Execute
+                    let mut res = Op::<i128>::f(&n.opkind, &inputs)?;
                     res.output.reshape(&n.out_dims)?;
-                    let elapsed = start.elapsed();
-                    trace!("op took: {elapsed:?}",);
+                    debug!("opkind: {:#?}, instr: {instr:#?}, res: {res:#?}", n.opkind);
                     // see if any of the intermediate lookup calcs are the max
                     if !res.intermediate_lookups.is_empty() {
-                        let (mut min, mut max) = (0, 0);
-                        for i in &res.intermediate_lookups {
-                            max = max.max(i.clone().into_iter().max().ok_or("missing max")?);
-                            min = min.min(i.clone().into_iter().min().ok_or("missing min")?);
-                        }
-                        max_lookup_inputs = max_lookup_inputs.max(max);
-                        min_lookup_inputs = min_lookup_inputs.min(min);
-                        debug!("intermediate max lookup inputs: {max}",);
-                        debug!("intermediate min lookup inputs: {min}",);
+                        Self::lookup_check(
+                            &res.intermediate_lookups,
+                            &mut max_lookup_inputs,
+                            &mut min_lookup_inputs,
+                        )?;
                     }
                     debug!(
-                        "------------ output node int {}: {} \n ------------ float: {} \n ------------ max: {} \n ------------ min: {} ------------ scale: {}",
+                        "------------ output node int {}: {} \n  ------------ scale: {}",
                         idx,
-                        res.output.map(crate::fieldutils::felt_to_i32).show(),
-                        res.output
-                            .map(|x| crate::fieldutils::felt_to_f64(x)
-                                / scale_to_multiplier(n.out_scale))
-                            .show(),
-                        res.output.clone().into_iter().map(crate::fieldutils::felt_to_i128).max().unwrap_or(0),
-                        res.output.clone().into_iter().map(crate::fieldutils::felt_to_i128).min().unwrap_or(0),
+                        res.output.show(),
                         n.out_scale
                     );
-                    results.insert(idx, vec![res.output]);
+                    results.insert(idx, vec![res.output.clone()]);
+                    self.tracer.capture_post_state(res.output);
                 }
+                // --- SubGraph Node Execution ---
+                //
+                // This block handles the execution of a subgraph node (NodeType::SubGraph), which is fundamentally
+                // different from executing a standard node (NodeType::Node). Subgraphs are used for control flow
+                // constructs like ONNX Scan, Loop, or custom nested models, where a portion of the graph is executed
+                // multiple times with varying inputs (e.g., sequence processing, RNNs).
+                //
+                // Why is this needed?
+                // - Standard nodes perform a single computation given their inputs.
+                // - Subgraph nodes encapsulate an entire model that must be executed repeatedly, often with sliced or
+                //   stateful inputs, and may have complex input/output mappings.
+                // - This code ensures correct iteration, input slicing, state management, and output collection for
+                //   subgraph execution.
+                //
+                // Intent & Purpose:
+                // - To simulate the iterative execution of a subgraph as required by ONNX control flow semantics.
+                // - To correctly map parent graph inputs to subgraph inputs, handle state variables, and collect outputs.
+                // - To recursively execute the subgraph and aggregate results, including lookup statistics.
+                //
+                // How it works (Step-by-Step):
+                // 1. Clone the original inputs and input mappings for reference.
+                // 2. Determine the number of iterations required by inspecting the input mappings and dimensions.
+                //    (For example, if an input is chunked along an axis, the number of iterations is dim_size / chunk_size.)
+                // 3. For each iteration:
+                //    a. Slice or update the inputs as specified by the input mappings (e.g., Stacked inputs get a chunk).
+                //    b. Recursively call `model.forward(&inputs)` to execute the subgraph for this iteration.
+                //    c. Track min/max lookup values from subgraph execution for quantization/table sizing.
+                //    d. Map subgraph outputs back to parent graph outputs using output mappings, handling stacking
+                //       (concatenation) and state variables.
+                //    e. Update stateful inputs for the next iteration using output states.
+                // 4. After all iterations, insert the aggregated outputs into the parent graph's results map.
+                //
+                // Key differences from normal node execution:
+                // - Iterative: Subgraphs may execute multiple times, while normal nodes execute once.
+                // - Input/Output Mapping: Inputs/outputs may be sliced, stacked, or carried as state, requiring complex mapping.
+                // - Recursion: Subgraph execution is recursive, calling `forward` on the sub-model.
+                // - State Management: Handles state variables that persist across iterations.
+                // - Output Aggregation: May need to concatenate outputs across iterations (stacked outputs).
+                //
+                // Gotchas:
+                // - Input slicing must match the expected chunk size and axis; mismatches can cause runtime errors.
+                // - State variables must be correctly updated between iterations.
+                // - Output mappings can be complex; ensure correct outlet and axis handling.
+                // - Recursion can lead to stack overflows if subgraphs are deeply nested.
+                //
+                // Summary:
+                // This code is essential for supporting ONNX models with control flow, enabling correct execution of
+                // iterative constructs and nested graphs. It ensures that subgraph semantics are faithfully reproduced,
+                // including input slicing, state management, and output aggregation.
                 NodeType::SubGraph {
                     model,
                     output_mappings,
@@ -317,7 +293,7 @@ impl Model {
                         num_iter, input_tuple, model.graph.inputs
                     );
                     debug!("input_mappings: {input_mappings:?}",);
-                    let mut full_results: Vec<Tensor<Fp>> = vec![];
+                    let mut full_results: Vec<Tensor<i128>> = vec![];
                     for i in 0..num_iter {
                         // replace the Stacked input with the current chunk iter
                         for ((mapping, inp), og_input) in
@@ -367,12 +343,7 @@ impl Model {
                     trace!(
                         "------------ output subgraph node {}: {:?}",
                         idx,
-                        full_results
-                            .iter()
-                            .map(|x|
-                            // convert to tensor i32
-                            x.map(crate::fieldutils::felt_to_i32).show())
-                            .collect_vec()
+                        full_results.iter().map(|x| x.show()).collect_vec()
                     );
                     results.insert(idx, full_results);
                 }
@@ -411,12 +382,77 @@ impl Model {
                 Ok(results.get(&idx).ok_or(GraphError::MissingResults)?[*outlet].clone())
             })
             .collect::<Result<Vec<_>, GraphError>>()?;
-        let res = ForwardResult {
+        Ok(ForwardResult {
             outputs,
             max_lookup_inputs,
             min_lookup_inputs,
+        })
+    }
+
+    /// Gathers the input tensors required for the current node's execution.
+    ///
+    /// # Intent
+    /// This code block prepares the list of input tensors (`inputs`) that will be fed into the current node's operation.
+    /// For each node in the graph, we must collect its input tensors from the results of previously executed nodes.
+    ///
+    /// # Why this code is needed
+    /// In a computational graph, each node may depend on the outputs of other nodes (its inputs).
+    /// Before executing a node, we must gather all its required input tensors in the correct order.
+    /// This ensures that the node receives the correct data for computation, and is essential for correct model execution.
+    ///
+    /// # How it works
+    /// - Initializes an empty `inputs` vector.
+    /// - If the current node is an input node, retrieves its tensor from the `results` map.
+    /// - Otherwise, iterates over the node's input connections (each a tuple of node index and outlet).
+    ///   For each input:
+    ///     - Looks up the output tensor of the source node from the `results` map.
+    ///     - Pushes the required output (by outlet index) into the `inputs` vector.
+    ///   - If any required input is missing, returns an error.
+    ///
+    /// # What it does
+    /// After this block, `inputs` contains the tensors that should be passed to the current node's operation,
+    /// in the order expected by the node. This enables the subsequent execution of the node's computation.
+    fn node_inputs(
+        idx: &usize,
+        n: &NodeType,
+        results: &BTreeMap<&usize, Vec<Tensor<i128>>>,
+    ) -> Result<Vec<Tensor<i128>>, Box<dyn Error>> {
+        let mut inputs = vec![];
+        if n.is_input() {
+            let t = results.get(idx).ok_or(GraphError::MissingResults)?[0].clone();
+            inputs.push(t);
+        } else {
+            for (idx, outlet) in n.inputs().iter() {
+                match results.get(&idx) {
+                    Some(value) => inputs.push(value[*outlet].clone()),
+                    None => return Err(Box::new(GraphError::MissingNode(*idx))),
+                }
+            }
         };
-        Ok(res)
+        debug!("executing {}: {}", idx, n.as_str());
+        debug!("dims: {:?}", n.out_dims());
+        debug!(
+            "input_dims: {:?}",
+            inputs.iter().map(|x| x.dims()).collect::<Vec<_>>()
+        );
+        Ok(inputs)
+    }
+
+    fn lookup_check(
+        inputs: &[Tensor<i128>],
+        max_lookup_inputs: &mut i128,
+        min_lookup_inputs: &mut i128,
+    ) -> Result<(), Box<dyn Error>> {
+        let (mut min, mut max) = (0, 0);
+        for i in inputs {
+            max = max.max(i.iter().copied().max().ok_or("missing max")?);
+            min = min.min(i.iter().copied().min().ok_or("missing min")?);
+        }
+        *max_lookup_inputs = (*max_lookup_inputs).max(max);
+        *min_lookup_inputs = (*min_lookup_inputs).min(min);
+        debug!("max lookup inputs: {max}");
+        debug!("min lookup inputs: {min}");
+        Ok(())
     }
 
     /// Loads an Onnx model from a specified path.
@@ -792,12 +828,102 @@ impl Model {
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
-/// A set of ONNX nodes that represent a computational graph.
+/// Represents a parsed computational graph consisting of ONNX nodes, inputs, and outputs.
+///
+/// `ParsedNodes` is the core data structure used to describe the internal representation of a computational graph
+/// after it has been loaded and converted from an ONNX model. It contains all the nodes (operations and subgraphs),
+/// as well as metadata about which nodes are considered inputs and outputs. This struct is central to the execution,
+/// transformation, and analysis of models within this module.
+///
+/// - After loading an ONNX model, the graph is parsed into a `ParsedNodes` instance.
+/// - The [`Model`] struct holds a `ParsedNodes` as its main graph representation.
+/// - During model execution (inference), the `inputs` field is used to map user-provided tensors to the correct nodes,
+///   and the `outputs` field is used to extract the final results after computation.
+/// - When exporting, tracing, or analyzing the model, `ParsedNodes` provides a complete and queryable view of the graph structure.
+///
+/// - Encapsulates the entire computational graph, including all nodes and their relationships.
+/// - Clearly separates the graph's structure (nodes) from its entry points (inputs) and exit points (outputs).
+/// - Enables flexible manipulation, traversal, and execution of the graph for various purposes (inference, optimization, etc.).
+/// - Supports both simple models and complex graphs with subgraphs (e.g., for control flow).
+///
+/// # Example
+/// ```ignore
+/// // Construct a simple graph: input -> add (with a constant) -> output
+/// let mut nodes = BTreeMap::new();
+/// nodes.insert(0, NodeType::Node(input_node));
+/// nodes.insert(1, NodeType::Node(const_node));
+/// nodes.insert(2, NodeType::Node(add_node));
+///
+/// let parsed = ParsedNodes {
+///     nodes,
+///     inputs: vec![0],           // Node 0 is the input node
+///     outputs: vec![(2, 0)],     // Node 2's output (outlet 0) is the model output
+/// };
+///
+/// // Use in a Model:
+/// let model = Model { graph: parsed, tracer: Tracer::default() };
+/// let result = model.forward(&[input_tensor]).unwrap();
+/// println!("Model output: {:?}", result.outputs);
+/// ```
 pub struct ParsedNodes {
     /// The nodes in the graph.
     pub nodes: BTreeMap<usize, NodeType>,
-    inputs: Vec<usize>,
-    outputs: Vec<Outlet>,
+    /// Indices of the input nodes for this computational graph.
+    ///
+    /// # Why we need this field
+    /// This field specifies which nodes in the graph are considered as inputs—i.e., the entry points where external data is fed into the model.
+    /// Each entry in this vector is the unique index (usize) of a node in the `nodes` map that acts as an input node.
+    /// This is essential for:
+    /// - Mapping user-provided input tensors to the correct nodes during model execution.
+    /// - Determining the expected input signature (shapes, types) of the model.
+    /// - Supporting models with multiple inputs (e.g., multi-branch networks).
+    ///
+    /// # What it does
+    /// When running inference, the code uses this vector to know which nodes should receive the input tensors provided by the user.
+    /// The order of indices in this vector determines the order in which input tensors should be supplied.
+    ///
+    /// # Example
+    /// For a simple model: `input -> const -> add`, where "input" is node 0, "const" is node 1, and "add" is node 2,
+    /// the `inputs` field would be: `vec![0]` (only node 0 is an input node).
+    pub inputs: Vec<usize>,
+
+    /// Output nodes and their outlet indices for this computational graph.
+    ///
+    /// # Why we need this field
+    /// This field defines which nodes (and which output slots, if a node has multiple outputs) are considered as the outputs of the model.
+    /// Each entry is a tuple `(node_index, outlet_index)`, where:
+    /// - `node_index` is the index of the node in the `nodes` map.
+    /// - `outlet_index` specifies which output of the node is used (for nodes with multiple outputs).
+    ///
+    /// This is essential for:
+    /// - Collecting the final results after model execution.
+    /// - Supporting models with multiple outputs (e.g., multi-task networks).
+    /// - Mapping the internal graph outputs to the user-facing model outputs.
+    ///
+    /// # What it does
+    /// After executing the graph, the code uses this vector to extract the correct output tensors from the results map.
+    /// The order of entries determines the order of outputs returned to the user.
+    ///
+    /// # Example
+    /// For the model: `input -> const -> add`, where "add" is node 2 and produces a single output at outlet 0,
+    /// the `outputs` field would be: `vec![(2, 0)]` (the output of node 2, outlet 0, is the model's output).
+    ///
+    /// # Usage Example
+    /// ```rust
+    /// // Suppose we have a graph:
+    /// // Node 0: Input
+    /// // Node 1: Constant
+    /// // Node 2: Add (inputs: Node 0, Node 1)
+    /// let parsed_nodes = ParsedNodes {
+    ///     nodes: /* ... */,
+    ///     inputs: vec![0],           // Node 0 is the input node
+    ///     outputs: vec![(2, 0)],     // Node 2's output (outlet 0) is the model output
+    /// };
+    /// // When running inference:
+    /// // - The input tensor is mapped to node 0.
+    /// // - After execution, the output is taken from node 2, outlet 0.
+    /// ```
+    pub outputs: Vec<Outlet>,
 }
 
 impl ParsedNodes {
@@ -987,7 +1113,7 @@ impl NodeType {
 #[derive(Clone, Debug)]
 pub struct ForwardResult {
     /// The outputs of the forward pass.
-    pub outputs: Vec<Tensor<Fp>>,
+    pub outputs: Vec<Tensor<i128>>,
     /// The maximum value of any input to a lookup operation.
     pub max_lookup_inputs: i128,
     /// The minimum value of any input to a lookup operation.
@@ -1114,12 +1240,9 @@ fn output_state_idx(output_mappings: &[Vec<OutputMapping>]) -> Vec<usize> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        circuit::{
-            ops::{lookup::LookupOp, poly::PolyOp, InputType},
-            utils::F32,
-        },
-        fieldutils::i128_to_felt,
+    use crate::circuit::{
+        ops::{lookup::LookupOp, poly::PolyOp, InputType},
+        utils::F32,
     };
 
     use super::*;
@@ -1154,20 +1277,18 @@ mod tests {
 
         // Test execution with vector-matrix multiplication
         // Vector: [1, 2]
-        let input2 = Tensor::new(Some(&[Fp::from(1), Fp::from(2)]), &[1, 2]).unwrap();
+        let input2 = Tensor::new(Some(&[1, 2]), &[1, 2]).unwrap();
         // Matrix: [[5, 6], [7, 8]]
-        let input1 = Tensor::new(
-            Some(&[Fp::from(5), Fp::from(6), Fp::from(7), Fp::from(8)]),
-            &[2, 2],
-        )
-        .unwrap();
+        let input1 = Tensor::new(Some(&[5, 6, 7, 8]), &[2, 2]).unwrap();
+
+        let result = model.forward(&[input1.clone(), input2.clone()]).unwrap();
 
         let result = model.forward(&[input1.clone(), input2.clone()]).unwrap();
 
         assert_eq!(result.outputs.len(), 1);
         assert_eq!(
             result.outputs[0],
-            Tensor::new(Some(&[Fp::from(17), Fp::from(23)]), &[1, 2]).unwrap()
+            Tensor::new(Some(&[17, 23]), &[1, 2]).unwrap()
         );
     }
 
@@ -1191,32 +1312,14 @@ mod tests {
         model.add_outputs(vec![(1, 0)]);
 
         // Test execution with various inputs
-        let input = Tensor::new(
-            Some(&[
-                i128_to_felt(-1),
-                i128_to_felt(0),
-                i128_to_felt(1),
-                i128_to_felt(2),
-            ]),
-            &[1, 4],
-        )
-        .unwrap();
+        let input = Tensor::new(Some(&[-1, 0, 1, 2]), &[1, 4]).unwrap();
         let result = model.forward(&[input]).unwrap();
 
         // Expected result: [0.0, 0.0, 1.0, 2.0]
         assert_eq!(result.outputs.len(), 1);
         assert_eq!(
             result.outputs[0],
-            Tensor::new(
-                Some(&[
-                    i128_to_felt(0),
-                    i128_to_felt(0),
-                    i128_to_felt(1),
-                    i128_to_felt(2)
-                ]),
-                &[1, 4]
-            )
-            .unwrap()
+            Tensor::new(Some(&[0, 0, 1, 2]), &[1, 4]).unwrap()
         );
     }
 
@@ -1244,22 +1347,12 @@ mod tests {
         model.add_outputs(vec![(1, 0)]);
 
         // x = [-2.0, 0.0, 2.0]
-        let x = Tensor::new(
-            Some(&[i128_to_felt(-2), i128_to_felt(0), i128_to_felt(2)]),
-            &[1, 3],
-        )
-        .unwrap();
+        let x = Tensor::new(Some(&[-2, 0, 2]), &[1, 3]).unwrap();
 
         let result = model.forward(&[x]).unwrap();
         assert_eq!(result.outputs.len(), 1);
 
-        let _out: Vec<i128> = result.outputs[0]
-            .iter()
-            .map(|f| {
-                let f = felt_to_i128(*f);
-                f
-            })
-            .collect();
+        let _out: Vec<i128> = result.outputs[0].iter().copied().collect();
 
         // TODO(Alberto): Not sure how to handle precision yet
         // sigmoid(-2)≈0.119, sigmoid(0)=0.5, sigmoid(2)≈0.881
@@ -1294,14 +1387,14 @@ mod tests {
         model.add_inputs(vec![0, 1]);
         model.add_outputs(vec![(2, 0)]);
 
-        let a = Tensor::new(Some(&[Fp::from(1), Fp::from(2), Fp::from(3)]), &[1, 3]).unwrap();
-        let b = Tensor::new(Some(&[Fp::from(4), Fp::from(5), Fp::from(6)]), &[1, 3]).unwrap();
+        let a = Tensor::new(Some(&[1, 2, 3]), &[1, 3]).unwrap();
+        let b = Tensor::new(Some(&[4, 5, 6]), &[1, 3]).unwrap();
 
         let result = model.forward(&[a.clone(), b.clone()]).unwrap();
         assert_eq!(result.outputs.len(), 1);
         assert_eq!(
             result.outputs[0],
-            Tensor::new(Some(&[Fp::from(5), Fp::from(7), Fp::from(9)]), &[1, 3]).unwrap()
+            Tensor::new(Some(&[5, 7, 9]), &[1, 3]).unwrap()
         );
     }
 }

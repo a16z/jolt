@@ -4,20 +4,33 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::tensor::Tensor;
+
 /// Represents a step in the execution trace, where an execution trace is a `Vec<ONNXCycle>`.
 /// Records what the VM did at a cycle of execution.
 /// Constructed at each step in the VM execution cycle, documenting instr, reads & state changes (writes).
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ONNXCycle {
     pub instr: ONNXInstr,
+    pub memory_state: MemoryState,
+    pub advice_value: Option<i128>,
 }
 
 impl ONNXCycle {
     pub fn no_op() -> Self {
         ONNXCycle {
             instr: ONNXInstr::no_op(),
+            memory_state: MemoryState::default(),
+            advice_value: None,
         }
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Default, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct MemoryState {
+    pub ts1_val: Option<Tensor<i128>>,
+    pub ts2_val: Option<Tensor<i128>>,
+    pub td_post_val: Option<Tensor<i128>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -55,6 +68,18 @@ pub struct ONNXInstr {
     /// This field is analogous to the `rs2` register specifier in RISC-V,
     /// serving to specify the address or index of the second operand.
     pub ts2: Option<usize>,
+    /// The destination tensor index, which is the index of the node in the computation graph
+    /// where the result of this instruction will be stored.
+    /// This is analogous to the `rd` register specifier in RISC-V, indicating
+    /// where the result of the operation should be written.
+    pub td: Option<usize>,
+    pub imm: Option<i128>,
+    /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
+    /// Jolt paper), then this contains the number of virtual instructions after this
+    /// one in the sequence. I.e. if this is the last instruction in the sequence,
+    /// `virtual_sequence_remaining` will be Some(0); if this is the penultimate instruction
+    /// in the sequence, `virtual_sequence_remaining` will be Some(1); etc.
+    pub virtual_sequence_remaining: Option<usize>,
 }
 
 impl ONNXInstr {
@@ -64,6 +89,9 @@ impl ONNXInstr {
             opcode: ONNXOpcode::Noop,
             ts1: None,
             ts2: None,
+            td: None,
+            imm: None,
+            virtual_sequence_remaining: None,
         }
     }
 }
@@ -73,7 +101,7 @@ impl ONNXInstr {
 //       This reduced ISA currently includes only the opcodes commonly used in such models.
 //       Future phases should extend this set to support a broader range of ONNX operations.
 
-#[derive(Clone, Hash, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Hash, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 /// Operation code uniquely identifying each ONNX instruction's function
 pub enum ONNXOpcode {
     Noop,
@@ -95,10 +123,37 @@ pub enum ONNXOpcode {
     MeanOfSquares,
     Sigmoid,
     Softmax,
+    RebaseScale(Box<ONNXOpcode>),
+
+    // Virtual instructions
+    VirtualAdvice,
+    VirtualAssertValidSignedRemainder,
+    VirtualAssertValidDiv0,
+    VirtualMove,
+    VirtualAssertEq,
 }
 
 impl ONNXOpcode {
     pub fn into_bitflag(self) -> u64 {
-        1u64 << (self as u8)
+        match self {
+            ONNXOpcode::Noop => 1u64 << 0,
+            ONNXOpcode::Constant => 1u64 << 1,
+            ONNXOpcode::Input => 1u64 << 2,
+            ONNXOpcode::Add => 1u64 << 3,
+            ONNXOpcode::Sub => 1u64 << 4,
+            ONNXOpcode::Mul => 1u64 << 5,
+            ONNXOpcode::Div => 1u64 << 6,
+            ONNXOpcode::Pow => 1u64 << 7,
+            ONNXOpcode::Relu => 1u64 << 8,
+            ONNXOpcode::MatMult => 1u64 << 9,
+            ONNXOpcode::Gather => 1u64 << 10,
+            ONNXOpcode::Transpose => 1u64 << 11,
+            ONNXOpcode::Sqrt => 1u64 << 12,
+            ONNXOpcode::Sum => 1u64 << 13,
+            ONNXOpcode::MeanOfSquares => 1u64 << 14,
+            ONNXOpcode::Sigmoid => 1u64 << 15,
+            ONNXOpcode::Softmax => 1u64 << 16,
+            _ => panic!("ONNXOpcode not implemented in into_bitflag"),
+        }
     }
 }

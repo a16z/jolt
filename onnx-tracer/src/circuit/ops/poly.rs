@@ -1,7 +1,9 @@
-use std::any::Any;
+use std::{
+    any::Any,
+    ops::{Add, Mul, Neg, Sub},
+};
 
 use crate::{
-    fieldutils::{felt_to_i128, i128_to_felt},
     //   circuit::layouts,
     tensor::{self, Tensor, TensorError},
     trace_types::ONNXOpcode,
@@ -12,7 +14,7 @@ use super::*;
 /// An enum representing the operations that can be expressed as arithmetic (non
 /// lookup) operations.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub enum PolyOp<F: PrimeField + TensorType + PartialOrd> {
+pub enum PolyOp<F: TensorType + PartialOrd> {
     MultiBroadcastTo {
         shape: Vec<usize>,
     },
@@ -80,7 +82,7 @@ pub enum PolyOp<F: PrimeField + TensorType + PartialOrd> {
     Xor,
 }
 
-impl<F: PrimeField + TensorType + PartialOrd> From<&PolyOp<F>> for ONNXOpcode {
+impl<F: TensorType + PartialOrd> From<&PolyOp<F>> for ONNXOpcode {
     fn from(value: &PolyOp<F>) -> Self {
         match value {
             PolyOp::Add => ONNXOpcode::Add,
@@ -97,7 +99,22 @@ impl<F: PrimeField + TensorType + PartialOrd> From<&PolyOp<F>> for ONNXOpcode {
     }
 }
 
-impl<F: PrimeField + TensorType + PartialOrd> Op<F> for PolyOp<F> {
+impl<
+        F: TensorType
+            + PartialOrd
+            + Send
+            + Sync
+            + From<u32>
+            + From<i128>
+            + Add<Output = F>
+            + Mul<Output = F>
+            + Sub<Output = F>
+            + Neg<Output = F>
+            + std::iter::Sum,
+    > Op<F> for PolyOp<F>
+where
+    i128: std::convert::From<F>,
+{
     /// Returns a reference to the Any trait.
     fn as_any(&self) -> &dyn Any {
         self
@@ -219,7 +236,7 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for PolyOp<F> {
                     return Err(TensorError::DimMismatch("pack inputs".to_string()));
                 }
 
-                tensor::ops::pack(&inputs[0], F::from(*base as u64), *scale)
+                tensor::ops::pack(&inputs[0], F::from(*base), *scale)
             }
             PolyOp::Pow(u) => {
                 if 1 != inputs.len() {
@@ -234,8 +251,9 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for PolyOp<F> {
                 tensor::ops::sum_axes(&inputs[0], axes)
             }
             PolyOp::MeanOfSquares { axes } => {
-                let x = inputs[0].map(|x| felt_to_i128(x));
-                Ok(tensor::ops::nonlinearities::mean_of_squares_axes(&x, axes).map(i128_to_felt))
+                let x = inputs[0].clone();
+                let x = x.map(|x| i128::from(x));
+                Ok(tensor::ops::nonlinearities::mean_of_squares_axes(&x, axes).map(|x| F::from(x)))
             }
             PolyOp::Prod { axes, .. } => {
                 if 1 != inputs.len() {

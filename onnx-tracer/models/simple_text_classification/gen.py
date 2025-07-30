@@ -55,9 +55,9 @@ for epoch in range(20):
 # Export float ONNX
 dummy_input = torch.randint(1, len(vocab)+1, (1, max_len))
 torch.onnx.export(
-    model, dummy_input, "text_classification.onnx",
+    model, dummy_input, "network.onnx",
     input_names=["input"], output_names=["output"],
     dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}},
     opset_version=15
 )
-print("✅ Exported float32 ONNX model to text_classification.onnx")
+print("✅ Exported float32 ONNX model to network.onnx")
