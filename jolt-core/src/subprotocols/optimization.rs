@@ -331,28 +331,37 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
                             before_idx_eval.mul_1_optimized(eq_eval_after_idx.mul_1_optimized(C));
 
                         let tmp = if d < D - 1 {
-                            eq_evals_at_idx[0].0 * temp * after_idx_evals[D - d - 2].0
+                            temp * after_idx_evals[D - d - 2].0
                         } else {
-                            eq_evals_at_idx[0].0 * temp
+                            temp
                         };
 
-                        [{ at_idx_evals[0] * tmp }, {
-                            let factor: F = at_idx_evals[1] * temp;
+                        let factor: F = at_idx_evals[1] * temp;
 
-                            let eval_0 = -tmp * at_idx_evals[1];
-                            let eval_1 = if d < D - 1 {
-                                eq_evals_at_idx[1].1 * factor * after_idx_evals[D - d - 2].1
-                            } else {
-                                eq_evals_at_idx[1].1 * factor
-                            };
+                        let eval_0 = -tmp * at_idx_evals[1];
+                        let eval_1 = if d < D - 1 {
+                            factor * after_idx_evals[D - d - 2].1
+                        } else {
+                            factor
+                        };
 
-                            eval_0 + eval_1
-                        }]
+                        [at_idx_evals[0] * tmp, eval_0, eval_1]
                     })
                     .reduce(
-                        || [F::zero(); 2],
-                        |running, new| [running[0] + new[0], running[1] + new[1]],
+                        || [F::zero(); 3],
+                        |running, new| {
+                            [
+                                running[0] + new[0],
+                                running[1] + new[1],
+                                running[2] + new[2],
+                            ]
+                        },
                     );
+                let univariate_poly_evals = [
+                    univariate_poly_evals[0] * eq_evals_at_idx[0].0,
+                    univariate_poly_evals[1] * eq_evals_at_idx[0].0
+                        + univariate_poly_evals[2] * eq_evals_at_idx[1].1,
+                ];
 
                 drop(_guard);
                 drop(_span);
