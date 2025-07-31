@@ -1,4 +1,4 @@
-use crate::subprotocols::sparse_dense_shout::TestInstructionTrait;
+// use crate::subprotocols::sparse_dense_shout::TestInstructionTrait;
 use jolt_core::jolt::instruction::{InstructionLookup, LookupQuery};
 use jolt_core::jolt::lookup_table::{LookupTables, range_check::RangeCheckTable};
 use rand::RngCore;
@@ -46,14 +46,14 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for ADD<WORD_SIZE> {
     }
 }
 
-impl<const WORD_SIZE: usize> TestInstructionTrait for ADD<WORD_SIZE> {
-    fn random(rng: &mut StdRng) -> Self {
-        match WORD_SIZE {
-            #[cfg(test)]
-            8 => Self(rng.next_u64() % (1 << 8), rng.next_u64() % (1 << 8)),
-            32 => Self(rng.next_u32() as u64, rng.next_u32() as u64),
-            64 => Self(rng.next_u64(), rng.next_u64()),
-            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
-        }
-    }
-}
+// impl<const WORD_SIZE: usize> TestInstructionTrait for ADD<WORD_SIZE> {
+//     fn random(rng: &mut StdRng) -> Self {
+//         match WORD_SIZE {
+//             #[cfg(test)]
+//             8 => Self(rng.next_u64() % (1 << 8), rng.next_u64() % (1 << 8)),
+//             32 => Self(rng.next_u32() as u64, rng.next_u32() as u64),
+//             64 => Self(rng.next_u64(), rng.next_u64()),
+//             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+//         }
+//     }
+// }

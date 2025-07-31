@@ -1,7 +1,7 @@
 use jolt_core::field::JoltField;
 use onnx_tracer::trace_types::CircuitFlags;
 
-use crate::jolt::vm::r1cs::{
+use crate::jolt::zkvm::r1cs::{
     builder::{CombinedUniformBuilder, R1CSBuilder},
     inputs::JoltONNXR1CSInputs,
 };

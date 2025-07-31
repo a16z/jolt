@@ -71,7 +71,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                     if cz_coeff != constraint
                     .c
                     .evaluate_row(flattened_polynomials, step_index) {
-                        use crate::jolt::vm::r1cs::builder::R1CSConstraintFormatter;
+                        use crate::jolt::zkvm::r1cs::builder::R1CSConstraintFormatter;
 
                         let mut constraint_string = String::new();
                         let _ = constraint

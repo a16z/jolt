@@ -6,8 +6,8 @@
 
 use super::spartan::UniformSpartanProof;
 use crate::jolt::lookup_trace::LookupTrace;
-use crate::jolt::vm::JoltProverPreprocessing;
 use crate::jolt::witness::CommittedPolynomials;
+use crate::jolt::zkvm::JoltProverPreprocessing;
 use jolt_core::field::JoltField;
 use jolt_core::jolt::instruction::LookupQuery;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;

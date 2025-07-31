@@ -2,7 +2,7 @@ use onnx_tracer::trace_types::{ONNXCycle, ONNXOpcode};
 
 use crate::jolt::{
     instruction::{add::ADD, mul::MUL, sub::SUB},
-    vm::onnx_vm::ONNXLookup,
+    zkvm::onnx_vm::ONNXLookup,
 };
 
 pub trait LookupTrace {

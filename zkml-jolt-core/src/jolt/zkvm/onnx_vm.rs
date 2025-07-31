@@ -1,8 +1,11 @@
-use jolt_core::jolt::instruction::LookupQuery;
+use jolt_core::jolt::{
+    instruction::{InstructionLookup, LookupQuery},
+    lookup_table::LookupTables,
+};
 
 use crate::jolt::instruction::{add::ADD, mul::MUL, sub::SUB};
 
-const WORD_SIZE: usize = 64;
+pub const WORD_SIZE: usize = 64;
 
 macro_rules! define_lookup_enum {
     (
@@ -62,11 +65,22 @@ define_lookup_enum!(
     Sub: SUB<WORD_SIZE>,
     Mul: MUL<WORD_SIZE>,
 );
+
+impl InstructionLookup<WORD_SIZE> for ONNXLookup {
+    fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
+        match self {
+            ONNXLookup::Add(add) => add.lookup_table(),
+            ONNXLookup::Sub(sub) => sub.lookup_table(),
+            ONNXLookup::Mul(mul) => mul.lookup_table(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod e2e_tests {
 
     use crate::{
-        jolt::vm::{JoltProverPreprocessing, JoltSNARK},
+        jolt::zkvm::{JoltProverPreprocessing, JoltSNARK},
         program::ONNXProgram,
     };
     use ark_bn254::Fr;

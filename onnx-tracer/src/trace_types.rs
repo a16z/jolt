@@ -2,6 +2,8 @@
 //! Used to format the bytecode and define each instr flags and memory access patterns.
 //! Used by the runtime to generate an execution trace for ONNX runtime execution.
 
+use std::ops::{Index, IndexMut};
+
 use crate::tensor::Tensor;
 use serde::{Deserialize, Serialize};
 use strum::EnumCount;
@@ -183,6 +185,32 @@ impl ONNXInstr {
         );
 
         flags
+    }
+}
+
+pub trait InterleavedBitsMarker {
+    fn is_interleaved_operands(&self) -> bool;
+}
+
+impl InterleavedBitsMarker for [bool; NUM_CIRCUIT_FLAGS] {
+    fn is_interleaved_operands(&self) -> bool {
+        !self[CircuitFlags::AddOperands]
+            && !self[CircuitFlags::SubtractOperands]
+            && !self[CircuitFlags::MultiplyOperands]
+        // && !self[CircuitFlags::Advice]
+    }
+}
+
+impl Index<CircuitFlags> for [bool; NUM_CIRCUIT_FLAGS] {
+    type Output = bool;
+    fn index(&self, index: CircuitFlags) -> &bool {
+        &self[index as usize]
+    }
+}
+
+impl IndexMut<CircuitFlags> for [bool; NUM_CIRCUIT_FLAGS] {
+    fn index_mut(&mut self, index: CircuitFlags) -> &mut bool {
+        &mut self[index as usize]
     }
 }
 
