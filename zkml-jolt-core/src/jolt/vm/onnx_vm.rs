@@ -74,7 +74,7 @@ mod e2e_tests {
         input_vector.resize(100, 0); // Resize to match the input shape
 
         let text_classification = ONNXProgram {
-            model_path: "/home/antoine/Documents/projets/Novanet/onnx/zkml-jolt/onnx-tracer/models/medium_text_classification/network.onnx".into(),
+            model_path: "../onnx-tracer/models/medium_text_classification/network.onnx".into(),
             inputs: Tensor::new(Some(&input_vector), &[1, 100]).unwrap(), // Example input
         };
         let program_bytecode = text_classification.decode();

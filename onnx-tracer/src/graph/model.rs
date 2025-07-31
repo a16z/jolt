@@ -1283,8 +1283,6 @@ mod tests {
 
         let result = model.forward(&[input1.clone(), input2.clone()]).unwrap();
 
-        let result = model.forward(&[input1.clone(), input2.clone()]).unwrap();
-
         assert_eq!(result.outputs.len(), 1);
         assert_eq!(
             result.outputs[0],
