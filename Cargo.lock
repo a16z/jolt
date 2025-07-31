@@ -985,6 +985,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctor"
+version = "0.2.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32a2785755761f3ddc1492979ce1e48d2c00d09311c39e4466429188f3dd6501"
+dependencies = [
+ "quote",
+ "syn 2.0.104",
+]
+
+[[package]]
 name = "der"
 version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2759,6 +2769,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "precompile-example"
+version = "0.1.0"
+dependencies = [
+ "ctor",
+ "tracer",
+]
+
+[[package]]
 name = "prettyplease"
 version = "0.2.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4019,6 +4037,7 @@ dependencies = [
  "derive_more 2.0.1",
  "fnv",
  "itertools 0.10.5",
+ "lazy_static",
  "object",
  "paste",
  "rand 0.7.3",

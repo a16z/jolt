@@ -114,6 +114,8 @@ use virtual_srai::VirtualSRAI;
 use virtual_srl::VirtualSRL;
 use virtual_srli::VirtualSRLI;
 
+use self::precompile::PRECOMPILE;
+
 use crate::emulator::cpu::Cpu;
 use derive_more::From;
 use format::{InstructionFormat, InstructionRegisterState, NormalizedOperands};
@@ -229,6 +231,9 @@ pub mod divw;
 pub mod mulw;
 pub mod remuw;
 pub mod remw;
+
+pub mod precompile;
+pub use precompile::{register_precompile, list_registered_precompiles};
 
 #[cfg(test)]
 pub mod test;
@@ -354,6 +359,9 @@ macro_rules! define_rv32im_enums {
             $(
                 $instr($instr),
             )*
+            /// Extension instruction from external crate
+            #[serde(skip)]
+            PRECOMPILE(PRECOMPILE),
         }
 
         #[derive(
@@ -365,6 +373,7 @@ macro_rules! define_rv32im_enums {
             $(
                 $instr(RISCVCycle<$instr>),
             )*
+            PRECOMPILE(RISCVCycle<PRECOMPILE>),
         }
 
         impl RV32IMCycle {
@@ -374,6 +383,7 @@ macro_rules! define_rv32im_enums {
                     $(
                         RV32IMCycle::$instr(cycle) => cycle.ram_access.into(),
                     )*
+                    RV32IMCycle::PRECOMPILE(cycle) => cycle.ram_access.into(),
                 }
             }
 
@@ -386,6 +396,10 @@ macro_rules! define_rv32im_enums {
                             cycle.register_state.rs1_value(),
                         ),
                     )*
+                    RV32IMCycle::PRECOMPILE(cycle) => (
+                        cycle.instruction.operands.rs1,
+                        cycle.register_state.rs1_value(),
+                    ),
                 }
             }
 
@@ -398,6 +412,10 @@ macro_rules! define_rv32im_enums {
                             cycle.register_state.rs2_value(),
                         ),
                     )*
+                    RV32IMCycle::PRECOMPILE(cycle) => (
+                        cycle.instruction.operands.rs2,
+                        cycle.register_state.rs2_value(),
+                    ),
                 }
             }
 
@@ -411,6 +429,21 @@ macro_rules! define_rv32im_enums {
                             cycle.register_state.rd_values().1,
                         ),
                     )*
+                    RV32IMCycle::PRECOMPILE(cycle) => (
+                        cycle.instruction.operands.rd,
+                        cycle.register_state.rd_values().0,
+                        cycle.register_state.rd_values().1,
+                    ),
+                }
+            }
+
+            pub fn pc(&self) -> u64 {
+                match self {
+                    RV32IMCycle::NoOp(addr) => *addr as u64,
+                    $(
+                        RV32IMCycle::$instr(cycle) => cycle.instruction.address,
+                    )*
+                    RV32IMCycle::PRECOMPILE(cycle) => cycle.instruction.address,
                 }
             }
 
@@ -420,6 +453,7 @@ macro_rules! define_rv32im_enums {
                     $(
                         RV32IMCycle::$instr(cycle) => cycle.instruction.into(),
                     )*
+                    RV32IMCycle::PRECOMPILE(cycle) => cycle.instruction.into(),
                 }
             }
         }
@@ -432,6 +466,7 @@ macro_rules! define_rv32im_enums {
                     $(
                         RV32IMInstruction::$instr(instr) => instr.trace(cpu, trace),
                     )*
+                    RV32IMInstruction::PRECOMPILE(instr) => instr.trace(cpu, trace),
                 }
             }
 
@@ -449,6 +484,14 @@ macro_rules! define_rv32im_enums {
                             instr.execute(cpu, &mut cycle.ram_access);
                         }
                     )*
+                    RV32IMInstruction::PRECOMPILE(instr) => {
+                        let mut cycle: RISCVCycle<PRECOMPILE> = RISCVCycle {
+                            instruction: *instr,
+                            register_state: Default::default(),
+                            ram_access: Default::default(),
+                        };
+                        instr.execute(cpu, &mut cycle.ram_access);
+                    }
                 }
             }
 
@@ -468,6 +511,11 @@ macro_rules! define_rv32im_enums {
                             virtual_sequence_remaining: instr.virtual_sequence_remaining,
                         },
                     )*
+                    RV32IMInstruction::PRECOMPILE(instr) => NormalizedInstruction {
+                        address: instr.address as usize,
+                        operands: instr.operands.normalize(),
+                        virtual_sequence_remaining: instr.virtual_sequence_remaining,
+                    },
                 }
             }
 
@@ -478,6 +526,7 @@ macro_rules! define_rv32im_enums {
                     $(
                         RV32IMInstruction::$instr(instr) => {instr.virtual_sequence_remaining = remaining;}
                     )*
+                    RV32IMInstruction::PRECOMPILE(instr) => {instr.virtual_sequence_remaining = remaining;}
                 }
             }
         }
@@ -799,10 +848,16 @@ impl RV32IMInstruction {
                     match funct3 {
                         0x0 => Ok(SHA256::new(instr, address, true).into()),
                         0x1 => Ok(SHA256INIT::new(instr, address, true).into()),
+                        0x2 => Ok(PRECOMPILE::new_with_funct7(instr, address, true).into()),
                         _ => Err("Unknown funct3 for custom SHA256 instruction"),
                     }
                 } else {
-                    Err("Unknown funct7 for custom-0 opcode")
+                    // For non-zero funct7, it's a PRECOMPILE with custom behavior
+                    if funct3 == 0x2 {
+                        Ok(PRECOMPILE::new_with_funct7(instr, address, true).into())
+                    } else {
+                        Err("Unknown funct7 for custom-0 opcode")
+                    }
                 }
             }
             _ => Err("Unknown opcode"),
