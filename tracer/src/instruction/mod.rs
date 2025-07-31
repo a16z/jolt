@@ -848,17 +848,15 @@ impl RV32IMInstruction {
                     match funct3 {
                         0x0 => Ok(SHA256::new(instr, address, true).into()),
                         0x1 => Ok(SHA256INIT::new(instr, address, true).into()),
-                        0x2 => Ok(PRECOMPILE::new_with_funct7(instr, address, true).into()),
                         _ => Err("Unknown funct3 for custom SHA256 instruction"),
                     }
                 } else {
-                    // For non-zero funct7, it's a PRECOMPILE with custom behavior
-                    if funct3 == 0x2 {
-                        Ok(PRECOMPILE::new_with_funct7(instr, address, true).into())
-                    } else {
-                        Err("Unknown funct7 for custom-0 opcode")
-                    }
+                    Err("Unknown funct7 for custom-0 opcode")
                 }
+            }
+            // 0x7E is reserved for precompiles
+            0b0111110 => {
+                Ok(PRECOMPILE::new_with_funct7(instr, address, true).into())
             }
             _ => Err("Unknown opcode"),
         }

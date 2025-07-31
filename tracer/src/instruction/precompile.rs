@@ -61,8 +61,8 @@ pub fn list_registered_precompiles() -> Vec<(u32, String)> {
 // First declare the basic struct with the macro
 declare_riscv_instr!(
     name   = PRECOMPILE,
-    mask   = 0xfe00707f,  // Mask for funct7 + funct3 + opcode
-    match  = 0x0000200b,  // funct7=0x00, funct3=0x2, opcode=0x0B (custom-0)
+    mask   = 0x0000707f,  // Mask for funct3 + opcode (excluding funct7 to allow any value)
+    match  = 0x0000203e,  // funct3=0x2, opcode=0x3E (0b0111110)
     format = FormatR,
     ram    = ()
 );
@@ -89,11 +89,12 @@ impl PRECOMPILE {
         <Self as RISCVInstruction>::new(word, address, validate)
     }
     
-    fn exec(&self, cpu: &mut Cpu, _: &mut <PRECOMPILE as RISCVInstruction>::RAMAccess) {
+    pub fn exec(&self, cpu: &mut Cpu, _: &mut <PRECOMPILE as RISCVInstruction>::RAMAccess) {
         // Retrieve the funct7 value for this instruction
         let funct7 = PRECOMPILE_FUNCT7_MAP.with(|map| {
             map.borrow().get(&self.address).copied().unwrap_or(0)
         });
+
         
         // Look up the precompile function in the registry
         if let Ok(registry) = PRECOMPILE_REGISTRY.read() {
@@ -142,6 +143,7 @@ impl VirtualInstructionSequence for PRECOMPILE {
         
         // If no builder is registered, return an empty sequence
         // This allows precompiles to work without virtual sequences if they don't need them
+        println!("OOOPPPPSSSS");
         Vec::new()
     }
 }
