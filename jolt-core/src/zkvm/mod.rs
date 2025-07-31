@@ -25,7 +25,8 @@ use crate::{
     zkvm::{
         bytecode::BytecodePreprocessing,
         dag::{jolt_dag::JoltDAG, proof_serialization::JoltProof, state_manager::StateManager},
-        ram::{RAMPreprocessing, NUM_RA_I_VARS},
+        ram::RAMPreprocessing,
+        witness::DTH_ROOT_OF_K,
     },
 };
 
@@ -185,11 +186,10 @@ where
 
         let shared = Self::shared_preprocess(bytecode, memory_layout, memory_init);
 
-        let max_K: usize = 1 << NUM_RA_I_VARS;
         let max_T: usize = max_trace_length.next_power_of_two();
 
         // TODO(moodlezoup): Change setup parameter to # variables everywhere
-        let generators = PCS::setup_prover(max_K.log_2() + max_T.log_2());
+        let generators = PCS::setup_prover(DTH_ROOT_OF_K.log_2() + max_T.log_2());
 
         JoltProverPreprocessing {
             generators,
@@ -261,13 +261,11 @@ where
         _debug_info: Option<ProverDebugInfo<F, FS, PCS>>,
     ) -> Result<(), ProofVerifyError> {
         #[cfg(test)]
-        let K = 1 << NUM_RA_I_VARS;
-        #[cfg(test)]
         let T = proof.trace_length.next_power_of_two();
         // Need to initialize globals because the verifier computes commitments
         // in `VerifierOpeningAccumulator::append` inside of a `#[cfg(test)]` block
         #[cfg(test)]
-        let _guard = DoryGlobals::initialize(K, T);
+        let _guard = DoryGlobals::initialize(DTH_ROOT_OF_K, T);
 
         // truncate trailing zeros on device outputs
         program_io.outputs.truncate(

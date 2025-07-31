@@ -17,15 +17,19 @@ use crate::{
     utils::math::Math,
     zkvm::{
         lookup_table::LookupTables,
-        {
-            instruction_lookups,
-            ram::{compute_d_parameter, remap_address, NUM_RA_I_VARS},
-            JoltProverPreprocessing,
-        },
+        {instruction_lookups, ram::remap_address, JoltProverPreprocessing},
     },
 };
 
 use super::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
+
+/// K^{1/d}
+pub const DTH_ROOT_OF_K: usize = 1 << 8;
+pub fn compute_d_parameter(K: usize) -> usize {
+    // Calculate D dynamically such that 2^8 = K^(1/D)
+    let log_K = K.log_2();
+    log_K.div_ceil(DTH_ROOT_OF_K.log_2())
+}
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord)]
 pub enum CommittedPolynomial {
@@ -293,14 +297,14 @@ impl CommittedPolynomial {
                             &preprocessing.shared.memory_layout,
                         )
                         .map(|address| {
-                            (address as usize >> (NUM_RA_I_VARS * (d - 1 - i)))
-                                % (1 << NUM_RA_I_VARS)
+                            (address as usize >> (DTH_ROOT_OF_K.log_2() * (d - 1 - i)))
+                                % DTH_ROOT_OF_K
                         })
                     })
                     .collect();
                 MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
                     addresses,
-                    1 << NUM_RA_I_VARS,
+                    DTH_ROOT_OF_K,
                 ))
             }
             CommittedPolynomial::RdInc => {
