@@ -7,21 +7,30 @@ use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{
     format::{format_r::FormatR, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
+    RISCVInstruction, RISCVTrace, VirtualInstructionSequence, RV32IMInstruction, RV32IMCycle,
 };
 
 // Type alias for the precompile function signature
 // Matches the signature of the exec() method exactly
 pub type PrecompileFunction = Box<dyn Fn(&PRECOMPILE, &mut Cpu, &mut ()) + Send + Sync>;
 
+// Type alias for the builder function signature
+// Takes address, rs1, rs2 and returns a virtual instruction sequence
+pub type BuilderFunction = Box<dyn Fn(u64, usize, usize) -> Vec<RV32IMInstruction> + Send + Sync>;
+
 // Global registry that maps funct7 values to precompile implementations
 lazy_static! {
-    static ref PRECOMPILE_REGISTRY: RwLock<HashMap<u32, (String, PrecompileFunction)>> = 
+    static ref PRECOMPILE_REGISTRY: RwLock<HashMap<u32, (String, PrecompileFunction, BuilderFunction)>> = 
         RwLock::new(HashMap::new());
 }
 
 // Public API for registering precompiles
-pub fn register_precompile(funct7: u32, name: &str, exec_fn: PrecompileFunction) -> Result<(), String> {
+pub fn register_precompile(
+    funct7: u32, 
+    name: &str, 
+    exec_fn: PrecompileFunction,
+    builder_fn: BuilderFunction,
+) -> Result<(), String> {
     // Validate funct7 is in valid range (0-127)
     if funct7 > 127 {
         return Err(format!("funct7 value {} is out of range (0-127)", funct7));
@@ -34,7 +43,7 @@ pub fn register_precompile(funct7: u32, name: &str, exec_fn: PrecompileFunction)
         return Err(format!("Precompile with funct7={} is already registered", funct7));
     }
     
-    registry.insert(funct7, (name.to_string(), exec_fn));
+    registry.insert(funct7, (name.to_string(), exec_fn, builder_fn));
     Ok(())
 }
 
@@ -42,7 +51,7 @@ pub fn register_precompile(funct7: u32, name: &str, exec_fn: PrecompileFunction)
 pub fn list_registered_precompiles() -> Vec<(u32, String)> {
     if let Ok(registry) = PRECOMPILE_REGISTRY.read() {
         registry.iter()
-            .map(|(&funct7, (name, _))| (funct7, name.clone()))
+            .map(|(&funct7, (name, _, _))| (funct7, name.clone()))
             .collect()
     } else {
         Vec::new()
@@ -88,7 +97,7 @@ impl PRECOMPILE {
         
         // Look up the precompile function in the registry
         if let Ok(registry) = PRECOMPILE_REGISTRY.read() {
-            if let Some((_name, exec_fn)) = registry.get(&funct7) {
+            if let Some((_name, exec_fn, _)) = registry.get(&funct7) {
                 // Execute the registered function
                 exec_fn(self, cpu, &mut ());
                 return;
@@ -104,4 +113,35 @@ impl PRECOMPILE {
     }
 }
 
-impl RISCVTrace for PRECOMPILE {}
+impl RISCVTrace for PRECOMPILE {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+        let virtual_sequence = self.virtual_sequence();
+
+        let mut trace = trace;
+        for instr in virtual_sequence {
+            instr.trace(cpu, trace.as_deref_mut());
+        }
+    }
+}
+
+
+impl VirtualInstructionSequence for PRECOMPILE {
+    fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
+        // Retrieve the funct7 value for this instruction
+        let funct7 = PRECOMPILE_FUNCT7_MAP.with(|map| {
+            map.borrow().get(&self.address).copied().unwrap_or(0)
+        });
+        
+        // Look up the builder function in the registry
+        if let Ok(registry) = PRECOMPILE_REGISTRY.read() {
+            if let Some((_name, _exec_fn, builder_fn)) = registry.get(&funct7) {
+                // Execute the registered builder function
+                return builder_fn(self.address, self.operands.rs1, self.operands.rs2);
+            }
+        }
+        
+        // If no builder is registered, return an empty sequence
+        // This allows precompiles to work without virtual sequences if they don't need them
+        Vec::new()
+    }
+}

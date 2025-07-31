@@ -1,5 +1,6 @@
 use tracer::emulator::cpu::Cpu;
 use tracer::instruction::precompile::PRECOMPILE;
+use tracer::instruction::RV32IMInstruction;
 use tracer::{register_precompile, list_registered_precompiles};
 
 // Example 1: Simple XOR precompile
@@ -8,6 +9,12 @@ fn xor_precompile(instr: &PRECOMPILE, cpu: &mut Cpu, _ram: &mut ()) {
     cpu.x[instr.operands.rd] = result;
     println!("XOR precompile: x{} = x{} ^ x{} = {:#x} (at {:#x})", 
              instr.operands.rd, instr.operands.rs1, instr.operands.rs2, result, instr.address);
+}
+
+// Builder for XOR - returns empty sequence as XOR is atomic
+fn xor_builder(_address: u64, _rs1: usize, _rs2: usize) -> Vec<RV32IMInstruction> {
+    // XOR doesn't need a virtual sequence, it's a single atomic operation
+    Vec::new()
 }
 
 // Example 2: Bit rotation precompile
@@ -20,6 +27,16 @@ fn rotate_left_precompile(instr: &PRECOMPILE, cpu: &mut Cpu, _ram: &mut ()) {
              instr.operands.rd, instr.operands.rs1, shift, result, instr.address);
 }
 
+// Builder for ROTL - could decompose into shifts and ORs if needed
+fn rotl_builder(_address: u64, _rs1: usize, _rs2: usize) -> Vec<RV32IMInstruction> {
+    // For simplicity, return empty sequence
+    // In a real implementation, you might decompose this into:
+    // - SLL for left shift
+    // - SRL for right shift of (64-shift) positions  
+    // - OR to combine results
+    Vec::new()
+}
+
 // Example 3: Population count (popcount) precompile
 fn popcount_precompile(instr: &PRECOMPILE, cpu: &mut Cpu, _ram: &mut ()) {
     let value = cpu.x[instr.operands.rs1] as u64;
@@ -29,16 +46,31 @@ fn popcount_precompile(instr: &PRECOMPILE, cpu: &mut Cpu, _ram: &mut ()) {
              instr.operands.rd, instr.operands.rs1, count, instr.address);
 }
 
+// Builder for POPCOUNT - could decompose into bit manipulation if needed
+fn popcount_builder(_address: u64, _rs1: usize, _rs2: usize) -> Vec<RV32IMInstruction> {
+    // For simplicity, return empty sequence
+    // In a real implementation, you might generate a sequence of:
+    // - Shift and AND operations to isolate bits
+    // - ADD operations to sum them up
+    Vec::new()
+}
+
 // Initialize and register precompiles
 fn init_precompiles() -> Result<(), String> {
     // Register XOR with funct7=0x01
-    register_precompile(0x01, "XOR_PRECOMPILE", Box::new(xor_precompile))?;
+    register_precompile(0x01, "XOR_PRECOMPILE", 
+        Box::new(xor_precompile), 
+        Box::new(xor_builder))?;
     
     // Register ROTL with funct7=0x02
-    register_precompile(0x02, "ROTL_PRECOMPILE", Box::new(rotate_left_precompile))?;
+    register_precompile(0x02, "ROTL_PRECOMPILE", 
+        Box::new(rotate_left_precompile),
+        Box::new(rotl_builder))?;
     
     // Register POPCOUNT with funct7=0x03
-    register_precompile(0x03, "POPCOUNT_PRECOMPILE", Box::new(popcount_precompile))?;
+    register_precompile(0x03, "POPCOUNT_PRECOMPILE", 
+        Box::new(popcount_precompile),
+        Box::new(popcount_builder))?;
     
     Ok(())
 }
@@ -73,6 +105,10 @@ fn main() {
     println!("  XOR:      .word 0x02A382AB  # funct7=0x01");
     println!("  ROTL:     .word 0x04A382AB  # funct7=0x02");
     println!("  POPCOUNT: .word 0x06A382AB  # funct7=0x03");
+    
+    println!("\nNote: The builder functions can return virtual instruction sequences");
+    println!("that decompose complex operations into simpler RISC-V instructions.");
+    println!("This is useful for verification and analysis purposes.");
 }
 
 #[cfg(test)]
@@ -122,7 +158,7 @@ mod tests {
     #[test]
     fn test_duplicate_registration() {
         // Try to register the same funct7 twice (this should always fail)
-        let result = register_precompile(0x01, "DUPLICATE", Box::new(|_, _, _| {}));
+        let result = register_precompile(0x01, "DUPLICATE", Box::new(|_, _, _| {}), Box::new(|_address, _rs1, _rs2| Vec::new()));
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("already registered"));
     }
