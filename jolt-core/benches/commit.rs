@@ -9,7 +9,8 @@ use jolt_core::utils::transcript::{KeccakTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 
-const SRS_SIZE: usize = 1 << 10;
+const NUM_VARS: usize = 10;
+const SRS_SIZE: usize = 1 << NUM_VARS;
 
 // Sets up the benchmark by generating leaves and computing known products
 // and allows configuring the percentage of ones in the leaves
@@ -56,7 +57,7 @@ where
     // Compute known products (one per layer)
     let known_products: Vec<F> = leaves.iter().map(|layer| layer.iter().product()).collect();
 
-    let setup = PCS::setup_prover(SRS_SIZE);
+    let setup = PCS::setup_prover(NUM_VARS);
 
     (leaves, setup, known_products)
 }

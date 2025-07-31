@@ -940,10 +940,6 @@ impl CommitmentScheme for DoryCommitmentScheme {
         prover_setup.to_verifier_setup()
     }
 
-    fn srs_size(_setup: &Self::ProverSetup) -> usize {
-        todo!()
-    }
-
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::commit")]
     fn commit(
         poly: &MultilinearPolynomial<Self::Field>,

@@ -188,7 +188,6 @@ where
 
         let max_T: usize = max_trace_length.next_power_of_two();
 
-        // TODO(moodlezoup): Change setup parameter to # variables everywhere
         let generators = PCS::setup_prover(DTH_ROOT_OF_K.log_2() + max_T.log_2());
 
         JoltProverPreprocessing {

@@ -98,9 +98,10 @@ where
     type OpeningProofHint = ();
 
     #[tracing::instrument(skip_all, name = "HyperBmmtv::setup")]
-    fn setup_prover(max_len: usize) -> Self::ProverSetup {
+    fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
         let mut rng = ChaCha20Rng::from_seed(*b"HyperBMMTV_POLY_COMMITMENTSCHEME");
-        let srs = UnivariatePolynomialCommitment::<P>::setup(&mut rng, max_len - 1).unwrap();
+        let srs =
+            UnivariatePolynomialCommitment::<P>::setup(&mut rng, (1 << max_num_vars) - 1).unwrap();
         let powers_len = srs.g1_powers.len();
 
         SRS::trim(Arc::new(srs), powers_len - 1).0
@@ -109,10 +110,6 @@ where
     #[tracing::instrument(skip_all, name = "HyperBmmtv::setup_verifier")]
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup {
         KZGVerifierKey::<P>::from(setup)
-    }
-
-    fn srs_size(setup: &Self::ProverSetup) -> usize {
-        setup.g1_powers().len()
     }
 
     #[tracing::instrument(skip_all, name = "HyperBmmtv::commit")]

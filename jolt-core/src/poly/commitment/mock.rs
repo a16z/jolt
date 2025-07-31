@@ -47,13 +47,9 @@ where
     type BatchedProof = MockProof<F>;
     type OpeningProofHint = ();
 
-    fn setup_prover(_max_len: usize) -> Self::ProverSetup {}
+    fn setup_prover(_num_vars: usize) -> Self::ProverSetup {}
 
     fn setup_verifier(_setup: &Self::ProverSetup) -> Self::VerifierSetup {}
-
-    fn srs_size(_setup: &Self::ProverSetup) -> usize {
-        1 << 10
-    }
 
     fn commit(
         _poly: &MultilinearPolynomial<Self::Field>,

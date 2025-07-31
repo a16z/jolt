@@ -426,10 +426,11 @@ where
     type BatchedProof = ZeromorphProof<P>;
     type OpeningProofHint = ();
 
-    fn setup_prover(max_len: usize) -> Self::ProverSetup
+    fn setup_prover(max_num_vars: usize) -> Self::ProverSetup
     where
         P::ScalarField: JoltField,
     {
+        let max_len = 1 << max_num_vars;
         ZeromorphSRS(Arc::new(SRS::setup(
             &mut ChaCha20Rng::from_seed(*b"ZEROMORPH_POLY_COMMITMENT_SCHEME"),
             max_len,
@@ -441,10 +442,6 @@ where
 
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup {
         ZeromorphVerifierKey::from(setup)
-    }
-
-    fn srs_size(setup: &Self::ProverSetup) -> usize {
-        setup.commit_pp.g1_powers().len()
     }
 
     fn commit(
