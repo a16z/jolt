@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BytecodePreprocessing {
-    code_size: usize,
+    pub code_size: usize,
     bytecode: Vec<ONNXInstr>,
 }
 

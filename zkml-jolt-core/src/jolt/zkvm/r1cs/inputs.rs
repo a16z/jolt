@@ -230,7 +230,7 @@ impl JoltONNXR1CSInputs {
                     .map(|cycle| {
                         cycle
                             .to_lookup()
-                            .map(|lookup| LookupQuery::<64>::to_lookup_operands(&lookup).0)
+                            .map(|lookup| LookupQuery::<32>::to_lookup_operands(&lookup).0)
                             .unwrap_or(0)
                     })
                     .collect();
@@ -242,7 +242,7 @@ impl JoltONNXR1CSInputs {
                     .map(|cycle| {
                         cycle
                             .to_lookup()
-                            .map(|lookup| LookupQuery::<64>::to_lookup_operands(&lookup).1)
+                            .map(|lookup| LookupQuery::<32>::to_lookup_operands(&lookup).1)
                             .unwrap_or(0)
                     })
                     .collect();
@@ -263,7 +263,7 @@ impl JoltONNXR1CSInputs {
                     .map(|cycle| {
                         cycle
                             .to_lookup()
-                            .map(|lookup| LookupQuery::<64>::to_lookup_output(&lookup))
+                            .map(|lookup| LookupQuery::<32>::to_lookup_output(&lookup))
                             .unwrap_or_default()
                     })
                     .collect();

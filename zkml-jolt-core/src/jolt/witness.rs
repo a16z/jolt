@@ -6,7 +6,7 @@ use jolt_core::{
     field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
-        multilinear_polynomial::MultilinearPolynomial,
+        multilinear_polynomial::MultilinearPolynomial, one_hot_polynomial::OneHotPolynomial,
     },
     utils::transcript::Transcript,
 };
@@ -46,12 +46,12 @@ pub enum CommittedPolynomials {
     // RdInc,
     // /// Inc polynomial for the RAM instance of Twist
     // RamInc,
-    // /// One-hot ra polynomial for the instruction lookups instance of Shout.
-    // /// There are four (d=4) of these polynomials, `InstructionRa(0) .. InstructionRa(3)`
-    // InstructionRa(usize),
+    /// One-hot ra polynomial for the instruction lookups instance of Shout.
+    /// There are four (d=4) of these polynomials, `InstructionRa(0) .. InstructionRa(3)`
+    InstructionRa(usize),
 }
 
-pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 4] = [
+pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 8] = [
     CommittedPolynomials::LeftInstructionInput,
     CommittedPolynomials::RightInstructionInput,
     CommittedPolynomials::Product,
@@ -62,10 +62,10 @@ pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 4] = [
     // CommittedPolynomials::RamRa(0),
     // CommittedPolynomials::RdInc,
     // CommittedPolynomials::RamInc,
-    // CommittedPolynomials::InstructionRa(0),
-    // CommittedPolynomials::InstructionRa(1),
-    // CommittedPolynomials::InstructionRa(2),
-    // CommittedPolynomials::InstructionRa(3),
+    CommittedPolynomials::InstructionRa(0),
+    CommittedPolynomials::InstructionRa(1),
+    CommittedPolynomials::InstructionRa(2),
+    CommittedPolynomials::InstructionRa(3),
 ];
 
 impl CommittedPolynomials {
@@ -102,7 +102,7 @@ impl CommittedPolynomials {
                     .map(|cycle| {
                         cycle
                             .to_lookup()
-                            .map(|lookup| LookupQuery::<64>::to_instruction_inputs(&lookup).0)
+                            .map(|lookup| LookupQuery::<32>::to_instruction_inputs(&lookup).0)
                             .unwrap_or_default()
                     })
                     .collect();
@@ -114,7 +114,7 @@ impl CommittedPolynomials {
                     .map(|cycle| {
                         cycle
                             .to_lookup()
-                            .map(|lookup| LookupQuery::<64>::to_instruction_inputs(&lookup).1)
+                            .map(|lookup| LookupQuery::<32>::to_instruction_inputs(&lookup).1)
                             .unwrap_or_default()
                     })
                     .collect();
@@ -128,7 +128,7 @@ impl CommittedPolynomials {
                             .to_lookup()
                             .map(|lookup| {
                                 let (left_input, right_input) =
-                                    LookupQuery::<64>::to_instruction_inputs(&lookup);
+                                    LookupQuery::<32>::to_instruction_inputs(&lookup);
                                 if left_input.checked_mul(right_input as u64).is_none() {
                                     panic!(
                                         "At cycle {cycle:?} Overflow in multiplication: {left_input} * {right_input}"
@@ -152,94 +152,94 @@ impl CommittedPolynomials {
                     .collect();
                 coeffs.into()
             } //     CommittedPolynomials::WritePCtoRD => {
-              //         let coeffs: Vec<u8> = trace
-              //             .par_iter()
-              //             .map(|cycle| {
-              //                 let flag = cycle.instruction().circuit_flags()[CircuitFlags::Jump as usize];
-              //                 (cycle.rd_write().0 as u8) * (flag as u8)
-              //             })
-              //             .collect();
-              //         coeffs.into()
-              //     }
-              //     CommittedPolynomials::ShouldBranch => {
-              //         let coeffs: Vec<u8> = trace
-              //             .par_iter()
-              //             .map(|cycle| {
-              //                 let is_branch =
-              //                     cycle.instruction().circuit_flags()[CircuitFlags::Branch as usize];
-              //                 (LookupQuery::<32>::to_lookup_output(cycle) as u8) * is_branch as u8
-              //             })
-              //             .collect();
-              //         coeffs.into()
-              //     }
-              //     CommittedPolynomials::BytecodeRa => {
-              //         let addresses: Vec<usize> = preprocessing
-              //             .shared
-              //             .bytecode
-              //             .map_trace_to_pc(trace)
-              //             .map(|k| k as usize)
-              //             .collect();
-              //         MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
-              //             addresses,
-              //             preprocessing.shared.bytecode.code_size,
-              //         ))
-              //     }
-              //     // TODO(markosg04) logic here needs to be adjusted for when d > 1 is implemented
-              //     CommittedPolynomials::RamRa(i) => {
-              //         if *i > 0 {
-              //             panic!("RAM is implemented for only d=1 currently.");
-              //         }
-              //         let addresses: Vec<usize> = trace
-              //             .par_iter()
-              //             .map(|cycle| {
-              //                 remap_address(
-              //                     cycle.ram_access().address() as u64,
-              //                     &preprocessing.shared.memory_layout,
-              //                 ) as usize
-              //             })
-              //             .collect();
-              //         let K = addresses.par_iter().max().unwrap().next_power_of_two();
-              //         MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(addresses, K))
-              //     }
-              //     CommittedPolynomials::RdInc => {
-              //         let coeffs: Vec<i64> = trace
-              //             .par_iter()
-              //             .map(|cycle| {
-              //                 let (_, pre_value, post_value) = cycle.rd_write();
-              //                 post_value as i64 - pre_value as i64
-              //             })
-              //             .collect();
-              //         coeffs.into()
-              //     }
-              //     CommittedPolynomials::RamInc => {
-              //         let coeffs: Vec<i64> = trace
-              //             .par_iter()
-              //             .map(|cycle| {
-              //                 let ram_op = cycle.ram_access();
-              //                 match ram_op {
-              //                     tracer::instruction::RAMAccess::Write(write) => {
-              //                         write.post_value as i64 - write.pre_value as i64
-              //                     }
-              //                     _ => 0,
-              //                 }
-              //             })
-              //             .collect();
-              //         coeffs.into()
-              //     }
-              //     CommittedPolynomials::InstructionRa(i) => {
-              //         if *i > 3 {
-              //             panic!("Unexpected i: {i}");
-              //         }
-              //         let addresses: Vec<usize> = trace
-              //             .par_iter()
-              //             .map(|cycle| {
-              //                 let lookup_index = LookupQuery::<32>::to_lookup_index(cycle);
-              //                 let k = (lookup_index >> (16 * (3 - i))) % (1 << 16);
-              //                 k as usize
-              //             })
-              //             .collect();
-              //         MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(addresses, 1 << 16))
-              //     }
+            //         let coeffs: Vec<u8> = trace
+            //             .par_iter()
+            //             .map(|cycle| {
+            //                 let flag = cycle.instruction().circuit_flags()[CircuitFlags::Jump as usize];
+            //                 (cycle.rd_write().0 as u8) * (flag as u8)
+            //             })
+            //             .collect();
+            //         coeffs.into()
+            //     }
+            //     CommittedPolynomials::ShouldBranch => {
+            //         let coeffs: Vec<u8> = trace
+            //             .par_iter()
+            //             .map(|cycle| {
+            //                 let is_branch =
+            //                     cycle.instruction().circuit_flags()[CircuitFlags::Branch as usize];
+            //                 (LookupQuery::<32>::to_lookup_output(cycle) as u8) * is_branch as u8
+            //             })
+            //             .collect();
+            //         coeffs.into()
+            //     }
+            //     CommittedPolynomials::BytecodeRa => {
+            //         let addresses: Vec<usize> = preprocessing
+            //             .shared
+            //             .bytecode
+            //             .map_trace_to_pc(trace)
+            //             .map(|k| k as usize)
+            //             .collect();
+            //         MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
+            //             addresses,
+            //             preprocessing.shared.bytecode.code_size,
+            //         ))
+            //     }
+            //     // TODO(markosg04) logic here needs to be adjusted for when d > 1 is implemented
+            //     CommittedPolynomials::RamRa(i) => {
+            //         if *i > 0 {
+            //             panic!("RAM is implemented for only d=1 currently.");
+            //         }
+            //         let addresses: Vec<usize> = trace
+            //             .par_iter()
+            //             .map(|cycle| {
+            //                 remap_address(
+            //                     cycle.ram_access().address() as u64,
+            //                     &preprocessing.shared.memory_layout,
+            //                 ) as usize
+            //             })
+            //             .collect();
+            //         let K = addresses.par_iter().max().unwrap().next_power_of_two();
+            //         MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(addresses, K))
+            //     }
+            //     CommittedPolynomials::RdInc => {
+            //         let coeffs: Vec<i64> = trace
+            //             .par_iter()
+            //             .map(|cycle| {
+            //                 let (_, pre_value, post_value) = cycle.rd_write();
+            //                 post_value as i64 - pre_value as i64
+            //             })
+            //             .collect();
+            //         coeffs.into()
+            //     }
+            //     CommittedPolynomials::RamInc => {
+            //         let coeffs: Vec<i64> = trace
+            //             .par_iter()
+            //             .map(|cycle| {
+            //                 let ram_op = cycle.ram_access();
+            //                 match ram_op {
+            //                     tracer::instruction::RAMAccess::Write(write) => {
+            //                         write.post_value as i64 - write.pre_value as i64
+            //                     }
+            //                     _ => 0,
+            //                 }
+            //             })
+            //             .collect();
+            //         coeffs.into()
+            //     }
+            CommittedPolynomials::InstructionRa(i) => {
+                if *i > 3 {
+                    panic!("Unexpected i: {i}");
+                }
+                let addresses: Vec<usize> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        let lookup_index = cycle.to_lookup().map_or(0, |x| x.to_lookup_index());
+                        let k = (lookup_index >> (16 * (3 - i))) % (1 << 16);
+                        k as usize
+                    })
+                    .collect();
+                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(addresses, 1 << 16))
+            }
         }
     }
 }

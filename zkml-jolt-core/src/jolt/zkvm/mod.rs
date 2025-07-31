@@ -3,6 +3,7 @@
 
 use crate::jolt::zkvm::{
     bytecode::{BytecodePreprocessing, BytecodeProof},
+    instruction_lookups::LookupsProof,
     r1cs::{
         constraints::{JoltONNXConstraints, R1CSConstraints},
         spartan::UniformSpartanProof,
@@ -11,16 +12,18 @@ use crate::jolt::zkvm::{
 use jolt_core::{
     field::JoltField,
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
+        commitment::{commitment_scheme::CommitmentScheme, dory::DoryGlobals},
         opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
     },
     utils::{errors::ProofVerifyError, transcript::Transcript},
 };
 use onnx_tracer::trace_types::{ONNXCycle, ONNXInstr};
+use onnx_vm::WORD_SIZE;
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 
 pub mod bytecode;
+pub mod instruction_lookups;
 pub mod onnx_vm;
 pub mod r1cs;
 
@@ -70,10 +73,12 @@ where
 pub struct JoltSNARK<F, PCS, ProofTranscript>
 where
     ProofTranscript: Transcript,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
     F: JoltField,
 {
     pub trace_length: usize,
     bytecode: BytecodeProof<F, ProofTranscript>,
+    instruction_lookups: LookupsProof<WORD_SIZE, F, PCS, ProofTranscript>,
     // r1cs: UniformSpartanProof<F, ProofTranscript>,
     _p: PhantomData<PCS>,
 }
@@ -117,8 +122,18 @@ where
         // pad trace to the next power of two
         trace.resize(trace.len().next_power_of_two(), ONNXCycle::no_op());
         let padded_trace_length = trace.len();
+        let K = [
+            preprocessing.shared.bytecode.code_size,
+            // ram_K,
+            1 << 16, // K for instruction lookups Shout
+        ]
+        .into_iter()
+        .max()
+        .unwrap();
+        println!("T = {padded_trace_length}, K = {K}");
+        let _guard = DoryGlobals::initialize(K, padded_trace_length);
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
-        let mut _opening_accumulator: ProverOpeningAccumulator<F, PCS, ProofTranscript> =
+        let mut opening_accumulator: ProverOpeningAccumulator<F, PCS, ProofTranscript> =
             ProverOpeningAccumulator::new();
         // let committed_polys: Vec<_> = ALL_COMMITTED_POLYNOMIALS
         //     .par_iter()
@@ -148,12 +163,20 @@ where
         );
         // .ok()
         // .unwrap();
+        let instruction_proof: LookupsProof<WORD_SIZE, F, PCS, ProofTranscript> =
+            LookupsProof::prove(
+                &preprocessing,
+                &trace,
+                &mut opening_accumulator,
+                &mut transcript,
+            );
 
         let bytecode_proof =
             BytecodeProof::prove(&preprocessing.shared.bytecode, &trace, &mut transcript);
         JoltSNARK {
             trace_length,
             // r1cs,
+            instruction_lookups: instruction_proof,
             bytecode: bytecode_proof,
             _p: PhantomData,
         }
@@ -165,7 +188,7 @@ where
         preprocessing: JoltVerifierPreprocessing<F, PCS, ProofTranscript>,
     ) -> Result<(), ProofVerifyError> {
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
-        let mut _opening_accumulator: VerifierOpeningAccumulator<F, PCS, ProofTranscript> =
+        let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS, ProofTranscript> =
             VerifierOpeningAccumulator::new();
         // Regenerate the uniform Spartan key
         let padded_trace_length = self.trace_length.next_power_of_two();
@@ -182,6 +205,11 @@ where
         //         &mut transcript,
         //     )
         //     .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))?;
+        self.instruction_lookups.verify(
+            // &proof.commitments,
+            &mut opening_accumulator,
+            &mut transcript,
+        )?;
         self.bytecode.verify(
             &preprocessing.shared.bytecode,
             self.trace_length,

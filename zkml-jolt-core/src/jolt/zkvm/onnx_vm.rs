@@ -5,7 +5,7 @@ use jolt_core::jolt::{
 
 use crate::jolt::instruction::{add::ADD, mul::MUL, sub::SUB};
 
-pub const WORD_SIZE: usize = 64;
+pub const WORD_SIZE: usize = 32;
 
 macro_rules! define_lookup_enum {
     (
