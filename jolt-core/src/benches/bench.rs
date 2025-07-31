@@ -10,7 +10,7 @@ use crate::poly::commitment::dory::DoryCommitmentScheme as Dory;
 use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::subprotocols::optimization::{
-    compute_initial_eval_claim, LargeDSumCheckProof, NaiveSumCheckProof,
+    compute_initial_eval_claim, KaratsubaSumCheckProof, LargeDSumCheckProof, NaiveSumCheckProof,
 };
 use crate::subprotocols::shout::ShoutProof;
 use crate::subprotocols::twist::{TwistAlgorithm, TwistProof};
@@ -362,9 +362,9 @@ where
 {
     let mut tasks = Vec::new();
 
-    let D = 16;
+    let D = 15;
     let T = 1 << 20;
-    const D1: usize = 15;
+    const D1: usize = 14;
 
     let mut ra = {
         let mut rng = test_rng();
@@ -393,6 +393,10 @@ where
     let mut previous_claim_copy = previous_claim.clone();
     let mut ra_copy = ra.clone();
 
+    let mut transcript_copy2 = transcript.clone();
+    let mut previous_claim_copy2 = previous_claim.clone();
+    let mut ra_copy2 = ra.clone();
+
     let task = move || {
         let _proof = LargeDSumCheckProof::<F, ProofTranscript>::prove::<D1>(
             &mut ra.iter_mut().collect::<Vec<_>>(),
@@ -406,6 +410,13 @@ where
             &r_cycle,
             &mut previous_claim_copy,
             &mut transcript_copy,
+        );
+
+        let _proof = KaratsubaSumCheckProof::<F, ProofTranscript>::prove(
+            &mut ra_copy2.iter_mut().collect::<Vec<_>>(),
+            &r_cycle,
+            &mut previous_claim_copy2,
+            &mut transcript_copy2,
         );
     };
 

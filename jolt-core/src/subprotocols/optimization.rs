@@ -14,13 +14,24 @@ use crate::{
         },
         unipoly::{CompressedUniPoly, UniPoly},
     },
-    subprotocols::sumcheck::SumcheckInstanceProof,
+    subprotocols::{
+        karatsuba::{coeff_kara_16, coeff_naive, kara_17},
+        sumcheck::SumcheckInstanceProof,
+    },
     utils::{
         errors::ProofVerifyError,
         math::Math,
         transcript::{AppendToTranscript, Transcript},
     },
 };
+
+fn verify_product_mle_claim<F: JoltField>(
+    mle_vec: &Vec<&MultilinearPolynomial<F>>,
+    r_cycle: &Vec<F>,
+    claim: F,
+) -> bool {
+    todo!()
+}
 
 #[inline]
 pub fn compute_initial_eval_claim<F: JoltField>(
@@ -38,6 +49,197 @@ pub fn compute_initial_eval_claim<F: JoltField>(
                 * eq.get_bound_coeff(j)
         })
         .reduce(|| F::zero(), |running, new| running + new)
+}
+
+pub struct KaratsubaSumCheckProof<F: JoltField, ProofTranscript: Transcript> {
+    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
+    eq_claim: F,
+    mle_claims: Vec<F>,
+}
+
+impl<F: JoltField, ProofTranscript: Transcript> KaratsubaSumCheckProof<F, ProofTranscript> {
+    #[tracing::instrument(skip_all, name = "KaratsubaSumCheckProof::prove")]
+    pub fn prove(
+        mle_vec: &mut Vec<&mut MultilinearPolynomial<F>>,
+        r_cycle: &Vec<F>,
+        previous_claim: &mut F,
+        transcript: &mut ProofTranscript,
+    ) -> (Self, Vec<F>) {
+        let d_plus_one = mle_vec.len() + 1;
+
+        let span = tracing::span!(tracing::Level::INFO, "Initialize eq");
+        let _guard = span.enter();
+        let mut eq = MultilinearPolynomial::from(EqPolynomial::evals(&r_cycle));
+        let log_T = r_cycle.len();
+        let mut r: Vec<F> = Vec::with_capacity(r_cycle.len());
+        let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(r_cycle.len());
+        drop(_guard);
+        drop(span);
+
+        let span = tracing::span!(tracing::Level::INFO, "Loop over rounds");
+        let _guard = span.enter();
+
+        for round in 0..r_cycle.len() {
+            let inner_span = tracing::span!(tracing::Level::INFO, "Compute evals");
+            let _guard = inner_span.enter();
+
+            let evals = (0..(log_T - round - 1).pow2())
+                .into_par_iter()
+                .map(|j| {
+                    let mle_evals: Vec<F> = match d_plus_one {
+                        16 => {
+                            // (constant, slope)
+                            let flat: [F; 32] = mle_vec
+                                .iter()
+                                .flat_map(|x| {
+                                    [
+                                        x.get_bound_coeff(j),
+                                        x.get_bound_coeff(j + x.len() / 2) - x.get_bound_coeff(j),
+                                    ]
+                                })
+                                .chain(iter::once(eq.get_bound_coeff(j)))
+                                .chain(iter::once(
+                                    eq.get_bound_coeff(j + eq.len() / 2) - eq.get_bound_coeff(j),
+                                ))
+                                .collect::<Vec<_>>()
+                                .try_into()
+                                .unwrap();
+
+                            let kera_res = coeff_kara_16(&flat);
+
+                            Vec::from(kera_res)
+                        }
+                        _ => unimplemented!(),
+                    };
+
+                    // #[cfg(test)]
+                    // {
+                    //     let eq_evals =
+                    //         eq.sumcheck_evals(j, mle_vec.len() + 1, BindingOrder::HighToLow);
+                    //     let bench_mle_evals = mle_vec
+                    //         .iter()
+                    //         .map(|poly| {
+                    //             poly.sumcheck_evals(j, mle_vec.len() + 1, BindingOrder::HighToLow)
+                    //         })
+                    //         .collect::<Vec<_>>();
+
+                    //     let bench_evals = bench_mle_evals
+                    //         .into_iter()
+                    //         .chain(iter::once(eq_evals))
+                    //         .reduce(|running, new| {
+                    //             running
+                    //                 .iter()
+                    //                 .zip(new.iter())
+                    //                 .map(|(a, b)| *a * b)
+                    //                 .collect::<Vec<_>>()
+                    //         })
+                    //         .unwrap();
+
+                    //     let poly = UniPoly {
+                    //         coeffs: mle_evals.clone(),
+                    //     };
+
+                    //     for i in 0..bench_evals.len() + 1 {
+                    //         if i == 1 {
+                    //             continue;
+                    //         }
+
+                    //         let bench = if i == 0 {
+                    //             bench_evals[0]
+                    //         } else {
+                    //             bench_evals[i - 1]
+                    //         };
+
+                    //         assert_eq!(poly.evaluate(&F::from_u32(i as u32)), bench, "i = {}", i);
+                    //     }
+                    // }
+
+                    mle_evals
+                })
+                .reduce(
+                    || vec![F::zero(); mle_vec.len() + 2],
+                    |running, new| {
+                        running
+                            .iter()
+                            .zip(new.iter())
+                            .map(|(a, b)| *a + b)
+                            .collect::<Vec<_>>()
+                    },
+                );
+
+            assert_eq!(evals.len(), mle_vec.len() + 2);
+
+            drop(_guard);
+            drop(inner_span);
+
+            let inner_span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
+            let _guard = inner_span.enter();
+
+            let univariate_poly = UniPoly { coeffs: evals };
+            let compressed_poly = univariate_poly.compress();
+            compressed_poly.append_to_transcript(transcript);
+            compressed_polys.push(compressed_poly);
+
+            let r_j = transcript.challenge_scalar::<F>();
+            *previous_claim = univariate_poly.evaluate(&r_j);
+            r.push(r_j);
+
+            drop(_guard);
+            drop(inner_span);
+
+            let inner_span = tracing::span!(tracing::Level::INFO, "Bind");
+            let _guard = inner_span.enter();
+
+            rayon::join(
+                || eq.bind_parallel(r_j, BindingOrder::HighToLow),
+                || {
+                    mle_vec
+                        .par_iter_mut()
+                        .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow))
+                },
+            );
+
+            drop(_guard);
+            drop(inner_span);
+        }
+
+        drop(_guard);
+        drop(span);
+
+        (
+            Self {
+                sumcheck_proof: SumcheckInstanceProof::new(compressed_polys),
+                eq_claim: eq.final_sumcheck_claim(),
+                mle_claims: mle_vec
+                    .iter()
+                    .map(|func| func.final_sumcheck_claim())
+                    .collect(),
+            },
+            r,
+        )
+    }
+
+    pub fn verify(
+        &self,
+        r_prime: Vec<F>,
+        claim: F,
+        transcript: &mut ProofTranscript,
+    ) -> Result<(), ProofVerifyError> {
+        let (_sumcheck_claim, _r_sumcheck) = self.sumcheck_proof.verify(
+            claim,
+            r_prime.len(),
+            self.mle_claims.len() + 1,
+            transcript,
+        )?;
+
+        assert_eq!(_r_sumcheck, r_prime);
+        assert_eq!(
+            _sumcheck_claim,
+            self.eq_claim * self.mle_claims.iter().product::<F>()
+        );
+
+        Ok(())
+    }
 }
 
 /// Contains proof for a generic sumcheck of the form
@@ -443,7 +645,8 @@ mod test {
         field::JoltField,
         poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         subprotocols::optimization::{
-            compute_initial_eval_claim, LargeDSumCheckProof, NaiveSumCheckProof,
+            compute_initial_eval_claim, KaratsubaSumCheckProof, LargeDSumCheckProof,
+            NaiveSumCheckProof,
         },
         utils::{
             math::Math,
@@ -519,14 +722,10 @@ mod test {
         eq
     }
 
-    struct TestPerf {
-        naive_duration: Duration,
-        optimized_duration: Duration,
-    }
-
     #[test]
     fn test_large_d_optimization_sumcheck() {
-        large_d_optimization_ra_virtualization::<15>(16, 1 << 10);
+        large_d_optimization_ra_virtualization::<14>(15, 1 << 10);
+        // large_d_optimization_ra_virtualization::<15>(16, 1 << 10);
     }
 
     fn test_func_data(D: usize, T: usize) -> Vec<MultilinearPolynomial<Fr>> {
@@ -636,7 +835,7 @@ mod test {
         assert_eq!(previous_claim, previous_claim_bench);
     }
 
-    fn large_d_optimization_ra_virtualization<const D1: usize>(D: usize, T: usize) -> TestPerf {
+    fn large_d_optimization_ra_virtualization<const D1: usize>(D: usize, T: usize) {
         assert!(T.is_power_of_two(), "T: {T}");
 
         // Compute the sum-check
@@ -644,8 +843,8 @@ mod test {
         // where eq(j, j_1, ..., j_d) = 1 if j = j_1 = ... = j_d and 0 otherwise.
         // let mut ra = test_ra_data(D, T, K);
         let mut ra = test_func_data(D, T);
-
         let mut ra_copy = ra.clone();
+        let mut ra_copy_2 = ra.clone();
 
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
@@ -656,8 +855,11 @@ mod test {
         let mut previous_claim =
             compute_initial_eval_claim(&ra.iter().map(|x| &*x).collect::<Vec<_>>(), &r_cycle);
         let mut previous_claim_copy = previous_claim;
-        let claim_copy = previous_claim_copy.clone();
+        let mut previous_claim_copy_2 = previous_claim;
+
         let claim = previous_claim.clone();
+        let claim_copy = previous_claim_copy.clone();
+        let claim_copy_2 = previous_claim_copy_2.clone();
 
         let start_time = Instant::now();
         let (proof, r_prime) = LargeDSumCheckProof::<Fr, KeccakTranscript>::prove::<D1>(
@@ -666,7 +868,7 @@ mod test {
             &mut previous_claim,
             &mut prover_transcript,
         );
-        let optimized_duration = start_time.elapsed();
+        let _optimized_duration = start_time.elapsed();
 
         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
         verifier_transcript.compare_to(prover_transcript);
@@ -688,7 +890,7 @@ mod test {
             &mut previous_claim_copy,
             &mut prover_transcript,
         );
-        let naive_duration = start_time.elapsed();
+        let _naive_duration = start_time.elapsed();
 
         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
         verifier_transcript.compare_to(prover_transcript);
@@ -700,9 +902,26 @@ mod test {
             "Verification (naive sumcheck) failed: {verification_result:?}"
         );
 
-        TestPerf {
-            naive_duration,
-            optimized_duration,
-        }
+        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+        let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
+
+        let start_time = Instant::now();
+        let (proof, r_prime) = KaratsubaSumCheckProof::<Fr, KeccakTranscript>::prove(
+            &mut ra_copy_2.iter_mut().collect::<Vec<_>>(),
+            &r_cycle,
+            &mut previous_claim_copy_2,
+            &mut prover_transcript,
+        );
+        let _karatsuba_duration = start_time.elapsed();
+
+        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+        verifier_transcript.compare_to(prover_transcript);
+        let _r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
+
+        let verification_result = proof.verify(r_prime, claim_copy_2, &mut verifier_transcript);
+        assert!(
+            verification_result.is_ok(),
+            "Verification (naive sumcheck) failed: {verification_result:?}"
+        );
     }
 }
