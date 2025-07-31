@@ -365,7 +365,7 @@ impl<F: JoltField> PrefixPolynomial<F> for OperandPolynomial<F> {
     }
 }
 
-/// Polynomial that unmaps RAM addresses: k -> (k-1)*4 + start_address
+/// Polynomial that unmaps RAM addresses: k -> (k-1)*8 + start_address
 pub struct UnmapRamAddressPolynomial<F: JoltField> {
     start_address: u64,
     int_poly: IdentityPolynomial<F>,
@@ -373,7 +373,7 @@ pub struct UnmapRamAddressPolynomial<F: JoltField> {
 
 impl<F: JoltField> UnmapRamAddressPolynomial<F> {
     pub fn new(num_vars: usize, start_address: u64) -> Self {
-        assert!(start_address > 4);
+        assert!(start_address > 8);
         UnmapRamAddressPolynomial {
             start_address,
             int_poly: IdentityPolynomial::new(num_vars),
@@ -396,13 +396,13 @@ impl<F: JoltField> PolynomialBinding<F> for UnmapRamAddressPolynomial<F> {
     }
 
     fn final_sumcheck_claim(&self) -> F {
-        self.int_poly.final_sumcheck_claim().mul_u64(4) + F::from_u64(self.start_address - 4)
+        self.int_poly.final_sumcheck_claim().mul_u64(8) + F::from_u64(self.start_address - 8)
     }
 }
 
 impl<F: JoltField> PolynomialEvaluation<F> for UnmapRamAddressPolynomial<F> {
     fn evaluate(&self, r: &[F]) -> F {
-        self.int_poly.evaluate(r).mul_u64(4) + F::from_u64(self.start_address - 4)
+        self.int_poly.evaluate(r).mul_u64(8) + F::from_u64(self.start_address - 8)
     }
 
     fn batch_evaluate(_polys: &[&Self], _r: &[F]) -> (Vec<F>, Vec<F>) {
@@ -413,7 +413,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for UnmapRamAddressPolynomial<F> {
         let evals = self.int_poly.sumcheck_evals(index, degree, order);
         evals
             .into_iter()
-            .map(|l| l.mul_u64(4) + F::from_u64(self.start_address - 4))
+            .map(|l| l.mul_u64(8) + F::from_u64(self.start_address - 8))
             .collect()
     }
 }
@@ -495,25 +495,25 @@ mod tests {
         let unmap_poly = UnmapRamAddressPolynomial::<Fr>::new(NUM_VARS, START_ADDRESS);
 
         // Test a few specific points
-        // k=0 should map to start_address - 4
+        // k=0 should map to start_address - 8
         let point_0 = vec![Fr::ZERO; NUM_VARS];
-        assert_eq!(unmap_poly.evaluate(&point_0), Fr::from(START_ADDRESS - 4));
+        assert_eq!(unmap_poly.evaluate(&point_0), Fr::from(START_ADDRESS - 8));
 
         // k=1 should map to start_address
         let mut point_1 = vec![Fr::ZERO; NUM_VARS];
         point_1[NUM_VARS - 1] = Fr::ONE;
         assert_eq!(unmap_poly.evaluate(&point_1), Fr::from(START_ADDRESS));
 
-        // k=2 should map to start_address + 4
+        // k=2 should map to start_address + 8
         let mut point_2 = vec![Fr::ZERO; NUM_VARS];
         point_2[NUM_VARS - 2] = Fr::ONE;
-        assert_eq!(unmap_poly.evaluate(&point_2), Fr::from(START_ADDRESS + 4));
+        assert_eq!(unmap_poly.evaluate(&point_2), Fr::from(START_ADDRESS + 8));
 
-        // k=3 should map to start_address + 8
+        // k=3 should map to start_address + 16
         let mut point_3 = vec![Fr::ZERO; NUM_VARS];
         point_3[NUM_VARS - 1] = Fr::ONE;
         point_3[NUM_VARS - 2] = Fr::ONE;
-        assert_eq!(unmap_poly.evaluate(&point_3), Fr::from(START_ADDRESS + 8));
+        assert_eq!(unmap_poly.evaluate(&point_3), Fr::from(START_ADDRESS + 16));
     }
 
     #[test]
@@ -635,7 +635,7 @@ mod tests {
                 Fr::from(
                     (k as u64)
                         .wrapping_sub(1)
-                        .wrapping_mul(4)
+                        .wrapping_mul(8)
                         .wrapping_add(START_ADDRESS),
                 )
             })

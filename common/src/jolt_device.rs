@@ -58,7 +58,7 @@ impl JoltDevice {
                 self.outputs[internal_address]
             }
         } else {
-            assert!(address <= RAM_START_ADDRESS - 4);
+            assert!(address <= RAM_START_ADDRESS - 8);
             0 // zero-padding
         }
     }
@@ -193,27 +193,27 @@ impl MemoryLayout {
                     }
                 }
             }
-        } // Must be word-aligned
+        } // Must be 8-byte aligned
 
-        let max_input_size = align_up(config.max_input_size, 4);
-        let max_output_size = align_up(config.max_output_size, 4);
-        let stack_size = align_up(config.stack_size, 4);
-        let memory_size = align_up(config.memory_size, 4);
+        let max_input_size = align_up(config.max_input_size, 8);
+        let max_output_size = align_up(config.max_output_size, 8);
+        let stack_size = align_up(config.stack_size, 8);
+        let memory_size = align_up(config.memory_size, 8);
 
-        // Adds 8 to account for panic bit and termination bit
-        // (they each occupy one full 4-byte word)
+        // Adds 16 to account for panic bit and termination bit
+        // (they each occupy one full 8-byte word)
         let io_region_bytes = max_input_size
             .checked_add(max_output_size)
-            .and_then(|s| s.checked_add(8))
+            .and_then(|s| s.checked_add(16))
             .expect("I/O region size overflow");
 
         // Padded so that the witness index corresponding to `input_start`
         // has the form 0b11...100...0
-        let io_region_words = (io_region_bytes / 4).next_power_of_two();
-        // let io_region_words = (io_region_bytes / 4 + 1).next_power_of_two() - 1;
+        let io_region_words = (io_region_bytes / 8).next_power_of_two();
+        // let io_region_words = (io_region_bytes / 8 + 1).next_power_of_two() - 1;
 
         let io_bytes = io_region_words
-            .checked_mul(4)
+            .checked_mul(8)
             .expect("I/O region byte count overflow");
         let input_start = RAM_START_ADDRESS
             .checked_sub(io_bytes)
@@ -226,8 +226,8 @@ impl MemoryLayout {
             .checked_add(max_output_size)
             .expect("output_end overflow");
         let panic = output_end;
-        let termination = panic.checked_add(4).expect("termination overflow");
-        let io_end = termination.checked_add(4).expect("io_end overflow");
+        let termination = panic.checked_add(8).expect("termination overflow");
+        let io_end = termination.checked_add(8).expect("io_end overflow");
 
         let bytecode_size = config.bytecode_size.unwrap();
         // stack grows downwards (decreasing addresses) from the bytecode_end + stack_size up to bytecode_end

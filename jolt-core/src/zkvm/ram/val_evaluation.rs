@@ -46,7 +46,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
     #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         K: usize,
-        initial_ram_state: &[u32],
+        initial_ram_state: &[u64],
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         let (preprocessing, trace, program_io, _) = state_manager.get_prover_data();
@@ -115,7 +115,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
 
     pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         K: usize,
-        initial_ram_state: &[u32],
+        initial_ram_state: &[u64],
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         let (_, _, T) = state_manager.get_verifier_data();

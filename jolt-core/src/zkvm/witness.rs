@@ -314,23 +314,23 @@ impl CommittedPolynomial {
                 ))
             }
             CommittedPolynomial::RdInc => {
-                let coeffs: Vec<i64> = trace
+                let coeffs: Vec<i128> = trace
                     .par_iter()
                     .map(|cycle| {
                         let (_, pre_value, post_value) = cycle.rd_write();
-                        post_value as i64 - pre_value as i64
+                        post_value as i128 - pre_value as i128
                     })
                     .collect();
                 coeffs.into()
             }
             CommittedPolynomial::RamInc => {
-                let coeffs: Vec<i64> = trace
+                let coeffs: Vec<i128> = trace
                     .par_iter()
                     .map(|cycle| {
                         let ram_op = cycle.ram_access();
                         match ram_op {
                             tracer::instruction::RAMAccess::Write(write) => {
-                                write.post_value as i64 - write.pre_value as i64
+                                write.post_value as i128 - write.pre_value as i128
                             }
                             _ => 0,
                         }

@@ -67,7 +67,7 @@ struct ReadWriteCheckingProverState<F: JoltField> {
 impl<F: JoltField> ReadWriteCheckingProverState<F> {
     #[tracing::instrument(skip_all, name = "RamReadWriteCheckingProverState::initialize")]
     fn initialize<PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript>(
-        initial_memory_state: &[u32],
+        initial_memory_state: &[u64],
         K: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
@@ -323,7 +323,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         K: usize,
         T: usize,
-        initial_memory_state: &[u32],
+        initial_memory_state: &[u64],
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         let gamma = state_manager.transcript.borrow_mut().challenge_scalar();
