@@ -206,8 +206,56 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                 );
 
             univariate_poly_evals.to_vec()
+        } else if round == polynomial.K.log_2() {
+            // First t-variable round: use F directly without initializing H
+            let B = &shared_eq.B;
+            let d_gruen = &shared_eq.D;
+            let F = &shared_eq.F;
+            
+            // Compute using F directly for the first t-variable round
+            let gruen_eval_0 = if d_gruen.E_in_current_len() == 1 {
+                // E_in is fully bound
+                (0..d_gruen.len() / 2)
+                    .into_par_iter()
+                    .map(|j| {
+                        let d_eval = d_gruen.E_out_current()[j];
+                        // Use F directly instead of H
+                        let f_eval = polynomial.nonzero_indices.as_ref().unwrap()[j]
+                            .map_or(F::zero(), |k| F[k]);
+                        d_eval * f_eval
+                    })
+                    .sum()
+            } else {
+                // E_in has not been fully bound
+                let num_x_out = d_gruen.E_out_current_len();
+                let num_x_out_bits = num_x_out.log_2();
+                let d_e_in = d_gruen.E_in_current();
+                let d_e_out = d_gruen.E_out_current();
+                let max_j = d_gruen.len() / 2;
+
+                (0..max_j)
+                    .into_par_iter()
+                    .map(|j| {
+                        let x_out = j & ((1 << num_x_out_bits) - 1);
+                        let x_in = j >> num_x_out_bits;
+                        // Use F directly instead of H
+                        let f_eval = polynomial.nonzero_indices.as_ref().unwrap()[j]
+                            .map_or(F::zero(), |k| F[k]);
+                        d_e_in[x_in] * d_e_out[x_out] * f_eval
+                    })
+                    .sum()
+            };
+
+            let eq_r_address_claim = B.final_sumcheck_claim();
+            let gruen_univariate_evals: [F; 2] =
+                d_gruen.gruen_evals_deg_2(gruen_eval_0, previous_claim / eq_r_address_claim);
+
+            vec![
+                eq_r_address_claim * gruen_univariate_evals[0],
+                eq_r_address_claim * gruen_univariate_evals[1],
+            ]
         } else {
-            // Last log(T) rounds of sumcheck - uses Gruen x Dao-Thaler optimizations
+            // Subsequent t-variable rounds: use H as before
             let H = polynomial.H.as_ref().unwrap();
             let B = &shared_eq.B;
             let d_gruen = &shared_eq.D;
@@ -265,17 +313,29 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                 shared_eq.num_variables_bound += 1;
             }
 
-            if round == polynomial.K.log_2() - 1 {
+            // H initialization moved to after first t-variable round
+        } else {
+            // Last log(T) rounds of sumcheck
+            
+            if round == polynomial.K.log_2() {
+                // First t-variable round: initialize H with special binding
                 let F = &shared_eq.F;
-                // Transition point; initialize H
-                let nonzero_indices = polynomial
-                    .nonzero_indices
-                    .take()
-                    .expect("nonzero_indices not initialized");
+                let T = polynomial.nonzero_indices.as_ref().unwrap().len();
+                let half_T = T / 2;
+                
+                // Initialize H by applying the binding relation:
+                // H[j] = H[0, j] + r(H[1, j] - H[0, j])
+                // where H[0, j] = F[k_j] and H[1, j] = F[k_{j+T/2}]
                 polynomial.H = Some(DensePolynomial::new(
-                    nonzero_indices
-                        .par_iter()
-                        .map(|&k| k.map_or(F::zero(), |k| F[k]))
+                    (0..half_T)
+                        .into_par_iter()
+                        .map(|j| {
+                            let h_0 = polynomial.nonzero_indices.as_ref().unwrap()[j]
+                                .map_or(F::zero(), |k| F[k]);
+                            let h_1 = polynomial.nonzero_indices.as_ref().unwrap()[j + half_T]
+                                .map_or(F::zero(), |k| F[k]);
+                            h_0 + r * (h_1 - h_0)
+                        })
                         .collect::<Vec<_>>(),
                 ));
 
@@ -284,24 +344,30 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                     drop_in_background_thread(g);
                 }
 
-                drop_in_background_thread(nonzero_indices);
-
+                // Explicitly drop the lock before re-acquiring
                 drop(shared_eq);
                 self.eq_state.lock().unwrap().D_coeffs_for_G = None;
+                
+                let mut shared_eq = self.eq_state.lock().unwrap();
+                if num_variables_bound <= round {
+                    shared_eq.D.bind(r);
+                    shared_eq.num_variables_bound += 1;
+                }
+            } else {
+                if num_variables_bound <= round {
+                    shared_eq.D.bind(r);
+                    shared_eq.num_variables_bound += 1;
+                }
             }
-        } else {
-            // Last log(T) rounds of sumcheck
-            if num_variables_bound <= round {
-                shared_eq.D.bind(r);
 
-                shared_eq.num_variables_bound += 1;
+            // Only bind H in subsequent rounds
+            if round > polynomial.K.log_2() {
+                polynomial
+                    .H
+                    .as_mut()
+                    .unwrap()
+                    .bind_parallel(r, BindingOrder::HighToLow)
             }
-
-            polynomial
-                .H
-                .as_mut()
-                .unwrap()
-                .bind_parallel(r, BindingOrder::HighToLow)
         }
     }
 
