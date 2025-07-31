@@ -7,6 +7,7 @@ use movsign::MovsignTable;
 use not_equal::NotEqualTable;
 use or::OrTable;
 use pow2::Pow2Table;
+use pow2_w::Pow2WTable;
 use prefixes::PrefixEval;
 use range_check::RangeCheckTable;
 use serde::{Deserialize, Serialize};
@@ -72,6 +73,7 @@ pub mod movsign;
 pub mod not_equal;
 pub mod or;
 pub mod pow2;
+pub mod pow2_w;
 pub mod range_check;
 pub mod shift_right_bitmask;
 pub mod sign_extend_half_word;
@@ -120,6 +122,7 @@ pub enum LookupTables<const WORD_SIZE: usize> {
     LowerHalfWord(LowerHalfWordTable<WORD_SIZE>),
     SignExtendHalfWord(SignExtendHalfWordTable<WORD_SIZE>),
     Pow2(Pow2Table<WORD_SIZE>),
+    Pow2W(Pow2WTable<WORD_SIZE>),
     ShiftRightBitmask(ShiftRightBitmaskTable<WORD_SIZE>),
     VirtualSRL(VirtualSRLTable<WORD_SIZE>),
     VirtualSRA(VirtualSRATable<WORD_SIZE>),
@@ -157,6 +160,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::LowerHalfWord(table) => table.materialize(),
             LookupTables::SignExtendHalfWord(table) => table.materialize(),
             LookupTables::Pow2(table) => table.materialize(),
+            LookupTables::Pow2W(table) => table.materialize(),
             LookupTables::ShiftRightBitmask(table) => table.materialize(),
             LookupTables::VirtualSRL(table) => table.materialize(),
             LookupTables::VirtualSRA(table) => table.materialize(),
@@ -187,6 +191,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::LowerHalfWord(table) => table.materialize_entry(index),
             LookupTables::SignExtendHalfWord(table) => table.materialize_entry(index),
             LookupTables::Pow2(table) => table.materialize_entry(index),
+            LookupTables::Pow2W(table) => table.materialize_entry(index),
             LookupTables::ShiftRightBitmask(table) => table.materialize_entry(index),
             LookupTables::VirtualSRL(table) => table.materialize_entry(index),
             LookupTables::VirtualSRA(table) => table.materialize_entry(index),
@@ -217,6 +222,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::LowerHalfWord(table) => table.evaluate_mle(r),
             LookupTables::SignExtendHalfWord(table) => table.evaluate_mle(r),
             LookupTables::Pow2(table) => table.evaluate_mle(r),
+            LookupTables::Pow2W(table) => table.evaluate_mle(r),
             LookupTables::ShiftRightBitmask(table) => table.evaluate_mle(r),
             LookupTables::VirtualSRL(table) => table.evaluate_mle(r),
             LookupTables::VirtualSRA(table) => table.evaluate_mle(r),
@@ -247,6 +253,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::LowerHalfWord(table) => table.suffixes(),
             LookupTables::SignExtendHalfWord(table) => table.suffixes(),
             LookupTables::Pow2(table) => table.suffixes(),
+            LookupTables::Pow2W(table) => table.suffixes(),
             LookupTables::ShiftRightBitmask(table) => table.suffixes(),
             LookupTables::VirtualSRL(table) => table.suffixes(),
             LookupTables::VirtualSRA(table) => table.suffixes(),
@@ -281,6 +288,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::LowerHalfWord(table) => table.combine(prefixes, suffixes),
             LookupTables::SignExtendHalfWord(table) => table.combine(prefixes, suffixes),
             LookupTables::Pow2(table) => table.combine(prefixes, suffixes),
+            LookupTables::Pow2W(table) => table.combine(prefixes, suffixes),
             LookupTables::ShiftRightBitmask(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualSRL(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualSRA(table) => table.combine(prefixes, suffixes),

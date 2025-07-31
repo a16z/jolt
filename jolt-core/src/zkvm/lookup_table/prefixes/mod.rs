@@ -9,6 +9,7 @@ use num_derive::FromPrimitive;
 use positive_remainder_equals_divisor::PositiveRemainderEqualsDivisorPrefix;
 use positive_remainder_less_than_divisor::PositiveRemainderLessThanDivisorPrefix;
 use pow2::Pow2Prefix;
+use pow2_w::Pow2WPrefix;
 use rayon::prelude::*;
 use right_shift::RightShiftPrefix;
 use sign_extension::SignExtensionPrefix;
@@ -51,6 +52,7 @@ pub mod or;
 pub mod positive_remainder_equals_divisor;
 pub mod positive_remainder_less_than_divisor;
 pub mod pow2;
+pub mod pow2_w;
 pub mod right_is_zero;
 pub mod right_msb;
 pub mod right_shift;
@@ -121,6 +123,7 @@ pub enum Prefixes {
     NegativeDivisorGreaterThanRemainder,
     Lsb,
     Pow2,
+    Pow2W,
     RightShift,
     SignExtension,
     LeftShift,
@@ -224,6 +227,7 @@ impl Prefixes {
             }
             Prefixes::Lsb => LsbPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::Pow2 => Pow2Prefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::Pow2W => Pow2WPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::RightShift => RightShiftPrefix::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::SignExtension => {
                 SignExtensionPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
@@ -365,6 +369,9 @@ impl Prefixes {
             }
             Prefixes::Pow2 => {
                 Pow2Prefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::Pow2W => {
+                Pow2WPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
             Prefixes::RightShift => {
                 RightShiftPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j)

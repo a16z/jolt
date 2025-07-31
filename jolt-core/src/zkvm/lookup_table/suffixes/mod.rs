@@ -9,6 +9,7 @@ use lt::LessThanSuffix;
 use num_derive::FromPrimitive;
 use or::OrSuffix;
 use pow2::Pow2Suffix;
+use pow2_w::Pow2WSuffix;
 use right_is_zero::RightOperandIsZeroSuffix;
 use right_shift::RightShiftSuffix;
 use right_shift_helper::RightShiftHelperSuffix;
@@ -38,6 +39,7 @@ pub mod lt;
 pub mod one;
 pub mod or;
 pub mod pow2;
+pub mod pow2_w;
 pub mod right_is_zero;
 pub mod right_shift;
 pub mod right_shift_helper;
@@ -73,6 +75,7 @@ pub enum Suffixes {
     Lsb,
     DivByZero,
     Pow2,
+    Pow2W,
     RightShiftPadding,
     RightShift,
     RightShiftHelper,
@@ -104,6 +107,7 @@ impl Suffixes {
             Suffixes::Lsb => LsbSuffix::suffix_mle(b),
             Suffixes::DivByZero => DivByZeroSuffix::suffix_mle(b),
             Suffixes::Pow2 => Pow2Suffix::<WORD_SIZE>::suffix_mle(b),
+            Suffixes::Pow2W => Pow2WSuffix::<WORD_SIZE>::suffix_mle(b),
             Suffixes::RightShiftPadding => RightShiftPaddingSuffix::<WORD_SIZE>::suffix_mle(b),
             Suffixes::RightShift => RightShiftSuffix::suffix_mle(b),
             Suffixes::RightShiftHelper => RightShiftHelperSuffix::suffix_mle(b),
