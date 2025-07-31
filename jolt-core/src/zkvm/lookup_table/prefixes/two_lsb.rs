@@ -1,4 +1,5 @@
 use crate::zkvm::instruction_lookups::read_raf_checking::current_suffix_len;
+use crate::zkvm::lookup_table::prefixes::Prefixes;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
 use super::{PrefixCheckpoint, SparseDensePrefix};
@@ -30,15 +31,15 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for TwoLsbPrefix
     }
 
     fn update_prefix_checkpoint(
-        _: &[PrefixCheckpoint<F>],
+        checkpoints: &[PrefixCheckpoint<F>],
         r_x: F,
         r_y: F,
         j: usize,
     ) -> PrefixCheckpoint<F> {
         if j == 2 * WORD_SIZE - 1 {
-            Some(r_x * r_y).into()
+            Some((F::one() - r_x) * (F::one() - r_y)).into()
         } else {
-            Some(F::one()).into()
+            checkpoints[Prefixes::TwoLsb].into()
         }
     }
 }

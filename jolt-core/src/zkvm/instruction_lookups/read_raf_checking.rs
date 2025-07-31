@@ -831,6 +831,7 @@ mod tests {
             RV32IMCycle::VirtualAdvice(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualAssertEQ(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualAssertHalfwordAlignment(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualAssertWordAlignment(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualAssertLTE(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualAssertValidDiv0(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualAssertValidSignedRemainder(cycle) => cycle.random(rng).into(),
@@ -840,12 +841,16 @@ mod tests {
             RV32IMCycle::VirtualMULI(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualPow2(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualPow2I(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualPow2W(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualPow2IW(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualShiftRightBitmask(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualShiftRightBitmaskI(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualSRA(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualSRAI(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualSRL(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualSRLI(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualExtend(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualSignExtend(cycle) => cycle.random(rng).into(),
             _ => RV32IMCycle::NoOp,
         }
     }
@@ -1154,6 +1159,13 @@ mod tests {
     }
 
     #[test]
+    fn test_assertwordalignment() {
+        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualAssertWordAlignment(
+            Default::default(),
+        )));
+    }
+
+    #[test]
     fn test_assertlte() {
         test_read_raf_sumcheck(Some(RV32IMCycle::VirtualAssertLTE(Default::default())));
     }
@@ -1205,6 +1217,16 @@ mod tests {
     }
 
     #[test]
+    fn test_pow2w() {
+        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualPow2W(Default::default())));
+    }
+
+    #[test]
+    fn test_pow2iw() {
+        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualPow2IW(Default::default())));
+    }
+
+    #[test]
     fn test_shiftrightbitmask() {
         test_read_raf_sumcheck(Some(RV32IMCycle::VirtualShiftRightBitmask(
             Default::default(),
@@ -1241,5 +1263,15 @@ mod tests {
     #[test]
     fn test_virtualsrli() {
         test_read_raf_sumcheck(Some(RV32IMCycle::VirtualSRLI(Default::default())));
+    }
+
+    #[test]
+    fn test_virtualextend() {
+        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualExtend(Default::default())));
+    }
+
+    #[test]
+    fn test_virtualsignextend() {
+        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualSignExtend(Default::default())));
     }
 }

@@ -25,7 +25,7 @@ impl VirtualAssertWordAlignment {
         let address = cpu.x[self.operands.rs1] + self.operands.imm;
         assert!(
             address & 3 == 0,
-            "RAM access (LW or LWU) is not halfword aligned: {address:x}"
+            "RAM access (LW or LWU) is not word aligned: {address:x}"
         );
     }
 }
