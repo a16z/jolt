@@ -102,10 +102,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
     }
 
     pub fn initialize(&mut self, mut polynomial: OneHotPolynomial<F>) {
-        let nonzero_indices = polynomial
-            .nonzero_indices
-            .as_ref()
-            .expect("nonzero_indices not initialized");
+        let nonzero_indices = polynomial.nonzero_indices.as_ref().unwrap();
         let T = nonzero_indices.len();
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = (T / num_chunks).max(1);
@@ -211,7 +208,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             let B = &shared_eq.B;
             let d_gruen = &shared_eq.D;
             let F = &shared_eq.F;
-            
+
             // Compute using F directly for the first t-variable round
             let gruen_eval_0 = if d_gruen.E_in_current_len() == 1 {
                 // E_in is fully bound
@@ -316,13 +313,13 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             // H initialization moved to after first t-variable round
         } else {
             // Last log(T) rounds of sumcheck
-            
+
             if round == polynomial.K.log_2() {
                 // First t-variable round: initialize H with special binding
                 let F = &shared_eq.F;
                 let T = polynomial.nonzero_indices.as_ref().unwrap().len();
                 let half_T = T / 2;
-                
+
                 // Initialize H by applying the binding relation:
                 // H[j] = H[0, j] + r(H[1, j] - H[0, j])
                 // where H[0, j] = F[k_j] and H[1, j] = F[k_{j+T/2}]
@@ -347,17 +344,15 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                 // Explicitly drop the lock before re-acquiring
                 drop(shared_eq);
                 self.eq_state.lock().unwrap().D_coeffs_for_G = None;
-                
+
                 let mut shared_eq = self.eq_state.lock().unwrap();
                 if num_variables_bound <= round {
                     shared_eq.D.bind(r);
                     shared_eq.num_variables_bound += 1;
                 }
-            } else {
-                if num_variables_bound <= round {
-                    shared_eq.D.bind(r);
-                    shared_eq.num_variables_bound += 1;
-                }
+            } else if num_variables_bound <= round {
+                shared_eq.D.bind(r);
+                shared_eq.num_variables_bound += 1;
             }
 
             // Only bind H in subsequent rounds
@@ -380,36 +375,20 @@ impl<F: JoltField> OneHotPolynomial<F> {
     /// The number of rows in the coefficient matrix used to
     /// commit to this polynomial using Dory
     pub fn num_rows(&self) -> usize {
-        let T = self
-            .nonzero_indices
-            .as_ref()
-            .expect("nonzero_indices not initialized")
-            .len() as u128;
+        let T = self.nonzero_indices.as_ref().unwrap().len() as u128;
         let row_length = DoryGlobals::get_num_columns() as u128;
         (T * self.K as u128 / row_length) as usize
     }
 
     pub fn get_num_vars(&self) -> usize {
-        self.K.log_2()
-            + self
-                .nonzero_indices
-                .as_ref()
-                .expect("nonzero_indices not initialized")
-                .len()
-                .log_2()
+        self.K.log_2() + self.nonzero_indices.as_ref().unwrap().len().log_2()
     }
 
     #[cfg(test)]
     fn to_dense_poly(&self) -> DensePolynomial<F> {
         let T = DoryGlobals::get_T();
         let mut dense_coeffs: Vec<F> = vec![F::zero(); self.K * T];
-        for (t, k) in self
-            .nonzero_indices
-            .as_ref()
-            .expect("nonzero_indices not initialized")
-            .iter()
-            .enumerate()
-        {
+        for (t, k) in self.nonzero_indices.as_ref().unwrap().iter().enumerate() {
             if let Some(k) = k {
                 dense_coeffs[k * T + t] = F::one();
             }
@@ -460,7 +439,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
             let chunk_commitments: Vec<Vec<_>> = self
                 .nonzero_indices
                 .as_ref()
-                .expect("nonzero_indices not initialized")
+                .unwrap()
                 .par_chunks(row_len)
                 .map(|chunk| {
                     let mut row_commitments = vec![JoltGroupWrapper(G::zero()); self.K];
@@ -498,13 +477,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
                     let min_row_index = chunk_index * chunk_size;
                     let max_row_index = min_row_index + chunk_size;
 
-                    for (t, k) in self
-                        .nonzero_indices
-                        .as_ref()
-                        .expect("nonzero_indices not initialized")
-                        .iter()
-                        .enumerate()
-                    {
+                    for (t, k) in self.nonzero_indices.as_ref().unwrap().iter().enumerate() {
                         if let Some(k) = k {
                             let global_index = *k as u64 * T as u64 + t as u64;
                             let row_index = (global_index / row_len as u64) as usize;
@@ -540,11 +513,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
                 .for_each(|(col_index, dest)| {
                     let mut col_dot_product = F::zero();
                     for (row_offset, t) in (col_index..T).step_by(row_len).enumerate() {
-                        if let Some(k) = self
-                            .nonzero_indices
-                            .as_ref()
-                            .expect("nonzero_indices not initialized")[t]
-                        {
+                        if let Some(k) = self.nonzero_indices.as_ref().unwrap()[t] {
                             let row_index = k * rows_per_k + row_offset;
                             col_dot_product += left_vec[row_index];
                         }
@@ -561,13 +530,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
                 .for_each(|(chunk_index, chunk)| {
                     let min_col_index = chunk_index * chunk_size;
                     let max_col_index = min_col_index + chunk_size;
-                    for (t, k) in self
-                        .nonzero_indices
-                        .as_ref()
-                        .expect("nonzero_indices not initialized")
-                        .iter()
-                        .enumerate()
-                    {
+                    for (t, k) in self.nonzero_indices.as_ref().unwrap().iter().enumerate() {
                         if let Some(k) = k {
                             let global_index = *k as u128 * T as u128 + t as u128;
                             let col_index = (global_index % row_len as u128) as usize;

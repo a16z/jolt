@@ -1,7 +1,5 @@
-use std::{cell::RefCell, rc::Rc};
-
-use common::jolt_device::MemoryLayout;
 use rayon::prelude::*;
+use std::{cell::RefCell, rc::Rc};
 
 use crate::{
     field::JoltField,
@@ -52,7 +50,6 @@ pub struct BooleanitySumcheck<F: JoltField> {
     prover_state: Option<BooleanityProverState<F>>,
     current_round: usize,
     addresses: Option<Vec<Option<u64>>>,
-    memory_layout: Option<MemoryLayout>,
 }
 
 impl<F: JoltField> BooleanitySumcheck<F> {
@@ -160,7 +157,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             prover_state: Some(prover_state),
             current_round: 0,
             addresses: Some(addresses),
-            memory_layout: Some(memory_layout.clone()),
         }
     }
 
@@ -168,8 +164,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         K: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (_, program_io, T) = state_manager.get_verifier_data();
-        let memory_layout = &program_io.memory_layout;
+        let (_, _, T) = state_manager.get_verifier_data();
 
         // Calculate D dynamically such that 2^8 = K^(1/D)
         let d = compute_d_parameter(K);
@@ -200,7 +195,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             prover_state: None,
             current_round: 0,
             addresses: None,
-            memory_layout: Some(memory_layout.clone()),
         }
     }
 }
@@ -285,12 +279,9 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
                     drop_in_background_thread(f);
                 }
 
-                // Drop addresses and memory_layout as they're no longer needed in phase 2
+                // Drop addresses as it's no longer needed in phase 2
                 if let Some(addresses) = self.addresses.take() {
                     drop_in_background_thread(addresses);
-                }
-                if let Some(memory_layout) = self.memory_layout.take() {
-                    drop_in_background_thread(memory_layout);
                 }
             }
         } else {
