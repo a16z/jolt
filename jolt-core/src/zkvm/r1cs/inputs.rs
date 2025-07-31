@@ -119,7 +119,7 @@ impl TryFrom<JoltR1CSInputs> for OpeningId {
 
 /// This const serves to define a canonical ordering over inputs (and thus indices
 /// for each input). This is needed for sumcheck.
-pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 40] = [
+pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 41] = [
     JoltR1CSInputs::LeftInstructionInput,
     JoltR1CSInputs::RightInstructionInput,
     JoltR1CSInputs::Product,
@@ -160,6 +160,7 @@ pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 40] = [
     JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC),
     JoltR1CSInputs::OpFlags(CircuitFlags::Advice),
     JoltR1CSInputs::OpFlags(CircuitFlags::IsNoop),
+    JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed),
 ];
 
 /// The subset of `ALL_R1CS_INPUTS` that are committed. The rest of

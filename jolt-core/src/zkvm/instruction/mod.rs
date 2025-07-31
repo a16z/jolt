@@ -76,6 +76,8 @@ pub enum CircuitFlags {
     Advice,
     /// Is noop instruction
     IsNoop,
+    /// Is a compressed instruction (i.e. increase UnexpandedPc by 2 only)
+    IsCompressed,
 }
 
 pub const NUM_CIRCUIT_FLAGS: usize = CircuitFlags::COUNT;
