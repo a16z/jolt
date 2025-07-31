@@ -181,7 +181,7 @@ impl SW {
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
-        sequence.push(srli.into()); // v_mask gets 0x00000000_FFFFFFFF
+        sequence.extend(srli.virtual_sequence(Xlen::Bit64)); // v_mask gets 0x00000000_FFFFFFFF
         virtual_sequence_remaining -= 1;
 
         let sll_mask = SLL {

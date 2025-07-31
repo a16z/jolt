@@ -133,7 +133,7 @@ pub fn amo_post64(
         },
         virtual_sequence_remaining: Some(remaining),
     };
-    sequence.push(srli.into()); // v_mask gets 0x00000000_FFFFFFFF
+    sequence.extend(srli.virtual_sequence(Xlen::Bit64)); // v_mask gets 0x00000000_FFFFFFFF
     remaining -= 1;
 
     let sll_mask = SLL {

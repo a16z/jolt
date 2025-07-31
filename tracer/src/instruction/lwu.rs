@@ -162,7 +162,7 @@ impl LWU {
             },
             virtual_sequence_remaining: Some(0),
         };
-        sequence.push(srli.into());
+        sequence.extend(srli.virtual_sequence(xlen));
 
         sequence
     }
