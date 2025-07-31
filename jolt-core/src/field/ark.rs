@@ -61,35 +61,27 @@ impl JoltField for ark_bn254::Fr {
 
     #[inline]
     fn from_u64(n: u64) -> Self {
-        // The new `from_u64` is faster than doing 4 lookups & adding them together
-        // but it's slower than doing <=2 lookups & adding them together (if n fits in u16 or u32)
-        if n <= u16::MAX as u64 {
-            <Self as JoltField>::from_u16(n as u16)
-        } else if n <= u32::MAX as u64 {
-            <Self as JoltField>::from_u32(n as u32)
-        } else {
-            <Self as ark_ff::PrimeField>::from_u64(n).unwrap()
-        }
+        <Self as ark_ff::PrimeField>::from_u64(n).unwrap()
     }
 
     fn from_i64(val: i64) -> Self {
         if val.is_negative() {
             let val = (-val) as u64;
             if val <= u16::MAX as u64 {
-                -<Self as JoltField>::from_u16(val as u16)
+                -<Self as ark_ff::PrimeField>::from_u64(val as u64).unwrap()
             } else if val <= u32::MAX as u64 {
-                -<Self as JoltField>::from_u32(val as u32)
+                -<Self as ark_ff::PrimeField>::from_u64(val as u64).unwrap()
             } else {
-                -<Self as JoltField>::from_u64(val)
+                -<Self as ark_ff::PrimeField>::from_u64(val).unwrap()
             }
         } else {
             let val = val as u64;
             if val <= u16::MAX as u64 {
-                <Self as JoltField>::from_u16(val as u16)
+                <Self as ark_ff::PrimeField>::from_u64(val as u64).unwrap()
             } else if val <= u32::MAX as u64 {
-                <Self as JoltField>::from_u32(val as u32)
+                <Self as ark_ff::PrimeField>::from_u64(val as u64).unwrap()
             } else {
-                <Self as JoltField>::from_u64(val)
+                <Self as ark_ff::PrimeField>::from_u64(val).unwrap()
             }
         }
     }
@@ -98,11 +90,11 @@ impl JoltField for ark_bn254::Fr {
         if val.is_negative() {
             let val = (-val) as u128;
             if val <= u16::MAX as u128 {
-                -<Self as JoltField>::from_u16(val as u16)
+                -<Self as ark_ff::PrimeField>::from_u64(val as u64).unwrap()
             } else if val <= u32::MAX as u128 {
-                -<Self as JoltField>::from_u32(val as u32)
+                -<Self as ark_ff::PrimeField>::from_u64(val as u64).unwrap()
             } else if val <= u64::MAX as u128 {
-                -<Self as JoltField>::from_u64(val as u64)
+                -<Self as ark_ff::PrimeField>::from_u64(val as u64).unwrap()
             } else {
                 let bigint = BigInt::new([val as u64, (val >> 64) as u64, 0, 0]);
                 -<Self as ark_ff::PrimeField>::from_bigint(bigint).unwrap()
@@ -110,11 +102,11 @@ impl JoltField for ark_bn254::Fr {
         } else {
             let val = val as u128;
             if val <= u16::MAX as u128 {
-                <Self as JoltField>::from_u16(val as u16)
+                <Self as ark_ff::PrimeField>::from_u64(val as u64).unwrap()
             } else if val <= u32::MAX as u128 {
-                <Self as JoltField>::from_u32(val as u32)
+                <Self as ark_ff::PrimeField>::from_u64(val as u64).unwrap()
             } else if val <= u64::MAX as u128 {
-                <Self as JoltField>::from_u64(val as u64)
+                <Self as ark_ff::PrimeField>::from_u64(val as u64).unwrap()
             } else {
                 let bigint = BigInt::new([val as u64, (val >> 64) as u64, 0, 0]);
                 <Self as ark_ff::PrimeField>::from_bigint(bigint).unwrap()
@@ -127,7 +119,7 @@ impl JoltField for ark_bn254::Fr {
         let limbs: &[u64] = bigint.as_ref();
         let result = limbs[0];
 
-        if <Self as JoltField>::from_u64(result) != *self {
+        if <Self as ark_ff::PrimeField>::from_u64(result).unwrap() != *self {
             None
         } else {
             Some(result)
