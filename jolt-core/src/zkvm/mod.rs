@@ -7,6 +7,7 @@ use std::{
 use ark_bn254::Fr;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
+use rayon::prelude::*;
 use tracer::{
     instruction::{RV32IMCycle, RV32IMInstruction},
     JoltDevice,
@@ -187,10 +188,8 @@ where
         let max_K: usize = 1 << NUM_RA_I_VARS;
         let max_T: usize = max_trace_length.next_power_of_two();
 
-        println!("setup...");
         // TODO(moodlezoup): Change setup parameter to # variables everywhere
         let generators = PCS::setup_prover(max_K.log_2() + max_T.log_2());
-        println!("setup done");
 
         JoltProverPreprocessing {
             generators,
@@ -211,6 +210,27 @@ where
         Option<ProverDebugInfo<F, FS, PCS>>,
     ) {
         let (mut trace, final_memory_state, mut program_io) = program.trace(inputs);
+        let num_riscv_cycles: usize = trace
+            .par_iter()
+            .map(|cycle| {
+                // Count the cycle if the instruction is not part of a virtual sequence
+                // (`virtual_sequence_remaining` is `None`) or if it's the first instruction
+                // in a virtual sequence (`virtual_sequence_remaining` is `Some(0)`)
+                if let Some(virtual_sequence_remaining) =
+                    cycle.instruction().normalize().virtual_sequence_remaining
+                {
+                    if virtual_sequence_remaining > 0 {
+                        return 0;
+                    }
+                }
+                1
+            })
+            .sum();
+        println!(
+            "{num_riscv_cycles} raw RISC-V instructions + {} virtual instructions = {} total cycles",
+            trace.len() - num_riscv_cycles,
+            trace.len(),
+        );
 
         // Setup trace length and padding
         let padded_trace_length = (trace.len() + 1).next_power_of_two();

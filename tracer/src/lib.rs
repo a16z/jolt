@@ -99,16 +99,6 @@ pub fn trace_checkpoints(
         LazyTraceIterator::new(setup_emulator(elf_contents, inputs, memory_config));
     let mut checkpoints = Vec::new();
 
-    // let mut trace = Vec::with_capacity(1 << 24); // TODO(moodlezoup): make configurable
-    // loop {
-    //     let mut trace_n = emulator_trace_iter.clone();
-    //     trace_n.set_length(checkpoint_interval);
-    //     checkpoints.push(trace_n);
-    //     emulator_trace_iter = emulator_trace_iter.dropping(checkpoint_interval);
-    //     if emulator_trace_iter.is_empty() {
-    //         break;
-    //     }
-    // }
     loop {
         let chkpt = emulator_trace_iter.clone().take(checkpoint_interval);
         checkpoints.push(chkpt);

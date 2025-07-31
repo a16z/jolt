@@ -724,7 +724,10 @@ where
         pcs_setup: &PCS::ProverSetup,
         transcript: &mut ProofTranscript,
     ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
-        println!("# instances: {}", self.sumchecks.len());
+        println!(
+            "{} sumcheck instances in batched opening proof reduction",
+            self.sumchecks.len()
+        );
 
         self.sumchecks
             .iter_mut()
@@ -1113,13 +1116,6 @@ where
                 *coeff * claim * lagrange_eval
             })
             .sum();
-
-        // #[cfg(test)]
-        // assert_eq!(
-        //     joint_claim,
-        //     reduced_opening_proof.joint_poly.evaluate(&r_sumcheck),
-        //     "joint claim mismatch"
-        // );
 
         // Verify the reduced opening proof
         PCS::verify(

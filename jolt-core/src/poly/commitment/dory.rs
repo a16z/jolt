@@ -61,12 +61,11 @@ impl DoryGlobals {
     /// Initializes the static variables (`GLOBAL_T`, `MAX_NUM_ROWS`, and
     /// `NUM_COLUMNS`) used by Dory.
     pub fn initialize(K: usize, T: usize) -> Self {
-        println!("K_log {}, T_log {}", K.log_2(), T.log_2());
         let matrix_size = K as u128 * T as u128;
         let num_columns = matrix_size.isqrt().next_power_of_two();
         let num_rows = num_columns;
-        println!("# rows: {num_rows}");
-        println!("# cols: {num_columns}");
+        println!("[Dory PCS] # rows: {num_rows}");
+        println!("[Dory PCS] # cols: {num_columns}");
 
         unsafe {
             GLOBAL_T.set(T).expect("GLOBAL_T is already initialized");
@@ -879,13 +878,10 @@ where
     fn vector_matrix_product(
         &self,
         left_vec: &[JoltFieldWrapper<F>],
-        sigma: usize,
-        nu: usize,
+        _sigma: usize,
+        _nu: usize,
     ) -> Vec<JoltFieldWrapper<F>> {
         let num_columns = DoryGlobals::get_num_columns();
-        println!("sigma: {sigma}");
-        println!("nu: {nu}");
-        println!("num_columns: {num_columns}");
 
         match self {
             MultilinearPolynomial::LargeScalars(poly) => (0..num_columns)
@@ -1194,8 +1190,6 @@ impl CommitmentScheme for DoryCommitmentScheme {
             setup,
             dory_transcript,
         );
-
-        println!("{verify_result:?}");
 
         match verify_result {
             Ok(()) => Ok(()),
