@@ -56,6 +56,7 @@ impl VirtualInstructionSequence for ADDW {
                 rs2: self.operands.rs2,
             },
             virtual_sequence_remaining: Some(1),
+            is_compressed: self.is_compressed,
         };
         sequence.push(add.into());
 
@@ -67,6 +68,7 @@ impl VirtualInstructionSequence for ADDW {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(0),
+            is_compressed: self.is_compressed,
         };
         sequence.push(signext.into());
 

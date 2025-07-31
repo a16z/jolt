@@ -83,6 +83,7 @@ impl LHU {
                 imm: self.operands.imm,
             },
             virtual_sequence_remaining: Some(8),
+            is_compressed: self.is_compressed,
         };
         sequence.push(assert_alignment.into());
 
@@ -94,6 +95,7 @@ impl LHU {
                 imm: self.operands.imm as u64,
             },
             virtual_sequence_remaining: Some(7),
+            is_compressed: self.is_compressed,
         };
         sequence.push(add.into());
 
@@ -105,6 +107,7 @@ impl LHU {
                 imm: -4i64 as u64,
             },
             virtual_sequence_remaining: Some(6),
+            is_compressed: self.is_compressed,
         };
         sequence.push(andi.into());
 
@@ -116,6 +119,7 @@ impl LHU {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(5),
+            is_compressed: self.is_compressed,
         };
         sequence.push(lw.into());
 
@@ -127,6 +131,7 @@ impl LHU {
                 imm: 2,
             },
             virtual_sequence_remaining: Some(4),
+            is_compressed: self.is_compressed,
         };
         sequence.push(xori.into());
 
@@ -138,6 +143,7 @@ impl LHU {
                 imm: 3,
             },
             virtual_sequence_remaining: Some(3),
+            is_compressed: self.is_compressed,
         };
         sequence.extend(slli.virtual_sequence(Xlen::Bit32));
 
@@ -149,6 +155,7 @@ impl LHU {
                 rs2: v_shift,
             },
             virtual_sequence_remaining: Some(2),
+            is_compressed: self.is_compressed,
         };
         sequence.extend(sll.virtual_sequence(Xlen::Bit32));
 
@@ -160,6 +167,7 @@ impl LHU {
                 imm: 16,
             },
             virtual_sequence_remaining: Some(0),
+            is_compressed: self.is_compressed,
         };
         sequence.extend(srli.virtual_sequence(Xlen::Bit32));
 
@@ -182,6 +190,7 @@ impl LHU {
                 imm: self.operands.imm,
             },
             virtual_sequence_remaining: Some(8),
+            is_compressed: self.is_compressed,
         };
         sequence.push(assert_alignment.into());
 
@@ -193,6 +202,7 @@ impl LHU {
                 imm: self.operands.imm as u64,
             },
             virtual_sequence_remaining: Some(7),
+            is_compressed: self.is_compressed,
         };
         sequence.push(add.into());
 
@@ -204,6 +214,7 @@ impl LHU {
                 imm: -8i64 as u64,
             },
             virtual_sequence_remaining: Some(6),
+            is_compressed: self.is_compressed,
         };
         sequence.push(andi.into());
 
@@ -215,6 +226,7 @@ impl LHU {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(5),
+            is_compressed: self.is_compressed,
         };
         sequence.push(ld.into());
 
@@ -226,6 +238,7 @@ impl LHU {
                 imm: 6,
             },
             virtual_sequence_remaining: Some(4),
+            is_compressed: self.is_compressed,
         };
         sequence.push(xori.into());
 
@@ -237,6 +250,7 @@ impl LHU {
                 imm: 3,
             },
             virtual_sequence_remaining: Some(3),
+            is_compressed: self.is_compressed,
         };
         sequence.extend(slli.virtual_sequence(Xlen::Bit64));
 
@@ -248,6 +262,7 @@ impl LHU {
                 rs2: v_shift,
             },
             virtual_sequence_remaining: Some(2),
+            is_compressed: self.is_compressed,
         };
         sequence.extend(sll.virtual_sequence(Xlen::Bit64));
 
@@ -259,6 +274,7 @@ impl LHU {
                 imm: 48,
             },
             virtual_sequence_remaining: Some(0),
+            is_compressed: self.is_compressed,
         };
         sequence.extend(srli.virtual_sequence(Xlen::Bit64));
 

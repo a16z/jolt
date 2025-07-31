@@ -58,6 +58,7 @@ impl VirtualInstructionSequence for SLLW {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(2),
+            is_compressed: self.is_compressed,
         };
         sequence.push(pow2w.into());
 
@@ -69,6 +70,7 @@ impl VirtualInstructionSequence for SLLW {
                 rs2: v_pow2,
             },
             virtual_sequence_remaining: Some(1),
+            is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
 
@@ -80,6 +82,7 @@ impl VirtualInstructionSequence for SLLW {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(0),
+            is_compressed: self.is_compressed,
         };
         sequence.push(signext.into());
 

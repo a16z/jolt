@@ -64,6 +64,7 @@ impl VirtualInstructionSequence for SRLW {
                 imm: 32,
             },
             virtual_sequence_remaining: Some(4),
+            is_compressed: self.is_compressed,
         };
         sequence.push(slli.into());
 
@@ -75,6 +76,7 @@ impl VirtualInstructionSequence for SRLW {
                 imm: 32,
             },
             virtual_sequence_remaining: Some(3),
+            is_compressed: self.is_compressed,
         };
         sequence.push(ori.into());
 
@@ -86,6 +88,7 @@ impl VirtualInstructionSequence for SRLW {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(2),
+            is_compressed: self.is_compressed,
         };
         sequence.push(bitmask.into());
 
@@ -97,6 +100,7 @@ impl VirtualInstructionSequence for SRLW {
                 rs2: v_bitmask,
             },
             virtual_sequence_remaining: Some(1),
+            is_compressed: self.is_compressed,
         };
         sequence.push(srl.into());
 
@@ -108,6 +112,7 @@ impl VirtualInstructionSequence for SRLW {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(0),
+            is_compressed: self.is_compressed,
         };
         sequence.push(signext.into());
 

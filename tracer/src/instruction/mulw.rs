@@ -55,6 +55,7 @@ impl VirtualInstructionSequence for MULW {
                 rs2: self.operands.rs2,
             },
             virtual_sequence_remaining: Some(1),
+            is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
 
@@ -66,6 +67,7 @@ impl VirtualInstructionSequence for MULW {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(0),
+            is_compressed: self.is_compressed,
         };
         sequence.push(ext.into());
 

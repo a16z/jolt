@@ -68,6 +68,7 @@ impl VirtualInstructionSequence for MULH {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(6),
+            is_compressed: self.is_compressed,
         };
         sequence.push(movsign_x.into());
 
@@ -79,6 +80,7 @@ impl VirtualInstructionSequence for MULH {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(5),
+            is_compressed: self.is_compressed,
         };
         sequence.push(movsign_y.into());
 
@@ -90,6 +92,7 @@ impl VirtualInstructionSequence for MULH {
                 rs2: self.operands.rs2,
             },
             virtual_sequence_remaining: Some(4),
+            is_compressed: self.is_compressed,
         };
         sequence.push(mulhu.into());
 
@@ -101,6 +104,7 @@ impl VirtualInstructionSequence for MULH {
                 rs2: self.operands.rs2,
             },
             virtual_sequence_remaining: Some(3),
+            is_compressed: self.is_compressed,
         };
         sequence.push(mulu_sx_y.into());
 
@@ -112,6 +116,7 @@ impl VirtualInstructionSequence for MULH {
                 rs2: self.operands.rs1,
             },
             virtual_sequence_remaining: Some(2),
+            is_compressed: self.is_compressed,
         };
         sequence.push(mulu_sy_x.into());
 
@@ -123,6 +128,7 @@ impl VirtualInstructionSequence for MULH {
                 rs2: v_1,
             },
             virtual_sequence_remaining: Some(1),
+            is_compressed: self.is_compressed,
         };
         sequence.push(add_1.into());
 
@@ -134,6 +140,7 @@ impl VirtualInstructionSequence for MULH {
                 rs2: v_2,
             },
             virtual_sequence_remaining: Some(0),
+            is_compressed: self.is_compressed,
         };
         sequence.push(add_2.into());
 

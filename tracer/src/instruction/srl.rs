@@ -64,6 +64,7 @@ impl VirtualInstructionSequence for SRL {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(bitmask.into());
         virtual_sequence_remaining -= 1;
@@ -76,6 +77,7 @@ impl VirtualInstructionSequence for SRL {
                 rs2: v_bitmask,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(srl.into());
 

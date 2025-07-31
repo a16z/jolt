@@ -93,6 +93,7 @@ impl VirtualInstructionSequence for REMU {
             operands: FormatJ { rd: v_q, imm: 0 },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
             advice: 0,
+            is_compressed: self.is_compressed,
         };
         sequence.push(advice.into());
         virtual_sequence_remaining -= 1;
@@ -102,6 +103,7 @@ impl VirtualInstructionSequence for REMU {
             operands: FormatJ { rd: v_r, imm: 0 },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
             advice: 0,
+            is_compressed: self.is_compressed,
         };
         sequence.push(advice.into());
         virtual_sequence_remaining -= 1;
@@ -114,6 +116,7 @@ impl VirtualInstructionSequence for REMU {
                 rs2: self.operands.rs2,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
         virtual_sequence_remaining -= 1;
@@ -126,6 +129,7 @@ impl VirtualInstructionSequence for REMU {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(assert_remainder.into());
         virtual_sequence_remaining -= 1;
@@ -138,6 +142,7 @@ impl VirtualInstructionSequence for REMU {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(assert_lte.into());
         virtual_sequence_remaining -= 1;
@@ -150,6 +155,7 @@ impl VirtualInstructionSequence for REMU {
                 rs2: v_r,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(add.into());
         virtual_sequence_remaining -= 1;
@@ -162,6 +168,7 @@ impl VirtualInstructionSequence for REMU {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(assert_eq.into());
         virtual_sequence_remaining -= 1;
@@ -174,6 +181,7 @@ impl VirtualInstructionSequence for REMU {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(virtual_move.into());
 

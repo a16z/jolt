@@ -86,6 +86,7 @@ impl SB {
                 imm: self.operands.imm as u64,
             },
             virtual_sequence_remaining: Some(12),
+            is_compressed: self.is_compressed,
         };
         sequence.push(add.into());
 
@@ -97,6 +98,7 @@ impl SB {
                 imm: -4i64 as u64,
             },
             virtual_sequence_remaining: Some(11),
+            is_compressed: self.is_compressed,
         };
         sequence.push(andi.into());
 
@@ -108,6 +110,7 @@ impl SB {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(10),
+            is_compressed: self.is_compressed,
         };
         sequence.push(lw.into());
 
@@ -119,6 +122,7 @@ impl SB {
                 imm: 3,
             },
             virtual_sequence_remaining: Some(9),
+            is_compressed: self.is_compressed,
         };
         sequence.extend(slli.virtual_sequence(Xlen::Bit32));
 
@@ -129,6 +133,7 @@ impl SB {
                 imm: 0xff,
             },
             virtual_sequence_remaining: Some(8),
+            is_compressed: self.is_compressed,
         };
         sequence.push(lui.into());
 
@@ -140,6 +145,7 @@ impl SB {
                 rs2: v_shift,
             },
             virtual_sequence_remaining: Some(7),
+            is_compressed: self.is_compressed,
         };
         sequence.extend(sll.virtual_sequence(Xlen::Bit32));
 
@@ -151,6 +157,7 @@ impl SB {
                 rs2: v_shift,
             },
             virtual_sequence_remaining: Some(5),
+            is_compressed: self.is_compressed,
         };
         sequence.extend(sll.virtual_sequence(Xlen::Bit32));
 
@@ -162,6 +169,7 @@ impl SB {
                 rs2: v_byte,
             },
             virtual_sequence_remaining: Some(3),
+            is_compressed: self.is_compressed,
         };
         sequence.push(xor.into());
 
@@ -173,6 +181,7 @@ impl SB {
                 rs2: v_mask,
             },
             virtual_sequence_remaining: Some(2),
+            is_compressed: self.is_compressed,
         };
         sequence.push(and.into());
 
@@ -184,6 +193,7 @@ impl SB {
                 rs2: v_byte,
             },
             virtual_sequence_remaining: Some(1),
+            is_compressed: self.is_compressed,
         };
         sequence.push(xor.into());
 
@@ -195,6 +205,7 @@ impl SB {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(0),
+            is_compressed: self.is_compressed,
         };
         sequence.push(sw.into());
 
@@ -220,6 +231,7 @@ impl SB {
                 imm: self.operands.imm as u64,
             },
             virtual_sequence_remaining: Some(12),
+            is_compressed: self.is_compressed,
         };
         sequence.push(add.into());
 
@@ -231,6 +243,7 @@ impl SB {
                 imm: -8i64 as u64,
             },
             virtual_sequence_remaining: Some(11),
+            is_compressed: self.is_compressed,
         };
         sequence.push(andi.into());
 
@@ -242,6 +255,7 @@ impl SB {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(10),
+            is_compressed: self.is_compressed,
         };
         sequence.push(ld.into());
 
@@ -253,6 +267,7 @@ impl SB {
                 imm: 3,
             },
             virtual_sequence_remaining: Some(9),
+            is_compressed: self.is_compressed,
         };
         sequence.extend(slli.virtual_sequence(Xlen::Bit64));
 
@@ -263,6 +278,7 @@ impl SB {
                 imm: 0xff,
             },
             virtual_sequence_remaining: Some(8),
+            is_compressed: self.is_compressed,
         };
         sequence.push(lui.into());
 
@@ -274,6 +290,7 @@ impl SB {
                 rs2: v_shift,
             },
             virtual_sequence_remaining: Some(7),
+            is_compressed: self.is_compressed,
         };
         sequence.extend(sll.virtual_sequence(Xlen::Bit64));
 
@@ -285,6 +302,7 @@ impl SB {
                 rs2: v_shift,
             },
             virtual_sequence_remaining: Some(5),
+            is_compressed: self.is_compressed,
         };
         sequence.extend(sll.virtual_sequence(Xlen::Bit64));
 
@@ -296,6 +314,7 @@ impl SB {
                 rs2: v_byte,
             },
             virtual_sequence_remaining: Some(3),
+            is_compressed: self.is_compressed,
         };
         sequence.push(xor.into());
 
@@ -307,6 +326,7 @@ impl SB {
                 rs2: v_mask,
             },
             virtual_sequence_remaining: Some(2),
+            is_compressed: self.is_compressed,
         };
         sequence.push(and.into());
 
@@ -318,6 +338,7 @@ impl SB {
                 rs2: v_byte,
             },
             virtual_sequence_remaining: Some(1),
+            is_compressed: self.is_compressed,
         };
         sequence.push(xor.into());
 
@@ -329,6 +350,7 @@ impl SB {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(0),
+            is_compressed: self.is_compressed,
         };
         sequence.push(sd.into());
 

@@ -82,6 +82,7 @@ impl VirtualInstructionSequence for AMOSWAPD {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(2),
+            is_compressed: self.is_compressed,
         };
         sequence.push(ld.into());
 
@@ -93,6 +94,7 @@ impl VirtualInstructionSequence for AMOSWAPD {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(1),
+            is_compressed: self.is_compressed,
         };
         sequence.push(sd.into());
 
@@ -104,6 +106,7 @@ impl VirtualInstructionSequence for AMOSWAPD {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(0),
+            is_compressed: self.is_compressed,
         };
         sequence.push(vmove.into());
         sequence

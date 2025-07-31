@@ -62,6 +62,7 @@ impl VirtualInstructionSequence for SRA {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(bitmask.into());
         virtual_sequence_remaining -= 1;
@@ -74,6 +75,7 @@ impl VirtualInstructionSequence for SRA {
                 rs2: v_bitmask,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(sra.into());
 

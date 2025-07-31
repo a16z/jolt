@@ -96,6 +96,7 @@ impl VirtualInstructionSequence for AMOMINUD {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(ld.into());
         virtual_sequence_remaining -= 1;
@@ -108,6 +109,7 @@ impl VirtualInstructionSequence for AMOMINUD {
                 rs2: v_rd,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(sltu.into());
         virtual_sequence_remaining -= 1;
@@ -120,6 +122,7 @@ impl VirtualInstructionSequence for AMOMINUD {
                 imm: 1,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(xori.into());
         virtual_sequence_remaining -= 1;
@@ -132,6 +135,7 @@ impl VirtualInstructionSequence for AMOMINUD {
                 rs2: self.operands.rs2,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
         virtual_sequence_remaining -= 1;
@@ -144,6 +148,7 @@ impl VirtualInstructionSequence for AMOMINUD {
                 rs2: v_rd,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
         virtual_sequence_remaining -= 1;
@@ -156,6 +161,7 @@ impl VirtualInstructionSequence for AMOMINUD {
                 rs2: v_rs2,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(add.into());
         virtual_sequence_remaining -= 1;
@@ -168,6 +174,7 @@ impl VirtualInstructionSequence for AMOMINUD {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(sd.into());
         virtual_sequence_remaining -= 1;
@@ -180,6 +187,7 @@ impl VirtualInstructionSequence for AMOMINUD {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(vmove.into());
 

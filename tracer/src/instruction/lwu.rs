@@ -84,6 +84,7 @@ impl LWU {
                 imm: self.operands.imm,
             },
             virtual_sequence_remaining: Some(8),
+            is_compressed: self.is_compressed,
         };
         sequence.push(assert_alignment.into());
 
@@ -95,6 +96,7 @@ impl LWU {
                 imm: self.operands.imm as u64,
             },
             virtual_sequence_remaining: Some(7),
+            is_compressed: self.is_compressed,
         };
         sequence.push(add.into());
 
@@ -106,6 +108,7 @@ impl LWU {
                 imm: -8i64 as u64,
             },
             virtual_sequence_remaining: Some(6),
+            is_compressed: self.is_compressed,
         };
         sequence.push(andi.into());
 
@@ -117,6 +120,7 @@ impl LWU {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(5),
+            is_compressed: self.is_compressed,
         };
         sequence.push(ld.into());
 
@@ -128,6 +132,7 @@ impl LWU {
                 imm: 4,
             },
             virtual_sequence_remaining: Some(4),
+            is_compressed: self.is_compressed,
         };
         sequence.push(xori.into());
 
@@ -139,6 +144,7 @@ impl LWU {
                 imm: 3,
             },
             virtual_sequence_remaining: Some(3),
+            is_compressed: self.is_compressed,
         };
         sequence.extend(slli.virtual_sequence(xlen));
 
@@ -150,6 +156,7 @@ impl LWU {
                 rs2: v_shift,
             },
             virtual_sequence_remaining: Some(2),
+            is_compressed: self.is_compressed,
         };
         sequence.extend(sll.virtual_sequence(xlen));
 
@@ -161,6 +168,7 @@ impl LWU {
                 imm: 32,
             },
             virtual_sequence_remaining: Some(0),
+            is_compressed: self.is_compressed,
         };
         sequence.extend(srli.virtual_sequence(xlen));
 

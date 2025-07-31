@@ -65,6 +65,7 @@ impl VirtualInstructionSequence for SHA256INIT {
         });
         let builder = Sha256SequenceBuilder::new(
             self.address,
+            self.is_compressed,
             vr,
             self.operands.rs1,
             self.operands.rs2,

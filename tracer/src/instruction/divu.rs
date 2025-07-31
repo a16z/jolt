@@ -96,6 +96,7 @@ impl VirtualInstructionSequence for DIVU {
             operands: FormatJ { rd: v_q, imm: 0 },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
             advice: 0,
+            is_compressed: self.is_compressed,
         };
         sequence.push(advice.into());
         virtual_sequence_remaining -= 1;
@@ -105,6 +106,7 @@ impl VirtualInstructionSequence for DIVU {
             operands: FormatJ { rd: v_r, imm: 0 },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
             advice: 0,
+            is_compressed: self.is_compressed,
         };
         sequence.push(advice.into());
         virtual_sequence_remaining -= 1;
@@ -117,6 +119,7 @@ impl VirtualInstructionSequence for DIVU {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(is_valid.into());
         virtual_sequence_remaining -= 1;
@@ -129,6 +132,7 @@ impl VirtualInstructionSequence for DIVU {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(is_valid.into());
         virtual_sequence_remaining -= 1;
@@ -141,6 +145,7 @@ impl VirtualInstructionSequence for DIVU {
                 rs2: self.operands.rs2,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
         virtual_sequence_remaining -= 1;
@@ -153,6 +158,7 @@ impl VirtualInstructionSequence for DIVU {
                 rs2: v_r,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(add.into());
         virtual_sequence_remaining -= 1;
@@ -165,6 +171,7 @@ impl VirtualInstructionSequence for DIVU {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(assert_eq.into());
         virtual_sequence_remaining -= 1;
@@ -177,6 +184,7 @@ impl VirtualInstructionSequence for DIVU {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(virtual_move.into());
 

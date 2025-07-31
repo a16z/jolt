@@ -60,6 +60,7 @@ impl VirtualInstructionSequence for SLL {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         });
         sequence.push(pow2);
         virtual_sequence_remaining -= 1;
@@ -72,6 +73,7 @@ impl VirtualInstructionSequence for SLL {
                 rs2: v_pow2,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         });
         sequence.push(mul);
 

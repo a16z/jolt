@@ -28,6 +28,7 @@ use super::format::format_r::FormatR;
 pub fn amo_pre64(
     sequence: &mut Vec<RV32IMInstruction>,
     address: u64,
+    is_compressed: bool,
     rs1: usize,
     v_rd: usize,
     v_dword_address: usize,
@@ -39,6 +40,7 @@ pub fn amo_pre64(
         address,
         operands: HalfwordAlignFormat { rs1, imm: 0 },
         virtual_sequence_remaining: Some(remaining),
+        is_compressed,
     };
     sequence.push(assert_alignment.into());
     remaining -= 1;
@@ -51,6 +53,7 @@ pub fn amo_pre64(
             imm: -8i64 as u64,
         },
         virtual_sequence_remaining: Some(remaining),
+        is_compressed,
     };
     sequence.push(andi.into());
     remaining -= 1;
@@ -63,6 +66,7 @@ pub fn amo_pre64(
             imm: 0,
         },
         virtual_sequence_remaining: Some(remaining),
+        is_compressed,
     };
     sequence.push(ld.into());
     remaining -= 1;
@@ -75,6 +79,7 @@ pub fn amo_pre64(
             imm: 3,
         },
         virtual_sequence_remaining: Some(remaining),
+        is_compressed,
     };
     let slli_sequence = slli.virtual_sequence(Xlen::Bit64);
     let slli_sequence_len = slli_sequence.len();
@@ -89,6 +94,7 @@ pub fn amo_pre64(
             rs2: v_shift,
         },
         virtual_sequence_remaining: Some(remaining),
+        is_compressed,
     };
     let srl_sequence = srl.virtual_sequence(Xlen::Bit64);
     let srl_sequence_len = srl_sequence.len();
@@ -102,6 +108,7 @@ pub fn amo_pre64(
 pub fn amo_post64(
     sequence: &mut Vec<RV32IMInstruction>,
     address: u64,
+    is_compressed: bool,
     rs2: usize,
     v_dword_address: usize,
     v_dword: usize,
@@ -120,6 +127,7 @@ pub fn amo_post64(
             imm: -1i64 as u64,
         },
         virtual_sequence_remaining: Some(remaining),
+        is_compressed,
     };
     sequence.push(ori.into()); // v_mask gets 0xFFFFFFFF_FFFFFFFF
     remaining -= 1;
@@ -132,6 +140,7 @@ pub fn amo_post64(
             imm: 32, // Logical right shift by 32 bits
         },
         virtual_sequence_remaining: Some(remaining),
+        is_compressed,
     };
     sequence.extend(srli.virtual_sequence(Xlen::Bit64)); // v_mask gets 0x00000000_FFFFFFFF
     remaining -= 1;
@@ -144,6 +153,7 @@ pub fn amo_post64(
             rs2: v_shift,
         },
         virtual_sequence_remaining: Some(remaining),
+        is_compressed,
     };
     let sll_mask_sequence = sll_mask.virtual_sequence(Xlen::Bit64);
     let sll_mask_sequence_len = sll_mask_sequence.len();
@@ -158,6 +168,7 @@ pub fn amo_post64(
             rs2: v_shift,
         },
         virtual_sequence_remaining: Some(remaining),
+        is_compressed,
     };
     let sll_value_sequence = sll_value.virtual_sequence(Xlen::Bit64);
     let sll_value_sequence_len = sll_value_sequence.len();
@@ -172,6 +183,7 @@ pub fn amo_post64(
             rs2: v_word,
         },
         virtual_sequence_remaining: Some(remaining),
+        is_compressed,
     };
     sequence.push(xor.into());
     remaining -= 1;
@@ -184,6 +196,7 @@ pub fn amo_post64(
             rs2: v_mask,
         },
         virtual_sequence_remaining: Some(remaining),
+        is_compressed,
     };
     sequence.push(and.into());
     remaining -= 1;
@@ -196,6 +209,7 @@ pub fn amo_post64(
             rs2: v_word,
         },
         virtual_sequence_remaining: Some(remaining),
+        is_compressed,
     };
     sequence.push(xor_final.into());
     remaining -= 1;
@@ -208,6 +222,7 @@ pub fn amo_post64(
             imm: 0,
         },
         virtual_sequence_remaining: Some(remaining),
+        is_compressed,
     };
     sequence.push(sd.into());
     remaining -= 1;
@@ -220,6 +235,7 @@ pub fn amo_post64(
             imm: 0,
         },
         virtual_sequence_remaining: Some(remaining),
+        is_compressed,
     };
     sequence.push(signext.into());
 
@@ -234,6 +250,7 @@ pub fn amo_post64(
 pub fn amo_pre32(
     sequence: &mut Vec<RV32IMInstruction>,
     address: u64,
+    is_compressed: bool,
     rs1: usize,
     v_rd: usize,
     mut remaining: usize,
@@ -242,6 +259,7 @@ pub fn amo_pre32(
         address,
         operands: HalfwordAlignFormat { rs1, imm: 0 },
         virtual_sequence_remaining: Some(remaining),
+        is_compressed,
     };
     sequence.push(assert_alignment.into());
     remaining -= 1;
@@ -254,6 +272,7 @@ pub fn amo_pre32(
             imm: 0,
         },
         virtual_sequence_remaining: Some(remaining),
+        is_compressed,
     };
     sequence.push(lw.into());
     remaining -= 1;
@@ -261,9 +280,11 @@ pub fn amo_pre32(
     remaining
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn amo_post32(
     sequence: &mut Vec<RV32IMInstruction>,
     address: u64,
+    is_compressed: bool,
     rs2: usize,
     rs1: usize,
     rd: usize,
@@ -274,6 +295,7 @@ pub fn amo_post32(
         address,
         operands: FormatS { rs1, rs2, imm: 0 },
         virtual_sequence_remaining: Some(remaining),
+        is_compressed,
     };
     sequence.push(sw.into());
     remaining -= 1;
@@ -286,6 +308,7 @@ pub fn amo_post32(
             imm: 0,
         },
         virtual_sequence_remaining: Some(remaining),
+        is_compressed,
     };
     sequence.push(vmove.into());
 

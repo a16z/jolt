@@ -84,6 +84,7 @@ impl VirtualInstructionSequence for AMOXORD {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(3),
+            is_compressed: self.is_compressed,
         };
         sequence.push(ld.into());
 
@@ -95,6 +96,7 @@ impl VirtualInstructionSequence for AMOXORD {
                 rs2: self.operands.rs2,
             },
             virtual_sequence_remaining: Some(2),
+            is_compressed: self.is_compressed,
         };
         sequence.push(xor.into());
 
@@ -106,6 +108,7 @@ impl VirtualInstructionSequence for AMOXORD {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(1),
+            is_compressed: self.is_compressed,
         };
         sequence.push(sd.into());
 
@@ -117,6 +120,7 @@ impl VirtualInstructionSequence for AMOXORD {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(0),
+            is_compressed: self.is_compressed,
         };
         sequence.push(vmove.into());
 

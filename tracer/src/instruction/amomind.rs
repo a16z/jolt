@@ -94,6 +94,7 @@ impl VirtualInstructionSequence for AMOMIND {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(7),
+            is_compressed: self.is_compressed,
         };
         sequence.push(ld.into());
 
@@ -105,6 +106,7 @@ impl VirtualInstructionSequence for AMOMIND {
                 rs2: v_rd,
             },
             virtual_sequence_remaining: Some(6),
+            is_compressed: self.is_compressed,
         };
         sequence.push(slt.into());
 
@@ -116,6 +118,7 @@ impl VirtualInstructionSequence for AMOMIND {
                 imm: 1,
             },
             virtual_sequence_remaining: Some(5),
+            is_compressed: self.is_compressed,
         };
         sequence.push(xori.into());
 
@@ -127,6 +130,7 @@ impl VirtualInstructionSequence for AMOMIND {
                 rs2: self.operands.rs2,
             },
             virtual_sequence_remaining: Some(4),
+            is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
 
@@ -138,6 +142,7 @@ impl VirtualInstructionSequence for AMOMIND {
                 rs2: v_rd,
             },
             virtual_sequence_remaining: Some(3),
+            is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
 
@@ -149,6 +154,7 @@ impl VirtualInstructionSequence for AMOMIND {
                 rs2: v_rs2,
             },
             virtual_sequence_remaining: Some(2),
+            is_compressed: self.is_compressed,
         };
         sequence.push(add.into());
 
@@ -160,6 +166,7 @@ impl VirtualInstructionSequence for AMOMIND {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(1),
+            is_compressed: self.is_compressed,
         };
         sequence.push(sd.into());
 
@@ -171,6 +178,7 @@ impl VirtualInstructionSequence for AMOMIND {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(0),
+            is_compressed: self.is_compressed,
         };
         sequence.push(vmove.into());
 

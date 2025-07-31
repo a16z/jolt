@@ -58,6 +58,7 @@ impl VirtualInstructionSequence for SLLIW {
                 imm: 1 << shift,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
         virtual_sequence_remaining -= 1;
@@ -70,6 +71,7 @@ impl VirtualInstructionSequence for SLLIW {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(signext.into());
 

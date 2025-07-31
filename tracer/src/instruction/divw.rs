@@ -108,6 +108,7 @@ impl VirtualInstructionSequence for DIVW {
             operands: FormatJ { rd: v_q, imm: 0 },
             virtual_sequence_remaining: Some(12),
             advice: 0,
+            is_compressed: self.is_compressed,
         };
         sequence.push(advice.into());
 
@@ -116,6 +117,7 @@ impl VirtualInstructionSequence for DIVW {
             operands: FormatJ { rd: v_r, imm: 0 },
             virtual_sequence_remaining: Some(11),
             advice: 0,
+            is_compressed: self.is_compressed,
         };
         sequence.push(advice.into());
 
@@ -127,6 +129,7 @@ impl VirtualInstructionSequence for DIVW {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(10),
+            is_compressed: self.is_compressed,
         };
         sequence.push(ext.into());
 
@@ -138,6 +141,7 @@ impl VirtualInstructionSequence for DIVW {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(9),
+            is_compressed: self.is_compressed,
         };
         sequence.push(ext.into());
 
@@ -149,6 +153,7 @@ impl VirtualInstructionSequence for DIVW {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(8),
+            is_compressed: self.is_compressed,
         };
         sequence.push(ext.into());
 
@@ -160,6 +165,7 @@ impl VirtualInstructionSequence for DIVW {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(7),
+            is_compressed: self.is_compressed,
         };
         sequence.push(ext.into());
 
@@ -171,6 +177,7 @@ impl VirtualInstructionSequence for DIVW {
                 rs2: v_rs2,
             },
             virtual_sequence_remaining: Some(6),
+            is_compressed: self.is_compressed,
         };
         sequence.push(change_divisor.into());
 
@@ -182,6 +189,7 @@ impl VirtualInstructionSequence for DIVW {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(5),
+            is_compressed: self.is_compressed,
         };
         sequence.push(is_valid.into());
 
@@ -193,6 +201,7 @@ impl VirtualInstructionSequence for DIVW {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(4),
+            is_compressed: self.is_compressed,
         };
         sequence.push(is_valid.into());
 
@@ -204,6 +213,7 @@ impl VirtualInstructionSequence for DIVW {
                 rs2: v_rs2,
             },
             virtual_sequence_remaining: Some(3),
+            is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
 
@@ -215,6 +225,7 @@ impl VirtualInstructionSequence for DIVW {
                 rs2: v_r,
             },
             virtual_sequence_remaining: Some(2),
+            is_compressed: self.is_compressed,
         };
         sequence.push(add.into());
 
@@ -226,6 +237,7 @@ impl VirtualInstructionSequence for DIVW {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(1),
+            is_compressed: self.is_compressed,
         };
         sequence.push(assert_eq.into());
 
@@ -237,6 +249,7 @@ impl VirtualInstructionSequence for DIVW {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(0),
+            is_compressed: self.is_compressed,
         };
         sequence.push(virtual_move.into());
 

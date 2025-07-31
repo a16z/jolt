@@ -97,6 +97,7 @@ impl AMOMAXW {
         remaining = amo_pre32(
             &mut sequence,
             self.address,
+            self.is_compressed,
             self.operands.rs1,
             v_rd,
             remaining,
@@ -110,6 +111,7 @@ impl AMOMAXW {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(mov.into());
         remaining -= 1;
@@ -122,6 +124,7 @@ impl AMOMAXW {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(mov.into());
         remaining -= 1;
@@ -134,6 +137,7 @@ impl AMOMAXW {
                 rs2: v_rs2,
             },
             virtual_sequence_remaining: Some(remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(slt.into());
         remaining -= 1;
@@ -146,6 +150,7 @@ impl AMOMAXW {
                 imm: 1,
             },
             virtual_sequence_remaining: Some(remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(xori.into());
         remaining -= 1;
@@ -158,6 +163,7 @@ impl AMOMAXW {
                 rs2: self.operands.rs2,
             },
             virtual_sequence_remaining: Some(remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
         remaining -= 1;
@@ -170,6 +176,7 @@ impl AMOMAXW {
                 rs2: v_rd,
             },
             virtual_sequence_remaining: Some(remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
         remaining -= 1;
@@ -182,6 +189,7 @@ impl AMOMAXW {
                 rs2: v_rs2,
             },
             virtual_sequence_remaining: Some(remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(add.into());
         remaining -= 1;
@@ -189,6 +197,7 @@ impl AMOMAXW {
         amo_post32(
             &mut sequence,
             self.address,
+            self.is_compressed,
             v_rs2,
             self.operands.rs1,
             self.operands.rd,
@@ -217,6 +226,7 @@ impl AMOMAXW {
         remaining = amo_pre64(
             &mut sequence,
             self.address,
+            self.is_compressed,
             self.operands.rs1,
             v_rd,
             v_dword_address,
@@ -233,6 +243,7 @@ impl AMOMAXW {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(signext.into());
         remaining -= 1;
@@ -245,6 +256,7 @@ impl AMOMAXW {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(signext.into());
         remaining -= 1;
@@ -257,6 +269,7 @@ impl AMOMAXW {
                 rs2: v_rs2,
             },
             virtual_sequence_remaining: Some(remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(slt.into());
         remaining -= 1;
@@ -269,6 +282,7 @@ impl AMOMAXW {
                 imm: 1,
             },
             virtual_sequence_remaining: Some(remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(xori.into());
         remaining -= 1;
@@ -281,6 +295,7 @@ impl AMOMAXW {
                 rs2: self.operands.rs2,
             },
             virtual_sequence_remaining: Some(remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
         remaining -= 1;
@@ -293,6 +308,7 @@ impl AMOMAXW {
                 rs2: v_rd,
             },
             virtual_sequence_remaining: Some(remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
         remaining -= 1;
@@ -305,6 +321,7 @@ impl AMOMAXW {
                 rs2: v_rs2,
             },
             virtual_sequence_remaining: Some(remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(add.into());
         remaining -= 1;
@@ -312,6 +329,7 @@ impl AMOMAXW {
         amo_post64(
             &mut sequence,
             self.address,
+            self.is_compressed,
             v_rs2,
             v_dword_address,
             v_dword,

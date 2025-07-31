@@ -81,6 +81,7 @@ impl SW {
                 imm: self.operands.imm,
             },
             virtual_sequence_remaining: Some(0),
+            is_compressed: self.is_compressed,
         };
         sequence.push(sw.into());
 
@@ -106,6 +107,7 @@ impl SW {
                 imm: self.operands.imm,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(align_check.into());
         virtual_sequence_remaining -= 1;
@@ -118,6 +120,7 @@ impl SW {
                 imm: self.operands.imm as u64,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(add.into());
         virtual_sequence_remaining -= 1;
@@ -130,6 +133,7 @@ impl SW {
                 imm: -8i64 as u64,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(andi.into());
         virtual_sequence_remaining -= 1;
@@ -142,6 +146,7 @@ impl SW {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(ld.into());
         virtual_sequence_remaining -= 1;
@@ -154,6 +159,7 @@ impl SW {
                 imm: 3,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         let slli_sequence = slli.virtual_sequence(Xlen::Bit64);
         let slli_sequence_len = slli_sequence.len();
@@ -168,6 +174,7 @@ impl SW {
                 imm: -1i64 as u64,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(ori.into()); // v_mask gets 0xFFFFFFFF_FFFFFFFF
         virtual_sequence_remaining -= 1;
@@ -180,6 +187,7 @@ impl SW {
                 imm: 32, // Logical right shift by 32 bits
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.extend(srli.virtual_sequence(Xlen::Bit64)); // v_mask gets 0x00000000_FFFFFFFF
         virtual_sequence_remaining -= 1;
@@ -192,6 +200,7 @@ impl SW {
                 rs2: v_shift,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         let sll_mask_sequence = sll_mask.virtual_sequence(Xlen::Bit64);
         let sll_mask_sequence_len = sll_mask_sequence.len();
@@ -206,6 +215,7 @@ impl SW {
                 rs2: v_shift,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         let sll_value_sequence = sll_value.virtual_sequence(Xlen::Bit64);
         let sll_value_sequence_len = sll_value_sequence.len();
@@ -220,6 +230,7 @@ impl SW {
                 rs2: v_word,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(xor.into());
         virtual_sequence_remaining -= 1;
@@ -232,6 +243,7 @@ impl SW {
                 rs2: v_mask,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(and.into());
         virtual_sequence_remaining -= 1;
@@ -244,6 +256,7 @@ impl SW {
                 rs2: v_word,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(xor_final.into());
         virtual_sequence_remaining -= 1;
@@ -256,6 +269,7 @@ impl SW {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(sd.into());
 

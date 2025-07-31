@@ -55,6 +55,7 @@ impl VirtualInstructionSequence for SUBW {
                 rs2: self.operands.rs2,
             },
             virtual_sequence_remaining: Some(1),
+            is_compressed: self.is_compressed,
         };
         sequence.push(sub.into());
 
@@ -66,6 +67,7 @@ impl VirtualInstructionSequence for SUBW {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(0),
+            is_compressed: self.is_compressed,
         };
         sequence.push(signext.into());
 

@@ -59,6 +59,7 @@ impl VirtualInstructionSequence for SLLI {
                 imm: 1 << shift,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         });
         sequence.push(mul);
 

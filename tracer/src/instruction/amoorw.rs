@@ -86,6 +86,7 @@ impl AMOORW {
         virtual_sequence_remaining = amo_pre32(
             &mut sequence,
             self.address,
+            self.is_compressed,
             self.operands.rs1,
             v_rd,
             virtual_sequence_remaining,
@@ -99,6 +100,7 @@ impl AMOORW {
                 rs2: self.operands.rs2,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(or.into());
         virtual_sequence_remaining -= 1;
@@ -106,6 +108,7 @@ impl AMOORW {
         amo_post32(
             &mut sequence,
             self.address,
+            self.is_compressed,
             v_rs2,
             self.operands.rs1,
             self.operands.rd,
@@ -131,6 +134,7 @@ impl AMOORW {
         remaining = amo_pre64(
             &mut sequence,
             self.address,
+            self.is_compressed,
             self.operands.rs1,
             v_rd,
             v_dword_address,
@@ -146,12 +150,14 @@ impl AMOORW {
                 rs2: self.operands.rs2,
             },
             virtual_sequence_remaining: Some(remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(or.into());
         remaining -= 1;
         amo_post64(
             &mut sequence,
             self.address,
+            self.is_compressed,
             v_rs2,
             v_dword_address,
             v_dword,

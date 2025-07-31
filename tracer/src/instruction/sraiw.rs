@@ -57,6 +57,7 @@ impl VirtualInstructionSequence for SRAIW {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(2),
+            is_compressed: self.is_compressed,
         };
         sequence.push(signext.into());
 
@@ -76,6 +77,7 @@ impl VirtualInstructionSequence for SRAIW {
                 imm: bitmask,
             },
             virtual_sequence_remaining: Some(1),
+            is_compressed: self.is_compressed,
         };
         sequence.push(sra.into());
 
@@ -87,6 +89,7 @@ impl VirtualInstructionSequence for SRAIW {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(0),
+            is_compressed: self.is_compressed,
         };
         sequence.push(signext.into());
         sequence

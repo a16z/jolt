@@ -58,6 +58,7 @@ impl VirtualInstructionSequence for SRLIW {
                 imm: 32,
             },
             virtual_sequence_remaining: Some(2),
+            is_compressed: self.is_compressed,
         };
         sequence.push(slli.into());
 
@@ -76,6 +77,7 @@ impl VirtualInstructionSequence for SRLIW {
                 imm: bitmask,
             },
             virtual_sequence_remaining: Some(1),
+            is_compressed: self.is_compressed,
         };
         sequence.push(srl.into());
 
@@ -87,6 +89,7 @@ impl VirtualInstructionSequence for SRLIW {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(0),
+            is_compressed: self.is_compressed,
         };
         sequence.push(signext.into());
         sequence

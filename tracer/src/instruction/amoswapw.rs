@@ -83,6 +83,7 @@ impl AMOSWAPW {
         remaining = amo_pre32(
             &mut sequence,
             self.address,
+            self.is_compressed,
             self.operands.rs1,
             v_rd,
             remaining,
@@ -91,6 +92,7 @@ impl AMOSWAPW {
         amo_post32(
             &mut sequence,
             self.address,
+            self.is_compressed,
             self.operands.rs2,
             self.operands.rs1,
             self.operands.rd,
@@ -115,6 +117,7 @@ impl AMOSWAPW {
         remaining = amo_pre64(
             &mut sequence,
             self.address,
+            self.is_compressed,
             self.operands.rs1,
             v_rd,
             v_dword_address,
@@ -125,6 +128,7 @@ impl AMOSWAPW {
         amo_post64(
             &mut sequence,
             self.address,
+            self.is_compressed,
             self.operands.rs2,
             v_dword_address,
             v_dword,
