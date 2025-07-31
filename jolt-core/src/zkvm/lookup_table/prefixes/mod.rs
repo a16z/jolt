@@ -12,6 +12,7 @@ use pow2::Pow2Prefix;
 use rayon::prelude::*;
 use right_shift::RightShiftPrefix;
 use sign_extension::SignExtensionPrefix;
+use sign_extension_upper_half::SignExtensionUpperHalfPrefix;
 use std::{fmt::Display, ops::Index};
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
@@ -21,6 +22,7 @@ use div_by_zero::DivByZeroPrefix;
 use eq::EqPrefix;
 use left_is_zero::LeftOperandIsZeroPrefix;
 use left_msb::LeftMsbPrefix;
+use lower_half_word::LowerHalfWordPrefix;
 use lower_word::LowerWordPrefix;
 use lt::LessThanPrefix;
 use num::FromPrimitive;
@@ -38,6 +40,7 @@ pub mod left_is_zero;
 pub mod left_msb;
 pub mod left_shift;
 pub mod left_shift_helper;
+pub mod lower_half_word;
 pub mod lower_word;
 pub mod lsb;
 pub mod lt;
@@ -52,6 +55,7 @@ pub mod right_is_zero;
 pub mod right_msb;
 pub mod right_shift;
 pub mod sign_extension;
+pub mod sign_extension_upper_half;
 pub mod two_lsb;
 pub mod upper_word;
 pub mod xor;
@@ -98,6 +102,7 @@ pub trait SparseDensePrefix<F: JoltField>: 'static + Sync {
 #[derive(EnumCountMacro, EnumIter, FromPrimitive)]
 pub enum Prefixes {
     LowerWord,
+    LowerHalfWord,
     UpperWord,
     Eq,
     And,
@@ -121,6 +126,7 @@ pub enum Prefixes {
     LeftShift,
     LeftShiftHelper,
     TwoLsb,
+    SignExtensionUpperHalf,
 }
 
 #[derive(Clone, Copy)]
@@ -181,6 +187,9 @@ impl Prefixes {
             Prefixes::LowerWord => {
                 LowerWordPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
             }
+            Prefixes::LowerHalfWord => {
+                LowerHalfWordPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
             Prefixes::UpperWord => {
                 UpperWordPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
             }
@@ -226,6 +235,9 @@ impl Prefixes {
                 LeftShiftHelperPrefix::prefix_mle(checkpoints, r_x, c, b, j)
             }
             Prefixes::TwoLsb => TwoLsbPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::SignExtensionUpperHalf => {
+                SignExtensionUpperHalfPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
         };
         PrefixEval(eval)
     }
@@ -273,6 +285,9 @@ impl Prefixes {
         match self {
             Prefixes::LowerWord => {
                 LowerWordPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::LowerHalfWord => {
+                LowerHalfWordPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
             Prefixes::UpperWord => {
                 UpperWordPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
@@ -365,6 +380,14 @@ impl Prefixes {
             }
             Prefixes::TwoLsb => {
                 TwoLsbPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::SignExtensionUpperHalf => {
+                SignExtensionUpperHalfPrefix::<WORD_SIZE>::update_prefix_checkpoint(
+                    checkpoints,
+                    r_x,
+                    r_y,
+                    j,
+                )
             }
         }
     }

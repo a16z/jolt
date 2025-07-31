@@ -815,7 +815,7 @@ mod tests {
             RV32IMCycle::JAL(cycle) => cycle.random(rng).into(),
             RV32IMCycle::JALR(cycle) => cycle.random(rng).into(),
             RV32IMCycle::LUI(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::LW(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::LD(cycle) => cycle.random(rng).into(),
             RV32IMCycle::MUL(cycle) => cycle.random(rng).into(),
             RV32IMCycle::MULHU(cycle) => cycle.random(rng).into(),
             RV32IMCycle::OR(cycle) => cycle.random(rng).into(),
@@ -825,7 +825,7 @@ mod tests {
             RV32IMCycle::SLTIU(cycle) => cycle.random(rng).into(),
             RV32IMCycle::SLTU(cycle) => cycle.random(rng).into(),
             RV32IMCycle::SUB(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::SW(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::SD(cycle) => cycle.random(rng).into(),
             RV32IMCycle::XOR(cycle) => cycle.random(rng).into(),
             RV32IMCycle::XORI(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualAdvice(cycle) => cycle.random(rng).into(),
@@ -1072,8 +1072,8 @@ mod tests {
     }
 
     #[test]
-    fn test_lw() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::LW(Default::default())));
+    fn test_ld() {
+        test_read_raf_sumcheck(Some(RV32IMCycle::LD(Default::default())));
     }
 
     #[test]
@@ -1122,8 +1122,8 @@ mod tests {
     }
 
     #[test]
-    fn test_sw() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::SW(Default::default())));
+    fn test_sd() {
+        test_read_raf_sumcheck(Some(RV32IMCycle::SD(Default::default())));
     }
 
     #[test]

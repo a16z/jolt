@@ -2,6 +2,7 @@ use and::AndTable;
 use enum_dispatch::enum_dispatch;
 use equal::EqualTable;
 use halfword_alignment::HalfwordAlignmentTable;
+use lower_half_word::LowerHalfWordTable;
 use movsign::MovsignTable;
 use not_equal::NotEqualTable;
 use or::OrTable;
@@ -10,6 +11,7 @@ use prefixes::PrefixEval;
 use range_check::RangeCheckTable;
 use serde::{Deserialize, Serialize};
 use shift_right_bitmask::ShiftRightBitmaskTable;
+use sign_extend_half_word::SignExtendHalfWordTable;
 use signed_greater_than_equal::SignedGreaterThanEqualTable;
 use signed_less_than::SignedLessThanTable;
 use std::marker::Sync;
@@ -65,12 +67,14 @@ pub mod suffixes;
 pub mod and;
 pub mod equal;
 pub mod halfword_alignment;
+pub mod lower_half_word;
 pub mod movsign;
 pub mod not_equal;
 pub mod or;
 pub mod pow2;
 pub mod range_check;
 pub mod shift_right_bitmask;
+pub mod sign_extend_half_word;
 pub mod signed_greater_than_equal;
 pub mod signed_less_than;
 pub mod sub;
@@ -113,6 +117,8 @@ pub enum LookupTables<const WORD_SIZE: usize> {
     ValidDiv0(ValidDiv0Table<WORD_SIZE>),
     HalfwordAlignment(HalfwordAlignmentTable<WORD_SIZE>),
     WordAlignment(WordAlignmentTable<WORD_SIZE>),
+    LowerHalfWord(LowerHalfWordTable<WORD_SIZE>),
+    SignExtendHalfWord(SignExtendHalfWordTable<WORD_SIZE>),
     Pow2(Pow2Table<WORD_SIZE>),
     ShiftRightBitmask(ShiftRightBitmaskTable<WORD_SIZE>),
     VirtualSRL(VirtualSRLTable<WORD_SIZE>),
@@ -148,6 +154,8 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::ValidDiv0(table) => table.materialize(),
             LookupTables::HalfwordAlignment(table) => table.materialize(),
             LookupTables::WordAlignment(table) => table.materialize(),
+            LookupTables::LowerHalfWord(table) => table.materialize(),
+            LookupTables::SignExtendHalfWord(table) => table.materialize(),
             LookupTables::Pow2(table) => table.materialize(),
             LookupTables::ShiftRightBitmask(table) => table.materialize(),
             LookupTables::VirtualSRL(table) => table.materialize(),
@@ -176,6 +184,8 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::ValidDiv0(table) => table.materialize_entry(index),
             LookupTables::HalfwordAlignment(table) => table.materialize_entry(index),
             LookupTables::WordAlignment(table) => table.materialize_entry(index),
+            LookupTables::LowerHalfWord(table) => table.materialize_entry(index),
+            LookupTables::SignExtendHalfWord(table) => table.materialize_entry(index),
             LookupTables::Pow2(table) => table.materialize_entry(index),
             LookupTables::ShiftRightBitmask(table) => table.materialize_entry(index),
             LookupTables::VirtualSRL(table) => table.materialize_entry(index),
@@ -204,6 +214,8 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::ValidDiv0(table) => table.evaluate_mle(r),
             LookupTables::HalfwordAlignment(table) => table.evaluate_mle(r),
             LookupTables::WordAlignment(table) => table.evaluate_mle(r),
+            LookupTables::LowerHalfWord(table) => table.evaluate_mle(r),
+            LookupTables::SignExtendHalfWord(table) => table.evaluate_mle(r),
             LookupTables::Pow2(table) => table.evaluate_mle(r),
             LookupTables::ShiftRightBitmask(table) => table.evaluate_mle(r),
             LookupTables::VirtualSRL(table) => table.evaluate_mle(r),
@@ -232,6 +244,8 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::ValidDiv0(table) => table.suffixes(),
             LookupTables::HalfwordAlignment(table) => table.suffixes(),
             LookupTables::WordAlignment(table) => table.suffixes(),
+            LookupTables::LowerHalfWord(table) => table.suffixes(),
+            LookupTables::SignExtendHalfWord(table) => table.suffixes(),
             LookupTables::Pow2(table) => table.suffixes(),
             LookupTables::ShiftRightBitmask(table) => table.suffixes(),
             LookupTables::VirtualSRL(table) => table.suffixes(),
@@ -264,6 +278,8 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::ValidDiv0(table) => table.combine(prefixes, suffixes),
             LookupTables::HalfwordAlignment(table) => table.combine(prefixes, suffixes),
             LookupTables::WordAlignment(table) => table.combine(prefixes, suffixes),
+            LookupTables::LowerHalfWord(table) => table.combine(prefixes, suffixes),
+            LookupTables::SignExtendHalfWord(table) => table.combine(prefixes, suffixes),
             LookupTables::Pow2(table) => table.combine(prefixes, suffixes),
             LookupTables::ShiftRightBitmask(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualSRL(table) => table.combine(prefixes, suffixes),

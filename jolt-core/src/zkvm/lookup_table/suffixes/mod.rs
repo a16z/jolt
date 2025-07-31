@@ -14,9 +14,11 @@ use right_shift::RightShiftSuffix;
 use right_shift_helper::RightShiftHelperSuffix;
 use right_shift_padding::RightShiftPaddingSuffix;
 use sign_extension::SignExtensionSuffix;
+use sign_extension_upper_half::SignExtensionUpperHalfSuffix;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
 use and::AndSuffix;
+use lower_half_word::LowerHalfWordSuffix;
 use lower_word::LowerWordSuffix;
 use one::OneSuffix;
 use two_lsb::TwoLsbSuffix;
@@ -29,6 +31,7 @@ pub mod eq;
 pub mod gt;
 pub mod left_is_zero;
 pub mod left_shift;
+pub mod lower_half_word;
 pub mod lower_word;
 pub mod lsb;
 pub mod lt;
@@ -40,6 +43,7 @@ pub mod right_shift;
 pub mod right_shift_helper;
 pub mod right_shift_padding;
 pub mod sign_extension;
+pub mod sign_extension_upper_half;
 pub mod two_lsb;
 pub mod upper_word;
 pub mod xor;
@@ -60,6 +64,7 @@ pub enum Suffixes {
     Or,
     UpperWord,
     LowerWord,
+    LowerHalfWord,
     LessThan,
     GreaterThan,
     Eq,
@@ -74,6 +79,7 @@ pub enum Suffixes {
     SignExtension,
     LeftShift,
     TwoLsb,
+    SignExtensionUpperHalf,
 }
 
 pub type SuffixEval<F: JoltField> = F;
@@ -89,6 +95,7 @@ impl Suffixes {
             Suffixes::Xor => XorSuffix::suffix_mle(b),
             Suffixes::UpperWord => UpperWordSuffix::<WORD_SIZE>::suffix_mle(b),
             Suffixes::LowerWord => LowerWordSuffix::<WORD_SIZE>::suffix_mle(b),
+            Suffixes::LowerHalfWord => LowerHalfWordSuffix::<WORD_SIZE>::suffix_mle(b),
             Suffixes::LessThan => LessThanSuffix::suffix_mle(b),
             Suffixes::GreaterThan => GreaterThanSuffix::suffix_mle(b),
             Suffixes::Eq => EqSuffix::suffix_mle(b),
@@ -103,6 +110,9 @@ impl Suffixes {
             Suffixes::SignExtension => SignExtensionSuffix::<WORD_SIZE>::suffix_mle(b),
             Suffixes::LeftShift => LeftShiftSuffix::suffix_mle(b),
             Suffixes::TwoLsb => TwoLsbSuffix::suffix_mle(b),
+            Suffixes::SignExtensionUpperHalf => {
+                SignExtensionUpperHalfSuffix::<WORD_SIZE>::suffix_mle(b)
+            }
         }
     }
 }
