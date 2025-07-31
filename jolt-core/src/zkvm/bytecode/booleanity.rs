@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::poly::compact_polynomial::SmallScalar;
 use crate::poly::opening_proof::{
     OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
@@ -29,8 +30,6 @@ struct BooleanityProverState<F: JoltField> {
     H: Option<Vec<MultilinearPolynomial<F>>>,
     F: Vec<F>,
     eq_r_r: Option<F>,
-    eq_km_c: [[F; 3]; 2],
-    eq_km_c_squared: [[F; 3]; 2],
 }
 
 pub struct BooleanitySumcheck<F: JoltField> {
@@ -144,25 +143,6 @@ impl<F: JoltField> BooleanityProverState<F> {
             .collect();
         let D = MultilinearPolynomial::from(eq_r_cycle);
 
-        // Precompute EQ(k_m, c) for k_m \in {0, 1} and c \in {0, 2, 3}
-        let eq_km_c: [[F; 3]; 2] = [
-            [
-                F::one(),        // eq(0, 0) = 0 * 0 + (1 - 0) * (1 - 0)
-                F::from_i64(-1), // eq(0, 2) = 0 * 2 + (1 - 0) * (1 - 2)
-                F::from_i64(-2), // eq(0, 3) = 0 * 3 + (1 - 0) * (1 - 3)
-            ],
-            [
-                F::zero(),     // eq(1, 0) = 1 * 0 + (1 - 1) * (1 - 0)
-                F::from_u8(2), // eq(1, 2) = 1 * 2 + (1 - 1) * (1 - 2)
-                F::from_u8(3), // eq(1, 3) = 1 * 3 + (1 - 1) * (1 - 3)
-            ],
-        ];
-
-        // Precompute EQ(k_m, c)^2 for k_m \in {0, 1} and c \in {0, 2, 3}
-        let eq_km_c_squared: [[F; 3]; 2] = [
-            [F::one(), F::one(), F::from_u8(4)],
-            [F::zero(), F::from_u8(4), F::from_u8(9)],
-        ];
         BooleanityProverState {
             B,
             D,
@@ -170,8 +150,6 @@ impl<F: JoltField> BooleanityProverState<F> {
             G,
             F: F_vec,
             eq_r_r: None,
-            eq_km_c,
-            eq_km_c_squared,
             pc_by_cycle,
         }
     }
@@ -329,6 +307,23 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         let m = round + 1;
         const DEGREE: usize = 3;
 
+        // EQ(k_m, c) for k_m \in {0, 1} and c \in {0, 2, 3}
+        const EQ_KM_C: [[i8; 3]; 2] = [
+            [
+                1,  // eq(0, 0) = 0 * 0 + (1 - 0) * (1 - 0)
+                -1, // eq(0, 2) = 0 * 2 + (1 - 0) * (1 - 2)
+                -2, // eq(0, 3) = 0 * 3 + (1 - 0) * (1 - 3)
+            ],
+            [
+                0, // eq(1, 0) = 1 * 0 + (1 - 1) * (1 - 0)
+                2, // eq(1, 2) = 1 * 2 + (1 - 1) * (1 - 2)
+                3, // eq(1, 3) = 1 * 3 + (1 - 1) * (1 - 3)
+            ],
+        ];
+
+        // EQ(k_m, c)^2 for k_m \in {0, 1} and c \in {0, 2, 3}
+        const EQ_KM_C_SQUARED: [[u8; 3]; 2] = [[1, 1, 4], [0, 4, 9]];
+
         let univariate_poly_evals: [F; 3] = (0..p.B.len() / 2)
             .into_par_iter()
             .map(|k_prime| {
@@ -355,9 +350,15 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                         //    G[k] * (F[k_1, ...., k_{m-1}, c]^2 - F[k_1, ...., k_{m-1}, c])
                         //    = G_times_F * (eq(k_m, c)^2 * F[k_1, ...., k_{m-1}] - eq(k_m, c))
                         [
-                            G_times_F * (p.eq_km_c_squared[k_m][0] * F_k - p.eq_km_c[k_m][0]),
-                            G_times_F * (p.eq_km_c_squared[k_m][1] * F_k - p.eq_km_c[k_m][1]),
-                            G_times_F * (p.eq_km_c_squared[k_m][2] * F_k - p.eq_km_c[k_m][2]),
+                            G_times_F
+                                * (EQ_KM_C_SQUARED[k_m][0].field_mul(F_k)
+                                    - F::from_i64(EQ_KM_C[k_m][0] as i64)),
+                            G_times_F
+                                * (EQ_KM_C_SQUARED[k_m][1].field_mul(F_k)
+                                    - F::from_i64(EQ_KM_C[k_m][1] as i64)),
+                            G_times_F
+                                * (EQ_KM_C_SQUARED[k_m][2].field_mul(F_k)
+                                    - F::from_i64(EQ_KM_C[k_m][2] as i64)),
                         ]
                     })
                     .reduce(
