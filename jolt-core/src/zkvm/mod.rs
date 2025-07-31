@@ -347,7 +347,7 @@ mod tests {
     fn fib_e2e_mock() {
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&9u32).unwrap();
-        let (bytecode, init_memory_state) = program.decode();
+        let (bytecode, init_memory_state, _) = program.decode();
         let (_, _, io_device) = program.trace(&inputs);
 
         let preprocessing = JoltRV32IMMockPCS::prover_preprocess(
@@ -374,7 +374,7 @@ mod tests {
     fn fib_e2e_dory() {
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&100u32).unwrap();
-        let (bytecode, init_memory_state) = program.decode();
+        let (bytecode, init_memory_state, _) = program.decode();
         let (_, _, io_device) = program.trace(&inputs);
 
         let preprocessing = JoltRV32IM::prover_preprocess(
@@ -400,7 +400,7 @@ mod tests {
     #[serial]
     fn sha3_e2e_dory() {
         let mut program = host::Program::new("sha3-guest");
-        let (bytecode, init_memory_state) = program.decode();
+        let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
         let (_, _, io_device) = program.trace(&inputs);
 
@@ -427,7 +427,7 @@ mod tests {
     #[serial]
     fn sha2_e2e_dory() {
         let mut program = host::Program::new("sha2-guest");
-        let (bytecode, init_memory_state) = program.decode();
+        let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
         let (_, _, io_device) = program.trace(&inputs);
 
@@ -454,7 +454,7 @@ mod tests {
     #[serial]
     fn memory_ops_e2e_dory() {
         let mut program = host::Program::new("memory-ops-guest");
-        let (bytecode, init_memory_state) = program.decode();
+        let (bytecode, init_memory_state, _) = program.decode();
         let (_, _, io_device) = program.trace(&[]);
 
         let preprocessing = JoltRV32IM::prover_preprocess(

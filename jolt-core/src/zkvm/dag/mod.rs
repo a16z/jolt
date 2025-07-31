@@ -20,7 +20,7 @@ mod tests {
     #[should_panic]
     fn truncated_trace() {
         let mut program = host::Program::new("fibonacci-guest");
-        let (bytecode, init_memory_state) = program.decode();
+        let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&9u8).unwrap();
         let (mut trace, final_memory_state, mut program_io) = program.trace(&inputs);
         trace.truncate(100);
@@ -66,7 +66,7 @@ mod tests {
     fn malicious_trace() {
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&1u8).unwrap();
-        let (bytecode, init_memory_state) = program.decode();
+        let (bytecode, init_memory_state, _) = program.decode();
         let (mut trace, final_memory_state, mut program_io) = program.trace(&inputs);
 
         // Since the preprocessing is done with the original memory layout, the verifier should fail

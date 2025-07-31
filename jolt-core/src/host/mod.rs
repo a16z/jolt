@@ -8,6 +8,7 @@ use std::{
     process::Command,
 };
 
+use common::constants::{EMULATOR_MEMORY_CAPACITY, RAM_START_ADDRESS};
 use common::{
     constants::{
         DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
@@ -155,7 +156,7 @@ impl Program {
         }
     }
 
-    pub fn decode(&mut self) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>) {
+    pub fn decode(&mut self) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>, u64) {
         self.build(DEFAULT_TARGET_DIR);
         let elf = self.elf.as_ref().unwrap();
         let mut elf_file =
@@ -163,6 +164,11 @@ impl Program {
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
         let (mut instructions, raw_bytes) = tracer::decode(&elf_contents);
+        let bytecode_size = {
+            let hi = raw_bytes.iter().map(|(address, _)| address).max().unwrap();
+            hi - RAM_START_ADDRESS
+        };
+
         // Expand virtual sequences
         instructions = instructions
             .into_par_iter()
@@ -191,7 +197,7 @@ impl Program {
             })
             .collect();
 
-        (instructions, raw_bytes)
+        (instructions, raw_bytes, bytecode_size)
     }
 
     // TODO(moodlezoup): Make this generic over InstructionSet
@@ -203,17 +209,23 @@ impl Program {
             File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
+        let (_, raw_bytes) = tracer::decode(&elf_contents);
+        let bytecode_size = {
+            let hi = raw_bytes.iter().map(|(address, _)| address).max().unwrap();
+            hi - RAM_START_ADDRESS
+        };
         let memory_config = MemoryConfig {
             memory_size: self.memory_size,
             stack_size: self.stack_size,
             max_input_size: self.max_input_size,
             max_output_size: self.max_output_size,
+            bytecode_size: Some(bytecode_size),
         };
         tracer::trace(elf_contents, inputs, &memory_config)
     }
 
     pub fn trace_analyze<F: JoltField>(mut self, inputs: &[u8]) -> ProgramSummary {
-        let (bytecode, init_memory_state) = self.decode();
+        let (bytecode, init_memory_state, _) = self.decode();
         let (trace, _, io_device) = self.trace(inputs);
 
         ProgramSummary {
@@ -231,6 +243,7 @@ impl Program {
         }
 
         let linker_script = LINKER_SCRIPT_TEMPLATE
+            .replace("{EMULATOR_MEMORY}", &EMULATOR_MEMORY_CAPACITY.to_string())
             .replace("{MEMORY_SIZE}", &self.memory_size.to_string())
             .replace("{STACK_SIZE}", &self.stack_size.to_string());
 
@@ -246,7 +259,7 @@ impl Program {
 
 const LINKER_SCRIPT_TEMPLATE: &str = r#"
 MEMORY {
-  program (rwx) : ORIGIN = 0x80000000, LENGTH = {MEMORY_SIZE}
+  program (rwx) : ORIGIN = 0x80000000, LENGTH = {EMULATOR_MEMORY}
 }
 
 SECTIONS {
@@ -262,13 +275,15 @@ SECTIONS {
     *(.data)
   } > program
 
-  .bss : {
+  .bss (NOLOAD) : {
     *(.bss)
   } > program
 
   . = ALIGN(8);
+  _STACK_END = .;
   . = . + {STACK_SIZE};
   _STACK_PTR = .;
+
   . = ALIGN(8);
   _HEAP_PTR = .;
 }
