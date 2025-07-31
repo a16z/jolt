@@ -1,9 +1,9 @@
 use std::ops::Index;
 
 use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
+use crate::field::JoltField;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
-use crate::{field::JoltField, utils};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use num_integer::Integer;
 use rayon::prelude::*;
@@ -114,7 +114,7 @@ pub struct CompactPolynomial<T: SmallScalar, F: JoltField> {
 impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
     pub fn from_coeffs(coeffs: Vec<T>) -> Self {
         assert!(
-            utils::is_power_of_two(coeffs.len()),
+            coeffs.len().is_power_of_two(),
             "Multilinear polynomials must be made from a power of 2 (not {})",
             coeffs.len()
         );

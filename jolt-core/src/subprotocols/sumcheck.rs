@@ -3,9 +3,7 @@
 
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::multilinear_polynomial::{
-    BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-};
+use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial};
 use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
@@ -375,115 +373,6 @@ impl BatchedSumcheck {
 }
 
 impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTranscript> {
-    /// Create a sumcheck proof for polynomial(s) of arbitrary degree.
-    ///
-    /// Params
-    /// - `claim`: Claimed sumcheck evaluation (note: currently unused)
-    /// - `num_rounds`: Number of rounds of sumcheck, or number of variables to bind
-    /// - `polys`: Dense polynomials to combine and sumcheck
-    /// - `comb_func`: Function used to combine each polynomial evaluation
-    /// - `transcript`: Fiat-shamir transcript
-    ///
-    /// Returns (SumcheckInstanceProof, r_eval_point, final_evals)
-    /// - `r_eval_point`: Final random point of evaluation
-    /// - `final_evals`: Each of the polys evaluated at `r_eval_point`
-    #[tracing::instrument(skip_all, name = "Sumcheck.prove")]
-    pub fn prove_arbitrary<Func>(
-        claim: &F,
-        num_rounds: usize,
-        polys: &mut Vec<MultilinearPolynomial<F>>,
-        comb_func: Func,
-        combined_degree: usize,
-        transcript: &mut ProofTranscript,
-    ) -> (Self, Vec<F>, Vec<F>)
-    where
-        Func: Fn(&[F]) -> F + std::marker::Sync,
-    {
-        let mut previous_claim = *claim;
-        let mut r: Vec<F> = Vec::new();
-        let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
-
-        #[cfg(test)]
-        {
-            for poly in polys.iter() {
-                assert_eq!(num_rounds, poly.get_num_vars());
-            }
-            let total_evals = 1 << num_rounds;
-            let mut sum = F::zero();
-            for i in 0..total_evals {
-                let params: Vec<F> = polys.iter().map(|poly| poly.get_coeff(i)).collect();
-                sum += comb_func(&params);
-            }
-            assert_eq!(&sum, claim, "Sumcheck claim is wrong");
-        }
-
-        for _round in 0..num_rounds {
-            // Vector storing evaluations of combined polynomials g(x) = P_0(x) * ... P_{num_polys} (x)
-            // for points {0, ..., |g(x)|}
-            let mut eval_points = vec![F::zero(); combined_degree];
-
-            let mle_half = polys[0].len() / 2;
-
-            let accum: Vec<Vec<F>> = (0..mle_half)
-                .into_par_iter()
-                .map(|poly_term_i| {
-                    let mut accum = vec![F::zero(); combined_degree];
-                    // TODO(moodlezoup): Optimize
-                    let evals: Vec<_> = polys
-                        .iter()
-                        .map(|poly| {
-                            poly.sumcheck_evals(
-                                poly_term_i,
-                                combined_degree,
-                                BindingOrder::HighToLow,
-                            )
-                        })
-                        .collect();
-                    for j in 0..combined_degree {
-                        let evals_j: Vec<_> = evals.iter().map(|x| x[j]).collect();
-                        accum[j] += comb_func(&evals_j);
-                    }
-
-                    accum
-                })
-                .collect();
-
-            eval_points
-                .par_iter_mut()
-                .enumerate()
-                .for_each(|(poly_i, eval_point)| {
-                    *eval_point = accum
-                        .par_iter()
-                        .take(mle_half)
-                        .map(|mle| mle[poly_i])
-                        .sum::<F>();
-                });
-
-            eval_points.insert(1, previous_claim - eval_points[0]);
-            let univariate_poly = UniPoly::from_evals(&eval_points);
-            let compressed_poly = univariate_poly.compress();
-
-            // append the prover's message to the transcript
-            compressed_poly.append_to_transcript(transcript);
-            let r_j = transcript.challenge_scalar();
-            r.push(r_j);
-
-            // bound all tables to the verifier's challenge
-            polys
-                .par_iter_mut()
-                .for_each(|poly| poly.bind(r_j, BindingOrder::HighToLow));
-            previous_claim = univariate_poly.evaluate(&r_j);
-            compressed_polys.push(compressed_poly);
-        }
-
-        let final_evals = polys
-            .iter()
-            .map(|poly| poly.final_sumcheck_claim())
-            .collect();
-
-        (SumcheckInstanceProof::new(compressed_polys), r, final_evals)
-    }
-
     #[tracing::instrument(skip_all, name = "Spartan::prove_spartan_small_value")]
     pub fn prove_spartan_small_value<const NUM_SVO_ROUNDS: usize>(
         num_rounds: usize,
