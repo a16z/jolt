@@ -36,6 +36,7 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     proofs: Proofs<F, PCS, FS>,
     pub trace_length: usize,
     ram_K: usize,
+    twist_sumcheck_switch_index: usize,
 }
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F, PCS, FS> {
@@ -46,6 +47,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
         let proofs = state_manager.proofs.take();
         let trace_length = prover_state.trace.len();
         let ram_K = state_manager.ram_K;
+        let twist_sumcheck_switch_index = state_manager.twist_sumcheck_switch_index;
 
         Self {
             opening_claims: Claims(openings),
@@ -53,6 +55,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
             proofs,
             trace_length,
             ram_K,
+            twist_sumcheck_switch_index,
         }
     }
 
@@ -79,6 +82,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
             commitments,
             program_io,
             ram_K: self.ram_K,
+            twist_sumcheck_switch_index: self.twist_sumcheck_switch_index,
             prover_state: None,
             verifier_state: Some(VerifierState {
                 preprocessing,
@@ -319,10 +323,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
                 1u8.serialize_with_mode(&mut writer, compress)?;
                 proof.serialize_with_mode(&mut writer, compress)
             }
-            ProofData::SumcheckSwitchIndex(idx) => {
-                2u8.serialize_with_mode(&mut writer, compress)?;
-                idx.serialize_with_mode(&mut writer, compress)
-            }
         }
     }
 
@@ -330,7 +330,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
         1 + match self {
             ProofData::SumcheckProof(proof) => proof.serialized_size(compress),
             ProofData::ReducedOpeningProof(proof) => proof.serialized_size(compress),
-            ProofData::SumcheckSwitchIndex(idx) => idx.serialized_size(compress),
         }
     }
 }
@@ -362,10 +361,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
                 let proof =
                     ReducedOpeningProof::deserialize_with_mode(&mut reader, compress, validate)?;
                 Ok(ProofData::ReducedOpeningProof(proof))
-            }
-            2 => {
-                let idx = usize::deserialize_with_mode(&mut reader, compress, validate)?;
-                Ok(ProofData::SumcheckSwitchIndex(idx))
             }
             _ => Err(SerializationError::InvalidData),
         }

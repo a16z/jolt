@@ -17,15 +17,19 @@ use crate::{
     utils::math::Math,
     zkvm::{
         lookup_table::LookupTables,
-        {
-            instruction_lookups,
-            ram::{compute_d_parameter, remap_address, NUM_RA_I_VARS},
-            JoltProverPreprocessing,
-        },
+        {instruction_lookups, ram::remap_address, JoltProverPreprocessing},
     },
 };
 
 use super::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
+
+/// K^{1/d}
+pub const DTH_ROOT_OF_K: usize = 1 << 8;
+pub fn compute_d_parameter(K: usize) -> usize {
+    // Calculate D dynamically such that 2^8 = K^(1/D)
+    let log_K = K.log_2();
+    log_K.div_ceil(DTH_ROOT_OF_K.log_2())
+}
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord)]
 pub enum CommittedPolynomial {
@@ -49,12 +53,6 @@ pub enum CommittedPolynomial {
     /// Whether the current instruction triggers a jump
     ShouldJump,
     /*  Twist/Shout witnesses */
-    /// One-hot ra polynomial for the bytecode instance of Shout
-    BytecodeRa(usize),
-    /// One-hot ra/wa polynomial for the RAM instance of Twist
-    /// Note that for RAM, ra and wa are the same polynomial because
-    /// there is at most one load or store per cycle.
-    RamRa(usize),
     /// Inc polynomial for the registers instance of Twist
     RdInc,
     /// Inc polynomial for the RAM instance of Twist
@@ -62,13 +60,19 @@ pub enum CommittedPolynomial {
     /// One-hot ra polynomial for the instruction lookups instance of Shout.
     /// There are d=8 of these polynomials, `InstructionRa(0) .. InstructionRa(7)`
     InstructionRa(usize),
+    /// One-hot ra polynomial for the bytecode instance of Shout
+    BytecodeRa(usize),
+    /// One-hot ra/wa polynomial for the RAM instance of Twist
+    /// Note that for RAM, ra and wa are the same polynomial because
+    /// there is at most one load or store per cycle.
+    RamRa(usize),
 }
 
 pub static mut ALL_COMMITTED_POLYNOMIALS: OnceCell<Vec<CommittedPolynomial>> = OnceCell::new();
 
 pub struct AllCommittedPolynomials();
 impl AllCommittedPolynomials {
-    pub fn initialize(ram_K: usize, bytecode_d: usize) -> Self {
+    pub fn initialize(ram_d: usize, bytecode_d: usize) -> Self {
         let mut polynomials = vec![
             CommittedPolynomial::LeftInstructionInput,
             CommittedPolynomial::RightInstructionInput,
@@ -77,15 +81,6 @@ impl AllCommittedPolynomials {
             CommittedPolynomial::WritePCtoRD,
             CommittedPolynomial::ShouldBranch,
             CommittedPolynomial::ShouldJump,
-        ];
-        let ram_d = compute_d_parameter(ram_K);
-        for i in 0..ram_d {
-            polynomials.push(CommittedPolynomial::RamRa(i));
-        }
-        for i in 0..bytecode_d {
-            polynomials.push(CommittedPolynomial::BytecodeRa(i));
-        }
-        polynomials.extend([
             CommittedPolynomial::RdInc,
             CommittedPolynomial::RamInc,
             CommittedPolynomial::InstructionRa(0),
@@ -96,7 +91,13 @@ impl AllCommittedPolynomials {
             CommittedPolynomial::InstructionRa(5),
             CommittedPolynomial::InstructionRa(6),
             CommittedPolynomial::InstructionRa(7),
-        ]);
+        ];
+        for i in 0..ram_d {
+            polynomials.push(CommittedPolynomial::RamRa(i));
+        }
+        for i in 0..bytecode_d {
+            polynomials.push(CommittedPolynomial::BytecodeRa(i));
+        }
 
         unsafe {
             ALL_COMMITTED_POLYNOMIALS
@@ -293,14 +294,14 @@ impl CommittedPolynomial {
                             &preprocessing.shared.memory_layout,
                         )
                         .map(|address| {
-                            (address as usize >> (NUM_RA_I_VARS * (d - 1 - i)))
-                                % (1 << NUM_RA_I_VARS)
+                            (address as usize >> (DTH_ROOT_OF_K.log_2() * (d - 1 - i)))
+                                % DTH_ROOT_OF_K
                         })
                     })
                     .collect();
                 MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
                     addresses,
-                    1 << NUM_RA_I_VARS,
+                    DTH_ROOT_OF_K,
                 ))
             }
             CommittedPolynomial::RdInc => {

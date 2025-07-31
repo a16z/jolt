@@ -12,9 +12,11 @@ use crate::zkvm::dag::stage::SumcheckStages;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::zkvm::instruction_lookups::LookupsDag;
 use crate::zkvm::r1cs::spartan::SpartanDag;
-use crate::zkvm::ram::{RamDag, NUM_RA_I_VARS};
+use crate::zkvm::ram::RamDag;
 use crate::zkvm::registers::RegistersDag;
-use crate::zkvm::witness::{AllCommittedPolynomials, CommittedPolynomial};
+use crate::zkvm::witness::{
+    compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K,
+};
 use crate::zkvm::ProverDebugInfo;
 use anyhow::Context;
 use rayon::prelude::*;
@@ -50,8 +52,8 @@ impl JoltDAG {
         let ram_K = state_manager.ram_K;
         let bytecode_d = preprocessing.shared.bytecode.d;
         let _guard = (
-            DoryGlobals::initialize(1 << NUM_RA_I_VARS, padded_trace_length),
-            AllCommittedPolynomials::initialize(ram_K, bytecode_d),
+            DoryGlobals::initialize(DTH_ROOT_OF_K, padded_trace_length),
+            AllCommittedPolynomials::initialize(compute_d_parameter(ram_K), bytecode_d),
         );
 
         // Generate and commit to all witness polynomials
@@ -247,7 +249,7 @@ impl JoltDAG {
 
         let ram_K = state_manager.ram_K;
         let bytecode_d = state_manager.get_verifier_data().0.shared.bytecode.d;
-        let _guard = AllCommittedPolynomials::initialize(ram_K, bytecode_d);
+        let _guard = AllCommittedPolynomials::initialize(compute_d_parameter(ram_K), bytecode_d);
 
         // Append commitments to transcript
         let commitments = state_manager.get_commitments();

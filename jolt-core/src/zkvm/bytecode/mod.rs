@@ -7,8 +7,7 @@ use crate::zkvm::bytecode::hamming_weight::HammingWeightSumcheck;
 use crate::zkvm::bytecode::read_raf_checking::ReadRafSumcheck;
 use crate::zkvm::dag::stage::SumcheckStages;
 use crate::zkvm::dag::state_manager::StateManager;
-use crate::zkvm::ram::compute_d_parameter;
-use crate::zkvm::witness::VirtualPolynomial;
+use crate::zkvm::witness::{compute_d_parameter, VirtualPolynomial};
 use crate::{
     field::JoltField,
     poly::{commitment::commitment_scheme::CommitmentScheme, eq_poly::EqPolynomial},
