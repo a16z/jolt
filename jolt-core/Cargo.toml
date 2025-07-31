@@ -18,10 +18,14 @@ description = "The lookup singularity. Based on Spartan; built on Arkworks."
 documentation = "https://github.com/a16z/jolt/README.md"
 repository = "https://github.com/a16z/jolt"
 license-file = "LICENSE"
-keywords = ["SNARK", "cryptography", "proofs"]
+keywords = ["SNARK", "cryptography", "proofs", "zkVM"]
 
 [features]
-default = [
+default = ["host"]
+host = ["dep:reqwest", "dep:tokio", "prover"]
+host-verifier = ["dep:reqwest", "dep:tokio", "parallel"]
+prover = ["parallel"]
+parallel = [
     "ark-ec/parallel",
     "ark-ff/parallel",
     "ark-std/parallel",
@@ -29,7 +33,6 @@ default = [
     "host",
     "rayon",
 ]
-host = ["dep:reqwest", "dep:tokio"]
 icicle = [
     "default",
     "dep:icicle-runtime",
@@ -125,6 +128,11 @@ harness = false
 [lib]
 name = "jolt_core"
 path = "src/lib.rs"
+
+[[bin]]
+name = "jolt-core"
+path = "src/bin/jolt_core.rs"
+required-features = ["host"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 memory-stats = "1.0.0"
