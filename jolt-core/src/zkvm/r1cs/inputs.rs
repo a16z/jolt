@@ -335,7 +335,8 @@ impl JoltR1CSInputs {
                             .chain(rayon::iter::once(&RV32IMCycle::NoOp)),
                     )
                     .map(|(cycle, next_cycle)| {
-                        let is_branch = cycle.instruction().circuit_flags()[CircuitFlags::Branch];
+                        let flags = cycle.instruction().circuit_flags();
+                        let is_branch = flags[CircuitFlags::Branch];
                         let should_branch =
                             is_branch && LookupQuery::<WORD_SIZE>::to_lookup_output(cycle) != 0;
                         let instr = cycle.instruction().normalize();
@@ -343,7 +344,8 @@ impl JoltR1CSInputs {
                             (instr.address as i64 + instr.operands.imm) as u64
                         } else {
                             // JoltR1CSInputs::NextPCJump
-                            let is_jump = cycle.instruction().circuit_flags()[CircuitFlags::Jump];
+                            let is_jump = flags[CircuitFlags::Jump];
+                            let is_compressed = flags[CircuitFlags::IsCompressed];
                             let do_not_update_pc = cycle.instruction().circuit_flags()
                                 [CircuitFlags::DoNotUpdateUnexpandedPC];
                             let next_is_noop =
@@ -354,6 +356,8 @@ impl JoltR1CSInputs {
                                 LookupQuery::<WORD_SIZE>::to_lookup_output(cycle)
                             } else if do_not_update_pc {
                                 instr.address as u64
+                            } else if is_compressed {
+                                instr.address as u64 + 2
                             } else {
                                 instr.address as u64 + 4
                             }

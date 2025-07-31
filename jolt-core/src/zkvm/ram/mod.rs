@@ -54,7 +54,9 @@ impl RAMPreprocessing {
             .map(|(address, _)| *address)
             .max()
             .unwrap_or(0)
-            + (BYTES_PER_INSTRUCTION as u64 - 1); // For RV32IM, instructions occupy 4 bytes, so the max bytecode address is the max instruction address + 3
+            + (BYTES_PER_INSTRUCTION as u64 - 1);
+        // For RV32IM, instructions occupy 4 bytes, so the max bytecode address is the max
+        // instruction address + 3
 
         let num_words = max_bytecode_address.next_multiple_of(4) / 4 - min_bytecode_address / 4 + 1;
         let mut bytecode_words = vec![0u32; num_words as usize];

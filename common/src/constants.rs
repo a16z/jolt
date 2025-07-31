@@ -3,6 +3,7 @@ const RISCV_REGISTER_COUNT: u64 = 32;
 const VIRTUAL_REGISTER_COUNT: u64 = 32; //  see Section 6.1 of Jolt paper
 pub const REGISTER_COUNT: u64 = RISCV_REGISTER_COUNT + VIRTUAL_REGISTER_COUNT;
 pub const BYTES_PER_INSTRUCTION: usize = 4;
+pub const ALIGNMENT_FACTOR_BYTECODE: usize = 2;
 
 pub const RAM_START_ADDRESS: u64 = 0x80000000;
 

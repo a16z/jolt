@@ -215,12 +215,12 @@ impl CommittedPolynomial {
                 coeffs.into()
             }
             CommittedPolynomial::Product => {
-                let coeffs: Vec<u64> = trace
+                let coeffs: Vec<u128> = trace
                     .par_iter()
                     .map(|cycle| {
                         let (left_input, right_input) =
                             LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle);
-                        left_input * right_input as u64
+                        left_input as u128 * (right_input as u64) as u128
                     })
                     .collect();
                 coeffs.into()
