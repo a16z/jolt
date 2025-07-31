@@ -889,6 +889,7 @@ mod tests {
             program_io,
             trace.len(),
             1 << 8,
+            prover_sm.twist_sumcheck_switch_index,
         );
 
         let r_cycle: Vec<Fr> = prover_sm.transcript.borrow_mut().challenge_vector(LOG_T);

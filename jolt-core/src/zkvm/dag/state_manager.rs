@@ -9,6 +9,7 @@ use crate::poly::opening_proof::{
     VerifierOpeningAccumulator, BIG_ENDIAN,
 };
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
+use crate::utils::math::Math;
 use crate::utils::transcript::Transcript;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::zkvm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
@@ -26,13 +27,11 @@ pub enum ProofKeys {
     Stage3Sumcheck,
     Stage4Sumcheck,
     ReducedOpeningProof,
-    TwistSumcheckSwitchIndex,
 }
 
 pub enum ProofData<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> {
     SumcheckProof(SumcheckInstanceProof<F, ProofTranscript>),
     ReducedOpeningProof(ReducedOpeningProof<F, PCS, ProofTranscript>),
-    SumcheckSwitchIndex(usize),
 }
 
 pub type Proofs<F, PCS, ProofTranscript> = BTreeMap<ProofKeys, ProofData<F, PCS, ProofTranscript>>;
@@ -66,6 +65,7 @@ pub struct StateManager<
     pub proofs: Rc<RefCell<Proofs<F, PCS, ProofTranscript>>>,
     pub commitments: Rc<RefCell<Vec<PCS::Commitment>>>,
     pub ram_K: usize,
+    pub twist_sumcheck_switch_index: usize,
     pub program_io: JoltDevice,
     pub prover_state: Option<ProverState<'a, F, PCS>>,
     pub verifier_state: Option<VerifierState<'a, F, PCS>>,
@@ -99,12 +99,18 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             .unwrap_or(0)
             .next_power_of_two() as usize;
 
+        let T = trace.len();
+        let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
+        let chunk_size = T / num_chunks;
+        let twist_sumcheck_switch_index = chunk_size.log_2();
+
         Self {
             transcript,
             proofs,
             commitments,
             program_io,
             ram_K,
+            twist_sumcheck_switch_index,
             prover_state: Some(ProverState {
                 preprocessing,
                 trace,
@@ -123,6 +129,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         program_io: JoltDevice,
         trace_length: usize,
         ram_K: usize,
+        twist_sumcheck_switch_index: usize,
     ) -> Self {
         let opening_accumulator = VerifierOpeningAccumulator::new();
         let opening_accumulator = Rc::new(RefCell::new(opening_accumulator));
@@ -136,6 +143,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             commitments,
             program_io,
             ram_K,
+            twist_sumcheck_switch_index,
             prover_state: None,
             verifier_state: Some(VerifierState {
                 preprocessing,
