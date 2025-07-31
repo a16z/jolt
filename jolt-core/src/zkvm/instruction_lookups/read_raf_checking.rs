@@ -42,16 +42,6 @@ use crate::{
 
 const DEGREE: usize = D + 2;
 
-/// Computes the bit-length of the suffix, for the current (`j`th) round
-/// of sumcheck.
-pub fn current_suffix_len(log_K: usize, j: usize) -> usize {
-    // Number of sumcheck rounds per "phase" of sparse-dense sumcheck.
-    let phase_length = log_K / 4;
-    // The suffix length is 3/4 * log_K at the beginning and shrinks by
-    // log_K / 4 after each phase.
-    log_K - (j / phase_length + 1) * phase_length
-}
-
 struct ReadRafProverState<F: JoltField> {
     ra: Vec<MultilinearPolynomial<F>>,
     r: Vec<F>,

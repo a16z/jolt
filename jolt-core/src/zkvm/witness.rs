@@ -18,7 +18,8 @@ use crate::{
     zkvm::{
         instruction_lookups::{self, WORD_SIZE},
         lookup_table::LookupTables,
-        {instruction_lookups, ram::remap_address, JoltProverPreprocessing},
+        ram::remap_address,
+        JoltProverPreprocessing,
     },
 };
 

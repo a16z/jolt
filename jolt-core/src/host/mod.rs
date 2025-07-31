@@ -271,7 +271,7 @@ impl Program {
             File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
-        let (_, raw_bytes) = tracer::decode(&elf_contents);
+        let (_, raw_bytes, _) = tracer::decode(&elf_contents);
         let bytecode_size = {
             let hi = raw_bytes.iter().map(|(address, _)| address).max().unwrap();
             hi - RAM_START_ADDRESS
