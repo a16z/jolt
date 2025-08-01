@@ -258,7 +258,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             shared_eq.num_variables_bound += 1;
         }
 
-        // For the first log T round we want to use F stil
+        // For the first log T round we want to use F still
         if round == polynomial.K.log_2() {
             let F = &shared_eq.F;
             let nonzero_indices = &polynomial.nonzero_indices;
