@@ -618,16 +618,7 @@ impl RV32IMInstruction {
     }
 
     pub fn decode(instr: u32, address: u64) -> Result<Self, &'static str> {
-        let opcode = instr & 0x7f;
-        
-        // Debug: Show instruction details for custom opcodes
-        if opcode == 0x0B || opcode == 0x2B || opcode == 0x3E || opcode == 0x0C {
-            let funct3 = (instr >> 12) & 0x7;
-            let funct7 = (instr >> 25) & 0x7f;
-            eprintln!("DEBUG decode(): addr={:#x}, word={:#010x}, opcode={:#x}, funct3={:#x}, funct7={:#x}", 
-                     address, instr, opcode, funct3, funct7);
-        }
-        
+        let opcode = instr & 0x7f;        
         match opcode {
             0b0110111 => {
                 // LUI: U-type => [imm(31:12), rd, opcode]
@@ -856,11 +847,9 @@ impl RV32IMInstruction {
                 if funct7 == 0x00 {
                     match funct3 {
                         0x0 => {
-                            eprintln!("RV32IMInstruction::decode() called for SHA256");
                             Ok(SHA256::new(instr, address, true).into())
                         },
                         0x1 => {
-                            eprintln!("RV32IMInstruction::decode() called for SHA256INIT opcode");
                             Ok(SHA256INIT::new(instr, address, true).into())
                         },
                         _ => Err("Unknown funct3 for custom SHA256 instruction"),
@@ -873,42 +862,9 @@ impl RV32IMInstruction {
             0b0101011 => {
                 let funct3 = (instr >> 12) & 0x7;
                 let funct7 = (instr >> 25) & 0x7f;
-                eprintln!("DEBUG: Decoding opcode 0x2B (custom-1) instruction: word={:#010x}, funct3={:#x}, funct7={:#x}", 
-                         instr, funct3, funct7);
-                match funct3 {
-                    0x0 => {
-                        eprintln!("RV32IMInstruction::decode() called for PRECOMPILE");
-                        Ok(PRECOMPILE::new_with_funct7(instr, address, true).into())
-                    },
-                    _ => {
-                        eprintln!("ERROR: Unknown funct3={:#x} for PRECOMPILE instruction", funct3);
-                        Err("Unknown funct3 for PRECOMPILE instruction")
-                    },
-                }
-                
+                Ok(PRECOMPILE::new_with_funct7(instr, address, true).into())
             }
-            0b0000111 => {
-                // Floating-point load instructions (FLW, FLD)
-                eprintln!("Warning: Floating-point load instruction at {:#x} not implemented, treating as NOP", address);
-                Ok(RV32IMInstruction::UNIMPL)
-            }
-            0b0100111 => {
-                // Floating-point store instructions (FSW, FSD)
-                eprintln!("Warning: Floating-point store instruction at {:#x} not implemented, treating as NOP", address);
-                Ok(RV32IMInstruction::UNIMPL)
-            }
-            0b1010011 => {
-                // Floating-point arithmetic (FADD, FSUB, FMUL, etc.)
-                eprintln!("Warning: Floating-point arithmetic instruction at {:#x} not implemented, treating as NOP", address);
-                Ok(RV32IMInstruction::UNIMPL)
-            }
-            0b1000011 | 0b1000111 | 0b1001011 | 0b1001111 => {
-                // FMADD, FMSUB, FNMSUB, FNMADD
-                eprintln!("Warning: Floating-point fused multiply-add at {:#x} not implemented, treating as NOP", address);
-                Ok(RV32IMInstruction::UNIMPL)
-            }
-            op => {
-                eprintln!("RV32IMInstruction::decode() called for Unknown opcode: {:b}", op);
+            _ => {
                 Err("Unknown opcode")
             }
         }

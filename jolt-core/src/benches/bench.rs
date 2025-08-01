@@ -463,21 +463,8 @@ where
     let inputs = postcard::to_stdvec(input).unwrap();
 
     let task = move || {
-        eprintln!("Benchmarking SHA2 Starts here");
         let (trace, final_memory_state, io_device) = program.trace(&inputs);
-        eprintln!("Separator of the bytecode and trace");
         let (bytecode, init_memory_state) = program.decode();
-        
-        eprintln!("Bytecode length is: {}", bytecode.len());
-        for i in bytecode.clone() {
-            eprintln!("Bytecode is: {:?}", i);
-        }
-
-        eprintln!("Trace length is: {}", trace.len());
-        for i in trace.clone() {
-            eprintln!("Trace is: {:?}", i);
-        }
-
 
         let preprocessing: JoltProverPreprocessing<F, PCS, ProofTranscript> =
             RV32IJoltVM::prover_preprocess(
