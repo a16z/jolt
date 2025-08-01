@@ -17,7 +17,7 @@ use common::{
 use rayon::prelude::*;
 use tracer::{
     emulator::memory::Memory,
-    instruction::{RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence},
+    instruction::{precompile, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence},
 };
 
 use crate::field::JoltField;
@@ -185,8 +185,15 @@ impl Program {
                 RV32IMInstruction::SRAI(srai) => srai.virtual_sequence(),
                 RV32IMInstruction::SRL(srl) => srl.virtual_sequence(),
                 RV32IMInstruction::SRLI(srli) => srli.virtual_sequence(),
-                RV32IMInstruction::SHA256(sha256) => sha256.virtual_sequence(),
-                RV32IMInstruction::SHA256INIT(sha256init) => sha256init.virtual_sequence(),
+                RV32IMInstruction::SHA256(sha256) => {
+                    eprintln!("Program::decode() for SHA256");
+                    sha256.virtual_sequence()},
+                RV32IMInstruction::SHA256INIT(sha256init) => {
+                    eprintln!("Program::decode() for SHA256 INIT");
+                    sha256init.virtual_sequence()},
+                RV32IMInstruction::PRECOMPILE(precompile) => {
+                    eprintln!("Program::decode() for PRECOMPILE");
+                    precompile.virtual_sequence()},
                 _ => vec![instr],
             })
             .collect();

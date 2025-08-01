@@ -372,13 +372,41 @@ impl Cpu {
             }
         };
 
-        let instr = RV32IMInstruction::decode(word, instruction_address)
-            .ok()
-            .unwrap();
+        let instr = match RV32IMInstruction::decode(word, instruction_address) {
+            Ok(instr) => instr,
+            Err(e) => {
+                eprintln!("Failed to decode instruction at {:#x}: word={:#010x}, error: {}", 
+                         instruction_address, word, e);
+                eprintln!("Instruction bytes: {:02x} {:02x} {:02x} {:02x}", 
+                         word & 0xFF, (word >> 8) & 0xFF, (word >> 16) & 0xFF, (word >> 24) & 0xFF);
+                // Check if this might be a data word misinterpreted as instruction
+                if word == 0xFFFFFFFF || word == 0x00000000 {
+                    eprintln!("Warning: This looks like data (all 1s or 0s), not an instruction");
+                }
+                panic!("Instruction decode failed");
+            }
+        };
+
+        // Debug: Print instruction type
+        match &instr {
+            RV32IMInstruction::SHA256(_) => {
+                eprintln!("CPU::tick() - Decoded SHA256 instruction at {:#x}", instruction_address);
+            }
+            RV32IMInstruction::SHA256INIT(_) => {
+                eprintln!("CPU::tick() - Decoded SHA256INIT instruction at {:#x}", instruction_address);
+            }
+            RV32IMInstruction::PRECOMPILE(_) => {
+                eprintln!("CPU::tick() - Decoded PRECOMPILE instruction at {:#x}, word={:#010x}", 
+                         instruction_address, word);
+            }
+            _ => {}
+        }
 
         if trace.is_none() {
+            eprintln!("CPU::tick() - Executing instruction (no trace): {:?}", instr);
             instr.execute(self);
         } else {
+            eprintln!("CPU::tick() - Tracing instruction: {:?}", instr);
             instr.trace(self, trace);
         }
 

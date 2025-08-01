@@ -42,6 +42,7 @@ pub struct BytecodePreprocessing {
 impl BytecodePreprocessing {
     #[tracing::instrument(skip_all, name = "BytecodePreprocessing::preprocess")]
     pub fn preprocess(mut bytecode: Vec<RV32IMInstruction>) -> Self {
+        println!("{:?}", bytecode);
         let mut virtual_address_map = BTreeMap::new();
         let mut virtual_address = 1; // Account for no-op instruction prepended to bytecode
         for instruction in bytecode.iter() {

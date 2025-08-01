@@ -141,8 +141,13 @@ fn sha2_builder(_address: u64, _rs1: usize, _rs2: usize) -> Vec<RV32IMInstructio
 }
 
 // Initialize and register precompiles
-fn init_precompiles() -> Result<(), String> {
-    // Register XOR with funct7=0x01
+pub fn init_precompiles() -> Result<(), String> {
+    // Register SHA256 with funct7=0x00
+    register_precompile(0x00, "SHA256_PRECOMPILE", 
+        Box::new(sha2_precompile), 
+        Box::new(sha2_builder))?;
+    
+    // Also register with funct7=0x01 for compatibility
     register_precompile(0x01, "SHA2_PRECOMPILE", 
         Box::new(sha2_precompile), 
         Box::new(sha2_builder))?;

@@ -2071,6 +2071,7 @@ dependencies = [
  "clap",
  "common",
  "criterion",
+ "ctor",
  "derive_more 2.0.1",
  "dirs",
  "dory",
