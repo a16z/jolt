@@ -103,7 +103,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
         let ram_K = usize::deserialize_with_mode(&mut reader, compress, validate)?;
         let bytecode_d = usize::deserialize_with_mode(&mut reader, compress, validate)?;
 
-        // ensure that all committed polys are set up before serializing
+        // ensure that all committed polys are set up before deserializing proofs
         let guard = AllCommittedPolynomials::initialize(ram_K, bytecode_d);
         let opening_claims = Claims::deserialize_with_mode(&mut reader, compress, validate)?;
         let commitments =
