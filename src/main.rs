@@ -200,9 +200,6 @@ lto = "fat"
 jolt-sdk = { git = "https://github.com/a16z/jolt", features = ["host"] }
 guest = { path = "./guest" }
 
-[features]
-icicle = ["jolt-sdk/icicle"]
-
 [patch.crates-io]
 ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
@@ -220,7 +217,7 @@ const HOST_MAIN: &str = r#"pub fn main() {
     let prove_fib = guest::build_prover_fib(program, prover_preprocessing);
     let verify_fib = guest::build_verifier_fib(verifier_preprocessing);
 
-    let (output, proof) = prove_fib(50);
+    let (output, proof, _) = prove_fib(50);
     let is_valid = verify_fib(50, output, proof);
 
     println!("output: {output}");

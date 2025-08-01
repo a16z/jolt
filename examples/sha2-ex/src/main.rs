@@ -13,7 +13,7 @@ pub fn main() {
 
     let input: &[u8] = &[5u8; 32];
     let now = Instant::now();
-    let (output, proof) = prove_sha2(input);
+    let (output, proof, _) = prove_sha2(input);
     println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
     let is_valid = verify_sha2(input, output, proof);
 

@@ -7,7 +7,7 @@ use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance};
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::Transcript;
 use crate::zkvm::bytecode::BytecodeDag;
-use crate::zkvm::dag::proof_serialization::{serialize_and_print_size, JoltProof};
+use crate::zkvm::dag::proof_serialization::JoltProof;
 use crate::zkvm::dag::stage::SumcheckStages;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::zkvm::instruction_lookups::LookupsDag;
@@ -32,7 +32,6 @@ impl JoltDAG {
         PCS: CommitmentScheme<Field = F>,
     >(
         mut state_manager: StateManager<'a, F, ProofTranscript, PCS>,
-        write_proof_to_file: Option<&str>,
     ) -> Result<
         (
             JoltProof<F, PCS, ProofTranscript>,
@@ -228,9 +227,6 @@ impl JoltDAG {
         let debug_info = None;
 
         let proof = JoltProof::from_prover_state_manager(state_manager);
-        if let Some(file_name) = write_proof_to_file {
-            serialize_and_print_size(file_name, &proof);
-        }
 
         Ok((proof, debug_info))
     }
