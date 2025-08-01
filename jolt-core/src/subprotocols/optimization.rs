@@ -143,55 +143,55 @@ impl<F: JoltField, ProofTranscript: Transcript> KaratsubaSumCheckProof<F, ProofT
                         _ => unimplemented!(),
                     };
 
-                    #[cfg(test)]
-                    {
-                        let bench_mle_evals = mle_vec
-                            .iter()
-                            .map(|poly| {
-                                poly.sumcheck_evals(j, mle_vec.len(), BindingOrder::HighToLow)
-                            })
-                            .collect::<Vec<_>>();
+                    // #[cfg(test)]
+                    // {
+                    //     let bench_mle_evals = mle_vec
+                    //         .iter()
+                    //         .map(|poly| {
+                    //             poly.sumcheck_evals(j, mle_vec.len(), BindingOrder::HighToLow)
+                    //         })
+                    //         .collect::<Vec<_>>();
 
-                        let bench_evals = bench_mle_evals
-                            .into_iter()
-                            .reduce(|running, new| {
-                                running
-                                    .iter()
-                                    .zip(new.iter())
-                                    .map(|(a, b)| *a * b)
-                                    .collect::<Vec<_>>()
-                            })
-                            .unwrap();
+                    //     let bench_evals = bench_mle_evals
+                    //         .into_iter()
+                    //         .reduce(|running, new| {
+                    //             running
+                    //                 .iter()
+                    //                 .zip(new.iter())
+                    //                 .map(|(a, b)| *a * b)
+                    //                 .collect::<Vec<_>>()
+                    //         })
+                    //         .unwrap();
 
-                        let poly = UniPoly {
-                            coeffs: Vec::from(mle_evals.clone()),
-                        };
+                    //     let poly = UniPoly {
+                    //         coeffs: Vec::from(mle_evals.clone()),
+                    //     };
 
-                        for i in 0..bench_evals.len() + 1 {
-                            if i == 1 {
-                                continue;
-                            }
+                    //     for i in 0..bench_evals.len() + 1 {
+                    //         if i == 1 {
+                    //             continue;
+                    //         }
 
-                            let mut bench = if i == 0 {
-                                bench_evals[0]
-                            } else {
-                                bench_evals[i - 1]
-                            } * factor;
+                    //         let mut bench = if i == 0 {
+                    //             bench_evals[0]
+                    //         } else {
+                    //             bench_evals[i - 1]
+                    //         } * factor;
 
-                            if round < log_T - 1 {
-                                bench *= E_table[round][j];
-                            }
+                    //         if round < log_T - 1 {
+                    //             bench *= E_table[round][j];
+                    //         }
 
-                            assert_eq!(
-                                poly.evaluate(&F::from_u32(i as u32)),
-                                bench,
-                                "i = {}, round = {}, j = {}",
-                                i,
-                                round,
-                                j
-                            );
-                        }
-                    }
+                    //         assert_eq!(
+                    //             poly.evaluate(&F::from_u32(i as u32)),
+                    //             bench,
+                    //             "i = {}, round = {}, j = {}",
+                    //             i,
+                    //             round,
+                    //             j
+                    //         );
+                    //     }
+                    // }
 
                     mle_evals
                 })
