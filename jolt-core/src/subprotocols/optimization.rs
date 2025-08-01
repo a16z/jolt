@@ -114,7 +114,7 @@ impl<F: JoltField, ProofTranscript: Transcript> KaratsubaSumCheckProof<F, ProofT
 
                             let flat: [F; 32] = core::array::from_fn(|i| {
                                 // Optimization
-                                if i < 2 && round < r_cycle.len() - 1 {
+                                if i < 2 {
                                     if i == 0 {
                                         return mle_vec[0].get_bound_coeff(j) * j_factor;
                                     }
