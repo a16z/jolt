@@ -76,6 +76,20 @@ impl<F: JoltField, ProofTranscript: Transcript> KaratsubaSumCheckProof<F, ProofT
         drop(_guard);
         drop(span);
 
+        let span = tracing::span!(tracing::Level::INFO, "Initialize E table");
+        let _guard = span.enter();
+        let E_table = (1..=log_T - 1)
+            .map(|i| {
+                let evals =
+                    EqPolynomial::evals(&r_cycle[i..].iter().map(|x| *x).collect::<Vec<_>>());
+                evals
+            })
+            .collect::<Vec<_>>();
+        drop(_guard);
+        drop(span);
+
+        let mut factor = F::one();
+
         let span = tracing::span!(tracing::Level::INFO, "Loop over rounds");
         let _guard = span.enter();
 
@@ -83,29 +97,41 @@ impl<F: JoltField, ProofTranscript: Transcript> KaratsubaSumCheckProof<F, ProofT
             let inner_span = tracing::span!(tracing::Level::INFO, "Compute evals");
             let _guard = inner_span.enter();
 
-            let evals = (0..(log_T - round - 1).pow2())
+            let mle_product_evals = (0..(log_T - round - 1).pow2())
                 .into_par_iter()
                 .map(|j| {
-                    let mle_evals = match d_plus_one {
+                    let mle_evals = match mle_vec.len() {
                         32 => {
                             unimplemented!()
                         }
                         16 => {
                             // (constant, slope)
+                            let j_factor = if round < log_T - 1 {
+                                factor.mul_1_optimized(E_table[round][j])
+                            } else {
+                                factor
+                            };
+
                             let flat: [F; 32] = core::array::from_fn(|i| {
-                                if i < 30 {
-                                    if i % 2 == 0 {
-                                        mle_vec[i / 2].get_bound_coeff(j)
-                                    } else {
-                                        mle_vec[i / 2].get_bound_coeff(j + mle_vec[i / 2].len() / 2)
-                                            - mle_vec[i / 2].get_bound_coeff(j)
+                                // Optimization
+                                if i < 2 && round < r_cycle.len() - 1 {
+                                    if i == 0 {
+                                        return mle_vec[0].get_bound_coeff(j) * j_factor;
                                     }
+
+                                    if i == 1 {
+                                        return (mle_vec[0]
+                                            .get_bound_coeff(j + mle_vec[0].len() / 2)
+                                            - mle_vec[0].get_bound_coeff(j))
+                                            * j_factor;
+                                    }
+                                }
+
+                                if i % 2 == 0 {
+                                    mle_vec[i / 2].get_bound_coeff(j)
                                 } else {
-                                    if i % 2 == 0 {
-                                        eq.get_bound_coeff(j)
-                                    } else {
-                                        eq.get_bound_coeff(j + eq.len() / 2) - eq.get_bound_coeff(j)
-                                    }
+                                    mle_vec[i / 2].get_bound_coeff(j + mle_vec[i / 2].len() / 2)
+                                        - mle_vec[i / 2].get_bound_coeff(j)
                                 }
                             });
 
@@ -117,47 +143,55 @@ impl<F: JoltField, ProofTranscript: Transcript> KaratsubaSumCheckProof<F, ProofT
                         _ => unimplemented!(),
                     };
 
-                    // #[cfg(test)]
-                    // {
-                    //     let eq_evals =
-                    //         eq.sumcheck_evals(j, mle_vec.len() + 1, BindingOrder::HighToLow);
-                    //     let bench_mle_evals = mle_vec
-                    //         .iter()
-                    //         .map(|poly| {
-                    //             poly.sumcheck_evals(j, mle_vec.len() + 1, BindingOrder::HighToLow)
-                    //         })
-                    //         .collect::<Vec<_>>();
+                    #[cfg(test)]
+                    {
+                        let bench_mle_evals = mle_vec
+                            .iter()
+                            .map(|poly| {
+                                poly.sumcheck_evals(j, mle_vec.len(), BindingOrder::HighToLow)
+                            })
+                            .collect::<Vec<_>>();
 
-                    //     let bench_evals = bench_mle_evals
-                    //         .into_iter()
-                    //         .chain(iter::once(eq_evals))
-                    //         .reduce(|running, new| {
-                    //             running
-                    //                 .iter()
-                    //                 .zip(new.iter())
-                    //                 .map(|(a, b)| *a * b)
-                    //                 .collect::<Vec<_>>()
-                    //         })
-                    //         .unwrap();
+                        let bench_evals = bench_mle_evals
+                            .into_iter()
+                            .reduce(|running, new| {
+                                running
+                                    .iter()
+                                    .zip(new.iter())
+                                    .map(|(a, b)| *a * b)
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap();
 
-                    //     let poly = UniPoly {
-                    //         coeffs: mle_evals.clone(),
-                    //     };
+                        let poly = UniPoly {
+                            coeffs: Vec::from(mle_evals.clone()),
+                        };
 
-                    //     for i in 0..bench_evals.len() + 1 {
-                    //         if i == 1 {
-                    //             continue;
-                    //         }
+                        for i in 0..bench_evals.len() + 1 {
+                            if i == 1 {
+                                continue;
+                            }
 
-                    //         let bench = if i == 0 {
-                    //             bench_evals[0]
-                    //         } else {
-                    //             bench_evals[i - 1]
-                    //         };
+                            let mut bench = if i == 0 {
+                                bench_evals[0]
+                            } else {
+                                bench_evals[i - 1]
+                            } * factor;
 
-                    //         assert_eq!(poly.evaluate(&F::from_u32(i as u32)), bench, "i = {}", i);
-                    //     }
-                    // }
+                            if round < log_T - 1 {
+                                bench *= E_table[round][j];
+                            }
+
+                            assert_eq!(
+                                poly.evaluate(&F::from_u32(i as u32)),
+                                bench,
+                                "i = {}, round = {}, j = {}",
+                                i,
+                                round,
+                                j
+                            );
+                        }
+                    }
 
                     mle_evals
                 })
@@ -186,7 +220,37 @@ impl<F: JoltField, ProofTranscript: Transcript> KaratsubaSumCheckProof<F, ProofT
                     },
                 );
 
-            assert_eq!(evals.len(), mle_vec.len() + 2);
+            assert_eq!(mle_product_evals.len(), mle_vec.len() + 1);
+
+            let mut univariate_evals: Vec<F> = Vec::with_capacity(mle_vec.len() + 2);
+
+            // Recall that the eq polynomial is rc + (1 - r)(1 - c), which has constant term 1 - r and slope (2r - 1)
+            let eq_coeffs = [
+                F::one() - r_cycle[round],
+                r_cycle[round] + r_cycle[round] - F::one(),
+            ];
+
+            // Constant term
+            univariate_evals.push(eq_coeffs[0] * mle_product_evals[0]);
+
+            // Middle terms
+            let mul_by_evals_0 = mle_product_evals[1..]
+                .iter()
+                .map(|x| *x * eq_coeffs[0])
+                .collect::<Vec<_>>();
+            let mul_by_evals_1 = mle_product_evals[..16]
+                .iter()
+                .map(|x| *x * eq_coeffs[1])
+                .collect::<Vec<_>>();
+
+            (0..16).into_iter().for_each(|i| {
+                univariate_evals.push(mul_by_evals_0[i] + mul_by_evals_1[i]);
+            });
+
+            // Last term
+            univariate_evals.push(mle_product_evals[16] * eq_coeffs[1]);
+
+            assert_eq!(univariate_evals.len(), mle_vec.len() + 2);
 
             drop(_guard);
             drop(inner_span);
@@ -195,7 +259,7 @@ impl<F: JoltField, ProofTranscript: Transcript> KaratsubaSumCheckProof<F, ProofT
             let _guard = inner_span.enter();
 
             let univariate_poly = UniPoly {
-                coeffs: Vec::from(evals),
+                coeffs: Vec::from(univariate_evals),
             };
             let compressed_poly = univariate_poly.compress();
             compressed_poly.append_to_transcript(transcript);
@@ -204,6 +268,11 @@ impl<F: JoltField, ProofTranscript: Transcript> KaratsubaSumCheckProof<F, ProofT
             let r_j = transcript.challenge_scalar::<F>();
             *previous_claim = univariate_poly.evaluate(&r_j);
             r.push(r_j);
+
+            // Update factor by the multiplicative factor of wr_j + (1 - r_j)(1 - w) = (2w - 1)r_j + (1 - w), where w is the current bit of r_cycle
+            factor = factor.mul_1_optimized(
+                (r_cycle[round] + r_cycle[round] - F::one()) * r_j + (F::one() - r_cycle[round]),
+            );
 
             drop(_guard);
             drop(inner_span);
@@ -749,6 +818,12 @@ mod test {
         // large_d_optimization_ra_virtualization::<15>(16, 1 << 10);
     }
 
+    #[test]
+    fn test_karatsuba_optimization() {
+        // karatsuba_optimization(15, 1 << 10);
+        karatsuba_optimization(16, 1 << 10);
+    }
+
     fn test_func_data(D: usize, T: usize) -> Vec<MultilinearPolynomial<Fr>> {
         let mut rng = test_rng();
         let mut val_vec: Vec<Vec<Fr>> = vec![unsafe_allocate_zero_vec(T); D];
@@ -854,6 +929,68 @@ mod test {
 
         let previous_claim = compute_initial_eval_claim(&ra.iter().collect::<Vec<_>>(), r_cycle);
         assert_eq!(previous_claim, previous_claim_bench);
+    }
+
+    fn karatsuba_optimization(D: usize, T: usize) {
+        let mut ra = test_func_data(D, T);
+        let mut ra_copy = ra.clone();
+
+        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+        let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
+
+        if D < 6 && T < 1 << 6 {
+            check_initial_eval_claim(D, T, &r_cycle, &ra);
+        }
+        let mut previous_claim =
+            compute_initial_eval_claim(&ra.iter().map(|x| &*x).collect::<Vec<_>>(), &r_cycle);
+        let mut previous_claim_copy = previous_claim;
+
+        let claim = previous_claim.clone();
+        let claim_copy = previous_claim_copy.clone();
+
+        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+        let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
+
+        let start_time = Instant::now();
+        let (proof, r_prime) = NaiveSumCheckProof::<Fr, KeccakTranscript>::prove(
+            &mut ra.iter_mut().collect::<Vec<_>>(),
+            &r_cycle,
+            &mut previous_claim,
+            &mut prover_transcript,
+        );
+        let _naive_duration = start_time.elapsed();
+
+        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+        verifier_transcript.compare_to(prover_transcript);
+        let _r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
+
+        let verification_result = proof.verify(r_prime, claim, &mut verifier_transcript);
+        assert!(
+            verification_result.is_ok(),
+            "Verification (naive sumcheck) failed: {verification_result:?}"
+        );
+
+        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+        let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
+
+        let start_time = Instant::now();
+        let (proof, r_prime) = KaratsubaSumCheckProof::<Fr, KeccakTranscript>::prove(
+            &mut ra_copy.iter_mut().collect::<Vec<_>>(),
+            &r_cycle,
+            &mut previous_claim_copy,
+            &mut prover_transcript,
+        );
+        let _karatsuba_duration = start_time.elapsed();
+
+        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+        verifier_transcript.compare_to(prover_transcript);
+        let _r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
+
+        let verification_result = proof.verify(r_prime, claim_copy, &mut verifier_transcript);
+        assert!(
+            verification_result.is_ok(),
+            "Verification (naive sumcheck) failed: {verification_result:?}"
+        );
     }
 
     fn large_d_optimization_ra_virtualization<const D1: usize>(D: usize, T: usize) {
