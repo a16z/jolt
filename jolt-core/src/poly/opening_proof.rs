@@ -535,6 +535,8 @@ where
 {
     pub sumchecks: Vec<OpeningProofReductionSumcheck<F>>,
     pub openings: Openings<F>,
+    #[cfg(test)]
+    pub appended_virtual_openings: std::rc::Rc<std::cell::RefCell<Vec<OpeningId>>>,
     // #[cfg(test)]
     // joint_commitment: Option<PCS::Commitment>,
 }
@@ -587,6 +589,8 @@ where
         Self {
             sumchecks: vec![],
             openings: BTreeMap::new(),
+            #[cfg(test)]
+            appended_virtual_openings: std::rc::Rc::new(std::cell::RefCell::new(vec![])),
             // #[cfg(test)]
             // joint_commitment: None,
         }
@@ -618,6 +622,16 @@ where
             .openings
             .get(&OpeningId::Virtual(polynomial, sumcheck))
             .unwrap_or_else(|| panic!("opening for {sumcheck:?} {polynomial:?} not found"));
+        #[cfg(test)]
+        {
+            let mut virtual_openigns = self.appended_virtual_openings.borrow_mut();
+            if let Some(index) = virtual_openigns
+                .iter()
+                .position(|id| id == &OpeningId::Virtual(polynomial, sumcheck))
+            {
+                virtual_openigns.remove(index);
+            }
+        }
         (point.clone(), *claim)
     }
 
@@ -712,6 +726,10 @@ where
             OpeningId::Virtual(polynomial, sumcheck),
             (opening_point, claim),
         );
+        #[cfg(test)]
+        self.appended_virtual_openings
+            .borrow_mut()
+            .push(OpeningId::Virtual(polynomial, sumcheck));
     }
 
     /// Reduces the multiple openings accumulated into a single opening proof,
