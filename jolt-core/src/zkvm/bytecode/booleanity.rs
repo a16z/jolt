@@ -8,6 +8,7 @@ use crate::poly::opening_proof::{
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
+
 use crate::{
     field::JoltField,
     poly::{
@@ -17,7 +18,11 @@ use crate::{
         opening_proof::ProverOpeningAccumulator,
     },
     subprotocols::sumcheck::SumcheckInstance,
-    utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
+    utils::{
+        math::Math,
+        thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
+        transcript::Transcript,
+    },
 };
 use rayon::prelude::*;
 use tracer::instruction::RV32IMCycle;
@@ -27,9 +32,9 @@ struct BooleanityProverState<F: JoltField> {
     D: MultilinearPolynomial<F>,
     G: Vec<Vec<F>>,
     pc_by_cycle: Vec<Vec<usize>>,
-    H: Option<Vec<MultilinearPolynomial<F>>>,
+    H: Vec<MultilinearPolynomial<F>>,
     F: Vec<F>,
-    eq_r_r: Option<F>,
+    eq_r_r: F,
 }
 
 pub struct BooleanitySumcheck<F: JoltField> {
@@ -146,10 +151,10 @@ impl<F: JoltField> BooleanityProverState<F> {
         BooleanityProverState {
             B,
             D,
-            H: None,
+            H: vec![],
             G,
             F: F_vec,
-            eq_r_r: None,
+            eq_r_r: F::zero(),
             pc_by_cycle,
         }
     }
@@ -199,25 +204,32 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
 
             // If transitioning to phase 2, prepare H
             if round == self.log_K_chunk - 1 {
-                ps.H = Some(
-                    ps.pc_by_cycle
-                        .par_iter_mut()
-                        .map(|pc_by_cycle| {
-                            let coeffs: Vec<F> = std::mem::take(pc_by_cycle)
-                                .into_par_iter()
-                                .map(|j| ps.F[j])
-                                .collect();
-                            MultilinearPolynomial::from(coeffs)
-                        })
-                        .collect(),
-                );
-                ps.eq_r_r = Some(ps.B.final_sumcheck_claim());
+                let mut pc_by_cycle = std::mem::take(&mut ps.pc_by_cycle);
+                let f_ref = &ps.F;
+                ps.H = pc_by_cycle
+                    .par_iter_mut()
+                    .map(|pc_by_cycle| {
+                        let coeffs: Vec<F> = std::mem::take(pc_by_cycle)
+                            .into_par_iter()
+                            .map(|j| f_ref[j])
+                            .collect();
+                        MultilinearPolynomial::from(coeffs)
+                    })
+                    .collect();
+                ps.eq_r_r = ps.B.final_sumcheck_claim();
+
+                // Drop G arrays, F array, and pc_by_cycle as they're no longer needed in phase 2
+                let g = std::mem::take(&mut ps.G);
+                drop_in_background_thread(g);
+
+                let f = std::mem::take(&mut ps.F);
+                drop_in_background_thread(f);
+
+                drop_in_background_thread(pc_by_cycle);
             }
         } else {
             // Phase 2: Bind D and H
-            ps.H.as_mut()
-                .unwrap()
-                .into_par_iter()
+            ps.H.par_iter_mut()
                 .chain(rayon::iter::once(&mut ps.D))
                 .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
         }
@@ -272,12 +284,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
     ) {
         let ps = self.prover_state.as_ref().unwrap();
 
-        let claims: Vec<F> =
-            ps.H.as_ref()
-                .unwrap()
-                .iter()
-                .map(|H| H.final_sumcheck_claim())
-                .collect();
+        let claims: Vec<F> = ps.H.iter().map(|H| H.final_sumcheck_claim()).collect();
 
         accumulator.borrow_mut().append_sparse(
             (0..self.d).map(CommittedPolynomial::BytecodeRa).collect(),
@@ -340,12 +347,13 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                         let F_k = p.F[k % (1 << (m - 1))];
                         // G_times_F := G[k] * F[k_1, ...., k_{m-1}]
                         let k_G = (k_prime << m) + k;
-                        let G_times_F =
-                            p.G.iter()
-                                .zip(self.gamma.iter())
-                                .map(|(g, gamma)| g[k_G] * gamma)
-                                .sum::<F>()
-                                * F_k;
+                        let G_ref = &p.G;
+                        let G_times_F = G_ref
+                            .iter()
+                            .zip(self.gamma.iter())
+                            .map(|(g, gamma)| g[k_G] * gamma)
+                            .sum::<F>()
+                            * F_k;
                         // For c \in {0, 2, 3} compute:
                         //    G[k] * (F[k_1, ...., k_{m-1}, c]^2 - F[k_1, ...., k_{m-1}, c])
                         //    = G_times_F * (eq(k_m, c)^2 * F[k_1, ...., k_{m-1}] - eq(k_m, c))
@@ -402,7 +410,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                 // Get D and H evaluations at points 0, 2, 3
                 let D_evals =
                     p.D.sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
-                let H = p.H.as_ref().unwrap();
+                let H = &p.H;
                 let H_evals = H
                     .iter()
                     .map(|h| h.sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh))
@@ -438,9 +446,9 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             );
 
         vec![
-            p.eq_r_r.unwrap() * univariate_poly_evals[0],
-            p.eq_r_r.unwrap() * univariate_poly_evals[1],
-            p.eq_r_r.unwrap() * univariate_poly_evals[2],
+            p.eq_r_r * univariate_poly_evals[0],
+            p.eq_r_r * univariate_poly_evals[1],
+            p.eq_r_r * univariate_poly_evals[2],
         ]
     }
 }

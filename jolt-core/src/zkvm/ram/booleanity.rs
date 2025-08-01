@@ -1,8 +1,5 @@
-use std::{cell::RefCell, rc::Rc};
-
-use common::jolt_device::MemoryLayout;
 use rayon::prelude::*;
-use tracer::instruction::RV32IMCycle;
+use std::{cell::RefCell, rc::Rc};
 
 use crate::{
     field::JoltField,
@@ -17,7 +14,11 @@ use crate::{
         split_eq_poly::GruenSplitEqPolynomial,
     },
     subprotocols::sumcheck::SumcheckInstance,
-    utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
+    utils::{
+        math::Math,
+        thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
+        transcript::Transcript,
+    },
     zkvm::{
         dag::state_manager::StateManager,
         ram::remap_address,
@@ -35,7 +36,7 @@ struct BooleanityProverState<F: JoltField> {
     /// eq(r_cycle, j) - using Gruen optimization
     D: GruenSplitEqPolynomial<F>,
     /// ra(r'_address, j)
-    H: Option<Vec<MultilinearPolynomial<F>>>,
+    H: Vec<MultilinearPolynomial<F>>,
     /// eq(r_address, r'_address)
     eq_r_r: F,
 }
@@ -48,8 +49,7 @@ pub struct BooleanitySumcheck<F: JoltField> {
     gamma_powers: Vec<F>,
     prover_state: Option<BooleanityProverState<F>>,
     current_round: usize,
-    trace: Option<Vec<RV32IMCycle>>,
-    memory_layout: Option<MemoryLayout>,
+    addresses: Vec<Option<u64>>,
 }
 
 impl<F: JoltField> BooleanitySumcheck<F> {
@@ -92,17 +92,21 @@ impl<F: JoltField> BooleanitySumcheck<F> {
 
         // TODO(moodlezoup): `G_arrays` is identical to `F_arrays` in `hamming_weight.rs`
         let mut G_arrays = Vec::with_capacity(d);
+
+        let addresses: Vec<Option<u64>> = trace
+            .par_iter()
+            .map(|cycle| remap_address(cycle.ram_access().address() as u64, memory_layout))
+            .collect();
+
         for i in 0..d {
-            let G: Vec<F> = trace
+            let G: Vec<F> = addresses
                 .par_chunks(chunk_size)
                 .enumerate()
-                .map(|(chunk_index, trace_chunk)| {
+                .map(|(chunk_index, address_chunk)| {
                     let mut local_array = unsafe_allocate_zero_vec(DTH_ROOT_OF_K);
                     let mut j = chunk_index * chunk_size;
-                    for cycle in trace_chunk {
-                        if let Some(address) =
-                            remap_address(cycle.ram_access().address() as u64, memory_layout)
-                        {
+                    for address_opt in address_chunk {
+                        if let Some(address) = address_opt {
                             // For each address, add eq_r_cycle[j] to each corresponding chunk
                             // This maintains the property that sum of all ra values for an address equals 1
                             let address_i = (address >> (DTH_ROOT_OF_K.log_2() * (d - 1 - i)))
@@ -140,7 +144,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             F,
             G: G_arrays,
             D,
-            H: None,
+            H: vec![],
             eq_r_r: F::zero(),
         };
 
@@ -152,8 +156,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             gamma_powers,
             prover_state: Some(prover_state),
             current_round: 0,
-            trace: Some(trace.to_vec()),
-            memory_layout: Some(memory_layout.clone()),
+            addresses,
         }
     }
 
@@ -161,8 +164,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         K: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (_, program_io, T) = state_manager.get_verifier_data();
-        let memory_layout = &program_io.memory_layout;
+        let (_, _, T) = state_manager.get_verifier_data();
 
         // Calculate D dynamically such that 2^8 = K^(1/D)
         let d = compute_d_parameter(K);
@@ -192,8 +194,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             gamma_powers,
             prover_state: None,
             current_round: 0,
-            trace: None,
-            memory_layout: Some(memory_layout.clone()),
+            addresses: vec![],
         }
     }
 }
@@ -248,40 +249,46 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
                 prover_state.eq_r_r = prover_state.B.current_scalar;
 
                 // Compute H polynomials for each decomposed part
-                let trace = self.trace.as_ref().expect("Trace not set");
-                let memory_layout = self.memory_layout.as_ref().expect("Memory layout not set");
+                let addresses = &self.addresses;
 
                 let mut H_polys = Vec::with_capacity(self.d);
 
                 for i in 0..self.d {
-                    let H_vec: Vec<F> = trace
+                    let H_vec: Vec<F> = addresses
                         .par_iter()
-                        .map(|cycle| {
-                            remap_address(cycle.ram_access().address() as u64, memory_layout)
-                                .map_or(F::zero(), |address| {
-                                    // Get i-th address chunk
-                                    let address_i = (address
-                                        >> (DTH_ROOT_OF_K.log_2() * (self.d - 1 - i)))
-                                        % DTH_ROOT_OF_K as u64;
-                                    prover_state.F[address_i as usize]
-                                })
+                        .map(|address_opt| {
+                            address_opt.map_or(F::zero(), |address| {
+                                // Get i-th address chunk
+                                let address_i = (address
+                                    >> (DTH_ROOT_OF_K.log_2() * (self.d - 1 - i)))
+                                    % DTH_ROOT_OF_K as u64;
+                                prover_state.F[address_i as usize]
+                            })
                         })
                         .collect();
                     H_polys.push(MultilinearPolynomial::from(H_vec));
                 }
 
-                prover_state.H = Some(H_polys);
+                prover_state.H = H_polys;
+
+                // Drop G arrays and F array as they're no longer needed in phase 2
+                let g = std::mem::take(&mut prover_state.G);
+                drop_in_background_thread(g);
+
+                let f = std::mem::take(&mut prover_state.F);
+                drop_in_background_thread(f);
+
+                // Drop addresses as it's no longer needed in phase 2
+                let addresses = std::mem::take(&mut self.addresses);
+                drop_in_background_thread(addresses);
             }
         } else {
             // Phase 2: Bind D and all H polynomials
-            let h_polys = prover_state
-                .H
-                .as_mut()
-                .expect("H polynomials not initialized");
 
             // Bind D and all H polynomials
             prover_state.D.bind(r_j);
-            h_polys
+            prover_state
+                .H
                 .par_iter_mut()
                 .for_each(|h_poly| h_poly.bind_parallel(r_j, BindingOrder::LowToHigh));
         }
@@ -342,8 +349,8 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
             .as_ref()
             .expect("Prover state not initialized");
 
-        let h_polys = prover_state.H.as_ref().expect("H polys not initialized");
-        let claims: Vec<F> = h_polys
+        let claims: Vec<F> = prover_state
+            .H
             .iter()
             .map(|h_poly| h_poly.final_sumcheck_claim())
             .collect();
@@ -502,10 +509,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
-        let h_polys = prover_state
-            .H
-            .as_ref()
-            .expect("H polynomials not initialized");
         const DEGREE: usize = 3;
 
         let D = &prover_state.D;
@@ -520,7 +523,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                     let mut coeffs = [F::zero(); DEGREE - 1];
 
                     for i in 0..self.d {
-                        let h_poly = &h_polys[i];
+                        let h_poly = &prover_state.H[i];
 
                         let h_0 = h_poly.get_bound_coeff(2 * j_prime); // h(0)
                         let h_1 = h_poly.get_bound_coeff(2 * j_prime + 1); // h(1)
@@ -560,7 +563,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                             let mut coeffs = [F::zero(); DEGREE - 1];
 
                             for i in 0..self.d {
-                                let h_poly = &h_polys[i];
+                                let h_poly = &prover_state.H[i];
 
                                 let h_0 = h_poly.get_bound_coeff(2 * j_prime); // h(0)
                                 let h_1 = h_poly.get_bound_coeff(2 * j_prime + 1); // h(1)
