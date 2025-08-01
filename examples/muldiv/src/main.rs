@@ -9,8 +9,8 @@ pub fn main() {
     let prove_test = guest::build_prover_test(program, prover_preprocessing);
     let verify_test = guest::build_verifier_test(verifier_preprocessing);
 
-    let (output, proof, _) = prove_test(50);
-    let is_valid = verify_test(50, output, proof);
+    let (output, proof, program_io) = prove_test(50);
+    let is_valid = verify_test(50, output, program_io.panic, proof);
 
     println!("output: {output}");
     println!("valid: {is_valid}");

@@ -15,9 +15,9 @@ pub fn main() {
     let iters = 1000;
     let native_output = guest::sha2_chain(input, iters);
     let now = Instant::now();
-    let (output, proof, _) = prove_sha2_chain(input, iters);
+    let (output, proof, program_io) = prove_sha2_chain(input, iters);
     println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verify_sha2_chain(input, iters, output, proof);
+    let is_valid = verify_sha2_chain(input, iters, output, program_io.panic, proof);
 
     assert_eq!(output, native_output, "output mismatch");
     println!("output: {}", hex::encode(output));

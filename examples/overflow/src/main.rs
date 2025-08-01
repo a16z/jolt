@@ -43,9 +43,9 @@ pub fn main() {
         guest::build_verifier_allocate_stack_with_increased_size(verifier_preprocessing);
 
     let now = Instant::now();
-    let (output, proof, _) = prove_allocate_stack_with_increased_size();
+    let (output, proof, program_io) = prove_allocate_stack_with_increased_size();
     println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verify_allocate_stack_with_increased_size(output, proof);
+    let is_valid = verify_allocate_stack_with_increased_size(output, program_io.panic, proof);
 
     println!("output: {output}");
     println!("valid: {is_valid}");

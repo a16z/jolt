@@ -15,9 +15,9 @@ pub fn main() {
 
     let now = Instant::now();
     let input = 19;
-    let (output, proof, _) = prove_collatz_single(input);
+    let (output, proof, program_io) = prove_collatz_single(input);
     println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verify_collatz_single(input, output, proof);
+    let is_valid = verify_collatz_single(input, output, program_io.panic, proof);
 
     println!("output: {output}");
     println!("valid: {is_valid}");
@@ -36,9 +36,9 @@ pub fn main() {
     // https://www.reddit.com/r/compsci/comments/gk9x6g/collatz_conjecture_news_recently_i_managed_to/
     let start: u128 = 1 << 68;
     let now = Instant::now();
-    let (output, proof, _) = prove_collatz_convergence(start, start + 100);
+    let (output, proof, program_io) = prove_collatz_convergence(start, start + 100);
     println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verify_collatz_convergence(start, start + 100, output, proof);
+    let is_valid = verify_collatz_convergence(start, start + 100, output, program_io.panic, proof);
 
     println!("output: {output}");
     println!("valid: {is_valid}");

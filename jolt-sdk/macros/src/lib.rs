@@ -155,12 +155,12 @@ impl MacroBuilder {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #build_verifier_fn_name(
                 preprocessing: jolt::JoltVerifierPreprocessing<jolt::F, jolt::PCS>,
-            ) -> impl Fn(#(#input_types ,)* #output_type, jolt::RV32IMJoltProof) -> bool + Sync + Send
+            ) -> impl Fn(#(#input_types ,)* #output_type, bool, jolt::RV32IMJoltProof) -> bool + Sync + Send
             {
                 #imports
                 let preprocessing = std::sync::Arc::new(preprocessing);
 
-                let verify_closure = move |#(#inputs,)* output, proof: jolt::RV32IMJoltProof| {
+                let verify_closure = move |#(#inputs,)* output, panic, proof: jolt::RV32IMJoltProof| {
                     let preprocessing = (*preprocessing).clone();
                     let memory_config = MemoryConfig {
                         max_input_size: preprocessing.shared.memory_layout.max_input_size,
@@ -173,6 +173,7 @@ impl MacroBuilder {
 
                     #(#set_program_args;)*
                     io_device.outputs.append(&mut jolt::postcard::to_stdvec(&output).unwrap());
+                    io_device.panic = panic;
 
                     JoltRV32IM::verify(&preprocessing, proof, io_device, None).is_ok()
                 };
