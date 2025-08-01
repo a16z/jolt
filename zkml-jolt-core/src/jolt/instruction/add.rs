@@ -1,8 +1,6 @@
 // use crate::subprotocols::sparse_dense_shout::TestInstructionTrait;
 use jolt_core::jolt::instruction::{InstructionLookup, LookupQuery};
 use jolt_core::jolt::lookup_table::{LookupTables, range_check::RangeCheckTable};
-use rand::RngCore;
-use rand::prelude::StdRng;
 use serde::{Deserialize, Serialize};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]

@@ -79,7 +79,7 @@ where
     pub trace_length: usize,
     bytecode: BytecodeProof<F, ProofTranscript>,
     instruction_lookups: LookupsProof<WORD_SIZE, F, PCS, ProofTranscript>,
-    // r1cs: UniformSpartanProof<F, ProofTranscript>,
+    r1cs: UniformSpartanProof<F, ProofTranscript>,
     _p: PhantomData<PCS>,
 }
 
@@ -153,16 +153,16 @@ where
         );
         transcript.append_scalar(&spartan_key.vk_digest);
 
-        let _ = UniformSpartanProof::prove::<PCS>(
+        let r1cs = UniformSpartanProof::prove::<PCS>(
             &preprocessing,
             &constraint_builder,
             &spartan_key,
             &trace,
             // &mut opening_accumulator,
             &mut transcript,
-        );
-        // .ok()
-        // .unwrap();
+        )
+        .ok()
+        .unwrap();
         let instruction_proof: LookupsProof<WORD_SIZE, F, PCS, ProofTranscript> =
             LookupsProof::prove(
                 &preprocessing,
@@ -175,7 +175,7 @@ where
             BytecodeProof::prove(&preprocessing.shared.bytecode, &trace, &mut transcript);
         JoltSNARK {
             trace_length,
-            // r1cs,
+            r1cs,
             instruction_lookups: instruction_proof,
             bytecode: bytecode_proof,
             _p: PhantomData,
@@ -197,14 +197,14 @@ where
             UniformSpartanProof::<F, ProofTranscript>::setup(&r1cs_builder, padded_trace_length);
         transcript.append_scalar(&spartan_key.vk_digest);
 
-        // self.r1cs
-        //     .verify::<PCS>(
-        //         &spartan_key,
-        //         // &self.commitments,
-        //         // &mut opening_accumulator,
-        //         &mut transcript,
-        //     )
-        //     .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))?;
+        self.r1cs
+            .verify::<PCS>(
+                &spartan_key,
+                // &self.commitments,
+                // &mut opening_accumulator,
+                &mut transcript,
+            )
+            .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))?;
         self.instruction_lookups.verify(
             // &proof.commitments,
             &mut opening_accumulator,

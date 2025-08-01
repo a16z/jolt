@@ -7,22 +7,23 @@ use jolt_core::poly::multilinear_polynomial::{
 };
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_core::utils::math::Math;
+use jolt_core::utils::small_value::NUM_SVO_ROUNDS;
 use jolt_core::utils::transcript::Transcript;
 use jolt_core::{
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPlusOnePolynomial},
     subprotocols::sumcheck::BatchableSumcheckInstance,
 };
 use onnx_tracer::trace_types::ONNXCycle;
+use rayon::prelude::*;
 use std::marker::PhantomData;
 use thiserror::Error;
 use tracing::{Level, span};
-
-use rayon::prelude::*;
 
 use crate::jolt::zkvm::JoltProverPreprocessing;
 use crate::jolt::zkvm::r1cs::builder::CombinedUniformBuilder;
 use crate::jolt::zkvm::r1cs::inputs::ALL_R1CS_INPUTS;
 use crate::jolt::zkvm::r1cs::key::UniformSpartanKey;
+#[cfg(test)]
 use crate::jolt::zkvm::r1cs::spartan_interleaved_poly::SpartanInterleavedPolynomial;
 
 #[derive(Clone, Debug)]
@@ -116,11 +117,11 @@ where
     pub fn prove<PCS>(
         preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
         constraint_builder: &CombinedUniformBuilder<F>,
-        _key: &UniformSpartanKey<F>,
+        key: &UniformSpartanKey<F>,
         trace: &[ONNXCycle],
         // opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
-        _transcript: &mut ProofTranscript,
-    ) -> Result<(), SpartanError>
+        transcript: &mut ProofTranscript,
+    ) -> Result<Self, SpartanError>
     where
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
     {
@@ -129,83 +130,86 @@ where
             .map(|var| var.generate_witness::<F, PCS, ProofTranscript>(trace, preprocessing))
             .collect();
 
-        SpartanInterleavedPolynomial::new(
-            &constraint_builder.uniform_builder.constraints,
-            &input_polys,
-            constraint_builder.padded_rows_per_step(),
+        #[cfg(test)]
+        {
+            SpartanInterleavedPolynomial::new(
+                &constraint_builder.uniform_builder.constraints,
+                &input_polys,
+                constraint_builder.padded_rows_per_step(),
+            );
+        }
+
+        let num_rounds_x = key.num_rows_bits();
+
+        /* Sumcheck 1: Outer sumcheck
+           Proves: \sum_x eq(tau, x) * (Az(x) * Bz(x) - Cz(x)) = 0
+
+           The matrices A, B, C have a block-diagonal structure with repeated blocks
+           A_small, B_small, C_small corresponding to the uniform constraints.
+        */
+        let tau: Vec<F> = transcript.challenge_vector(num_rounds_x);
+        let uniform_constraints_only_padded = constraint_builder
+            .uniform_builder
+            .constraints
+            .len()
+            .next_power_of_two();
+        let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
+            SumcheckInstanceProof::prove_spartan_small_value::<NUM_SVO_ROUNDS>(
+                num_rounds_x,
+                uniform_constraints_only_padded,
+                &constraint_builder.uniform_builder.constraints,
+                &input_polys,
+                &tau,
+                transcript,
+            );
+        let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
+
+        ProofTranscript::append_scalars(transcript, &outer_sumcheck_claims);
+        let (claim_Az, claim_Bz, claim_Cz): (F, F, F) = (
+            outer_sumcheck_claims[0],
+            outer_sumcheck_claims[1],
+            outer_sumcheck_claims[2],
         );
 
-        // let num_rounds_x = key.num_rows_bits();
+        /* Sumcheck 2: Inner sumcheck
+           Proves: claim_Az + r * claim_Bz + r^2 * claim_Cz =
+                   \sum_y (A_small(rx, y) + r * B_small(rx, y) + r^2 * C_small(rx, y)) * z(y)
 
-        // /* Sumcheck 1: Outer sumcheck
-        //    Proves: \sum_x eq(tau, x) * (Az(x) * Bz(x) - Cz(x)) = 0
+           Evaluates the uniform constraint matrices A_small, B_small, C_small at the point
+           determined by the outer sumcheck.
+        */
+        let num_cycles = key.num_steps;
+        let num_cycles_bits = num_cycles.ilog2() as usize;
 
-        //    The matrices A, B, C have a block-diagonal structure with repeated blocks
-        //    A_small, B_small, C_small corresponding to the uniform constraints.
-        // */
-        // let tau: Vec<F> = transcript.challenge_vector(num_rounds_x);
-        // let uniform_constraints_only_padded = constraint_builder
-        //     .uniform_builder
-        //     .constraints
-        //     .len()
-        //     .next_power_of_two();
-        // let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
-        //     SumcheckInstanceProof::prove_spartan_small_value::<NUM_SVO_ROUNDS>(
-        //         num_rounds_x,
-        //         uniform_constraints_only_padded,
-        //         &constraint_builder.uniform_builder.constraints,
-        //         &input_polys,
-        //         &tau,
-        //         transcript,
-        //     );
-        // let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
+        let inner_sumcheck_RLC: F = transcript.challenge_scalar();
 
-        // ProofTranscript::append_scalars(transcript, &outer_sumcheck_claims);
-        // let (claim_Az, claim_Bz, claim_Cz): (F, F, F) = (
-        //     outer_sumcheck_claims[0],
-        //     outer_sumcheck_claims[1],
-        //     outer_sumcheck_claims[2],
-        // );
+        let (r_cycle, rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
-        // /* Sumcheck 2: Inner sumcheck
-        //    Proves: claim_Az + r * claim_Bz + r^2 * claim_Cz =
-        //            \sum_y (A_small(rx, y) + r * B_small(rx, y) + r^2 * C_small(rx, y)) * z(y)
+        let claims = OuterSumcheckClaims {
+            az: claim_Az,
+            bz: claim_Bz,
+            cz: claim_Cz,
+        };
+        let params = InnerSumcheckParams {
+            r_cycle: r_cycle.to_vec(),
+            rx_var: rx_var.to_vec(),
+        };
+        let (inner_sumcheck_proof, _inner_sumcheck_r) = Self::prove_inner_sumcheck(
+            key,
+            &input_polys,
+            &claims,
+            &params,
+            inner_sumcheck_RLC,
+            transcript,
+        );
 
-        //    Evaluates the uniform constraint matrices A_small, B_small, C_small at the point
-        //    determined by the outer sumcheck.
-        // */
-        // let num_cycles = key.num_steps;
-        // let num_cycles_bits = num_cycles.ilog2() as usize;
+        // Evaluate all witness polynomials P_i at r_cycle for the verifier
+        // Verifier computes: z(r_inner, r_cycle) = Σ_i eq(r_inner, i) * P_i(r_cycle)
+        let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
+        let (claimed_witness_evals, _chis) =
+            MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
 
-        // let inner_sumcheck_RLC: F = transcript.challenge_scalar();
-
-        // let (r_cycle, rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
-
-        // let claims = OuterSumcheckClaims {
-        //     az: claim_Az,
-        //     bz: claim_Bz,
-        //     cz: claim_Cz,
-        // };
-        // let params = InnerSumcheckParams {
-        //     r_cycle: r_cycle.to_vec(),
-        //     rx_var: rx_var.to_vec(),
-        // };
-        // let (inner_sumcheck_proof, _inner_sumcheck_r) = Self::prove_inner_sumcheck(
-        //     key,
-        //     &input_polys,
-        //     &claims,
-        //     &params,
-        //     inner_sumcheck_RLC,
-        //     transcript,
-        // );
-
-        // // Evaluate all witness polynomials P_i at r_cycle for the verifier
-        // // Verifier computes: z(r_inner, r_cycle) = Σ_i eq(r_inner, i) * P_i(r_cycle)
-        // let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
-        // let (claimed_witness_evals, chis) =
-        //     MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
-
-        // let (_, eq_plus_one_r_cycle) = EqPlusOnePolynomial::evals(r_cycle, None);
+        let (_, _eq_plus_one_r_cycle) = EqPlusOnePolynomial::evals(r_cycle, None);
 
         /*  Sumcheck 3: Batched sumcheck for NextUnexpandedPC and NextPC verification
             Proves: NextUnexpandedPC(r_cycle) + r * NextPC(r_cycle) =
@@ -242,21 +246,20 @@ where
         //     transcript,
         // );
 
-        // let outer_sumcheck_claims = (
-        //     outer_sumcheck_claims[0],
-        //     outer_sumcheck_claims[1],
-        //     outer_sumcheck_claims[2],
-        // );
-        // Ok(UniformSpartanProof {
-        //     outer_sumcheck_proof,
-        //     outer_sumcheck_claims,
-        //     inner_sumcheck_proof,
-        //     // shift_sumcheck_proof,
-        //     claimed_witness_evals,
-        //     // shift_sumcheck_witness_eval,
-        //     _marker: PhantomData,
-        // })
-        Ok(())
+        let outer_sumcheck_claims = (
+            outer_sumcheck_claims[0],
+            outer_sumcheck_claims[1],
+            outer_sumcheck_claims[2],
+        );
+        Ok(UniformSpartanProof {
+            outer_sumcheck_proof,
+            outer_sumcheck_claims,
+            inner_sumcheck_proof,
+            // shift_sumcheck_proof,
+            claimed_witness_evals,
+            // shift_sumcheck_witness_eval,
+            _marker: PhantomData,
+        })
     }
 
     #[tracing::instrument(skip_all)]

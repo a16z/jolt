@@ -1,9 +1,10 @@
+#![allow(clippy::too_many_arguments)]
 use jolt_core::subprotocols::sparse_dense_shout::{ExpandingTable, LookupBits};
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_core::{
     field::JoltField,
     jolt::{
-        instruction::{InstructionFlags, InstructionLookup, LookupQuery},
+        instruction::{InstructionLookup, LookupQuery},
         lookup_table::{
             LookupTables,
             prefixes::{PrefixCheckpoint, PrefixEval, Prefixes},
@@ -24,12 +25,10 @@ use jolt_core::{
         math::Math,
         thread::{drop_in_background_thread, unsafe_allocate_zero_vec, unsafe_zero_slice},
         transcript::{AppendToTranscript, Transcript},
-        uninterleave_bits,
     },
 };
 use onnx_tracer::trace_types::{InterleavedBitsMarker, ONNXCycle};
-use rayon::{prelude::*, slice::Iter};
-use std::{fmt::Display, ops::Index};
+use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
 
 use crate::jolt::lookup_trace::LookupTrace;
@@ -229,7 +228,7 @@ pub fn prove_sparse_dense_shout<F: JoltField, ProofTranscript: Transcript>(
             let (right, left) = cycle
                 .to_lookup()
                 .map_or((0, 0), |lookup| lookup.to_lookup_operands());
-            (right as u64, left as u64)
+            (right, left)
         })
         .collect();
     let right_operand_claim = MultilinearPolynomial::from(right_operand_evals).evaluate(r_cycle);

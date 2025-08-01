@@ -158,7 +158,7 @@ where
     pub fn verify(
         &self,
         // commitments: &JoltCommitments<F, PCS, ProofTranscript>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
+        _opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let r_cycle: Vec<F> = transcript.challenge_vector(self.log_T);
@@ -212,7 +212,7 @@ where
         let z_hamming_weight: F = transcript.challenge_scalar();
         let z_hamming_weight_squared: F = z_hamming_weight.square();
         let z_hamming_weight_cubed: F = z_hamming_weight_squared * z_hamming_weight;
-        let (sumcheck_claim, r_hamming_weight) = self.hamming_weight_proof.sumcheck_proof.verify(
+        let (sumcheck_claim, _r_hamming_weight) = self.hamming_weight_proof.sumcheck_proof.verify(
             F::one() + z_hamming_weight + z_hamming_weight_squared + z_hamming_weight_cubed,
             16,
             1,
@@ -228,7 +228,7 @@ where
             "Hamming weight sumcheck failed"
         );
 
-        let r_hamming_weight: Vec<_> = r_hamming_weight.iter().copied().rev().collect();
+        // let r_hamming_weight: Vec<_> = r_hamming_weight.iter().copied().rev().collect();
         // for i in 0..4 {
         //     opening_accumulator.append(
         //         &[&commitments.commitments[CommittedPolynomials::InstructionRa(i).to_index()]],
