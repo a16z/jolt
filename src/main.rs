@@ -217,8 +217,8 @@ const HOST_MAIN: &str = r#"pub fn main() {
     let prove_fib = guest::build_prover_fib(program, prover_preprocessing);
     let verify_fib = guest::build_verifier_fib(verifier_preprocessing);
 
-    let (output, proof, _) = prove_fib(50);
-    let is_valid = verify_fib(50, output, proof);
+    let (output, proof, io_device) = prove_fib(50);
+    let is_valid = verify_fib(50, output, io_device.panic, proof);
 
     println!("output: {output}");
     println!("valid: {is_valid}");
