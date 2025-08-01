@@ -1,6 +1,6 @@
 use crate::{
     poly::{one_hot_polynomial::OneHotPolynomial, rlc_polynomial::RLCPolynomial},
-    utils::{compute_dotproduct, math::Math},
+    utils::compute_dotproduct,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
 use num_traits::MulAdd;
@@ -110,37 +110,6 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U64Scalars(poly) => poly.get_num_vars(),
             MultilinearPolynomial::I64Scalars(poly) => poly.get_num_vars(),
             MultilinearPolynomial::OneHot(poly) => poly.get_num_vars(),
-            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
-        }
-    }
-
-    /// The maximum number of bits occupied by one of the polynomial's coefficients.
-    #[tracing::instrument(skip_all)]
-    pub fn max_num_bits(&self) -> usize {
-        match self {
-            MultilinearPolynomial::LargeScalars(poly) => poly
-                .evals_ref()
-                .par_iter()
-                .map(|s| s.num_bits())
-                .max()
-                .unwrap() as usize,
-            MultilinearPolynomial::U8Scalars(poly) => {
-                (*poly.coeffs.iter().max().unwrap() as usize).num_bits()
-            }
-            MultilinearPolynomial::U16Scalars(poly) => {
-                (*poly.coeffs.iter().max().unwrap() as usize).num_bits()
-            }
-            MultilinearPolynomial::U32Scalars(poly) => {
-                (*poly.coeffs.iter().max().unwrap() as usize).num_bits()
-            }
-            MultilinearPolynomial::U64Scalars(poly) => {
-                (*poly.coeffs.iter().max().unwrap() as usize).num_bits()
-            }
-            MultilinearPolynomial::I64Scalars(_) => {
-                // HACK(moodlezoup): i64 coefficients are converted into full-width field
-                // elements before computing the MSM
-                F::NUM_BYTES * 8
-            }
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
@@ -259,9 +228,6 @@ impl<F: JoltField> MultilinearPolynomial<F> {
     /// Panics if the polynomial is a large-scalar polynomial.
     pub fn get_coeff_i64(&self, index: usize) -> i64 {
         match self {
-            MultilinearPolynomial::LargeScalars(_) => {
-                panic!("Unexpected large-scalar polynomial")
-            }
             MultilinearPolynomial::U8Scalars(poly) => i64::from(poly.coeffs[index]),
             MultilinearPolynomial::U16Scalars(poly) => i64::from(poly.coeffs[index]),
             MultilinearPolynomial::U32Scalars(poly) => i64::from(poly.coeffs[index]),
@@ -275,9 +241,6 @@ impl<F: JoltField> MultilinearPolynomial<F> {
     /// Panics if the polynomial is a large-scalar polynomial.
     pub fn get_coeff_i128(&self, index: usize) -> i128 {
         match self {
-            MultilinearPolynomial::LargeScalars(_) => {
-                panic!("Unexpected large-scalar polynomial")
-            }
             MultilinearPolynomial::U8Scalars(poly) => i128::from(poly.coeffs[index]),
             MultilinearPolynomial::U16Scalars(poly) => i128::from(poly.coeffs[index]),
             MultilinearPolynomial::U32Scalars(poly) => i128::from(poly.coeffs[index]),
@@ -339,10 +302,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly.evaluate(r),
             MultilinearPolynomial::RLC(_) => {
-                // TODO(moodlezoup): This case is only hit in the Dory opening proof,
-                // which doesn't actually do anything with this value. We should
-                // remove that call from Dory.
-                F::zero()
+                unimplemented!("Unexpected RLC polynomial")
             }
             _ => {
                 let chis = EqPolynomial::evals(r);
@@ -386,29 +346,6 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                 .zip_eq(other.par_iter())
                 .map(|(a, b)| a.field_mul(*b))
                 .sum(),
-            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
-        }
-    }
-
-    /// Multiplies the polynomial's coefficient at `index` by a field element.
-    pub fn scale_coeff(&self, index: usize, scaling_factor: F, scaling_factor_r2_adjusted: F) -> F {
-        match self {
-            MultilinearPolynomial::LargeScalars(poly) => poly.Z[index] * scaling_factor,
-            MultilinearPolynomial::U8Scalars(poly) => {
-                poly.coeffs[index].field_mul(scaling_factor_r2_adjusted)
-            }
-            MultilinearPolynomial::U16Scalars(poly) => {
-                poly.coeffs[index].field_mul(scaling_factor_r2_adjusted)
-            }
-            MultilinearPolynomial::U32Scalars(poly) => {
-                poly.coeffs[index].field_mul(scaling_factor_r2_adjusted)
-            }
-            MultilinearPolynomial::U64Scalars(poly) => {
-                poly.coeffs[index].field_mul(scaling_factor_r2_adjusted)
-            }
-            MultilinearPolynomial::I64Scalars(poly) => {
-                poly.coeffs[index].field_mul(scaling_factor_r2_adjusted)
-            }
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }

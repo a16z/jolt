@@ -19,10 +19,10 @@ use crate::{
         thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
         transcript::Transcript,
     },
-    zkvm::dag::state_manager::StateManager,
     zkvm::{
-        ram::{compute_d_parameter, remap_address, NUM_RA_I_VARS},
-        witness::CommittedPolynomial,
+        dag::state_manager::StateManager,
+        ram::remap_address,
+        witness::{compute_d_parameter, CommittedPolynomial, DTH_ROOT_OF_K},
     },
 };
 
@@ -76,7 +76,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         let r_address: Vec<F> = state_manager
             .transcript
             .borrow_mut()
-            .challenge_vector(NUM_RA_I_VARS);
+            .challenge_vector(DTH_ROOT_OF_K.log_2());
 
         let eq_r_cycle = EqPolynomial::evals(&r_cycle);
 
@@ -103,14 +103,14 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                 .par_chunks(chunk_size)
                 .enumerate()
                 .map(|(chunk_index, address_chunk)| {
-                    let mut local_array = unsafe_allocate_zero_vec(1 << NUM_RA_I_VARS);
+                    let mut local_array = unsafe_allocate_zero_vec(DTH_ROOT_OF_K);
                     let mut j = chunk_index * chunk_size;
                     for address_opt in address_chunk {
                         if let Some(address) = address_opt {
                             // For each address, add eq_r_cycle[j] to each corresponding chunk
                             // This maintains the property that sum of all ra values for an address equals 1
-                            let address_i =
-                                (*address >> (NUM_RA_I_VARS * (d - 1 - i))) % (1 << NUM_RA_I_VARS);
+                            let address_i = (address >> (DTH_ROOT_OF_K.log_2() * (d - 1 - i)))
+                                % DTH_ROOT_OF_K as u64;
                             local_array[address_i as usize] += eq_r_cycle[j];
                         }
                         j += 1;
@@ -118,7 +118,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                     local_array
                 })
                 .reduce(
-                    || unsafe_allocate_zero_vec(1 << NUM_RA_I_VARS),
+                    || unsafe_allocate_zero_vec(DTH_ROOT_OF_K),
                     |mut running, new| {
                         running
                             .par_iter_mut()
@@ -177,7 +177,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         let r_address: Vec<F> = state_manager
             .transcript
             .borrow_mut()
-            .challenge_vector(NUM_RA_I_VARS);
+            .challenge_vector(DTH_ROOT_OF_K.log_2());
 
         // Get gamma challenge for batching
         let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
@@ -205,7 +205,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
     }
 
     fn num_rounds(&self) -> usize {
-        NUM_RA_I_VARS + self.T.log_2()
+        DTH_ROOT_OF_K.log_2() + self.T.log_2()
     }
 
     fn input_claim(&self) -> F {
@@ -214,12 +214,12 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
 
     #[tracing::instrument(skip_all, name = "RamBooleanitySumcheck::compute_prover_message")]
     fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
-        if round < NUM_RA_I_VARS {
+        if round < DTH_ROOT_OF_K.log_2() {
             // Phase 1: First log(K^(1/d)) rounds
             self.compute_phase1_message(round, previous_claim)
         } else {
             // Phase 2: Last log(T) rounds
-            self.compute_phase2_message(round - NUM_RA_I_VARS, previous_claim)
+            self.compute_phase2_message(round - DTH_ROOT_OF_K.log_2(), previous_claim)
         }
     }
 
@@ -230,7 +230,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
             .as_mut()
             .expect("Prover state not initialized");
 
-        if round < NUM_RA_I_VARS {
+        if round < DTH_ROOT_OF_K.log_2() {
             // Phase 1: Bind B and update F
             prover_state.B.bind(r_j);
 
@@ -246,7 +246,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
                 });
 
             // If transitioning to phase 2, prepare H polynomials
-            if round == NUM_RA_I_VARS - 1 {
+            if round == DTH_ROOT_OF_K.log_2() - 1 {
                 prover_state.eq_r_r = prover_state.B.current_scalar;
 
                 // Compute H polynomials for each decomposed part
@@ -260,8 +260,9 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
                         .map(|address_opt| {
                             address_opt.map_or(F::zero(), |address| {
                                 // Get i-th address chunk
-                                let address_i = (address >> (NUM_RA_I_VARS * (self.d - 1 - i)))
-                                    % (1 << NUM_RA_I_VARS);
+                                let address_i = (address
+                                    >> (DTH_ROOT_OF_K.log_2() * (self.d - 1 - i)))
+                                    % DTH_ROOT_OF_K as u64;
                                 prover_state.F.as_ref().unwrap()[address_i as usize]
                             })
                         })
@@ -320,7 +321,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
             })
             .collect();
 
-        let (r_address_prime, r_cycle_prime) = r.split_at(NUM_RA_I_VARS);
+        let (r_address_prime, r_cycle_prime) = r.split_at(DTH_ROOT_OF_K.log_2());
 
         let r_address_prime: Vec<_> = r_address_prime.iter().copied().rev().collect();
         let eq_eval_address = EqPolynomial::mle(&self.r_address, &r_address_prime);
@@ -338,7 +339,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
     }
 
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
-        let (r_address, r_cycle) = opening_point.split_at(NUM_RA_I_VARS);
+        let (r_address, r_cycle) = opening_point.split_at(DTH_ROOT_OF_K.log_2());
         let mut r_big_endian: Vec<F> = r_address.iter().rev().copied().collect();
         r_big_endian.extend(r_cycle.iter().copied().rev());
         OpeningPoint::new(r_big_endian)
@@ -360,7 +361,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
             .map(|h_poly| h_poly.final_sumcheck_claim())
             .collect();
 
-        let (r_address, r_cycle) = opening_point.split_at(NUM_RA_I_VARS);
+        let (r_address, r_cycle) = opening_point.split_at(DTH_ROOT_OF_K.log_2());
         accumulator.borrow_mut().append_sparse(
             (0..self.d).map(CommittedPolynomial::RamRa).collect(),
             SumcheckId::RamBooleanity,

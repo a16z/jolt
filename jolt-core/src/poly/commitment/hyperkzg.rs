@@ -406,13 +406,13 @@ where
     type BatchedProof = HyperKZGProof<P>;
     type OpeningProofHint = ();
 
-    fn setup_prover(max_len: usize) -> Self::ProverSetup {
+    fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
         HyperKZGSRS(Arc::new(SRS::setup(
             &mut ChaCha20Rng::from_seed(*b"HyperKZG_POLY_COMMITMENT_SCHEMEE"),
-            max_len,
+            1 << max_num_vars,
             2,
         )))
-        .trim(max_len)
+        .trim(1 << max_num_vars)
         .0
     }
 
@@ -420,10 +420,6 @@ where
         HyperKZGVerifierKey {
             kzg_vk: KZGVerifierKey::from(&setup.kzg_pk),
         }
-    }
-
-    fn srs_size(setup: &Self::ProverSetup) -> usize {
-        setup.kzg_pk.g1_powers().len()
     }
 
     #[tracing::instrument(skip_all, name = "HyperKZG::commit")]

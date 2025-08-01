@@ -99,16 +99,6 @@ pub fn trace_checkpoints(
         LazyTraceIterator::new(setup_emulator(elf_contents, inputs, memory_config));
     let mut checkpoints = Vec::new();
 
-    // let mut trace = Vec::with_capacity(1 << 24); // TODO(moodlezoup): make configurable
-    // loop {
-    //     let mut trace_n = emulator_trace_iter.clone();
-    //     trace_n.set_length(checkpoint_interval);
-    //     checkpoints.push(trace_n);
-    //     emulator_trace_iter = emulator_trace_iter.dropping(checkpoint_interval);
-    //     if emulator_trace_iter.is_empty() {
-    //         break;
-    //     }
-    // }
     loop {
         let chkpt = emulator_trace_iter.clone().take(checkpoint_interval);
         checkpoints.push(chkpt);
@@ -140,7 +130,7 @@ fn setup_emulator(elf_contents: Vec<u8>, inputs: &[u8], memory_config: &MemoryCo
 
     let mut jolt_device = JoltDevice::new(memory_config);
     jolt_device.inputs = inputs.to_vec();
-    emulator.get_mut_cpu().get_mut_mmu().jolt_device = jolt_device;
+    emulator.get_mut_cpu().get_mut_mmu().jolt_device = Some(jolt_device);
 
     emulator.setup_program(elf_contents);
     emulator
@@ -195,8 +185,12 @@ impl LazyTraceIterator {
 
     pub fn get_jolt_device(self) -> JoltDevice {
         let mut final_emulator_state = self.get_emulator_state();
-        let mut_jolt_device = &mut final_emulator_state.get_mut_cpu().get_mut_mmu().jolt_device;
-        std::mem::take(mut_jolt_device)
+        final_emulator_state
+            .get_mut_cpu()
+            .get_mut_mmu()
+            .jolt_device
+            .take()
+            .expect("JoltDevice was not initialized")
     }
 
     pub fn is_empty(&self) -> bool {

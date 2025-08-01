@@ -15,7 +15,7 @@ use crate::{
     },
     subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
     utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
-    zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager},
+    zkvm::dag::state_manager::StateManager,
     zkvm::{
         ram::remap_address,
         witness::{CommittedPolynomial, VirtualPolynomial},
@@ -85,13 +85,6 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         let T = trace.len();
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = T / num_chunks;
-
-        // HACK: Both the RAM and registers Twist instances use the same switch index;
-        // it may already be in the state manager at this point.
-        state_manager.proofs.borrow_mut().insert(
-            ProofKeys::TwistSumcheckSwitchIndex,
-            ProofData::SumcheckSwitchIndex(chunk_size.log_2()),
-        );
 
         let span = tracing::span!(tracing::Level::INFO, "compute deltas");
         let _guard = span.enter();
@@ -353,14 +346,12 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         let prover_state =
             ReadWriteCheckingProverState::initialize(initial_memory_state, K, state_manager);
 
-        let sumcheck_switch_index = prover_state.chunk_size.log_2();
-
         Self {
             K,
             T,
             gamma,
             r_prime: None,
-            sumcheck_switch_index,
+            sumcheck_switch_index: state_manager.twist_sumcheck_switch_index,
             prover_state: Some(prover_state),
             rv_claim,
             wv_claim,
@@ -383,15 +374,6 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             )
             .0;
 
-        let sumcheck_switch_index = match state_manager
-            .proofs
-            .borrow()
-            .get(&ProofKeys::TwistSumcheckSwitchIndex)
-        {
-            Some(ProofData::SumcheckSwitchIndex(index)) => *index,
-            _ => panic!("SumcheckSwitchIndex not found"),
-        };
-
         let (_, rv_claim) = state_manager
             .get_verifier_accumulator()
             .borrow()
@@ -412,7 +394,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             T,
             gamma,
             r_prime: Some(r_prime),
-            sumcheck_switch_index,
+            sumcheck_switch_index: state_manager.twist_sumcheck_switch_index,
             prover_state: None,
             rv_claim,
             wv_claim,

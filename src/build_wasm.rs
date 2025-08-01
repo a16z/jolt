@@ -35,7 +35,7 @@ fn preprocess_and_save(func_name: &str, attributes: &Attributes, is_std: bool) -
     program.set_max_input_size(attributes.max_input_size);
     program.set_max_output_size(attributes.max_output_size);
 
-    let (bytecode, memory_init) = program.decode();
+    let (bytecode, memory_init, _) = program.decode();
     let decoded_data = DecodedData {
         bytecode,
         memory_init,

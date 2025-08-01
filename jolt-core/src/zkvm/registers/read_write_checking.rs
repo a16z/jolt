@@ -1,6 +1,6 @@
 use crate::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN};
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
-use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
+use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::witness::VirtualPolynomial;
 use crate::{
     field::{JoltField, OptimizedMul},
@@ -266,22 +266,11 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
         let prover_state =
             ReadWriteCheckingProverState::initialize(preprocessing, trace, &r_cycle.r);
 
-        let T = trace.len();
-        let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
-        let chunk_size = T / num_chunks;
-        let sumcheck_switch_index = chunk_size.log_2();
-        // HACK: Both the RAM and registers Twist instances use the same switch index;
-        // it may already be in the state manager at this point.
-        state_manager.proofs.borrow_mut().insert(
-            ProofKeys::TwistSumcheckSwitchIndex,
-            ProofData::SumcheckSwitchIndex(sumcheck_switch_index),
-        );
-
         Self {
-            T,
+            T: trace.len(),
             gamma,
             gamma_sqr: gamma.square(),
-            sumcheck_switch_index,
+            sumcheck_switch_index: state_manager.twist_sumcheck_switch_index,
             prover_state: Some(prover_state),
             input_claim,
         }
@@ -308,20 +297,11 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
         let gamma: F = transcript.challenge_scalar();
         let input_claim = rd_wv_claim + gamma * rs1_rv_claim + gamma.square() * rs2_rv_claim;
 
-        let sumcheck_switch_index = match state_manager
-            .proofs
-            .borrow()
-            .get(&ProofKeys::TwistSumcheckSwitchIndex)
-        {
-            Some(ProofData::SumcheckSwitchIndex(index)) => *index,
-            _ => panic!("SumcheckSwitchIndex not found"),
-        };
-
         Self {
             T: trace_length,
             gamma,
             gamma_sqr: gamma.square(),
-            sumcheck_switch_index,
+            sumcheck_switch_index: state_manager.twist_sumcheck_switch_index,
             prover_state: None,
             input_claim,
         }

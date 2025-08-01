@@ -128,7 +128,7 @@ fn prove_example(
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     let mut tasks = Vec::new();
     let mut program = host::Program::new(example_name);
-    let (bytecode, init_memory_state) = program.decode();
+    let (bytecode, init_memory_state, _) = program.decode();
     let (_, _, program_io) = program.trace(&serialized_input);
 
     let task = move || {

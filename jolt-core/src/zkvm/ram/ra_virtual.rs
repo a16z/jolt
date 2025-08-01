@@ -7,8 +7,10 @@ use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
 use crate::zkvm::dag::state_manager::StateManager;
-use crate::zkvm::ram::{compute_d_parameter, remap_address, NUM_RA_I_VARS};
-use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
+use crate::zkvm::ram::remap_address;
+use crate::zkvm::witness::{
+    compute_d_parameter, CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K,
+};
 use crate::{
     field::JoltField,
     poly::{
@@ -92,19 +94,19 @@ impl<F: JoltField> RASumcheck<F> {
         let (r_address_raf, r_cycle_raf) = r.split_at_r(log_K);
         assert_eq!(r_address, r_address_raf);
 
-        let r_address = if r_address.len().is_multiple_of(NUM_RA_I_VARS) {
+        let r_address = if r_address.len().is_multiple_of(DTH_ROOT_OF_K.log_2()) {
             r_address.to_vec()
         } else {
             // Pad with zeros
             [
-                &vec![F::zero(); NUM_RA_I_VARS - (r_address.len() % NUM_RA_I_VARS)],
+                &vec![F::zero(); DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())],
                 r_address,
             ]
             .concat()
         };
         // Split r_address into d chunks of variable sizes
         let r_address_chunks: Vec<Vec<F>> = r_address
-            .chunks(NUM_RA_I_VARS)
+            .chunks(DTH_ROOT_OF_K.log_2())
             .map(|chunk| chunk.to_vec())
             .collect();
         debug_assert_eq!(r_address_chunks.len(), d);
@@ -146,8 +148,8 @@ impl<F: JoltField> RASumcheck<F> {
                         .map_or(F::zero(), |address| {
                             // For each address, add eq_r_cycle[j] to each corresponding chunk
                             // This maintains the property that sum of all ra values for an address equals 1
-                            let address_i =
-                                (address >> (NUM_RA_I_VARS * (d - 1 - i))) % (1 << NUM_RA_I_VARS);
+                            let address_i = (address >> (DTH_ROOT_OF_K.log_2() * (d - 1 - i)))
+                                % DTH_ROOT_OF_K as u64;
 
                             eq_tables[i][address_i as usize]
                         })
@@ -214,19 +216,19 @@ impl<F: JoltField> RASumcheck<F> {
         let (r_address_raf, r_cycle_raf) = r.split_at_r(log_K);
         assert_eq!(r_address, r_address_raf);
 
-        let r_address = if r_address.len().is_multiple_of(NUM_RA_I_VARS) {
+        let r_address = if r_address.len().is_multiple_of(DTH_ROOT_OF_K.log_2()) {
             r_address.to_vec()
         } else {
             // Pad with zeros
             [
-                &vec![F::zero(); NUM_RA_I_VARS - (r_address.len() % NUM_RA_I_VARS)],
+                &vec![F::zero(); DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())],
                 r_address,
             ]
             .concat()
         };
         // Split r_address into d chunks of variable sizes
         let r_address_chunks: Vec<Vec<F>> = r_address
-            .chunks(NUM_RA_I_VARS)
+            .chunks(DTH_ROOT_OF_K.log_2())
             .map(|chunk| chunk.to_vec())
             .collect();
         debug_assert_eq!(r_address_chunks.len(), d);

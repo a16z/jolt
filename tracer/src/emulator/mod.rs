@@ -2,7 +2,7 @@
 
 // @TODO: temporal
 const TEST_MEMORY_CAPACITY: u64 = 1024 * 512 * 100;
-const PROGRAM_MEMORY_CAPACITY: u64 = 1024 * 1024 * 128; // big enough to run Linux and xv6
+const PROGRAM_MEMORY_CAPACITY: u64 = EMULATOR_MEMORY_CAPACITY; // big enough to run Linux and xv6
 
 extern crate fnv;
 
@@ -33,6 +33,7 @@ use self::cpu::{Cpu, Xlen};
 use self::elf_analyzer::ElfAnalyzer;
 use self::terminal::Terminal;
 
+use common::constants::{EMULATOR_MEMORY_CAPACITY, RAM_START_ADDRESS};
 use std::io::Write;
 
 /// RISC-V emulator. It emulates RISC-V CPU and peripheral devices.
@@ -222,15 +223,16 @@ impl Emulator {
             self.cpu.get_mut_mmu().init_memory(PROGRAM_MEMORY_CAPACITY);
         }
 
+        // Copy program data sections to CPU memory.
         for header in &program_data_section_headers {
             let sh_addr = header.sh_addr;
             let sh_offset = header.sh_offset as usize;
             let sh_size = header.sh_size as usize;
-            if sh_addr >= 0x80000000 && sh_offset > 0 && sh_size > 0 {
+            if sh_addr >= RAM_START_ADDRESS && sh_offset > 0 && sh_size > 0 {
                 for j in 0..sh_size {
                     self.cpu
                         .get_mut_mmu()
-                        .store_raw(sh_addr + j as u64, analyzer.read_byte(sh_offset + j));
+                        .setup_bytecode(sh_addr + j as u64, analyzer.read_byte(sh_offset + j));
                 }
             }
         }

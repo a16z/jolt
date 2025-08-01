@@ -14,11 +14,11 @@ use crate::{
         },
     },
     subprotocols::sumcheck::SumcheckInstance,
-    utils::{thread::unsafe_allocate_zero_vec, transcript::Transcript},
-    zkvm::dag::state_manager::StateManager,
+    utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
     zkvm::{
-        ram::{compute_d_parameter, remap_address, NUM_RA_I_VARS},
-        witness::{CommittedPolynomial, VirtualPolynomial},
+        dag::state_manager::StateManager,
+        ram::remap_address,
+        witness::{compute_d_parameter, CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K},
     },
 };
 
@@ -68,7 +68,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
                 .par_chunks(chunk_size)
                 .enumerate()
                 .map(|(chunk_index, trace_chunk)| {
-                    let mut local_array = unsafe_allocate_zero_vec(1 << NUM_RA_I_VARS);
+                    let mut local_array = unsafe_allocate_zero_vec(DTH_ROOT_OF_K);
                     let mut j = chunk_index * chunk_size;
                     for cycle in trace_chunk {
                         if let Some(address) =
@@ -76,8 +76,8 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
                         {
                             // For each address, add eq_r_cycle[j] to each corresponding chunk
                             // This maintains the property that sum of all ra values for an address equals 1
-                            let address_i =
-                                (address >> (NUM_RA_I_VARS * (d - 1 - i))) % (1 << NUM_RA_I_VARS);
+                            let address_i = (address >> (DTH_ROOT_OF_K.log_2() * (d - 1 - i)))
+                                % DTH_ROOT_OF_K as u64;
                             local_array[address_i as usize] += eq_r_cycle[j];
                         }
                         j += 1;
@@ -85,7 +85,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
                     local_array
                 })
                 .reduce(
-                    || unsafe_allocate_zero_vec(1 << NUM_RA_I_VARS),
+                    || unsafe_allocate_zero_vec(DTH_ROOT_OF_K),
                     |mut running, new| {
                         running
                             .par_iter_mut()
@@ -148,7 +148,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
     }
 
     fn num_rounds(&self) -> usize {
-        NUM_RA_I_VARS
+        DTH_ROOT_OF_K.log_2()
     }
 
     fn input_claim(&self) -> F {

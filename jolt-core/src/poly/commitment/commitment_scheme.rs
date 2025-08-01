@@ -29,13 +29,35 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     /// used as a hint for the opening proof.
     type OpeningProofHint: Sync + Send + Clone + Debug;
 
-    fn setup_prover(max_len: usize) -> Self::ProverSetup;
+    /// Generates the prover setup for this PCS. `max_num_vars` is the maximum number of
+    /// variables of any polynomial that will be committed using this setup.
+    fn setup_prover(max_num_vars: usize) -> Self::ProverSetup;
+
+    /// Generates the verifier setup from the prover setup.
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup;
-    fn srs_size(setup: &Self::ProverSetup) -> usize;
+
+    /// Commits to a multilinear polynomial using the provided setup.
+    ///
+    /// # Arguments
+    /// * `poly` - The multilinear polynomial to commit to
+    /// * `setup` - The prover setup for the commitment scheme
+    ///
+    /// # Returns
+    /// A tuple containing the commitment to the polynomial and a hint that can be used
+    /// to optimize opening proof generation
     fn commit(
         poly: &MultilinearPolynomial<Self::Field>,
         setup: &Self::ProverSetup,
     ) -> (Self::Commitment, Self::OpeningProofHint);
+
+    /// Commits to multiple multilinear polynomials in batch.
+    ///
+    /// # Arguments
+    /// * `polys` - A slice of multilinear polynomials to commit to
+    /// * `gens` - The prover setup for the commitment scheme
+    ///
+    /// # Returns
+    /// A vector of commitments, one for each input polynomial
     fn batch_commit<U>(polys: &[U], gens: &Self::ProverSetup) -> Vec<Self::Commitment>
     where
         U: Borrow<MultilinearPolynomial<Self::Field>> + Sync;
@@ -58,20 +80,43 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         unimplemented!()
     }
 
+    /// Generates a proof of evaluation for a polynomial at a specific point.
+    ///
+    /// # Arguments
+    /// * `setup` - The prover setup for the commitment scheme
+    /// * `poly` - The multilinear polynomial being proved
+    /// * `opening_point` - The point at which the polynomial is evaluated
+    /// * `hint` - A hint that helps optimize the proof generation
+    /// * `transcript` - The transcript for Fiat-Shamir transformation
+    ///
+    /// # Returns
+    /// A proof of the polynomial evaluation at the specified point
     fn prove<ProofTranscript: Transcript>(
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
-        opening_point: &[Self::Field], // point at which the polynomial is evaluated
+        opening_point: &[Self::Field],
         hint: Self::OpeningProofHint,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof;
 
+    /// Verifies a proof of polynomial evaluation at a specific point.
+    ///
+    /// # Arguments
+    /// * `proof` - The proof to be verified
+    /// * `setup` - The verifier setup for the commitment scheme
+    /// * `transcript` - The transcript for Fiat-Shamir transformation
+    /// * `opening_point` - The point at which the polynomial is evaluated
+    /// * `opening` - The claimed evaluation value of the polynomial at the opening point
+    /// * `commitment` - The commitment to the polynomial
+    ///
+    /// # Returns
+    /// Ok(()) if the proof is valid, otherwise a ProofVerifyError
     fn verify<ProofTranscript: Transcript>(
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
         transcript: &mut ProofTranscript,
-        opening_point: &[Self::Field], // point at which the polynomial is evaluated
-        opening: &Self::Field,         // evaluation \widetilde{Z}(r)
+        opening_point: &[Self::Field],
+        opening: &Self::Field,
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError>;
 

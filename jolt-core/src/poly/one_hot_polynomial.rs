@@ -348,7 +348,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
         bases: &[G::Affine],
     ) -> Vec<JoltGroupWrapper<G>> {
         let num_rows = self.num_rows();
-        println!("# rows = {num_rows}");
+        println!("Committing to one-hot polynomial with {num_rows} rows");
         let row_len = DoryGlobals::get_num_columns();
         let T = DoryGlobals::get_T();
 

@@ -13,9 +13,6 @@ use crate::{
     },
 };
 use ark_bn254::{Bn254, Fr, G1Projective, G2Projective};
-use ark_ec::bn::{G1Prepared, G2Prepared};
-type BnG1Prepared = G1Prepared<ark_bn254::Config>;
-type BnG2Prepared = G2Prepared<ark_bn254::Config>;
 use ark_ec::{
     pairing::{MillerLoopOutput, Pairing as ArkPairing, PairingOutput},
     AffineRepr, CurveGroup,
@@ -61,12 +58,11 @@ impl DoryGlobals {
     /// Initializes the static variables (`GLOBAL_T`, `MAX_NUM_ROWS`, and
     /// `NUM_COLUMNS`) used by Dory.
     pub fn initialize(K: usize, T: usize) -> Self {
-        println!("K_log {}, T_log {}", K.log_2(), T.log_2());
         let matrix_size = K as u128 * T as u128;
         let num_columns = matrix_size.isqrt().next_power_of_two();
         let num_rows = num_columns;
-        println!("# rows: {num_rows}");
-        println!("# cols: {num_columns}");
+        println!("[Dory PCS] # rows: {num_rows}");
+        println!("[Dory PCS] # cols: {num_columns}");
 
         unsafe {
             GLOBAL_T.set(T).expect("GLOBAL_T is already initialized");
@@ -609,151 +605,6 @@ where
         g2_cache: Option<&dory::curve::G2Cache>,
     ) -> Self::GT {
         match (g1_points, g1_count, g1_cache, g2_points, g2_count, g2_cache) {
-            // Case 1: Both G1 and G2 use cached prepared values (fully optimized)
-            (None, Some(g1_c), Some(g1_cache), None, Some(g2_c), Some(g2_cache)) => {
-                assert_eq!(g1_c, g2_c, "G1 and G2 counts must be equal");
-                if g1_c == 0 {
-                    return Self::GT::identity();
-                }
-
-                // Extract prepared values from caches
-                let g1_prepared: Vec<&BnG1Prepared> = (0..g1_c)
-                    .map(|i| {
-                        g1_cache
-                            .get_prepared(i)
-                            .expect("Index out of bounds in G1 cache")
-                    })
-                    .collect();
-
-                let g2_prepared: Vec<&BnG2Prepared> = (0..g2_c)
-                    .map(|i| {
-                        g2_cache
-                            .get_prepared(i)
-                            .expect("Index out of bounds in G2 cache")
-                    })
-                    .collect();
-
-                // Use Bn254 directly since caches are BN254-specific
-                let ml_result = Bn254::multi_miller_loop(g1_prepared, g2_prepared).0;
-
-                let pairing_result = Bn254::final_exponentiation(MillerLoopOutput(ml_result))
-                    .expect("Final exponentiation should not fail");
-
-                // # Safety
-                // When E = Bn254, JoltGTWrapper<Bn254> has same memory layout as JoltGTWrapper<E>
-                // since JoltGTWrapper is repr(transparent) and E::TargetField = Bn254::TargetField
-                let bn_result = JoltGTWrapper::<Bn254>(pairing_result.0);
-                unsafe {
-                    let ptr = &bn_result as *const JoltGTWrapper<Bn254> as *const Self::GT;
-                    (*ptr).clone()
-                }
-            }
-
-            // Case 2: G1 cached, G2 fresh points (partial optimization)
-            (None, Some(g1_c), Some(g1_cache), Some(g2_points), _, _) => {
-                assert_eq!(
-                    g1_c,
-                    g2_points.len(),
-                    "G1 count must equal G2 points length"
-                );
-                if g1_c == 0 {
-                    return Self::GT::identity();
-                }
-
-                // G1 from cache
-                let g1_prepared: Vec<&BnG1Prepared> = (0..g1_c)
-                    .map(|i| {
-                        g1_cache
-                            .get_prepared(i)
-                            .expect("Index out of bounds in G1 cache")
-                    })
-                    .collect();
-
-                // # Safety
-                // JoltGroupWrapper is repr(transparent) so has same memory layout as E::G2
-                // When E = Bn254, E::G2 = G2Projective
-                let g2_inner: &[G2Projective] = unsafe {
-                    std::slice::from_raw_parts(
-                        g2_points.as_ptr() as *const G2Projective,
-                        g2_points.len(),
-                    )
-                };
-
-                let g2_affine = G2Projective::normalize_batch(g2_inner);
-                let g2_prepared = g2_affine
-                    .par_iter()
-                    .map(BnG2Prepared::from)
-                    .collect::<Vec<_>>();
-
-                // Use Bn254 directly since caches are BN254-specific
-                let ml_result = Bn254::multi_miller_loop(g1_prepared, g2_prepared).0;
-
-                let pairing_result = Bn254::final_exponentiation(MillerLoopOutput(ml_result))
-                    .expect("Final exponentiation should not fail");
-
-                // # Safety
-                // When E = Bn254, JoltGTWrapper<Bn254> has same memory layout as JoltGTWrapper<E>
-                // since JoltGTWrapper is repr(transparent) and E::TargetField = Bn254::TargetField
-                let bn_result = JoltGTWrapper::<Bn254>(pairing_result.0);
-                unsafe {
-                    let ptr = &bn_result as *const JoltGTWrapper<Bn254> as *const Self::GT;
-                    (*ptr).clone()
-                }
-            }
-
-            // Case 3: G1 fresh points, G2 cached (partial optimization)
-            (Some(g1_points), _, _, None, Some(g2_c), Some(g2_cache)) => {
-                assert_eq!(
-                    g1_points.len(),
-                    g2_c,
-                    "G1 points length must equal G2 count"
-                );
-                if g2_c == 0 {
-                    return Self::GT::identity();
-                }
-
-                // # Safety
-                // JoltGroupWrapper is repr(transparent) so has same memory layout as E::G1
-                // When E = Bn254, E::G1 = G1Projective
-                let g1_inner: &[G1Projective] = unsafe {
-                    std::slice::from_raw_parts(
-                        g1_points.as_ptr() as *const G1Projective,
-                        g1_points.len(),
-                    )
-                };
-
-                let g1_affine = G1Projective::normalize_batch(g1_inner);
-                let g1_prepared = g1_affine
-                    .par_iter()
-                    .map(BnG1Prepared::from)
-                    .collect::<Vec<_>>();
-
-                // G2 from cache
-                let g2_prepared: Vec<&BnG2Prepared> = (0..g2_c)
-                    .map(|i| {
-                        g2_cache
-                            .get_prepared(i)
-                            .expect("Index out of bounds in G2 cache")
-                    })
-                    .collect();
-
-                // Use Bn254 directly since caches are BN254-specific
-                let ml_result = Bn254::multi_miller_loop(g1_prepared, g2_prepared).0;
-
-                let pairing_result = Bn254::final_exponentiation(MillerLoopOutput(ml_result))
-                    .expect("Final exponentiation should not fail");
-
-                // # Safety
-                // When E = Bn254, JoltGTWrapper<Bn254> has same memory layout as JoltGTWrapper<E>
-                // since JoltGTWrapper is repr(transparent) and E::TargetField = Bn254::TargetField
-                let bn_result = JoltGTWrapper::<Bn254>(pairing_result.0);
-                unsafe {
-                    let ptr = &bn_result as *const JoltGTWrapper<Bn254> as *const Self::GT;
-                    (*ptr).clone()
-                }
-            }
-
-            // Case 4: Both fresh points (no caching benefit)
             (Some(g1_points), _, _, Some(g2_points), _, _) => {
                 assert_eq!(
                     g1_points.len(),
@@ -802,8 +653,7 @@ where
 
                 JoltGTWrapper(pairing_result.0)
             }
-
-            _ => panic!("Invalid combination of parameters provided to multi_pair_cached"),
+            _ => panic!("Unexpected combination of parameters provided to multi_pair_cached"),
         }
     }
 }
@@ -879,13 +729,10 @@ where
     fn vector_matrix_product(
         &self,
         left_vec: &[JoltFieldWrapper<F>],
-        sigma: usize,
-        nu: usize,
+        _sigma: usize,
+        _nu: usize,
     ) -> Vec<JoltFieldWrapper<F>> {
         let num_columns = DoryGlobals::get_num_columns();
-        println!("sigma: {sigma}");
-        println!("nu: {nu}");
-        println!("num_columns: {num_columns}");
 
         match self {
             MultilinearPolynomial::LargeScalars(poly) => (0..num_columns)
@@ -1093,10 +940,6 @@ impl CommitmentScheme for DoryCommitmentScheme {
         prover_setup.to_verifier_setup()
     }
 
-    fn srs_size(_setup: &Self::ProverSetup) -> usize {
-        todo!()
-    }
-
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::commit")]
     fn commit(
         poly: &MultilinearPolynomial<Self::Field>,
@@ -1194,8 +1037,6 @@ impl CommitmentScheme for DoryCommitmentScheme {
             setup,
             dory_transcript,
         );
-
-        println!("{verify_result:?}");
 
         match verify_result {
             Ok(()) => Ok(()),
