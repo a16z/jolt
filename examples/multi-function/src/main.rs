@@ -30,8 +30,13 @@ pub fn main() {
     println!("add output: {output}");
     println!("add valid: {is_valid}");
 
+<<<<<<< HEAD
     let (output, proof, program_io) = prove_mul(5, 10);
     let is_valid = verify_mul(5, 10, output, program_io.panic, proof);
+=======
+    let (output, proof, _) = prove_mul(5, 10);
+    let is_valid = verify_mul(5, 10, output, proof);
+>>>>>>> 9b861bb3 (add wrapper crate "jolt-verifier" to expose verifier api)
 
     println!("mul output: {output}");
     println!("mul valid: {is_valid}");

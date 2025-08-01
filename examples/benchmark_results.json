@@ -1,0 +1,110 @@
+[
+  {
+        "name": "alloc-time",
+        "unit": "s",
+        "value": 0.7157,
+        "extra": ""
+    },
+  {
+        "name": "alloc-mem",
+        "unit": "KB",
+        "value": 501344.0000,
+        "extra": ""
+    },
+  {
+        "name": "fibonacci-time",
+        "unit": "s",
+        "value": 0.6653,
+        "extra": ""
+    },
+  {
+        "name": "fibonacci-mem",
+        "unit": "KB",
+        "value": 476464.0000,
+        "extra": ""
+    },
+  {
+        "name": "memory-ops-time",
+        "unit": "s",
+        "value": 0.5454,
+        "extra": ""
+    },
+  {
+        "name": "memory-ops-mem",
+        "unit": "KB",
+        "value": 478656.0000,
+        "extra": ""
+    },
+  {
+        "name": "muldiv-time",
+        "unit": "s",
+        "value": 0.5406,
+        "extra": ""
+    },
+  {
+        "name": "muldiv-mem",
+        "unit": "KB",
+        "value": 477184.0000,
+        "extra": ""
+    },
+  {
+        "name": "multi-function-time",
+        "unit": "s",
+        "value": 0.4735,
+        "extra": ""
+    },
+  {
+        "name": "multi-function-mem",
+        "unit": "KB",
+        "value": 624160.0000,
+        "extra": ""
+    },
+  {
+        "name": "sha2-chain-time",
+        "unit": "s",
+        "value": 15.1811,
+        "extra": ""
+    },
+  {
+        "name": "sha2-chain-mem",
+        "unit": "KB",
+        "value": 14731824.0000,
+        "extra": ""
+    },
+  {
+        "name": "sha2-ex-time",
+        "unit": "s",
+        "value": 0.7773,
+        "extra": ""
+    },
+  {
+        "name": "sha2-ex-mem",
+        "unit": "KB",
+        "value": 568912.0000,
+        "extra": ""
+    },
+  {
+        "name": "sha3-ex-time",
+        "unit": "s",
+        "value": 1.4119,
+        "extra": ""
+    },
+  {
+        "name": "sha3-ex-mem",
+        "unit": "KB",
+        "value": 550784.0000,
+        "extra": ""
+    },
+  {
+        "name": "stdlib-time",
+        "unit": "s",
+        "value": 0.0000,
+        "extra": ""
+    },
+  {
+        "name": "stdlib-mem",
+        "unit": "KB",
+        "value": 489936.0000,
+        "extra": ""
+    }
+]
