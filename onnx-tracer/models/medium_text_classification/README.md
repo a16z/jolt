@@ -17,5 +17,8 @@ Run `python tokenize_text.py '<input text>'` to tokenize an input text.
 
 Also contains:
 
-- `Spam_SMS.csv`, training data for the model, can be used or replaced to re-train the model.
-- `vocab.json`, file holding the vocabulary issued from training the given model, can be rebuilt by running `python gen.py`.
+- `vocab.json`, file holding the vocabulary issued from training the given model,
+
+  Built from training with Spam SMS dataset: https://www.kaggle.com/datasets/mariumfaheem666/spam-sms-classification-using-nlp.
+
+  Can be rebuilt by running `python gen.py` after linking to the desired dataset.

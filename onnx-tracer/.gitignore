@@ -3,7 +3,6 @@ pkg
 data
 *.csv
 !examples/notebooks/eth_price.csv
-!models/medium_text_classification/Spam_SMS.csv
 *.ipynb_checkpoints
 *.sol
 !QuantizeData.sol

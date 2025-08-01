@@ -17,5 +17,8 @@ Run `python tokenize_text.py '<input article text>'` to tokenize an input text.
 
 Also contains:
 
-- `bbc_data.csv`, the training dataset with articles and their tags.
-- `vocab.json`, file holding the integer-scaled IDF values for the vocabulary, rebuilt by running `python gen.py`.
+- `vocab.json`, file holding the integer-scaled IDF values for the vocabulary
+
+  Built from training with BBC articles dataset: https://www.kaggle.com/datasets/alfathterry/bbc-full-text-document-classification.
+
+  Can be rebuilt by running `python gen.py` after linking to the desired dataset.
