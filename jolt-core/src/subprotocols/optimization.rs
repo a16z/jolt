@@ -86,28 +86,33 @@ impl<F: JoltField, ProofTranscript: Transcript> KaratsubaSumCheckProof<F, ProofT
             let evals = (0..(log_T - round - 1).pow2())
                 .into_par_iter()
                 .map(|j| {
-                    let mle_evals: Vec<F> = match d_plus_one {
+                    let mle_evals = match d_plus_one {
+                        32 => {
+                            unimplemented!()
+                        }
                         16 => {
                             // (constant, slope)
-                            let flat: [F; 32] = mle_vec
-                                .iter()
-                                .flat_map(|x| {
-                                    [
-                                        x.get_bound_coeff(j),
-                                        x.get_bound_coeff(j + x.len() / 2) - x.get_bound_coeff(j),
-                                    ]
-                                })
-                                .chain(iter::once(eq.get_bound_coeff(j)))
-                                .chain(iter::once(
-                                    eq.get_bound_coeff(j + eq.len() / 2) - eq.get_bound_coeff(j),
-                                ))
-                                .collect::<Vec<_>>()
-                                .try_into()
-                                .unwrap();
+                            let flat: [F; 32] = core::array::from_fn(|i| {
+                                if i < 30 {
+                                    if i % 2 == 0 {
+                                        mle_vec[i / 2].get_bound_coeff(j)
+                                    } else {
+                                        mle_vec[i / 2].get_bound_coeff(j + mle_vec[i / 2].len() / 2)
+                                            - mle_vec[i / 2].get_bound_coeff(j)
+                                    }
+                                } else {
+                                    if i % 2 == 0 {
+                                        eq.get_bound_coeff(j)
+                                    } else {
+                                        eq.get_bound_coeff(j + eq.len() / 2) - eq.get_bound_coeff(j)
+                                    }
+                                }
+                            });
 
-                            let kera_res = coeff_kara_16(&flat);
-
-                            Vec::from(kera_res)
+                            coeff_kara_16(&flat)
+                        }
+                        8 => {
+                            unimplemented!()
                         }
                         _ => unimplemented!(),
                     };
@@ -157,13 +162,27 @@ impl<F: JoltField, ProofTranscript: Transcript> KaratsubaSumCheckProof<F, ProofT
                     mle_evals
                 })
                 .reduce(
-                    || vec![F::zero(); mle_vec.len() + 2],
+                    || [F::zero(); 17],
                     |running, new| {
-                        running
-                            .iter()
-                            .zip(new.iter())
-                            .map(|(a, b)| *a + b)
-                            .collect::<Vec<_>>()
+                        [
+                            running[0] + new[0],
+                            running[1] + new[1],
+                            running[2] + new[2],
+                            running[3] + new[3],
+                            running[4] + new[4],
+                            running[5] + new[5],
+                            running[6] + new[6],
+                            running[7] + new[7],
+                            running[8] + new[8],
+                            running[9] + new[9],
+                            running[10] + new[10],
+                            running[11] + new[11],
+                            running[12] + new[12],
+                            running[13] + new[13],
+                            running[14] + new[14],
+                            running[15] + new[15],
+                            running[16] + new[16],
+                        ]
                     },
                 );
 
@@ -175,7 +194,9 @@ impl<F: JoltField, ProofTranscript: Transcript> KaratsubaSumCheckProof<F, ProofT
             let inner_span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
             let _guard = inner_span.enter();
 
-            let univariate_poly = UniPoly { coeffs: evals };
+            let univariate_poly = UniPoly {
+                coeffs: Vec::from(evals),
+            };
             let compressed_poly = univariate_poly.compress();
             compressed_poly.append_to_transcript(transcript);
             compressed_polys.push(compressed_poly);

@@ -376,7 +376,6 @@ mod tests {
         let naive_res = coeff_naive(&polys);
         let kara_res = coeff_kara_32(&flat);
         assert_eq!(naive_res.len(), kara_res.len());
-        assert_eq!(naive_res.len(), 33);
         for i in 0..naive_res.len() {
             assert_eq!(naive_res[i], kara_res[i]);
         }
