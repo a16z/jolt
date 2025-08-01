@@ -90,7 +90,7 @@ impl VirtualInstructionSequence for REMU {
         let advice = VirtualAdvice {
             address: self.address,
             operands: FormatJ { rd: v_q, imm: 0 },
-            virtual_sequence_remaining: Some(6),
+            virtual_sequence_remaining: Some(7),
             advice: 0,
         };
         sequence.push(advice.into());
@@ -98,7 +98,7 @@ impl VirtualInstructionSequence for REMU {
         let advice = VirtualAdvice {
             address: self.address,
             operands: FormatJ { rd: v_r, imm: 0 },
-            virtual_sequence_remaining: Some(5),
+            virtual_sequence_remaining: Some(6),
             advice: 0,
         };
         sequence.push(advice.into());
@@ -110,7 +110,7 @@ impl VirtualInstructionSequence for REMU {
                 rs1: v_q,
                 rs2: self.operands.rs2,
             },
-            virtual_sequence_remaining: Some(4),
+            virtual_sequence_remaining: Some(5),
         };
         sequence.push(mul.into());
 
@@ -121,7 +121,7 @@ impl VirtualInstructionSequence for REMU {
                 rs2: self.operands.rs2,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(3),
+            virtual_sequence_remaining: Some(4),
         };
         sequence.push(assert_remainder.into());
 
@@ -132,7 +132,7 @@ impl VirtualInstructionSequence for REMU {
                 rs2: self.operands.rs1,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(2),
+            virtual_sequence_remaining: Some(3),
         };
         sequence.push(assert_lte.into());
 
@@ -143,7 +143,7 @@ impl VirtualInstructionSequence for REMU {
                 rs1: v_qy,
                 rs2: v_r,
             },
-            virtual_sequence_remaining: Some(1),
+            virtual_sequence_remaining: Some(2),
         };
         sequence.push(add.into());
 

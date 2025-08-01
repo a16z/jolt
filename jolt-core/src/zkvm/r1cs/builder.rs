@@ -16,7 +16,7 @@ pub struct Constraint {
 
 impl Constraint {
     #[cfg(test)]
-    pub(crate) fn _pretty_fmt<F: JoltField>(
+    pub(crate) fn pretty_fmt<F: JoltField>(
         &self,
         f: &mut String,
         flattened_polynomials: &[crate::poly::multilinear_polynomial::MultilinearPolynomial<F>],
