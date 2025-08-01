@@ -11,6 +11,7 @@ use ark_serialize::{
 use num::FromPrimitive;
 use tracer::JoltDevice;
 
+use crate::zkvm::witness::AllCommittedPolynomials;
 use crate::{
     field::JoltField,
     poly::{
@@ -29,14 +30,100 @@ use crate::{
     },
 };
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
     opening_claims: Claims<F>,
     commitments: Vec<PCS::Commitment>,
     proofs: Proofs<F, PCS, FS>,
     pub trace_length: usize,
     ram_K: usize,
+    bytecode_d: usize,
     twist_sumcheck_switch_index: usize,
+}
+
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSerialize
+    for JoltProof<F, PCS, FS>
+{
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        // serialize ram_K and bytecode_d first
+        self.ram_K.serialize_with_mode(&mut writer, compress)?;
+        self.bytecode_d.serialize_with_mode(&mut writer, compress)?;
+        // ensure that all committed polys are set up before serializing proofs
+        let guard = AllCommittedPolynomials::initialize(self.ram_K, self.bytecode_d);
+        self.opening_claims
+            .serialize_with_mode(&mut writer, compress)?;
+        self.commitments
+            .serialize_with_mode(&mut writer, compress)?;
+        self.proofs.serialize_with_mode(&mut writer, compress)?;
+        self.trace_length
+            .serialize_with_mode(&mut writer, compress)?;
+        self.twist_sumcheck_switch_index
+            .serialize_with_mode(&mut writer, compress)?;
+
+        drop(guard);
+        Ok(())
+    }
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.opening_claims.serialized_size(compress)
+            + self.commitments.serialized_size(compress)
+            + self.proofs.serialized_size(compress)
+            + self.trace_length.serialized_size(compress)
+            + self.ram_K.serialized_size(compress)
+            + self.bytecode_d.serialized_size(compress)
+            + self.twist_sumcheck_switch_index.serialized_size(compress)
+    }
+}
+
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
+    for JoltProof<F, PCS, FS>
+{
+    fn check(&self) -> Result<(), SerializationError> {
+        self.opening_claims.check()?;
+        self.commitments.check()?;
+        self.proofs.check()?;
+        self.trace_length.check()?;
+        self.ram_K.check()?;
+        self.bytecode_d.check()?;
+        self.twist_sumcheck_switch_index.check()?;
+        Ok(())
+    }
+}
+
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDeserialize
+    for JoltProof<F, PCS, FS>
+{
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let ram_K = usize::deserialize_with_mode(&mut reader, compress, validate)?;
+        let bytecode_d = usize::deserialize_with_mode(&mut reader, compress, validate)?;
+
+        // ensure that all committed polys are set up before serializing
+        let guard = AllCommittedPolynomials::initialize(ram_K, bytecode_d);
+        let opening_claims = Claims::deserialize_with_mode(&mut reader, compress, validate)?;
+        let commitments =
+            Vec::<PCS::Commitment>::deserialize_with_mode(&mut reader, compress, validate)?;
+        let proofs = Proofs::<F, PCS, FS>::deserialize_with_mode(&mut reader, compress, validate)?;
+        let trace_length = usize::deserialize_with_mode(&mut reader, compress, validate)?;
+        let twist_sumcheck_switch_index =
+            usize::deserialize_with_mode(&mut reader, compress, validate)?;
+        drop(guard);
+
+        Ok(Self {
+            opening_claims,
+            commitments,
+            proofs,
+            trace_length,
+            ram_K,
+            bytecode_d,
+            twist_sumcheck_switch_index,
+        })
+    }
 }
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F, PCS, FS> {
@@ -55,6 +142,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
             proofs,
             trace_length,
             ram_K,
+            bytecode_d: prover_state.preprocessing.shared.bytecode.d,
             twist_sumcheck_switch_index,
         }
     }
@@ -368,12 +456,17 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
 }
 
 #[allow(dead_code)]
-pub fn serialize_and_print_size(file_name: &str, item: &impl CanonicalSerialize) {
+pub fn serialize_and_print_size(
+    item_name: &str,
+    file_name: &str,
+    item: &impl CanonicalSerialize,
+) -> Result<(), SerializationError> {
     use std::fs::File;
-    let mut file = File::create(file_name).unwrap();
-    item.serialize_compressed(&mut file).unwrap();
-    let file_size_bytes = file.metadata().unwrap().len();
+    let mut file = File::create(file_name)?;
+    item.serialize_compressed(&mut file)?;
+    let file_size_bytes = file.metadata()?.len();
     let file_size_kb = file_size_bytes as f64 / 1024.0;
-    println!("Proof written to {file_name}");
-    println!("Proof size: {file_size_kb:.1} kB");
+    println!("{item_name} Written to {file_name}");
+    println!("{item_name} size: {file_size_kb:.1} kB");
+    Ok(())
 }
