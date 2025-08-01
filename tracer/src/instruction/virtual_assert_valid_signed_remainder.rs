@@ -30,24 +30,14 @@ impl VirtualAssertValidSignedRemainder {
                 let remainder = cpu.x[self.operands.rs1] as i32;
                 let divisor = cpu.x[self.operands.rs2] as i32;
                 if remainder != 0 && divisor != 0 {
-                    let remainder_sign = remainder >> 31;
-                    let divisor_sign = divisor >> 31;
-                    assert!(
-                        remainder.unsigned_abs() < divisor.unsigned_abs()
-                            && remainder_sign == divisor_sign
-                    );
+                    assert!(remainder.unsigned_abs() < divisor.unsigned_abs());
                 }
             }
             Xlen::Bit64 => {
                 let remainder = cpu.x[self.operands.rs1];
                 let divisor = cpu.x[self.operands.rs2];
                 if remainder != 0 && divisor != 0 {
-                    let remainder_sign = remainder >> 63;
-                    let divisor_sign = divisor >> 63;
-                    assert!(
-                        remainder.unsigned_abs() < divisor.unsigned_abs()
-                            && remainder_sign == divisor_sign
-                    );
+                    assert!(remainder.unsigned_abs() < divisor.unsigned_abs());
                 }
             }
         }

@@ -10,6 +10,7 @@ use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{OpeningId, SumcheckId};
 use crate::utils::transcript::Transcript;
 use crate::zkvm::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
+use crate::zkvm::instruction_lookups::WORD_SIZE;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::zkvm::JoltProverPreprocessing;
 
@@ -118,7 +119,7 @@ impl TryFrom<JoltR1CSInputs> for OpeningId {
 
 /// This const serves to define a canonical ordering over inputs (and thus indices
 /// for each input). This is needed for sumcheck.
-pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 40] = [
+pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 41] = [
     JoltR1CSInputs::LeftInstructionInput,
     JoltR1CSInputs::RightInstructionInput,
     JoltR1CSInputs::Product,
@@ -159,6 +160,7 @@ pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 40] = [
     JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC),
     JoltR1CSInputs::OpFlags(CircuitFlags::Advice),
     JoltR1CSInputs::OpFlags(CircuitFlags::IsNoop),
+    JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed),
 ];
 
 /// The subset of `ALL_R1CS_INPUTS` that are committed. The rest of
@@ -296,14 +298,14 @@ impl JoltR1CSInputs {
             JoltR1CSInputs::LeftLookupOperand => {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
-                    .map(|cycle| LookupQuery::<32>::to_lookup_operands(cycle).0)
+                    .map(|cycle| LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle).0)
                     .collect();
                 coeffs.into()
             }
             JoltR1CSInputs::RightLookupOperand => {
-                let coeffs: Vec<u64> = trace
+                let coeffs: Vec<u128> = trace
                     .par_iter()
-                    .map(|cycle| LookupQuery::<32>::to_lookup_operands(cycle).1)
+                    .map(|cycle| LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle).1)
                     .collect();
                 coeffs.into()
             }
@@ -319,7 +321,7 @@ impl JoltR1CSInputs {
             JoltR1CSInputs::LookupOutput => {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
-                    .map(LookupQuery::<32>::to_lookup_output)
+                    .map(LookupQuery::<WORD_SIZE>::to_lookup_output)
                     .collect();
                 coeffs.into()
             }
@@ -333,15 +335,17 @@ impl JoltR1CSInputs {
                             .chain(rayon::iter::once(&RV32IMCycle::NoOp)),
                     )
                     .map(|(cycle, next_cycle)| {
-                        let is_branch = cycle.instruction().circuit_flags()[CircuitFlags::Branch];
+                        let flags = cycle.instruction().circuit_flags();
+                        let is_branch = flags[CircuitFlags::Branch];
                         let should_branch =
-                            is_branch && LookupQuery::<32>::to_lookup_output(cycle) != 0;
+                            is_branch && LookupQuery::<WORD_SIZE>::to_lookup_output(cycle) != 0;
                         let instr = cycle.instruction().normalize();
                         if should_branch {
                             (instr.address as i64 + instr.operands.imm) as u64
                         } else {
                             // JoltR1CSInputs::NextPCJump
-                            let is_jump = cycle.instruction().circuit_flags()[CircuitFlags::Jump];
+                            let is_jump = flags[CircuitFlags::Jump];
+                            let is_compressed = flags[CircuitFlags::IsCompressed];
                             let do_not_update_pc = cycle.instruction().circuit_flags()
                                 [CircuitFlags::DoNotUpdateUnexpandedPC];
                             let next_is_noop =
@@ -349,9 +353,11 @@ impl JoltR1CSInputs {
                             if next_is_noop {
                                 0
                             } else if is_jump {
-                                LookupQuery::<32>::to_lookup_output(cycle)
+                                LookupQuery::<WORD_SIZE>::to_lookup_output(cycle)
                             } else if do_not_update_pc {
                                 instr.address as u64
+                            } else if is_compressed {
+                                instr.address as u64 + 2
                             } else {
                                 instr.address as u64 + 4
                             }

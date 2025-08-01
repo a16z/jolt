@@ -24,12 +24,12 @@ pub mod booleanity;
 pub mod hamming_weight;
 pub mod read_raf_checking;
 
-pub const WORD_SIZE: usize = 32;
+pub const WORD_SIZE: usize = 64;
 const LOG_K: usize = WORD_SIZE * 2;
-const PHASES: usize = 4;
-const LOG_M: usize = LOG_K / PHASES;
+const PHASES: usize = 8;
+pub const LOG_M: usize = LOG_K / PHASES;
 const M: usize = 1 << LOG_M;
-pub const D: usize = 8;
+pub const D: usize = 16;
 pub const LOG_K_CHUNK: usize = LOG_K / D;
 pub const K_CHUNK: usize = 1 << LOG_K_CHUNK;
 const RA_PER_LOG_M: usize = LOG_M / LOG_K_CHUNK;
@@ -99,7 +99,7 @@ fn compute_ra_evals<F: JoltField>(trace: &[RV32IMCycle], eq_r_cycle: &[F]) -> [V
             for cycle in trace_chunk {
                 let mut lookup_index = LookupQuery::<WORD_SIZE>::to_lookup_index(cycle);
                 for i in (0..D).rev() {
-                    let k = lookup_index % K_CHUNK as u64;
+                    let k = lookup_index % K_CHUNK as u128;
                     result[i][k as usize] += eq_r_cycle[j];
                     lookup_index >>= LOG_K_CHUNK;
                 }

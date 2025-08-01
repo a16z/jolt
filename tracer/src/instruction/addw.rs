@@ -1,10 +1,18 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+};
+
+use super::add::ADD;
+use super::virtual_sign_extend::VirtualSignExtend;
+use super::RV32IMInstruction;
+use super::VirtualInstructionSequence;
 
 use super::{
-    format::{format_r::FormatR, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
+    format::{format_i::FormatI, format_r::FormatR, InstructionFormat},
+    RISCVInstruction, RISCVTrace, RV32IMCycle,
 };
 
 declare_riscv_instr!(
@@ -26,4 +34,44 @@ impl ADDW {
     }
 }
 
-impl RISCVTrace for ADDW {}
+impl RISCVTrace for ADDW {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+        let virtual_sequence = self.virtual_sequence(cpu.xlen);
+        let mut trace = trace;
+        for instr in virtual_sequence {
+            // In each iteration, create a new Option containing a re-borrowed reference
+            instr.trace(cpu, trace.as_deref_mut());
+        }
+    }
+}
+
+impl VirtualInstructionSequence for ADDW {
+    fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+        let mut sequence = vec![];
+        let add = ADD {
+            address: self.address,
+            operands: FormatR {
+                rd: self.operands.rd,
+                rs1: self.operands.rs1,
+                rs2: self.operands.rs2,
+            },
+            virtual_sequence_remaining: Some(1),
+            is_compressed: self.is_compressed,
+        };
+        sequence.push(add.into());
+
+        let signext = VirtualSignExtend {
+            address: self.address,
+            operands: FormatI {
+                rd: self.operands.rd,
+                rs1: self.operands.rd,
+                imm: 0,
+            },
+            virtual_sequence_remaining: Some(0),
+            is_compressed: self.is_compressed,
+        };
+        sequence.push(signext.into());
+
+        sequence
+    }
+}

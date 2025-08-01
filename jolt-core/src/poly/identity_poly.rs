@@ -7,6 +7,7 @@ use crate::poly::prefix_suffix::{
     CacheablePolynomial, CachedPolynomial, Prefix, PrefixCheckpoints, PrefixPolynomial,
     PrefixRegistry, PrefixSuffixPolynomial, SuffixPolynomial,
 };
+use crate::utils::lookup_bits::LookupBits;
 use crate::utils::math::Math;
 use crate::utils::uninterleave_bits;
 
@@ -39,7 +40,7 @@ impl<F: JoltField> PolynomialBinding<F> for IdentityPolynomial<F> {
 
         match order {
             BindingOrder::LowToHigh => {
-                self.bound_value += F::from_u64(1u64 << self.num_bound_vars) * r;
+                self.bound_value += F::from_u128(1 << self.num_bound_vars) * r;
             }
             BindingOrder::HighToLow => {
                 self.bound_value += self.bound_value;
@@ -64,7 +65,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for IdentityPolynomial<F> {
     fn evaluate(&self, r: &[F]) -> F {
         let len = r.len();
         debug_assert_eq!(len, self.num_vars);
-        (0..len).map(|i| r[i].mul_u64(1u64 << (len - 1 - i))).sum()
+        (0..len).map(|i| r[i].mul_u128(1 << (len - 1 - i))).sum()
     }
 
     fn batch_evaluate(_polys: &[&Self], _r: &[F]) -> (Vec<F>, Vec<F>) {
@@ -75,12 +76,12 @@ impl<F: JoltField> PolynomialEvaluation<F> for IdentityPolynomial<F> {
         let mut evals = vec![F::zero(); degree];
         let m = match order {
             BindingOrder::LowToHigh => {
-                let m = F::from_u32(1 << self.num_bound_vars);
+                let m = F::from_u128(1 << self.num_bound_vars);
                 evals[0] = self.bound_value + (m + m).mul_u64(index as u64);
                 m
             }
             BindingOrder::HighToLow => {
-                let m = F::from_u32(1 << (self.num_vars - 1 - self.num_bound_vars));
+                let m = F::from_u128(1 << (self.num_vars - 1 - self.num_bound_vars));
                 evals[0] = self.bound_value * (m + m) + F::from_u64(index as u64);
                 m
             }
@@ -136,25 +137,25 @@ impl<F: JoltField> PrefixPolynomial<F> for IdentityPolynomial<F> {
 }
 
 impl<F: JoltField> SuffixPolynomial<F> for IdentityPolynomial<F> {
-    fn suffix_mle(&self, index: u64, suffix_len: usize) -> u64 {
-        debug_assert!(suffix_len.is_even());
-        index
+    fn suffix_mle(&self, b: LookupBits) -> u128 {
+        debug_assert!(b.len().is_even());
+        u128::from(b)
     }
 }
 
 pub struct ShiftSuffixPolynomial;
 impl<F: JoltField> SuffixPolynomial<F> for ShiftSuffixPolynomial {
-    fn suffix_mle(&self, _index: u64, suffix_len: usize) -> u64 {
-        debug_assert!(suffix_len.is_even());
-        1 << suffix_len
+    fn suffix_mle(&self, b: LookupBits) -> u128 {
+        debug_assert!(b.len().is_even());
+        1u128 << b.len()
     }
 }
 
 pub struct ShiftHalfSuffixPolynomial;
 impl<F: JoltField> SuffixPolynomial<F> for ShiftHalfSuffixPolynomial {
-    fn suffix_mle(&self, _index: u64, suffix_len: usize) -> u64 {
-        debug_assert!(suffix_len.is_even());
-        1 << (suffix_len / 2)
+    fn suffix_mle(&self, b: LookupBits) -> u128 {
+        debug_assert!(b.len().is_even());
+        1u128 << (b.len() / 2)
     }
 }
 
@@ -228,10 +229,10 @@ impl<F: JoltField> PolynomialEvaluation<F> for OperandPolynomial<F> {
 
         match self.side {
             OperandSide::Left => (0..len / 2)
-                .map(|i| r[2 * i].mul_u64(1u64 << (self.num_vars / 2 - 1 - i)))
+                .map(|i| r[2 * i].mul_u128(1 << (self.num_vars / 2 - 1 - i)))
                 .sum(),
             OperandSide::Right => (0..len / 2)
-                .map(|i| r[2 * i + 1].mul_u64(1u64 << (self.num_vars / 2 - 1 - i)))
+                .map(|i| r[2 * i + 1].mul_u128(1 << (self.num_vars / 2 - 1 - i)))
                 .sum(),
         }
     }
@@ -248,19 +249,19 @@ impl<F: JoltField> PolynomialEvaluation<F> for OperandPolynomial<F> {
         );
 
         let mut evals = vec![F::zero(); degree];
-        let (left, right) = uninterleave_bits(index as u64);
+        let (left, right) = uninterleave_bits(index as u128);
 
         let index = match self.side {
-            OperandSide::Left => F::from_u32(left),
-            OperandSide::Right => F::from_u32(right),
+            OperandSide::Left => F::from_u64(left),
+            OperandSide::Right => F::from_u64(right),
         };
 
         if self.num_bound_vars.is_even() {
             let unbound_pairs = (self.num_vars - self.num_bound_vars) / 2;
             debug_assert!(unbound_pairs > 0);
-            evals[0] = self.bound_value.mul_u64(1 << unbound_pairs) + index;
+            evals[0] = self.bound_value.mul_u128(1 << unbound_pairs) + index;
             if self.side == OperandSide::Left {
-                let m = F::from_u32(1 << (unbound_pairs - 1));
+                let m = F::from_u128(1 << (unbound_pairs - 1));
                 let mut eval = evals[0] + m;
                 for i in 1..degree {
                     eval += m;
@@ -274,8 +275,8 @@ impl<F: JoltField> PolynomialEvaluation<F> for OperandPolynomial<F> {
         } else if self.side == OperandSide::Right {
             // We are currently bindinng the right operand variable
             let unbound_pairs = (self.num_vars - self.num_bound_vars).div_ceil(2);
-            evals[0] = self.bound_value.mul_u64(1 << unbound_pairs) + index;
-            let m = F::from_u32(1 << (unbound_pairs - 1));
+            evals[0] = self.bound_value.mul_u128(1 << unbound_pairs) + index;
+            let m = F::from_u128(1 << (unbound_pairs - 1));
             let mut eval = evals[0] + m;
             for i in 1..degree {
                 eval += m;
@@ -284,7 +285,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for OperandPolynomial<F> {
         } else {
             // We are currently binding right operand variable, but polynoimal is LeftOperand
             let unbound_pairs = (self.num_vars - self.num_bound_vars) / 2;
-            evals[0] = self.bound_value.mul_u64(1 << unbound_pairs) + index;
+            evals[0] = self.bound_value.mul_u128(1 << unbound_pairs) + index;
             for i in 1..degree {
                 evals[i] = evals[0];
             }
@@ -331,13 +332,13 @@ impl<F: JoltField> PrefixSuffixPolynomial<F, 2> for OperandPolynomial<F> {
 }
 
 impl<F: JoltField> SuffixPolynomial<F> for OperandPolynomial<F> {
-    fn suffix_mle(&self, index: u64, suffix_len: usize) -> u64 {
-        debug_assert!(suffix_len.is_even());
+    fn suffix_mle(&self, b: LookupBits) -> u128 {
+        debug_assert!(b.len().is_even());
         debug_assert!(self.num_bound_vars.is_even());
-        let (left, right) = uninterleave_bits(index);
+        let (left, right) = b.uninterleave();
         match self.side {
-            OperandSide::Left => left as u64,
-            OperandSide::Right => right as u64,
+            OperandSide::Left => u128::from(left),
+            OperandSide::Right => u128::from(right),
         }
     }
 }
@@ -364,7 +365,7 @@ impl<F: JoltField> PrefixPolynomial<F> for OperandPolynomial<F> {
     }
 }
 
-/// Polynomial that unmaps RAM addresses: k -> (k-1)*4 + start_address
+/// Polynomial that unmaps RAM addresses: k -> (k-1)*8 + start_address
 pub struct UnmapRamAddressPolynomial<F: JoltField> {
     start_address: u64,
     int_poly: IdentityPolynomial<F>,
@@ -372,7 +373,7 @@ pub struct UnmapRamAddressPolynomial<F: JoltField> {
 
 impl<F: JoltField> UnmapRamAddressPolynomial<F> {
     pub fn new(num_vars: usize, start_address: u64) -> Self {
-        assert!(start_address > 4);
+        assert!(start_address > 8);
         UnmapRamAddressPolynomial {
             start_address,
             int_poly: IdentityPolynomial::new(num_vars),
@@ -395,13 +396,13 @@ impl<F: JoltField> PolynomialBinding<F> for UnmapRamAddressPolynomial<F> {
     }
 
     fn final_sumcheck_claim(&self) -> F {
-        self.int_poly.final_sumcheck_claim().mul_u64(4) + F::from_u64(self.start_address - 4)
+        self.int_poly.final_sumcheck_claim().mul_u64(8) + F::from_u64(self.start_address - 8)
     }
 }
 
 impl<F: JoltField> PolynomialEvaluation<F> for UnmapRamAddressPolynomial<F> {
     fn evaluate(&self, r: &[F]) -> F {
-        self.int_poly.evaluate(r).mul_u64(4) + F::from_u64(self.start_address - 4)
+        self.int_poly.evaluate(r).mul_u64(8) + F::from_u64(self.start_address - 8)
     }
 
     fn batch_evaluate(_polys: &[&Self], _r: &[F]) -> (Vec<F>, Vec<F>) {
@@ -412,7 +413,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for UnmapRamAddressPolynomial<F> {
         let evals = self.int_poly.sumcheck_evals(index, degree, order);
         evals
             .into_iter()
-            .map(|l| l.mul_u64(4) + F::from_u64(self.start_address - 4))
+            .map(|l| l.mul_u64(8) + F::from_u64(self.start_address - 8))
             .collect()
     }
 }
@@ -494,25 +495,25 @@ mod tests {
         let unmap_poly = UnmapRamAddressPolynomial::<Fr>::new(NUM_VARS, START_ADDRESS);
 
         // Test a few specific points
-        // k=0 should map to start_address - 4
+        // k=0 should map to start_address - 8
         let point_0 = vec![Fr::ZERO; NUM_VARS];
-        assert_eq!(unmap_poly.evaluate(&point_0), Fr::from(START_ADDRESS - 4));
+        assert_eq!(unmap_poly.evaluate(&point_0), Fr::from(START_ADDRESS - 8));
 
         // k=1 should map to start_address
         let mut point_1 = vec![Fr::ZERO; NUM_VARS];
         point_1[NUM_VARS - 1] = Fr::ONE;
         assert_eq!(unmap_poly.evaluate(&point_1), Fr::from(START_ADDRESS));
 
-        // k=2 should map to start_address + 4
+        // k=2 should map to start_address + 8
         let mut point_2 = vec![Fr::ZERO; NUM_VARS];
         point_2[NUM_VARS - 2] = Fr::ONE;
-        assert_eq!(unmap_poly.evaluate(&point_2), Fr::from(START_ADDRESS + 4));
+        assert_eq!(unmap_poly.evaluate(&point_2), Fr::from(START_ADDRESS + 8));
 
-        // k=3 should map to start_address + 8
+        // k=3 should map to start_address + 16
         let mut point_3 = vec![Fr::ZERO; NUM_VARS];
         point_3[NUM_VARS - 1] = Fr::ONE;
         point_3[NUM_VARS - 2] = Fr::ONE;
-        assert_eq!(unmap_poly.evaluate(&point_3), Fr::from(START_ADDRESS + 8));
+        assert_eq!(unmap_poly.evaluate(&point_3), Fr::from(START_ADDRESS + 16));
     }
 
     #[test]
@@ -533,9 +534,9 @@ mod tests {
             eval_point.reverse();
 
             // Use uninterleave_bits to match the polynomial's implementation
-            let (left, right) = uninterleave_bits(i as u64);
-            let expected_r = Fr::from_u32(right);
-            let expected_l = Fr::from_u32(left);
+            let (left, right) = uninterleave_bits(i as u128);
+            let expected_r = Fr::from_u64(right);
+            let expected_l = Fr::from_u64(left);
 
             assert_eq!(
                 ro_poly.evaluate(&eval_point),
@@ -555,14 +556,14 @@ mod tests {
         const NUM_VARS: usize = 8;
 
         let mut rng = test_rng();
-        let mut ro_poly = OperandPolynomial::<Fr>::new(NUM_VARS, OperandSide::Left);
-        let mut lo_poly = OperandPolynomial::<Fr>::new(NUM_VARS, OperandSide::Right);
+        let mut ro_poly = OperandPolynomial::<Fr>::new(NUM_VARS, OperandSide::Right);
+        let mut lo_poly = OperandPolynomial::<Fr>::new(NUM_VARS, OperandSide::Left);
 
         // Create reference polynomial with evaluations
-        let (reference_evals_r, reference_evals_l): (Vec<Fr>, Vec<Fr>) = (0u64..(1 << NUM_VARS))
+        let (reference_evals_l, reference_evals_r): (Vec<Fr>, Vec<Fr>) = (0u128..(1 << NUM_VARS))
             .map(|i| {
-                let (right, left) = uninterleave_bits(i);
-                (Fr::from_u32(right), Fr::from_u32(left))
+                let (left, right) = uninterleave_bits(i);
+                (Fr::from_u64(left), Fr::from_u64(right))
             })
             .collect();
         let mut reference_poly_r = MultilinearPolynomial::from(reference_evals_r);
@@ -634,7 +635,7 @@ mod tests {
                 Fr::from(
                     (k as u64)
                         .wrapping_sub(1)
-                        .wrapping_mul(4)
+                        .wrapping_mul(8)
                         .wrapping_add(START_ADDRESS),
                 )
             })

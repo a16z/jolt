@@ -14,6 +14,8 @@ macro_rules! declare_riscv_instr {
             pub address: u64,
             pub operands: $format,
             pub virtual_sequence_remaining: Option<usize>,
+            /// Set if instruction is C-Type
+            pub is_compressed: bool,
         }
 
         impl $crate::instruction::RISCVInstruction for $name {
@@ -27,7 +29,7 @@ macro_rules! declare_riscv_instr {
                 &self.operands
             }
 
-            fn new(word: u32, address: u64, validate: bool) -> Self {
+            fn new(word: u32, address: u64, validate: bool, compressed: bool) -> Self {
               if declare_riscv_instr!(@is_virtual $( $virt )?) {
                     panic!(
                         "virtual instruction `{}` cannot be built from a machine word",
@@ -41,6 +43,7 @@ macro_rules! declare_riscv_instr {
                     address,
                     operands: <$format>::parse(word),
                     virtual_sequence_remaining: None,
+                    is_compressed: compressed,
                 }
             }
 
@@ -49,6 +52,7 @@ macro_rules! declare_riscv_instr {
                     address: rand::RngCore::next_u64(rng),
                     operands: <$format>::random(rng),
                     virtual_sequence_remaining: None,
+                    is_compressed: false,
                 }
             }
 

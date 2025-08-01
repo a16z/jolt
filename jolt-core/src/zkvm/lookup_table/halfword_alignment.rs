@@ -12,7 +12,7 @@ use crate::zkvm::lookup_table::prefixes::Prefixes;
 pub struct HalfwordAlignmentTable<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for HalfwordAlignmentTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+    fn materialize_entry(&self, index: u128) -> u64 {
         index.is_multiple_of(2).into()
     }
 
@@ -40,6 +40,7 @@ impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
 mod test {
     use ark_bn254::Fr;
 
+    use crate::zkvm::instruction_lookups::WORD_SIZE;
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
@@ -53,11 +54,11 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, HalfwordAlignmentTable<32>>();
+        lookup_table_mle_random_test::<Fr, HalfwordAlignmentTable<WORD_SIZE>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, HalfwordAlignmentTable<32>>();
+        prefix_suffix_test::<WORD_SIZE, Fr, HalfwordAlignmentTable<WORD_SIZE>>();
     }
 }

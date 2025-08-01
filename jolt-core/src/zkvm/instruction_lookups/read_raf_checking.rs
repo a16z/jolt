@@ -42,16 +42,6 @@ use crate::{
 
 const DEGREE: usize = D + 2;
 
-/// Computes the bit-length of the suffix, for the current (`j`th) round
-/// of sumcheck.
-pub fn current_suffix_len(log_K: usize, j: usize) -> usize {
-    // Number of sumcheck rounds per "phase" of sparse-dense sumcheck.
-    let phase_length = log_K / 4;
-    // The suffix length is 3/4 * log_K at the beginning and shrinks by
-    // log_K / 4 after each phase.
-    log_K - (j / phase_length + 1) * phase_length
-}
-
 struct ReadRafProverState<F: JoltField> {
     ra: Vec<MultilinearPolynomial<F>>,
     r: Vec<F>,
@@ -573,7 +563,7 @@ impl<F: JoltField> ReadRafProverState<F> {
                                     let t = suffix.suffix_mle::<WORD_SIZE>(suffix_bits);
                                     if t != 0 {
                                         let u = self.u_evals[*j];
-                                        poly.Z[prefix_bits % M] += u.mul_u64(t as u64);
+                                        poly.Z[prefix_bits % M] += u.mul_u64(t);
                                     }
                                 }
                             });
@@ -642,7 +632,7 @@ impl<F: JoltField> ReadRafProverState<F> {
                         .suffixes()
                         .iter()
                         .map(|suffix| {
-                            F::from_u32(suffix.suffix_mle::<WORD_SIZE>(LookupBits::new(0, 0)))
+                            F::from_u64(suffix.suffix_mle::<WORD_SIZE>(LookupBits::new(0, 0)))
                         })
                         .collect();
                     *val += table.combine(&prefixes, &suffixes);
@@ -722,7 +712,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         let (eval_0, eval_2_left, eval_2_right) = (0..len / 2)
             .into_par_iter()
             .flat_map_iter(|b| {
-                let b = LookupBits::new(b as u64, log_len - 1);
+                let b = LookupBits::new(b as u128, log_len - 1);
                 let prefixes_c0: Vec<_> = Prefixes::iter()
                     .map(|prefix| {
                         prefix.prefix_mle::<WORD_SIZE, F>(&ps.prefix_checkpoints, r_x, 0, b, j)
@@ -756,6 +746,12 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             );
         [eval_0, eval_2_right + eval_2_right - eval_2_left]
     }
+}
+
+/// Computes the bit-length of the suffix, for the current (`j`th) round
+/// of sumcheck.
+pub fn current_suffix_len(j: usize) -> usize {
+    LOG_K - (j / LOG_M + 1) * LOG_M
 }
 
 #[cfg(test)]
@@ -809,7 +805,7 @@ mod tests {
             RV32IMCycle::JAL(cycle) => cycle.random(rng).into(),
             RV32IMCycle::JALR(cycle) => cycle.random(rng).into(),
             RV32IMCycle::LUI(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::LW(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::LD(cycle) => cycle.random(rng).into(),
             RV32IMCycle::MUL(cycle) => cycle.random(rng).into(),
             RV32IMCycle::MULHU(cycle) => cycle.random(rng).into(),
             RV32IMCycle::OR(cycle) => cycle.random(rng).into(),
@@ -819,12 +815,13 @@ mod tests {
             RV32IMCycle::SLTIU(cycle) => cycle.random(rng).into(),
             RV32IMCycle::SLTU(cycle) => cycle.random(rng).into(),
             RV32IMCycle::SUB(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::SW(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::SD(cycle) => cycle.random(rng).into(),
             RV32IMCycle::XOR(cycle) => cycle.random(rng).into(),
             RV32IMCycle::XORI(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualAdvice(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualAssertEQ(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualAssertHalfwordAlignment(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualAssertWordAlignment(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualAssertLTE(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualAssertValidDiv0(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualAssertValidSignedRemainder(cycle) => cycle.random(rng).into(),
@@ -834,12 +831,16 @@ mod tests {
             RV32IMCycle::VirtualMULI(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualPow2(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualPow2I(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualPow2W(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualPow2IW(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualShiftRightBitmask(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualShiftRightBitmaskI(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualSRA(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualSRAI(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualSRL(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualSRLI(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualExtend(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualSignExtend(cycle) => cycle.random(rng).into(),
             _ => RV32IMCycle::NoOp,
         }
     }
@@ -908,7 +909,7 @@ mod tests {
             }
             let (lo, ro) = LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle);
             left_operand_claim += eq_r_cycle[i].mul_u64(lo);
-            right_operand_claim += eq_r_cycle[i].mul_u64(ro);
+            right_operand_claim += eq_r_cycle[i].mul_u128(ro);
         }
 
         let prover_accumulator = prover_sm.get_prover_accumulator();
@@ -1066,8 +1067,8 @@ mod tests {
     }
 
     #[test]
-    fn test_lw() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::LW(Default::default())));
+    fn test_ld() {
+        test_read_raf_sumcheck(Some(RV32IMCycle::LD(Default::default())));
     }
 
     #[test]
@@ -1116,8 +1117,8 @@ mod tests {
     }
 
     #[test]
-    fn test_sw() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::SW(Default::default())));
+    fn test_sd() {
+        test_read_raf_sumcheck(Some(RV32IMCycle::SD(Default::default())));
     }
 
     #[test]
@@ -1143,6 +1144,13 @@ mod tests {
     #[test]
     fn test_asserthalfwordalignment() {
         test_read_raf_sumcheck(Some(RV32IMCycle::VirtualAssertHalfwordAlignment(
+            Default::default(),
+        )));
+    }
+
+    #[test]
+    fn test_assertwordalignment() {
+        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualAssertWordAlignment(
             Default::default(),
         )));
     }
@@ -1199,6 +1207,16 @@ mod tests {
     }
 
     #[test]
+    fn test_pow2w() {
+        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualPow2W(Default::default())));
+    }
+
+    #[test]
+    fn test_pow2iw() {
+        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualPow2IW(Default::default())));
+    }
+
+    #[test]
     fn test_shiftrightbitmask() {
         test_read_raf_sumcheck(Some(RV32IMCycle::VirtualShiftRightBitmask(
             Default::default(),
@@ -1235,5 +1253,15 @@ mod tests {
     #[test]
     fn test_virtualsrli() {
         test_read_raf_sumcheck(Some(RV32IMCycle::VirtualSRLI(Default::default())));
+    }
+
+    #[test]
+    fn test_virtualextend() {
+        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualExtend(Default::default())));
+    }
+
+    #[test]
+    fn test_virtualsignextend() {
+        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualSignExtend(Default::default())));
     }
 }

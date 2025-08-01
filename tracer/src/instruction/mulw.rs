@@ -1,9 +1,16 @@
-use super::{
-    format::{format_r::FormatR, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
-};
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 use serde::{Deserialize, Serialize};
+
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+};
+
+use super::{
+    format::{format_i::FormatI, format_r::FormatR, InstructionFormat},
+    mul::MUL,
+    virtual_sign_extend::VirtualSignExtend,
+    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
+};
 
 declare_riscv_instr!(
     name   = MULW,
@@ -23,4 +30,47 @@ impl MULW {
         cpu.x[self.operands.rd] = a.wrapping_mul(b) as i64;
     }
 }
-impl RISCVTrace for MULW {}
+
+impl RISCVTrace for MULW {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+        let virtual_sequence = self.virtual_sequence(cpu.xlen);
+
+        let mut trace = trace;
+        for instr in virtual_sequence {
+            // In each iteration, create a new Option containing a re-borrowed reference
+            instr.trace(cpu, trace.as_deref_mut());
+        }
+    }
+}
+
+impl VirtualInstructionSequence for MULW {
+    fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+        let mut sequence = vec![];
+
+        let mul = MUL {
+            address: self.address,
+            operands: FormatR {
+                rd: self.operands.rd,
+                rs1: self.operands.rs1,
+                rs2: self.operands.rs2,
+            },
+            virtual_sequence_remaining: Some(1),
+            is_compressed: self.is_compressed,
+        };
+        sequence.push(mul.into());
+
+        let ext = VirtualSignExtend {
+            address: self.address,
+            operands: FormatI {
+                rd: self.operands.rd,
+                rs1: self.operands.rd,
+                imm: 0,
+            },
+            virtual_sequence_remaining: Some(0),
+            is_compressed: self.is_compressed,
+        };
+        sequence.push(ext.into());
+
+        sequence
+    }
+}

@@ -12,8 +12,8 @@ use crate::zkvm::lookup_table::prefixes::Prefixes;
 pub struct Pow2Table<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for Pow2Table<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
-        1 << (index % WORD_SIZE as u64)
+    fn materialize_entry(&self, index: u128) -> u64 {
+        1 << (index % WORD_SIZE as u128) as u64
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
@@ -43,6 +43,7 @@ mod test {
     use ark_bn254::Fr;
 
     use super::Pow2Table;
+    use crate::zkvm::instruction_lookups::WORD_SIZE;
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
@@ -54,11 +55,11 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, Pow2Table<32>>();
+        lookup_table_mle_random_test::<Fr, Pow2Table<WORD_SIZE>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, Pow2Table<32>>();
+        prefix_suffix_test::<WORD_SIZE, Fr, Pow2Table<WORD_SIZE>>();
     }
 }

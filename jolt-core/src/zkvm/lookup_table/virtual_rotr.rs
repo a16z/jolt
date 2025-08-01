@@ -12,7 +12,7 @@ use crate::zkvm::lookup_table::prefixes::Prefixes;
 pub struct VirtualRotrTable<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for VirtualRotrTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+    fn materialize_entry(&self, index: u128) -> u64 {
         let (x_bits, y_bits) = uninterleave_bits(index);
 
         let mut prod_one_plus_y = 1;
@@ -28,7 +28,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for VirtualRotrTable<WORD_SIZE> {
             prod_one_plus_y *= 1 + y;
         });
 
-        (first_sum + second_sum) as u64
+        first_sum + second_sum
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
@@ -80,7 +80,7 @@ impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for VirtualRot
     }
 
     #[cfg(test)]
-    fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u64 {
+    fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u128 {
         super::test::gen_bitmask_lookup_index(rng)
     }
 }
@@ -90,6 +90,7 @@ mod test {
     use ark_bn254::Fr;
 
     use super::VirtualRotrTable;
+    use crate::zkvm::instruction_lookups::WORD_SIZE;
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
@@ -101,11 +102,11 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, VirtualRotrTable<32>>();
+        lookup_table_mle_random_test::<Fr, VirtualRotrTable<WORD_SIZE>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, VirtualRotrTable<32>>();
+        prefix_suffix_test::<WORD_SIZE, Fr, VirtualRotrTable<WORD_SIZE>>();
     }
 }

@@ -1,5 +1,6 @@
 use std::ops::{Index, IndexMut};
 
+use crate::zkvm::instruction_lookups::WORD_SIZE;
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
@@ -20,16 +21,16 @@ pub trait LookupQuery<const WORD_SIZE: usize> {
     /// Returns a tuple of the instruction's lookup operands. By default, these are the
     /// same as the instruction inputs returned by `to_instruction_inputs`, but in some cases
     /// (e.g. ADD, MUL) the instruction inputs are combined to form a single lookup operand.
-    fn to_lookup_operands(&self) -> (u64, u64) {
+    fn to_lookup_operands(&self) -> (u64, u128) {
         let (x, y) = self.to_instruction_inputs();
-        (x, y as u64)
+        (x, (y as u64) as u128)
     }
 
     /// Converts this instruction's operands into a lookup index (as used in sparse-dense Shout).
     /// By default, interleaves the two bits of the two operands together.
-    fn to_lookup_index(&self) -> u64 {
+    fn to_lookup_index(&self) -> u128 {
         let (x, y) = LookupQuery::<WORD_SIZE>::to_lookup_operands(self);
-        interleave_bits(x as u32, y as u32)
+        interleave_bits(x, y as u64)
     }
 
     /// Computes the output lookup entry for this instruction as a u64.
@@ -75,6 +76,8 @@ pub enum CircuitFlags {
     Advice,
     /// Is noop instruction
     IsNoop,
+    /// Is a compressed instruction (i.e. increase UnexpandedPc by 2 only)
+    IsCompressed,
 }
 
 pub const NUM_CIRCUIT_FLAGS: usize = CircuitFlags::COUNT;
@@ -113,8 +116,8 @@ macro_rules! define_rv32im_trait_impls {
     (
         instructions: [$($instr:ident),* $(,)?]
     ) => {
-        impl InstructionLookup<32> for RV32IMInstruction {
-            fn lookup_table(&self) -> Option<LookupTables<32>> {
+        impl InstructionLookup<WORD_SIZE> for RV32IMInstruction {
+            fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
                 match self {
                     RV32IMInstruction::NoOp => None,
                     $(
@@ -167,7 +170,7 @@ macro_rules! define_rv32im_trait_impls {
                 }
             }
 
-            fn to_lookup_index(&self) -> u64 {
+            fn to_lookup_index(&self) -> u128 {
                 match self {
                     RV32IMCycle::NoOp => 0,
                     $(
@@ -177,7 +180,7 @@ macro_rules! define_rv32im_trait_impls {
                 }
             }
 
-            fn to_lookup_operands(&self) -> (u64, u64) {
+            fn to_lookup_operands(&self) -> (u64, u128) {
                 match self {
                     RV32IMCycle::NoOp => (0, 0),
                     $(
@@ -203,12 +206,13 @@ macro_rules! define_rv32im_trait_impls {
 define_rv32im_trait_impls! {
     instructions: [
         ADD, ADDI, AND, ANDI, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
-        ECALL, FENCE, JAL, JALR, LUI, LW, MUL, MULHU, OR, ORI,
-        SLT, SLTI, SLTIU, SLTU, SUB, SW, XOR, XORI,
-        VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertLTE,
+        ECALL, FENCE, JAL, JALR, LUI, LD, MUL, MULHU, OR, ORI,
+        SLT, SLTI, SLTIU, SLTU, SUB, SD, XOR, XORI,
+        VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment,
+        VirtualAssertWordAlignment, VirtualAssertLTE,
         VirtualAssertValidDiv0, VirtualAssertValidSignedRemainder, VirtualAssertValidUnsignedRemainder,
-        VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I,
-        VirtualShiftRightBitmask, VirtualShiftRightBitmaskI, VirtualROTRI,
+        VirtualExtend, VirtualSignExtend, VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I,
+        VirtualPow2W, VirtualPow2IW, VirtualShiftRightBitmask, VirtualShiftRightBitmaskI, VirtualROTRI,
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI
     ]
 }
@@ -228,18 +232,18 @@ pub mod ecall;
 pub mod fence;
 pub mod jal;
 pub mod jalr;
+pub mod ld;
 pub mod lui;
-pub mod lw;
 pub mod mul;
 pub mod mulhu;
 pub mod or;
 pub mod ori;
+pub mod sd;
 pub mod slt;
 pub mod slti;
 pub mod sltiu;
 pub mod sltu;
 pub mod sub;
-pub mod sw;
 pub mod virtual_advice;
 pub mod virtual_assert_eq;
 pub mod virtual_assert_halfword_alignment;
@@ -247,14 +251,19 @@ pub mod virtual_assert_lte;
 pub mod virtual_assert_valid_div0;
 pub mod virtual_assert_valid_signed_remainder;
 pub mod virtual_assert_valid_unsigned_remainder;
+pub mod virtual_assert_word_alignment;
+pub mod virtual_extend;
 pub mod virtual_move;
 pub mod virtual_movsign;
 pub mod virtual_muli;
 pub mod virtual_pow2;
 pub mod virtual_pow2i;
+pub mod virtual_pow2iw;
+pub mod virtual_pow2w;
 pub mod virtual_rotri;
 pub mod virtual_shift_right_bitmask;
 pub mod virtual_shift_right_bitmaski;
+pub mod virtual_sign_extend;
 pub mod virtual_sra;
 pub mod virtual_srai;
 pub mod virtual_srl;

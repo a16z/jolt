@@ -10,8 +10,8 @@ use super::JoltLookupTable;
 pub struct SubTable<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for SubTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
-        index % (1 << WORD_SIZE)
+    fn materialize_entry(&self, index: u128) -> u64 {
+        (index % (1u128 << WORD_SIZE)) as u64
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
@@ -40,6 +40,7 @@ impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for SubTable<W
 mod test {
     use ark_bn254::Fr;
 
+    use crate::zkvm::instruction_lookups::WORD_SIZE;
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
@@ -48,7 +49,7 @@ mod test {
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, SubTable<32>>();
+        prefix_suffix_test::<WORD_SIZE, Fr, SubTable<WORD_SIZE>>();
     }
 
     #[test]
@@ -58,6 +59,6 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, SubTable<32>>();
+        lookup_table_mle_random_test::<Fr, SubTable<WORD_SIZE>>();
     }
 }

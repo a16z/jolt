@@ -11,7 +11,7 @@ use super::{
 pub struct UnsignedLessThanTable<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for UnsignedLessThanTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+    fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
         (x < y).into()
     }
@@ -50,6 +50,7 @@ impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
 mod test {
     use ark_bn254::Fr;
 
+    use crate::zkvm::instruction_lookups::WORD_SIZE;
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
@@ -58,7 +59,7 @@ mod test {
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, UnsignedLessThanTable<32>>();
+        prefix_suffix_test::<WORD_SIZE, Fr, UnsignedLessThanTable<WORD_SIZE>>();
     }
 
     #[test]
@@ -68,6 +69,6 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, UnsignedLessThanTable<32>>();
+        lookup_table_mle_random_test::<Fr, UnsignedLessThanTable<WORD_SIZE>>();
     }
 }

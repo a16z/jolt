@@ -35,7 +35,7 @@ impl SLL {
 
 impl RISCVTrace for SLL {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence();
+        let virtual_sequence = self.virtual_sequence(cpu.xlen);
         let mut trace = trace;
         for instr in virtual_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
@@ -45,12 +45,12 @@ impl RISCVTrace for SLL {
 }
 
 impl VirtualInstructionSequence for SLL {
-    fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
+    fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_pow2 = virtual_register_index(6) as usize;
 
-        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(1);
         let mut sequence = vec![];
+        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(1);
 
         let pow2 = RV32IMInstruction::VirtualPow2(VirtualPow2 {
             address: self.address,
@@ -60,6 +60,7 @@ impl VirtualInstructionSequence for SLL {
                 imm: 0,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         });
         sequence.push(pow2);
         virtual_sequence_remaining -= 1;
@@ -72,6 +73,7 @@ impl VirtualInstructionSequence for SLL {
                 rs2: v_pow2,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         });
         sequence.push(mul);
 

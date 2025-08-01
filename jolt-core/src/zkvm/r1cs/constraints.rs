@@ -200,7 +200,11 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         );
 
         // if Rd != 0 && Jump {
-        //     assert!(RdWriteValue == UnexpandedPC + 4)
+        //     if !isCompressed {
+        //          assert!(RdWriteValue == UnexpandedPC + 4)
+        //     } else {
+        //          assert!(RdWriteValue == UnexpandedPC + 2)
+        //     }
         // }
         cs.constrain_prod(
             JoltR1CSInputs::Rd,
@@ -210,7 +214,8 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         cs.constrain_eq_conditional(
             JoltR1CSInputs::WritePCtoRD,
             JoltR1CSInputs::RdWriteValue,
-            JoltR1CSInputs::UnexpandedPC + 4,
+            JoltR1CSInputs::UnexpandedPC + 4
+                - 2 * JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed),
         );
 
         // if Jump && !NextIsNoop {
@@ -249,11 +254,14 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         //     }
         // }
         // Note that ShouldBranch and Jump instructions are mutually exclusive
+        // TODO: This is probably incorrect if DoNotUpdateUnexpandedPC and IsCompressed are both
+        // true
         cs.constrain_eq_conditional(
             1 - JoltR1CSInputs::ShouldBranch - JoltR1CSInputs::OpFlags(CircuitFlags::Jump),
             JoltR1CSInputs::NextUnexpandedPC,
             JoltR1CSInputs::UnexpandedPC + 4
-                - 4 * JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC),
+                - 4 * JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC)
+                - 2 * JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed),
         );
 
         // if Inline {

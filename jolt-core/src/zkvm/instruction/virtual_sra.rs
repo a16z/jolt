@@ -20,6 +20,7 @@ impl InstructionFlags for VirtualSRA {
             self.virtual_sequence_remaining.is_some();
         flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
             self.virtual_sequence_remaining.unwrap_or(0) != 0;
+        flags[CircuitFlags::IsCompressed as usize] = self.is_compressed;
         flags
     }
 }
@@ -44,8 +45,8 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualSRA> {
     fn to_lookup_output(&self) -> u64 {
         use crate::utils::lookup_bits::LookupBits;
         let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
-        let mut x = LookupBits::new(x, WORD_SIZE);
-        let mut y = LookupBits::new(y as u64, WORD_SIZE);
+        let mut x = LookupBits::new(x as u128, WORD_SIZE);
+        let mut y = LookupBits::new(y as u64 as u128, WORD_SIZE);
 
         let sign_bit = if x.leading_ones() == 0 { 0 } else { 1 };
         let mut entry = 0;

@@ -15,7 +15,7 @@ use crate::{
     utils::{thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
+use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS};
 use rayon::prelude::*;
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
 
@@ -48,7 +48,7 @@ impl BytecodePreprocessing {
             }
             let instr = instruction.normalize();
             debug_assert!(instr.address >= RAM_START_ADDRESS as usize);
-            debug_assert!(instr.address.is_multiple_of(BYTES_PER_INSTRUCTION));
+            debug_assert!(instr.address.is_multiple_of(ALIGNMENT_FACTOR_BYTECODE));
             assert_eq!(
                 virtual_address_map.insert(
                     (instr.address, instr.virtual_sequence_remaining.unwrap_or(0)),

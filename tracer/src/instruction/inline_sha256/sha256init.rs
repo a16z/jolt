@@ -2,7 +2,7 @@ use common::constants::virtual_register_index;
 use serde::{Deserialize, Serialize};
 
 use crate::declare_riscv_instr;
-use crate::emulator::cpu::Cpu;
+use crate::emulator::cpu::{Cpu, Xlen};
 use crate::instruction::format::format_r::FormatR;
 use crate::instruction::format::InstructionFormat;
 use crate::instruction::inline_sha256::{
@@ -47,7 +47,7 @@ impl SHA256INIT {
 
 impl RISCVTrace for SHA256INIT {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence();
+        let virtual_sequence = self.virtual_sequence(cpu.xlen);
 
         let mut trace = trace;
         for instr in virtual_sequence {
@@ -57,7 +57,7 @@ impl RISCVTrace for SHA256INIT {
 }
 
 impl VirtualInstructionSequence for SHA256INIT {
-    fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
+    fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used as a scratch space
         let mut vr = [0; NEEDED_REGISTERS];
         (0..NEEDED_REGISTERS).for_each(|i| {
@@ -65,6 +65,7 @@ impl VirtualInstructionSequence for SHA256INIT {
         });
         let builder = Sha256SequenceBuilder::new(
             self.address,
+            self.is_compressed,
             vr,
             self.operands.rs1,
             self.operands.rs2,
