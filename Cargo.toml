@@ -52,6 +52,8 @@ members = [
     "examples/overflow/guest",
     "examples/memory-ops",
     "examples/memory-ops/guest",
+    "examples/verifier-on-jolt",
+    "examples/verifier-on-jolt/guest",
 ]
 
 [features]
@@ -101,6 +103,7 @@ ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist
 ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+getrandom = { path = "../getrandom-2" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]

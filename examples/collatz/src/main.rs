@@ -36,11 +36,7 @@ pub fn main() {
     // https://www.reddit.com/r/compsci/comments/gk9x6g/collatz_conjecture_news_recently_i_managed_to/
     let start: u128 = 1 << 68;
     let now = Instant::now();
-<<<<<<< HEAD
     let (output, proof, program_io) = prove_collatz_convergence(start, start + 100);
-=======
-    let (output, proof, _) = prove_collatz_convergence(start, start + 100);
->>>>>>> 9b861bb3 (add wrapper crate "jolt-verifier" to expose verifier api)
     println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
     let is_valid = verify_collatz_convergence(start, start + 100, output, program_io.panic, proof);
 

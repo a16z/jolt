@@ -8,7 +8,7 @@ use tracer::{
 
 use crate::field::JoltField;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ProgramSummary {
     pub trace: Vec<RV32IMCycle>,
     pub bytecode: Vec<RV32IMInstruction>,

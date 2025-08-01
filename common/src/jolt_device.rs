@@ -114,7 +114,7 @@ pub struct MemoryConfig {
     pub max_output_size: u64,
     pub stack_size: u64,
     pub memory_size: u64,
-    pub bytecode_size: Option<u64>,
+    pub program_size: Option<u64>,
 }
 
 impl Default for MemoryConfig {
@@ -124,7 +124,7 @@ impl Default for MemoryConfig {
             max_output_size: DEFAULT_MAX_OUTPUT_SIZE,
             stack_size: DEFAULT_STACK_SIZE,
             memory_size: DEFAULT_MEMORY_SIZE,
-            bytecode_size: None,
+            program_size: None,
         }
     }
 }
@@ -133,7 +133,7 @@ impl Default for MemoryConfig {
     Default, Clone, PartialEq, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize,
 )]
 pub struct MemoryLayout {
-    pub bytecode_size: u64,
+    pub program_size: u64,
     pub max_input_size: u64,
     pub max_output_size: u64,
     pub input_start: u64,
@@ -141,7 +141,7 @@ pub struct MemoryLayout {
     pub output_start: u64,
     pub output_end: u64,
     pub stack_size: u64,
-    /// Stack starts from (RAM_START_ADDRESS + `bytecode_size` + `stack_size`) and grows in descending addresses by `stack_size` bytes.
+    /// Stack starts from (RAM_START_ADDRESS + `program_size` + `stack_size`) and grows in descending addresses by `stack_size` bytes.
     pub stack_end: u64,
     pub memory_size: u64,
     /// Heap starts just after the start of the stack and is `memory_size` bytes.
@@ -156,7 +156,7 @@ pub struct MemoryLayout {
 impl core::fmt::Debug for MemoryLayout {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("MemoryLayout")
-            .field("bytecode_size", &self.bytecode_size)
+            .field("bytecode_size", &self.program_size)
             .field("max_input_size", &self.max_input_size)
             .field("max_output_size", &self.max_output_size)
             .field("input_start", &format_args!("{:#X}", self.input_start))
@@ -176,7 +176,7 @@ impl core::fmt::Debug for MemoryLayout {
 impl MemoryLayout {
     pub fn new(config: &MemoryConfig) -> Self {
         assert!(
-            config.bytecode_size.is_some(),
+            config.program_size.is_some(),
             "MemoryLayout requires bytecode size to be set"
         );
         // helper to align ‘val’ *up* to a multiple of ‘align’, panicking on overflow
@@ -229,22 +229,29 @@ impl MemoryLayout {
         let termination = panic.checked_add(4).expect("termination overflow");
         let io_end = termination.checked_add(4).expect("io_end overflow");
 
-        let bytecode_size = config.bytecode_size.unwrap();
+        let program_size = config.program_size.unwrap();
         // stack grows downwards (decreasing addresses) from the bytecode_end + stack_size up to bytecode_end
         let stack_end = RAM_START_ADDRESS
-            .checked_add(bytecode_size)
+            .checked_add(program_size)
             .expect("stack_end overflow");
         let stack_start = stack_end
             .checked_add(stack_size)
             .expect("stack_start overflow");
+        println!(
+            "MemoryLayout: stack_start = {:#X}, stack_end = {:#X}",
+            stack_start, stack_end
+        );
+        println!("Measured Stack size: {}", stack_start - stack_end);
 
         // heap grows *up* (increasing addresses) from the stack of the stack
         let memory_end = stack_start
             .checked_add(memory_size)
             .expect("memory_end overflow");
+        println!("MemoryLayout: memory_end = {:#X}", memory_end);
+        println!("Measured heap size: {}", memory_end - stack_start);
 
         Self {
-            bytecode_size,
+            program_size,
             max_input_size,
             max_output_size,
             input_start,

@@ -1,6 +1,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![allow(dead_code)]
 #![allow(clippy::legacy_numeric_constants)]
+#![feature(unsigned_is_multiple_of)]
 
 #[cfg(not(feature = "std"))]
 extern crate alloc;
@@ -79,6 +80,85 @@ pub fn trace(
     (trace, final_memory_state, lazy_trace_iter.get_jolt_device())
 }
 
+use std::{
+    fs::File,
+    io::{BufWriter, Write},
+    sync::mpsc::sync_channel,
+    thread,
+};
+
+const BATCH_SIZE: usize = 5_000_000;
+// batches of size 5M (~400MB) RV32IMCycles (80 bytes each)
+const BATCH_BYTES: usize = BATCH_SIZE * 80;
+// total memory usage of the channel is BATCH * CHANNEL_DEPTH = ~2 GB
+const CHANNEL_DEPTH: usize = 64;
+
+pub fn trace_to_file(
+    elf_contents: Vec<u8>,
+    inputs: &[u8],
+    memory_config: &MemoryConfig,
+    out_path: &std::path::PathBuf,
+) -> (Memory, JoltDevice) {
+    let (sender, receiver) = sync_channel::<Vec<RV32IMCycle>>(CHANNEL_DEPTH);
+
+    //TODO(sagar) move this into a different module
+    let writer_handle = {
+        let path = out_path.clone();
+        thread::spawn(move || -> std::io::Result<()> {
+            let file = File::create(&path)?;
+            let mut buf = BufWriter::with_capacity(1 << 26, file);
+
+            while let Ok(chunk) = receiver.recv() {
+                postcard::to_io(&chunk, &mut buf)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                // for cycle in &chunk {
+                //     postcard::to_io(&cycle, &mut buf)
+                //         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                // }
+            }
+            buf.flush()?;
+            Ok(())
+        })
+    };
+
+    let mut lazy = LazyTraceIterator::new(setup_emulator(elf_contents, inputs, memory_config));
+    let mut batch = Vec::<RV32IMCycle>::with_capacity(BATCH_SIZE);
+    let mut total = 0usize;
+
+    for cycle in &mut lazy {
+        batch.push(cycle);
+        if batch.len() == BATCH_SIZE {
+            let now = Instant::now();
+            // note - this is blocking
+            sender.send(batch).unwrap();
+            let elapsed = now.elapsed().as_millis();
+            if elapsed > 100u128 {
+                // if macs can do 3500MB/s, then BATCH_SIZE_BYTES (40MB) should take about 11.4 ms
+                println!("batch delay: {} cycles in {:.2} ms", BATCH_SIZE, elapsed);
+            }
+            batch = Vec::with_capacity(BATCH_SIZE);
+        }
+        total += 1;
+    }
+    if !batch.is_empty() {
+        sender.send(batch).unwrap();
+    }
+    drop(sender);
+    let now = Instant::now();
+    writer_handle
+        .join()
+        .expect("writer thread")
+        .expect("write thread failed");
+    println!(
+        "Waited for writer thread to finish in {:.2} ms",
+        now.elapsed().as_millis()
+    );
+
+    println!("trace length: {}", total);
+    let final_mem = lazy.final_memory_state.take().unwrap();
+    (final_mem, lazy.get_jolt_device())
+}
+
 #[tracing::instrument(skip_all)]
 pub fn trace_lazy(
     elf_contents: Vec<u8>,
@@ -118,8 +198,84 @@ fn step_emulator(emulator: &mut Emulator, prev_pc: &mut u64, trace: Option<&mut 
     if *prev_pc == pc {
         return;
     }
+
     emulator.tick(trace);
     *prev_pc = pc;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+use memory_stats::memory_stats;
+use std::time::Instant;
+use std::{
+    collections::HashMap,
+    sync::{LazyLock, Mutex},
+};
+
+static MEMORY_USAGE_MAP: LazyLock<Mutex<HashMap<&'static str, f64>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+static MEMORY_DELTA_MAP: LazyLock<Mutex<HashMap<&'static str, f64>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+pub fn start_memory_tracing_span(label: &'static str) {
+    let memory_usage = memory_stats().unwrap().physical_mem;
+    let mut map = MEMORY_USAGE_MAP.lock().unwrap();
+    assert_eq!(
+        map.insert(label, memory_usage as f64 / 1_000_000_000.0),
+        None
+    );
+}
+
+pub fn end_memory_tracing_span(label: &'static str) {
+    let memory_usage_end = memory_stats().unwrap().physical_mem as f64 / 1_000_000_000.0;
+    let mut memory_usage_map = MEMORY_USAGE_MAP.lock().unwrap();
+    let memory_usage_start = memory_usage_map.remove(label).unwrap();
+
+    let memory_usage_delta = memory_usage_end - memory_usage_start;
+    let mut memory_delta_map = MEMORY_DELTA_MAP.lock().unwrap();
+    assert_eq!(memory_delta_map.insert(label, memory_usage_delta), None);
+}
+
+pub fn report_memory_usage() {
+    println!("================ MEMORY USAGE REPORT ================");
+
+    let memory_usage_map = MEMORY_USAGE_MAP.lock().unwrap();
+    for label in memory_usage_map.keys() {
+        eprintln!("  Unclosed memory tracing span: \"{label}\"");
+    }
+
+    let memory_delta_map = MEMORY_DELTA_MAP.lock().unwrap();
+    for (label, delta) in memory_delta_map.iter() {
+        if *delta >= 1.0 {
+            println!("  \"{label}\": {delta:.2} GB");
+        } else {
+            println!("  \"{}\": {:.2} MB", label, delta * 1000.0);
+        }
+    }
+
+    println!("=====================================================");
+}
+
+pub fn print_current_memory_usage(label: &str) {
+    if let Some(usage) = memory_stats() {
+        let memory_usage_gb = usage.physical_mem as f64 / 1_000_000_000.0;
+        let vmem_usage_gb = usage.virtual_mem as f64 / 1_000_000_000.0;
+        if memory_usage_gb >= 1.0 {
+            println!("\"{label}\" current memory usage: {memory_usage_gb} GB");
+            println!("\"{label}\" current virtual memory usage: {vmem_usage_gb} GB");
+        } else {
+            println!(
+                "\"{}\" current memory usage: {} MB",
+                label,
+                memory_usage_gb * 1000.0
+            );
+            println!(
+                "\"{}\" current virtual memory usage: {} GB",
+                label, vmem_usage_gb
+            );
+        }
+    } else {
+        println!("Failed to get current memory usage (\"{label}\")");
+    }
 }
 
 #[tracing::instrument(skip_all)]
@@ -156,6 +312,7 @@ pub struct LazyTraceIterator {
     current_traces: Vec<RV32IMCycle>,
     count: usize, // number of cycles completed
     finished: bool,
+    last_instant: Instant,
     pub(crate) final_memory_state: Option<Memory>,
 }
 
@@ -168,6 +325,7 @@ impl LazyTraceIterator {
             count: 0,
             finished: false,
             final_memory_state: None,
+            last_instant: Instant::now(),
         }
     }
 
@@ -224,6 +382,26 @@ impl Iterator for LazyTraceIterator {
 
         // Step the emulator to execute the next instruction till the program ends.
         self.count += 1;
+
+        //TODO(sagar): this can be made aware of the configured trace length and just bail if you trace more than the prover can handle.
+        // let cycle_size = size_of::<RV32IMCycle>();
+
+        // if self.count % 100_000 == 0 {
+        //     let now = Instant::now();
+        //     let dt = now.duration_since(self.last_instant).as_secs_f64();
+        //     let rate = (100_000f64) / dt;
+        //
+        //     let mem_bytes = self.count * cycle_size;
+        //     let mem_mb = mem_bytes as f64 / (1024.0 * 1024.0);
+        //     print_current_memory_usage(&format!(
+        //         "cycle count {}, using {:.2} MB of mem => {:.2} cycles/sec",
+        //         self.count,
+        //         mem_mb,
+        //         rate
+        //     ));
+        //     self.last_instant = now;
+        // }
+
         assert!(self.current_traces.is_empty());
         step_emulator(
             get_mut_emulator(&mut self.emulator_state),
@@ -243,7 +421,7 @@ impl Iterator for LazyTraceIterator {
 }
 
 #[tracing::instrument(skip_all)]
-pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>) {
+pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>, u64) {
     let obj = object::File::parse(elf).unwrap();
 
     let sections = obj
@@ -254,8 +432,20 @@ pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>) {
     let mut instructions = Vec::new();
     let mut data = Vec::new();
 
+    let mut hi = RAM_START_ADDRESS;
     for section in sections {
+        //todo this should actually specify which sections are RO vs writable
+        // println!(
+        //     "section: {:?}, addr = {:#X}, size = {:#X}",
+        //     section.name().unwrap(),
+        //     section.address(),
+        //     section.size()
+        // );
         let raw_data = section.data().unwrap();
+        let start = section.address();
+        let length = section.size();
+        let end = start + length;
+        hi = hi.max(end);
 
         if let SectionKind::Text = section.kind() {
             for (chunk, word) in raw_data.chunks(4).enumerate() {
@@ -276,8 +466,9 @@ pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>) {
             data.push((address + offset as u64, *byte));
         }
     }
+    println!("Highest address for bytecode + sections: {:#X}", hi);
 
-    (instructions, data)
+    (instructions, data, hi)
 }
 
 fn get_xlen() -> Xlen {

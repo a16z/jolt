@@ -1,4 +1,5 @@
 pub use ark_bn254::Fr as F;
+pub use common::cycle_tracking;
 pub use common::jolt_device::{MemoryConfig, MemoryLayout};
 pub use jolt_core::field::JoltField;
 pub use jolt_core::host;

@@ -13,11 +13,12 @@ use tracer::{
     JoltDevice,
 };
 
+#[cfg(feature = "prover")]
+use crate::host::Program;
 #[cfg(test)]
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::{
     field::JoltField,
-    host::Program,
     poly::{
         commitment::commitment_scheme::CommitmentScheme, opening_proof::ProverOpeningAccumulator,
     },
@@ -198,6 +199,7 @@ where
     }
 
     #[allow(clippy::type_complexity)]
+    #[cfg(feature = "prover")]
     fn prove(
         preprocessing: &JoltProverPreprocessing<F, PCS>,
         program: &mut Program,
@@ -208,6 +210,7 @@ where
         Option<ProverDebugInfo<F, FS, PCS>>,
     ) {
         let (mut trace, final_memory_state, mut program_io) = program.trace(inputs);
+        println!("Trace length: {}", trace.len());
         let num_riscv_cycles: usize = trace
             .par_iter()
             .map(|cycle| {
@@ -264,6 +267,7 @@ where
         let _guard = DoryGlobals::initialize(DTH_ROOT_OF_K, T);
 
         // truncate trailing zeros on device outputs
+        start_cycle_tracking("truncate_outputs");
         program_io.outputs.truncate(
             program_io
                 .outputs
@@ -271,8 +275,11 @@ where
                 .rposition(|&b| b != 0)
                 .map_or(0, |pos| pos + 1),
         );
+        end_cycle_tracking("truncate_outputs");
 
+        start_cycle_tracking("to_verifier_state_manager");
         let state_manager = proof.to_verifier_state_manager(preprocessing, program_io);
+        end_cycle_tracking("to_verifier_state_manager");
 
         #[cfg(test)]
         {
@@ -298,6 +305,7 @@ pub type RV32IMJoltProof = JoltProof<Fr, DoryCommitmentScheme, KeccakTranscript>
 
 use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::utils::transcript::KeccakTranscript;
+use common::cycle_tracking::{end_cycle_tracking, start_cycle_tracking};
 use eyre::Result;
 use std::io::Cursor;
 use std::path::PathBuf;

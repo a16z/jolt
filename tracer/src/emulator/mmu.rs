@@ -3,7 +3,7 @@
 pub const DRAM_BASE: u64 = RAM_START_ADDRESS;
 
 use crate::instruction::{RAMRead, RAMWrite};
-use common::constants::RAM_START_ADDRESS;
+use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
 use common::jolt_device::JoltDevice;
 
 use super::cpu::{get_privilege_mode, PrivilegeMode, Trap, TrapType, Xlen};
@@ -201,8 +201,8 @@ impl Mmu {
                 // These errors aren't necessarily correct as there's no way to distinguish between an
                 // attempt to write to the stack vs heap, but they're trying their best
                 assert!(
-                    ea > layout.stack_end,
-                    "Stack overflow: Attempted to {verb} 0x{ea:X}. Stack too small.\n{layout:#?}",
+                    ea <= layout.stack_end || ea >= layout.stack_end + STACK_CANARY_SIZE,
+                    "Stack overflow: Triggered Stack Canary. Attempted to {verb} 0x{ea:X}.\n{layout:#?}",
                 );
                 assert!(
                     ea <= layout.memory_end,

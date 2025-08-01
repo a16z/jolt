@@ -19,6 +19,7 @@ use crate::zkvm::witness::{
 };
 use crate::zkvm::ProverDebugInfo;
 use anyhow::Context;
+use common::cycle_tracking::{end_cycle_tracking, start_cycle_tracking};
 use rayon::prelude::*;
 
 pub enum JoltDAG {}
@@ -261,7 +262,9 @@ impl JoltDAG {
 
         let ram_K = state_manager.ram_K;
         let bytecode_d = state_manager.get_verifier_data().0.shared.bytecode.d;
+        start_cycle_tracking("AllCommittedPolynomials initialization");
         let _guard = AllCommittedPolynomials::initialize(compute_d_parameter(ram_K), bytecode_d);
+        end_cycle_tracking("AllCommittedPolynomials initialization");
 
         // Append commitments to transcript
         let commitments = state_manager.get_commitments();
@@ -307,6 +310,7 @@ impl JoltDAG {
 
         let transcript = state_manager.get_transcript();
         let opening_accumulator = state_manager.get_verifier_accumulator();
+        start_cycle_tracking("Stage 2 sumcheck verification");
         let _r_stage2 = BatchedSumcheck::verify(
             stage2_proof,
             stage2_instances_ref,
@@ -314,6 +318,7 @@ impl JoltDAG {
             &mut *transcript.borrow_mut(),
         )
         .context("Stage 2")?;
+        end_cycle_tracking("Stage 2 sumcheck verification");
 
         drop(proofs);
 
@@ -338,6 +343,7 @@ impl JoltDAG {
             _ => panic!("Invalid proof type for stage 3"),
         };
 
+        start_cycle_tracking("Stage 3 sumcheck verification");
         let _r_stage3 = BatchedSumcheck::verify(
             stage3_proof,
             stage3_instances_ref,
@@ -345,6 +351,7 @@ impl JoltDAG {
             &mut *transcript.borrow_mut(),
         )
         .context("Stage 3")?;
+        end_cycle_tracking("Stage 3 sumcheck verification");
 
         drop(proofs);
 
@@ -367,6 +374,7 @@ impl JoltDAG {
             _ => panic!("Invalid proof type for stage 4"),
         };
 
+        start_cycle_tracking("Stage 4 sumcheck verification");
         let _r_stage4 = BatchedSumcheck::verify(
             stage4_proof,
             stage4_instances_ref,
@@ -374,6 +382,7 @@ impl JoltDAG {
             &mut *transcript.borrow_mut(),
         )
         .context("Stage 4")?;
+        end_cycle_tracking("Stage 4 sumcheck verification");
 
         // Batch-prove all openings
         let batched_opening_proof = proofs
@@ -392,6 +401,7 @@ impl JoltDAG {
             );
         }
         let accumulator = state_manager.get_verifier_accumulator();
+        start_cycle_tracking("Stage 5 reduce and verify");
         accumulator
             .borrow_mut()
             .reduce_and_verify(
@@ -401,6 +411,7 @@ impl JoltDAG {
                 &mut *transcript.borrow_mut(),
             )
             .context("Stage 5")?;
+        end_cycle_tracking("Stage 5 reduce and verify");
 
         Ok(())
     }

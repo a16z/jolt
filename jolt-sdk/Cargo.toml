@@ -15,7 +15,6 @@ edition = "2021"
 [features]
 host = [
     "dep:tracer",
-    "dep:common",
     "dep:jolt-core",
     "dep:ark-ec",
     "dep:ark-bn254",
@@ -35,4 +34,4 @@ ark-bn254 = { version = "0.5.0", default-features = false, optional = true }
 jolt-sdk-macros = { path = "./macros" }
 jolt-core = { path = "../jolt-core", optional = true }
 tracer = { path = "../tracer", optional = true }
-common = { path = "../common", optional = true }
+common = { path = "../common" }

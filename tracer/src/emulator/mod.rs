@@ -236,7 +236,6 @@ impl Emulator {
                 }
             }
         }
-
         self.cpu.update_pc(header.e_entry);
     }
 

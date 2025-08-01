@@ -7,11 +7,11 @@
 #![allow(clippy::from_over_into)]
 #![allow(clippy::len_without_is_empty)]
 #![allow(clippy::too_long_first_doc_paragraph)]
+#![feature(unsigned_is_multiple_of, unbounded_shifts)]
 
 #[cfg(feature = "host")]
 pub mod benches;
 
-#[cfg(feature = "host")]
 pub mod host;
 
 pub mod field;

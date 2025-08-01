@@ -12,8 +12,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-
 use super::{
     commitment::commitment_scheme::CommitmentScheme,
     eq_poly::EqPolynomial,
@@ -30,6 +28,8 @@ use crate::{
     utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use common::cycle_tracking::{end_cycle_tracking, start_cycle_tracking};
 
 pub type Endianness = bool;
 pub const BIG_ENDIAN: Endianness = false;
@@ -1083,8 +1083,10 @@ where
             .for_each(|(opening, claim)| opening.sumcheck_claim = Some(*claim));
 
         // Verify the sumcheck
+        start_cycle_tracking("batch opening reduction sumcheck");
         let r_sumcheck =
             self.verify_batch_opening_reduction(&reduced_opening_proof.sumcheck_proof, transcript)?;
+        end_cycle_tracking("batch opening reduction sumcheck");
 
         transcript.append_scalars(&reduced_opening_proof.sumcheck_claims);
 
@@ -1138,14 +1140,17 @@ where
             .sum();
 
         // Verify the reduced opening proof
-        PCS::verify(
+        start_cycle_tracking("combined opening proof verification");
+        let ret = PCS::verify(
             &reduced_opening_proof.joint_opening_proof,
             pcs_setup,
             transcript,
             &r_sumcheck,
             &joint_claim,
             &joint_commitment,
-        )
+        );
+        end_cycle_tracking("combined opening proof verification");
+        ret
     }
 
     /// Verifies the sumcheck proven in `ProverOpeningAccumulator::prove_batch_opening_reduction`.
