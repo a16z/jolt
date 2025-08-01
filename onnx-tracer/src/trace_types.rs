@@ -2,10 +2,9 @@
 //! Used to format the bytecode and define each instr flags and memory access patterns.
 //! Used by the runtime to generate an execution trace for ONNX runtime execution.
 
-use std::ops::{Index, IndexMut};
-
-use crate::tensor::Tensor;
+use crate::{constants::MEMORY_OPS_PER_INSTRUCTION, tensor::Tensor};
 use serde::{Deserialize, Serialize};
+use std::ops::{Index, IndexMut};
 use strum::EnumCount;
 use strum_macros::EnumCount as EnumCountMacro;
 
@@ -32,28 +31,30 @@ impl ONNXCycle {
         self.instr.td.unwrap_or(0)
     }
 
-    // HACKS(Forpee)
-    pub fn td_write(&self) -> u64 {
+    // HACKS(Forpee): These methods are going to be removed once we 1. migrate runtime to 64-bit and 2. allow jolt-prover to intake tensor ops at each cycle.
+    pub fn td_post_val(&self) -> u64 {
         self.memory_state
             .td_post_val
             .as_ref()
-            .map(|t| t.inner[0] as i64 as u64)
+            .map(|t| t.inner[0] as i32 as u32 as u64)
             .unwrap_or(0)
     }
-
+    pub fn td_pre_val(&self) -> u64 {
+        // This value is only written to once
+        0
+    }
     pub fn ts1_val(&self) -> u64 {
         self.memory_state
             .ts1_val
             .as_ref()
-            .map(|t| t.inner[0] as i64 as u64)
+            .map(|t| t.inner[0] as i32 as u32 as u64)
             .unwrap_or(0)
     }
-
     pub fn ts2_val(&self) -> u64 {
         self.memory_state
             .ts2_val
             .as_ref()
-            .map(|t| t.inner[0] as i64 as u64)
+            .map(|t| t.inner[0] as i32 as u32 as u64)
             .unwrap_or(0)
     }
 }
@@ -62,6 +63,7 @@ impl ONNXCycle {
 pub struct MemoryState {
     pub ts1_val: Option<Tensor<i128>>,
     pub ts2_val: Option<Tensor<i128>>,
+    pub td_pre_val: Option<Tensor<i128>>,
     pub td_post_val: Option<Tensor<i128>>,
 }
 
@@ -112,6 +114,66 @@ pub struct ONNXInstr {
     /// `virtual_sequence_remaining` will be Some(0); if this is the penultimate instruction
     /// in the sequence, `virtual_sequence_remaining` will be Some(1); etc.
     pub virtual_sequence_remaining: Option<usize>,
+}
+
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
+pub enum MemoryOp {
+    Read(u64, u64),       // (address, value)
+    Write(u64, u64, u64), // (address, old_value, new_value)
+}
+
+impl MemoryOp {
+    pub fn noop_read() -> Self {
+        Self::Read(0, 0)
+    }
+
+    pub fn noop_write() -> Self {
+        Self::Write(0, 0, 0)
+    }
+
+    pub fn address(&self) -> u64 {
+        match self {
+            MemoryOp::Read(a, _) => *a,
+            MemoryOp::Write(a, _, _) => *a,
+        }
+    }
+}
+
+impl ONNXCycle {
+    pub fn to_memory_ops(&self) -> [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
+        let ts1_read = || MemoryOp::Read(self.instr.ts1.unwrap() as u64, self.ts1_val());
+        let ts2_read = || MemoryOp::Read(self.instr.ts2.unwrap() as u64, self.ts2_val());
+        let td_write = || {
+            MemoryOp::Write(
+                self.instr.td.unwrap() as u64,
+                self.td_pre_val(),
+                self.td_post_val(),
+            )
+        };
+
+        // // Canonical ordering for memory instructions
+        // // 0: ts1
+        // // 1: ts2
+        // // 2: td
+        // // If any are empty a no_op is inserted.
+
+        match self.instr.opcode {
+            ONNXOpcode::Add | ONNXOpcode::Sub | ONNXOpcode::Mul => {
+                [ts1_read(), ts2_read(), td_write()]
+            }
+            ONNXOpcode::Noop => [
+                MemoryOp::noop_read(),
+                MemoryOp::noop_read(),
+                MemoryOp::noop_write(),
+            ],
+            ONNXOpcode::Constant | ONNXOpcode::Input => [
+                MemoryOp::noop_read(),
+                MemoryOp::noop_read(),
+                MemoryOp::noop_write(),
+            ],
+            _ => unreachable!("{self:?}"),
+        }
+    }
 }
 
 /// Boolean flags used in Jolt's R1CS constraints (`opflags` in the Jolt paper).

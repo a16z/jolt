@@ -26,6 +26,8 @@ pub mod bytecode;
 pub mod instruction_lookups;
 pub mod onnx_vm;
 pub mod r1cs;
+pub mod ram;
+pub mod registers;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct JoltProverPreprocessing<F, PCS, ProofTranscript>

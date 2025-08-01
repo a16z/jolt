@@ -187,7 +187,7 @@ impl JoltONNXR1CSInputs {
             //         coeffs.into()
             //     }
             JoltONNXR1CSInputs::RdWriteValue => {
-                let coeffs: Vec<u64> = trace.par_iter().map(|cycle| cycle.td_write()).collect();
+                let coeffs: Vec<u64> = trace.par_iter().map(|cycle| cycle.td_post_val()).collect();
                 coeffs.into()
             }
             //     JoltONNXR1CSInputs::RamReadValue => {
