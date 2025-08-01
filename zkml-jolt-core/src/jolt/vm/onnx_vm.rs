@@ -8,23 +8,50 @@ mod e2e_tests {
     use jolt_core::utils::transcript::KeccakTranscript;
     use log::info;
     use serde_json::Value;
-    use std::fs::File;
-    use std::io::Read;
+    use std::{collections::HashMap, fs::File, io::Read};
 
     use onnx_tracer::{custom_addsubmul_model, logger::init_logger, model, tensor::Tensor};
 
-    fn load_input_vector(path: &str) -> Vec<i128> {
-        let mut file = File::open(path).expect("Unable to open input.json");
-        let mut data = String::new();
-        file.read_to_string(&mut data).expect("Unable to read file");
+    /// Load vocab.json into HashMap<String, (usize, i32)>
+    pub fn load_vocab(
+        path: &str,
+    ) -> Result<HashMap<String, (usize, i32)>, Box<dyn std::error::Error>> {
+        let mut file = File::open(path)?;
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)?;
 
-        let v: Value = serde_json::from_str(&data).expect("Invalid JSON");
-        let arr = v["input_data"][0]
-            .as_array()
-            .expect("Bad input_data format");
+        let json_value: Value = serde_json::from_str(&contents)?;
+        let mut vocab = HashMap::new();
 
-        let mut vec: Vec<i128> = arr.iter().map(|x| x.as_i64().unwrap() as i128).collect();
-        vec.resize(1000, 0);
+        if let Value::Object(map) = json_value {
+            for (word, data) in map {
+                if let (Some(index), Some(idf)) = (
+                    data.get("index").and_then(|v| v.as_u64()),
+                    data.get("idf").and_then(|v| v.as_i64()),
+                ) {
+                    vocab.insert(word, (index as usize, idf as i32));
+                }
+            }
+        }
+
+        Ok(vocab)
+    }
+
+    /// Tokenize and convert text to vector of length 1000
+    pub fn build_input_vector(text: &str, vocab: &HashMap<String, (usize, i32)>) -> Vec<i128> {
+        let mut vec = vec![0; 1000];
+
+        // Split text into tokens (preserve punctuation as tokens)
+        let re = regex::Regex::new(r"\w+|[^\w\s]").unwrap();
+        for cap in re.captures_iter(text) {
+            let token = cap.get(0).unwrap().as_str().to_lowercase();
+            if let Some(&(index, idf)) = vocab.get(&token) {
+                if index < 1000 {
+                    vec[index] += idf as i128; // accumulate idf value
+                }
+            }
+        }
+
         vec
     }
 
@@ -92,37 +119,64 @@ mod e2e_tests {
     pub fn test_article_classification_output() {
         init_logger();
         let working_dir: &str = "../onnx-tracer/models/article_classification/";
-        // Load input
-        let input_vector = load_input_vector(&format!("{working_dir}input.json"));
 
-        // Prepare ONNX program
-        let text_classification = ONNXProgram {
-            model_path: format!("{working_dir}network.onnx").into(),
-            inputs: Tensor::new(Some(&input_vector), &[1, 1000]).unwrap(),
-        };
+        // Load the vocab mapping from JSON
+        let vocab_path = format!("{}/vocab.json", working_dir);
+        let vocab = load_vocab(&vocab_path).expect("Failed to load vocab");
 
-        // Decode to program bytecode (for EZKL use)
-        let program_bytecode = text_classification.decode();
-        println!("Program code: {program_bytecode:#?}");
+        // Input text string to classify
+        let input_texts = [
+            "The government plans new trade policies.",
+            "The latest computer model has impressive features.",
+            "The football match ended in a thrilling draw.",
+            "The new movie has received rave reviews from critics.",
+            "The stock market saw a significant drop today.",
+        ];
 
-        // Load model
-        let model = model(&text_classification.model_path);
+        let expected_classes = ["politics", "tech", "sport", "entertainment", "business"];
 
-        // Run inference
-        let result = model
-            .forward(&[text_classification.inputs.clone()])
-            .unwrap();
-        let output = result.outputs[0].clone();
+        let mut predicted_classes = Vec::new();
 
-        // Map index to label
-        let classes = ["business", "entertainment", "politics", "sport", "tech"];
-        let (pred_idx, _) = output
-            .iter()
-            .enumerate()
-            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-            .unwrap();
+        for input_text in &input_texts {
+            // Build input vector from the input text
+            let input_vector = build_input_vector(&input_text, &vocab);
 
-        info!("Predicted class: {}", classes[pred_idx]);
+            // Prepare ONNX program
+            let text_classification = ONNXProgram {
+                model_path: format!("{working_dir}network.onnx").into(),
+                inputs: Tensor::new(Some(&input_vector), &[1, 1000]).unwrap(),
+            };
+
+            // Decode to program bytecode (for EZKL use)
+            let program_bytecode = text_classification.decode();
+            println!("Program code: {program_bytecode:#?}");
+
+            // Load model
+            let model = model(&text_classification.model_path);
+
+            // Run inference
+            let result = model
+                .forward(&[text_classification.inputs.clone()])
+                .unwrap();
+            let output = result.outputs[0].clone();
+
+            // Map index to label
+            let classes = ["business", "entertainment", "politics", "sport", "tech"];
+            let (pred_idx, _) = output
+                .iter()
+                .enumerate()
+                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+                .unwrap();
+
+            info!("Output: {}", output.show());
+            info!("Predicted class: {}", classes[pred_idx]);
+
+            predicted_classes.push(classes[pred_idx]);
+        }
+        // Check if predicted classes match expected classes
+        for (predicted, expected) in predicted_classes.iter().zip(expected_classes.iter()) {
+            assert_eq!(predicted, expected, "Mismatch in predicted class");
+        }
     }
 
     #[test]
