@@ -255,7 +255,6 @@ pub mod svo_helpers {
                     temp_tA.is_empty(),
                     "temp_tA should be empty for 0 SVO rounds"
                 );
-                return;
             }
             1 => {
                 compute_and_update_tA_inplace_1(binary_az_evals, binary_bz_evals, e_in_val, temp_tA)
@@ -672,7 +671,6 @@ pub mod svo_helpers {
             );
             // M_NON_BINARY_POINTS_CONST would be 0, NUM_TERNARY_POINTS_CONST would be 1.
             // The loops below would not run.
-            return;
         }
 
         // Verify consistency of const generic arguments with NUM_SVO_ROUNDS
@@ -780,7 +778,6 @@ pub mod svo_helpers {
                     tA_accums.is_empty(),
                     "tA_accums should be empty for 0 SVO rounds"
                 );
-                return;
             }
             1 => distribute_tA_to_svo_accumulators_1(
                 tA_accums,
@@ -1119,7 +1116,6 @@ pub mod svo_helpers {
                 accums_infty.is_empty(),
                 "accums_infty should be empty for N=0"
             );
-            return;
         }
 
         // Assert that the provided M_NON_BINARY_POINTS is correct.
