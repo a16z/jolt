@@ -268,7 +268,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             ReadCheckingValType::Stage1 => {
                 let gamma: F = sm.get_transcript().borrow_mut().challenge_scalar();
                 let mut gamma_powers = vec![F::one()];
-                for _ in 0..NUM_CIRCUIT_FLAGS + 1 {
+                for _ in 0..NUM_CIRCUIT_FLAGS + 2 {
                     gamma_powers.push(gamma * gamma_powers.last().unwrap());
                 }
                 let (r_cycle, _) = sm.get_virtual_polynomial_opening(
@@ -338,10 +338,11 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 let mut linear_combination = F::zero();
                 linear_combination += F::from_u64(unexpanded_pc as u64);
                 linear_combination += operands.imm.field_mul(gamma_powers[1]);
+                linear_combination += (operands.rd as u64).field_mul(gamma_powers[2]);
                 for (flag, gamma_power) in instruction
                     .circuit_flags()
                     .iter()
-                    .zip(gamma_powers[2..].iter())
+                    .zip(gamma_powers[3..].iter())
                 {
                     if *flag {
                         linear_combination += *gamma_power;
@@ -363,8 +364,11 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         );
         let (_, imm_claim) =
             sm.get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);
+        let (_, rd_claim) =
+            sm.get_virtual_polynomial_opening(VirtualPolynomial::Rd, SumcheckId::SpartanOuter);
         once(unexpanded_pc_claim)
             .chain(once(imm_claim))
+            .chain(once(rd_claim))
             .chain(CircuitFlags::iter().map(|flag| {
                 sm.get_virtual_polynomial_opening(
                     VirtualPolynomial::OpFlags(flag),
