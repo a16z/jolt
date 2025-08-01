@@ -6,7 +6,27 @@ mod e2e_tests {
     };
     use ark_bn254::Fr;
     use jolt_core::utils::transcript::KeccakTranscript;
+    use log::info;
+    use serde_json::Value;
+    use std::fs::File;
+    use std::io::Read;
+
     use onnx_tracer::{custom_addsubmul_model, logger::init_logger, model, tensor::Tensor};
+
+    fn load_input_vector(path: &str) -> Vec<i128> {
+        let mut file = File::open(path).expect("Unable to open input.json");
+        let mut data = String::new();
+        file.read_to_string(&mut data).expect("Unable to read file");
+
+        let v: Value = serde_json::from_str(&data).expect("Invalid JSON");
+        let arr = v["input_data"][0]
+            .as_array()
+            .expect("Bad input_data format");
+
+        let mut vec: Vec<i128> = arr.iter().map(|x| x.as_i64().unwrap() as i128).collect();
+        vec.resize(1000, 0);
+        vec
+    }
 
     #[test]
     fn test_addsubmul0() {
@@ -68,6 +88,44 @@ mod e2e_tests {
     }
 
     #[test]
+
+    pub fn test_article_classification_output() {
+        init_logger();
+        let working_dir: &str = "../onnx-tracer/models/article_classification/";
+        // Load input
+        let input_vector = load_input_vector(&format!("{working_dir}input.json"));
+
+        // Prepare ONNX program
+        let text_classification = ONNXProgram {
+            model_path: format!("{working_dir}network.onnx").into(),
+            inputs: Tensor::new(Some(&input_vector), &[1, 1000]).unwrap(),
+        };
+
+        // Decode to program bytecode (for EZKL use)
+        let program_bytecode = text_classification.decode();
+        println!("Program code: {program_bytecode:#?}");
+
+        // Load model
+        let model = model(&text_classification.model_path);
+
+        // Run inference
+        let result = model
+            .forward(&[text_classification.inputs.clone()])
+            .unwrap();
+        let output = result.outputs[0].clone();
+
+        // Map index to label
+        let classes = ["business", "entertainment", "politics", "sport", "tech"];
+        let (pred_idx, _) = output
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .unwrap();
+
+        info!("Predicted class: {}", classes[pred_idx]);
+    }
+
+    #[test]
     fn test_medium_classification() {
         init_logger();
         let mut input_vector = vec![846, 3, 195, 4, 374, 14, 259];
@@ -100,7 +158,6 @@ mod e2e_tests {
             .forward(&[text_classification.inputs.clone()])
             .unwrap();
         let output = result.outputs[0].clone();
-        use log::info;
         info!("Output: {output:#?}",);
     }
 

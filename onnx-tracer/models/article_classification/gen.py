@@ -15,8 +15,8 @@ from sklearn.metrics import classification_report, confusion_matrix, accuracy_sc
 # Config
 # --------------------------
 VOCAB_SIZE = 1000
-SVD_COMPONENTS = 50
-EPOCHS = 100
+SVD_COMPONENTS = 100
+EPOCHS = 200
 BATCH_SIZE = 32
 LR = 1e-3
 SCALE_FACTOR = 1000  # For integer scaling of TF-IDF
@@ -46,7 +46,7 @@ idf_mapping = {
     for word, idx in vocab.items()
 }
 
-with open("idf_mapping.json", "w") as f:
+with open("vocab.json", "w") as f:
     json.dump(idf_mapping, f)
 
 # --------------------------
@@ -91,8 +91,6 @@ model = SVDClassifier(svd_components, svd_mean, num_classes=len(label_encoder.cl
 # --------------------------
 # 6. Train
 # --------------------------
-print("TF-IDF shape:", X_train.shape)
-print("Labels shape:", len(y_train))
 train_dataset = TensorDataset(torch.tensor(X_train.toarray(), dtype=torch.float32),
                               torch.tensor(y_train, dtype=torch.long))
 train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
@@ -139,7 +137,7 @@ torch.onnx.export(
     "network.onnx",
     input_names=["input"],
     output_names=["output"],
-    dynamic_axes={"input": {0: "batch"}, "output": {0: "batch"}},
+    dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}},
     opset_version=13
 )
 

@@ -1,6 +1,6 @@
 # Medium Text Classification Example
 
-Trained to recognised if given SMS text is a ham or spam.
+Trained to recognize if given SMS text is a ham or spam.
 
 Run `python gen.py` to create:
 
@@ -10,6 +10,10 @@ Run `python gen.py` to create:
 Run `python run_model.py '<input text>'` to run the model using an input text.
 
 - Outputs model's prediction: ham or spam.
+
+Run `python tokenize_text.py '<input text>'` to tokenize an input text.
+
+- Outputs `input.json`, a model-friendly input vector.
 
 Also contains:
 

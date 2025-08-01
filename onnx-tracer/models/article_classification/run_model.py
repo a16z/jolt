@@ -54,10 +54,10 @@ def main():
         text = sys.argv[1]
 
     # --- Load mapping ---
-    if not os.path.exists("idf_mapping.json"):
-        print("❌ Missing idf_mapping.json. Run training script first.")
+    if not os.path.exists("vocab.json"):
+        print("❌ Missing vocab.json. Run training script first.")
         sys.exit(1)
-    with open("idf_mapping.json", "r") as f:
+    with open("vocab.json", "r") as f:
         idf_mapping = json.load(f)
 
     # --- Build input vector ---
