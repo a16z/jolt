@@ -37,8 +37,8 @@ pub mod val_evaluation;
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct RAMPreprocessing {
-    min_bytecode_address: u64,
-    bytecode_words: Vec<u32>,
+    pub min_bytecode_address: u64,
+    pub bytecode_words: Vec<u32>,
 }
 
 impl RAMPreprocessing {
@@ -109,17 +109,7 @@ impl RamDag {
         let (preprocessing, trace, program_io, final_memory) = state_manager.get_prover_data();
         let ram_preprocessing = &preprocessing.shared.ram;
 
-        let K = trace
-            .par_iter()
-            .filter_map(|cycle| {
-                remap_address(
-                    cycle.ram_access().address() as u64,
-                    &preprocessing.shared.memory_layout,
-                )
-            })
-            .max()
-            .unwrap()
-            .next_power_of_two() as usize;
+        let K = state_manager.ram_K;
 
         let T = trace.len();
 
