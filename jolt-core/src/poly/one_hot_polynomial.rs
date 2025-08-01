@@ -114,8 +114,8 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = (T / num_chunks).max(1);
 
-        let binding = self.eq_state.lock().unwrap();
-        let D_coeffs_for_G = &binding.D_coeffs_for_G;
+        let eq = self.eq_state.lock().unwrap();
+        let D_coeffs_for_G = &eq.D_coeffs_for_G;
 
         // Compute G as described in Section 6.3
         let G = nonzero_indices
@@ -205,8 +205,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             // Retrieve ra(j , r') for first round using F, and H otherwise
             let ra_eval = |j: usize| -> F {
                 if round == polynomial.K.log_2() {
-                    polynomial.nonzero_indices[j]
-                        .map_or(F::zero(), |k| shared_eq.F[k])
+                    polynomial.nonzero_indices[j].map_or(F::zero(), |k| shared_eq.F[k])
                 } else {
                     polynomial.H.Z[j]
                 }

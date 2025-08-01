@@ -206,32 +206,30 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
             if round == self.log_K_chunk - 1 {
                 let mut pc_by_cycle = std::mem::take(&mut ps.pc_by_cycle);
                 let f_ref = &ps.F;
-                ps.H = 
-                    pc_by_cycle
-                        .par_iter_mut()
-                        .map(|pc_by_cycle| {
-                            let coeffs: Vec<F> = std::mem::take(pc_by_cycle)
-                                .into_par_iter()
-                                .map(|j| f_ref[j])
-                                .collect();
-                            MultilinearPolynomial::from(coeffs)
-                        })
-                        .collect();
+                ps.H = pc_by_cycle
+                    .par_iter_mut()
+                    .map(|pc_by_cycle| {
+                        let coeffs: Vec<F> = std::mem::take(pc_by_cycle)
+                            .into_par_iter()
+                            .map(|j| f_ref[j])
+                            .collect();
+                        MultilinearPolynomial::from(coeffs)
+                    })
+                    .collect();
                 ps.eq_r_r = ps.B.final_sumcheck_claim();
 
                 // Drop G arrays, F array, and pc_by_cycle as they're no longer needed in phase 2
                 let g = std::mem::take(&mut ps.G);
                 drop_in_background_thread(g);
-                
+
                 let f = std::mem::take(&mut ps.F);
                 drop_in_background_thread(f);
-                
+
                 drop_in_background_thread(pc_by_cycle);
             }
         } else {
             // Phase 2: Bind D and H
-            ps.H
-                .par_iter_mut()
+            ps.H.par_iter_mut()
                 .chain(rayon::iter::once(&mut ps.D))
                 .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
         }
@@ -286,11 +284,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
     ) {
         let ps = self.prover_state.as_ref().unwrap();
 
-        let claims: Vec<F> =
-            ps.H
-                .iter()
-                .map(|H| H.final_sumcheck_claim())
-                .collect();
+        let claims: Vec<F> = ps.H.iter().map(|H| H.final_sumcheck_claim()).collect();
 
         accumulator.borrow_mut().append_sparse(
             (0..self.d).map(CommittedPolynomial::BytecodeRa).collect(),

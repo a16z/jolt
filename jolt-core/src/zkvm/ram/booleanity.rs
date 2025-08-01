@@ -274,7 +274,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
                 // Drop G arrays and F array as they're no longer needed in phase 2
                 let g = std::mem::take(&mut prover_state.G);
                 drop_in_background_thread(g);
-                
+
                 let f = std::mem::take(&mut prover_state.F);
                 drop_in_background_thread(f);
 
@@ -287,7 +287,8 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
 
             // Bind D and all H polynomials
             prover_state.D.bind(r_j);
-            prover_state.H
+            prover_state
+                .H
                 .par_iter_mut()
                 .for_each(|h_poly| h_poly.bind_parallel(r_j, BindingOrder::LowToHigh));
         }
@@ -348,7 +349,8 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
             .as_ref()
             .expect("Prover state not initialized");
 
-        let claims: Vec<F> = prover_state.H
+        let claims: Vec<F> = prover_state
+            .H
             .iter()
             .map(|h_poly| h_poly.final_sumcheck_claim())
             .collect();
@@ -461,8 +463,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                                     .enumerate()
                                     .map(|(k, &G_k)| {
                                         let k_m = k >> (m - 1);
-                                        let F_k =
-                                            prover_state.F[k % (1 << (m - 1))];
+                                        let F_k = prover_state.F[k % (1 << (m - 1))];
                                         let G_times_F = G_k * F_k;
 
                                         let eval_infty = G_times_F * F_k;

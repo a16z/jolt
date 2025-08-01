@@ -197,17 +197,16 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
                 // Replace G with empty vectors
                 let g: [Vec<F>; D] = std::array::from_fn(|i| std::mem::take(&mut ps.G[i]));
                 drop_in_background_thread(g);
-                
+
                 let f = std::mem::take(&mut ps.F);
                 drop_in_background_thread(f);
-                
+
                 drop_in_background_thread(h_indices);
             }
         } else {
             // Phase 2: Bind D and H
             ps.D.bind(r_j);
-            ps.H
-                .par_iter_mut()
+            ps.H.par_iter_mut()
                 .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
         }
     }
@@ -259,8 +258,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
     ) {
         let ps = self.prover_state.as_ref().unwrap();
         let ra_claims =
-            ps.H
-                .iter()
+            ps.H.iter()
                 .map(|ra| ra.final_sumcheck_claim())
                 .collect::<Vec<F>>();
 
