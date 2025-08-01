@@ -17,3 +17,7 @@ tracing = { version = "0.1.41", features = [
 strum = "0.26.3"
 strum_macros = "0.26.4"
 rand = "0.7.3"
+
+[dev-dependencies]
+log = "0.4"
+regex = "1.10.6"
