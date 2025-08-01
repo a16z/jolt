@@ -97,10 +97,15 @@ inherits = "release"
 debug = false
 
 [patch.crates-io]
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+# /Users/mgeorghiades/a16z/arkworks-algebra
+# ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+# ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+# ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+# ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ff = { path = "/Users/mgeorghiades/a16z/arkworks-algebra/ff"}
+ark-ec = { path = "/Users/mgeorghiades/a16z/arkworks-algebra/ec"}
+ark-serialize = { path = "/Users/mgeorghiades/a16z/arkworks-algebra/serialize"}
+ark-bn254 = { path = "/Users/mgeorghiades/a16z/arkworks-algebra/curves/bn254"}
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]
