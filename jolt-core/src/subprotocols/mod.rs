@@ -2,12 +2,14 @@
 
 pub mod grand_product;
 pub mod grand_product_quarks;
+pub mod optimization;
 pub mod ra_virtual;
 pub mod shout;
 pub mod sparse_dense_shout;
 pub mod sparse_grand_product;
 pub mod sumcheck;
 pub mod twist;
+pub mod karatsuba;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub enum QuarkHybridLayerDepth {

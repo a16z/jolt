@@ -119,6 +119,10 @@ name = "binding"
 harness = false
 
 [[bench]]
+name = "large_d"
+harness = false
+
+[[bench]]
 name = "compute_cubic"
 harness = false
 
