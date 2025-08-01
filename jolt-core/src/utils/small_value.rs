@@ -249,6 +249,14 @@ pub mod svo_helpers {
         temp_tA: &mut [F],
     ) {
         match NUM_SVO_ROUNDS {
+            0 => {
+                // No SVO rounds to process, temp_tA should be empty
+                debug_assert!(
+                    temp_tA.is_empty(),
+                    "temp_tA should be empty for 0 SVO rounds"
+                );
+                return;
+            }
             1 => {
                 compute_and_update_tA_inplace_1(binary_az_evals, binary_bz_evals, e_in_val, temp_tA)
             }
@@ -289,10 +297,7 @@ pub mod svo_helpers {
         if az_I != 0 {
             let bz_I = binary_bz_evals[1] - binary_bz_evals[0];
             if bz_I != 0 {
-                let product_i128 = az_I
-                    .checked_mul(bz_I)
-                    .expect("Az_I*Bz_I product overflow i128");
-                temp_tA[0] += e_in_val.mul_i128(product_i128);
+                temp_tA[0] += e_in_val.mul_i128(az_I).mul_i128(bz_I);
             }
         }
     }
@@ -334,20 +339,14 @@ pub mod svo_helpers {
         let az_0I = az01 - az00;
         let bz_0I = bz01 - bz00;
         if az_0I != 0 && bz_0I != 0 {
-            let prod_0I = az_0I
-                .checked_mul(bz_0I)
-                .expect("Product overflow for (0,I)");
-            temp_tA[0] += e_in_val.mul_i128(prod_0I);
+            temp_tA[0] += e_in_val.mul_i128(az_0I).mul_i128(bz_0I);
         }
 
         // 2. Point (1,I) -> temp_tA[1]
         let az_1I = az11 - az10;
         let bz_1I = bz11 - bz10;
         if az_1I != 0 && bz_1I != 0 {
-            let prod_1I = az_1I
-                .checked_mul(bz_1I)
-                .expect("Product overflow for (1,I)");
-            temp_tA[1] += e_in_val.mul_i128(prod_1I);
+            temp_tA[1] += e_in_val.mul_i128(az_1I).mul_i128(bz_1I);
         }
 
         // 3. Point (I,0) -> temp_tA[2]
@@ -355,10 +354,7 @@ pub mod svo_helpers {
         if az_I0 != 0 {
             let bz_I0 = bz10 - bz00;
             if bz_I0 != 0 {
-                let prod_I0 = az_I0
-                    .checked_mul(bz_I0)
-                    .expect("Product overflow for (I,0)");
-                temp_tA[2] += e_in_val.mul_i128(prod_I0);
+                temp_tA[2] += e_in_val.mul_i128(az_I0).mul_i128(bz_I0);
             }
         }
 
@@ -367,10 +363,7 @@ pub mod svo_helpers {
         if az_I1 != 0 {
             let bz_I1 = bz11 - bz01;
             if bz_I1 != 0 {
-                let prod_I1 = az_I1
-                    .checked_mul(bz_I1)
-                    .expect("Product overflow for (I,1)");
-                temp_tA[3] += e_in_val.mul_i128(prod_I1);
+                temp_tA[3] += e_in_val.mul_i128(az_I1).mul_i128(bz_I1);
             }
         }
 
@@ -379,11 +372,7 @@ pub mod svo_helpers {
         if az_II != 0 {
             let bz_II = bz_1I - bz_0I;
             if bz_II != 0 {
-                let prod_II = az_II
-                    .checked_mul(bz_II)
-                    .expect("Product overflow for (I,I)");
-                // At this point, pretty unlikely for prod_II to be 1
-                temp_tA[4] += e_in_val.mul_i128(prod_II);
+                temp_tA[4] += e_in_val.mul_i128(az_II).mul_i128(bz_II);
             }
         }
     }
@@ -454,97 +443,85 @@ pub mod svo_helpers {
         let az_00I = az001 - az000;
         let bz_00I = bz001 - bz000;
         if az_00I != 0 && bz_00I != 0 {
-            let prod = az_00I.checked_mul(bz_00I).expect("Prod overflow");
             // Test `mul_i128_1_optimized`
-            temp_tA[0] += e_in_val.mul_i128_1_optimized(prod);
+            temp_tA[0] += e_in_val.mul_i128_1_optimized(az_00I).mul_i128(bz_00I);
         }
 
         // Point (0,1,I) -> temp_tA[1]
         let az_01I = az011 - az010;
         let bz_01I = bz011 - bz010;
         if az_01I != 0 && bz_01I != 0 {
-            let prod = az_01I.checked_mul(bz_01I).expect("Prod overflow");
-            temp_tA[1] += e_in_val.mul_i128(prod);
+            temp_tA[1] += e_in_val.mul_i128(az_01I).mul_i128(bz_01I);
         }
 
         // Point (0,I,0) -> temp_tA[2]
         let az_0I0 = az010 - az000;
         let bz_0I0 = bz010 - bz000;
         if az_0I0 != 0 && bz_0I0 != 0 {
-            let prod = az_0I0.checked_mul(bz_0I0).expect("Prod overflow");
-            temp_tA[2] += e_in_val.mul_i128(prod);
+            temp_tA[2] += e_in_val.mul_i128(az_0I0).mul_i128(bz_0I0);
         }
 
         // Point (0,I,1) -> temp_tA[3]
         let az_0I1 = az011 - az001;
         let bz_0I1 = bz011 - bz001;
         if az_0I1 != 0 && bz_0I1 != 0 {
-            let prod = az_0I1.checked_mul(bz_0I1).expect("Prod overflow");
-            temp_tA[3] += e_in_val.mul_i128(prod);
+            temp_tA[3] += e_in_val.mul_i128(az_0I1).mul_i128(bz_0I1);
         }
 
         // Point (0,I,I) -> temp_tA[4]
         let az_0II = az_01I - az_00I;
         let bz_0II = bz_01I - bz_00I; // Need to compute this outside for III term
         if az_0II != 0 && bz_0II != 0 {
-            let prod = az_0II.checked_mul(bz_0II).expect("Prod overflow");
-            temp_tA[4] += e_in_val.mul_i128(prod);
+            temp_tA[4] += e_in_val.mul_i128(az_0II).mul_i128(bz_0II);
         }
 
         // Point (1,0,I) -> temp_tA[5]
         let az_10I = az101 - az100;
         let bz_10I = bz101 - bz100;
         if az_10I != 0 && bz_10I != 0 {
-            let prod = az_10I.checked_mul(bz_10I).expect("Prod overflow");
-            temp_tA[5] += e_in_val.mul_i128(prod);
+            temp_tA[5] += e_in_val.mul_i128(az_10I).mul_i128(bz_10I);
         }
 
         // Point (1,1,I) -> temp_tA[6]
         let az_11I = az111 - az110;
         let bz_11I = bz111 - bz110;
         if az_11I != 0 && bz_11I != 0 {
-            let prod = az_11I.checked_mul(bz_11I).expect("Prod overflow");
-            temp_tA[6] += e_in_val.mul_i128(prod);
+            temp_tA[6] += e_in_val.mul_i128(az_11I).mul_i128(bz_11I);
         }
 
         // Point (1,I,0) -> temp_tA[7]
         let az_1I0 = az110 - az100;
         let bz_1I0 = bz110 - bz100;
         if az_1I0 != 0 && bz_1I0 != 0 {
-            let prod = az_1I0.checked_mul(bz_1I0).expect("Prod overflow");
-            temp_tA[7] += e_in_val.mul_i128(prod);
+            temp_tA[7] += e_in_val.mul_i128(az_1I0).mul_i128(bz_1I0);
         }
 
         // Point (1,I,1) -> temp_tA[8]
         let az_1I1 = az111 - az101;
         let bz_1I1 = bz111 - bz101;
         if az_1I1 != 0 && bz_1I1 != 0 {
-            let prod = az_1I1.checked_mul(bz_1I1).expect("Prod overflow");
-            temp_tA[8] += e_in_val.mul_i128(prod);
+            temp_tA[8] += e_in_val.mul_i128(az_1I1).mul_i128(bz_1I1);
         }
 
         // Point (1,I,I) -> temp_tA[9]
         let az_1II = az_11I - az_10I;
         let bz_1II = bz_11I - bz_10I; // Need to compute this outside for III term
         if az_1II != 0 && bz_1II != 0 {
-            let prod = az_1II.checked_mul(bz_1II).expect("Prod overflow");
-            temp_tA[9] += e_in_val.mul_i128(prod);
+            temp_tA[9] += e_in_val.mul_i128(az_1II).mul_i128(bz_1II);
         }
 
         // Point (I,0,0) -> temp_tA[10]
         let az_I00 = az100 - az000;
         let bz_I00 = bz100 - bz000;
         if az_I00 != 0 && bz_I00 != 0 {
-            let prod = az_I00.checked_mul(bz_I00).expect("Prod overflow");
-            temp_tA[10] += e_in_val.mul_i128(prod);
+            temp_tA[10] += e_in_val.mul_i128(az_I00).mul_i128(bz_I00);
         }
 
         // Point (I,0,1) -> temp_tA[11]
         let az_I01 = az101 - az001;
         let bz_I01 = bz101 - bz001;
         if az_I01 != 0 && bz_I01 != 0 {
-            let prod = az_I01.checked_mul(bz_I01).expect("Prod overflow");
-            temp_tA[11] += e_in_val.mul_i128(prod);
+            temp_tA[11] += e_in_val.mul_i128(az_I01).mul_i128(bz_I01);
         }
 
         // Point (I,0,I) -> temp_tA[12]
@@ -552,8 +529,7 @@ pub mod svo_helpers {
         if az_I0I != 0 {
             let bz_I0I = bz_I01 - bz_I00; // Uses precomputed bz_I01, bz_I00
             if bz_I0I != 0 {
-                let prod = az_I0I.checked_mul(bz_I0I).expect("Prod overflow");
-                temp_tA[12] += e_in_val.mul_i128(prod);
+                temp_tA[12] += e_in_val.mul_i128(az_I0I).mul_i128(bz_I0I);
             }
         }
 
@@ -561,16 +537,14 @@ pub mod svo_helpers {
         let az_I10 = az110 - az010;
         let bz_I10 = bz110 - bz010;
         if az_I10 != 0 && bz_I10 != 0 {
-            let prod = az_I10.checked_mul(bz_I10).expect("Prod overflow");
-            temp_tA[13] += e_in_val.mul_i128(prod);
+            temp_tA[13] += e_in_val.mul_i128(az_I10).mul_i128(bz_I10);
         }
 
         // Point (I,1,1) -> temp_tA[14]
         let az_I11 = az111 - az011;
         let bz_I11 = bz111 - bz011;
         if az_I11 != 0 && bz_I11 != 0 {
-            let prod = az_I11.checked_mul(bz_I11).expect("Prod overflow");
-            temp_tA[14] += e_in_val.mul_i128(prod);
+            temp_tA[14] += e_in_val.mul_i128(az_I11).mul_i128(bz_I11);
         }
 
         // Point (I,1,I) -> temp_tA[15]
@@ -578,8 +552,7 @@ pub mod svo_helpers {
         if az_I1I != 0 {
             let bz_I1I = bz_I11 - bz_I10; // Uses precomputed bz_I11, bz_I10
             if bz_I1I != 0 {
-                let prod = az_I1I.checked_mul(bz_I1I).expect("Prod overflow");
-                temp_tA[15] += e_in_val.mul_i128(prod);
+                temp_tA[15] += e_in_val.mul_i128(az_I1I).mul_i128(bz_I1I);
             }
         }
 
@@ -588,8 +561,7 @@ pub mod svo_helpers {
         if az_II0 != 0 {
             let bz_II0 = bz_1I0 - bz_0I0; // Uses precomputed bz_1I0, bz_0I0
             if bz_II0 != 0 {
-                let prod = az_II0.checked_mul(bz_II0).expect("Prod overflow");
-                temp_tA[16] += e_in_val.mul_i128(prod);
+                temp_tA[16] += e_in_val.mul_i128(az_II0).mul_i128(bz_II0);
             }
         }
 
@@ -598,8 +570,7 @@ pub mod svo_helpers {
         if az_II1 != 0 {
             let bz_II1 = bz_1I1 - bz_0I1; // Uses precomputed bz_1I1, bz_0I1
             if bz_II1 != 0 {
-                let prod = az_II1.checked_mul(bz_II1).expect("Prod overflow");
-                temp_tA[17] += e_in_val.mul_i128(prod);
+                temp_tA[17] += e_in_val.mul_i128(az_II1).mul_i128(bz_II1);
             }
         }
 
@@ -614,8 +585,7 @@ pub mod svo_helpers {
             // bz_0II was computed for temp_tA[4]
             let bz_III = bz_1II - bz_0II;
             if bz_III != 0 {
-                let prod = az_III.checked_mul(bz_III).expect("Prod overflow");
-                temp_tA[18] += e_in_val.mul_i128(prod);
+                temp_tA[18] += e_in_val.mul_i128(az_III).mul_i128(bz_III);
             }
         }
     }
@@ -787,12 +757,9 @@ pub mod svo_helpers {
                 );
 
                 if bz_val != 0 {
-                    let product = az_val
-                        .checked_mul(bz_val)
-                        .expect("Extended Az*Bz product overflow i128");
                     // Note: temp_tA is indexed by `i_temp_tA` which is the iteration order
                     // of non-binary points from build_y_ext_code_map.
-                    temp_tA[i_temp_tA] += e_in_val.mul_i128(product);
+                    temp_tA[i_temp_tA] += e_in_val.mul_i128(az_val).mul_i128(bz_val);
                 }
             }
         }
@@ -807,6 +774,14 @@ pub mod svo_helpers {
         accums_infty: &mut [F],
     ) {
         match NUM_SVO_ROUNDS {
+            0 => {
+                // No SVO rounds to process, tA_accums should be empty
+                debug_assert!(
+                    tA_accums.is_empty(),
+                    "tA_accums should be empty for 0 SVO rounds"
+                );
+                return;
+            }
             1 => distribute_tA_to_svo_accumulators_1(
                 tA_accums,
                 x_out_val,
