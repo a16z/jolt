@@ -30,13 +30,13 @@ struct BooleanityProverState<F: JoltField> {
     /// B polynomial (GruenSplitEqPolynomial)
     B: GruenSplitEqPolynomial<F>,
     /// F array for phase 1
-    F: Option<Vec<F>>,
+    F: Vec<F>,
     /// ra(k, r_cycle)
-    G: Option<Vec<Vec<F>>>,
+    G: Vec<Vec<F>>,
     /// eq(r_cycle, j) - using Gruen optimization
     D: GruenSplitEqPolynomial<F>,
     /// ra(r'_address, j)
-    H: Option<Vec<MultilinearPolynomial<F>>>,
+    H: Vec<MultilinearPolynomial<F>>,
     /// eq(r_address, r'_address)
     eq_r_r: F,
 }
@@ -49,7 +49,7 @@ pub struct BooleanitySumcheck<F: JoltField> {
     gamma_powers: Vec<F>,
     prover_state: Option<BooleanityProverState<F>>,
     current_round: usize,
-    addresses: Option<Vec<Option<u64>>>,
+    addresses: Vec<Option<u64>>,
 }
 
 impl<F: JoltField> BooleanitySumcheck<F> {
@@ -141,10 +141,10 @@ impl<F: JoltField> BooleanitySumcheck<F> {
 
         let prover_state = BooleanityProverState {
             B,
-            F: Some(F),
-            G: Some(G_arrays),
+            F,
+            G: G_arrays,
             D,
-            H: None,
+            H: vec![],
             eq_r_r: F::zero(),
         };
 
@@ -156,7 +156,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             gamma_powers,
             prover_state: Some(prover_state),
             current_round: 0,
-            addresses: Some(addresses),
+            addresses,
         }
     }
 
@@ -194,7 +194,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             gamma_powers,
             prover_state: None,
             current_round: 0,
-            addresses: None,
+            addresses: vec![],
         }
     }
 }
@@ -235,8 +235,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
             prover_state.B.bind(r_j);
 
             // Update F for this round (see Equation 55)
-            let F = prover_state.F.as_mut().expect("F not initialized");
-            let (F_left, F_right) = F.split_at_mut(1 << round);
+            let (F_left, F_right) = prover_state.F.split_at_mut(1 << round);
             F_left
                 .par_iter_mut()
                 .zip(F_right.par_iter_mut())
@@ -250,7 +249,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
                 prover_state.eq_r_r = prover_state.B.current_scalar;
 
                 // Compute H polynomials for each decomposed part
-                let addresses = self.addresses.as_ref().expect("Addresses not set");
+                let addresses = &self.addresses;
 
                 let mut H_polys = Vec::with_capacity(self.d);
 
@@ -263,38 +262,32 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
                                 let address_i = (address
                                     >> (DTH_ROOT_OF_K.log_2() * (self.d - 1 - i)))
                                     % DTH_ROOT_OF_K as u64;
-                                prover_state.F.as_ref().unwrap()[address_i as usize]
+                                prover_state.F[address_i as usize]
                             })
                         })
                         .collect();
                     H_polys.push(MultilinearPolynomial::from(H_vec));
                 }
 
-                prover_state.H = Some(H_polys);
+                prover_state.H = H_polys;
 
                 // Drop G arrays and F array as they're no longer needed in phase 2
-                if let Some(g) = prover_state.G.take() {
-                    drop_in_background_thread(g);
-                }
-                if let Some(f) = prover_state.F.take() {
-                    drop_in_background_thread(f);
-                }
+                let g = std::mem::take(&mut prover_state.G);
+                drop_in_background_thread(g);
+                
+                let f = std::mem::take(&mut prover_state.F);
+                drop_in_background_thread(f);
 
                 // Drop addresses as it's no longer needed in phase 2
-                if let Some(addresses) = self.addresses.take() {
-                    drop_in_background_thread(addresses);
-                }
+                let addresses = std::mem::take(&mut self.addresses);
+                drop_in_background_thread(addresses);
             }
         } else {
             // Phase 2: Bind D and all H polynomials
-            let h_polys = prover_state
-                .H
-                .as_mut()
-                .expect("H polynomials not initialized");
 
             // Bind D and all H polynomials
             prover_state.D.bind(r_j);
-            h_polys
+            prover_state.H
                 .par_iter_mut()
                 .for_each(|h_poly| h_poly.bind_parallel(r_j, BindingOrder::LowToHigh));
         }
@@ -355,8 +348,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
             .as_ref()
             .expect("Prover state not initialized");
 
-        let h_polys = prover_state.H.as_ref().expect("H polys not initialized");
-        let claims: Vec<F> = h_polys
+        let claims: Vec<F> = prover_state.H
             .iter()
             .map(|h_poly| h_poly.final_sumcheck_claim())
             .collect();
@@ -406,13 +398,13 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                     let mut coeffs = [F::zero(); DEGREE - 1];
 
                     for i in 0..self.d {
-                        let G_i = &prover_state.G.as_ref().unwrap()[i];
+                        let G_i = &prover_state.G[i];
                         let inner_sum = G_i[k_prime << m..(k_prime + 1) << m]
                             .par_iter()
                             .enumerate()
                             .map(|(k, &G_k)| {
                                 let k_m = k >> (m - 1);
-                                let F_k = prover_state.F.as_ref().unwrap()[k % (1 << (m - 1))];
+                                let F_k = prover_state.F[k % (1 << (m - 1))];
                                 let G_times_F = G_k * F_k;
 
                                 // For c \in {0, infty} compute:
@@ -463,14 +455,14 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                             let mut coeffs = [F::zero(); DEGREE - 1];
 
                             for i in 0..self.d {
-                                let G_i = &prover_state.G.as_ref().unwrap()[i];
+                                let G_i = &prover_state.G[i];
                                 let inner_sum = G_i[k_prime << m..(k_prime + 1) << m]
                                     .par_iter()
                                     .enumerate()
                                     .map(|(k, &G_k)| {
                                         let k_m = k >> (m - 1);
                                         let F_k =
-                                            prover_state.F.as_ref().unwrap()[k % (1 << (m - 1))];
+                                            prover_state.F[k % (1 << (m - 1))];
                                         let G_times_F = G_k * F_k;
 
                                         let eval_infty = G_times_F * F_k;
@@ -516,10 +508,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
-        let h_polys = prover_state
-            .H
-            .as_ref()
-            .expect("H polynomials not initialized");
         const DEGREE: usize = 3;
 
         let D = &prover_state.D;
@@ -534,7 +522,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                     let mut coeffs = [F::zero(); DEGREE - 1];
 
                     for i in 0..self.d {
-                        let h_poly = &h_polys[i];
+                        let h_poly = &prover_state.H[i];
 
                         let h_0 = h_poly.get_bound_coeff(2 * j_prime); // h(0)
                         let h_1 = h_poly.get_bound_coeff(2 * j_prime + 1); // h(1)
@@ -574,7 +562,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                             let mut coeffs = [F::zero(); DEGREE - 1];
 
                             for i in 0..self.d {
-                                let h_poly = &h_polys[i];
+                                let h_poly = &prover_state.H[i];
 
                                 let h_0 = h_poly.get_bound_coeff(2 * j_prime); // h(0)
                                 let h_1 = h_poly.get_bound_coeff(2 * j_prime + 1); // h(1)

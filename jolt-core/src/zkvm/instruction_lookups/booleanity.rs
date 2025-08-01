@@ -34,11 +34,11 @@ const DEGREE: usize = 3;
 struct BooleanityProverState<F: JoltField> {
     B: GruenSplitEqPolynomial<F>,
     D: GruenSplitEqPolynomial<F>,
-    G: Option<[Vec<F>; D]>,
-    H_indices: Option<[Vec<usize>; D]>,
-    H: Option<[MultilinearPolynomial<F>; D]>,
-    F: Option<Vec<F>>,
-    eq_r_r: Option<F>,
+    G: [Vec<F>; D],
+    H_indices: [Vec<usize>; D],
+    H: [MultilinearPolynomial<F>; D],
+    F: Vec<F>,
+    eq_r_r: F,
 }
 
 pub struct BooleanitySumcheck<F: JoltField> {
@@ -129,11 +129,11 @@ impl<F: JoltField> BooleanityProverState<F> {
         BooleanityProverState {
             B,
             D: GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh),
-            G: Some(G),
-            H_indices: Some(H_indices),
-            H: None,
-            F: Some(F),
-            eq_r_r: None,
+            G,
+            H_indices,
+            H: std::array::from_fn(|_| MultilinearPolynomial::from(vec![F::zero()])),
+            F,
+            eq_r_r: F::zero(),
         }
     }
 }
@@ -173,8 +173,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
             // Phase 1: Bind B and update F
             ps.B.bind(r_j);
             // Update F for this round (see Equation 55)
-            let F = ps.F.as_mut().expect("F not initialized");
-            let (F_left, F_right) = F.split_at_mut(1 << round);
+            let (F_left, F_right) = ps.F.split_at_mut(1 << round);
             F_left
                 .par_iter_mut()
                 .zip(F_right.par_iter_mut())
@@ -183,32 +182,32 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
                     *x -= *y;
                 });
             if round == LOG_K_CHUNK - 1 {
-                let mut h_indices = ps.H_indices.take().expect("H_indices not initialized");
-                let f_ref = ps.F.as_ref().expect("F not initialized");
-                ps.H = Some(std::array::from_fn(|i| {
+                let mut h_indices = std::mem::take(&mut ps.H_indices);
+                let f_ref = &ps.F;
+                ps.H = std::array::from_fn(|i| {
                     let coeffs: Vec<F> = std::mem::take(&mut h_indices[i])
                         .into_par_iter()
                         .map(|j| f_ref[j])
                         .collect();
                     MultilinearPolynomial::from(coeffs)
-                }));
-                ps.eq_r_r = Some(ps.B.current_scalar);
+                });
+                ps.eq_r_r = ps.B.current_scalar;
 
                 // Drop G arrays, F array, and remaining H_indices as they're no longer needed in phase 2
-                if let Some(g) = ps.G.take() {
-                    drop_in_background_thread(g);
-                }
-                if let Some(f) = ps.F.take() {
-                    drop_in_background_thread(f);
-                }
+                // Replace G with empty vectors
+                let g: [Vec<F>; D] = std::array::from_fn(|i| std::mem::take(&mut ps.G[i]));
+                drop_in_background_thread(g);
+                
+                let f = std::mem::take(&mut ps.F);
+                drop_in_background_thread(f);
+                
                 drop_in_background_thread(h_indices);
             }
         } else {
             // Phase 2: Bind D and H
             ps.D.bind(r_j);
-            ps.H.as_mut()
-                .unwrap()
-                .into_par_iter()
+            ps.H
+                .par_iter_mut()
                 .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
         }
     }
@@ -260,8 +259,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
     ) {
         let ps = self.prover_state.as_ref().unwrap();
         let ra_claims =
-            ps.H.as_ref()
-                .unwrap()
+            ps.H
                 .iter()
                 .map(|ra| ra.final_sumcheck_claim())
                 .collect::<Vec<F>>();
@@ -309,9 +307,9 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                         .into_par_iter()
                         .map(|k| {
                             let k_m = k >> (m - 1);
-                            let F_k = p.F.as_ref().unwrap()[k % (1 << (m - 1))];
+                            let F_k = p.F[k % (1 << (m - 1))];
                             let k_G = (k_prime << m) + k;
-                            let G_ref = p.G.as_ref().unwrap();
+                            let G_ref = &p.G;
                             let G_times_F = G_ref
                                 .iter()
                                 .zip(self.gamma.iter())
@@ -363,9 +361,9 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                                 .into_par_iter()
                                 .map(|k| {
                                     let k_m = k >> (m - 1);
-                                    let F_k = p.F.as_ref().unwrap()[k % (1 << (m - 1))];
+                                    let F_k = p.F[k % (1 << (m - 1))];
                                     let k_G = (k_prime << m) + k;
-                                    let G_ref = p.G.as_ref().unwrap();
+                                    let G_ref = &p.G;
                                     let G_times_F = G_ref
                                         .iter()
                                         .zip(self.gamma.iter())
@@ -409,7 +407,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
     fn compute_phase2_message(&self, _round: usize, previous_claim: F) -> Vec<F> {
         let p = self.prover_state.as_ref().unwrap();
         let D_poly = &p.D;
-        let H = p.H.as_ref().unwrap();
+        let H = &p.H;
 
         let quadratic_coeffs: [F; DEGREE - 1] = if D_poly.E_in_current_len() == 1 {
             // E_in is fully bound
@@ -489,14 +487,14 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         };
 
         // Adjust the previous claim by dividing out eq_r_r
-        let adjusted_claim = previous_claim / p.eq_r_r.unwrap();
+        let adjusted_claim = previous_claim / p.eq_r_r;
 
         let gruen_evals =
             D_poly.gruen_evals_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], adjusted_claim);
         vec![
-            p.eq_r_r.unwrap() * gruen_evals[0],
-            p.eq_r_r.unwrap() * gruen_evals[1],
-            p.eq_r_r.unwrap() * gruen_evals[2],
+            p.eq_r_r * gruen_evals[0],
+            p.eq_r_r * gruen_evals[1],
+            p.eq_r_r * gruen_evals[2],
         ]
     }
 }
