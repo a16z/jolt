@@ -9,7 +9,9 @@ use std::ops::{Index, IndexMut};
 use strum::EnumCount;
 use strum_macros::EnumCount as EnumCountMacro;
 
-const ZERO_REGISTER_PREPEND: usize = 1; // The zkVM prepends a no-op instruction to the program code, so all instruction addresses must account for this offset.
+/// Used to calculate the zkVM address's from the execution trace.
+/// Since the 0 address is reserved for the zero register, we prepend a 1 to the address's in the execution trace.
+const ZERO_REGISTER_PREPEND: usize = 1;
 
 /// Represents a step in the execution trace, where an execution trace is a `Vec<ONNXCycle>`.
 /// Records what the VM did at a cycle of execution.
@@ -31,6 +33,7 @@ impl ONNXCycle {
     }
 
     // HACKS(Forpee): These methods are going to be removed once we 1. migrate runtime to 64-bit and 2. allow jolt-prover to intake tensor ops at each cycle.
+    // TODO: Also Refactor execution trace.
     pub fn td(&self) -> usize {
         self.instr.td.map_or(0, |td| td + ZERO_REGISTER_PREPEND)
     }

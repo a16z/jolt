@@ -1,5 +1,6 @@
 //! A state-of-the-art zkVM, called Jolt, which turns almost everything a VM does into reads and writes to memory.
 //! This includes the “fetch-decode-execute” logic of the VM.
+
 pub mod bytecode;
 pub mod instruction;
 pub mod instruction_lookups;
