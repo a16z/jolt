@@ -20,10 +20,6 @@ impl<const WORD_SIZE: usize> InstructionFlags for BEQInstruction<WORD_SIZE> {
         flags[CircuitFlags::LeftOperandIsRs1Value as usize] = true;
         flags[CircuitFlags::RightOperandIsRs2Value as usize] = true;
         flags[CircuitFlags::Branch as usize] = true;
-        // flags[CircuitFlags::InlineSequenceInstruction as usize] =
-        //     self.virtual_sequence_remaining.is_some();
-        // flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
-        //     self.virtual_sequence_remaining.unwrap_or(0) != 0;
         flags
     }
 }
