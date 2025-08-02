@@ -43,15 +43,3 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for ADD<WORD_SIZE> {
         }
     }
 }
-
-// impl<const WORD_SIZE: usize> TestInstructionTrait for ADD<WORD_SIZE> {
-//     fn random(rng: &mut StdRng) -> Self {
-//         match WORD_SIZE {
-//             #[cfg(test)]
-//             8 => Self(rng.next_u64() % (1 << 8), rng.next_u64() % (1 << 8)),
-//             32 => Self(rng.next_u32() as u64, rng.next_u32() as u64),
-//             64 => Self(rng.next_u64(), rng.next_u64()),
-//             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
-//         }
-//     }
-// }

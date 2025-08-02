@@ -31,8 +31,6 @@ pub enum CommittedPolynomials {
     WriteLookupOutputToRD,
     /// Inc polynomial for the registers instance of Twist
     RdInc,
-    // /// Inc polynomial for the RAM instance of Twist
-    // RamInc,
     /// One-hot ra polynomial for the instruction lookups instance of Shout.
     /// There are four (d=4) of these polynomials, `InstructionRa(0) .. InstructionRa(3)`
     InstructionRa(usize),
