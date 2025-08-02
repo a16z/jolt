@@ -42,8 +42,8 @@ pub enum CommittedPolynomials {
     // /// there is at most one load or store per cycle.
     // /// d = 1 right now hence we only ever use RamRa(0) for now.
     // RamRa(usize),
-    // /// Inc polynomial for the registers instance of Twist
-    // RdInc,
+    /// Inc polynomial for the registers instance of Twist
+    RdInc,
     // /// Inc polynomial for the RAM instance of Twist
     // RamInc,
     /// One-hot ra polynomial for the instruction lookups instance of Shout.
@@ -151,27 +151,7 @@ impl CommittedPolynomials {
                     })
                     .collect();
                 coeffs.into()
-            } //     CommittedPolynomials::WritePCtoRD => {
-            //         let coeffs: Vec<u8> = trace
-            //             .par_iter()
-            //             .map(|cycle| {
-            //                 let flag = cycle.instruction().circuit_flags()[CircuitFlags::Jump as usize];
-            //                 (cycle.rd_write().0 as u8) * (flag as u8)
-            //             })
-            //             .collect();
-            //         coeffs.into()
-            //     }
-            //     CommittedPolynomials::ShouldBranch => {
-            //         let coeffs: Vec<u8> = trace
-            //             .par_iter()
-            //             .map(|cycle| {
-            //                 let is_branch =
-            //                     cycle.instruction().circuit_flags()[CircuitFlags::Branch as usize];
-            //                 (LookupQuery::<32>::to_lookup_output(cycle) as u8) * is_branch as u8
-            //             })
-            //             .collect();
-            //         coeffs.into()
-            //     }
+            }
             //     CommittedPolynomials::BytecodeRa => {
             //         let addresses: Vec<usize> = preprocessing
             //             .shared
@@ -201,16 +181,17 @@ impl CommittedPolynomials {
             //         let K = addresses.par_iter().max().unwrap().next_power_of_two();
             //         MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(addresses, K))
             //     }
-            //     CommittedPolynomials::RdInc => {
-            //         let coeffs: Vec<i64> = trace
-            //             .par_iter()
-            //             .map(|cycle| {
-            //                 let (_, pre_value, post_value) = cycle.rd_write();
-            //                 post_value as i64 - pre_value as i64
-            //             })
-            //             .collect();
-            //         coeffs.into()
-            //     }
+            CommittedPolynomials::RdInc => {
+                let coeffs: Vec<i64> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        let pre_val = cycle.td_pre_val();
+                        let post_val = cycle.td_post_val();
+                        post_val as i64 - pre_val as i64
+                    })
+                    .collect();
+                coeffs.into()
+            }
             //     CommittedPolynomials::RamInc => {
             //         let coeffs: Vec<i64> = trace
             //             .par_iter()

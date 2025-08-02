@@ -3,6 +3,7 @@
 //! Used by the runtime to generate an execution trace for ONNX runtime execution.
 
 use crate::{constants::MEMORY_OPS_PER_INSTRUCTION, tensor::Tensor};
+use core::panic;
 use serde::{Deserialize, Serialize};
 use std::ops::{Index, IndexMut};
 use strum::EnumCount;
@@ -32,6 +33,21 @@ impl ONNXCycle {
     }
 
     // HACKS(Forpee): These methods are going to be removed once we 1. migrate runtime to 64-bit and 2. allow jolt-prover to intake tensor ops at each cycle.
+    pub fn td_write(&self) -> (usize, u64, u64) {
+        (self.td(), self.td_pre_val(), self.td_post_val())
+    }
+    pub fn ts1_read(&self) -> (usize, u64) {
+        match self.to_memory_ops()[0] {
+            MemoryOp::Read(ts1, ts1_val) => (ts1 as usize, ts1_val),
+            _ => panic!("Expected ts1 to be a read operation"),
+        }
+    }
+    pub fn ts2_read(&self) -> (usize, u64) {
+        match self.to_memory_ops()[1] {
+            MemoryOp::Read(ts2, ts2_val) => (ts2 as usize, ts2_val),
+            _ => panic!("Expected ts2 to be a read operation"),
+        }
+    }
     pub fn td_post_val(&self) -> u64 {
         self.memory_state
             .td_post_val
@@ -40,6 +56,7 @@ impl ONNXCycle {
             .unwrap_or(0)
     }
     pub fn td_pre_val(&self) -> u64 {
+        // FIXME: This is not correct for input and const nodes
         // This value is only written to once
         0
     }
