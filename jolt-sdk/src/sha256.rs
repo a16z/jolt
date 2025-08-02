@@ -43,7 +43,7 @@ impl Sha256 {
             buffer: [MaybeUninit::uninit(); 16],
             buffer_len: 0,
             total_len: 0,
-            initial: false,
+            initial: true,
         }
     }
 
@@ -378,8 +378,8 @@ pub unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
 #[cfg(not(feature = "host"))]
 pub unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
     core::arch::asm!(
-        // ".insn r 0x0B, 0x0, 0x00, x0, {}, {}",  // SHA256 Instruction
-        ".insn r 0x2B, 0x0, 0x00, x0, {}, {}",     // PRECOMPILE SHA256 Instruction   
+        // ".insn r 0x0B, 0x1, 0x00, x0, {}, {}",  // SHA256 Instruction
+        ".insn r 0x2B, 0x1, 0x00, x0, {}, {}",     // PRECOMPILE SHA256 Instruction   
         in(reg) input,
         in(reg) state,
         options(nostack)
