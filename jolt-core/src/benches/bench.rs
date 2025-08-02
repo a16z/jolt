@@ -35,14 +35,11 @@ pub enum BenchType {
     Twist,
 }
 
-
-
-
 /// Dynamic Extension Code
 use tracer::emulator::cpu::Cpu;
-use tracer::instruction::precompile::PRECOMPILE;
+use tracer::instruction::inline::INLINE;
 use tracer::instruction::{RISCVInstruction, RV32IMInstruction};
-use tracer::register_precompile;
+use tracer::{register_inline, list_registered_inlines};
 
 use crate::benches::generator;
 
@@ -126,13 +123,16 @@ pub fn execute_sha256_compression(initial_state: [u32; 8], input: [u32; 16]) -> 
     ]
 }
 
-
-
-fn sha2_precompile(instr: &PRECOMPILE, cpu: &mut Cpu, _ram_access: &mut <PRECOMPILE as RISCVInstruction>::RAMAccess) {
+fn sha2_exec(
+    instr: &INLINE,
+    cpu: &mut Cpu,
+    _ram_access: &mut <INLINE as RISCVInstruction>::RAMAccess,
+) {
     // Load 16 input words from memory at rs1
     let mut input = [0u32; 16];
     for (i, word) in input.iter_mut().enumerate() {
-        *word = cpu.mmu
+        *word = cpu
+            .mmu
             .load_word(cpu.x[instr.operands.rs1].wrapping_add((i * 4) as i64) as u64)
             .expect("SHA256: Failed to load input word")
             .0;
@@ -141,7 +141,8 @@ fn sha2_precompile(instr: &PRECOMPILE, cpu: &mut Cpu, _ram_access: &mut <PRECOMP
     // Load 8 initial state words from memory at rs2
     let mut iv = [0u32; 8];
     for (i, word) in iv.iter_mut().enumerate() {
-        *word = cpu.mmu
+        *word = cpu
+            .mmu
             .load_word(cpu.x[instr.operands.rs2].wrapping_add((i * 4) as i64) as u64)
             .expect("SHA256: Failed to load initial state")
             .0;
@@ -164,51 +165,48 @@ pub const fn virtual_register_index(index: u64) -> u64 {
     index + VIRTUAL_REGISTER_COUNT
 }
 
-// Builder for sha256 - returns empty sequence as XOR is atomic
-fn sha2_builder(_address: u64, _rs1: usize, _rs2: usize) -> Vec<RV32IMInstruction> {
+// Virtual instructions builder for sha256 - returns empty sequence as XOR is atomic
+fn sha2_virtual_sequence_builder(_address: u64, _rs1: usize, _rs2: usize) -> Vec<RV32IMInstruction> {
     // Virtual registers used as a scratch space
     let mut vr = [0; 32];
     (0..32).for_each(|i| {
         vr[i] = virtual_register_index(i as u64) as usize;
     });
     let builder = generator::Sha256SequenceBuilder::new(
-        _address,
-        vr,
-        _rs1,
-        _rs2,
-        false, // not initial - uses custom IV from rs2
+        _address, vr, _rs1, _rs2, false, // not initial - uses custom IV from rs2
     );
     builder.build()
 }
 
-// Initialize and register precompiles
-pub fn init_precompiles() -> Result<(), String> {
+// Initialize and register inlines
+pub fn init_inlines() -> Result<(), String> {
     // Register SHA256 with funct7=0x00 (matching the SDK's assembly instruction)
-    register_precompile(0x00, "SHA256_PRECOMPILE", 
-        std::boxed::Box::new(sha2_precompile), 
-        std::boxed::Box::new(sha2_builder))?;
-    
+    register_inline(
+        0x00,
+        0x00,
+        "SHA256_INLINE",
+        std::boxed::Box::new(sha2_exec),
+        std::boxed::Box::new(sha2_virtual_sequence_builder),
+    )?;
+
     // Also register with funct7=0x01 for compatibility
-    register_precompile(0x01, "SHA2_PRECOMPILE", 
-        std::boxed::Box::new(sha2_precompile), 
-        std::boxed::Box::new(sha2_builder))?;
-    
+    register_inline(
+        0x01,
+        0x00,
+        "SHA2_INLINE",
+        std::boxed::Box::new(sha2_exec),
+        std::boxed::Box::new(sha2_virtual_sequence_builder),
+    )?;
+
     Ok(())
 }
 
-// Optional: Use ctor for automatic registration when the library loads
 #[ctor::ctor]
 fn auto_register() {
-    if let Err(e) = init_precompiles() {
-        eprintln!("Failed to register precompiles: {}", e);
+    if let Err(e) = init_inlines() {
+        eprintln!("Failed to register inlines: {}", e);
     }
 }
-
-
-
-
-
-
 
 #[allow(unreachable_patterns)] // good errors on new BenchTypes
 pub fn benchmarks(
@@ -465,6 +463,12 @@ where
     let task = move || {
         let (trace, final_memory_state, io_device) = program.trace(&inputs);
         let (bytecode, init_memory_state) = program.decode();
+
+        println!(
+            "Trace Length: {}  ----   Bytecode Length: {}",
+            trace.len(),
+            bytecode.len()
+        );
 
         let preprocessing: JoltProverPreprocessing<F, PCS, ProofTranscript> =
             RV32IJoltVM::prover_preprocess(

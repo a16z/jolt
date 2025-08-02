@@ -1,5 +1,22 @@
-use tracer::instruction::{add::ADD, addi::ADDI, and::AND, andi::ANDI, format::{format_i::FormatI, format_load::FormatLoad, format_r::FormatR, format_s::FormatS, format_virtual_right_shift_i::FormatVirtualRightShiftI}, inline_sha256::{BLOCK, K}, lw::LW, srli::SRLI, sw::SW, virtual_rotri::VirtualROTRI, xor::XOR, xori::XORI, RV32IMInstruction};
 use self::Value::{Imm, Reg};
+use tracer::instruction::{
+    add::ADD,
+    addi::ADDI,
+    and::AND,
+    andi::ANDI,
+    format::{
+        format_i::FormatI, format_load::FormatLoad, format_r::FormatR, format_s::FormatS,
+        format_virtual_right_shift_i::FormatVirtualRightShiftI,
+    },
+    inline_sha256::{BLOCK, K},
+    lw::LW,
+    srli::SRLI,
+    sw::SW,
+    virtual_rotri::VirtualROTRI,
+    xor::XOR,
+    xori::XORI,
+    RV32IMInstruction,
+};
 
 /// Number of virtual registers needed for SHA256 computation
 /// Layout:
@@ -8,7 +25,6 @@ use self::Value::{Imm, Reg};
 /// - 24..27: Temporary registers (t1, t2, scratch space)
 /// - 28..31: Initial E-H values when using custom IV
 pub const NEEDED_REGISTERS: usize = 32;
-
 
 #[derive(Clone, Copy)]
 enum Value {
@@ -413,4 +429,3 @@ impl Sha256SequenceBuilder {
         self.xor(rotri, rotri2, rd)
     }
 }
-

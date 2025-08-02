@@ -321,11 +321,6 @@ impl Default for Sha256 {
     }
 }
 
-
-
-// ".insn r 0x0B, 0x0, 0x00, x0, {}, {}",  // SHA256 (custom-0)
-// ".insn r 0x2B, 0x0, 0x00, x0, {}, {}",  // PRECOMPILE (custom-1)
-
 /// Calls the SHA256 compression custom instruction
 ///
 /// # Arguments
@@ -340,8 +335,8 @@ impl Default for Sha256 {
 #[cfg(not(feature = "host"))]
 pub unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
     core::arch::asm!(
-        // Using custom-1 opcode (0x2B) for PRECOMPILE
-        ".insn r 0x2B, 0x0, 0x00, x0, {}, {}",
+        // ".insn r 0x0B, 0x0, 0x00, x0, {}, {}",  // SHA256 Instruction
+        ".insn r 0x2B, 0x0, 0x00, x0, {}, {}",     // PRECOMPILE SHA256 Instruction        
         in(reg) input,
         in(reg) state,
         options(nostack)
@@ -383,8 +378,8 @@ pub unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
 #[cfg(not(feature = "host"))]
 pub unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
     core::arch::asm!(
-        // Using custom-1 opcode (0x2B) with funct7=0x1 for initial compression
-        ".insn r 0x2B, 0x0, 0x00, x0, {}, {}",
+        // ".insn r 0x0B, 0x0, 0x00, x0, {}, {}",  // SHA256 Instruction
+        ".insn r 0x2B, 0x0, 0x00, x0, {}, {}",     // PRECOMPILE SHA256 Instruction   
         in(reg) input,
         in(reg) state,
         options(nostack)
