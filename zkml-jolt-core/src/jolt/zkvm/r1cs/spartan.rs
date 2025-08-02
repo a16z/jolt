@@ -214,9 +214,7 @@ where
             outer_sumcheck_proof,
             outer_sumcheck_claims,
             inner_sumcheck_proof,
-            // shift_sumcheck_proof,
             claimed_witness_evals,
-            // shift_sumcheck_witness_eval,
             _marker: PhantomData,
         })
     }

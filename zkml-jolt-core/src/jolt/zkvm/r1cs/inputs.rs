@@ -28,26 +28,14 @@ pub struct R1CSProof<F: JoltField, ProofTranscript: Transcript> {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum JoltONNXR1CSInputs {
-    // PC, // Virtual (bytecode raf)
-    // UnexpandedPC, // Virtual (bytecode rv)
     Rd, // Virtual (bytecode rv)
-    // Imm,          // Virtual (bytecode rv)
-    // RamAddress,   // Virtual (RAM raf)
-    // Rs1Value, // Virtual (registers rv)
-    // Rs2Value, // Virtual (registers rv)
     RdWriteValue,
-    // RamReadValue, // Virtual (RAM rv)
-    // RamWriteValue,
     LeftInstructionInput,  // to_lookup_query -> to_instruction_operands
     RightInstructionInput, // to_lookup_query -> to_instruction_operands
     LeftLookupOperand,     // Virtual (instruction raf)
     RightLookupOperand,    // Virtual (instruction raf)
     Product,               // LeftInstructionOperand * RightInstructionOperand
     WriteLookupOutputToRD,
-    // WritePCtoRD,
-    // ShouldBranch,
-    // NextUnexpandedPC, // Virtual (spartan shift sumcheck)
-    // NextPC,           // Virtual (spartan shift sumcheck)
     LookupOutput, // Virtual (instruction rv)
     OpFlags(CircuitFlags),
 }
@@ -59,39 +47,15 @@ pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs; 13] = [
     JoltONNXR1CSInputs::RightInstructionInput,
     JoltONNXR1CSInputs::Product,
     JoltONNXR1CSInputs::WriteLookupOutputToRD,
-    // JoltONNXR1CSInputs::WritePCtoRD,
-    // JoltONNXR1CSInputs::ShouldBranch,
-    // JoltONNXR1CSInputs::PC,
-    // JoltONNXR1CSInputs::UnexpandedPC,
     JoltONNXR1CSInputs::Rd,
-    // JoltONNXR1CSInputs::Imm,
-    // JoltONNXR1CSInputs::RamAddress,
-    // JoltONNXR1CSInputs::Rs1Value,
-    // JoltONNXR1CSInputs::Rs2Value,
     JoltONNXR1CSInputs::RdWriteValue,
-    // JoltONNXR1CSInputs::RamReadValue,
-    // JoltONNXR1CSInputs::RamWriteValue,
     JoltONNXR1CSInputs::LeftLookupOperand,
     JoltONNXR1CSInputs::RightLookupOperand,
-    // JoltONNXR1CSInputs::NextUnexpandedPC,
-    // JoltONNXR1CSInputs::NextPC,
     JoltONNXR1CSInputs::LookupOutput,
-    // JoltONNXR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsRs1Value),
-    // JoltONNXR1CSInputs::OpFlags(CircuitFlags::RightOperandIsRs2Value),
-    // JoltONNXR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsPC),
-    // JoltONNXR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm),
     JoltONNXR1CSInputs::OpFlags(CircuitFlags::AddOperands),
     JoltONNXR1CSInputs::OpFlags(CircuitFlags::SubtractOperands),
     JoltONNXR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands),
-    // JoltONNXR1CSInputs::OpFlags(CircuitFlags::Load),
-    // JoltONNXR1CSInputs::OpFlags(CircuitFlags::Store),
-    // JoltONNXR1CSInputs::OpFlags(CircuitFlags::Jump),
-    // JoltONNXR1CSInputs::OpFlags(CircuitFlags::Branch),
     JoltONNXR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD),
-    // JoltONNXR1CSInputs::OpFlags(CircuitFlags::InlineSequenceInstruction),
-    // JoltONNXR1CSInputs::OpFlags(CircuitFlags::Assert),
-    // JoltONNXR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC),
-    // JoltONNXR1CSInputs::OpFlags(CircuitFlags::Advice),
 ];
 
 /// The subset of `ALL_R1CS_INPUTS` that are committed. The rest of
@@ -101,8 +65,6 @@ pub const COMMITTED_R1CS_INPUTS: [JoltONNXR1CSInputs; 4] = [
     JoltONNXR1CSInputs::RightInstructionInput,
     JoltONNXR1CSInputs::Product,
     JoltONNXR1CSInputs::WriteLookupOutputToRD,
-    // JoltONNXR1CSInputs::WritePCtoRD,
-    // JoltONNXR1CSInputs::ShouldBranch,
 ];
 
 impl JoltONNXR1CSInputs {
@@ -136,88 +98,14 @@ impl JoltONNXR1CSInputs {
         ProofTranscript: Transcript,
     {
         match self {
-            // JoltONNXR1CSInputs::PC => {
-            //     let coeffs: Vec<u64> = preprocessing
-            //         .shared
-            //         .bytecode
-            //         .map_trace_to_pc(trace)
-            //         .collect();
-            //     coeffs.into()
-            // }
-            //     JoltONNXR1CSInputs::NextPC => {
-            //         let coeffs: Vec<u64> = preprocessing
-            //             .shared
-            //             .bytecode
-            //             .map_trace_to_pc(&trace[1..])
-            //             .chain(rayon::iter::once(0))
-            //             .collect();
-            //         coeffs.into()
-            //     }
-            //     JoltONNXR1CSInputs::UnexpandedPC => {
-            //         let coeffs: Vec<u64> = trace
-            //             .par_iter()
-            //             .map(|cycle| cycle.instruction().normalize().address as u64)
-            //             .collect();
-            //         coeffs.into()
-            //     }
             JoltONNXR1CSInputs::Rd => {
                 let coeffs: Vec<u8> = trace.par_iter().map(|cycle| cycle.td() as u8).collect();
                 coeffs.into()
             }
-            //     JoltONNXR1CSInputs::Imm => {
-            //         let coeffs: Vec<i64> = trace
-            //             .par_iter()
-            //             .map(|cycle| cycle.instruction().normalize().operands.imm)
-            //             .collect();
-            //         coeffs.into()
-            //     }
-            //     JoltONNXR1CSInputs::RamAddress => {
-            //         let coeffs: Vec<u64> = trace
-            //             .par_iter()
-            //             .map(|cycle| cycle.ram_access().address() as u64)
-            //             .collect();
-            //         coeffs.into()
-            //     }
-            //     JoltONNXR1CSInputs::Rs1Value => {
-            //         let coeffs: Vec<u64> = trace.par_iter().map(|cycle| cycle.rs1_read().1).collect();
-            //         coeffs.into()
-            //     }
-            //     JoltONNXR1CSInputs::Rs2Value => {
-            //         let coeffs: Vec<u64> = trace.par_iter().map(|cycle| cycle.rs2_read().1).collect();
-            //         coeffs.into()
-            //     }
             JoltONNXR1CSInputs::RdWriteValue => {
                 let coeffs: Vec<u64> = trace.par_iter().map(|cycle| cycle.td_post_val()).collect();
                 coeffs.into()
             }
-            //     JoltONNXR1CSInputs::RamReadValue => {
-            //         let coeffs: Vec<u64> = trace
-            //             .par_iter()
-            //             .map(|cycle| match cycle.ram_access() {
-            //                 tracer::instruction::RAMAccess::Read(read) => read.value,
-            //                 tracer::instruction::RAMAccess::Write(write) => write.pre_value,
-            //                 tracer::instruction::RAMAccess::NoOp => 0,
-            //                 tracer::instruction::RAMAccess::Atomic(_) => {
-            //                     unimplemented!("Atomic instructions are mapped to virtual sequences")
-            //                 }
-            //             })
-            //             .collect();
-            //         coeffs.into()
-            //     }
-            //     JoltONNXR1CSInputs::RamWriteValue => {
-            //         let coeffs: Vec<u64> = trace
-            //             .par_iter()
-            //             .map(|cycle| match cycle.ram_access() {
-            //                 tracer::instruction::RAMAccess::Read(read) => read.value,
-            //                 tracer::instruction::RAMAccess::Write(write) => write.post_value,
-            //                 tracer::instruction::RAMAccess::NoOp => 0,
-            //                 tracer::instruction::RAMAccess::Atomic(_) => {
-            //                     unimplemented!("Atomic instructions are mapped to virtual sequences")
-            //                 }
-            //             })
-            //             .collect();
-            //         coeffs.into()
-            //     }
             JoltONNXR1CSInputs::LeftInstructionInput => {
                 CommittedPolynomials::LeftInstructionInput.generate_witness(preprocessing, trace)
             }
@@ -254,9 +142,6 @@ impl JoltONNXR1CSInputs {
             JoltONNXR1CSInputs::WriteLookupOutputToRD => {
                 CommittedPolynomials::WriteLookupOutputToRD.generate_witness(preprocessing, trace)
             }
-            //     JoltONNXR1CSInputs::WritePCtoRD => {
-            //         CommittedPolynomials::WritePCtoRD.generate_witness(preprocessing, trace)
-            //     }
             JoltONNXR1CSInputs::LookupOutput => {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
@@ -269,38 +154,6 @@ impl JoltONNXR1CSInputs {
                     .collect();
                 coeffs.into()
             }
-            //     JoltONNXR1CSInputs::NextUnexpandedPC => {
-            //         let coeffs: Vec<u64> = trace
-            //             .par_iter()
-            //             .map(|cycle| {
-            //                 let is_branch =
-            //                     cycle.instruction().circuit_flags()[CircuitFlags::Branch as usize];
-            //                 let should_branch =
-            //                     is_branch && LookupQuery::<32>::to_lookup_output(cycle) != 0;
-            //                 let instr = cycle.instruction().normalize();
-            //                 if should_branch {
-            //                     (instr.address as i64 + instr.operands.imm) as u64
-            //                 } else {
-            //                     // JoltONNXR1CSInputs::NextPCJump
-            //                     let is_jump =
-            //                         cycle.instruction().circuit_flags()[CircuitFlags::Jump as usize];
-            //                     let do_not_update_pc = cycle.instruction().circuit_flags()
-            //                         [CircuitFlags::DoNotUpdateUnexpandedPC as usize];
-            //                     if is_jump {
-            //                         LookupQuery::<32>::to_lookup_output(cycle)
-            //                     } else if do_not_update_pc {
-            //                         instr.address as u64
-            //                     } else {
-            //                         instr.address as u64 + 4
-            //                     }
-            //                 }
-            //             })
-            //             .collect();
-            //         coeffs.into()
-            //     }
-            //     JoltONNXR1CSInputs::ShouldBranch => {
-            //         CommittedPolynomials::ShouldBranch.generate_witness(preprocessing, trace)
-            //     }
             JoltONNXR1CSInputs::OpFlags(flag) => {
                 let coeffs: Vec<u8> = trace
                     .par_iter()
