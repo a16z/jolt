@@ -1,5 +1,5 @@
 #![allow(clippy::needless_range_loop)]
-use crate::jolt::{witness::CommittedPolynomials, zkvm::JoltProverPreprocessing};
+use crate::jolt::{JoltProverPreprocessing, witness::CommittedPolynomials};
 use jolt_core::{
     field::{JoltField, OptimizedMul},
     poly::{

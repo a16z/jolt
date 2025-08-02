@@ -13,7 +13,7 @@ use jolt_core::{
 
 use jolt_core::jolt::instruction::LookupQuery;
 
-use crate::jolt::{lookup_trace::LookupTrace, zkvm::JoltProverPreprocessing};
+use crate::jolt::{JoltProverPreprocessing, lookup_trace::LookupTrace};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum CommittedPolynomials {

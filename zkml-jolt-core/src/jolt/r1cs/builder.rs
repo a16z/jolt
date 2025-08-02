@@ -1,5 +1,5 @@
-use crate::jolt::zkvm::r1cs::inputs::JoltONNXR1CSInputs;
-use crate::jolt::zkvm::r1cs::key::UniformR1CS;
+use crate::jolt::r1cs::inputs::JoltONNXR1CSInputs;
+use crate::jolt::r1cs::key::UniformR1CS;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::r1cs::builder::Constraint;
 use jolt_core::r1cs::ops::{LC, Term, Variable};

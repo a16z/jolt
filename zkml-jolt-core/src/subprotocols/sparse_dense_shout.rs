@@ -32,7 +32,7 @@ use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
 
 use crate::jolt::lookup_trace::LookupTrace;
-use crate::jolt::zkvm::onnx_vm::WORD_SIZE;
+use crate::jolt::lookup_trace::WORD_SIZE;
 
 /// Computes the bit-length of the suffix, for the current (`j`th) round
 /// of sumcheck.

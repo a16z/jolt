@@ -19,12 +19,12 @@ use std::marker::PhantomData;
 use thiserror::Error;
 use tracing::{Level, span};
 
-use crate::jolt::zkvm::JoltProverPreprocessing;
-use crate::jolt::zkvm::r1cs::builder::CombinedUniformBuilder;
-use crate::jolt::zkvm::r1cs::inputs::ALL_R1CS_INPUTS;
-use crate::jolt::zkvm::r1cs::key::UniformSpartanKey;
+use crate::jolt::JoltProverPreprocessing;
+use crate::jolt::r1cs::builder::CombinedUniformBuilder;
+use crate::jolt::r1cs::inputs::ALL_R1CS_INPUTS;
+use crate::jolt::r1cs::key::UniformSpartanKey;
 #[cfg(test)]
-use crate::jolt::zkvm::r1cs::spartan_interleaved_poly::SpartanInterleavedPolynomial;
+use crate::jolt::r1cs::spartan_interleaved_poly::SpartanInterleavedPolynomial;
 
 #[derive(Clone, Debug)]
 pub struct OuterSumcheckClaims<F: JoltField> {

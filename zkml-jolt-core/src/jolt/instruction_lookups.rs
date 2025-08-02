@@ -25,9 +25,7 @@ use jolt_core::{
 };
 
 use crate::{
-    jolt::{
-        lookup_trace::LookupTrace, witness::CommittedPolynomials, zkvm::JoltProverPreprocessing,
-    },
+    jolt::{JoltProverPreprocessing, lookup_trace::LookupTrace, witness::CommittedPolynomials},
     subprotocols::sparse_dense_shout::{prove_sparse_dense_shout, verify_sparse_dense_shout},
 };
 
