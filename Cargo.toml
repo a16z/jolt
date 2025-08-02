@@ -51,6 +51,7 @@ members = [
     "examples/overflow/guest",
     "examples/memory-ops",
     "examples/memory-ops/guest",
+    "examples/precompile-example",
 ]
 
 [features]

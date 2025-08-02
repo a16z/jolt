@@ -35,6 +35,45 @@ pub enum BenchType {
     Twist,
 }
 
+/// Dynamic Extension Code
+use tracer::emulator::cpu::Cpu;
+use tracer::instruction::inline::INLINE;
+use tracer::instruction::{RISCVInstruction, RV32IMInstruction};
+use tracer::{register_inline, list_registered_inlines};
+
+use crate::benches::{executor, virtual_generator};
+
+
+// Initialize and register inlines
+pub fn init_inlines() -> Result<(), String> {
+    // Register SHA256 with funct7=0x00 (matching the SDK's assembly instruction)
+    register_inline(
+        0x00,
+        0x00,
+        "SHA256_INLINE",
+        std::boxed::Box::new(executor::sha2_exec),
+        std::boxed::Box::new(virtual_generator::sha2_virtual_sequence_builder),
+    )?;
+
+    // Also register with funct7=0x01 for compatibility
+    register_inline(
+        0x01,
+        0x00,
+        "SHA256_INIT_INLINE",
+        std::boxed::Box::new(executor::sha2_init_exec),
+        std::boxed::Box::new(virtual_generator::sha2_init_virtual_sequence_builder),
+    )?;
+
+    Ok(())
+}
+
+#[ctor::ctor]
+fn auto_register() {
+    if let Err(e) = init_inlines() {
+        eprintln!("Failed to register inlines: {}", e);
+    }
+}
+
 #[allow(unreachable_patterns)] // good errors on new BenchTypes
 pub fn benchmarks(
     pcs_type: PCSType,
@@ -290,6 +329,12 @@ where
     let task = move || {
         let (trace, final_memory_state, io_device) = program.trace(&inputs);
         let (bytecode, init_memory_state) = program.decode();
+
+        println!(
+            "Trace Length: {}  ----   Bytecode Length: {}",
+            trace.len(),
+            bytecode.len()
+        );
 
         let preprocessing: JoltProverPreprocessing<F, PCS, ProofTranscript> =
             RV32IJoltVM::prover_preprocess(

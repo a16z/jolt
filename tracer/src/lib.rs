@@ -25,6 +25,7 @@ pub mod emulator;
 pub mod instruction;
 
 pub use common::jolt_device::JoltDevice;
+pub use instruction::inline::{list_registered_inlines, register_inline};
 
 use crate::emulator::memory::Memory;
 

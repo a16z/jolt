@@ -114,6 +114,8 @@ use virtual_srai::VirtualSRAI;
 use virtual_srl::VirtualSRL;
 use virtual_srli::VirtualSRLI;
 
+use self::inline::INLINE;
+
 use crate::emulator::cpu::Cpu;
 use derive_more::From;
 use format::{InstructionFormat, InstructionRegisterState, NormalizedOperands};
@@ -223,12 +225,12 @@ pub mod virtual_srl;
 pub mod virtual_srli;
 pub mod xor;
 pub mod xori;
-
 pub mod divuw;
 pub mod divw;
 pub mod mulw;
 pub mod remuw;
 pub mod remw;
+pub mod inline;
 
 #[cfg(test)]
 pub mod test;
@@ -354,6 +356,9 @@ macro_rules! define_rv32im_enums {
             $(
                 $instr($instr),
             )*
+            /// Inline instruction from external crates
+            #[serde(skip)]
+            INLINE(INLINE),
         }
 
         #[derive(
@@ -365,6 +370,7 @@ macro_rules! define_rv32im_enums {
             $(
                 $instr(RISCVCycle<$instr>),
             )*
+            INLINE(RISCVCycle<INLINE>),
         }
 
         impl RV32IMCycle {
@@ -374,6 +380,7 @@ macro_rules! define_rv32im_enums {
                     $(
                         RV32IMCycle::$instr(cycle) => cycle.ram_access.into(),
                     )*
+                    RV32IMCycle::INLINE(cycle) => cycle.ram_access.into(),
                 }
             }
 
@@ -386,6 +393,10 @@ macro_rules! define_rv32im_enums {
                             cycle.register_state.rs1_value(),
                         ),
                     )*
+                    RV32IMCycle::INLINE(cycle) => (
+                        cycle.instruction.operands.rs1,
+                        cycle.register_state.rs1_value(),
+                    ),
                 }
             }
 
@@ -398,6 +409,10 @@ macro_rules! define_rv32im_enums {
                             cycle.register_state.rs2_value(),
                         ),
                     )*
+                    RV32IMCycle::INLINE(cycle) => (
+                        cycle.instruction.operands.rs2,
+                        cycle.register_state.rs2_value(),
+                    ),
                 }
             }
 
@@ -411,6 +426,21 @@ macro_rules! define_rv32im_enums {
                             cycle.register_state.rd_values().1,
                         ),
                     )*
+                    RV32IMCycle::INLINE(cycle) => (
+                        cycle.instruction.operands.rd,
+                        cycle.register_state.rd_values().0,
+                        cycle.register_state.rd_values().1,
+                    ),
+                }
+            }
+
+            pub fn pc(&self) -> u64 {
+                match self {
+                    RV32IMCycle::NoOp(addr) => *addr as u64,
+                    $(
+                        RV32IMCycle::$instr(cycle) => cycle.instruction.address,
+                    )*
+                    RV32IMCycle::INLINE(cycle) => cycle.instruction.address,
                 }
             }
 
@@ -420,6 +450,7 @@ macro_rules! define_rv32im_enums {
                     $(
                         RV32IMCycle::$instr(cycle) => cycle.instruction.into(),
                     )*
+                    RV32IMCycle::INLINE(cycle) => cycle.instruction.into(),
                 }
             }
         }
@@ -432,6 +463,7 @@ macro_rules! define_rv32im_enums {
                     $(
                         RV32IMInstruction::$instr(instr) => instr.trace(cpu, trace),
                     )*
+                    RV32IMInstruction::INLINE(instr) => instr.trace(cpu, trace),
                 }
             }
 
@@ -449,6 +481,14 @@ macro_rules! define_rv32im_enums {
                             instr.execute(cpu, &mut cycle.ram_access);
                         }
                     )*
+                    RV32IMInstruction::INLINE(instr) => {
+                        let mut cycle: RISCVCycle<INLINE> = RISCVCycle {
+                            instruction: *instr,
+                            register_state: Default::default(),
+                            ram_access: Default::default(),
+                        };
+                        instr.execute(cpu, &mut cycle.ram_access);
+                    }
                 }
             }
 
@@ -468,6 +508,11 @@ macro_rules! define_rv32im_enums {
                             virtual_sequence_remaining: instr.virtual_sequence_remaining,
                         },
                     )*
+                    RV32IMInstruction::INLINE(instr) => NormalizedInstruction {
+                        address: instr.address as usize,
+                        operands: instr.operands.normalize(),
+                        virtual_sequence_remaining: instr.virtual_sequence_remaining,
+                    },
                 }
             }
 
@@ -478,6 +523,7 @@ macro_rules! define_rv32im_enums {
                     $(
                         RV32IMInstruction::$instr(instr) => {instr.virtual_sequence_remaining = remaining;}
                     )*
+                    RV32IMInstruction::INLINE(instr) => {instr.virtual_sequence_remaining = remaining;}
                 }
             }
         }
@@ -805,6 +851,8 @@ impl RV32IMInstruction {
                     Err("Unknown funct7 for custom-0 opcode")
                 }
             }
+            // 0x2B is custom-1 opcode, used for inlines
+            0b0101011 => Ok(INLINE::new(instr, address, false).into()),
             _ => Err("Unknown opcode"),
         }
     }

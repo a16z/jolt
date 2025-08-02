@@ -1,0 +1,10 @@
+[package]
+name = "precompile-example"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tracer = { path = "../../tracer" }
+
+# Optional: Use ctor for automatic registration
+ctor = "0.2" 
