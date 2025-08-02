@@ -1,6 +1,7 @@
+#![allow(clippy::needless_range_loop)]
+use crate::jolt::{witness::CommittedPolynomials, zkvm::JoltProverPreprocessing};
 use jolt_core::{
     field::{JoltField, OptimizedMul},
-    jolt::vm::JoltCommitments,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
@@ -18,17 +19,10 @@ use jolt_core::{
         transcript::{AppendToTranscript, Transcript},
     },
 };
+use onnx_tracer::trace_types::{MemoryOp, ONNXCycle};
+use rayon::prelude::*;
 
 const RD: usize = 2;
-// use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-// use common::constants::REGISTER_COUNT;
-// use fixedbitset::FixedBitSet;
-use rayon::prelude::*;
-// use tracer::instruction::ONNXCycle;
-
-use onnx_tracer::trace_types::{MemoryOp, ONNXCycle};
-
-use crate::jolt::{witness::CommittedPolynomials, zkvm::JoltProverPreprocessing};
 
 #[derive(Debug, Clone)]
 pub struct RegistersTwistProof<F: JoltField, ProofTranscript: Transcript> {
@@ -46,7 +40,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTran
         preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
         trace: &[ONNXCycle],
         K: usize,
-        opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
+        _opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> RegistersTwistProof<F, ProofTranscript> {
         let log_T = trace.len().log_2();
@@ -67,7 +61,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTran
         // Cycle variables are bound from low to high
         r_cycle_prime.reverse();
 
-        let rd_inc_poly = CommittedPolynomials::RdInc.generate_witness(preprocessing, trace);
+        let _rd_inc_poly = CommittedPolynomials::RdInc.generate_witness(preprocessing, trace);
         // opening_accumulator.append_sparse(
         //     vec![rd_inc_poly],
         //     r_address,
@@ -86,7 +80,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTran
         &self,
         // commitments: &JoltCommitments<F, PCS, ProofTranscript>,
         T: usize,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
+        _opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let log_K = self.K.log_2();
@@ -94,7 +88,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTran
         let r: Vec<F> = transcript.challenge_vector(log_K);
         let r_prime: Vec<F> = transcript.challenge_vector(log_T);
 
-        let (r_address, r_cycle) = self
+        let (_r_address, r_cycle) = self
             .read_write_checking_proof
             .verify(r, r_prime, transcript);
 
@@ -359,7 +353,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             .map(|(chunk_index, trace_chunk)| {
                 // Row index of the I matrix
                 let mut j = chunk_index * chunk_size;
-                let I_chunk = trace_chunk
+                trace_chunk
                     .iter()
                     .map(|cycle| match cycle.to_memory_ops()[RD] {
                         MemoryOp::Read(a, _v) => {
@@ -377,8 +371,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                             inc
                         }
                     })
-                    .collect();
-                I_chunk
+                    .collect()
             })
             .collect();
 
@@ -536,21 +529,21 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                                 let j_bound = j % (1 << round);
 
                                 let k = trace[j].ts1_read().0;
-                                unsafe {
-                                    dirty_indices.push(k);
-                                }
+
+                                dirty_indices.push(k);
+
                                 rs1_ra[0][k] += A[j_bound];
 
                                 let k = trace[j].ts2_read().0;
-                                unsafe {
-                                    dirty_indices.push(k);
-                                }
+
+                                dirty_indices.push(k);
+
                                 rs2_ra[0][k] += A[j_bound];
 
                                 let k = trace[j].td_write().0;
-                                unsafe {
-                                    dirty_indices.push(k);
-                                }
+
+                                dirty_indices.push(k);
+
                                 rd_wa[0][k] += A[j_bound];
                             }
 
@@ -558,21 +551,21 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                                 let j_bound = j % (1 << round);
 
                                 let k = trace[j].ts1_read().0;
-                                unsafe {
-                                    dirty_indices.push(k);
-                                }
+
+                                dirty_indices.push(k);
+
                                 rs1_ra[1][k] += A[j_bound];
 
                                 let k = trace[j].ts2_read().0;
-                                unsafe {
-                                    dirty_indices.push(k);
-                                }
+
+                                dirty_indices.push(k);
+
                                 rs2_ra[1][k] += A[j_bound];
 
                                 let k = trace[j].td_write().0;
-                                unsafe {
-                                    dirty_indices.push(k);
-                                }
+
+                                dirty_indices.push(k);
+
                                 rd_wa[1][k] += A[j_bound];
                             }
 

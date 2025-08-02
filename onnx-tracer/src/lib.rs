@@ -251,7 +251,7 @@ where
 
 /// # Program in (opcode, inputs) tuple format:
 /// [(0, input, []), (1, const, []), (2, add, [0, 1]), (3, sub, [0, 1]), (4, mul, [2, 3]), (5, output, [4])]
-pub fn custom_addsubmul_model() -> Model {
+pub fn custom_addsubmulconst_model() -> Model {
     const SCALE: i32 = 7;
     const NODE_OUTPUT_IDX: usize = 0;
     let mut custom_addsubmul_model = Model::default();
@@ -340,7 +340,7 @@ pub fn custom_addsubmul_model() -> Model {
 
 /// # Program in (opcode, inputs) tuple format:
 /// [(0, input, []), (1, add, [0, 0]), (2, sub, [1, 0]), (3, mul, [1, 2]), (4, add, [2, 3]), (5, output, [4])]
-pub fn custom_addsubmul_model0() -> Model {
+pub fn custom_addsubmul_model() -> Model {
     const SCALE: i32 = 7;
     const NODE_OUTPUT_IDX: usize = 0;
     let mut custom_addsubmul_model = Model::default();

@@ -86,31 +86,9 @@ mod e2e_tests {
     use ark_bn254::Fr;
     use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
     use jolt_core::utils::transcript::KeccakTranscript;
-    use onnx_tracer::{
-        custom_addsubmul_model, custom_addsubmul_model0, logger::init_logger, model, tensor::Tensor,
-    };
+    use onnx_tracer::{custom_addsubmul_model, logger::init_logger, tensor::Tensor};
 
     type PCS = DoryCommitmentScheme<KeccakTranscript>;
-
-    #[test]
-    fn test_custom_addsubmul0() {
-        // --- Preprocessing ---
-        let custom_addsubmul_model = custom_addsubmul_model0();
-        let program_bytecode = onnx_tracer::decode_model(custom_addsubmul_model.clone());
-        println!("Program code: {program_bytecode:#?}");
-        let pp: JoltProverPreprocessing<Fr, PCS, KeccakTranscript> =
-            JoltSNARK::prover_preprocess(program_bytecode);
-
-        // --- Proving ---
-        let input = Tensor::new(Some(&[60]), &[1]).unwrap();
-        let execution_trace = onnx_tracer::execution_trace(custom_addsubmul_model, &input);
-        println!("Execution trace: {execution_trace:#?}");
-        let snark: JoltSNARK<Fr, PCS, KeccakTranscript> =
-            JoltSNARK::prove(pp.clone(), execution_trace);
-
-        // --- Verification ---
-        snark.verify((&pp).into()).unwrap();
-    }
 
     #[test]
     fn test_custom_addsubmul() {
@@ -130,65 +108,6 @@ mod e2e_tests {
 
         // --- Verification ---
         snark.verify((&pp).into()).unwrap();
-    }
-
-    #[test]
-    fn test_addsubmul0() {
-        // --- Preprocessing ---
-        init_logger();
-        let text_classification_model = ONNXProgram::new(
-            "../onnx-tracer/models/addsubmul0/network.onnx".into(),
-            Tensor::new(Some(&[10]), &[1]).unwrap(),
-        );
-        let model = model(&text_classification_model.model_path);
-        println!("Model: {model:#?}");
-        // let program_bytecode = text_classification_model.decode();
-        // println!("Program code: {program_bytecode:#?}",);
-        // let pp: JoltProverPreprocessing<Fr, KeccakTranscript> =
-        //     JoltSNARK::prover_preprocess(program_bytecode);
-
-        // // --- Proving ---
-        // let execution_trace = text_classification_model.trace();
-        // // println!("{execution_trace:#?}");
-        // let snark: JoltSNARK<Fr, KeccakTranscript> = JoltSNARK::prove(pp.clone(), execution_trace);
-
-        // // --- Verification ---
-        // snark.verify((&pp).into()).unwrap();
-    }
-
-    // TODO(Forpee): refactor duplicate code in these tests
-    #[test]
-    fn test_simple_classification() {
-        // --- Preprocessing ---
-        init_logger();
-        let text_classification_model = ONNXProgram::new(
-            "../onnx-tracer/models/simple_text_classification/network.onnx".into(),
-            Tensor::new(Some(&[1, 2, 3, 4, 5]), &[1, 5]).unwrap(), // Example input
-        );
-        let program_bytecode = text_classification_model.decode();
-        println!("Program code: {program_bytecode:#?}",);
-        // let pp: JoltProverPreprocessing<Fr, KeccakTranscript> =
-        //     JoltSNARK::prover_preprocess(program_bytecode);
-
-        // --- Proving ---
-        let execution_trace = text_classification_model.trace();
-        println!("Execution trace: {execution_trace:#?}",);
-        // let snark: JoltSNARK<Fr, KeccakTranscript> = JoltSNARK::prove(pp.clone(), execution_trace);
-
-        // --- Verification ---
-        // snark.verify((&pp).into()).unwrap();
-    }
-
-    #[test]
-    fn test_medium_classification() {
-        init_logger();
-        let text_classification = ONNXProgram {
-            model_path: "../onnx-tracer/models/medium_text_classification/network.onnx".into(),
-            inputs: Tensor::new(Some(&[1, 2, 3, 4, 5]), &[1, 5]).unwrap(), // Example input
-        };
-        let program_bytecode = text_classification.decode();
-        println!("Program code: {program_bytecode:#?}",);
-        text_classification.trace();
     }
 
     #[test]
