@@ -140,53 +140,21 @@ where
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
         let mut opening_accumulator: ProverOpeningAccumulator<F, PCS, ProofTranscript> =
             ProverOpeningAccumulator::new();
-        // let committed_polys: Vec<_> = ALL_COMMITTED_POLYNOMIALS
-        //     .par_iter()
-        //     .map(|poly| poly.generate_witness(&preprocessing, &trace))
-        //     .collect();
-        // let commitments: Vec<_> = committed_polys
-        //     .par_iter()
-        //     .map(|poly| PCS::commit(poly, &preprocessing.generators))
-        //     .collect();
-        // for commitment in commitments.iter() {
-        //     transcript.append_serializable(commitment);
-        // }
         let constraint_builder = JoltONNXConstraints::construct_constraints(padded_trace_length);
         let spartan_key = UniformSpartanProof::<F, ProofTranscript>::setup(
             &constraint_builder,
             padded_trace_length,
         );
         transcript.append_scalar(&spartan_key.vk_digest);
-
         let r1cs = UniformSpartanProof::prove::<PCS>(
             &preprocessing,
             &constraint_builder,
             &spartan_key,
             &trace,
-            // &mut opening_accumulator,
             &mut transcript,
         )
         .ok()
         .unwrap();
-        #[cfg(test)]
-        {
-            use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
-
-            use crate::jolt::zkvm::r1cs::{
-                inputs::ALL_R1CS_INPUTS, spartan_interleaved_poly::SpartanInterleavedPolynomial,
-            };
-
-            let input_polys: Vec<MultilinearPolynomial<F>> = ALL_R1CS_INPUTS
-                .iter()
-                .map(|var| var.generate_witness::<F, PCS, ProofTranscript>(&trace, &preprocessing))
-                .collect();
-
-            SpartanInterleavedPolynomial::new(
-                &constraint_builder.uniform_builder.constraints,
-                &input_polys,
-                constraint_builder.padded_rows_per_step(),
-            );
-        }
         let instruction_proof: LookupsProof<WORD_SIZE, F, PCS, ProofTranscript> =
             LookupsProof::prove(
                 &preprocessing,
@@ -227,22 +195,12 @@ where
         let spartan_key =
             UniformSpartanProof::<F, ProofTranscript>::setup(&r1cs_builder, padded_trace_length);
         transcript.append_scalar(&spartan_key.vk_digest);
-
         self.r1cs
-            .verify::<PCS>(
-                &spartan_key,
-                // &self.commitments,
-                // &mut opening_accumulator,
-                &mut transcript,
-            )
+            .verify::<PCS>(&spartan_key, &mut transcript)
             .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))?;
-        self.instruction_lookups.verify(
-            // &proof.commitments,
-            &mut opening_accumulator,
-            &mut transcript,
-        )?;
+        self.instruction_lookups
+            .verify(&mut opening_accumulator, &mut transcript)?;
         self.registers.verify(
-            // &proof.commitments,
             padded_trace_length,
             &mut opening_accumulator,
             &mut transcript,
