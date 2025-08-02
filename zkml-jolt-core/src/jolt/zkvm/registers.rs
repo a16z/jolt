@@ -51,7 +51,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTran
     ) -> RegistersTwistProof<F, ProofTranscript> {
         let log_T = trace.len().log_2();
 
-        let r: Vec<F> = transcript.challenge_vector((K as usize).log_2());
+        let r: Vec<F> = transcript.challenge_vector(K.log_2());
         let r_prime: Vec<F> = transcript.challenge_vector(log_T);
 
         let (read_write_checking_proof, r_address, r_cycle) =
@@ -68,12 +68,12 @@ impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTran
         r_cycle_prime.reverse();
 
         let rd_inc_poly = CommittedPolynomials::RdInc.generate_witness(preprocessing, trace);
-        opening_accumulator.append_sparse(
-            vec![rd_inc_poly],
-            r_address,
-            r_cycle_prime,
-            vec![val_evaluation_proof.inc_claim],
-        );
+        // opening_accumulator.append_sparse(
+        //     vec![rd_inc_poly],
+        //     r_address,
+        //     r_cycle_prime,
+        //     vec![val_evaluation_proof.inc_claim],
+        // );
 
         RegistersTwistProof {
             K,
@@ -84,7 +84,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTran
 
     pub fn verify<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
         &self,
-        commitments: &JoltCommitments<F, PCS, ProofTranscript>,
+        // commitments: &JoltCommitments<F, PCS, ProofTranscript>,
         T: usize,
         opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
@@ -107,14 +107,14 @@ impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTran
         // Cycle variables are bound from low to high
         r_cycle_prime.reverse();
 
-        let inc_commitment = &commitments.commitments[CommittedPolynomials::RdInc.to_index()];
-        let r_concat = [r_address.as_slice(), r_cycle_prime.as_slice()].concat();
-        opening_accumulator.append(
-            &[inc_commitment],
-            r_concat,
-            &[self.val_evaluation_proof.inc_claim],
-            transcript,
-        );
+        // let inc_commitment = &commitments.commitments[CommittedPolynomials::RdInc.to_index()];
+        // let r_concat = [r_address.as_slice(), r_cycle_prime.as_slice()].concat();
+        // opening_accumulator.append(
+        //     &[inc_commitment],
+        //     r_concat,
+        //     &[self.val_evaluation_proof.inc_claim],
+        //     transcript,
+        // );
 
         // Compute LT(r_cycle', r_cycle)
         let mut lt_eval = F::zero();

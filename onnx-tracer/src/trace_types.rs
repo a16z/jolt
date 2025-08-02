@@ -9,6 +9,8 @@ use std::ops::{Index, IndexMut};
 use strum::EnumCount;
 use strum_macros::EnumCount as EnumCountMacro;
 
+const ZERO_REGISTER_PREPEND: usize = 1; // The zkVM prepends a no-op instruction to the program code, so all instruction addresses must account for this offset.
+
 /// Represents a step in the execution trace, where an execution trace is a `Vec<ONNXCycle>`.
 /// Records what the VM did at a cycle of execution.
 /// Constructed at each step in the VM execution cycle, documenting instr, reads & state changes (writes).
@@ -28,13 +30,21 @@ impl ONNXCycle {
         }
     }
 
-    pub fn td(&self) -> usize {
-        self.instr.td.unwrap_or(0)
-    }
-
     // HACKS(Forpee): These methods are going to be removed once we 1. migrate runtime to 64-bit and 2. allow jolt-prover to intake tensor ops at each cycle.
+    pub fn td(&self) -> usize {
+        self.instr.td.map_or(0, |td| td + ZERO_REGISTER_PREPEND)
+    }
+    pub fn ts1(&self) -> usize {
+        self.instr.ts1.map_or(0, |ts1| ts1 + ZERO_REGISTER_PREPEND)
+    }
+    pub fn ts2(&self) -> usize {
+        self.instr.ts2.map_or(0, |ts2| ts2 + ZERO_REGISTER_PREPEND)
+    }
     pub fn td_write(&self) -> (usize, u64, u64) {
-        (self.td(), self.td_pre_val(), self.td_post_val())
+        match self.to_memory_ops()[2] {
+            MemoryOp::Write(td, pre_val, post_val) => (td as usize, pre_val, post_val),
+            _ => panic!("Expected td to be a write operation"),
+        }
     }
     pub fn ts1_read(&self) -> (usize, u64) {
         match self.to_memory_ops()[0] {
@@ -158,15 +168,9 @@ impl MemoryOp {
 
 impl ONNXCycle {
     pub fn to_memory_ops(&self) -> [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
-        let ts1_read = || MemoryOp::Read(self.instr.ts1.unwrap() as u64, self.ts1_val());
-        let ts2_read = || MemoryOp::Read(self.instr.ts2.unwrap() as u64, self.ts2_val());
-        let td_write = || {
-            MemoryOp::Write(
-                self.instr.td.unwrap() as u64,
-                self.td_pre_val(),
-                self.td_post_val(),
-            )
-        };
+        let ts1_read = || MemoryOp::Read(self.ts1() as u64, self.ts1_val());
+        let ts2_read = || MemoryOp::Read(self.ts2() as u64, self.ts2_val());
+        let td_write = || MemoryOp::Write(self.td() as u64, self.td_pre_val(), self.td_post_val());
 
         // // Canonical ordering for memory instructions
         // // 0: ts1
@@ -183,11 +187,12 @@ impl ONNXCycle {
                 MemoryOp::noop_read(),
                 MemoryOp::noop_write(),
             ],
-            ONNXOpcode::Constant | ONNXOpcode::Input => [
+            ONNXOpcode::Constant => [
                 MemoryOp::noop_read(),
                 MemoryOp::noop_read(),
                 MemoryOp::noop_write(),
             ],
+            ONNXOpcode::Input => [MemoryOp::noop_read(), MemoryOp::noop_read(), td_write()],
             _ => unreachable!("{self:?}"),
         }
     }

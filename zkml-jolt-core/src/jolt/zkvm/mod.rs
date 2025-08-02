@@ -8,6 +8,7 @@ use crate::jolt::zkvm::{
         constraints::{JoltONNXConstraints, R1CSConstraints},
         spartan::UniformSpartanProof,
     },
+    registers::RegistersTwistProof,
 };
 use jolt_core::{
     field::JoltField,
@@ -81,6 +82,7 @@ where
     pub trace_length: usize,
     bytecode: BytecodeProof<F, ProofTranscript>,
     instruction_lookups: LookupsProof<WORD_SIZE, F, PCS, ProofTranscript>,
+    registers: RegistersTwistProof<F, ProofTranscript>,
     r1cs: UniformSpartanProof<F, ProofTranscript>,
     _p: PhantomData<PCS>,
 }
@@ -124,9 +126,11 @@ where
         // pad trace to the next power of two
         trace.resize(trace.len().next_power_of_two(), ONNXCycle::no_op());
         let padded_trace_length = trace.len();
+        let ram_addresses: Vec<usize> = trace.iter().map(|cycle| cycle.td() + 1).collect();
+        let ram_K = ram_addresses.iter().max().unwrap().next_power_of_two();
         let K = [
             preprocessing.shared.bytecode.code_size,
-            // ram_K,
+            ram_K,
             1 << 16, // K for instruction lookups Shout
         ]
         .into_iter()
@@ -165,6 +169,25 @@ where
         )
         .ok()
         .unwrap();
+        #[cfg(test)]
+        {
+            use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
+
+            use crate::jolt::zkvm::r1cs::{
+                inputs::ALL_R1CS_INPUTS, spartan_interleaved_poly::SpartanInterleavedPolynomial,
+            };
+
+            let input_polys: Vec<MultilinearPolynomial<F>> = ALL_R1CS_INPUTS
+                .iter()
+                .map(|var| var.generate_witness::<F, PCS, ProofTranscript>(&trace, &preprocessing))
+                .collect();
+
+            SpartanInterleavedPolynomial::new(
+                &constraint_builder.uniform_builder.constraints,
+                &input_polys,
+                constraint_builder.padded_rows_per_step(),
+            );
+        }
         let instruction_proof: LookupsProof<WORD_SIZE, F, PCS, ProofTranscript> =
             LookupsProof::prove(
                 &preprocessing,
@@ -172,12 +195,19 @@ where
                 &mut opening_accumulator,
                 &mut transcript,
             );
-
+        let registers_proof = RegistersTwistProof::prove(
+            &preprocessing,
+            &trace,
+            ram_K,
+            &mut opening_accumulator,
+            &mut transcript,
+        );
         let bytecode_proof =
             BytecodeProof::prove(&preprocessing.shared.bytecode, &trace, &mut transcript);
         JoltSNARK {
             trace_length,
             r1cs,
+            registers: registers_proof,
             instruction_lookups: instruction_proof,
             bytecode: bytecode_proof,
             _p: PhantomData,
@@ -209,6 +239,12 @@ where
             .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))?;
         self.instruction_lookups.verify(
             // &proof.commitments,
+            &mut opening_accumulator,
+            &mut transcript,
+        )?;
+        self.registers.verify(
+            // &proof.commitments,
+            padded_trace_length,
             &mut opening_accumulator,
             &mut transcript,
         )?;
