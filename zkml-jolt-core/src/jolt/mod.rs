@@ -148,7 +148,7 @@ where
             padded_trace_length,
         );
         transcript.append_scalar(&spartan_key.vk_digest);
-        let r1cs = UniformSpartanProof::prove::<PCS>(
+        let r1cs_snark = UniformSpartanProof::prove::<PCS>(
             &preprocessing,
             &constraint_builder,
             &spartan_key,
@@ -157,28 +157,28 @@ where
         )
         .ok()
         .unwrap();
-        let instruction_proof: LookupsProof<WORD_SIZE, F, PCS, ProofTranscript> =
+        let instruction_lookups_snark: LookupsProof<WORD_SIZE, F, PCS, ProofTranscript> =
             LookupsProof::prove(
                 &preprocessing,
                 &trace,
                 &mut opening_accumulator,
                 &mut transcript,
             );
-        let registers_proof = RegistersTwistProof::prove(
+        let registers_snark = RegistersTwistProof::prove(
             &preprocessing,
             &trace,
             ram_K,
             &mut opening_accumulator,
             &mut transcript,
         );
-        let bytecode_proof =
+        let bytecode_snark =
             BytecodeProof::prove(&preprocessing.shared.bytecode, &trace, &mut transcript);
         JoltSNARK {
             trace_length,
-            r1cs,
-            registers: registers_proof,
-            instruction_lookups: instruction_proof,
-            bytecode: bytecode_proof,
+            r1cs: r1cs_snark,
+            registers: registers_snark,
+            instruction_lookups: instruction_lookups_snark,
+            bytecode: bytecode_snark,
             _p: PhantomData,
         }
     }
