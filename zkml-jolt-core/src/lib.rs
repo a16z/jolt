@@ -4,3 +4,4 @@
 pub mod jolt;
 pub mod program;
 pub mod subprotocols;
+pub mod tensor_jolt;
