@@ -33,6 +33,7 @@ use dory::{
     commit, evaluate, setup_with_srs_file,
     transcript::Transcript as DoryTranscript,
     verify, DoryProof, DoryProofBuilder, Polynomial as DoryPolynomial, ProverSetup, VerifierSetup,
+    curve::{G1Cache, G2Cache},
 };
 
 /// The (padded) length of the execution trace currently being proven
@@ -595,7 +596,8 @@ where
         // Delegate to the cached version with no caches
         Self::multi_pair_cached(Some(ps), None, None, Some(qs), None, None)
     }
-
+    
+    #[tracing::instrument(skip_all)]
     fn multi_pair_cached(
         g1_points: Option<&[Self::G1]>,
         g1_count: Option<usize>,
@@ -604,7 +606,155 @@ where
         g2_count: Option<usize>,
         g2_cache: Option<&dory::curve::G2Cache>,
     ) -> Self::GT {
+        use ark_bn254::{Bn254, G1Projective, G2Projective};
+        use ark_ec::bn::{G1Prepared as BnG1Prepared, G2Prepared as BnG2Prepared};
+        
         match (g1_points, g1_count, g1_cache, g2_points, g2_count, g2_cache) {
+            // Case 1: Both G1 and G2 use cached prepared values (fully optimized)
+            (None, Some(g1_c), Some(g1_cache), None, Some(g2_c), Some(g2_cache)) => {
+                assert_eq!(g1_c, g2_c, "G1 and G2 counts must be equal");
+                if g1_c == 0 {
+                    return Self::GT::identity();
+                }
+
+                // Extract prepared values from caches
+                let g1_prepared: Vec<&BnG1Prepared<ark_bn254::Config>> = (0..g1_c)
+                    .map(|i| {
+                        g1_cache
+                        .get_prepared(i)
+                            .expect("Index out of bounds in G1 cache")
+                    })
+                    .collect();
+
+                let g2_prepared: Vec<&BnG2Prepared<ark_bn254::Config>> = (0..g2_c)
+                    .map(|i| {
+                        g2_cache
+                            .get_prepared(i)
+                            .expect("Index out of bounds in G2 cache")
+                    })
+                    .collect();
+
+                // Use Bn254 directly since caches are BN254-specific
+                let ml_result = Bn254::multi_miller_loop(g1_prepared, g2_prepared).0;
+
+                let pairing_result = Bn254::final_exponentiation(MillerLoopOutput(ml_result))
+                    .expect("Final exponentiation should not fail");
+
+                // # Safety
+                // When E = Bn254, JoltGTWrapper<Bn254> has same memory layout as JoltGTWrapper<E>
+                // since JoltGTWrapper is repr(transparent) and E::TargetField = Bn254::TargetField
+                let bn_result = JoltGTWrapper::<Bn254>(pairing_result.0);
+                unsafe {
+                    let ptr = &bn_result as *const JoltGTWrapper<Bn254> as *const Self::GT;
+                    (*ptr).clone()
+                }
+            }
+
+            // Case 2: G1 cached, G2 fresh points (partial optimization)
+            (None, Some(g1_c), Some(g1_cache), Some(g2_points), _, _) => {
+                assert_eq!(
+                    g1_c,
+                    g2_points.len(),
+                    "G1 count must equal G2 points length"
+                );
+                if g1_c == 0 {
+                    return Self::GT::identity();
+                }
+
+                // G1 from cache
+                let g1_prepared: Vec<&BnG1Prepared<ark_bn254::Config>> = (0..g1_c)
+                    .map(|i| {
+                        g1_cache
+                            .get_prepared(i)
+                            .expect("Index out of bounds in G1 cache")
+                    })
+                    .collect();
+
+                // # Safety
+                // JoltGroupWrapper is repr(transparent) so has same memory layout as E::G2
+                // When E = Bn254, E::G2 = G2Projective
+                let g2_inner: &[G2Projective] = unsafe {
+                    std::slice::from_raw_parts(
+                        g2_points.as_ptr() as *const G2Projective,
+                        g2_points.len(),
+                    )
+                };
+
+                let g2_affine = G2Projective::normalize_batch(g2_inner);
+                let g2_prepared = g2_affine
+                    .par_iter()
+                    .map(BnG2Prepared::<ark_bn254::Config>::from)
+                    .collect::<Vec<_>>();
+
+                // Use Bn254 directly since caches are BN254-specific
+                let ml_result = Bn254::multi_miller_loop(g1_prepared, g2_prepared).0;
+
+                let pairing_result = Bn254::final_exponentiation(MillerLoopOutput(ml_result))
+                    .expect("Final exponentiation should not fail");
+
+                // # Safety
+                // When E = Bn254, JoltGTWrapper<Bn254> has same memory layout as JoltGTWrapper<E>
+                // since JoltGTWrapper is repr(transparent) and E::TargetField = Bn254::TargetField
+                let bn_result = JoltGTWrapper::<Bn254>(pairing_result.0);
+                unsafe {
+                    let ptr = &bn_result as *const JoltGTWrapper<Bn254> as *const Self::GT;
+                    (*ptr).clone()
+                }
+            }
+
+            // Case 3: G1 fresh points, G2 cached (partial optimization)
+            (Some(g1_points), _, _, None, Some(g2_c), Some(g2_cache)) => {
+                assert_eq!(
+                    g1_points.len(),
+                    g2_c,
+                    "G1 points length must equal G2 count"
+                );
+                if g2_c == 0 {
+                    return Self::GT::identity();
+                }
+
+                // # Safety
+                // JoltGroupWrapper is repr(transparent) so has same memory layout as E::G1
+                // When E = Bn254, E::G1 = G1Projective
+                let g1_inner: &[G1Projective] = unsafe {
+                    std::slice::from_raw_parts(
+                        g1_points.as_ptr() as *const G1Projective,
+                        g1_points.len(),
+                    )
+                };
+
+                let g1_affine = G1Projective::normalize_batch(g1_inner);
+                let g1_prepared = g1_affine
+                    .par_iter()
+                    .map(BnG1Prepared::<ark_bn254::Config>::from)
+                    .collect::<Vec<_>>();
+
+                // G2 from cache
+                let g2_prepared: Vec<&BnG2Prepared<ark_bn254::Config>> = (0..g2_c)
+                    .map(|i| {
+                        g2_cache
+                            .get_prepared(i)
+                            .expect("Index out of bounds in G2 cache")
+                    })
+                    .collect();
+
+                // Use Bn254 directly since caches are BN254-specific
+                let ml_result = Bn254::multi_miller_loop(g1_prepared, g2_prepared).0;
+
+                let pairing_result = Bn254::final_exponentiation(MillerLoopOutput(ml_result))
+                    .expect("Final exponentiation should not fail");
+
+                // # Safety
+                // When E = Bn254, JoltGTWrapper<Bn254> has same memory layout as JoltGTWrapper<E>
+                // since JoltGTWrapper is repr(transparent) and E::TargetField = Bn254::TargetField
+                let bn_result = JoltGTWrapper::<Bn254>(pairing_result.0);
+                unsafe {
+                    let ptr = &bn_result as *const JoltGTWrapper<Bn254> as *const Self::GT;
+                    (*ptr).clone()
+                }
+            }
+
+            // Case 4: Both fresh points (no caching benefit)
             (Some(g1_points), _, _, Some(g2_points), _, _) => {
                 assert_eq!(
                     g1_points.len(),
@@ -926,11 +1076,37 @@ impl CommitmentScheme for DoryCommitmentScheme {
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::setup_prover")]
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
         let srs_file_name = format!("dory_srs_{max_num_vars}_variables.srs");
-        let (prover_setup, _) = setup_with_srs_file::<JoltBn254, _>(
+        let (mut prover_setup, _) = setup_with_srs_file::<JoltBn254, _>(
             &mut ark_std::rand::thread_rng(),
             max_num_vars,
             Some(&srs_file_name), // Will load if exists, generate and save if not
         );
+        
+        // Initialize caches for optimized pairing operations
+        // We directly access the public fields and create the caches
+        unsafe {
+            let setup_ptr = &mut prover_setup as *mut ProverSetup<JoltBn254>;
+            
+            // Access the core field to get g1_vec, g2_vec, and g_fin
+            let core_ptr = &(*setup_ptr).core;
+            
+            // Convert g2_vec elements to ark_bn254::G2Affine
+            let g2_elements: Vec<ark_bn254::G2Affine> = core_ptr.g2_vec.iter()
+                .map(|g| {
+                    // JoltGroupWrapper wraps the projective point
+                    let g_inner = &g.0;
+                    g_inner.into_affine()
+                })
+                .collect();
+            
+            // Convert g_fin to ark_bn254::G2Affine
+            let g_fin_element: ark_bn254::G2Affine = core_ptr.g_fin.0.into_affine();
+            
+            // Create and set G2 cache
+            (*setup_ptr).g2_cache = Some(G2Cache::new(&g2_elements, Some(&g_fin_element)));
+            
+            println!("Cache initialization complete.");
+        }
 
         prover_setup
     }
