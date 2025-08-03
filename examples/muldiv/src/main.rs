@@ -12,7 +12,7 @@ pub fn main() {
     let verify = guest::build_verifier_muldiv(verifier_preprocessing);
 
     let now = Instant::now();
-    let (output, proof) = prove(12031293, 17, 92);
+    let (output, proof, _) = prove(12031293, 17, 92);
     println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
     let is_valid = verify(12031293, 17, 92, output, proof);
 

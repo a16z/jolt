@@ -10,8 +10,7 @@ pub fn main() {
 
     let prove = guest::build_prover_int_to_string(program, prover_preprocessing);
     let verify = guest::build_verifier_int_to_string(verifier_preprocessing);
-
-    let (output, proof) = prove(81);
+    let (output, proof, _) = prove(81);
     println!("int to string output: {output:?}");
 
     let is_valid = verify(81, output, proof);
@@ -27,7 +26,7 @@ pub fn main() {
     let verify = guest::build_verifier_string_concat(verifier_preprocessing);
 
     let now = Instant::now();
-    let (output, proof) = prove(20);
+    let (output, proof, _) = prove(20);
     println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
     println!("string concat output: {output:?}");
 

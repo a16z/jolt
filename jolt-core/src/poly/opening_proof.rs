@@ -624,12 +624,12 @@ where
             .unwrap_or_else(|| panic!("opening for {sumcheck:?} {polynomial:?} not found"));
         #[cfg(test)]
         {
-            let mut virtual_openigns = self.appended_virtual_openings.borrow_mut();
-            if let Some(index) = virtual_openigns
+            let mut virtual_openings = self.appended_virtual_openings.borrow_mut();
+            if let Some(index) = virtual_openings
                 .iter()
                 .position(|id| id == &OpeningId::Virtual(polynomial, sumcheck))
             {
-                virtual_openigns.remove(index);
+                virtual_openings.remove(index);
             }
         }
         (point.clone(), *claim)

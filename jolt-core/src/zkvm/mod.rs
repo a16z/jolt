@@ -202,7 +202,6 @@ where
         preprocessing: &JoltProverPreprocessing<F, PCS>,
         program: &mut Program,
         inputs: &[u8],
-        write_proof_to_file: Option<&str>,
     ) -> (
         JoltProof<F, PCS, FS>,
         JoltDevice,
@@ -246,9 +245,7 @@ where
 
         let state_manager =
             StateManager::new_prover(preprocessing, trace, program_io.clone(), final_memory_state);
-        let (proof, debug_info) = JoltDAG::prove(state_manager, write_proof_to_file)
-            .ok()
-            .unwrap();
+        let (proof, debug_info) = JoltDAG::prove(state_manager).ok().unwrap();
 
         (proof, program_io, debug_info)
     }
@@ -341,6 +338,7 @@ pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
 }
 
 impl Serializable for RV32IMJoltProof {}
+impl Serializable for JoltDevice {}
 
 // ==================== TEST ====================
 
@@ -374,7 +372,7 @@ mod tests {
             1 << 16,
         );
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IMMockPCS::prove(&preprocessing, &mut program, &inputs, None);
+            JoltRV32IMMockPCS::prove(&preprocessing, &mut program, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
@@ -401,7 +399,7 @@ mod tests {
             1 << 16,
         );
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IM::prove(&preprocessing, &mut program, &inputs, None);
+            JoltRV32IM::prove(&preprocessing, &mut program, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
@@ -428,7 +426,7 @@ mod tests {
             1 << 16,
         );
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IM::prove(&preprocessing, &mut program, &inputs, None);
+            JoltRV32IM::prove(&preprocessing, &mut program, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
@@ -455,7 +453,7 @@ mod tests {
             1 << 16,
         );
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IM::prove(&preprocessing, &mut program, &inputs, None);
+            JoltRV32IM::prove(&preprocessing, &mut program, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
@@ -481,7 +479,7 @@ mod tests {
             1 << 16,
         );
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IM::prove(&preprocessing, &mut program, &[], None);
+            JoltRV32IM::prove(&preprocessing, &mut program, &[]);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =

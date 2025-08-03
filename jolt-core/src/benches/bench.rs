@@ -140,7 +140,7 @@ fn prove_example(
         );
 
         let (jolt_proof, program_io, _) =
-            JoltRV32IM::prove(&preprocessing, &mut program, &serialized_input, None);
+            JoltRV32IM::prove(&preprocessing, &mut program, &serialized_input);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =

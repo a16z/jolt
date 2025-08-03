@@ -27,6 +27,7 @@ members = [
     "common",
     "jolt-sdk",
     "jolt-sdk/macros",
+    "jolt-verifier",
     "examples/collatz",
     "examples/collatz/guest",
     "examples/fibonacci",
@@ -55,7 +56,6 @@ members = [
 
 [features]
 host = ["jolt-sdk/host"]
-icicle = ["jolt-core/icicle"]
 
 [lib]
 path = "./src/lib.rs"

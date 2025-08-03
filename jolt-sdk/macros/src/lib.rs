@@ -403,12 +403,11 @@ impl MacroBuilder {
                     &preprocessing,
                     &mut program,
                     &input_bytes,
-                    None
                 );
 
                 #handle_return
 
-                (ret_val, jolt_proof)
+                (ret_val, jolt_proof, io_device)
             }
         }
     }
@@ -635,10 +634,10 @@ impl MacroBuilder {
     fn get_prove_output_type(&self) -> TokenStream2 {
         match &self.func.sig.output {
             ReturnType::Default => quote! {
-                ((), jolt::RV32IMJoltProof)
+                ((), jolt::RV32IMJoltProof, jolt::JoltDevice)
             },
             ReturnType::Type(_, ty) => quote! {
-                (#ty, jolt::RV32IMJoltProof)
+                (#ty, jolt::RV32IMJoltProof, jolt::JoltDevice)
             },
         }
     }

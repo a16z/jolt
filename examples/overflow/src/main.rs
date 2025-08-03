@@ -12,7 +12,7 @@ pub fn main() {
     let res = panic::catch_unwind(|| {
         // trying to allocate 1024 elems array and sum it up
         // with stack_size=1024, should panic
-        let (_, _) = prove_overflow_stack();
+        let (_, _, _) = prove_overflow_stack();
     });
     handle_result(res);
 
@@ -22,7 +22,7 @@ pub fn main() {
     let prove_overflow_heap = guest::build_prover_overflow_heap(program, prover_preprocessing);
 
     let res = panic::catch_unwind(|| {
-        let (_, _) = prove_overflow_heap();
+        let (_, _, _) = prove_overflow_heap();
     });
     handle_result(res);
 
@@ -43,7 +43,7 @@ pub fn main() {
         guest::build_verifier_allocate_stack_with_increased_size(verifier_preprocessing);
 
     let now = Instant::now();
-    let (output, proof) = prove_allocate_stack_with_increased_size();
+    let (output, proof, _) = prove_allocate_stack_with_increased_size();
     println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
     let is_valid = verify_allocate_stack_with_increased_size(output, proof);
 
