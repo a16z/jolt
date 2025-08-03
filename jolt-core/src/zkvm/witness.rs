@@ -181,6 +181,7 @@ impl CommittedPolynomial {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "CommittedPolynomial::generate_witness")]
     pub fn generate_witness<F, PCS>(
         &self,
         preprocessing: &JoltProverPreprocessing<F, PCS>,

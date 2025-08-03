@@ -349,6 +349,7 @@ where
         }
     }
 
+    #[tracing::instrument(skip_all, name = "OpeningProofReductionSumcheck::prepare_sumcehck")]
     fn prepare_sumcheck<ProofTranscript: Transcript>(
         &mut self,
         polynomials_map: Option<&HashMap<CommittedPolynomial, MultilinearPolynomial<F>>>,
@@ -747,6 +748,7 @@ where
             self.sumchecks.len()
         );
 
+        // @TODO(markosg04) better parallelism here? being mindful of the transcript ordering
         self.sumchecks
             .iter_mut()
             .for_each(|sumcheck| sumcheck.prepare_sumcheck(Some(&polynomials), transcript));
