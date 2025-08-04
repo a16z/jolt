@@ -23,3 +23,5 @@ pub trait ONNXLookupQuery<const WORD_SIZE: usize> {
     /// Computes the output lookup entry for this instruction as a u64.
     fn to_lookup_output(&self) -> u64;
 }
+
+pub mod add;

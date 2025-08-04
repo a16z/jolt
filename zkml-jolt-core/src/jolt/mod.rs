@@ -227,30 +227,51 @@ mod e2e_tests {
     use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
     use jolt_core::utils::transcript::KeccakTranscript;
     use log::info;
-    use onnx_tracer::{custom_addsubmul_model, logger::init_logger, model, tensor::Tensor};
+    use onnx_tracer::{
+        custom_addsubmul_model, logger::init_logger, model, scalar_addsubmul_model, tensor::Tensor,
+    };
     use serde_json::Value;
     use std::{collections::HashMap, fs::File, io::Read};
 
     type PCS = DoryCommitmentScheme<KeccakTranscript>;
 
     #[test]
-    fn test_custom_addsubmul() {
+    fn test_scalar_addsubmul() {
         // --- Preprocessing ---
-        let custom_addsubmul_model = custom_addsubmul_model();
-        let program_bytecode = onnx_tracer::decode_model(custom_addsubmul_model.clone());
+        let scalar_addsubmul_model = scalar_addsubmul_model();
+        let program_bytecode = onnx_tracer::decode_model(scalar_addsubmul_model.clone());
         println!("Program code: {program_bytecode:#?}");
         let pp: JoltProverPreprocessing<Fr, PCS, KeccakTranscript> =
             JoltSNARK::prover_preprocess(program_bytecode);
 
         // --- Proving ---
         let input = Tensor::new(Some(&[60]), &[1]).unwrap();
-        let execution_trace = onnx_tracer::execution_trace(custom_addsubmul_model, &input);
+        let execution_trace = onnx_tracer::execution_trace(scalar_addsubmul_model, &input);
         println!("Execution trace: {execution_trace:#?}");
         let snark: JoltSNARK<Fr, PCS, KeccakTranscript> =
             JoltSNARK::prove(pp.clone(), execution_trace);
 
         // --- Verification ---
         snark.verify((&pp).into()).unwrap();
+    }
+
+    #[test]
+    fn test_custom_addsubmul() {
+        // --- Preprocessing ---
+        let custom_addsubmul_model = custom_addsubmul_model();
+        let program_bytecode = onnx_tracer::decode_model(custom_addsubmul_model.clone());
+        let pp: JoltProverPreprocessing<Fr, PCS, KeccakTranscript> =
+            JoltSNARK::prover_preprocess(program_bytecode);
+
+        // --- Proving ---
+        let input = Tensor::new(Some(&[10, 20, 30, 40, 50, 60, 70, 80]), &[1, 8]).unwrap();
+        let execution_trace = onnx_tracer::execution_trace(custom_addsubmul_model, &input);
+        println!("Execution trace: {execution_trace:#?}");
+        // let snark: JoltSNARK<Fr, PCS, KeccakTranscript> =
+        //     JoltSNARK::prove(pp.clone(), execution_trace);
+
+        // // --- Verification ---
+        // snark.verify((&pp).into()).unwrap();
     }
 
     /// Load vocab.json into HashMap<String, (usize, i32)>
