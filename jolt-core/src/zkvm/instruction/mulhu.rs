@@ -29,7 +29,7 @@ impl InstructionFlags for MULHU {
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<MULHU> {
     fn to_lookup_operands(&self) -> (u64, u128) {
         let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
-        (0, (x as u128) * (y as u128))
+        (0, x as u128 * y as u64 as u128)
     }
 
     fn to_lookup_index(&self) -> u128 {
@@ -58,7 +58,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<MULHU> {
             #[cfg(test)]
             8 => (x * y as u64) >> 8,
             32 => (x * y as u64) >> 32,
-            64 => ((x as u128).wrapping_mul(y as u128) >> 64) as u64,
+            64 => (((x as u128) * (y as u64 as u128)) >> 64) as u64,
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }
