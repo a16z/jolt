@@ -38,7 +38,7 @@ pub mod val_evaluation;
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct RAMPreprocessing {
     min_bytecode_address: u64,
-    bytecode_words: Vec<u32>,
+    bytecode_words: Vec<u64>,
 }
 
 impl RAMPreprocessing {
@@ -55,21 +55,19 @@ impl RAMPreprocessing {
             .max()
             .unwrap_or(0)
             + (BYTES_PER_INSTRUCTION as u64 - 1);
-        // For RV32IM, instructions occupy 4 bytes, so the max bytecode address is the max
-        // instruction address + 3
 
-        let num_words = max_bytecode_address.next_multiple_of(4) / 4 - min_bytecode_address / 4 + 1;
-        let mut bytecode_words = vec![0u32; num_words as usize];
+        let num_words = max_bytecode_address.next_multiple_of(8) / 8 - min_bytecode_address / 8 + 1;
+        let mut bytecode_words = vec![0u64; num_words as usize];
         // Convert bytes into words and populate `bytecode_words`
         for chunk in
-            memory_init.chunk_by(|(address_a, _), (address_b, _)| address_a / 4 == address_b / 4)
+            memory_init.chunk_by(|(address_a, _), (address_b, _)| address_a / 8 == address_b / 8)
         {
-            let mut word = [0u8; 4];
+            let mut word = [0u8; 8];
             for (address, byte) in chunk {
-                word[(address % 4) as usize] = *byte;
+                word[(address % 8) as usize] = *byte;
             }
-            let word = u32::from_le_bytes(word);
-            let remapped_index = (chunk[0].0 / 4 - min_bytecode_address / 4) as usize;
+            let word = u64::from_le_bytes(word);
+            let remapped_index = (chunk[0].0 / 8 - min_bytecode_address / 8) as usize;
             bytecode_words[remapped_index] = word;
         }
 
@@ -132,10 +130,8 @@ impl RamDag {
             &program_io.memory_layout,
         )
         .unwrap() as usize;
-        for words in ram_preprocessing.bytecode_words.chunks(2) {
-            let word = (words.get(1).copied().unwrap_or(0) as u64) << 32
-                | words.first().copied().unwrap_or(0) as u64;
-            initial_memory_state[index] = word;
+        for word in &ram_preprocessing.bytecode_words {
+            initial_memory_state[index] = *word;
             index += 1;
         }
 
@@ -253,10 +249,8 @@ impl RamDag {
             &program_io.memory_layout,
         )
         .unwrap() as usize;
-        for word in ram_preprocessing.bytecode_words.chunks(2) {
-            let word = (word.get(1).copied().unwrap_or(0) as u64) << 32
-                | word.first().copied().unwrap_or(0) as u64;
-            initial_memory_state[index] = word;
+        for word in &ram_preprocessing.bytecode_words {
+            initial_memory_state[index] = *word;
             index += 1;
         }
 
