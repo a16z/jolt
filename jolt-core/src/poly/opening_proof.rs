@@ -381,8 +381,8 @@ where
 
             let reduced_claim = self
                 .rlc_coeffs
-                .iter()
-                .zip(self.input_claims.iter())
+                .par_iter()
+                .zip(self.input_claims.par_iter())
                 .map(|(gamma, claim)| *gamma * claim)
                 .sum();
             self.input_claims = vec![reduced_claim];
@@ -391,7 +391,7 @@ where
                 let polynomials_map = polynomials_map.unwrap();
                 let polynomials: Vec<_> = self
                     .polynomials
-                    .iter()
+                    .par_iter()
                     .map(|label| polynomials_map.get(label).unwrap())
                     .collect();
 

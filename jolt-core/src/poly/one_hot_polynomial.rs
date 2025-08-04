@@ -108,7 +108,10 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             eq_state,
         }
     }
-
+    #[tracing::instrument(
+        skip_all,
+        name = "OneHotPolynomialProverOpening::initialize"
+    )]
     pub fn initialize(&mut self, mut polynomial: OneHotPolynomial<F>) {
         let nonzero_indices = &polynomial.nonzero_indices;
         let T = nonzero_indices.len();
