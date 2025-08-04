@@ -53,7 +53,7 @@ impl InstructionFormat for FormatI {
                     _ => 0,
                 } | ((word >> 20) & 0x000007ff)
                 // imm[10:0] = [30:20]
-            ) as i32 as u32 as u64,
+            ) as i32 as i64 as u64,
         }
     }
 
