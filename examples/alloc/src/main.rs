@@ -13,9 +13,9 @@ pub fn main() {
 
     let now = Instant::now();
     let input = 41;
-    let (output, proof, _) = prove_alloc(input);
+    let (output, proof, program_io) = prove_alloc(input);
     println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verify_alloc(input, output, proof);
+    let is_valid = verify_alloc(input, output, program_io.panic, proof);
 
     println!("output: {output:?}");
     println!("valid: {is_valid}");

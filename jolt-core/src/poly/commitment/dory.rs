@@ -723,29 +723,38 @@ where
                 .par_chunks(row_len)
                 .map(|row| {
                     JoltGroupWrapper(
-                        VariableBaseMSM::msm_field_elements(&bases, row, None).unwrap(),
+                        VariableBaseMSM::msm_field_elements(&bases[..row.len()], row, None)
+                            .unwrap(),
                     )
                 })
                 .collect(),
             MultilinearPolynomial::U8Scalars(poly) => poly
                 .coeffs
                 .par_chunks(row_len)
-                .map(|row| JoltGroupWrapper(VariableBaseMSM::msm_u8(&bases, row).unwrap()))
+                .map(|row| {
+                    JoltGroupWrapper(VariableBaseMSM::msm_u8(&bases[..row.len()], row).unwrap())
+                })
                 .collect(),
             MultilinearPolynomial::U16Scalars(poly) => poly
                 .coeffs
                 .par_chunks(row_len)
-                .map(|row| JoltGroupWrapper(VariableBaseMSM::msm_u16(&bases, row).unwrap()))
+                .map(|row| {
+                    JoltGroupWrapper(VariableBaseMSM::msm_u16(&bases[..row.len()], row).unwrap())
+                })
                 .collect(),
             MultilinearPolynomial::U32Scalars(poly) => poly
                 .coeffs
                 .par_chunks(row_len)
-                .map(|row| JoltGroupWrapper(VariableBaseMSM::msm_u32(&bases, row).unwrap()))
+                .map(|row| {
+                    JoltGroupWrapper(VariableBaseMSM::msm_u32(&bases[..row.len()], row).unwrap())
+                })
                 .collect(),
             MultilinearPolynomial::U64Scalars(poly) => poly
                 .coeffs
                 .par_chunks(row_len)
-                .map(|row| JoltGroupWrapper(VariableBaseMSM::msm_u64(&bases, row).unwrap()))
+                .map(|row| {
+                    JoltGroupWrapper(VariableBaseMSM::msm_u64(&bases[..row.len()], row).unwrap())
+                })
                 .collect(),
             MultilinearPolynomial::I64Scalars(poly) => poly
                 .coeffs
@@ -754,7 +763,8 @@ where
                     // TODO(moodlezoup): This can be optimized
                     let scalars: Vec<_> = row.iter().map(|x| F::from_i64(*x)).collect();
                     JoltGroupWrapper(
-                        VariableBaseMSM::msm_field_elements(&bases, &scalars, None).unwrap(),
+                        VariableBaseMSM::msm_field_elements(&bases[..row.len()], &scalars, None)
+                            .unwrap(),
                     )
                 })
                 .collect(),

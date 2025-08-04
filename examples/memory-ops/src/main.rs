@@ -12,9 +12,9 @@ pub fn main() {
     let verify = guest::build_verifier_memory_ops(verifier_preprocessing);
 
     let now = Instant::now();
-    let (output, proof, _) = prove();
+    let (output, proof, program_io) = prove();
     println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verify(output, proof);
+    let is_valid = verify(output, program_io.panic, proof);
 
     println!(
         "outputs: {} {} {} {}",

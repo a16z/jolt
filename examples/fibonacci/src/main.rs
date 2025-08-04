@@ -39,7 +39,7 @@ pub fn main() {
             .expect("Could not serialize io_device.");
     }
 
-    let is_valid = verify_fib(50, output, proof);
+    let is_valid = verify_fib(50, output, io_device.panic, proof);
     println!("output: {output}");
     println!("valid: {is_valid}");
 }
