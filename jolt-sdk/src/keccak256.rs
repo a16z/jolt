@@ -144,7 +144,7 @@ pub unsafe fn keccak_f(state: *mut u64) {
 /// * The pointer must be non-null and 8-byte aligned.
 /// * The memory referenced by `state` will be permuted **in-place**; callers must
 ///   ensure this side-effect is acceptable.
-/// * Passing an invalid pointer, mis-aligned pointer, or insufficiently sized
+/// * Passing an invalid pointer, misaligned pointer, or insufficiently sized
 ///   memory region results in undefined behaviour.
 pub unsafe fn keccak_f(state: *mut u64) {
     // On the host, we call our own reference implementation from the tracer crate.
