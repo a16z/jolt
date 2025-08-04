@@ -15,7 +15,7 @@ use crate::{
 use ark_bn254::{Bn254, Fr, G1Projective, G2Projective};
 use ark_ec::{
     pairing::{MillerLoopOutput, Pairing as ArkPairing, PairingOutput},
-    AffineRepr, CurveGroup,
+    CurveGroup,
 };
 use ark_ff::{Field, One, PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
