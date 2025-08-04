@@ -349,7 +349,7 @@ where
         }
     }
 
-    #[tracing::instrument(skip_all, name = "OpeningProofReductionSumcheck::prepare_sumcehck")]
+    #[tracing::instrument(skip_all, name = "OpeningProofReductionSumcheck::prepare_sumcheck")]
     fn prepare_sumcheck<ProofTranscript: Transcript>(
         &mut self,
         polynomials_map: Option<&HashMap<CommittedPolynomial, MultilinearPolynomial<F>>>,
