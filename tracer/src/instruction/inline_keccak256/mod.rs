@@ -127,7 +127,6 @@ struct Keccak256SequenceBuilder {
 ///     vr,
 ///     operand_rs1,
 ///     operand_rs2,
-///     initial,
 /// );
 /// let keccak_sequence = builder.build();
 /// // `keccak_sequence` now contains the instructions to perform Keccak-256.
