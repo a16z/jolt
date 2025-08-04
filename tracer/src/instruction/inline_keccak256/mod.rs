@@ -4,7 +4,7 @@
 ///
 /// Keccak is a hash function that uses a sponge construction. The spone absorbs (and permutes) data. Each permutation has 24 rounds. Then squeezes out the hash.
 /// Glossary:
-///   - “Lane”  = one 64-bit word in the 5×5 state matrix (25 lanes total).
+///   - “Lane”  = one 64-bit word in the 5×5 state matrix (25 lanes total for Keccak256).
 ///   - “Round” = single application of θ ρ π χ ι to the state.
 ///   - “Rate”  = 1088 bits (136 B) that interact with the message/output.
 ///   - “Capacity” = 512 bits hidden from the attacker (1600 − 1088).
@@ -37,6 +37,8 @@ pub mod keccak256;
 pub mod test_constants;
 #[cfg(test)]
 mod test_utils;
+
+pub const NUM_LANES: usize = 25;
 
 /// The 24 round constants for the Keccak-f[1600] permutation.
 /// These values are XORed into the state during the `iota` step of each round.
@@ -84,6 +86,7 @@ use Value::{Imm, Reg};
 /// While only 67 registers are actively used by this builder, we allocate 96
 /// to satisfy the system requirement.
 ///
+/// For NUM_LANES = 25, the layout is:
 /// - `vr[0..24]`: The 25 lanes of the Keccak state array `A`.
 /// - `vr[25..49]`: A temporary state array `B` used in `rho_and_pi`.
 /// - `vr[50..54]`: The 5 lanes of the `C` array (column parities) in `theta`.
@@ -159,7 +162,7 @@ impl Keccak256SequenceBuilder {
     }
 
     fn build(mut self) -> Vec<RV32IMInstruction> {
-        // 1. Load the 25 lanes (64-bit words) of state from memory into registers.
+        // 1. Load NUM_LANES lanes (64-bit words) of state from memory into registers.
         self.load_state();
 
         // 2. Main loop: 24 rounds of Keccak-f permutation.
@@ -216,14 +219,14 @@ impl Keccak256SequenceBuilder {
     }
 
     /// Load the initial Keccak state from memory into virtual registers.
-    /// Keccak state is 25 lanes of 64 bits each (200 bytes total).
+    /// Keccak state is NUM_LANES lanes of 64 bits each (200 bytes total).
     fn load_state(&mut self) {
-        (0..25).for_each(|i| self.ld(self.operand_rs1, i as i64, self.vr[i as usize]));
+        (0..NUM_LANES).for_each(|i| self.ld(self.operand_rs1, i as i64, self.vr[i as usize]));
     }
 
     /// Store the final Keccak state from virtual registers back to memory.
     fn store_state(&mut self) {
-        (0..25).for_each(|i| self.sd(self.operand_rs1, self.vr[i as usize], i as i64));
+        (0..NUM_LANES).for_each(|i| self.sd(self.operand_rs1, self.vr[i as usize], i as i64));
     }
 
     // --- Lane / Register Helpers ---
@@ -274,7 +277,7 @@ impl Keccak256SequenceBuilder {
         // 2. Pi (π): Permutes the lanes into a new configuration.
         //
         // The combined operation is: B[y, 2x+3y] = ROTL(A[x,y], offset)
-        // We use vr[25..49] as the temporary state B.
+        // We use vr[NUM_LANES..NUM_LANES*2-1] as the temporary state B.
 
         // --- 1. Rotate each lane and store in the permuted position in B ---
         #[allow(clippy::needless_range_loop)] // This is clearer than enumerating
@@ -288,7 +291,7 @@ impl Keccak256SequenceBuilder {
                 // Calculate the permuted destination coordinates in B.
                 let nx = y;
                 let ny = (2 * x + 3 * y) % 5;
-                let dest_reg_in_b = self.vr[25 + (5 * ny + nx)];
+                let dest_reg_in_b = self.vr[NUM_LANES + (5 * ny + nx)];
 
                 // Rotate A[x,y] and store the result in B[nx, ny].
                 self.rotl64(Reg(source_reg), rotation_offset, dest_reg_in_b);
@@ -303,9 +306,9 @@ impl Keccak256SequenceBuilder {
             for x in 0..5 {
                 // Get the registers for the three input values
                 // A[x,y], A[x+1,y], A[x+2,y]
-                let current = 25 + self.lane(x, y);
-                let next = 25 + self.lane((x + 1) % 5, y);
-                let two_next = 25 + self.lane((x + 2) % 5, y);
+                let current = NUM_LANES + self.lane(x, y);
+                let next = NUM_LANES + self.lane((x + 1) % 5, y);
+                let two_next = NUM_LANES + self.lane((x + 2) % 5, y);
 
                 // Define scratch registers for intermediate results.
                 let not_next_and_two_next = self.vr[65]; // reuse scratch
@@ -328,9 +331,10 @@ impl Keccak256SequenceBuilder {
         let round_constant = ROUND_CONSTANTS[self.round as usize];
         let first_lane_reg = self.lane(0, 0);
 
-        // IMPORTANT: XORI can only handle 12-bit immediates in RISC-V
+        // IMPORTANT: XORI can only handle 12-bit immediates in RISC-V as it calls normalize_imm
         // For round constants that don't fit in 12 bits, we need to load them into a register first
-        // TODO: Review this - moodlezoup said that we have 64-bit support for 12-bits, so getting rid of this is a potential optimization.
+        // TODO: Review this - moodlezoup said that we have 64-bit support for Imm, so getting rid of this is a potential optimization.
+        // This can be simplified if XORI is modified to support 64-bit immediates.
 
         // Check if the constant fits in 12 bits (signed)
         let fits_in_12_bits = round_constant as i64 >= -2048 && round_constant as i64 <= 2047;
@@ -726,8 +730,8 @@ pub fn execute_keccak256(msg: &[u8]) -> [u8; 32] {
     // Keccak-256 parameters.
     const RATE_IN_BYTES: usize = 136; // 1088-bit rate
 
-    // 25 × 64-bit state lanes initialised to zero.
-    let mut state = [0u64; 25];
+    // NUM_LANES × 64-bit state lanes initialised to zero.
+    let mut state = [0u64; NUM_LANES];
 
     // 1. Absorb full RATE blocks.
     let mut offset = 0;
@@ -770,7 +774,7 @@ pub fn execute_keccak256(msg: &[u8]) -> [u8; 32] {
 }
 
 /// Executes the 24-round Keccak-f[1600] permutation.
-pub fn execute_keccak_f(state: &mut [u64; 25]) {
+pub fn execute_keccak_f(state: &mut [u64; NUM_LANES]) {
     for rc in ROUND_CONSTANTS {
         execute_theta(state);
         execute_rho_and_pi(state);
@@ -781,7 +785,7 @@ pub fn execute_keccak_f(state: &mut [u64; 25]) {
 
 /// The `theta` step of the Keccak-f permutation mixes columns to provide diffusion.
 /// This step XORs each bit in the state with the parities of two columns in the state array.
-fn execute_theta(state: &mut [u64; 25]) {
+fn execute_theta(state: &mut [u64; NUM_LANES]) {
     // 1. Compute the parity of each of the 5 columns (an array `C` of 5 lanes).
     let mut c = [0u64; 5];
     for x in 0..5 {
@@ -802,8 +806,8 @@ fn execute_theta(state: &mut [u64; 25]) {
 
 /// The `rho` and `pi` steps of the Keccak-f permutation shuffles the state to provide diffusion.
 /// `rho` rotates each lane by a different fixed offset. `pi` permutes positions of the lanes.
-fn execute_rho_and_pi(state: &mut [u64; 25]) {
-    let mut b = [0u64; 25];
+fn execute_rho_and_pi(state: &mut [u64; NUM_LANES]) {
+    let mut b = [0u64; NUM_LANES];
     for x in 0..5 {
         for y in 0..5 {
             let nx = y;
@@ -816,7 +820,7 @@ fn execute_rho_and_pi(state: &mut [u64; 25]) {
 }
 
 /// The `chi` step of the Keccak-f permutation introduces non-linearity (relationships between input and output).
-fn execute_chi(state: &mut [u64; 25]) {
+fn execute_chi(state: &mut [u64; NUM_LANES]) {
     // For each row, it updates each lane as: lane[x] ^= (~lane[x+1] & lane[x+2])
     // This ensures output bit is a non-linear function of three input bits.
     for y in 0..5 {
@@ -831,7 +835,7 @@ fn execute_chi(state: &mut [u64; 25]) {
 }
 
 /// The `iota` step of Keccak-f breaks the symmetry of the rounds by injecting a round constant into the first lane.
-fn execute_iota(state: &mut [u64; 25], round_constant: u64) {
+fn execute_iota(state: &mut [u64; NUM_LANES], round_constant: u64) {
     state[0] ^= round_constant; // Inject round constant.
 }
 
@@ -871,7 +875,7 @@ mod tests {
     fn test_execute_keccak_f() {
         // Test vectors for the Keccak-f[1600] permutation from XKCP.
         // https://github.com/XKCP/XKCP/blob/master/tests/TestVectors/KeccakF-1600-IntermediateValues.txt
-        let mut state = [0u64; 25]; // Initial state is all zeros.
+        let mut state = [0u64; NUM_LANES]; // Initial state is all zeros.
 
         // First permutation
         execute_keccak_f(&mut state);
@@ -893,7 +897,7 @@ mod tests {
     #[test]
     fn test_execute_theta() {
         // Test theta with a known pattern
-        let mut state = [0u64; 25];
+        let mut state = [0u64; NUM_LANES];
         state[0] = 1;
         state[5] = 2;
         state[10] = 4;
@@ -909,7 +913,7 @@ mod tests {
     #[test]
     fn test_execute_rho_and_pi() {
         // Test rho_and_pi - just verify it changes the state
-        let mut state = [0u64; 25];
+        let mut state = [0u64; NUM_LANES];
         state[1] = 0xFF;
         let original_state = state;
         execute_rho_and_pi(&mut state);
@@ -926,7 +930,7 @@ mod tests {
     #[test]
     fn test_execute_chi() {
         // Test chi
-        let mut state = [0u64; 25];
+        let mut state = [0u64; NUM_LANES];
         state[0] = 0xFF;
         state[1] = 0xAA;
         state[2] = 0x55;
@@ -942,7 +946,7 @@ mod tests {
     #[test]
     fn test_execute_iota() {
         // Test iota
-        let mut state = [0u64; 25];
+        let mut state = [0u64; NUM_LANES];
         state[0] = 0x1234;
 
         execute_iota(&mut state, 0x5678);
@@ -953,7 +957,7 @@ mod tests {
         );
 
         // Verify other lanes unchanged
-        for i in 1..25 {
+        for i in 1..NUM_LANES {
             assert_eq!(state[i], 0, "Iota should only affect first lane");
         }
     }
@@ -961,12 +965,12 @@ mod tests {
     #[test]
     fn test_step_by_step_round_1() {
         // Start with the state after round 0
-        let mut state = [0u64; 25];
+        let mut state = [0u64; NUM_LANES];
         state[0] = 0x0000000000000001; // Result from round 0
         let round = 1;
         let expected_states = &xkcp_vectors::EXPECTED_AFTER_ROUND1;
 
-        let steps: &[(&str, fn(&mut [u64; 25]), [u64; 25])] = &[
+        let steps: &[(&str, fn(&mut [u64; NUM_LANES]), [u64; NUM_LANES])] = &[
             ("theta", execute_theta, expected_states.theta),
             ("rho and pi", execute_rho_and_pi, expected_states.rho_pi),
             ("chi", execute_chi, expected_states.chi),

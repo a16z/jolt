@@ -48,7 +48,7 @@ impl KeccakCpuHarness {
 
     /// Load a Keccak state into DRAM and set `x10 = BASE_ADDR`.
     pub fn load_state(&mut self, state: &Keccak256State) {
-        self.harness.cpu.x[10] = Self::BASE_ADDR as i64;
+        self.harness.cpu.x[Self::RS1] = Self::BASE_ADDR as i64;
         self.harness.set_memory(Self::BASE_ADDR, state);
     }
 
