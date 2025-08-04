@@ -65,6 +65,7 @@ impl Keccak256 {
     #[inline(always)]
     pub fn finalize(mut self) -> [u8; HASH_LEN] {
         // Pad the message. Keccak uses `0x01` padding.
+        // If buffer_len == RATE_IN_BYTES-1 both markers land in the same byte (0x01 | 0x80 = 0x81)
         self.buffer[self.buffer_len] = 0x01;
         self.buffer[RATE_IN_BYTES - 1] |= 0x80;
 
