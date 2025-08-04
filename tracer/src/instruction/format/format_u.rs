@@ -45,7 +45,7 @@ impl InstructionFormat for FormatU {
 			} | // imm[63:32] = [31]
 			((word as u64) & 0xfffff000)
                 // imm[31:12] = [31:12]
-            ) as i32 as u32 as u64,
+            ) as i32 as i64 as u64,
         }
     }
 

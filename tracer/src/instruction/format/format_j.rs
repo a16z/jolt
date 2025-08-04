@@ -47,7 +47,7 @@ impl InstructionFormat for FormatJ {
 			((word & 0x00100000) >> 9) | // imm[11] = [20]
 			((word & 0x7fe00000) >> 20)
                 // imm[10:1] = [30:21]
-            ) as i32 as u32 as u64,
+            ) as i32 as i64 as u64,
         }
     }
 
