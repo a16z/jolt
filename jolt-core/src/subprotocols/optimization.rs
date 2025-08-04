@@ -15,7 +15,7 @@ use crate::{
         unipoly::{CompressedUniPoly, UniPoly},
     },
     subprotocols::{
-        karatsuba::{coeff_kara_16, coeff_naive, kara_17},
+        karatsuba::{coeff_kara_16, coeff_kara_32, coeff_kara_8, coeff_naive, kara_17},
         sumcheck::SumcheckInstanceProof,
     },
     utils::{
@@ -25,12 +25,213 @@ use crate::{
     },
 };
 
-fn verify_product_mle_claim<F: JoltField>(
-    mle_vec: &Vec<&MultilinearPolynomial<F>>,
+// TODO: change the mle_vec type.
+#[inline]
+fn compute_mle_product_evals<F: JoltField>(
+    mle_vec: &Vec<&mut MultilinearPolynomial<F>>,
     r_cycle: &Vec<F>,
-    claim: F,
-) -> bool {
-    todo!()
+    round: usize,
+    log_T: usize,
+    factor: &F,
+    E_table: &Vec<Vec<F>>,
+    d: usize,
+) -> Vec<F> {
+    let mle_product_evals = match d {
+        32 => {
+            let evals = (0..(log_T - round - 1).pow2())
+                .into_par_iter()
+                .map(|j| {
+                    let j_factor = if round < log_T - 1 {
+                        factor.mul_1_optimized(E_table[round][j])
+                    } else {
+                        factor.clone()
+                    };
+
+                    let flat: [F; 64] = core::array::from_fn(|i| {
+                        // Optimization
+                        if i < 2 {
+                            if i == 0 {
+                                return mle_vec[0].get_bound_coeff(j) * j_factor;
+                            }
+
+                            if i == 1 {
+                                return (mle_vec[0].get_bound_coeff(j + mle_vec[0].len() / 2)
+                                    - mle_vec[0].get_bound_coeff(j))
+                                    * j_factor;
+                            }
+                        }
+
+                        if i % 2 == 0 {
+                            mle_vec[i / 2].get_bound_coeff(j)
+                        } else {
+                            mle_vec[i / 2].get_bound_coeff(j + mle_vec[i / 2].len() / 2)
+                                - mle_vec[i / 2].get_bound_coeff(j)
+                        }
+                    });
+
+                    coeff_kara_32(&flat)
+                })
+                .reduce(
+                    || [F::zero(); 33],
+                    |running, new| {
+                        [
+                            running[0] + new[0],
+                            running[1] + new[1],
+                            running[2] + new[2],
+                            running[3] + new[3],
+                            running[4] + new[4],
+                            running[5] + new[5],
+                            running[6] + new[6],
+                            running[7] + new[7],
+                            running[8] + new[8],
+                            running[9] + new[9],
+                            running[10] + new[10],
+                            running[11] + new[11],
+                            running[12] + new[12],
+                            running[13] + new[13],
+                            running[14] + new[14],
+                            running[15] + new[15],
+                            running[16] + new[16],
+                            running[17] + new[17],
+                            running[18] + new[18],
+                            running[19] + new[19],
+                            running[20] + new[20],
+                            running[21] + new[21],
+                            running[22] + new[22],
+                            running[23] + new[23],
+                            running[24] + new[24],
+                            running[25] + new[25],
+                            running[26] + new[26],
+                            running[27] + new[27],
+                            running[28] + new[28],
+                            running[29] + new[29],
+                            running[30] + new[30],
+                            running[31] + new[31],
+                            running[32] + new[32],
+                        ]
+                    },
+                );
+
+            Vec::from(evals)
+        }
+        16 => {
+            let evals = (0..(log_T - round - 1).pow2())
+                .into_par_iter()
+                .map(|j| {
+                    let j_factor = if round < log_T - 1 {
+                        factor.mul_1_optimized(E_table[round][j])
+                    } else {
+                        factor.clone()
+                    };
+
+                    let flat: [F; 32] = core::array::from_fn(|i| {
+                        // Optimization
+                        if i < 2 {
+                            if i == 0 {
+                                return mle_vec[0].get_bound_coeff(j) * j_factor;
+                            }
+
+                            if i == 1 {
+                                return (mle_vec[0].get_bound_coeff(j + mle_vec[0].len() / 2)
+                                    - mle_vec[0].get_bound_coeff(j))
+                                    * j_factor;
+                            }
+                        }
+
+                        if i % 2 == 0 {
+                            mle_vec[i / 2].get_bound_coeff(j)
+                        } else {
+                            mle_vec[i / 2].get_bound_coeff(j + mle_vec[i / 2].len() / 2)
+                                - mle_vec[i / 2].get_bound_coeff(j)
+                        }
+                    });
+
+                    coeff_kara_16(&flat)
+                })
+                .reduce(
+                    || [F::zero(); 17],
+                    |running, new| {
+                        [
+                            running[0] + new[0],
+                            running[1] + new[1],
+                            running[2] + new[2],
+                            running[3] + new[3],
+                            running[4] + new[4],
+                            running[5] + new[5],
+                            running[6] + new[6],
+                            running[7] + new[7],
+                            running[8] + new[8],
+                            running[9] + new[9],
+                            running[10] + new[10],
+                            running[11] + new[11],
+                            running[12] + new[12],
+                            running[13] + new[13],
+                            running[14] + new[14],
+                            running[15] + new[15],
+                            running[16] + new[16],
+                        ]
+                    },
+                );
+
+            Vec::from(evals)
+        }
+        8 => {
+            let evals = (0..(log_T - round - 1).pow2())
+                .into_par_iter()
+                .map(|j| {
+                    let j_factor = if round < log_T - 1 {
+                        factor.mul_1_optimized(E_table[round][j])
+                    } else {
+                        factor.clone()
+                    };
+
+                    let flat: [F; 16] = core::array::from_fn(|i| {
+                        // Optimization
+                        if i < 2 {
+                            if i == 0 {
+                                return mle_vec[0].get_bound_coeff(j) * j_factor;
+                            }
+
+                            if i == 1 {
+                                return (mle_vec[0].get_bound_coeff(j + mle_vec[0].len() / 2)
+                                    - mle_vec[0].get_bound_coeff(j))
+                                    * j_factor;
+                            }
+                        }
+
+                        if i % 2 == 0 {
+                            mle_vec[i / 2].get_bound_coeff(j)
+                        } else {
+                            mle_vec[i / 2].get_bound_coeff(j + mle_vec[i / 2].len() / 2)
+                                - mle_vec[i / 2].get_bound_coeff(j)
+                        }
+                    });
+
+                    coeff_kara_8(&flat)
+                })
+                .reduce(
+                    || [F::zero(); 9],
+                    |running, new| {
+                        [
+                            running[0] + new[0],
+                            running[1] + new[1],
+                            running[2] + new[2],
+                            running[3] + new[3],
+                            running[4] + new[4],
+                            running[5] + new[5],
+                            running[6] + new[6],
+                            running[7] + new[7],
+                            running[8] + new[8],
+                        ]
+                    },
+                );
+
+            Vec::from(evals)
+        }
+        _ => unimplemented!(),
+    };
+
+    mle_product_evals
 }
 
 #[inline]
@@ -65,11 +266,8 @@ impl<F: JoltField, ProofTranscript: Transcript> KaratsubaSumCheckProof<F, ProofT
         previous_claim: &mut F,
         transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>) {
-        let d_plus_one = mle_vec.len() + 1;
-
         let span = tracing::span!(tracing::Level::INFO, "Initialize eq");
         let _guard = span.enter();
-        let mut eq = MultilinearPolynomial::from(EqPolynomial::evals(&r_cycle));
         let log_T = r_cycle.len();
         let mut r: Vec<F> = Vec::with_capacity(r_cycle.len());
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(r_cycle.len());
@@ -97,128 +295,15 @@ impl<F: JoltField, ProofTranscript: Transcript> KaratsubaSumCheckProof<F, ProofT
             let inner_span = tracing::span!(tracing::Level::INFO, "Compute evals");
             let _guard = inner_span.enter();
 
-            let mle_product_evals = (0..(log_T - round - 1).pow2())
-                .into_par_iter()
-                .map(|j| {
-                    let mle_evals = match mle_vec.len() {
-                        32 => {
-                            unimplemented!()
-                        }
-                        16 => {
-                            // (constant, slope)
-                            let j_factor = if round < log_T - 1 {
-                                factor.mul_1_optimized(E_table[round][j])
-                            } else {
-                                factor
-                            };
-
-                            let flat: [F; 32] = core::array::from_fn(|i| {
-                                // Optimization
-                                if i < 2 {
-                                    if i == 0 {
-                                        return mle_vec[0].get_bound_coeff(j) * j_factor;
-                                    }
-
-                                    if i == 1 {
-                                        return (mle_vec[0]
-                                            .get_bound_coeff(j + mle_vec[0].len() / 2)
-                                            - mle_vec[0].get_bound_coeff(j))
-                                            * j_factor;
-                                    }
-                                }
-
-                                if i % 2 == 0 {
-                                    mle_vec[i / 2].get_bound_coeff(j)
-                                } else {
-                                    mle_vec[i / 2].get_bound_coeff(j + mle_vec[i / 2].len() / 2)
-                                        - mle_vec[i / 2].get_bound_coeff(j)
-                                }
-                            });
-
-                            coeff_kara_16(&flat)
-                        }
-                        8 => {
-                            unimplemented!()
-                        }
-                        _ => unimplemented!(),
-                    };
-
-                    // #[cfg(test)]
-                    // {
-                    //     let bench_mle_evals = mle_vec
-                    //         .iter()
-                    //         .map(|poly| {
-                    //             poly.sumcheck_evals(j, mle_vec.len(), BindingOrder::HighToLow)
-                    //         })
-                    //         .collect::<Vec<_>>();
-
-                    //     let bench_evals = bench_mle_evals
-                    //         .into_iter()
-                    //         .reduce(|running, new| {
-                    //             running
-                    //                 .iter()
-                    //                 .zip(new.iter())
-                    //                 .map(|(a, b)| *a * b)
-                    //                 .collect::<Vec<_>>()
-                    //         })
-                    //         .unwrap();
-
-                    //     let poly = UniPoly {
-                    //         coeffs: Vec::from(mle_evals.clone()),
-                    //     };
-
-                    //     for i in 0..bench_evals.len() + 1 {
-                    //         if i == 1 {
-                    //             continue;
-                    //         }
-
-                    //         let mut bench = if i == 0 {
-                    //             bench_evals[0]
-                    //         } else {
-                    //             bench_evals[i - 1]
-                    //         } * factor;
-
-                    //         if round < log_T - 1 {
-                    //             bench *= E_table[round][j];
-                    //         }
-
-                    //         assert_eq!(
-                    //             poly.evaluate(&F::from_u32(i as u32)),
-                    //             bench,
-                    //             "i = {}, round = {}, j = {}",
-                    //             i,
-                    //             round,
-                    //             j
-                    //         );
-                    //     }
-                    // }
-
-                    mle_evals
-                })
-                .reduce(
-                    || [F::zero(); 17],
-                    |running, new| {
-                        [
-                            running[0] + new[0],
-                            running[1] + new[1],
-                            running[2] + new[2],
-                            running[3] + new[3],
-                            running[4] + new[4],
-                            running[5] + new[5],
-                            running[6] + new[6],
-                            running[7] + new[7],
-                            running[8] + new[8],
-                            running[9] + new[9],
-                            running[10] + new[10],
-                            running[11] + new[11],
-                            running[12] + new[12],
-                            running[13] + new[13],
-                            running[14] + new[14],
-                            running[15] + new[15],
-                            running[16] + new[16],
-                        ]
-                    },
-                );
+            let mle_product_evals = compute_mle_product_evals(
+                mle_vec,
+                r_cycle,
+                round,
+                log_T,
+                &factor,
+                &E_table,
+                mle_vec.len(),
+            );
 
             assert_eq!(mle_product_evals.len(), mle_vec.len() + 1);
 
@@ -280,14 +365,9 @@ impl<F: JoltField, ProofTranscript: Transcript> KaratsubaSumCheckProof<F, ProofT
             let inner_span = tracing::span!(tracing::Level::INFO, "Bind");
             let _guard = inner_span.enter();
 
-            rayon::join(
-                || eq.bind_parallel(r_j, BindingOrder::HighToLow),
-                || {
-                    mle_vec
-                        .par_iter_mut()
-                        .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow))
-                },
-            );
+            mle_vec
+                .par_iter_mut()
+                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
 
             drop(_guard);
             drop(inner_span);
@@ -299,7 +379,7 @@ impl<F: JoltField, ProofTranscript: Transcript> KaratsubaSumCheckProof<F, ProofT
         (
             Self {
                 sumcheck_proof: SumcheckInstanceProof::new(compressed_polys),
-                eq_claim: eq.final_sumcheck_claim(),
+                eq_claim: factor,
                 mle_claims: mle_vec
                     .iter()
                     .map(|func| func.final_sumcheck_claim())
