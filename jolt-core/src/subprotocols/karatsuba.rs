@@ -79,41 +79,65 @@ pub fn coeff_naive<F: JoltField>(polys: &[Vec<F>]) -> Vec<F> {
 // this is the base case, there are two linear polynomials so they
 // can be multiplied directly
 #[inline(always)]
-pub fn coeff_kara_2<F: JoltField>(ps: &[F; 4]) -> [F; 3] {
-    kara_2(&ps[0..2].try_into().unwrap(), &ps[2..4].try_into().unwrap())
+pub fn coeff_kara_2<F: JoltField>(left: &[F; 2], right: &[F; 2]) -> [F; 3] {
+    kara_2(left, right)
 }
 
 // note how this splits the list of polynomials into two halves
 // and then makes a recursive call to get the polynomial coefficients
 // corresponding to the two halves and then multiplies them together
 #[inline(always)]
-pub fn coeff_kara_4<F: JoltField>(ps: &[F; 8]) -> [F; 5] {
+pub fn coeff_kara_4<F: JoltField>(left: &[F; 4], right: &[F; 4]) -> [F; 5] {
     kara_3(
-        &coeff_kara_2(&ps[0..4].try_into().unwrap()),
-        &coeff_kara_2(&ps[4..8].try_into().unwrap()),
+        &coeff_kara_2(
+            &left[..2].try_into().unwrap(),
+            &left[2..].try_into().unwrap(),
+        ),
+        &coeff_kara_2(
+            &right[..2].try_into().unwrap(),
+            &right[2..].try_into().unwrap(),
+        ),
     )
 }
 
 #[inline(always)]
-pub fn coeff_kara_8<F: JoltField>(ps: &[F; 16]) -> [F; 9] {
+pub fn coeff_kara_8<F: JoltField>(left: &[F; 8], right: &[F; 8]) -> [F; 9] {
     kara_5(
-        &coeff_kara_4(&ps[0..8].try_into().unwrap()),
-        &coeff_kara_4(&ps[8..16].try_into().unwrap()),
+        &coeff_kara_4(
+            &left[..4].try_into().unwrap(),
+            &left[4..].try_into().unwrap(),
+        ),
+        &coeff_kara_4(
+            &right[..4].try_into().unwrap(),
+            &right[4..].try_into().unwrap(),
+        ),
     )
 }
 
 #[inline(always)]
-pub fn coeff_kara_16<F: JoltField>(ps: &[F; 32]) -> [F; 17] {
+pub fn coeff_kara_16<F: JoltField>(left: &[F; 16], right: &[F; 16]) -> [F; 17] {
     kara_9(
-        &coeff_kara_8(&ps[0..16].try_into().unwrap()),
-        &coeff_kara_8(&ps[16..32].try_into().unwrap()),
+        &coeff_kara_8(
+            &left[..8].try_into().unwrap(),
+            &left[8..].try_into().unwrap(),
+        ),
+        &coeff_kara_8(
+            &right[..8].try_into().unwrap(),
+            &right[8..].try_into().unwrap(),
+        ),
     )
 }
 
-pub fn coeff_kara_32<F: JoltField>(ps: &[F; 64]) -> [F; 33] {
+pub fn coeff_kara_32<F: JoltField>(left: &[F; 32], right: &[F; 32]) -> [F; 33] {
     kara_17(
-        &coeff_kara_16(&ps[0..32].try_into().unwrap()),
-        &coeff_kara_16(&ps[32..64].try_into().unwrap()),
+        &coeff_kara_16(
+            &left[..16].try_into().unwrap(),
+            &left[16..].try_into().unwrap(),
+        ),
+        &coeff_kara_16(
+            &right[..16].try_into().unwrap(),
+            &right[16..].try_into().unwrap(),
+        ),
     )
 }
 
@@ -374,7 +398,10 @@ mod tests {
             .try_into()
             .unwrap();
         let naive_res = coeff_naive(&polys);
-        let kara_res = coeff_kara_32(&flat);
+        let kara_res = coeff_kara_32(
+            &flat[..32].try_into().unwrap(),
+            &flat[32..].try_into().unwrap(),
+        );
         assert_eq!(naive_res.len(), kara_res.len());
         for i in 0..naive_res.len() {
             assert_eq!(naive_res[i], kara_res[i]);
@@ -389,10 +416,16 @@ mod tests {
             .collect::<Vec<_>>()
             .try_into()
             .unwrap();
-        coeff_kara_2(&p[0..4].try_into().unwrap());
-        coeff_kara_4(&p[0..8].try_into().unwrap());
-        coeff_kara_8(&p[0..16].try_into().unwrap());
-        coeff_kara_16(&p[0..32].try_into().unwrap());
-        coeff_kara_32(&p);
+        coeff_kara_2(&p[0..2].try_into().unwrap(), &p[2..4].try_into().unwrap());
+        coeff_kara_4(&p[0..4].try_into().unwrap(), &p[4..8].try_into().unwrap());
+        coeff_kara_8(&p[0..8].try_into().unwrap(), &p[8..16].try_into().unwrap());
+        coeff_kara_16(
+            &p[0..16].try_into().unwrap(),
+            &p[16..32].try_into().unwrap(),
+        );
+        coeff_kara_32(
+            &p[0..32].try_into().unwrap(),
+            &p[32..64].try_into().unwrap(),
+        );
     }
 }

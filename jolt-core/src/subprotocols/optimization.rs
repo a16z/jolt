@@ -26,11 +26,7 @@ use crate::{
 };
 
 #[inline]
-fn compute_mle_product_evals_generic<
-    F: JoltField,
-    const D_PLUS_ONE: usize,
-    const D_TWICE: usize,
->(
+fn compute_mle_product_evals_generic<F: JoltField, const D: usize, const D_PLUS_ONE: usize>(
     mle_vec: &Vec<&mut MultilinearPolynomial<F>>,
     round: usize,
     log_T: usize,
@@ -46,7 +42,7 @@ fn compute_mle_product_evals_generic<
                 factor.clone()
             };
 
-            let flat: [F; D_TWICE] = core::array::from_fn(|i| {
+            let left: [F; D] = core::array::from_fn(|i| {
                 // Optimization
                 if i < 2 {
                     if i == 0 {
@@ -68,14 +64,32 @@ fn compute_mle_product_evals_generic<
                 }
             });
 
-            let res: [F; D_PLUS_ONE] = match D_TWICE {
-                64 => coeff_kara_32(&flat[..33].try_into().unwrap())[..]
+            let right: [F; D] = core::array::from_fn(|i| {
+                if i % 2 == 0 {
+                    mle_vec[(D + i) / 2].get_bound_coeff(j)
+                } else {
+                    mle_vec[(D + i) / 2].get_bound_coeff(j + mle_vec[(D + i) / 2].len() / 2)
+                        - mle_vec[(D + i) / 2].get_bound_coeff(j)
+                }
+            });
+
+            let res: [F; D_PLUS_ONE] = match D {
+                32 => coeff_kara_32(
+                    left[..32].try_into().unwrap(),
+                    &right[..32].try_into().unwrap(),
+                )[..]
                     .try_into()
                     .unwrap(),
-                32 => coeff_kara_16(&flat[..17].try_into().unwrap())[..]
+                16 => coeff_kara_16(
+                    &left[..16].try_into().unwrap(),
+                    &right[..16].try_into().unwrap(),
+                )[..]
                     .try_into()
                     .unwrap(),
-                16 => coeff_kara_8(&flat[..9].try_into().unwrap())[..]
+                8 => coeff_kara_8(
+                    &left[..8].try_into().unwrap(),
+                    &right[..8].try_into().unwrap(),
+                )[..]
                     .try_into()
                     .unwrap(),
                 _ => unimplemented!(),
@@ -100,7 +114,6 @@ fn compute_mle_product_evals_generic<
 #[inline]
 fn compute_mle_product_evals<F: JoltField>(
     mle_vec: &Vec<&mut MultilinearPolynomial<F>>,
-    r_cycle: &Vec<F>,
     round: usize,
     log_T: usize,
     factor: &F,
@@ -140,7 +153,10 @@ fn compute_mle_product_evals<F: JoltField>(
                         }
                     });
 
-                    coeff_kara_32(&flat)
+                    coeff_kara_32(
+                        &flat[..32].try_into().unwrap(),
+                        &flat[32..].try_into().unwrap(),
+                    )
                 })
                 .reduce(
                     || [F::zero(); 33],
@@ -217,7 +233,10 @@ fn compute_mle_product_evals<F: JoltField>(
                         }
                     });
 
-                    coeff_kara_16(&flat)
+                    coeff_kara_16(
+                        &flat[..16].try_into().unwrap(),
+                        &flat[16..].try_into().unwrap(),
+                    )
                 })
                 .reduce(
                     || [F::zero(); 17],
@@ -278,7 +297,10 @@ fn compute_mle_product_evals<F: JoltField>(
                         }
                     });
 
-                    coeff_kara_8(&flat)
+                    coeff_kara_8(
+                        &flat[..8].try_into().unwrap(),
+                        &flat[8..].try_into().unwrap(),
+                    )
                 })
                 .reduce(
                     || [F::zero(); 9],
@@ -366,15 +388,21 @@ impl<F: JoltField, ProofTranscript: Transcript> KaratsubaSumCheckProof<F, ProofT
             let inner_span = tracing::span!(tracing::Level::INFO, "Compute evals");
             let _guard = inner_span.enter();
 
-            let mle_product_evals = compute_mle_product_evals(
-                mle_vec,
-                r_cycle,
-                round,
-                log_T,
-                &factor,
-                &E_table,
-                mle_vec.len(),
-            );
+            let mle_product_evals = match mle_vec.len() {
+                32 => compute_mle_product_evals_generic::<F, 32, 33>(
+                    mle_vec, round, log_T, &factor, &E_table,
+                ),
+                16 => compute_mle_product_evals_generic::<F, 16, 17>(
+                    mle_vec, round, log_T, &factor, &E_table,
+                ),
+                8 => compute_mle_product_evals_generic::<F, 8, 9>(
+                    mle_vec, round, log_T, &factor, &E_table,
+                ),
+                _ => panic!(
+                    "Unsupported number of polynomials, got {} and expected 32, 16, or 8",
+                    mle_vec.len()
+                ),
+            };
 
             assert_eq!(mle_product_evals.len(), mle_vec.len() + 1);
 
@@ -394,17 +422,17 @@ impl<F: JoltField, ProofTranscript: Transcript> KaratsubaSumCheckProof<F, ProofT
                 .iter()
                 .map(|x| *x * eq_coeffs[0])
                 .collect::<Vec<_>>();
-            let mul_by_evals_1 = mle_product_evals[..16]
+            let mul_by_evals_1 = mle_product_evals[..mle_vec.len()]
                 .iter()
                 .map(|x| *x * eq_coeffs[1])
                 .collect::<Vec<_>>();
 
-            (0..16).into_iter().for_each(|i| {
+            (0..mle_vec.len()).into_iter().for_each(|i| {
                 univariate_evals.push(mul_by_evals_0[i] + mul_by_evals_1[i]);
             });
 
             // Last term
-            univariate_evals.push(mle_product_evals[16] * eq_coeffs[1]);
+            univariate_evals.push(mle_product_evals[mle_vec.len()] * eq_coeffs[1]);
 
             assert_eq!(univariate_evals.len(), mle_vec.len() + 2);
 
@@ -965,8 +993,9 @@ mod test {
 
     #[test]
     fn test_large_d_optimization_sumcheck() {
-        large_d_optimization_ra_virtualization::<14>(15, 1 << 10);
-        // large_d_optimization_ra_virtualization::<15>(16, 1 << 10);
+        large_d_optimization_ra_virtualization::<31>(32, 1 << 10);
+        large_d_optimization_ra_virtualization::<15>(16, 1 << 10);
+        large_d_optimization_ra_virtualization::<7>(8, 1 << 10);
     }
 
     #[test]
