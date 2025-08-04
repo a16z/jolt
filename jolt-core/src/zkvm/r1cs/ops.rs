@@ -88,14 +88,14 @@ impl LC {
         &self,
         flattened_polynomials: &[MultilinearPolynomial<F>],
         row: usize,
-    ) -> i128 {
+    ) -> F {
         self.terms()
             .iter()
             .map(|term| match term.0 {
-                Variable::Input(var_index) => {
-                    term.1 as i128 * flattened_polynomials[var_index].get_coeff_i128(row)
-                }
-                Variable::Constant => term.1 as i128,
+                Variable::Input(var_index) => flattened_polynomials[var_index]
+                    .get_coeff(row)
+                    .mul_i128(term.1 as i128),
+                Variable::Constant => F::from_i64(term.1),
             })
             .sum()
     }

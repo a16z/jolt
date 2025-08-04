@@ -4,7 +4,7 @@ use super::{
 };
 use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
 use crate::{
-    field::{JoltField, OptimizedMul, OptimizedMulI128},
+    field::{JoltField, OptimizedMul},
     utils::{
         math::Math,
         small_value::{svo_helpers, NUM_SVO_ROUNDS},
@@ -12,7 +12,6 @@ use crate::{
     },
     zkvm::r1cs::builder::Constraint,
 };
-use ark_ff::Zero;
 use rayon::prelude::*;
 
 pub const TOTAL_NUM_ACCUMS: usize = svo_helpers::total_num_accums(NUM_SVO_ROUNDS);
@@ -50,7 +49,7 @@ pub struct SpartanInterleavedPolynomial<const NUM_SVO_ROUNDS: usize, F: JoltFiel
     ///
     /// (note: **no** Cz coefficients are stored here, since they are not needed for small value
     /// precomputation, and can be computed on the fly in streaming round)
-    pub(crate) ab_unbound_coeffs_shards: Vec<Vec<SparseCoefficient<i128>>>,
+    pub(crate) ab_unbound_coeffs_shards: Vec<Vec<SparseCoefficient<F>>>,
 
     /// The bound coefficients for the Az, Bz, Cz polynomials. Will be populated in the streaming round
     pub(crate) bound_coeffs: Vec<SparseCoefficient<F>>,
@@ -199,7 +198,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
         // Define the structure returned by each parallel map task
         struct PrecomputeTaskOutput<F: JoltField> {
-            ab_coeffs_local: Vec<SparseCoefficient<i128>>,
+            ab_coeffs_local: Vec<SparseCoefficient<F>>,
             svo_accums_zero_local: [F; NUM_ACCUMS_EVAL_ZERO],
             svo_accums_infty_local: [F; NUM_ACCUMS_EVAL_INFTY],
         }
@@ -234,7 +233,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                 // We will be pushing at most 2 values (corresponding to Az and Bz) to `chunk_ab_coeffs`
                 // for each constraint in the chunk.
                 let max_ab_coeffs_capacity = 2 * cycles_per_chunk * num_uniform_r1cs_constraints;
-                let mut chunk_ab_coeffs = Vec::with_capacity(max_ab_coeffs_capacity);
+                let mut chunk_ab_coeffs: Vec<SparseCoefficient<F>> = Vec::with_capacity(max_ab_coeffs_capacity);
 
                 let mut chunk_svo_accums_zero = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
                 let mut chunk_svo_accums_infty = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
@@ -252,8 +251,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
                         let mut current_x_in_constraint_val = 0;
 
-                        let mut binary_az_block = [0i128; Y_SVO_SPACE_SIZE];
-                        let mut binary_bz_block = [0i128; Y_SVO_SPACE_SIZE];
+                        let mut binary_az_block = [F::zero(); Y_SVO_SPACE_SIZE];
+                        let mut binary_bz_block = [F::zero(); Y_SVO_SPACE_SIZE];
 
                         // Process Uniform Constraints
                         for (uniform_chunk_iter_idx, uniform_svo_chunk) in uniform_constraints.chunks(Y_SVO_SPACE_SIZE).enumerate() {
@@ -298,8 +297,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                 );
 
                                 current_x_in_constraint_val += 1;
-                                binary_az_block = [0i128; Y_SVO_SPACE_SIZE];
-                                binary_bz_block = [0i128; Y_SVO_SPACE_SIZE];
+                                binary_az_block = [F::zero(); Y_SVO_SPACE_SIZE];
+                                binary_bz_block = [F::zero(); Y_SVO_SPACE_SIZE];
                             }
                         }
 
@@ -347,7 +346,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         // --- Finalization ---
         let mut final_svo_accums_zero = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
         let mut final_svo_accums_infty = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
-        let mut final_ab_unbound_coeffs_shards: Vec<Vec<SparseCoefficient<i128>>> =
+        let mut final_ab_unbound_coeffs_shards: Vec<Vec<SparseCoefficient<F>>> =
             Vec::with_capacity(collected_chunk_outputs.len());
 
         for task_output in collected_chunk_outputs {
@@ -469,7 +468,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
         let collected_chunk_outputs: Vec<StreamingTaskOutput<F>> = shards_to_process // Use the taken vec
             .into_par_iter() // Consumes and gives ownership to closures
-            .map(|shard_data: Vec<SparseCoefficient<i128>>| { // shard_data is now owned Vec
+            .map(|shard_data: Vec<SparseCoefficient<F>>| { // shard_data is now owned Vec
                 // Estimate the number of bound coefficients to preallocate
                 // TODO: have a precise estimate. This is a (somewhat conservative) guess based on real workload (i.e. SHA-2 chain)
                 // Quick math: the shard data has Az + Bz unbound coeffs. Worst case is that each such coeff
@@ -522,18 +521,18 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         if current_is_B { // Current coefficient is Bz
                             let bz_orig_val = current_coeff.value;
                             match x_next_val {
-                                0 => bz0_at_r += eq_r_y.mul_i128_1_optimized(bz_orig_val),
-                                1 => bz1_at_r += eq_r_y.mul_i128_1_optimized(bz_orig_val),
+                                0 => bz0_at_r += eq_r_y.mul_1_optimized(bz_orig_val),
+                                1 => bz1_at_r += eq_r_y.mul_1_optimized(bz_orig_val),
                                 _ => unreachable!(),
                             }
                             coeff_idx_in_block += 1;
                         } else { // Current coefficient is Az
                             let az_orig_val = current_coeff.value;
-                            let mut bz_orig_for_this_az = 0i128;
+                            let mut bz_orig_for_this_az = F::zero();
 
                             match x_next_val {
-                                0 => az0_at_r += eq_r_y.mul_i128_1_optimized(az_orig_val),
-                                1 => az1_at_r += eq_r_y.mul_i128_1_optimized(az_orig_val),
+                                0 => az0_at_r += eq_r_y.mul_1_optimized(az_orig_val),
+                                1 => az1_at_r += eq_r_y.mul_1_optimized(az_orig_val),
                                 _ => unreachable!(),
                             }
 
@@ -552,8 +551,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                     );
 
                                     match x_next_val { // x_next_val of the current Az
-                                        0 => bz0_at_r += eq_r_y.mul_i128_1_optimized(bz_orig_for_this_az),
-                                        1 => bz1_at_r += eq_r_y.mul_i128_1_optimized(bz_orig_for_this_az),
+                                        0 => bz0_at_r += eq_r_y.mul_1_optimized(bz_orig_for_this_az),
+                                        1 => bz1_at_r += eq_r_y.mul_1_optimized(bz_orig_for_this_az),
                                         _ => unreachable!(),
                                     }
                                     coeff_idx_in_block += 1; // Consumed the Bz coefficient as well
@@ -563,10 +562,10 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
                             if !az_orig_val.is_zero() && !bz_orig_for_this_az.is_zero() {
                                 let cz_orig_val =
-                                    az_orig_val.wrapping_mul(bz_orig_for_this_az);
+                                    az_orig_val * bz_orig_for_this_az;
                                 match x_next_val { // x_next_val of the current Az
-                                    0 => cz0_at_r += eq_r_y.mul_i128(cz_orig_val),
-                                    1 => cz1_at_r += eq_r_y.mul_i128(cz_orig_val),
+                                    0 => cz0_at_r += eq_r_y * cz_orig_val,
+                                    1 => cz1_at_r += eq_r_y *cz_orig_val,
                                     _ => unreachable!(),
                                 }
                             }
