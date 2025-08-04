@@ -13,7 +13,6 @@ repository = "https://github.com/a16z/jolt"
 edition = "2021"
 
 [features]
-default = ["sha256", "keccak256"]
 host = [
     "dep:tracer",
     "dep:common",
