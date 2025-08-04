@@ -69,7 +69,9 @@ jobs:
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Run jolt-core tests
-        run: cargo nextest run --release -p jolt-core
+        run: cargo nextest run --release -p jolt-core --no-fail-fast
+      - name: Run tracer tests
+        run: cargo nextest run --release -p tracer --no-fail-fast
 
   typos:
     runs-on: ubuntu-latest
