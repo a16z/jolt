@@ -36,9 +36,9 @@ where
                         Self::zero()
                     } else if scalars.par_iter().all(|&s| s <= 1) {
                         let bool_scalars: Vec<bool> = scalars.par_iter().map(|&s| s == 1).collect();
-                        msm_binary::<Self>(bases, &bool_scalars)
+                        msm_binary::<Self>(bases, &bool_scalars, false)
                     } else {
-                        msm_u8::<Self>(bases, scalars)
+                        msm_u8::<Self>(bases, scalars, false)
                     }
                 })
                 .ok_or(ProofVerifyError::KeyLengthError(
@@ -46,20 +46,20 @@ where
                     poly.coeffs.len(),
                 )),
             MultilinearPolynomial::U16Scalars(poly) => (bases.len() == poly.coeffs.len())
-                .then(|| msm_u16::<Self>(bases, &poly.coeffs))
+                .then(|| msm_u16::<Self>(bases, &poly.coeffs, false))
                 .ok_or(ProofVerifyError::KeyLengthError(
                     bases.len(),
                     poly.coeffs.len(),
                 )),
             MultilinearPolynomial::U32Scalars(poly) => (bases.len() == poly.coeffs.len())
-                .then(|| msm_u32::<Self>(bases, &poly.coeffs))
+                .then(|| msm_u32::<Self>(bases, &poly.coeffs, false))
                 .ok_or(ProofVerifyError::KeyLengthError(
                     bases.len(),
                     poly.coeffs.len(),
                 )),
 
             MultilinearPolynomial::U64Scalars(poly) => (bases.len() == poly.coeffs.len())
-                .then(|| msm_u64::<Self>(bases, &poly.coeffs))
+                .then(|| msm_u64::<Self>(bases, &poly.coeffs, false))
                 .ok_or(ProofVerifyError::KeyLengthError(
                     bases.len(),
                     poly.coeffs.len(),
@@ -101,8 +101,8 @@ where
                     );
                 (bases.len() == poly.coeffs.len())
                     .then(|| {
-                        msm_u64::<Self>(&pos_bases, &pos_scalars)
-                            - msm_u64::<Self>(&neg_bases, &neg_scalars)
+                        msm_u64::<Self>(&pos_bases, &pos_scalars, false)
+                            - msm_u64::<Self>(&neg_bases, &neg_scalars, false)
                     })
                     .ok_or(ProofVerifyError::KeyLengthError(
                         bases.len(),
@@ -119,7 +119,7 @@ where
         scalars: &[Self::ScalarField],
         _max_num_bits: Option<usize>,
     ) -> Result<Self, ProofVerifyError> {
-        ArkVariableBaseMSM::msm(bases, scalars)
+        ArkVariableBaseMSM::msm_serial(bases, scalars)
             .map_err(|_bad_index| ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
     }
 
@@ -129,9 +129,9 @@ where
             .then(|| {
                 if scalars.par_iter().all(|&s| s <= 1) {
                     let bool_scalars: Vec<bool> = scalars.par_iter().map(|&s| s == 1).collect();
-                    msm_binary::<Self>(bases, &bool_scalars)
+                    msm_binary::<Self>(bases, &bool_scalars, true)
                 } else {
-                    msm_u8::<Self>(bases, scalars)
+                    msm_u8::<Self>(bases, scalars, true)
                 }
             })
             .ok_or(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
@@ -140,21 +140,21 @@ where
     #[tracing::instrument(skip_all)]
     fn msm_u16(bases: &[Self::MulBase], scalars: &[u16]) -> Result<Self, ProofVerifyError> {
         (bases.len() == scalars.len())
-            .then(|| msm_u16::<Self>(bases, scalars))
+            .then(|| msm_u16::<Self>(bases, scalars, true))
             .ok_or(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
     }
 
     #[tracing::instrument(skip_all)]
     fn msm_u32(bases: &[Self::MulBase], scalars: &[u32]) -> Result<Self, ProofVerifyError> {
         (bases.len() == scalars.len())
-            .then(|| msm_u32::<Self>(bases, scalars))
+            .then(|| msm_u32::<Self>(bases, scalars, true))
             .ok_or(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
     }
 
     #[tracing::instrument(skip_all)]
     fn msm_u64(bases: &[Self::MulBase], scalars: &[u64]) -> Result<Self, ProofVerifyError> {
         (bases.len() == scalars.len())
-            .then(|| msm_u64::<Self>(bases, scalars))
+            .then(|| msm_u64::<Self>(bases, scalars, true))
             .ok_or(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
     }
 
