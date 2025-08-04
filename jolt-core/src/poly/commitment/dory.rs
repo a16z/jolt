@@ -650,10 +650,16 @@ where
         // Optimized parallel preparation for fresh points
         let prepare_fresh_points = |g1_points: &[Self::G1], g2_points: &[Self::G2]| {
             let g1_inner: &[G1Projective] = unsafe {
-                std::slice::from_raw_parts(g1_points.as_ptr() as *const G1Projective, g1_points.len())
+                std::slice::from_raw_parts(
+                    g1_points.as_ptr() as *const G1Projective,
+                    g1_points.len(),
+                )
             };
             let g2_inner: &[G2Projective] = unsafe {
-                std::slice::from_raw_parts(g2_points.as_ptr() as *const G2Projective, g2_points.len())
+                std::slice::from_raw_parts(
+                    g2_points.as_ptr() as *const G2Projective,
+                    g2_points.len(),
+                )
             };
 
             let aff_g1 = G1Projective::normalize_batch(g1_inner);
@@ -678,38 +684,46 @@ where
         };
 
         // Get prepared points from cache or fresh points
-        let (g1_prepared, g2_prepared) = match (g1_cache, g1_count, g1_points, g2_cache, g2_count, g2_points) {
-            // Both cached
-            (Some(g1_cache), Some(g1_count), _, Some(g2_cache), Some(g2_count), _) => {
-                (prepare_g1_cached(g1_count, g1_cache), prepare_g2_cached(g2_count, g2_cache))
-            }
-            // Both fresh
-            (_, _, Some(g1_points), _, _, Some(g2_points)) => {
-                prepare_fresh_points(g1_points, g2_points)
-            }
-            // Mixed cases
-            (Some(cache), Some(count), _, _, _, Some(g2_points)) => {
-                let g2_inner: &[G2Projective] = unsafe {
-                    std::slice::from_raw_parts(g2_points.as_ptr() as *const G2Projective, g2_points.len())
-                };
-                let g2_prepared = G2Projective::normalize_batch(g2_inner)
-                    .par_iter()
-                    .map(BnG2Prepared::<ark_bn254::Config>::from)
-                    .collect::<Vec<_>>();
-                (prepare_g1_cached(count, cache), g2_prepared)
-            }
-            (_, _, Some(g1_points), Some(cache), Some(count), _) => {
-                let g1_inner: &[G1Projective] = unsafe {
-                    std::slice::from_raw_parts(g1_points.as_ptr() as *const G1Projective, g1_points.len())
-                };
-                let g1_prepared = G1Projective::normalize_batch(g1_inner)
-                    .par_iter()
-                    .map(BnG1Prepared::<ark_bn254::Config>::from)
-                    .collect::<Vec<_>>();
-                (g1_prepared, prepare_g2_cached(count, cache))
-            }
-            _ => panic!("Invalid G1/G2 parameters"),
-        };
+        let (g1_prepared, g2_prepared) =
+            match (g1_cache, g1_count, g1_points, g2_cache, g2_count, g2_points) {
+                // Both cached
+                (Some(g1_cache), Some(g1_count), _, Some(g2_cache), Some(g2_count), _) => (
+                    prepare_g1_cached(g1_count, g1_cache),
+                    prepare_g2_cached(g2_count, g2_cache),
+                ),
+                // Both fresh
+                (_, _, Some(g1_points), _, _, Some(g2_points)) => {
+                    prepare_fresh_points(g1_points, g2_points)
+                }
+                // Mixed cases
+                (Some(cache), Some(count), _, _, _, Some(g2_points)) => {
+                    let g2_inner: &[G2Projective] = unsafe {
+                        std::slice::from_raw_parts(
+                            g2_points.as_ptr() as *const G2Projective,
+                            g2_points.len(),
+                        )
+                    };
+                    let g2_prepared = G2Projective::normalize_batch(g2_inner)
+                        .par_iter()
+                        .map(BnG2Prepared::<ark_bn254::Config>::from)
+                        .collect::<Vec<_>>();
+                    (prepare_g1_cached(count, cache), g2_prepared)
+                }
+                (_, _, Some(g1_points), Some(cache), Some(count), _) => {
+                    let g1_inner: &[G1Projective] = unsafe {
+                        std::slice::from_raw_parts(
+                            g1_points.as_ptr() as *const G1Projective,
+                            g1_points.len(),
+                        )
+                    };
+                    let g1_prepared = G1Projective::normalize_batch(g1_inner)
+                        .par_iter()
+                        .map(BnG1Prepared::<ark_bn254::Config>::from)
+                        .collect::<Vec<_>>();
+                    (g1_prepared, prepare_g2_cached(count, cache))
+                }
+                _ => panic!("Invalid G1/G2 parameters"),
+            };
 
         // Perform chunked parallel Miller loops
         let num_chunks = rayon::current_num_threads();
