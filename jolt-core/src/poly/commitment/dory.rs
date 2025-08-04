@@ -30,10 +30,11 @@ use dory::{
         Field as DoryField, Group as DoryGroup, MultiScalarMul as DoryMultiScalarMul,
         Pairing as DoryPairing,
     },
-    commit, evaluate, setup_with_srs_file,
+    commit,
+    curve::{G1Cache, G2Cache},
+    evaluate, setup_with_srs_file,
     transcript::Transcript as DoryTranscript,
     verify, DoryProof, DoryProofBuilder, Polynomial as DoryPolynomial, ProverSetup, VerifierSetup,
-    curve::{G1Cache, G2Cache},
 };
 
 /// The (padded) length of the execution trace currently being proven
@@ -596,7 +597,7 @@ where
         // Delegate to the cached version with no caches
         Self::multi_pair_cached(Some(ps), None, None, Some(qs), None, None)
     }
-    
+
     #[tracing::instrument(skip_all)]
     fn multi_pair_cached(
         g1_points: Option<&[Self::G1]>,
@@ -608,7 +609,7 @@ where
     ) -> Self::GT {
         use ark_bn254::{Bn254, G1Projective, G2Projective};
         use ark_ec::bn::{G1Prepared as BnG1Prepared, G2Prepared as BnG2Prepared};
-        
+
         match (g1_points, g1_count, g1_cache, g2_points, g2_count, g2_cache) {
             // Case 1: Both G1 and G2 use cached prepared values (fully optimized)
             (None, Some(g1_c), Some(g1_cache), None, Some(g2_c), Some(g2_cache)) => {
@@ -621,7 +622,7 @@ where
                 let g1_prepared: Vec<&BnG1Prepared<ark_bn254::Config>> = (0..g1_c)
                     .map(|i| {
                         g1_cache
-                        .get_prepared(i)
+                            .get_prepared(i)
                             .expect("Index out of bounds in G1 cache")
                     })
                     .collect();
@@ -1081,30 +1082,32 @@ impl CommitmentScheme for DoryCommitmentScheme {
             max_num_vars,
             Some(&srs_file_name), // Will load if exists, generate and save if not
         );
-        
+
         // Initialize caches for optimized pairing operations
         // We directly access the public fields and create the caches
         unsafe {
             let setup_ptr = &mut prover_setup as *mut ProverSetup<JoltBn254>;
-            
+
             // Access the core field to get g1_vec, g2_vec, and g_fin
             let core_ptr = &(*setup_ptr).core;
-            
+
             // Convert g2_vec elements to ark_bn254::G2Affine
-            let g2_elements: Vec<ark_bn254::G2Affine> = core_ptr.g2_vec.iter()
+            let g2_elements: Vec<ark_bn254::G2Affine> = core_ptr
+                .g2_vec
+                .iter()
                 .map(|g| {
                     // JoltGroupWrapper wraps the projective point
                     let g_inner = &g.0;
                     g_inner.into_affine()
                 })
                 .collect();
-            
+
             // Convert g_fin to ark_bn254::G2Affine
             let g_fin_element: ark_bn254::G2Affine = core_ptr.g_fin.0.into_affine();
-            
+
             // Create and set G2 cache
             (*setup_ptr).g2_cache = Some(G2Cache::new(&g2_elements, Some(&g_fin_element)));
-            
+
             println!("Cache initialization complete.");
         }
 
