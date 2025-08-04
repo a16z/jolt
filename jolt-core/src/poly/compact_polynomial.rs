@@ -1,9 +1,9 @@
 use std::ops::Index;
 
 use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
+use crate::field::JoltField;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
-use crate::{field::JoltField, utils};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use num_integer::Integer;
 use rayon::prelude::*;
@@ -94,6 +94,36 @@ impl SmallScalar for i64 {
         self.abs_diff(other)
     }
 }
+impl SmallScalar for u128 {
+    #[inline]
+    fn field_mul<F: JoltField>(&self, n: F) -> F {
+        n.mul_u128(*self)
+    }
+    #[inline]
+    fn to_field<F: JoltField>(self) -> F {
+        F::from_u128(self)
+    }
+    #[inline]
+    fn abs_diff_u64(self, other: Self) -> u64 {
+        let diff = self.abs_diff(other);
+        diff.try_into().unwrap_or(u64::MAX)
+    }
+}
+impl SmallScalar for i128 {
+    #[inline]
+    fn field_mul<F: JoltField>(&self, n: F) -> F {
+        n.mul_i128(*self)
+    }
+    #[inline]
+    fn to_field<F: JoltField>(self) -> F {
+        F::from_i128(self)
+    }
+    #[inline]
+    fn abs_diff_u64(self, other: Self) -> u64 {
+        let diff = self.abs_diff(other);
+        diff.try_into().unwrap_or(u64::MAX)
+    }
+}
 
 /// Compact polynomials are used to store coefficients of small scalars.
 /// They have two representations:
@@ -114,7 +144,7 @@ pub struct CompactPolynomial<T: SmallScalar, F: JoltField> {
 impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
     pub fn from_coeffs(coeffs: Vec<T>) -> Self {
         assert!(
-            utils::is_power_of_two(coeffs.len()),
+            coeffs.len().is_power_of_two(),
             "Multilinear polynomials must be made from a power of 2 (not {})",
             coeffs.len()
         );

@@ -4,7 +4,7 @@
 
 Just One Lookup Table.
 
-Jolt is a zkVM (zero-knowledge virtual machine) for RISC-V, built to be the simplest, fastest, and most extensible general-purpose of its kind. This repository currently contains an implementation of Jolt for the RISC-V 32-bit Base Integer instruction set (RV32I). _Contributors are welcome!_
+Jolt is a zkVM (zero-knowledge virtual machine) for RISC-V, built to be the simplest, fastest, and most extensible general-purpose of its kind. This repository currently contains an implementation of Jolt for the RISC-V 32-bit Base Integer Instruction Set + M Standard Extension for Integer Multiplication and Division (RV32IM). _Contributors are welcome!_
 
 The Jolt [paper](https://eprint.iacr.org/2023/1217.pdf) was written by Arasu Arun, Srinath Setty, and Justin Thaler.
 
@@ -69,37 +69,13 @@ Examples in the [`examples`](./examples/) directory can be run using e.g.
 
 ```cargo run --release -p sha2-chain```
 
-## CUDA Support
-
-JOLT supports CUDA acceleration via [icicle](https://github.com/ingonyama-zk/icicle-jolt).
-
-Dependencies:
-1. Install [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit)
-2. Install [CMake](https://cmake.org/)
-
-Now you may build Jolt with CUDA acceleration using the `--features icicle` flag.
-
-### Build
-
-```cargo build -p jolt-core --features icicle```
-
-### Bench
-
-```
-# Set the icicle backend path - this won't be needed in the future
-export ICICLE_BACKEND_INSTALL_DIR=$(pwd)/target/debug/deps/icicle/lib/backend
-cargo bench --bench msm_batch --no-fail-fast -p jolt-core --features icicle
-```
-
-Note - NVIDIA doesn't support cross compilation on MacOS. Only Windows or Linux.
-
 ## Performance profiling
 
 Jolt uses [tracing_chrome](https://crates.io/crates/tracing-chrome) for performance profiling.
 
 To generate a trace, run:
 
-```cargo run --release -p jolt-core profile --name sha3 --format chrome --pcs hyper-kzg```
+```cargo run --release -p jolt-core profile --name sha3 --format chrome```
 
 Where `--name` can be `sha2`, `sha3`, `sha2-chain`, or `fibonacci`. The corresponding guest programs can be found in the [`examples`](./examples/) directory. The benchmark inputs are provided in [`bench.rs`](./jolt-core/src/benches/bench.rs).
 
@@ -112,6 +88,12 @@ We have enabled [benchmarking during CI](https://a16z.github.io/jolt/dev/bench/)
 ## Acknowledgements
 
 *This repository started as a fork of https://github.com/arkworks-rs/spartan. Original Spartan [code](https://github.com/microsoft/Spartan) by Srinath Setty.*
+
+## Licensing
+
+Jolt is dual licensed under the following two licenses at your discretion: the MIT License (see [LICENSE-MIT](https://github.com/a16z/jolt/blob/main/LICENSE-MIT)), and the Apache License (see [LICENSE-APACHE](https://github.com/a16z/jolt/blob/main/LICENSE-APACHE)).
+
+Jolt is Copyright (c) a16z 2023. However, certain portions of the Jolt codebase are modifications or ports of third party code, as indicated in the applicable code headers for such code or in the copyright attribution notices we have included in the directories for such code.
 
 ## Disclaimer
 

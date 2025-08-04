@@ -9,7 +9,8 @@ use jolt_core::utils::transcript::{KeccakTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 
-const SRS_SIZE: usize = 1 << 10;
+const NUM_VARS: usize = 10;
+const SRS_SIZE: usize = 1 << NUM_VARS;
 
 // Sets up the benchmark by generating leaves and computing known products
 // and allows configuring the percentage of ones in the leaves
@@ -25,7 +26,7 @@ fn setup_bench<PCS, F, ProofTranscript>(
     Vec<F>,
 )
 where
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     F: JoltField,
     ProofTranscript: Transcript,
 {
@@ -56,7 +57,7 @@ where
     // Compute known products (one per layer)
     let known_products: Vec<F> = leaves.iter().map(|layer| layer.iter().product()).collect();
 
-    let setup = PCS::setup_prover(SRS_SIZE);
+    let setup = PCS::setup_prover(NUM_VARS);
 
     (leaves, setup, known_products)
 }
@@ -68,8 +69,8 @@ fn benchmark_commit<PCS, F, ProofTranscript>(
     layer_size: usize,
     threshold: u32,
 ) where
-    PCS: CommitmentScheme<ProofTranscript, Field = F>, // Generic over PCS implementing CommitmentScheme for field F
-    F: JoltField,                                      // Generic over a field F
+    PCS: CommitmentScheme<Field = F>, // Generic over PCS implementing CommitmentScheme for field F
+    F: JoltField,                     // Generic over a field F
     ProofTranscript: Transcript,
 {
     let (leaves, setup, _) =
@@ -92,14 +93,14 @@ fn main() {
     let num_layers = 50;
     let layer_size = 1 << 10;
     // Zeromorph
-    benchmark_commit::<Zeromorph<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
+    benchmark_commit::<Zeromorph<Bn254>, Fr, KeccakTranscript>(
         &mut criterion,
         "Zeromorph",
         num_layers,
         layer_size,
         90,
     );
-    benchmark_commit::<HyperKZG<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
+    benchmark_commit::<HyperKZG<Bn254>, Fr, KeccakTranscript>(
         &mut criterion,
         "HyperKZG",
         num_layers,

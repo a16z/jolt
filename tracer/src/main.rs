@@ -40,7 +40,7 @@ fn main() {
     let elf_content = std::fs::read(elf_path).expect("Failed to read ELF file");
 
     // Create and run the emulator
-    let mut emulator = Emulator::new(Box::new(DefaultTerminal::new()));
+    let mut emulator = Emulator::new(Box::new(DefaultTerminal::default()));
     emulator.setup_program(elf_content);
     emulator.run_test(args.trace.unwrap_or(false));
 
