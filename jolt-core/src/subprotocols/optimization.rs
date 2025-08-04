@@ -25,6 +25,77 @@ use crate::{
     },
 };
 
+#[inline]
+fn compute_mle_product_evals_generic<
+    F: JoltField,
+    const D_PLUS_ONE: usize,
+    const D_TWICE: usize,
+>(
+    mle_vec: &Vec<&mut MultilinearPolynomial<F>>,
+    round: usize,
+    log_T: usize,
+    factor: &F,
+    E_table: &Vec<Vec<F>>,
+) -> Vec<F> {
+    let evals = (0..(log_T - round - 1).pow2())
+        .into_par_iter()
+        .map(|j| {
+            let j_factor = if round < log_T - 1 {
+                factor.mul_1_optimized(E_table[round][j])
+            } else {
+                factor.clone()
+            };
+
+            let flat: [F; D_TWICE] = core::array::from_fn(|i| {
+                // Optimization
+                if i < 2 {
+                    if i == 0 {
+                        return mle_vec[0].get_bound_coeff(j) * j_factor;
+                    }
+
+                    if i == 1 {
+                        return (mle_vec[0].get_bound_coeff(j + mle_vec[0].len() / 2)
+                            - mle_vec[0].get_bound_coeff(j))
+                            * j_factor;
+                    }
+                }
+
+                if i % 2 == 0 {
+                    mle_vec[i / 2].get_bound_coeff(j)
+                } else {
+                    mle_vec[i / 2].get_bound_coeff(j + mle_vec[i / 2].len() / 2)
+                        - mle_vec[i / 2].get_bound_coeff(j)
+                }
+            });
+
+            let res: [F; D_PLUS_ONE] = match D_TWICE {
+                64 => coeff_kara_32(&flat[..33].try_into().unwrap())[..]
+                    .try_into()
+                    .unwrap(),
+                32 => coeff_kara_16(&flat[..17].try_into().unwrap())[..]
+                    .try_into()
+                    .unwrap(),
+                16 => coeff_kara_8(&flat[..9].try_into().unwrap())[..]
+                    .try_into()
+                    .unwrap(),
+                _ => unimplemented!(),
+            };
+
+            res
+        })
+        .reduce(
+            || [F::zero(); D_PLUS_ONE],
+            |mut running, new| {
+                for i in 0..D_PLUS_ONE {
+                    running[i] += new[i];
+                }
+                running
+            },
+        );
+
+    Vec::from(evals)
+}
+
 // TODO: change the mle_vec type.
 #[inline]
 fn compute_mle_product_evals<F: JoltField>(
