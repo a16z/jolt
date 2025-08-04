@@ -14,8 +14,8 @@ use rayon::prelude::*;
 
 #[derive(Default, Debug, Clone, Copy, PartialEq)]
 pub struct SparseCoefficient<T> {
-    pub(crate) index: usize,
-    pub(crate) value: T,
+    pub index: usize,
+    pub value: T,
 }
 
 impl<T> From<(usize, T)> for SparseCoefficient<T> {

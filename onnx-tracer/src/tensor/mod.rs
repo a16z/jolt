@@ -26,7 +26,7 @@ pub mod ops;
 /// values, or slice a Tensor.
 #[derive(Clone, Debug, Eq, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct Tensor<T: TensorType> {
-    inner: Vec<T>,
+    pub inner: Vec<T>,
     dims: Vec<usize>,
     scale: Option<crate::Scale>,
 }

@@ -17,6 +17,12 @@ tracing = { version = "0.1.41", features = [
 strum = "0.26.3"
 strum_macros = "0.26.4"
 rand = "0.7.3"
+thiserror = "1.0.58"
+sha3 = "0.10.8"
+ark-serialize = { version = "0.5.0", default-features = false, features = [
+  "derive",
+] }
+ark-serialize-derive = { version = "0.5.0", default-features = false }
 
 [dev-dependencies]
 log = "0.4"

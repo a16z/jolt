@@ -2957,6 +2957,8 @@ dependencies = [
  "rand 0.8.5",
  "serde",
  "serde_json",
+ "strum",
+ "strum_macros",
  "tabled",
  "thiserror 1.0.69",
  "tract-onnx",
@@ -5744,6 +5746,8 @@ name = "zkml-jolt-core"
 version = "0.1.0"
 dependencies = [
  "ark-bn254",
+ "ark-serialize 0.5.0",
+ "ark-serialize-derive 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "itertools 0.10.5",
  "jolt-core",
  "log",
@@ -5753,8 +5757,10 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "sha3 0.10.8",
  "strum",
  "strum_macros",
+ "thiserror 1.0.69",
  "tracing",
 ]
 

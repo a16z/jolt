@@ -250,8 +250,8 @@ where
 // }
 
 /// # Program in (opcode, inputs) tuple format:
-/// [(input, []), (const, []), (add, [0, 1]), (sub, [0, 1]), (mul, [2, 3]), (output, [4])]
-pub fn custom_addsubmul_model() -> Model {
+/// [(0, input, []), (1, const, []), (2, add, [0, 1]), (3, sub, [0, 1]), (4, mul, [2, 3]), (5, output, [4])]
+pub fn custom_addsubmulconst_model() -> Model {
     const SCALE: i32 = 7;
     const NODE_OUTPUT_IDX: usize = 0;
     let mut custom_addsubmul_model = Model::default();
@@ -271,7 +271,7 @@ pub fn custom_addsubmul_model() -> Model {
     };
 
     // constant node
-    let mut const_tensor = Tensor::new(Some(&[402i128]), &[1, 1]).unwrap();
+    let mut const_tensor = Tensor::new(Some(&[50i128]), &[1, 1]).unwrap();
     const_tensor.set_scale(7);
     let const_node = Node {
         opkind: SupportedOp::Constant(Constant {
@@ -334,6 +334,93 @@ pub fn custom_addsubmul_model() -> Model {
 
     // Set inputs and outputs
     custom_addsubmul_model.graph.inputs = vec![0 /* input_node.idx */];
-    custom_addsubmul_model.graph.outputs = vec![(4 /* mul_node.idx */, 0)];
+    custom_addsubmul_model.graph.outputs = vec![(4 /* mul_node.idx */, NODE_OUTPUT_IDX)];
+    custom_addsubmul_model
+}
+
+/// # Program in (opcode, inputs) tuple format:
+/// [(0, input, []), (1, add, [0, 0]), (2, sub, [1, 0]), (3, mul, [1, 2]), (4, add, [2, 3]), (5, output, [4])]
+pub fn custom_addsubmul_model() -> Model {
+    const SCALE: i32 = 7;
+    const NODE_OUTPUT_IDX: usize = 0;
+    let mut custom_addsubmul_model = Model::default();
+    let mut nodes = BTreeMap::new();
+
+    // input node
+    let input_node = Node {
+        opkind: SupportedOp::Input(Input {
+            scale: 7,
+            datum_type: InputType::F32,
+        }),
+        out_scale: SCALE,
+        inputs: vec![],
+        out_dims: vec![1],
+        idx: 0,
+        num_uses: 2,
+    };
+
+    // add node
+    let add_node = Node {
+        opkind: SupportedOp::Linear(PolyOp::Add),
+        out_scale: SCALE,
+        inputs: vec![
+            (input_node.idx, NODE_OUTPUT_IDX),
+            (input_node.idx, NODE_OUTPUT_IDX),
+        ],
+        out_dims: vec![1],
+        idx: 1,
+        num_uses: 2,
+    };
+
+    // sub node
+    let sub_node = Node {
+        opkind: SupportedOp::Linear(PolyOp::Sub),
+        out_scale: SCALE,
+        inputs: vec![
+            (add_node.idx, NODE_OUTPUT_IDX),
+            (input_node.idx, NODE_OUTPUT_IDX),
+        ],
+        out_dims: vec![1],
+        idx: 2,
+        num_uses: 1,
+    };
+
+    // mul node
+    let mul_node = Node {
+        opkind: SupportedOp::Linear(PolyOp::Mult),
+        out_scale: SCALE,
+        inputs: vec![
+            (add_node.idx, NODE_OUTPUT_IDX),
+            (sub_node.idx, NODE_OUTPUT_IDX),
+        ],
+        out_dims: vec![1],
+        idx: 3,
+        num_uses: 1,
+    };
+
+    // add node
+    let add_node2 = Node {
+        opkind: SupportedOp::Linear(PolyOp::Add),
+        out_scale: SCALE,
+        inputs: vec![
+            (sub_node.idx, NODE_OUTPUT_IDX),
+            (mul_node.idx, NODE_OUTPUT_IDX),
+        ],
+        out_dims: vec![1],
+        idx: 4,
+        num_uses: 1,
+    };
+
+    // Insert nodes into the model
+    nodes.insert(input_node.idx, NodeType::Node(input_node));
+    nodes.insert(add_node.idx, NodeType::Node(add_node));
+    nodes.insert(sub_node.idx, NodeType::Node(sub_node));
+    nodes.insert(mul_node.idx, NodeType::Node(mul_node));
+    nodes.insert(add_node2.idx, NodeType::Node(add_node2));
+    custom_addsubmul_model.graph.nodes = nodes;
+
+    // Set inputs and outputs
+    custom_addsubmul_model.graph.inputs = vec![0 /* input_node.idx */];
+    custom_addsubmul_model.graph.outputs = vec![(4 /* add_node2.idx */, NODE_OUTPUT_IDX)];
     custom_addsubmul_model
 }

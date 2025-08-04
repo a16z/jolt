@@ -2,9 +2,16 @@
 //! Used to format the bytecode and define each instr flags and memory access patterns.
 //! Used by the runtime to generate an execution trace for ONNX runtime execution.
 
+use crate::{constants::MEMORY_OPS_PER_INSTRUCTION, tensor::Tensor};
+use core::panic;
 use serde::{Deserialize, Serialize};
+use std::ops::{Index, IndexMut};
+use strum::EnumCount;
+use strum_macros::EnumCount as EnumCountMacro;
 
-use crate::tensor::Tensor;
+/// Used to calculate the zkVM address's from the execution trace.
+/// Since the 0 address is reserved for the zero register, we prepend a 1 to the address's in the execution trace.
+const ZERO_REGISTER_PREPEND: usize = 1;
 
 /// Represents a step in the execution trace, where an execution trace is a `Vec<ONNXCycle>`.
 /// Records what the VM did at a cycle of execution.
@@ -24,12 +31,69 @@ impl ONNXCycle {
             advice_value: None,
         }
     }
+
+    // HACKS(Forpee): These methods are going to be removed once we 1. migrate runtime to 64-bit and 2. allow jolt-prover to intake tensor ops at each cycle.
+    // TODO: Also Refactor execution trace.
+    pub fn td(&self) -> usize {
+        self.instr.td.map_or(0, |td| td + ZERO_REGISTER_PREPEND)
+    }
+    pub fn ts1(&self) -> usize {
+        self.instr.ts1.map_or(0, |ts1| ts1 + ZERO_REGISTER_PREPEND)
+    }
+    pub fn ts2(&self) -> usize {
+        self.instr.ts2.map_or(0, |ts2| ts2 + ZERO_REGISTER_PREPEND)
+    }
+    pub fn td_write(&self) -> (usize, u64, u64) {
+        match self.to_memory_ops()[2] {
+            MemoryOp::Write(td, pre_val, post_val) => (td as usize, pre_val, post_val),
+            _ => panic!("Expected td to be a write operation"),
+        }
+    }
+    pub fn ts1_read(&self) -> (usize, u64) {
+        match self.to_memory_ops()[0] {
+            MemoryOp::Read(ts1, ts1_val) => (ts1 as usize, ts1_val),
+            _ => panic!("Expected ts1 to be a read operation"),
+        }
+    }
+    pub fn ts2_read(&self) -> (usize, u64) {
+        match self.to_memory_ops()[1] {
+            MemoryOp::Read(ts2, ts2_val) => (ts2 as usize, ts2_val),
+            _ => panic!("Expected ts2 to be a read operation"),
+        }
+    }
+    pub fn td_post_val(&self) -> u64 {
+        self.memory_state
+            .td_post_val
+            .as_ref()
+            .map(|t| t.inner[0] as i32 as u32 as u64)
+            .unwrap_or(0)
+    }
+    pub fn td_pre_val(&self) -> u64 {
+        // FIXME: This is not correct for input and const nodes
+        // This value is only written to once
+        0
+    }
+    pub fn ts1_val(&self) -> u64 {
+        self.memory_state
+            .ts1_val
+            .as_ref()
+            .map(|t| t.inner[0] as i32 as u32 as u64)
+            .unwrap_or(0)
+    }
+    pub fn ts2_val(&self) -> u64 {
+        self.memory_state
+            .ts2_val
+            .as_ref()
+            .map(|t| t.inner[0] as i32 as u32 as u64)
+            .unwrap_or(0)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Default, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct MemoryState {
     pub ts1_val: Option<Tensor<i128>>,
     pub ts2_val: Option<Tensor<i128>>,
+    pub td_pre_val: Option<Tensor<i128>>,
     pub td_post_val: Option<Tensor<i128>>,
 }
 
@@ -80,6 +144,161 @@ pub struct ONNXInstr {
     /// `virtual_sequence_remaining` will be Some(0); if this is the penultimate instruction
     /// in the sequence, `virtual_sequence_remaining` will be Some(1); etc.
     pub virtual_sequence_remaining: Option<usize>,
+}
+
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
+pub enum MemoryOp {
+    Read(u64, u64),       // (address, value)
+    Write(u64, u64, u64), // (address, old_value, new_value)
+}
+
+impl MemoryOp {
+    pub fn noop_read() -> Self {
+        Self::Read(0, 0)
+    }
+
+    pub fn noop_write() -> Self {
+        Self::Write(0, 0, 0)
+    }
+
+    pub fn address(&self) -> u64 {
+        match self {
+            MemoryOp::Read(a, _) => *a,
+            MemoryOp::Write(a, _, _) => *a,
+        }
+    }
+}
+
+impl ONNXCycle {
+    pub fn to_memory_ops(&self) -> [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
+        let ts1_read = || MemoryOp::Read(self.ts1() as u64, self.ts1_val());
+        let ts2_read = || MemoryOp::Read(self.ts2() as u64, self.ts2_val());
+        let td_write = || MemoryOp::Write(self.td() as u64, self.td_pre_val(), self.td_post_val());
+
+        // // Canonical ordering for memory instructions
+        // // 0: ts1
+        // // 1: ts2
+        // // 2: td
+        // // If any are empty a no_op is inserted.
+
+        match self.instr.opcode {
+            ONNXOpcode::Add | ONNXOpcode::Sub | ONNXOpcode::Mul => {
+                [ts1_read(), ts2_read(), td_write()]
+            }
+            ONNXOpcode::Noop => [
+                MemoryOp::noop_read(),
+                MemoryOp::noop_read(),
+                MemoryOp::noop_write(),
+            ],
+            ONNXOpcode::Constant => [
+                MemoryOp::noop_read(),
+                MemoryOp::noop_read(),
+                MemoryOp::noop_write(),
+            ],
+            ONNXOpcode::Input => [MemoryOp::noop_read(), MemoryOp::noop_read(), td_write()],
+            _ => unreachable!("{self:?}"),
+        }
+    }
+}
+
+/// Boolean flags used in Jolt's R1CS constraints (`opflags` in the Jolt paper).
+/// Note that the flags below deviate somewhat from those described in Appendix A.1
+/// of the Jolt paper.
+#[derive(Clone, Copy, Debug, PartialEq, EnumCountMacro)]
+pub enum CircuitFlags {
+    /// 1 if the first instruction operand is RS1 value; 0 otherwise.
+    LeftOperandIsRs1Value,
+    /// 1 if the first instruction operand is RS2 value; 0 otherwise.
+    RightOperandIsRs2Value,
+    /// 1 if the first lookup operand is the sum of the two instruction operands.
+    AddOperands,
+    /// 1 if the first lookup operand is the difference between the two instruction operands.
+    SubtractOperands,
+    /// 1 if the first lookup operand is the product of the two instruction operands.
+    MultiplyOperands,
+    /// 1 if the lookup output is to be stored in `rd` at the end of the step.
+    WriteLookupOutputToRD,
+    // /// 1 if the instruction is "inline", as defined in Section 6.1 of the Jolt paper.
+    // InlineSequenceInstruction,
+    // /// 1 if the instruction is an assert, as defined in Section 6.1.1 of the Jolt paper.
+    // Assert,
+    // /// Used in virtual sequences; the program counter should be the same for the full sequence.
+    // DoNotUpdateUnexpandedPC,
+    // /// Is (virtual) advice instruction
+    // Advice,
+}
+
+pub const NUM_CIRCUIT_FLAGS: usize = CircuitFlags::COUNT;
+
+impl ONNXInstr {
+    #[rustfmt::skip]
+    pub fn to_circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
+        let mut flags = [false; NUM_CIRCUIT_FLAGS];
+
+        flags[CircuitFlags::LeftOperandIsRs1Value as usize] = matches!(
+            self.opcode,
+            ONNXOpcode::Add
+            | ONNXOpcode::Sub
+            | ONNXOpcode::Mul
+        );
+
+        flags[CircuitFlags::RightOperandIsRs2Value as usize] = matches!(
+            self.opcode,
+            ONNXOpcode::Add
+            | ONNXOpcode::Sub
+            | ONNXOpcode::Mul
+        );
+
+        flags[CircuitFlags::AddOperands as usize] = matches!(
+            self.opcode,
+            ONNXOpcode::Add,
+        );
+
+        flags[CircuitFlags::SubtractOperands as usize] = matches!(
+            self.opcode,
+            ONNXOpcode::Sub,
+        );
+
+        flags[CircuitFlags::MultiplyOperands as usize] = matches!(
+            self.opcode,
+            ONNXOpcode::Mul,
+        );
+
+        flags[CircuitFlags::WriteLookupOutputToRD as usize] = matches!(
+            self.opcode,
+            ONNXOpcode::Add
+            | ONNXOpcode::Sub
+            | ONNXOpcode::Mul
+        );
+
+        flags
+    }
+}
+
+pub trait InterleavedBitsMarker {
+    fn is_interleaved_operands(&self) -> bool;
+}
+
+impl InterleavedBitsMarker for [bool; NUM_CIRCUIT_FLAGS] {
+    fn is_interleaved_operands(&self) -> bool {
+        !self[CircuitFlags::AddOperands]
+            && !self[CircuitFlags::SubtractOperands]
+            && !self[CircuitFlags::MultiplyOperands]
+        // && !self[CircuitFlags::Advice]
+    }
+}
+
+impl Index<CircuitFlags> for [bool; NUM_CIRCUIT_FLAGS] {
+    type Output = bool;
+    fn index(&self, index: CircuitFlags) -> &bool {
+        &self[index as usize]
+    }
+}
+
+impl IndexMut<CircuitFlags> for [bool; NUM_CIRCUIT_FLAGS] {
+    fn index_mut(&mut self, index: CircuitFlags) -> &mut bool {
+        &mut self[index as usize]
+    }
 }
 
 impl ONNXInstr {

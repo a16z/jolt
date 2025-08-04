@@ -1,18 +1,17 @@
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use sha3::Sha3_256;
 
-use crate::{
+use super::builder::CombinedUniformBuilder;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use jolt_core::{
     field::JoltField,
     poly::eq_poly::EqPolynomial,
+    r1cs::key::SparseConstraints,
     utils::{index_to_field_bitvector, mul_0_1_optimized, thread::unsafe_allocate_zero_vec},
 };
-
-use super::builder::CombinedUniformBuilder;
 use sha3::Digest;
 
-use crate::utils::math::Math;
+use jolt_core::utils::math::Math;
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct UniformSpartanKey<F: JoltField> {
     pub uniform_r1cs: UniformR1CS<F>,
 
@@ -24,28 +23,6 @@ pub struct UniformSpartanKey<F: JoltField> {
 
     /// Digest of verifier key
     pub vk_digest: F,
-}
-
-/// (row, col, value)
-pub type Coeff<F> = (usize, usize, F);
-
-/// Sparse representation of a single R1CS matrix.
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct SparseConstraints<F: JoltField> {
-    /// Non-zero, non-constant coefficients
-    pub vars: Vec<Coeff<F>>,
-
-    /// Non-zero constant coefficients stored as (uniform_row_index, coeff)
-    pub consts: Vec<(usize, F)>,
-}
-
-impl<F: JoltField> SparseConstraints<F> {
-    pub fn empty_with_capacity(vars: usize, consts: usize) -> Self {
-        Self {
-            vars: Vec::with_capacity(vars),
-            consts: Vec::with_capacity(consts),
-        }
-    }
 }
 
 /// Sparse representation of all 3 uniform R1CS matrices. Uniform matrices can be repeated over a number of steps

@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BytecodePreprocessing {
-    code_size: usize,
+    pub code_size: usize,
     bytecode: Vec<ONNXInstr>,
 }
 
@@ -156,6 +156,7 @@ where
                     (instr.ts1.unwrap_or_default() as u64).field_mul(gamma_pows[2]);
                 linear_combination +=
                     (instr.ts2.unwrap_or_default() as u64).field_mul(gamma_pows[3]);
+                // TODO: Add td
                 linear_combination
             })
             .collect()

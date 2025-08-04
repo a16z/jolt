@@ -3,7 +3,6 @@
 
 use crate::{field::JoltField, poly::multilinear_polynomial::MultilinearPolynomial};
 use std::fmt::Debug;
-#[cfg(test)]
 use std::fmt::Write as _;
 use std::hash::Hash;
 
@@ -16,7 +15,6 @@ pub enum Variable {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Term(pub Variable, pub i64);
 impl Term {
-    #[cfg(test)]
     fn pretty_fmt(&self, f: &mut String) -> std::fmt::Result {
         use super::inputs::JoltR1CSInputs;
 
@@ -32,7 +30,7 @@ impl Term {
 
 /// Linear Combination of terms.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct LC(Vec<Term>);
+pub struct LC(pub Vec<Term>);
 
 impl LC {
     pub fn new(terms: Vec<Term>) -> Self {
@@ -100,7 +98,6 @@ impl LC {
             .sum()
     }
 
-    #[cfg(test)]
     pub fn pretty_fmt(&self, f: &mut String) -> std::fmt::Result {
         if self.0.is_empty() {
             write!(f, "0")
