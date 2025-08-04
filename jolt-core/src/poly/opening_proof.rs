@@ -349,6 +349,7 @@ where
         }
     }
 
+    #[tracing::instrument(skip_all, name = "OpeningProofReductionSumcheck::prepare_sumcheck")]
     fn prepare_sumcheck<ProofTranscript: Transcript>(
         &mut self,
         polynomials_map: Option<&HashMap<CommittedPolynomial, MultilinearPolynomial<F>>>,
@@ -380,8 +381,8 @@ where
 
             let reduced_claim = self
                 .rlc_coeffs
-                .iter()
-                .zip(self.input_claims.iter())
+                .par_iter()
+                .zip(self.input_claims.par_iter())
                 .map(|(gamma, claim)| *gamma * claim)
                 .sum();
             self.input_claims = vec![reduced_claim];
@@ -390,7 +391,7 @@ where
                 let polynomials_map = polynomials_map.unwrap();
                 let polynomials: Vec<_> = self
                     .polynomials
-                    .iter()
+                    .par_iter()
                     .map(|label| polynomials_map.get(label).unwrap())
                     .collect();
 
@@ -747,6 +748,7 @@ where
             self.sumchecks.len()
         );
 
+        // @TODO(markosg04) better parallelism here? being mindful of the transcript ordering
         self.sumchecks
             .iter_mut()
             .for_each(|sumcheck| sumcheck.prepare_sumcheck(Some(&polynomials), transcript));

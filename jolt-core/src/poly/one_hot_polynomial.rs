@@ -15,6 +15,7 @@ use crate::utils::expanding_table::ExpandingTable;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::thread::unsafe_allocate_zero_vec;
+use ark_bn254::{G1Affine, G1Projective};
 use ark_ec::CurveGroup;
 use rayon::prelude::*;
 use std::mem;
@@ -107,7 +108,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             eq_state,
         }
     }
-
+    #[tracing::instrument(skip_all, name = "OneHotPolynomialProverOpening::initialize")]
     pub fn initialize(&mut self, mut polynomial: OneHotPolynomial<F>) {
         let nonzero_indices = &polynomial.nonzero_indices;
         let T = nonzero_indices.len();
@@ -374,14 +375,35 @@ impl<F: JoltField> OneHotPolynomial<F> {
                 .nonzero_indices
                 .par_chunks(row_len)
                 .map(|chunk| {
-                    let mut row_commitments = vec![JoltGroupWrapper(G::zero()); self.K];
+                    // Collect indices for each k
+                    let mut indices_per_k: Vec<Vec<usize>> = vec![Vec::new(); self.K];
+
                     for (col_index, k) in chunk.iter().enumerate() {
-                        // All the nonzero coefficients are 1, so we simply add
-                        // the associated base to the result.
                         if let Some(k) = k {
-                            row_commitments[*k].0 += bases[col_index];
+                            indices_per_k[*k].push(col_index);
                         }
                     }
+
+                    // Safety: This function is only called with G1Affine
+                    let g1_bases =
+                        unsafe { std::mem::transmute::<&[G::Affine], &[G1Affine]>(bases) };
+
+                    // Vectorized batch addition for all k values at once
+                    let results =
+                        jolt_optimizations::batch_g1_additions_multi(g1_bases, &indices_per_k);
+
+                    // Convert results to row_commitments
+                    let mut row_commitments = vec![JoltGroupWrapper(G::zero()); self.K];
+                    for (k, result) in results.into_iter().enumerate() {
+                        if !indices_per_k[k].is_empty() {
+                            let sum_projective: G1Projective = result.into();
+                            // Safety: We know G is G1Projective
+                            row_commitments[k].0 = unsafe {
+                                std::ptr::read(&sum_projective as *const G1Projective as *const G)
+                            };
+                        }
+                    }
+
                     row_commitments
                 })
                 .collect();
@@ -402,26 +424,40 @@ impl<F: JoltField> OneHotPolynomial<F> {
 
             // Iterate over chunks of contiguous rows in parallel
             let mut result: Vec<JoltGroupWrapper<G>> = vec![JoltGroupWrapper(G::zero()); num_rows];
+
+            // First, collect indices for each row
+            let mut row_indices: Vec<Vec<usize>> = vec![Vec::new(); num_rows];
+
+            for (t, k) in self.nonzero_indices.iter().enumerate() {
+                if let Some(k) = k {
+                    let global_index = *k as u64 * T as u64 + t as u64;
+                    let row_index = (global_index / row_len as u64) as usize;
+                    let col_index = (global_index % row_len as u64) as usize;
+                    row_indices[row_index].push(col_index);
+                }
+            }
+
+            // Process rows in parallel chunks
+            // Safety: This function is only called with G1Affine
+            let g1_bases = unsafe { std::mem::transmute::<&[G::Affine], &[G1Affine]>(bases) };
+
             result
                 .par_chunks_mut(chunk_size)
-                .enumerate()
-                .for_each(|(chunk_index, chunk)| {
-                    let min_row_index = chunk_index * chunk_size;
-                    let max_row_index = min_row_index + chunk_size;
+                .zip(row_indices.par_chunks(chunk_size))
+                .for_each(|(result_chunk, indices_chunk)| {
+                    let results =
+                        jolt_optimizations::batch_g1_additions_multi(g1_bases, indices_chunk);
 
-                    for (t, k) in self.nonzero_indices.iter().enumerate() {
-                        if let Some(k) = k {
-                            let global_index = *k as u64 * T as u64 + t as u64;
-                            let row_index = (global_index / row_len as u64) as usize;
-
-                            // If this coefficient falls in the chunk of rows corresponding
-                            // to `chunk_index`, add its contribution to the result
-                            if row_index >= min_row_index && row_index < max_row_index {
-                                let col_index = global_index % row_len as u64;
-                                // All the nonzero coefficients are 1, so we simply add
-                                // the associated base to the result.
-                                chunk[row_index % chunk_size].0 += bases[col_index as usize];
-                            }
+                    for (row_result, (indices, result)) in result_chunk
+                        .iter_mut()
+                        .zip(indices_chunk.iter().zip(results.into_iter()))
+                    {
+                        if !indices.is_empty() {
+                            let sum_projective: G1Projective = result.into();
+                            // Safety: We know G is G1Projective
+                            row_result.0 = unsafe {
+                                std::ptr::read(&sum_projective as *const G1Projective as *const G)
+                            };
                         }
                     }
                 });
