@@ -176,7 +176,6 @@ impl Program {
                 .flat_map_iter(|instr| match instr {
                     RV32IMInstruction::DIV(div) => div.virtual_sequence(xlen),
                     RV32IMInstruction::DIVU(divu) => divu.virtual_sequence(xlen),
-                    RV32IMInstruction::KECCAK256(keccak256) => keccak256.virtual_sequence(xlen),
                     RV32IMInstruction::LB(lb) => lb.virtual_sequence(xlen),
                     RV32IMInstruction::LBU(lbu) => lbu.virtual_sequence(xlen),
                     RV32IMInstruction::LH(lh) => lh.virtual_sequence(xlen),
