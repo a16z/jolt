@@ -622,8 +622,7 @@ where
             return Self::GT::identity();
         }
 
-        // @TODO(markosg04) avoid clones?
-
+        // @TODO(markosg04) avoid clones? requires change to arkworks multi_pair
         let prepare_g1_cached =
             |count, cache: &dory::curve::G1Cache| -> Vec<BnG1Prepared<ark_bn254::Config>> {
                 (0..count)
