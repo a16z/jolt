@@ -1,4 +1,3 @@
-use crate::instruction::addi::ADDI;
 /// This file contains Keccak256-specific logic to be used in the Keccak256 inline:
 /// 1) Prover: Keccak256SequenceBuilder expands the inline to a list of RV instructions.
 /// 2) Host: Rust reference implementation to be called by jolt-sdk.
@@ -13,6 +12,7 @@ use crate::instruction::addi::ADDI;
 ///
 /// Keccak256 refers to the specific variant where the rate is 1088 bits and the capacity is 512 bits.
 /// Keccak256 differs from SHA3-256 (not implemented here) in the padding scheme.
+use crate::instruction::addi::ADDI;
 use crate::instruction::and::AND;
 use crate::instruction::andi::ANDI;
 use crate::instruction::andn::ANDN;
