@@ -23,7 +23,7 @@ pub struct CpuTestHarness {
 impl CpuTestHarness {
     /// Creates a harness with RV64.
     pub fn new() -> Self {
-        let mut cpu = Cpu::new(Box::new(DefaultTerminal::new()));
+        let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
         cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
         Self { cpu }
     }
