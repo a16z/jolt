@@ -12,20 +12,15 @@
 ///
 /// Keccak256 refers to the specific variant where the rate is 1088 bits and the capacity is 512 bits.
 /// Keccak256 differs from SHA3-256 (not implemented here) in the padding scheme.
-use crate::instruction::addi::ADDI;
 use crate::instruction::and::AND;
 use crate::instruction::andi::ANDI;
 use crate::instruction::andn::ANDN;
 use crate::instruction::format::format_i::FormatI;
 use crate::instruction::format::format_r::FormatR;
 use crate::instruction::format::format_s::FormatS;
-use crate::instruction::format::format_u::FormatU;
 use crate::instruction::format::format_virtual_right_shift_i::FormatVirtualRightShiftI;
 use crate::instruction::ld::LD;
-use crate::instruction::lui::LUI;
-use crate::instruction::or::OR;
 use crate::instruction::sd::SD;
-use crate::instruction::slli::SLLI;
 use crate::instruction::virtual_rotri::VirtualROTRI;
 use crate::instruction::xor::XOR;
 use crate::instruction::xori::XORI;
@@ -330,154 +325,10 @@ impl Keccak256SequenceBuilder {
         // into the first lane of the state, A[0,0].
         let round_constant = ROUND_CONSTANTS[self.round as usize];
         let first_lane_reg = self.lane(0, 0);
-
-        // IMPORTANT: XORI can only handle 12-bit immediates in RISC-V as it calls normalize_imm
-        // For round constants that don't fit in 12 bits, we need to load them into a register first
-        // TODO: Review this - moodlezoup said that we have 64-bit support for Imm, so getting rid of this is a potential optimization.
-        // This can be simplified if XORI is modified to support 64-bit immediates.
-
-        // Check if the constant fits in 12 bits (signed)
-        let fits_in_12_bits = round_constant as i64 >= -2048 && round_constant as i64 <= 2047;
-
-        if fits_in_12_bits {
-            // Use XORI directly for small constants (rounds 0, 7, 8, 9, 17)
-            self.xor64(Reg(first_lane_reg), Imm(round_constant), first_lane_reg);
-        } else {
-            // For larger constants, we need to load them into a register first
-            // Use a scratch register to hold the constant
-            let const_reg = self.vr[65];
-
-            // Load the 64-bit constant into the register
-            // We'll use LUI + ADDI + shifts to construct the full 64-bit value
-            self.load_64bit_immediate(round_constant, const_reg);
-
-            // Now XOR with the register containing the constant
-            self.xor64(Reg(first_lane_reg), Reg(const_reg), first_lane_reg);
-        }
+        self.xor64(Reg(first_lane_reg), Imm(round_constant), first_lane_reg);
     }
 
     // TODO(dwong): Refactor non-keccak-specific helpers below into inline_helpers module.
-
-    /// Load a 64-bit immediate value into a register
-    /// This is needed because RISC-V instructions can only handle small immediates
-    fn load_64bit_immediate(&mut self, value: u64, rd: usize) {
-        // For efficiency, handle special cases
-        if value == 0 {
-            // XOR with itself to get zero
-            self.xor(Reg(rd), Reg(rd), rd);
-            return;
-        }
-
-        if value == u64::MAX {
-            // Use NOT of zero (which we'll implement as XOR with all ones)
-            // First get zero
-            self.xor(Reg(rd), Reg(rd), rd);
-            // Then XOR with all ones (which we already handle in not64)
-            self.xor(Reg(rd), Imm(u64::MAX), rd);
-            return;
-        }
-
-        // For general 64-bit values, we need multiple instructions
-        // We'll use a sequence of LUI, ADDI, and shifts
-
-        // Break the 64-bit value into parts
-        let bits_63_32 = (value >> 32) as u32;
-        let bits_31_0 = value as u32;
-
-        if bits_63_32 == 0 {
-            // Upper 32 bits are zero, we can optimize
-            self.load_32bit_immediate(bits_31_0, rd);
-        } else if bits_31_0 == 0 {
-            // Lower 32 bits are zero
-            self.load_32bit_immediate(bits_63_32, rd);
-            self.slli(Reg(rd), 32, rd);
-        } else {
-            // Need to load both halves
-            // First load the upper 32 bits
-            // Use vr[67] to avoid conflict with temp registers used by load_32bit_immediate
-            let temp_reg = self.vr[67];
-            self.load_32bit_immediate(bits_63_32, temp_reg);
-            self.slli(Reg(temp_reg), 32, temp_reg);
-
-            // Load lower 32 bits into rd
-            self.load_32bit_immediate(bits_31_0, rd);
-
-            // OR them together
-            self.or(Reg(temp_reg), Reg(rd), rd);
-        }
-    }
-
-    /// Load a 32-bit immediate value into a register
-    fn load_32bit_immediate(&mut self, value: u32, rd: usize) {
-        // Use LUI + ADDI to load a 32-bit value
-        // LUI loads bits 31:12, ADDI adds bits 11:0
-
-        let upper_20 = value >> 12;
-        let lower_12 = value & 0xFFF;
-
-        if upper_20 == 0 {
-            // Just use ADDI with zero register
-            self.addi(Reg(0), lower_12 as i64, rd);
-        } else {
-            // Need LUI + ADDI
-            // Note: if bit 11 of lower_12 is set, ADDI will sign-extend
-            // and subtract from the upper bits, so we need to adjust
-            let needs_adjustment = (lower_12 & 0x800) != 0;
-            let adjusted_upper = if needs_adjustment {
-                upper_20 + 1
-            } else {
-                upper_20
-            };
-
-            // IMPORTANT: Check if the upper 20 bits would cause sign extension
-            // If bit 19 is set (which becomes bit 31 after shifting), LUI will
-            // sign-extend the value, which we don't want for loading positive constants
-            if adjusted_upper & 0x80000 != 0 {
-                // For values that would be sign-extended by LUI, we need a different approach
-                // We'll use ADDI to load the value in parts
-
-                // First, clear the register
-                self.xor(Reg(rd), Reg(rd), rd);
-
-                // Load lower 12 bits
-                if lower_12 != 0 {
-                    self.addi(Reg(rd), lower_12 as i64, rd);
-                }
-
-                // Load bits 23:12 using another ADDI after shifting
-                let middle_12 = (value >> 12) & 0xFFF;
-                if middle_12 != 0 {
-                    // Use vr[68] to avoid conflict with rd which might be vr[65] or vr[66]
-                    let temp = self.vr[68];
-                    self.addi(Reg(0), middle_12 as i64, temp);
-                    self.slli(Reg(temp), 12, temp);
-                    self.or(Reg(rd), Reg(temp), rd);
-                }
-
-                // Load bits 31:24 if needed
-                let upper_8 = (value >> 24) & 0xFF;
-                if upper_8 != 0 {
-                    // Use vr[69] to avoid conflict
-                    let temp = self.vr[69];
-                    self.addi(Reg(0), upper_8 as i64, temp);
-                    self.slli(Reg(temp), 24, temp);
-                    self.or(Reg(rd), Reg(temp), rd);
-                }
-            } else {
-                // Normal case: LUI won't sign-extend
-                self.lui(adjusted_upper, rd);
-
-                // Add lower 12 bits with ADDI (will be sign-extended)
-                let sign_extended_lower = if lower_12 & 0x800 != 0 {
-                    // Sign extend to 64 bits
-                    (lower_12 | 0xFFFFF000) as i32 as i64
-                } else {
-                    lower_12 as i64
-                };
-                self.addi(Reg(rd), sign_extended_lower, rd);
-            }
-        }
-    }
 
     // --- 64-bit Arithmetic Helpers ---
 
@@ -640,76 +491,6 @@ impl Keccak256SequenceBuilder {
             }
             Imm(val) => Imm(val.rotate_right(imm as u32)),
         }
-    }
-
-    fn slli(&mut self, rs1: Value, imm: u64, rd: usize) -> Value {
-        match rs1 {
-            Reg(rs1) => {
-                let slli = SLLI {
-                    address: self.address,
-                    operands: FormatI { rd, rs1, imm },
-                    virtual_sequence_remaining: Some(0),
-                    is_compressed: self.is_compressed,
-                };
-                self.sequence.push(slli.into());
-                Reg(rd)
-            }
-            Imm(val) => Imm(val << imm),
-        }
-    }
-
-    fn or(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
-        match (rs1, rs2) {
-            (Reg(rs1), Reg(rs2)) => {
-                let or = OR {
-                    address: self.address,
-                    operands: FormatR { rd, rs1, rs2 },
-                    virtual_sequence_remaining: Some(0),
-                    is_compressed: self.is_compressed,
-                };
-                self.sequence.push(or.into());
-                Reg(rd)
-            }
-            (Reg(_), Imm(_)) | (Imm(_), Reg(_)) => {
-                panic!("OR with immediate not implemented - use ORI if needed");
-            }
-            (Imm(imm1), Imm(imm2)) => Imm(imm1 | imm2),
-        }
-    }
-
-    fn addi(&mut self, rs1: Value, imm: i64, rd: usize) -> Value {
-        match rs1 {
-            Reg(rs1) => {
-                let addi = ADDI {
-                    address: self.address,
-                    operands: FormatI {
-                        rd,
-                        rs1,
-                        imm: imm as u64,
-                    },
-                    virtual_sequence_remaining: Some(0),
-                    is_compressed: self.is_compressed,
-                };
-                self.sequence.push(addi.into());
-                Reg(rd)
-            }
-            Imm(val) => Imm((val as i64 + imm) as u64),
-        }
-    }
-
-    fn lui(&mut self, imm: u32, rd: usize) -> Value {
-        let lui = LUI {
-            address: self.address,
-            operands: FormatU {
-                rd,
-                // LUI expects the immediate to be in bits 31:12
-                imm: (imm as u64) << 12,
-            },
-            virtual_sequence_remaining: Some(0),
-            is_compressed: self.is_compressed,
-        };
-        self.sequence.push(lui.into());
-        Reg(rd)
     }
 
     /// Enumerates sequence in reverse order and sets virtual_sequence_remaining
