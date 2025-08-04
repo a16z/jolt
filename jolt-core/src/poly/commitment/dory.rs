@@ -15,7 +15,7 @@ use crate::{
 use ark_bn254::{Bn254, Fr, G1Projective, G2Projective};
 use ark_ec::{
     pairing::{MillerLoopOutput, Pairing as ArkPairing, PairingOutput},
-    CurveGroup,
+    AffineRepr, CurveGroup,
 };
 use ark_ff::{Field, One, PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -647,41 +647,82 @@ where
                     .collect()
             };
 
-        let prepare_g1_fresh = |points: &[Self::G1]| {
+        // Optimized parallel preparation for fresh points
+        let prepare_fresh_points = |g1_points: &[Self::G1], g2_points: &[Self::G2]| {
             let g1_inner: &[G1Projective] = unsafe {
-                std::slice::from_raw_parts(points.as_ptr() as *const G1Projective, points.len())
+                std::slice::from_raw_parts(g1_points.as_ptr() as *const G1Projective, g1_points.len())
             };
-            G1Projective::normalize_batch(g1_inner)
-                .par_iter()
-                .map(BnG1Prepared::<ark_bn254::Config>::from)
-                .collect::<Vec<_>>()
-        };
-
-        let prepare_g2_fresh = |points: &[Self::G2]| {
             let g2_inner: &[G2Projective] = unsafe {
-                std::slice::from_raw_parts(points.as_ptr() as *const G2Projective, points.len())
+                std::slice::from_raw_parts(g2_points.as_ptr() as *const G2Projective, g2_points.len())
             };
-            G2Projective::normalize_batch(g2_inner)
+
+            let aff_g1 = G1Projective::normalize_batch(g1_inner);
+            let aff_g2 = G2Projective::normalize_batch(g2_inner);
+
+            let (prepared_g1, prepared_g2): (Vec<_>, Vec<_>) = aff_g1
                 .par_iter()
-                .map(BnG2Prepared::<ark_bn254::Config>::from)
-                .collect::<Vec<_>>()
+                .zip(aff_g2.par_iter())
+                .filter_map(|(g1, g2)| {
+                    if g1.is_zero() {
+                        None
+                    } else {
+                        Some((
+                            BnG1Prepared::<ark_bn254::Config>::from(g1),
+                            BnG2Prepared::<ark_bn254::Config>::from(g2),
+                        ))
+                    }
+                })
+                .unzip();
+
+            (prepared_g1, prepared_g2)
         };
 
         // Get prepared points from cache or fresh points
-        let g1_prepared = match (g1_cache, g1_count, g1_points) {
-            (Some(cache), Some(count), _) => prepare_g1_cached(count, cache),
-            (_, _, Some(points)) => prepare_g1_fresh(points),
-            _ => panic!("Invalid G1 parameters"),
+        let (g1_prepared, g2_prepared) = match (g1_cache, g1_count, g1_points, g2_cache, g2_count, g2_points) {
+            // Both cached
+            (Some(g1_cache), Some(g1_count), _, Some(g2_cache), Some(g2_count), _) => {
+                (prepare_g1_cached(g1_count, g1_cache), prepare_g2_cached(g2_count, g2_cache))
+            }
+            // Both fresh
+            (_, _, Some(g1_points), _, _, Some(g2_points)) => {
+                prepare_fresh_points(g1_points, g2_points)
+            }
+            // Mixed cases
+            (Some(cache), Some(count), _, _, _, Some(g2_points)) => {
+                let g2_inner: &[G2Projective] = unsafe {
+                    std::slice::from_raw_parts(g2_points.as_ptr() as *const G2Projective, g2_points.len())
+                };
+                let g2_prepared = G2Projective::normalize_batch(g2_inner)
+                    .par_iter()
+                    .map(BnG2Prepared::<ark_bn254::Config>::from)
+                    .collect::<Vec<_>>();
+                (prepare_g1_cached(count, cache), g2_prepared)
+            }
+            (_, _, Some(g1_points), Some(cache), Some(count), _) => {
+                let g1_inner: &[G1Projective] = unsafe {
+                    std::slice::from_raw_parts(g1_points.as_ptr() as *const G1Projective, g1_points.len())
+                };
+                let g1_prepared = G1Projective::normalize_batch(g1_inner)
+                    .par_iter()
+                    .map(BnG1Prepared::<ark_bn254::Config>::from)
+                    .collect::<Vec<_>>();
+                (g1_prepared, prepare_g2_cached(count, cache))
+            }
+            _ => panic!("Invalid G1/G2 parameters"),
         };
 
-        let g2_prepared = match (g2_cache, g2_count, g2_points) {
-            (Some(cache), Some(count), _) => prepare_g2_cached(count, cache),
-            (_, _, Some(points)) => prepare_g2_fresh(points),
-            _ => panic!("Invalid G2 parameters"),
-        };
+        // Perform chunked parallel Miller loops
+        let num_chunks = rayon::current_num_threads();
+        let chunk_size = (g1_prepared.len() / num_chunks.max(1)).max(1);
 
-        // Perform pairing computation
-        let ml_result = Bn254::multi_miller_loop(g1_prepared, g2_prepared).0;
+        let ml_result = g1_prepared
+            .par_chunks(chunk_size)
+            .zip(g2_prepared.par_chunks(chunk_size))
+            .map(|(g1_chunk, g2_chunk)| {
+                Bn254::multi_miller_loop(g1_chunk.iter().cloned(), g2_chunk.iter().cloned()).0
+            })
+            .product();
+
         let pairing_result = Bn254::final_exponentiation(MillerLoopOutput(ml_result))
             .expect("Final exponentiation should not fail");
 
@@ -689,10 +730,7 @@ where
         // When E = Bn254, JoltGTWrapper<Bn254> has same memory layout as JoltGTWrapper<E>
         // since JoltGTWrapper is repr(transparent) and E::TargetField = Bn254::TargetField
         let bn_result = JoltGTWrapper::<Bn254>(pairing_result.0);
-        unsafe {
-            let ptr = &bn_result as *const JoltGTWrapper<Bn254> as *const Self::GT;
-            (*ptr).clone()
-        }
+        unsafe { std::mem::transmute_copy(&bn_result) }
     }
 }
 
