@@ -26,10 +26,10 @@ impl InstructionFlags for VirtualROTRI {
 }
 
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualROTRI> {
-    fn to_instruction_inputs(&self) -> (u64, i64) {
+    fn to_instruction_inputs(&self) -> (u64, i128) {
         (
             self.register_state.rs1,
-            self.instruction.operands.imm as i64,
+            self.instruction.operands.imm as i128,
         )
     }
 

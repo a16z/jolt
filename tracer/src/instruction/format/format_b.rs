@@ -1,7 +1,7 @@
 use crate::emulator::cpu::Cpu;
 use common::constants::REGISTER_COUNT;
 use rand::rngs::StdRng;
-use rand::RngCore;
+use rand::{Rng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -13,7 +13,7 @@ use super::{
 pub struct FormatB {
     pub rs1: usize,
     pub rs2: usize,
-    pub imm: i64,
+    pub imm: i128,
 }
 
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
@@ -55,7 +55,7 @@ impl InstructionFormat for FormatB {
 			((word >> 20) & 0x000007e0) | // imm[10:5] = [30:25]
 			((word >> 7) & 0x0000001e)
                 // imm[4:1] = [11:8]
-            ) as i32 as i64,
+            ) as i32 as i128,
         }
     }
 
@@ -70,7 +70,7 @@ impl InstructionFormat for FormatB {
 
     fn random(rng: &mut StdRng) -> Self {
         Self {
-            imm: rng.next_u64() as i64,
+            imm: rng.gen(),
             rs1: (rng.next_u64() % REGISTER_COUNT) as usize,
             rs2: (rng.next_u64() % REGISTER_COUNT) as usize,
         }

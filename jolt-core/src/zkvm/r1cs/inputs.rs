@@ -236,7 +236,7 @@ impl JoltR1CSInputs {
                 coeffs.into()
             }
             JoltR1CSInputs::Imm => {
-                let coeffs: Vec<i64> = trace
+                let coeffs: Vec<i128> = trace
                     .par_iter()
                     .map(|cycle| cycle.instruction().normalize().operands.imm)
                     .collect();
@@ -341,7 +341,7 @@ impl JoltR1CSInputs {
                             is_branch && LookupQuery::<WORD_SIZE>::to_lookup_output(cycle) != 0;
                         let instr = cycle.instruction().normalize();
                         if should_branch {
-                            (instr.address as i64 + instr.operands.imm) as u64
+                            (instr.address as i64 + instr.operands.imm as i64) as u64
                         } else {
                             // JoltR1CSInputs::NextPCJump
                             let is_jump = flags[CircuitFlags::Jump];

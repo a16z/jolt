@@ -18,7 +18,7 @@ declare_riscv_instr!(
 impl BLT {
     fn exec(&self, cpu: &mut Cpu, _: &mut <BLT as RISCVInstruction>::RAMAccess) {
         if cpu.sign_extend(cpu.x[self.operands.rs1]) < cpu.sign_extend(cpu.x[self.operands.rs2]) {
-            cpu.pc = (self.address as i64 + self.operands.imm) as u64;
+            cpu.pc = (self.address as i64 + self.operands.imm as i64) as u64;
         }
     }
 }

@@ -31,7 +31,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualSignEx
         (0, x as u128 + y as u64 as u128)
     }
 
-    fn to_instruction_inputs(&self) -> (u64, i64) {
+    fn to_instruction_inputs(&self) -> (u64, i128) {
         (self.register_state.rs1, 0)
     }
 

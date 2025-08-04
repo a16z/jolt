@@ -26,9 +26,9 @@ impl InstructionFlags for VirtualPow2IW {
 }
 
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualPow2IW> {
-    fn to_instruction_inputs(&self) -> (u64, i64) {
+    fn to_instruction_inputs(&self) -> (u64, i128) {
         // Only use immediate value
-        (0, self.instruction.operands.imm as i64)
+        (0, self.instruction.operands.imm as i128)
     }
 
     fn to_lookup_operands(&self) -> (u64, u128) {

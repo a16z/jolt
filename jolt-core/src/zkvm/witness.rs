@@ -209,7 +209,7 @@ impl CommittedPolynomial {
                 coeffs.into()
             }
             CommittedPolynomial::RightInstructionInput => {
-                let coeffs: Vec<i64> = trace
+                let coeffs: Vec<i128> = trace
                     .par_iter()
                     .map(|cycle| LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle).1)
                     .collect();
@@ -437,7 +437,7 @@ pub static ALL_VIRTUAL_POLYNOMIALS: LazyLock<Vec<VirtualPolynomial>> = LazyLock:
     }
     for table in LookupTables::iter() {
         polynomials.push(VirtualPolynomial::LookupTableFlag(
-            LookupTables::<32>::enum_index(&table),
+            LookupTables::<WORD_SIZE>::enum_index(&table),
         ));
     }
 
