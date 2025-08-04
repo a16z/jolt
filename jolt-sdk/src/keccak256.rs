@@ -156,7 +156,7 @@ pub unsafe fn keccak_f(state: *mut u64) {
     );
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "host"))]
 mod tests {
     use super::*;
     use hex_literal::hex;
