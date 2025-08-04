@@ -384,7 +384,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
                         }
                     }
 
-                    // Safety: This function is only called with G1Affine in practice
+                    // Safety: This function is only called with G1Affine
                     let g1_bases =
                         unsafe { std::mem::transmute::<&[G::Affine], &[G1Affine]>(bases) };
 
@@ -397,7 +397,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
                     for (k, result) in results.into_iter().enumerate() {
                         if !indices_per_k[k].is_empty() {
                             let sum_projective: G1Projective = result.into();
-                            // Safety: We know G is G1Projective in practice
+                            // Safety: We know G is G1Projective
                             row_commitments[k].0 = unsafe {
                                 std::ptr::read(&sum_projective as *const G1Projective as *const G)
                             };
@@ -438,14 +438,13 @@ impl<F: JoltField> OneHotPolynomial<F> {
             }
 
             // Process rows in parallel chunks
-            // Safety: This function is only called with G1Affine in practice
+            // Safety: This function is only called with G1Affine
             let g1_bases = unsafe { std::mem::transmute::<&[G::Affine], &[G1Affine]>(bases) };
 
             result
                 .par_chunks_mut(chunk_size)
                 .zip(row_indices.par_chunks(chunk_size))
                 .for_each(|(result_chunk, indices_chunk)| {
-                    // Vectorized batch addition for all rows in this chunk
                     let results =
                         jolt_optimizations::batch_g1_additions_multi(g1_bases, indices_chunk);
 
@@ -455,7 +454,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
                     {
                         if !indices.is_empty() {
                             let sum_projective: G1Projective = result.into();
-                            // Safety: We know G is G1Projective in practice
+                            // Safety: We know G is G1Projective
                             row_result.0 = unsafe {
                                 std::ptr::read(&sum_projective as *const G1Projective as *const G)
                             };
