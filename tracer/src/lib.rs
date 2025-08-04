@@ -26,7 +26,7 @@ pub mod instruction;
 
 pub use common::jolt_device::JoltDevice;
 
-use crate::emulator::memory::Memory;
+use crate::{emulator::memory::Memory, instruction::uncompress_instruction};
 
 /// Executes a RISC-V program and generates its execution trace along with emulator state checkpoints.
 ///
@@ -99,16 +99,6 @@ pub fn trace_checkpoints(
         LazyTraceIterator::new(setup_emulator(elf_contents, inputs, memory_config));
     let mut checkpoints = Vec::new();
 
-    // let mut trace = Vec::with_capacity(1 << 24); // TODO(moodlezoup): make configurable
-    // loop {
-    //     let mut trace_n = emulator_trace_iter.clone();
-    //     trace_n.set_length(checkpoint_interval);
-    //     checkpoints.push(trace_n);
-    //     emulator_trace_iter = emulator_trace_iter.dropping(checkpoint_interval);
-    //     if emulator_trace_iter.is_empty() {
-    //         break;
-    //     }
-    // }
     loop {
         let chkpt = emulator_trace_iter.clone().take(checkpoint_interval);
         checkpoints.push(chkpt);
@@ -120,7 +110,6 @@ pub fn trace_checkpoints(
     (checkpoints, emulator_trace_iter.get_jolt_device())
 }
 
-#[tracing::instrument(skip_all)]
 fn step_emulator(emulator: &mut Emulator, prev_pc: &mut u64, trace: Option<&mut Vec<RV32IMCycle>>) {
     let pc = emulator.get_cpu().read_pc();
     // This is a trick to see if the program has terminated by throwing itself
@@ -135,13 +124,13 @@ fn step_emulator(emulator: &mut Emulator, prev_pc: &mut u64, trace: Option<&mut 
 
 #[tracing::instrument(skip_all)]
 fn setup_emulator(elf_contents: Vec<u8>, inputs: &[u8], memory_config: &MemoryConfig) -> Emulator {
-    let term = DefaultTerminal::new();
+    let term = DefaultTerminal::default();
     let mut emulator = Emulator::new(Box::new(term));
     emulator.update_xlen(get_xlen());
 
     let mut jolt_device = JoltDevice::new(memory_config);
     jolt_device.inputs = inputs.to_vec();
-    emulator.get_mut_cpu().get_mut_mmu().jolt_device = jolt_device;
+    emulator.get_mut_cpu().get_mut_mmu().jolt_device = Some(jolt_device);
 
     emulator.setup_program(elf_contents);
     emulator
@@ -196,8 +185,12 @@ impl LazyTraceIterator {
 
     pub fn get_jolt_device(self) -> JoltDevice {
         let mut final_emulator_state = self.get_emulator_state();
-        let mut_jolt_device = &mut final_emulator_state.get_mut_cpu().get_mut_mmu().jolt_device;
-        std::mem::take(mut_jolt_device)
+        final_emulator_state
+            .get_mut_cpu()
+            .get_mut_mmu()
+            .jolt_device
+            .take()
+            .expect("JoltDevice was not initialized")
     }
 
     pub fn is_empty(&self) -> bool {
@@ -250,8 +243,12 @@ impl Iterator for LazyTraceIterator {
 }
 
 #[tracing::instrument(skip_all)]
-pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>) {
+pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>, Xlen) {
     let obj = object::File::parse(elf).unwrap();
+    let mut xlen = Xlen::Bit64;
+    if let object::File::Elf32(_) = &obj {
+        xlen = Xlen::Bit32;
+    }
 
     let sections = obj
         .sections()
@@ -265,17 +262,56 @@ pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>) {
         let raw_data = section.data().unwrap();
 
         if let SectionKind::Text = section.kind() {
-            for (chunk, word) in raw_data.chunks(4).enumerate() {
-                let word = u32::from_le_bytes(word.try_into().unwrap());
-                let address = chunk as u64 * 4 + section.address();
+            let mut offset = 0;
+            while offset < raw_data.len() {
+                let address = section.address() + offset as u64;
 
-                if let Ok(inst) = RV32IMInstruction::decode(word, address) {
-                    instructions.push(inst);
-                    continue;
+                // Check if we have at least 2 bytes
+                if offset + 1 >= raw_data.len() {
+                    break;
                 }
-                // Unrecognized instruction, or from a ReadOnlyData section
-                eprintln!("Warning: word: {word:08X} at address: {address:08X} is not recognized as a valid instruction.");
-                instructions.push(RV32IMInstruction::UNIMPL);
+
+                // Read first 2 bytes to determine instruction length
+                let first_halfword = u16::from_le_bytes([raw_data[offset], raw_data[offset + 1]]);
+
+                // Check if it's a compressed instruction (lowest 2 bits != 11)
+                if (first_halfword & 0b11) != 0b11 {
+                    // Compressed 16-bit instruction
+                    let compressed_inst = first_halfword;
+
+                    if let Ok(inst) = RV32IMInstruction::decode(
+                        uncompress_instruction(compressed_inst as u32, xlen),
+                        address,
+                        false,
+                    ) {
+                        instructions.push(inst);
+                    } else {
+                        eprintln!("Warning: compressed instruction {compressed_inst:04X} at address: {address:08X} failed to decode.");
+                        instructions.push(RV32IMInstruction::UNIMPL);
+                    }
+                    offset += 2;
+                } else {
+                    // Standard 32-bit instruction
+                    if offset + 3 >= raw_data.len() {
+                        eprintln!("Warning: incomplete instruction at address: {address:08X}");
+                        break;
+                    }
+
+                    let word = u32::from_le_bytes([
+                        raw_data[offset],
+                        raw_data[offset + 1],
+                        raw_data[offset + 2],
+                        raw_data[offset + 3],
+                    ]);
+
+                    if let Ok(inst) = RV32IMInstruction::decode(word, address, false) {
+                        instructions.push(inst);
+                    } else {
+                        eprintln!("Warning: word: {word:08X} at address: {address:08X} is not recognized as a valid instruction.");
+                        instructions.push(RV32IMInstruction::UNIMPL);
+                    }
+                    offset += 4;
+                }
             }
         }
         let address = section.address();
@@ -284,7 +320,7 @@ pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>) {
         }
     }
 
-    (instructions, data)
+    (instructions, data, xlen)
 }
 
 fn get_xlen() -> Xlen {

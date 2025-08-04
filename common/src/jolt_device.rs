@@ -58,7 +58,7 @@ impl JoltDevice {
                 self.outputs[internal_address]
             }
         } else {
-            assert!(address <= RAM_START_ADDRESS - 4);
+            assert!(address <= RAM_START_ADDRESS - 8);
             0 // zero-padding
         }
     }
@@ -114,6 +114,7 @@ pub struct MemoryConfig {
     pub max_output_size: u64,
     pub stack_size: u64,
     pub memory_size: u64,
+    pub bytecode_size: Option<u64>,
 }
 
 impl Default for MemoryConfig {
@@ -123,6 +124,7 @@ impl Default for MemoryConfig {
             max_output_size: DEFAULT_MAX_OUTPUT_SIZE,
             stack_size: DEFAULT_STACK_SIZE,
             memory_size: DEFAULT_MEMORY_SIZE,
+            bytecode_size: None,
         }
     }
 }
@@ -131,6 +133,7 @@ impl Default for MemoryConfig {
     Default, Clone, PartialEq, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize,
 )]
 pub struct MemoryLayout {
+    pub bytecode_size: u64,
     pub max_input_size: u64,
     pub max_output_size: u64,
     pub input_start: u64,
@@ -138,10 +141,10 @@ pub struct MemoryLayout {
     pub output_start: u64,
     pub output_end: u64,
     pub stack_size: u64,
-    /// Stack starts at the IO inputs and goes "down" from there by `stack_size` bytes.
+    /// Stack starts from (RAM_START_ADDRESS + `bytecode_size` + `stack_size`) and grows in descending addresses by `stack_size` bytes.
     pub stack_end: u64,
     pub memory_size: u64,
-    /// Heap starts at RAM_START_ADDRESS and is `memory_size` bytes.
+    /// Heap starts just after the start of the stack and is `memory_size` bytes.
     pub memory_end: u64,
     pub panic: u64,
     pub termination: u64,
@@ -153,6 +156,7 @@ pub struct MemoryLayout {
 impl core::fmt::Debug for MemoryLayout {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("MemoryLayout")
+            .field("bytecode_size", &self.bytecode_size)
             .field("max_input_size", &self.max_input_size)
             .field("max_output_size", &self.max_output_size)
             .field("input_start", &format_args!("{:#X}", self.input_start))
@@ -171,6 +175,10 @@ impl core::fmt::Debug for MemoryLayout {
 
 impl MemoryLayout {
     pub fn new(config: &MemoryConfig) -> Self {
+        assert!(
+            config.bytecode_size.is_some(),
+            "MemoryLayout requires bytecode size to be set"
+        );
         // helper to align ‘val’ *up* to a multiple of ‘align’, panicking on overflow
         #[inline]
         fn align_up(val: u64, align: u64) -> u64 {
@@ -185,27 +193,27 @@ impl MemoryLayout {
                     }
                 }
             }
-        } // Must be word-aligned
+        } // Must be 8-byte aligned
 
-        let max_input_size = align_up(config.max_input_size, 4);
-        let max_output_size = align_up(config.max_output_size, 4);
-        let stack_size = align_up(config.stack_size, 4);
-        let memory_size = align_up(config.memory_size, 4);
+        let max_input_size = align_up(config.max_input_size, 8);
+        let max_output_size = align_up(config.max_output_size, 8);
+        let stack_size = align_up(config.stack_size, 8);
+        let memory_size = align_up(config.memory_size, 8);
 
-        // Adds 8 to account for panic bit and termination bit
-        // (they each occupy one full 4-byte word)
+        // Adds 16 to account for panic bit and termination bit
+        // (they each occupy one full 8-byte word)
         let io_region_bytes = max_input_size
             .checked_add(max_output_size)
-            .and_then(|s| s.checked_add(8))
+            .and_then(|s| s.checked_add(16))
             .expect("I/O region size overflow");
 
         // Padded so that the witness index corresponding to `input_start`
         // has the form 0b11...100...0
-        let io_region_words = (io_region_bytes / 4).next_power_of_two();
-        // let io_region_words = (io_region_bytes / 4 + 1).next_power_of_two() - 1;
+        let io_region_words = (io_region_bytes / 8).next_power_of_two();
+        // let io_region_words = (io_region_bytes / 8 + 1).next_power_of_two() - 1;
 
         let io_bytes = io_region_words
-            .checked_mul(4)
+            .checked_mul(8)
             .expect("I/O region byte count overflow");
         let input_start = RAM_START_ADDRESS
             .checked_sub(io_bytes)
@@ -218,20 +226,25 @@ impl MemoryLayout {
             .checked_add(max_output_size)
             .expect("output_end overflow");
         let panic = output_end;
-        let termination = panic.checked_add(4).expect("termination overflow");
-        let io_end = termination.checked_add(4).expect("io_end overflow");
+        let termination = panic.checked_add(8).expect("termination overflow");
+        let io_end = termination.checked_add(8).expect("io_end overflow");
 
-        // stack grows *down* from input_start
-        let stack_end = input_start
-            .checked_sub(stack_size)
-            .expect("stack region exceeds I/O region");
+        let bytecode_size = config.bytecode_size.unwrap();
+        // stack grows downwards (decreasing addresses) from the bytecode_end + stack_size up to bytecode_end
+        let stack_end = RAM_START_ADDRESS
+            .checked_add(bytecode_size)
+            .expect("stack_end overflow");
+        let stack_start = stack_end
+            .checked_add(stack_size)
+            .expect("stack_start overflow");
 
-        // heap grows *up* from RAM_START_ADDRESS
-        let memory_end = RAM_START_ADDRESS
+        // heap grows *up* (increasing addresses) from the stack of the stack
+        let memory_end = stack_start
             .checked_add(memory_size)
             .expect("memory_end overflow");
 
         Self {
+            bytecode_size,
             max_input_size,
             max_output_size,
             input_start,

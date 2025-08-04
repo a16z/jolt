@@ -15,8 +15,8 @@ use crate::{
 use super::commitment_scheme::CommitmentScheme;
 
 #[derive(Clone)]
-pub struct MockCommitScheme<F: JoltField, ProofTranscript: Transcript> {
-    _marker: PhantomData<(F, ProofTranscript)>,
+pub struct MockCommitScheme<F: JoltField> {
+    _marker: PhantomData<F>,
 }
 
 #[derive(Default, Debug, PartialEq, Clone, CanonicalDeserialize, CanonicalSerialize)]
@@ -35,10 +35,9 @@ pub struct MockProof<F: JoltField> {
     opening_point: Vec<F>,
 }
 
-impl<F, ProofTranscript> CommitmentScheme<ProofTranscript> for MockCommitScheme<F, ProofTranscript>
+impl<F> CommitmentScheme for MockCommitScheme<F>
 where
     F: JoltField,
-    ProofTranscript: Transcript,
 {
     type Field = F;
     type ProverSetup = ();
@@ -46,42 +45,48 @@ where
     type Commitment = MockCommitment<F>;
     type Proof = MockProof<F>;
     type BatchedProof = MockProof<F>;
+    type OpeningProofHint = ();
 
-    fn setup_prover(_max_len: usize) -> Self::ProverSetup {}
+    fn setup_prover(_num_vars: usize) -> Self::ProverSetup {}
 
     fn setup_verifier(_setup: &Self::ProverSetup) -> Self::VerifierSetup {}
-
-    fn srs_size(_setup: &Self::ProverSetup) -> usize {
-        1 << 10
-    }
 
     fn commit(
         _poly: &MultilinearPolynomial<Self::Field>,
         _setup: &Self::ProverSetup,
-    ) -> Self::Commitment {
-        MockCommitment::default()
+    ) -> (Self::Commitment, Self::OpeningProofHint) {
+        (MockCommitment::default(), ())
     }
+
     fn batch_commit<P>(polys: &[P], gens: &Self::ProverSetup) -> Vec<Self::Commitment>
     where
         P: Borrow<MultilinearPolynomial<Self::Field>>,
     {
         polys
             .iter()
-            .map(|poly| Self::commit(poly.borrow(), gens))
+            .map(|poly| Self::commit(poly.borrow(), gens).0)
             .collect()
     }
 
-    fn combine_commitments(
-        _commitments: &[&Self::Commitment],
+    fn combine_commitments<C: Borrow<Self::Commitment>>(
+        _commitments: &[C],
         _coeffs: &[Self::Field],
     ) -> Self::Commitment {
         MockCommitment::default()
     }
 
-    fn prove(
+    fn combine_hints(
+        _hints: Vec<Self::OpeningProofHint>,
+        _coeffs: &[Self::Field],
+    ) -> Self::OpeningProofHint {
+        ()
+    }
+
+    fn prove<ProofTranscript: Transcript>(
         _setup: &Self::ProverSetup,
         _poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[Self::Field],
+        _: Self::OpeningProofHint,
         _transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         MockProof {
@@ -89,7 +94,7 @@ where
         }
     }
 
-    fn verify(
+    fn verify<ProofTranscript: Transcript>(
         proof: &Self::Proof,
         _setup: &Self::VerifierSetup,
         _transcript: &mut ProofTranscript,

@@ -9,9 +9,9 @@ use crate::instruction::format::format_r::FormatR;
 use crate::instruction::format::format_s::FormatS;
 use crate::instruction::format::format_virtual_right_shift_i::FormatVirtualRightShiftI;
 use crate::instruction::lw::LW;
-use crate::instruction::srli::SRLI;
 use crate::instruction::sw::SW;
 use crate::instruction::virtual_rotri::VirtualROTRI;
+use crate::instruction::virtual_srli::VirtualSRLI;
 use crate::instruction::xor::XOR;
 use crate::instruction::xori::XORI;
 use crate::instruction::RV32IMInstruction;
@@ -61,11 +61,13 @@ struct Sha256SequenceBuilder {
     operand_rs2: usize,
     /// Whether this is the initial compression (use BLOCK constants)
     initial: bool,
+    is_compressed: bool,
 }
 
 impl Sha256SequenceBuilder {
     fn new(
         address: u64,
+        is_compressed: bool,
         vr: [usize; NEEDED_REGISTERS],
         operand_rs1: usize,
         operand_rs2: usize,
@@ -79,6 +81,7 @@ impl Sha256SequenceBuilder {
             operand_rs1,
             operand_rs2,
             initial,
+            is_compressed,
         }
     }
 
@@ -284,14 +287,15 @@ impl Sha256SequenceBuilder {
     /// sigma_0 for word computation: σ₀(x) = ROTR⁷(x) ⊕ ROTR¹⁸(x) ⊕ SHR³(x)
     fn sha_word_sigma_0(&mut self, rs1: usize, rd: usize, ss: usize) {
         self.rotri_xor_rotri(Reg(rs1), 7, 18, rd, ss);
-        let srli = SRLI {
+        let srli = VirtualSRLI {
             address: self.address,
-            operands: FormatI {
+            operands: FormatVirtualRightShiftI {
                 rd: ss,
                 rs1,
-                imm: 3,
+                imm: 0xFFFFFFF8, // SRLI by 3
             },
             virtual_sequence_remaining: Some(0),
+            is_compressed: self.is_compressed,
         };
         self.sequence.push(srli.into());
         self.xor(Reg(rd), Reg(ss), rd);
@@ -301,14 +305,15 @@ impl Sha256SequenceBuilder {
     fn sha_word_sigma_1(&mut self, rs1: usize, rd: usize, ss: usize) {
         // We don't need to do Imm shenanigans here since words are always in registers
         self.rotri_xor_rotri(Reg(rs1), 17, 19, rd, ss);
-        let srli = SRLI {
+        let srli = VirtualSRLI {
             address: self.address,
-            operands: FormatI {
+            operands: FormatVirtualRightShiftI {
                 rd: ss,
                 rs1,
-                imm: 10,
+                imm: 0xFFFFFC00, // SRLI by 10
             },
             virtual_sequence_remaining: Some(0),
+            is_compressed: self.is_compressed,
         };
         self.sequence.push(srli.into());
         self.xor(Reg(rd), Reg(ss), rd);
@@ -323,6 +328,7 @@ impl Sha256SequenceBuilder {
                 imm: offset * 4,
             },
             virtual_sequence_remaining: Some(0),
+            is_compressed: self.is_compressed,
         };
         self.sequence.push(lw.into());
     }
@@ -336,6 +342,7 @@ impl Sha256SequenceBuilder {
                 imm: offset * 4,
             },
             virtual_sequence_remaining: Some(0),
+            is_compressed: self.is_compressed,
         };
         self.sequence.push(sw.into());
     }
@@ -348,6 +355,7 @@ impl Sha256SequenceBuilder {
                     address: self.address,
                     operands: FormatR { rd, rs1, rs2 },
                     virtual_sequence_remaining: Some(0),
+                    is_compressed: self.is_compressed,
                 };
                 self.sequence.push(add.into());
                 Reg(rd)
@@ -357,6 +365,7 @@ impl Sha256SequenceBuilder {
                     address: self.address,
                     operands: FormatI { rd, rs1, imm },
                     virtual_sequence_remaining: Some(0),
+                    is_compressed: self.is_compressed,
                 };
                 self.sequence.push(addi.into());
                 Reg(rd)
@@ -373,6 +382,7 @@ impl Sha256SequenceBuilder {
                     address: self.address,
                     operands: FormatR { rd, rs1, rs2 },
                     virtual_sequence_remaining: Some(0),
+                    is_compressed: self.is_compressed,
                 };
                 self.sequence.push(add.into());
                 Reg(rd)
@@ -382,6 +392,7 @@ impl Sha256SequenceBuilder {
                     address: self.address,
                     operands: FormatI { rd, rs1, imm },
                     virtual_sequence_remaining: Some(0),
+                    is_compressed: self.is_compressed,
                 };
                 self.sequence.push(add.into());
                 Reg(rd)
@@ -398,6 +409,7 @@ impl Sha256SequenceBuilder {
                     address: self.address,
                     operands: FormatR { rd, rs1, rs2 },
                     virtual_sequence_remaining: Some(0),
+                    is_compressed: self.is_compressed,
                 };
                 self.sequence.push(xor.into());
                 Reg(rd)
@@ -407,6 +419,7 @@ impl Sha256SequenceBuilder {
                     address: self.address,
                     operands: FormatI { rd, rs1, imm },
                     virtual_sequence_remaining: Some(0),
+                    is_compressed: self.is_compressed,
                 };
                 self.sequence.push(xori.into());
                 Reg(rd)
@@ -427,6 +440,7 @@ impl Sha256SequenceBuilder {
                     address: self.address,
                     operands: FormatVirtualRightShiftI { rd, rs1, imm },
                     virtual_sequence_remaining: Some(0),
+                    is_compressed: self.is_compressed,
                 };
                 self.sequence.push(rotri.into());
                 Reg(rd)

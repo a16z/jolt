@@ -36,7 +36,7 @@ impl SRLI {
 
 impl RISCVTrace for SRLI {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence();
+        let virtual_sequence = self.virtual_sequence(cpu.xlen);
         let mut trace = trace;
         for instr in virtual_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
@@ -46,19 +46,16 @@ impl RISCVTrace for SRLI {
 }
 
 impl VirtualInstructionSequence for SRLI {
-    fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
-        let virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(0);
+    fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         let mut sequence = vec![];
+        let virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(0);
 
-        // Determine word size based on immediate value and instruction encoding
-        // For SRLI: RV32 uses 5-bit immediates (0-31), RV64 uses 6-bit immediates (0-63)
-        let is_64bit = self.operands.imm > 31;
-        let word_size = if is_64bit { 64 } else { 32 };
-        let shift_mask = if is_64bit { 0x3f } else { 0x1f };
-
-        let shift = self.operands.imm & shift_mask;
-        let ones = (1u64 << (word_size - shift)) - 1;
-        let bitmask = ones << shift;
+        let (shift, len) = match xlen {
+            Xlen::Bit32 => (self.operands.imm & 0x1f, 32),
+            Xlen::Bit64 => (self.operands.imm & 0x3f, 64),
+        };
+        let ones = (1u128 << (len - shift)) - 1;
+        let bitmask = (ones << shift) as u64;
 
         let srl = VirtualSRLI {
             address: self.address,
@@ -68,6 +65,7 @@ impl VirtualInstructionSequence for SRLI {
                 imm: bitmask,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(srl.into());
 

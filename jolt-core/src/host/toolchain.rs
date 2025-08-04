@@ -32,7 +32,7 @@ pub fn install_toolchain() -> Result<()> {
         link_toolchain()?;
         write_tag_file()?;
         println!(
-            "\"riscv32im-jolt-zkvm-elf\" toolchain installed successfully at {:?}",
+            "\"riscv64imac-jolt-zkvm-elf\" toolchain installed successfully at {:?}",
             jolt_dir()
         );
     }
@@ -42,7 +42,7 @@ pub fn install_toolchain() -> Result<()> {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn install_no_std_toolchain() -> Result<()> {
     std::process::Command::new("rustup")
-        .args(["target", "add", "riscv32im-unknown-none-elf"])
+        .args(["target", "add", "riscv64imac-unknown-none-elf"])
         .output()?;
     Ok(())
 }
@@ -85,7 +85,7 @@ fn link_toolchain() -> Result<()> {
         .args([
             "toolchain",
             "link",
-            "riscv32im-jolt-zkvm-elf",
+            "riscv64imac-jolt-zkvm-elf",
             link_path.to_str().unwrap(),
         ])
         .output()?;
@@ -167,10 +167,10 @@ fn toolchain_url() -> String {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn uninstall_no_std_toolchain() -> Result<()> {
     std::process::Command::new("rustup")
-        .args(["target", "remove", "riscv32im-unknown-none-elf"])
+        .args(["target", "remove", "riscv64imac-unknown-none-elf"])
         .output()?;
 
-    println!("\"riscv32im-unknown-none-elf\" toolchain uninstalled successfully");
+    println!("\"riscv64imac-unknown-none-elf\" toolchain uninstalled successfully");
     Ok(())
 }
 
@@ -184,7 +184,7 @@ pub fn uninstall_toolchain() -> Result<()> {
 
     // Remove the linked toolchain from rustup
     let output = std::process::Command::new("rustup")
-        .args(["toolchain", "remove", "riscv32im-jolt-zkvm-elf"])
+        .args(["toolchain", "remove", "riscv64imac-jolt-zkvm-elf"])
         .output()?;
 
     if !output.status.success() {
@@ -209,7 +209,7 @@ pub fn uninstall_toolchain() -> Result<()> {
         fs::remove_file(&tag_file)?;
     }
 
-    println!("\"riscv32im-jolt-zkvm-elf\" toolchain uninstalled successfully");
+    println!("\"riscv64imac-jolt-zkvm-elf\" toolchain uninstalled successfully");
     Ok(())
 }
 

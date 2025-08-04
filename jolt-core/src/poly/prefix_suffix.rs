@@ -9,7 +9,7 @@ use strum_macros::{EnumCount as EnumCountMacro, EnumIter as EnumIterMacro};
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding, PolynomialEvaluation};
-use crate::subprotocols::sparse_dense_shout::LookupBits;
+use crate::utils::lookup_bits::LookupBits;
 use crate::utils::math::Math;
 use crate::utils::thread::{unsafe_allocate_zero_vec, unsafe_zero_slice};
 
@@ -172,7 +172,7 @@ pub trait PrefixPolynomial<F: JoltField> {
 }
 
 pub trait SuffixPolynomial<F: JoltField> {
-    fn suffix_mle(&self, index: u64, suffix_len: usize) -> u64;
+    fn suffix_mle(&self, b: LookupBits) -> u128;
 }
 
 pub trait PrefixSuffixPolynomial<F: JoltField, const ORDER: usize> {
@@ -250,7 +250,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
     }
 
     #[tracing::instrument(skip_all)]
-    pub fn init_Q<'a, I: IntoIterator<Item = &'a (usize, &'a LookupBits)> + Clone + Send + Sync>(
+    pub fn init_Q<'a, I: IntoIterator<Item = &'a (usize, LookupBits)> + Clone + Send + Sync>(
         &mut self,
         u_evals: &[F],
         indices: I,
@@ -266,10 +266,10 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
             .for_each(|(poly, suffix)| {
                 for (j, k) in indices.clone() {
                     let (prefix_bits, suffix_bits) = k.split(suffix_len);
-                    let t = suffix.suffix_mle(suffix_bits.into(), suffix_len);
+                    let t = suffix.suffix_mle(suffix_bits);
                     if t != 0 {
                         if let Some(u) = u_evals.get(*j) {
-                            poly.Z[prefix_bits % self.chunk_len.pow2()] += (*u).mul_u64(t);
+                            poly.Z[prefix_bits % self.chunk_len.pow2()] += (*u).mul_u128(t);
                         }
                     }
                 }
@@ -329,15 +329,15 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
             .par_iter()
             .zip(self.poly.suffixes().par_iter())
             .map(|(p, suffix)| {
-                let suff = suffix.suffix_mle(0, 0);
+                let suff = suffix.suffix_mle(LookupBits::new(0, 0));
                 if suff == 0 {
                     return F::zero();
                 }
                 if let Some(p) = p {
                     let p = p.read().unwrap();
-                    p.final_sumcheck_claim().mul_u64(suff)
+                    p.final_sumcheck_claim().mul_u128(suff)
                 } else {
-                    F::from_u64(suff)
+                    F::from_u128(suff)
                 }
             })
             .sum()
@@ -393,8 +393,8 @@ pub mod tests {
 
         let indices = (0..(1 << NUM_VARS))
             .map(|i| LookupBits::new(i, NUM_VARS))
+            .enumerate()
             .collect::<Vec<_>>();
-        let enumerated_indices = indices.iter().enumerate().collect::<Vec<_>>();
 
         let mut rr = vec![];
         for phase in 0..(NUM_VARS / PREFIX_LEN) {
@@ -403,7 +403,7 @@ pub mod tests {
                 &(0..(1 << (NUM_VARS - PREFIX_LEN * phase)))
                     .map(|_| Fr::ONE)
                     .collect::<Vec<_>>(),
-                enumerated_indices.iter(),
+                indices.iter(),
             );
 
             for round in (0..PREFIX_LEN).rev() {

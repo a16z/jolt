@@ -1,15 +1,15 @@
 use std::marker::PhantomData;
 
-use crate::{field::JoltField, subprotocols::sparse_dense_shout::LookupBits};
+use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
 pub struct RangeMaskPolynomial<F: JoltField> {
-    range_start: u64,
-    range_end: u64,
+    range_start: u128,
+    range_end: u128,
     _field: PhantomData<F>,
 }
 
 impl<F: JoltField> RangeMaskPolynomial<F> {
-    pub fn new(range_start: u64, range_end: u64) -> Self {
+    pub fn new(range_start: u128, range_end: u128) -> Self {
         Self {
             range_start,
             range_end,

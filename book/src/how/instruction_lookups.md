@@ -22,7 +22,7 @@ Lasso requires that each primitive instruction satisfies a decomposability prope
 The property needed is that the input(s) to the instruction can be broken into "chunks" (say, with each chunk
 consisting of 16 bits), such that one can obtain the answer to the original instruction by
 evaluating a simple function on each chunk and then "collating" the results together.
-For example, the bitwise-OR of two 32-bit inputs x and y can be computed by breaking each input up into 8-bit chunks, XORing 
+For example, the bitwise-OR of two 32-bit inputs x and y can be computed by breaking each input up into 8-bit chunks, ORing 
 each 8-bit chunk of x with the associated chunk of y, and concatenating the results together.
 
 In Lasso, we call the task of evaluating a simple function on each chunk a "subtable lookup" (the relevant lookup table
@@ -57,4 +57,4 @@ $$
 - At a given step of the CPU only a single instruction will be used, that means that only that instruction's subtables will be used. For the rest of the memories we insert a no_op with (a, v) = 0. In order to make the GKR trees cheaper to compute and sumcheck we'll add a single additional layer to the GKR tree. During this layer we'll "toggle" each of the GKR leaves to "1" in the case that it is an unused step of the CPU. This will make the binary tree of multiplication gates cheaper. We'll toggle based on a new flags polynomial called $subtable-flags_f$ which is the sum of all of the $instruction-flags_f$ used in the instruction collation above.
 - The function to compute each of the leaves becomes $leaf[i] = \text{subtable-flags}[i] \cdot \text{fingerprint}[i] + (1 - \text{subtable-flags}[i])$
 
-See the documentation on how Jolt leverages [sparse-constraint-systems](sparse-constraint-systems.md) for further details on subtagle flags and how they are used in Jolt. 
+See the documentation on how Jolt leverages [sparse-constraint-systems](sparse-constraint-systems.md) for further details on subtable flags and how they are used in Jolt. 

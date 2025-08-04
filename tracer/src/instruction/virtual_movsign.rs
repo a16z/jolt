@@ -45,7 +45,6 @@ impl VirtualMovsign {
                 }
             }
         };
-        cpu.x[self.operands.rd] = cpu.x[self.operands.rs1];
     }
 }
 

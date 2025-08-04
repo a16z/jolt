@@ -20,6 +20,7 @@ pub struct VirtualAdvice {
     /// in the sequence, `virtual_sequence_remaining` will be Some(1); etc.
     pub virtual_sequence_remaining: Option<usize>,
     pub advice: u64,
+    pub is_compressed: bool,
 }
 
 impl RISCVInstruction for VirtualAdvice {
@@ -33,7 +34,7 @@ impl RISCVInstruction for VirtualAdvice {
         &self.operands
     }
 
-    fn new(_: u32, _: u64, _: bool) -> Self {
+    fn new(_: u32, _: u64, _: bool, _: bool) -> Self {
         panic!("virtual instruction `VirtualAdvice` cannot be built from a machine word");
     }
 
@@ -43,6 +44,7 @@ impl RISCVInstruction for VirtualAdvice {
             operands: FormatJ::random(rng),
             advice: rng.next_u64(),
             virtual_sequence_remaining: None,
+            is_compressed: false,
         }
     }
 
