@@ -83,6 +83,7 @@ impl KeccakCpuHarness {
                 rd: 0,
             },
             virtual_sequence_remaining: None,
+            is_compressed: false,
         }
     }
 

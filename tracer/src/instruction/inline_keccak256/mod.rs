@@ -99,6 +99,8 @@ struct Keccak256SequenceBuilder {
     vr: [usize; NEEDED_REGISTERS],
     operand_rs1: usize,
     _operand_rs2: usize,
+    /// whether the KECCAK256 instruction was compressed (C extension)
+    is_compressed: bool,
 }
 
 /// `Keccak256SequenceBuilder` is a helper struct for constructing the virtual instruction
@@ -124,6 +126,7 @@ struct Keccak256SequenceBuilder {
 /// ```ignore
 /// let builder = Keccak256SequenceBuilder::new(
 ///     address,
+///     is_compressed,
 ///     vr,
 ///     operand_rs1,
 ///     operand_rs2,
@@ -139,6 +142,7 @@ struct Keccak256SequenceBuilder {
 impl Keccak256SequenceBuilder {
     fn new(
         address: u64,
+        is_compressed: bool,
         vr: [usize; NEEDED_REGISTERS],
         operand_rs1: usize,
         operand_rs2: usize,
@@ -150,6 +154,7 @@ impl Keccak256SequenceBuilder {
             vr,
             operand_rs1,
             _operand_rs2: operand_rs2,
+            is_compressed,
         }
     }
 
@@ -490,6 +495,7 @@ impl Keccak256SequenceBuilder {
                     address: self.address,
                     operands: FormatR { rd, rs1, rs2 },
                     virtual_sequence_remaining: Some(0),
+                    is_compressed: self.is_compressed,
                 };
                 self.sequence.push(andn.into());
                 Reg(rd)
@@ -540,6 +546,7 @@ impl Keccak256SequenceBuilder {
                 imm: (offset * 8) as u64, // 64-bit lanes are 8 bytes
             },
             virtual_sequence_remaining: Some(0),
+            is_compressed: self.is_compressed,
         };
         self.sequence.push(ld.into());
     }
@@ -553,6 +560,7 @@ impl Keccak256SequenceBuilder {
                 imm: offset * 8, // 64-bit lanes are 8 bytes
             },
             virtual_sequence_remaining: Some(0),
+            is_compressed: self.is_compressed,
         };
         self.sequence.push(sd.into());
     }
@@ -564,6 +572,7 @@ impl Keccak256SequenceBuilder {
                     address: self.address,
                     operands: FormatR { rd, rs1, rs2 },
                     virtual_sequence_remaining: Some(0),
+                    is_compressed: self.is_compressed,
                 };
                 self.sequence.push(xor.into());
                 Reg(rd)
@@ -573,6 +582,7 @@ impl Keccak256SequenceBuilder {
                     address: self.address,
                     operands: FormatI { rd, rs1, imm },
                     virtual_sequence_remaining: Some(0),
+                    is_compressed: self.is_compressed,
                 };
                 self.sequence.push(xori.into());
                 Reg(rd)
@@ -589,6 +599,7 @@ impl Keccak256SequenceBuilder {
                     address: self.address,
                     operands: FormatR { rd, rs1, rs2 },
                     virtual_sequence_remaining: Some(0),
+                    is_compressed: self.is_compressed,
                 };
                 self.sequence.push(and.into());
                 Reg(rd)
@@ -598,6 +609,7 @@ impl Keccak256SequenceBuilder {
                     address: self.address,
                     operands: FormatI { rd, rs1, imm },
                     virtual_sequence_remaining: Some(0),
+                    is_compressed: self.is_compressed,
                 };
                 self.sequence.push(andi.into());
                 Reg(rd)
@@ -617,6 +629,7 @@ impl Keccak256SequenceBuilder {
                     address: self.address,
                     operands: FormatVirtualRightShiftI { rd, rs1, imm },
                     virtual_sequence_remaining: Some(0),
+                    is_compressed: self.is_compressed,
                 };
                 self.sequence.push(rotri.into());
                 Reg(rd)
@@ -632,6 +645,7 @@ impl Keccak256SequenceBuilder {
                     address: self.address,
                     operands: FormatI { rd, rs1, imm },
                     virtual_sequence_remaining: Some(0),
+                    is_compressed: self.is_compressed,
                 };
                 self.sequence.push(slli.into());
                 Reg(rd)
@@ -647,6 +661,7 @@ impl Keccak256SequenceBuilder {
                     address: self.address,
                     operands: FormatR { rd, rs1, rs2 },
                     virtual_sequence_remaining: Some(0),
+                    is_compressed: self.is_compressed,
                 };
                 self.sequence.push(or.into());
                 Reg(rd)
@@ -669,6 +684,7 @@ impl Keccak256SequenceBuilder {
                         imm: imm as u64,
                     },
                     virtual_sequence_remaining: Some(0),
+                    is_compressed: self.is_compressed,
                 };
                 self.sequence.push(addi.into());
                 Reg(rd)
@@ -686,6 +702,7 @@ impl Keccak256SequenceBuilder {
                 imm: (imm as u64) << 12,
             },
             virtual_sequence_remaining: Some(0),
+            is_compressed: self.is_compressed,
         };
         self.sequence.push(lui.into());
         Reg(rd)
@@ -973,7 +990,7 @@ mod tests {
     #[test]
     fn test_rotl64() {
         // Set up a minimal builder; VR contents are irrelevant for Imm path
-        let mut builder = Keccak256SequenceBuilder::new(0x0, [0; NEEDED_REGISTERS], 0, 0);
+        let mut builder = Keccak256SequenceBuilder::new(0x0, false, [0; NEEDED_REGISTERS], 0, 0);
         let dest_reg = 0; // dummy register index
         for (value, amount, expected) in TestVectors::get_rotation_test_vectors() {
             if amount as u32 >= 64 {

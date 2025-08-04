@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::declare_riscv_instr;
 use crate::emulator::cpu::Cpu;
+use crate::emulator::cpu::Xlen;
 use crate::instruction::format::format_r::FormatR;
 use crate::instruction::format::InstructionFormat;
 use crate::instruction::inline_keccak256::{
@@ -50,7 +51,7 @@ impl KECCAK256 {
 
 impl RISCVTrace for KECCAK256 {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence();
+        let virtual_sequence = self.virtual_sequence(cpu.xlen);
 
         let mut trace = trace;
         for instr in virtual_sequence {
@@ -60,14 +61,19 @@ impl RISCVTrace for KECCAK256 {
 }
 
 impl VirtualInstructionSequence for KECCAK256 {
-    fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
+    fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used as a scratch space
         let mut vr = [0; NEEDED_REGISTERS];
         (0..NEEDED_REGISTERS).for_each(|i| {
             vr[i] = virtual_register_index(i as u64) as usize;
         });
-        let builder =
-            Keccak256SequenceBuilder::new(self.address, vr, self.operands.rs1, self.operands.rs2);
+        let builder = Keccak256SequenceBuilder::new(
+            self.address,
+            self.is_compressed,
+            vr,
+            self.operands.rs1,
+            self.operands.rs2,
+        );
         builder.build()
     }
 }
@@ -123,7 +129,8 @@ mod tests {
                     setup.load_state(&initial_state);
 
                     // 2. Generate and execute the virtual sequence up to the current step.
-                    let builder = super::Keccak256SequenceBuilder::new(0x1000, setup.vr, 10, 11);
+                    let builder =
+                        super::Keccak256SequenceBuilder::new(0x1000, false, setup.vr, 10, 11);
                     let sequence = builder.build_up_to_step(round, step);
                     setup.execute_virtual_sequence(&sequence);
                     let vr_state = if *step == "rho_and_pi" {

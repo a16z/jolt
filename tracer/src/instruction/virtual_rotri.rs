@@ -62,6 +62,7 @@ mod tests {
             address: DRAM_BASE,
             operands: FormatVirtualRightShiftI { rd, rs1, imm },
             virtual_sequence_remaining: Some(0),
+            is_compressed: false,
         }
     }
 
@@ -210,6 +211,7 @@ mod tests {
             address: 0x1000,
             operands: FormatVirtualRightShiftI { rd, rs1, imm },
             virtual_sequence_remaining: Some(0),
+            is_compressed: false,
         };
 
         (instr, val)

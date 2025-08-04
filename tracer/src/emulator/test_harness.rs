@@ -83,22 +83,60 @@ impl CpuTestHarness {
         template | ((rs2 as u32) << 20) | ((rs1 as u32) << 15) | ((rd as u32) << 7)
     }
 
-    fn exec_word(mut self, rs1_val: u64, rs2_val: u64, instr_word: u32) -> u64 {
+    fn exec_word(
+        mut self,
+        rs1_val: u64,
+        rs2_val: u64,
+        instr_word: u32,
+        is_compressed: bool,
+    ) -> u64 {
         self.cpu.x[1] = rs1_val as i64;
         self.cpu.x[2] = rs2_val as i64;
-        RV32IMInstruction::decode(instr_word, 0)
+        RV32IMInstruction::decode(instr_word, 0, is_compressed)
             .expect("decode")
             .execute(&mut self.cpu);
         self.cpu.x[3] as u64
     }
 
     /// Execute an R-type instruction template using standard registers x1, x2 -> x3.
-    pub fn exec_r<I: RISCVInstruction>(self, rs1_val: u64, rs2_val: u64) -> u64 {
+    pub fn exec_r_impl<I: RISCVInstruction>(
+        self,
+        rs1_val: u64,
+        rs2_val: u64,
+        is_compressed: bool,
+    ) -> u64 {
         let word = Self::encode_r(I::MATCH, 3, 1, 2);
-        self.exec_word(rs1_val, rs2_val, word)
+        self.exec_word(rs1_val, rs2_val, word, is_compressed)
+    }
+
+    pub fn exec_r<I: RISCVInstruction>(self, rs1_val: u64, rs2_val: u64) -> u64 {
+        self.exec_r_impl::<I>(rs1_val, rs2_val, false)
+    }
+
+    pub fn exec_r_c<I: RISCVInstruction>(self, rs1_val: u64, rs2_val: u64) -> u64 {
+        self.exec_r_impl::<I>(rs1_val, rs2_val, true)
     }
 
     /// Execute an R-type instruction template with custom rd/rs1/rs2 indices.
+    pub fn exec_r_with_impl<I: RISCVInstruction>(
+        self,
+        rd: usize,
+        rs1_idx: usize,
+        rs2_idx: usize,
+        rs1_val: u64,
+        rs2_val: u64,
+        is_compressed: bool,
+    ) -> u64 {
+        let word = Self::encode_r(I::MATCH, rd, rs1_idx, rs2_idx);
+        let mut harness = self;
+        harness.cpu.x[rs1_idx] = rs1_val as i64;
+        harness.cpu.x[rs2_idx] = rs2_val as i64;
+        RV32IMInstruction::decode(word, 0, is_compressed)
+            .expect("decode")
+            .execute(&mut harness.cpu);
+        harness.cpu.x[rd] as u64
+    }
+
     pub fn exec_r_with<I: RISCVInstruction>(
         self,
         rd: usize,
@@ -107,14 +145,18 @@ impl CpuTestHarness {
         rs1_val: u64,
         rs2_val: u64,
     ) -> u64 {
-        let word = Self::encode_r(I::MATCH, rd, rs1_idx, rs2_idx);
-        let mut harness = self;
-        harness.cpu.x[rs1_idx] = rs1_val as i64;
-        harness.cpu.x[rs2_idx] = rs2_val as i64;
-        RV32IMInstruction::decode(word, 0)
-            .expect("decode")
-            .execute(&mut harness.cpu);
-        harness.cpu.x[rd] as u64
+        self.exec_r_with_impl::<I>(rd, rs1_idx, rs2_idx, rs1_val, rs2_val, false)
+    }
+
+    pub fn exec_r_with_c<I: RISCVInstruction>(
+        self,
+        rd: usize,
+        rs1_idx: usize,
+        rs2_idx: usize,
+        rs1_val: u64,
+        rs2_val: u64,
+    ) -> u64 {
+        self.exec_r_with_impl::<I>(rd, rs1_idx, rs2_idx, rs1_val, rs2_val, true)
     }
 }
 
