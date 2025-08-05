@@ -12,6 +12,7 @@ use rand_distr::{Distribution, Zipf};
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
 pub enum BenchType {
+    Btreemap,
     Fibonacci,
     Sha2,
     Sha3,
@@ -22,6 +23,7 @@ pub enum BenchType {
 
 pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     match bench_type {
+        BenchType::Btreemap => btreemap(),
         BenchType::Sha2 => sha2(),
         BenchType::Sha3 => sha3(),
         BenchType::Sha2Chain => sha2_chain(),
@@ -113,6 +115,10 @@ fn sha2() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 
 fn sha3() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     prove_example("sha3-guest", postcard::to_stdvec(&vec![5u8; 2048]).unwrap())
+}
+
+fn btreemap() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    prove_example("btreemap-guest", postcard::to_stdvec(&50u32).unwrap())
 }
 
 fn sha2_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
