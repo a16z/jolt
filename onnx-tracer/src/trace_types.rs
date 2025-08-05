@@ -232,34 +232,29 @@ impl ONNXCycle {
     ) {
         let ts1 = self.memory_state.ts1_val.as_ref().map_or_else(
             || (0, vec![0; MAX_TENSOR_SIZE]),
-            |t| {
-                (
-                    self.ts1(),
-                    t.inner.iter().map(|&v| v as i32 as u32 as u64).collect(),
-                )
-            },
+            |t| (self.ts1(), t.inner.iter().map(normalize).collect()),
         );
         let ts2 = self.memory_state.ts2_val.as_ref().map_or_else(
             || (0, vec![0; MAX_TENSOR_SIZE]),
-            |t| {
-                (
-                    self.ts2(),
-                    t.inner.iter().map(|&v| v as i32 as u32 as u64).collect(),
-                )
-            },
+            |t| (self.ts2(), t.inner.iter().map(normalize).collect()),
         );
         let td = self.memory_state.td_post_val.as_ref().map_or_else(
             || (0, vec![0; MAX_TENSOR_SIZE], vec![0; MAX_TENSOR_SIZE]),
             |t| {
                 (
                     self.td(),
-                    t.inner.iter().map(|&v| v as i32 as u32 as u64).collect(),
-                    t.inner.iter().map(|&v| v as i32 as u32 as u64).collect(),
+                    t.inner.iter().map(normalize).collect(),
+                    t.inner.iter().map(normalize).collect(),
                 )
             },
         );
         (ts1, ts2, td)
     }
+}
+
+// HACK(Forpee): This is a temporary function to normalize i128 values to u64 for the jolt execution trace.
+fn normalize(value: &i128) -> u64 {
+    *value as i32 as u32 as u64
 }
 
 /// Boolean flags used in Jolt's R1CS constraints (`opflags` in the Jolt paper).

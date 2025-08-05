@@ -23,7 +23,7 @@ use jolt_core::jolt::{instruction::InstructionLookup, lookup_table::LookupTables
 pub const WORD_SIZE: usize = 32;
 
 pub type ExecutionTrace = Vec<JoltONNXCycle>;
-pub type ONNXLookupQuery = Vec<ONNXLookup>;
+pub type ONNXLookup = Vec<ElementWiseLookup>;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct MemoryOps {
@@ -44,26 +44,27 @@ impl MemoryOps {
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct JoltONNXCycle {
-    pub instruction_lookups: Option<ONNXLookupQuery>,
+    pub instruction_lookups: Option<ONNXLookup>,
     pub circuit_flags: [bool; NUM_CIRCUIT_FLAGS],
     pub memory_ops: MemoryOps,
     pub instr: ONNXInstr,
 }
 
+// TODO(Forpee): Refactor these clones in JoltONNXCycle::ts1_read, ts2_read, td_write
 impl JoltONNXCycle {
     /// # Returns: (address, read_value)
     pub fn ts1_read(&self) -> (usize, Vec<u64>) {
-        todo!()
+        self.memory_ops.ts1_read.clone()
     }
 
     /// # Returns: (address, read_value)
     pub fn ts2_read(&self) -> (usize, Vec<u64>) {
-        todo!()
+        self.memory_ops.ts2_read.clone()
     }
 
     /// # Returns: (address, pre_value, post_value)
     pub fn td_write(&self) -> (usize, Vec<u64>, Vec<u64>) {
-        todo!()
+        self.memory_ops.td_write.clone()
     }
 
     pub fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
@@ -71,11 +72,11 @@ impl JoltONNXCycle {
     }
 
     pub fn instr(&self) -> ONNXInstr {
-        todo!()
+        self.instr.clone()
     }
 
     pub fn bytecode_line(&self) -> ONNXInstr {
-        todo!()
+        self.instr.clone()
     }
 
     pub fn no_op() -> Self {
@@ -127,31 +128,87 @@ pub trait WitnessGenerator {
     fn to_index(&self) -> usize;
 }
 
-// impl<const WORD_SIZE: usize> ONNXLookupQuery<WORD_SIZE> for JoltONNXCycle {
-//     /// Returns a tuple of the instruction's inputs. If the instruction has only one input,
-//     /// one of the tuple values will be 0.
-//     fn to_instruction_inputs(&self) -> (u64, i64) {
-//         todo!()
-//     }
+impl InstructionLookup<WORD_SIZE> for JoltONNXCycle {
+    fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
+        self.instruction_lookups
+            .as_ref()
+            .and_then(|lookups| lookups.first().and_then(|lookup| lookup.lookup_table()))
+    }
+}
 
-//     /// Returns a tuple of the instruction's lookup operands. By default, these are the
-//     /// same as the instruction inputs returned by `to_instruction_inputs`, but in some cases
-//     /// (e.g. ADD, MUL) the instruction inputs are combined to form a single lookup operand.
-//     fn to_lookup_operands(&self) -> (u64, u64) {
-//         todo!()
-//     }
+impl<const WORD_SIZE: usize> ONNXLookupQuery<WORD_SIZE> for JoltONNXCycle {
+    /// Returns a tuple of the instruction's inputs. If the instruction has only one input,
+    /// one of the tuple values will be 0.
+    fn to_instruction_inputs(&self) -> (Vec<u64>, Vec<i64>) {
+        self.instruction_lookups.as_ref().map_or(
+            (vec![0; MAX_TENSOR_SIZE], vec![0; MAX_TENSOR_SIZE]),
+            |lookups| {
+                lookups
+                    .iter()
+                    .map(|lookup| lookup.to_instruction_inputs())
+                    .unzip()
+            },
+        )
+    }
 
-//     /// Converts this instruction's operands into a lookup index (as used in sparse-dense Shout).
-//     /// By default, interleaves the two bits of the two operands together.
-//     fn to_lookup_index(&self) -> u64 {
-//         todo!()
-//     }
+    /// Returns a tuple of the instruction's lookup operands. By default, these are the
+    /// same as the instruction inputs returned by `to_instruction_inputs`, but in some cases
+    /// (e.g. ADD, MUL) the instruction inputs are combined to form a single lookup operand.
+    fn to_lookup_operands(&self) -> (Vec<u64>, Vec<u64>) {
+        self.instruction_lookups.as_ref().map_or(
+            (vec![0; MAX_TENSOR_SIZE], vec![0; MAX_TENSOR_SIZE]),
+            |lookups| {
+                lookups
+                    .iter()
+                    .map(|lookup| lookup.to_lookup_operands())
+                    .unzip()
+            },
+        )
+    }
 
-//     /// Computes the output lookup entry for this instruction as a u64.
-//     fn to_lookup_output(&self) -> u64 {
-//         todo!()
-//     }
-// }
+    /// Converts this instruction's operands into a lookup index (as used in sparse-dense Shout).
+    /// By default, interleaves the two bits of the two operands together.
+    fn to_lookup_index(&self) -> Vec<u64> {
+        self.instruction_lookups
+            .as_ref()
+            .map_or(vec![0; MAX_TENSOR_SIZE], |lookups| {
+                lookups
+                    .iter()
+                    .map(|lookup| lookup.to_lookup_index())
+                    .collect()
+            })
+    }
+
+    /// Computes the output lookup entry for this instruction as a u64.
+    fn to_lookup_output(&self) -> Vec<u64> {
+        self.instruction_lookups
+            .as_ref()
+            .map_or(vec![0; MAX_TENSOR_SIZE], |lookups| {
+                lookups
+                    .iter()
+                    .map(|lookup| lookup.to_lookup_output())
+                    .collect()
+            })
+    }
+}
+
+pub trait ONNXLookupQuery<const WORD_SIZE: usize> {
+    /// Returns a tuple of the instruction's inputs. If the instruction has only one input,
+    /// one of the tuple values will be 0.
+    fn to_instruction_inputs(&self) -> (Vec<u64>, Vec<i64>);
+
+    /// Returns a tuple of the instruction's lookup operands. By default, these are the
+    /// same as the instruction inputs returned by `to_instruction_inputs`, but in some cases
+    /// (e.g. ADD, MUL) the instruction inputs are combined to form a single lookup operand.
+    fn to_lookup_operands(&self) -> (Vec<u64>, Vec<u64>);
+
+    /// Converts this instruction's operands into a lookup index (as used in sparse-dense Shout).
+    /// By default, interleaves the two bits of the two operands together.
+    fn to_lookup_index(&self) -> Vec<u64>;
+
+    /// Computes the output lookup entry for this instruction as a u64.
+    fn to_lookup_output(&self) -> Vec<u64>;
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum CommittedPolynomials {
@@ -490,7 +547,7 @@ macro_rules! define_lookup_enum {
 }
 
 define_lookup_enum!(
-    enum ONNXLookup,
+    enum ElementWiseLookup,
     const WORD_SIZE,
     trait LookupQuery,
     Add: ADD<WORD_SIZE>,
@@ -498,12 +555,12 @@ define_lookup_enum!(
     Mul: MUL<WORD_SIZE>,
 );
 
-impl InstructionLookup<WORD_SIZE> for ONNXLookup {
+impl InstructionLookup<WORD_SIZE> for ElementWiseLookup {
     fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
         match self {
-            ONNXLookup::Add(add) => add.lookup_table(),
-            ONNXLookup::Sub(sub) => sub.lookup_table(),
-            ONNXLookup::Mul(mul) => mul.lookup_table(),
+            ElementWiseLookup::Add(add) => add.lookup_table(),
+            ElementWiseLookup::Sub(sub) => sub.lookup_table(),
+            ElementWiseLookup::Mul(mul) => mul.lookup_table(),
         }
     }
 }
@@ -512,23 +569,23 @@ impl JoltONNXCycle {
     pub fn populate_instruction_lookups(&mut self) {
         self.instruction_lookups = self.to_instruction_lookups();
     }
-    pub fn to_instruction_lookups(&self) -> Option<ONNXLookupQuery> {
+    pub fn to_instruction_lookups(&self) -> Option<ONNXLookup> {
         let (_, ts1) = self.ts1_read();
         let (_, ts2) = self.ts2_read();
         match self.instr().opcode {
             ONNXOpcode::Add => Some(
                 (0..MAX_TENSOR_SIZE)
-                    .map(|i| ONNXLookup::Add(ADD(ts1[i], ts2[i])))
+                    .map(|i| ElementWiseLookup::Add(ADD(ts1[i], ts2[i])))
                     .collect(),
             ),
             ONNXOpcode::Mul => Some(
                 (0..MAX_TENSOR_SIZE)
-                    .map(|i| ONNXLookup::Mul(MUL(ts1[i], ts2[i])))
+                    .map(|i| ElementWiseLookup::Mul(MUL(ts1[i], ts2[i])))
                     .collect(),
             ),
             ONNXOpcode::Sub => Some(
                 (0..MAX_TENSOR_SIZE)
-                    .map(|i| ONNXLookup::Sub(SUB(ts1[i], ts2[i])))
+                    .map(|i| ElementWiseLookup::Sub(SUB(ts1[i], ts2[i])))
                     .collect(),
             ),
             _ => None, // TODO(Forpee): Figure out how to ensure sparse-dense-shout handles none to still be no-op lookup queries of len MAX_TENSOR_SIZE
