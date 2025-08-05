@@ -19,13 +19,15 @@ use jolt_core::{
         transcript::{AppendToTranscript, Transcript},
     },
 };
-use onnx_tracer::trace_types::{MemoryOp, ONNXCycle};
 use rayon::prelude::*;
 
 const RD: usize = 2;
 
+#[derive(Debug)]
+pub struct DummyCycle {}
+
 #[derive(Debug, Clone)]
-pub struct RegistersTwistProof<F: JoltField, ProofTranscript: Transcript> {
+pub struct TensorHeapTwistProof<F: JoltField, ProofTranscript: Transcript> {
     pub(crate) K: usize,
     /// Proof for the read-checking and write-checking sumchecks
     /// (steps 3 and 4 of Figure 9).
@@ -34,15 +36,15 @@ pub struct RegistersTwistProof<F: JoltField, ProofTranscript: Transcript> {
     val_evaluation_proof: ValEvaluationProof<F, ProofTranscript>,
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTranscript> {
-    #[tracing::instrument(skip_all, name = "RegistersTwistProof::prove")]
+impl<F: JoltField, ProofTranscript: Transcript> TensorHeapTwistProof<F, ProofTranscript> {
+    #[tracing::instrument(skip_all, name = "TensorHeapTwistProof::prove")]
     pub fn prove<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
         preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
-        trace: &[ONNXCycle],
+        trace: &[DummyCycle],
         K: usize,
         _opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
-    ) -> RegistersTwistProof<F, ProofTranscript> {
+    ) -> TensorHeapTwistProof<F, ProofTranscript> {
         let log_T = trace.len().log_2();
 
         let r: Vec<F> = transcript.challenge_vector(K.log_2());
@@ -51,17 +53,17 @@ impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTran
         let (read_write_checking_proof, r_address, r_cycle) =
             ReadWriteCheckingProof::prove(trace, r, r_prime, transcript);
 
-        let (val_evaluation_proof, mut r_cycle_prime) = prove_val_evaluation(
-            trace,
-            r_address.clone(),
-            r_cycle,
-            read_write_checking_proof.val_claim,
-            transcript,
-        );
-        // Cycle variables are bound from low to high
-        r_cycle_prime.reverse();
+        // let (val_evaluation_proof, mut r_cycle_prime) = prove_val_evaluation(
+        //     trace,
+        //     r_address.clone(),
+        //     r_cycle,
+        //     read_write_checking_proof.val_claim,
+        //     transcript,
+        // );
+        // // Cycle variables are bound from low to high
+        // r_cycle_prime.reverse();
 
-        let _rd_inc_poly = CommittedPolynomials::RdInc.generate_witness(preprocessing, trace);
+        // let _rd_inc_poly = CommittedPolynomials::RdInc.generate_witness(preprocessing, trace);
         // opening_accumulator.append_sparse(
         //     vec![rd_inc_poly],
         //     r_address,
@@ -69,11 +71,12 @@ impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTran
         //     vec![val_evaluation_proof.inc_claim],
         // );
 
-        RegistersTwistProof {
-            K,
-            read_write_checking_proof,
-            val_evaluation_proof,
-        }
+        // TensorHeapTwistProof {
+        //     K,
+        //     read_write_checking_proof,
+        //     val_evaluation_proof,
+        // }
+        todo!()
     }
 
     pub fn verify<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
@@ -172,7 +175,7 @@ pub struct ValEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
 impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofTranscript> {
     #[tracing::instrument(skip_all, name = "ReadWriteCheckingProof::prove")]
     pub fn prove(
-        trace: &[ONNXCycle],
+        trace: &[DummyCycle],
         r: Vec<F>,
         r_prime: Vec<F>,
         transcript: &mut ProofTranscript,
@@ -219,6 +222,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             ra.par_chunks_mut(T).enumerate().for_each(|(k, ra_k)| {
                 for j in 0..T {
                     let instr = &trace[j].instr;
+                    // FIXME: is this correct because 0 register is reserved for no-ops
                     if instr.ts1.unwrap_or_default() == k {
                         ra_k[j] = F::one();
                     }
@@ -265,16 +269,10 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             .map(|trace_chunk| {
                 let mut delta = vec![0i64; K];
                 for cycle in trace_chunk.iter() {
-                    match cycle.to_memory_ops()[RD] {
-                        MemoryOp::Read(a, _v) => {
-                            panic!("Unexpected rd MemoryOp::Read({a})")
-                        }
-                        MemoryOp::Write(k, pre_value, post_value) => {
-                            let increment = post_value as i64 - pre_value as i64;
-                            debug_assert!(k != 0 || increment == 0, "{cycle:?}"); // Zero register
-                            delta[k as usize] += increment;
-                        }
-                    };
+                    let (k, pre_value, post_value) = cycle.td_write();
+                    let increment = post_value as i64 - pre_value as i64;
+                    debug_assert!(k != 0 || increment == 0, "{cycle:?}"); // Zero register
+                    delta[k as usize] += increment;
                 }
                 debug_assert_eq!(delta[0], 0); // Zero register
                 delta
@@ -355,21 +353,17 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                 let mut j = chunk_index * chunk_size;
                 trace_chunk
                     .iter()
-                    .map(|cycle| match cycle.to_memory_ops()[RD] {
-                        MemoryOp::Read(a, _v) => {
-                            panic!("Unexpected rd MemoryOp::Read({a})")
-                        }
-                        MemoryOp::Write(k, pre_value, post_value) => {
-                            let k = k as usize;
-                            let increment = post_value as i64 - pre_value as i64;
-                            let inc = if increment == 0 {
-                                (j, k, F::zero(), F::zero())
-                            } else {
-                                (j, k, F::zero(), F::from_i64(increment))
-                            };
-                            j += 1;
-                            inc
-                        }
+                    .map(|cycle| {
+                        let (k, pre_value, post_value) = cycle.td_write();
+                        let k = k as usize;
+                        let increment = post_value as i64 - pre_value as i64;
+                        let inc = if increment == 0 {
+                            (j, k, F::zero(), F::zero())
+                        } else {
+                            (j, k, F::zero(), F::from_i64(increment))
+                        };
+                        j += 1;
+                        inc
                     })
                     .collect()
             })
@@ -1121,7 +1115,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 /// TODO(moodlezoup): incorporate optimization from Appendix B.2
 #[tracing::instrument(skip_all)]
 pub fn prove_val_evaluation<F: JoltField, ProofTranscript: Transcript>(
-    trace: &[ONNXCycle],
+    trace: &[DummyCycle],
     r_address: Vec<F>,
     r_cycle: Vec<F>,
     claimed_evaluation: F,

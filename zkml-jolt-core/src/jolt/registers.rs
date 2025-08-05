@@ -234,7 +234,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             ra.par_chunks_mut(T).enumerate().for_each(|(k, ra_k)| {
                 for j in 0..T {
                     let instr = &trace[j].instr;
-                    if instr.ts1.unwrap_or_default() == k {
+                    if instr.ts2.unwrap_or_default() == k {
                         ra_k[j] = F::one();
                     }
                 }
@@ -265,16 +265,10 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             .map(|trace_chunk| {
                 let mut delta = vec![0i64; K];
                 for cycle in trace_chunk.iter() {
-                    match cycle.to_memory_ops()[RD] {
-                        MemoryOp::Read(a, _v) => {
-                            panic!("Unexpected rd MemoryOp::Read({a})")
-                        }
-                        MemoryOp::Write(k, pre_value, post_value) => {
-                            let increment = post_value as i64 - pre_value as i64;
-                            debug_assert!(k != 0 || increment == 0, "{cycle:?}"); // Zero register
-                            delta[k as usize] += increment;
-                        }
-                    };
+                    let (k, pre_value, post_value) = cycle.td_write();
+                    let increment = post_value as i64 - pre_value as i64;
+                    debug_assert!(k != 0 || increment == 0, "{cycle:?}"); // Zero register
+                    delta[k as usize] += increment;
                 }
                 debug_assert_eq!(delta[0], 0); // Zero register
                 delta
