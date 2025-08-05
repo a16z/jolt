@@ -675,40 +675,27 @@ pub fn verify_sparse_dense_shout<
 
 #[cfg(test)]
 mod tests {
-    use crate::jolt::instruction::{add::ADD, mul::MUL, sub::SUB};
-
     use super::*;
     use ark_bn254::Fr;
-    use jolt_core::{jolt::instruction::InstructionFlags, utils::transcript::KeccakTranscript};
-    use onnx_tracer::{
-        tensor::Tensor,
-        trace_types::{ONNXInstr, ONNXOpcode},
-    };
+    use jolt_core::utils::transcript::KeccakTranscript;
+    use onnx_tracer::trace_types::ONNXOpcode;
     use rand::{SeedableRng, rngs::StdRng};
 
-    const WORD_SIZE: usize = 8;
+    const WORD_SIZE: usize = 32;
     const LOG_T: usize = 8;
     const T: usize = 1 << LOG_T;
 
-    fn test_sparse_dense_shout<I>()
-    where
-        I: Sync + InstructionLookup<WORD_SIZE> + LookupQuery<WORD_SIZE> + Default,
-    {
-        let mut cycle = ONNXCycle::no_op();
-        cycle.instr = ONNXInstr::no_op();
-        cycle.instr.opcode = ONNXOpcode::Add;
-        cycle.memory_state.ts1_val = Some(Tensor::new(Some(&[4]), &[1]).unwrap());
-        cycle.memory_state.ts2_val = Some(Tensor::new(Some(&[3]), &[1]).unwrap());
+    fn test_sparse_dense_shout(opcode: ONNXOpcode) {
+        let mut rng = StdRng::from_seed([0u8; 32]);
 
         let mut trace = Vec::with_capacity(T);
-        trace.push(cycle);
-        trace.resize(T, ONNXCycle::no_op());
+        trace.resize(T, ONNXCycle::random(opcode, &mut rng));
 
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(LOG_T);
 
         let (proof, rv_claim, ra_claims, add_mul_sub_claim, flag_claims, _) =
-            prove_sparse_dense_shout::<_, _, _>(&trace, &r_cycle, &mut prover_transcript);
+            prove_sparse_dense_shout::<_, _>(&trace, &r_cycle, &mut prover_transcript);
 
         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
         let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(LOG_T);
@@ -732,16 +719,16 @@ mod tests {
 
     #[test]
     fn test_add() {
-        test_sparse_dense_shout::<ADD<WORD_SIZE>>();
+        test_sparse_dense_shout(ONNXOpcode::Add);
     }
 
     #[test]
     fn test_sub() {
-        test_sparse_dense_shout::<SUB<WORD_SIZE>>();
+        test_sparse_dense_shout(ONNXOpcode::Sub);
     }
 
     #[test]
     fn test_mul() {
-        test_sparse_dense_shout::<MUL<WORD_SIZE>>();
+        test_sparse_dense_shout(ONNXOpcode::Mul);
     }
 }
