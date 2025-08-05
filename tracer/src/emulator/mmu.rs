@@ -152,7 +152,11 @@ impl Mmu {
     /// * `effective_address` Effective memory address to validate
     #[inline]
     fn assert_effective_address(&self, ea: u64, is_write: bool) {
-        let jolt_device = self.jolt_device.as_ref().expect("JoltDevice not set");
+        if self.jolt_device.is_none() {
+            return;
+        }
+
+        let jolt_device = self.jolt_device.as_ref().unwrap();
         let layout = &jolt_device.memory_layout;
         // helper strings
         let (action, verb) = if is_write {
@@ -481,7 +485,6 @@ impl Mmu {
     /// # Arguments
     /// * `p_address` Physical address
     pub fn load_raw(&mut self, p_address: u64) -> u8 {
-        let jolt_device = self.jolt_device.as_ref().expect("JoltDevice not set");
         let effective_address = self.get_effective_address(p_address);
         self.assert_effective_load_address(effective_address);
         // @TODO: Mapping should be configurable with dtb
@@ -497,15 +500,16 @@ impl Mmu {
                 0x10000000..=0x100000ff => panic!("load_raw:UART is unsupported."),
                 0x10001000..=0x10001FFF => panic!("load_raw:disk is unsupported."),
                 _ => {
-                    if jolt_device.is_input(effective_address)
-                        || jolt_device.is_output(effective_address)
-                        || jolt_device.is_panic(effective_address)
-                        || jolt_device.is_termination(effective_address)
-                    {
-                        jolt_device.load(effective_address)
-                    } else {
-                        panic!("Load Failed: Unknown memory mapping {effective_address:X}.");
+                    if let Some(jolt_device) = self.jolt_device.as_ref() {
+                        if jolt_device.is_input(effective_address)
+                            || jolt_device.is_output(effective_address)
+                            || jolt_device.is_panic(effective_address)
+                            || jolt_device.is_termination(effective_address)
+                        {
+                            return jolt_device.load(effective_address);
+                        }
                     }
+                    panic!("Load Failed: Unknown memory mapping {effective_address:X}.");
                 }
             },
         }
@@ -769,10 +773,11 @@ impl Mmu {
                 0x10001000..=0x10001FFF => panic!("store_raw:disk is unsupported."),
                 _ => {
                     self.assert_effective_store_address(effective_address);
-                    self.jolt_device
-                        .as_mut()
-                        .expect("JoltDevice not set")
-                        .store(effective_address, value);
+                    if let Some(jolt_device) = self.jolt_device.as_mut() {
+                        return jolt_device.store(effective_address, value);
+                    };
+
+                    panic!("Store Failed: Unknown memory mapping {effective_address:X}.");
                 }
             },
         };
@@ -785,10 +790,13 @@ impl Mmu {
             effective_address >= DRAM_BASE,
             "setup_bytecode: Effective address must be >= DRAM_BASE, got {effective_address:X}."
         );
-        assert!(
-            effective_address <= self.jolt_device.as_ref().unwrap().memory_layout.stack_end,
-            "setup_bytecode: Effective address must be < stack_end, got {effective_address:X}."
-        );
+
+        if let Some(jolt_device) = self.jolt_device.as_ref() {
+            assert!(
+                effective_address <= jolt_device.memory_layout.stack_end,
+                "setup_bytecode: Effective address must be < stack_end, got {effective_address:X}."
+            );
+        }
 
         self.memory.write_byte(effective_address, value)
     }
