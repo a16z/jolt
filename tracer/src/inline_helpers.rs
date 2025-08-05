@@ -76,13 +76,6 @@ impl InstrAssembler {
         self.sequence
     }
 
-    /// Consume the assembler and return the internal sequence **without**
-    /// back-filling `virtual_sequence_remaining`.  Prefer `finalize()` unless you
-    /// have a specific reason.
-    pub fn into_inner(self) -> Vec<RV32IMInstruction> {
-        self.sequence
-    }
-
     // ---------------------------------------------------------------------
     // RV64 Load/Store helpers (Keccak needs 64-bit variants)
     // ---------------------------------------------------------------------
@@ -335,12 +328,6 @@ impl InstrAssembler {
                 panic!("andn64 with mixed operands requires caller-provided NOT+AND sequence")
             }
         }
-    }
-
-    /// NOT a 64-bit value by XORing with `u64::MAX`.
-    #[inline]
-    pub fn not64(&mut self, rs1: Value, rd: usize) -> Value {
-        self.xor(rs1, Imm(u64::MAX), rd)
     }
 
     /// Rotate left on a 64-bit value.

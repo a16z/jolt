@@ -75,14 +75,11 @@ const ROTATION_OFFSETS: [[u32; 5]; 5] = [
 /// - `vr[67..95]`: Unused, allocated for padding to meet the power-of-two requirement.
 pub const NEEDED_REGISTERS: usize = 96;
 struct Keccak256SequenceBuilder {
-    address: u64,
     asm: InstrAssembler,
     round: u32,
     vr: [usize; NEEDED_REGISTERS],
     operand_rs1: usize,
     _operand_rs2: usize,
-    /// whether the KECCAK256 instruction was compressed (C extension)
-    is_compressed: bool,
 }
 
 /// `Keccak256SequenceBuilder` is a helper struct for constructing the virtual instruction
@@ -130,13 +127,11 @@ impl Keccak256SequenceBuilder {
         operand_rs2: usize,
     ) -> Self {
         Keccak256SequenceBuilder {
-            address,
             asm: InstrAssembler::new(address, is_compressed),
             round: 0,
             vr,
             operand_rs1,
             _operand_rs2: operand_rs2,
-            is_compressed,
         }
     }
 

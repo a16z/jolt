@@ -43,7 +43,6 @@ pub const NEEDED_REGISTERS: usize = 32;
 /// Expects A..H to be in RAM at location rs2..rs2+8
 /// Output will be written to rs2..rs2+8
 struct Sha256SequenceBuilder {
-    address: u64,
     asm: InstrAssembler,
     /// Round id
     round: i32,
@@ -55,7 +54,6 @@ struct Sha256SequenceBuilder {
     operand_rs2: usize,
     /// Whether this is the initial compression (use BLOCK constants)
     initial: bool,
-    is_compressed: bool,
 }
 
 impl Sha256SequenceBuilder {
@@ -68,14 +66,12 @@ impl Sha256SequenceBuilder {
         initial: bool,
     ) -> Self {
         Sha256SequenceBuilder {
-            address,
             asm: InstrAssembler::new(address, is_compressed),
             round: 0,
             vr,
             operand_rs1,
             operand_rs2,
             initial,
-            is_compressed,
         }
     }
 
