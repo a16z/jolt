@@ -46,6 +46,7 @@ impl REM {
 
 impl RISCVTrace for REM {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+        // RISCV spec: For REM, the sign of a nonzero result equals the sign of the dividend.
         // REM operands
         let x = cpu.x[self.operands.rs1];
         let y = cpu.x[self.operands.rs2];

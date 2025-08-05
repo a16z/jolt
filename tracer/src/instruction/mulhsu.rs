@@ -54,6 +54,19 @@ impl RISCVTrace for MULHSU {
 
 impl VirtualInstructionSequence for MULHSU {
     fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+        // MULHSU implements signed-unsigned multiplication: rs1 (signed) × rs2 (unsigned)
+        //
+        // For negative rs1, two's complement encoding means:
+        // rs1_unsigned = rs1 + 2^32 (when rs1 < 0)
+        //
+        // Therefore:
+        // MULHU(rs1_unsigned, rs2) = upper_bits((rs1 + 2^32) × rs2)
+        //                          = upper_bits(rs1 × rs2 + 2^32 × rs2)
+        //                          = upper_bits(rs1 × rs2) + rs2
+        //                          = MULHSU(rs1, rs2) + rs2
+        //
+        // So: MULHSU(rs1, rs2) = MULHU(rs1_unsigned, rs2) - rs2
+
         // Virtual registers used in sequence
         let v_sx = virtual_register_index(0) as usize;
         let v_sx_0 = virtual_register_index(1) as usize;
