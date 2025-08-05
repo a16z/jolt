@@ -45,6 +45,7 @@ impl REM {
 
 impl RISCVTrace for REM {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+        // RISCV spec: For REM, the sign of a nonzero result equals the sign of the dividend.
         // REM operands
         let x = cpu.x[self.operands.rs1];
         let y = cpu.x[self.operands.rs2];
@@ -56,12 +57,8 @@ impl RISCVTrace for REM {
                 } else if x == cpu.most_negative() && y == -1 {
                     (x as u32 as u64, 0)
                 } else {
-                    let mut quotient = x as i32 / y as i32;
-                    let mut remainder = x as i32 % y as i32;
-                    if (remainder < 0 && (y as i32) > 0) || (remainder > 0 && (y as i32) < 0) {
-                        remainder += y as i32;
-                        quotient -= 1;
-                    }
+                    let quotient = x as i32 / y as i32;
+                    let remainder = x as i32 % y as i32;
                     (quotient as u32 as u64, remainder as u32 as u64)
                 }
             }
@@ -71,12 +68,8 @@ impl RISCVTrace for REM {
                 } else if x == cpu.most_negative() && y == -1 {
                     (x as u64, 0)
                 } else {
-                    let mut quotient = x / y;
-                    let mut remainder = x % y;
-                    if (remainder < 0 && y > 0) || (remainder > 0 && y < 0) {
-                        remainder += y;
-                        quotient -= 1;
-                    }
+                    let quotient = x / y;
+                    let remainder = x % y;
                     (quotient as u64, remainder as u64)
                 }
             }
