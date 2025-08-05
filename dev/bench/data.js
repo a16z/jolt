@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754408175513,
+  "lastUpdate": 1754409004336,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -9766,6 +9766,138 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 620920,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zouguangxian@gmail.com",
+            "name": "Zou Guangxian",
+            "username": "zouguangxian"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0369981446471c2ed2c4a4d2f24d61205a2d0853",
+          "message": "Fix RISC-V instruction bugs in division, remainder, and multiplication (#834)\n\n* fix: correct remainder sign handling in DIV and REM instructions\n\n* fix: remove incorrect value assignment in VirtualMovsign exec\n\n- Remove the line that overwrites the calculated sign-based value with\n  the original rs1 value\n- This was causing VirtualMovsign to return the original input instead\n  of the intended sign indicator (-1 for negative, 0 for non-negative)\n\n* fix: correct MULHSU virtual sequence\n\n- Document the two's complement encoding relationship:\n  MULHSU(rs1, rs2) = MULHU(rs1_unsigned, rs2) - rs2\n- Replace MULHU with MUL instruction  because we need the lower bits of (-rs2), not the upper bits",
+          "timestamp": "2025-08-05T11:22:01-04:00",
+          "tree_id": "0be13ae581ba601fcceae227e66b8ec11e7cac5c",
+          "url": "https://github.com/a16z/jolt/commit/0369981446471c2ed2c4a4d2f24d61205a2d0853"
+        },
+        "date": 1754409003735,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 3.6088,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 475152,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 2.8171,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 482056,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 2.1223,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 462800,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 2.683,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 458504,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 1.6918,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 632336,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 110.0427,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 9563368,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 3.5853,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 494736,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 9.4478,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 494088,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 4.275,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 607172,
             "unit": "KB",
             "extra": ""
           }
