@@ -5752,7 +5752,7 @@ dependencies = [
  "jolt-core",
  "log",
  "onnx-tracer",
- "rand 0.7.3",
+ "rand 0.8.5",
  "rayon",
  "regex",
  "serde",
