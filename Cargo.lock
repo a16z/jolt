@@ -5754,6 +5754,7 @@ dependencies = [
  "log",
  "onnx-tracer",
  "rand 0.8.5",
+ "rand_core 0.6.4",
  "rayon",
  "regex",
  "serde",
