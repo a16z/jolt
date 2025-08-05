@@ -280,6 +280,31 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                         chunk_ab_coeffs.push((global_r1cs_idx + 1, bz).into());
                                     }
                                 }
+
+                                #[cfg(test)] {
+                                    let az = constraint
+                                        .a
+                                        .evaluate_row(flattened_polynomials, current_step_idx);
+                                    let bz = constraint
+                                        .b
+                                        .evaluate_row(flattened_polynomials, current_step_idx);
+                                    let cz = constraint
+                                        .c
+                                        .evaluate_row(flattened_polynomials, current_step_idx);
+                                    let mut constraint_string = String::new();
+                                    let _ = constraint
+                                        .pretty_fmt(
+                                            &mut constraint_string,
+                                            flattened_polynomials,
+                                            current_step_idx,
+                                        );
+                                    if az * bz != cz {
+                                        println!("{constraint_string}");
+                                        panic!(
+                                            "Constraint violated at step {current_step_idx}",
+                                        );
+                                    }
+                                }
                             }
 
                             // If this is a full block, compute and update tA, then reset Az, Bz blocks

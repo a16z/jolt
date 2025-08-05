@@ -97,6 +97,15 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
             })
             .max()
             .unwrap_or(0)
+            .max(
+                crate::zkvm::ram::remap_address(
+                    preprocessing.shared.ram.min_bytecode_address,
+                    &preprocessing.shared.memory_layout,
+                )
+                .unwrap_or(0)
+                    + preprocessing.shared.ram.bytecode_words.len() as u64
+                    + 1,
+            )
             .next_power_of_two() as usize;
 
         let T = trace.len();

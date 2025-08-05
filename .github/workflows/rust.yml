@@ -114,6 +114,17 @@ jobs:
         working-directory: ./sample_project
         run: cargo run --release
 
+  test-verifier:
+    name: Jolt Verifier Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install Jolt RISC-V Rust toolchain
+        run: cargo run install-toolchain
+      - name: Run verifier tests
+        run: cargo test --release --package jolt-verifier
+
   # zklean-extractor-tests:
   #   name: ZkLean extractor tests
   #   runs-on: ubuntu-latest

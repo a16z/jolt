@@ -349,6 +349,7 @@ where
         }
     }
 
+    #[tracing::instrument(skip_all, name = "OpeningProofReductionSumcheck::prepare_sumcheck")]
     fn prepare_sumcheck<ProofTranscript: Transcript>(
         &mut self,
         polynomials_map: Option<&HashMap<CommittedPolynomial, MultilinearPolynomial<F>>>,
@@ -380,8 +381,8 @@ where
 
             let reduced_claim = self
                 .rlc_coeffs
-                .iter()
-                .zip(self.input_claims.iter())
+                .par_iter()
+                .zip(self.input_claims.par_iter())
                 .map(|(gamma, claim)| *gamma * claim)
                 .sum();
             self.input_claims = vec![reduced_claim];
@@ -390,7 +391,7 @@ where
                 let polynomials_map = polynomials_map.unwrap();
                 let polynomials: Vec<_> = self
                     .polynomials
-                    .iter()
+                    .par_iter()
                     .map(|label| polynomials_map.get(label).unwrap())
                     .collect();
 
@@ -535,6 +536,8 @@ where
 {
     pub sumchecks: Vec<OpeningProofReductionSumcheck<F>>,
     pub openings: Openings<F>,
+    #[cfg(test)]
+    pub appended_virtual_openings: std::rc::Rc<std::cell::RefCell<Vec<OpeningId>>>,
     // #[cfg(test)]
     // joint_commitment: Option<PCS::Commitment>,
 }
@@ -587,6 +590,8 @@ where
         Self {
             sumchecks: vec![],
             openings: BTreeMap::new(),
+            #[cfg(test)]
+            appended_virtual_openings: std::rc::Rc::new(std::cell::RefCell::new(vec![])),
             // #[cfg(test)]
             // joint_commitment: None,
         }
@@ -618,6 +623,16 @@ where
             .openings
             .get(&OpeningId::Virtual(polynomial, sumcheck))
             .unwrap_or_else(|| panic!("opening for {sumcheck:?} {polynomial:?} not found"));
+        #[cfg(test)]
+        {
+            let mut virtual_openings = self.appended_virtual_openings.borrow_mut();
+            if let Some(index) = virtual_openings
+                .iter()
+                .position(|id| id == &OpeningId::Virtual(polynomial, sumcheck))
+            {
+                virtual_openings.remove(index);
+            }
+        }
         (point.clone(), *claim)
     }
 
@@ -712,6 +727,10 @@ where
             OpeningId::Virtual(polynomial, sumcheck),
             (opening_point, claim),
         );
+        #[cfg(test)]
+        self.appended_virtual_openings
+            .borrow_mut()
+            .push(OpeningId::Virtual(polynomial, sumcheck));
     }
 
     /// Reduces the multiple openings accumulated into a single opening proof,
@@ -729,6 +748,7 @@ where
             self.sumchecks.len()
         );
 
+        // @TODO(markosg04) better parallelism here? being mindful of the transcript ordering
         self.sumchecks
             .iter_mut()
             .for_each(|sumcheck| sumcheck.prepare_sumcheck(Some(&polynomials), transcript));

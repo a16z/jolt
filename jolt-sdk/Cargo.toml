@@ -22,8 +22,10 @@ host = [
     "postcard/use-std",
     "dep:sha3",
 ]
-guest-std = ["postcard/use-std", "jolt-sdk-macros/guest-std"]
-icicle = ["host", "jolt-core?/icicle"]
+guest-std = [
+    "postcard/use-std",
+    "jolt-sdk-macros/guest-std",
+]
 sha256 = []
 keccak256 = []
 

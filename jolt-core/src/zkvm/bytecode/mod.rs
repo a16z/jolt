@@ -7,7 +7,7 @@ use crate::zkvm::bytecode::hamming_weight::HammingWeightSumcheck;
 use crate::zkvm::bytecode::read_raf_checking::ReadRafSumcheck;
 use crate::zkvm::dag::stage::SumcheckStages;
 use crate::zkvm::dag::state_manager::StateManager;
-use crate::zkvm::witness::{compute_d_parameter, VirtualPolynomial};
+use crate::zkvm::witness::{compute_d_parameter, VirtualPolynomial, DTH_ROOT_OF_K};
 use crate::{
     field::JoltField,
     poly::{commitment::commitment_scheme::CommitmentScheme, eq_poly::EqPolynomial},
@@ -65,7 +65,9 @@ impl BytecodePreprocessing {
 
         let d = compute_d_parameter(bytecode.len().next_power_of_two());
         // Make log(code_size) a multiple of d
-        let code_size = (bytecode.len().next_power_of_two().log_2().div_ceil(d) * d).pow2();
+        let code_size = (bytecode.len().next_power_of_two().log_2().div_ceil(d) * d)
+            .pow2()
+            .max(DTH_ROOT_OF_K);
 
         // Bytecode: Pad to nearest power of 2
         bytecode.resize(code_size, RV32IMInstruction::NoOp);

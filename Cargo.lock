@@ -226,7 +226,7 @@ dependencies = [
 [[package]]
 name = "ark-ec"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#efc56e0d2f1129257a35c078b13dd017aeceff91"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#b41cf110459a4f971d6d71780a8d17f018f58159"
 dependencies = [
  "ahash",
  "ark-ff 0.5.0",
@@ -285,7 +285,7 @@ dependencies = [
 [[package]]
 name = "ark-ff"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#efc56e0d2f1129257a35c078b13dd017aeceff91"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#b41cf110459a4f971d6d71780a8d17f018f58159"
 dependencies = [
  "ark-ff-asm 0.5.0",
  "ark-ff-macros 0.5.0",
@@ -325,7 +325,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-asm"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#efc56e0d2f1129257a35c078b13dd017aeceff91"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#b41cf110459a4f971d6d71780a8d17f018f58159"
 dependencies = [
  "quote",
  "syn 2.0.104",
@@ -359,7 +359,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-macros"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#efc56e0d2f1129257a35c078b13dd017aeceff91"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#b41cf110459a4f971d6d71780a8d17f018f58159"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -371,7 +371,7 @@ dependencies = [
 [[package]]
 name = "ark-poly"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#efc56e0d2f1129257a35c078b13dd017aeceff91"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#b41cf110459a4f971d6d71780a8d17f018f58159"
 dependencies = [
  "ahash",
  "ark-ff 0.5.0",
@@ -406,7 +406,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#efc56e0d2f1129257a35c078b13dd017aeceff91"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#b41cf110459a4f971d6d71780a8d17f018f58159"
 dependencies = [
  "ark-serialize-derive 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-std 0.5.0",
@@ -430,7 +430,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize-derive"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#efc56e0d2f1129257a35c078b13dd017aeceff91"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#b41cf110459a4f971d6d71780a8d17f018f58159"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -651,9 +651,9 @@ checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
 name = "cc"
-version = "1.2.30"
+version = "1.2.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "deec109607ca693028562ed836a5f1c4b8bd77755c4e132fc5ce11b0b6211ae7"
+checksum = "c3a42d84bb6b69d3a8b3eaacf0d88f179e1929695e1ad012b6cf64d9caaa5fd2"
 dependencies = [
  "shlex",
 ]
@@ -750,15 +750,6 @@ name = "clap_lex"
 version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b94f61472cee1439c0b966b47e3aca9ae07e45d070759512cd390ea2bebc6675"
-
-[[package]]
-name = "cmake"
-version = "0.1.54"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7caa3f9de89ddbe2c607f4101924c5abec803763ae9534e4f4d7d8f84aa81f0"
-dependencies = [
- "cc",
-]
 
 [[package]]
 name = "cobs"
@@ -1094,7 +1085,7 @@ dependencies = [
 [[package]]
 name = "dory"
 version = "1.0.0"
-source = "git+https://github.com/spaceandtimefdn/sxt-dory?branch=feat%2Freturn_row_commitments#1c77b53bfc05f8ff1fe546625e830a776f4e17e1"
+source = "git+https://github.com/spaceandtimefdn/sxt-dory?branch=feat%2Freturn_row_commitments#b22b6f08fdda11150e5826ee1cba0f6d12f977f7"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1750,49 +1741,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "icicle-bn254"
-version = "3.2.0"
-source = "git+https://github.com/ingonyama-zk/icicle-jolt.git?rev=2441eba#2441eba2e1bb8a8b2336a2ffb5e47653198eebf9"
-dependencies = [
- "cmake",
- "icicle-core",
- "icicle-hash",
- "icicle-runtime",
-]
-
-[[package]]
-name = "icicle-core"
-version = "3.2.0"
-source = "git+https://github.com/ingonyama-zk/icicle-jolt.git?rev=2441eba#2441eba2e1bb8a8b2336a2ffb5e47653198eebf9"
-dependencies = [
- "hex",
- "icicle-runtime",
- "once_cell",
- "rand 0.8.5",
- "rayon",
-]
-
-[[package]]
-name = "icicle-hash"
-version = "3.2.0"
-source = "git+https://github.com/ingonyama-zk/icicle-jolt.git?rev=2441eba#2441eba2e1bb8a8b2336a2ffb5e47653198eebf9"
-dependencies = [
- "cmake",
- "icicle-core",
- "icicle-runtime",
- "rand 0.8.5",
-]
-
-[[package]]
-name = "icicle-runtime"
-version = "3.2.0"
-source = "git+https://github.com/ingonyama-zk/icicle-jolt.git?rev=2441eba#2441eba2e1bb8a8b2336a2ffb5e47653198eebf9"
-dependencies = [
- "cmake",
- "once_cell",
-]
-
-[[package]]
 name = "icu_collections"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2069,9 +2017,6 @@ dependencies = [
  "fixedbitset",
  "getrandom 0.2.16",
  "iai-callgrind",
- "icicle-bn254",
- "icicle-core",
- "icicle-runtime",
  "indicatif",
  "itertools 0.10.5",
  "jolt-optimizations",
@@ -2108,7 +2053,7 @@ dependencies = [
 [[package]]
 name = "jolt-optimizations"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#efc56e0d2f1129257a35c078b13dd017aeceff91"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#b41cf110459a4f971d6d71780a8d17f018f58159"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -2145,6 +2090,14 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "jolt-verifier"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "jolt-core",
 ]
 
 [[package]]
@@ -2225,9 +2178,9 @@ checksum = "f9fbbcab51052fe104eb5e5d351cf728d30a5be1fe14d9be8a3b097481fb97de"
 
 [[package]]
 name = "libredox"
-version = "0.1.8"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "360e552c93fa0e8152ab463bc4c4837fce76a225df11dfaeea66c313de5e61f7"
+checksum = "391290121bad3d37fbddad76d8f5d1c1c314cfc646d143d7e07a3086ddff0ce3"
 dependencies = [
  "bitflags",
  "libc",
@@ -3436,9 +3389,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.141"
+version = "1.0.142"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30b9eff21ebe718216c6ec64e1d9ac57087aad11efc64e32002bce4a0d4c03d3"
+checksum = "030fedb782600dcbd6f02d479bf0d817ac3bb40d644745b769d6a96bc3afc5a7"
 dependencies = [
  "itoa",
  "memchr",
@@ -3899,9 +3852,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.47.0"
+version = "1.47.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43864ed400b6043a4757a25c7a64a8efde741aed79a056a2fb348a406701bb35"
+checksum = "89e49afdadebb872d3145a5638b59eb0691ea23e46ca484037cfab3b76b95038"
 dependencies = [
  "backtrace",
  "bytes",
@@ -3936,9 +3889,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-util"
-version = "0.7.15"
+version = "0.7.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66a539a9ad6d5d281510d5bd368c973d636c02dbf8a67300bfb6b950696ad7df"
+checksum = "14307c986784f72ef81c89db7d9e28d6ac26d16213b109ea501696195e6e3ce5"
 dependencies = [
  "bytes",
  "futures-core",
@@ -4797,9 +4750,9 @@ dependencies = [
 
 [[package]]
 name = "zerovec"
-version = "0.11.2"
+version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a05eb080e015ba39cc9e23bbe5e7fb04d5fb040350f99f34e338d5fdd294428"
+checksum = "bdbb9122ea75b11bf96e7492afb723e8a7fbe12c67417aa95e7e3d18144d37cd"
 dependencies = [
  "yoke",
  "zerofrom",
@@ -4820,4 +4773,4 @@ dependencies = [
 [[patch.unused]]
 name = "ark-bn254"
 version = "0.5.0-alpha.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#efc56e0d2f1129257a35c078b13dd017aeceff91"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#b41cf110459a4f971d6d71780a8d17f018f58159"

@@ -23,15 +23,15 @@ pub fn main() {
     let verify_mul = guest::build_verifier_mul(verifier_preprocessing);
 
     let now = Instant::now();
-    let (output, proof) = prove_add(5, 10);
+    let (output, proof, program_io) = prove_add(5, 10);
     println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verify_add(5, 10, output, proof);
+    let is_valid = verify_add(5, 10, output, program_io.panic, proof);
 
     println!("add output: {output}");
     println!("add valid: {is_valid}");
 
-    let (output, proof) = prove_mul(5, 10);
-    let is_valid = verify_mul(5, 10, output, proof);
+    let (output, proof, program_io) = prove_mul(5, 10);
+    let is_valid = verify_mul(5, 10, output, program_io.panic, proof);
 
     println!("mul output: {output}");
     println!("mul valid: {is_valid}");
