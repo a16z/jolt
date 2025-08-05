@@ -827,12 +827,13 @@ where
                     // TODO(moodlezoup): This can be optimized
                     let scalars: Vec<_> = row.iter().map(|x| F::from_i128(*x)).collect();
                     JoltGroupWrapper(
-                        VariableBaseMSM::msm_field_elements(&bases, &scalars, None).unwrap(),
+                        VariableBaseMSM::msm_field_elements(&bases[..row.len()], &scalars, None)
+                            .unwrap(),
                     )
                 })
                 .collect(),
-            MultilinearPolynomial::RLC(poly) => poly.commit_rows(&bases),
-            MultilinearPolynomial::OneHot(poly) => poly.commit_rows(&bases),
+            MultilinearPolynomial::RLC(poly) => poly.commit_rows(&bases[..row_len]),
+            MultilinearPolynomial::OneHot(poly) => poly.commit_rows(&bases[..row_len]),
             MultilinearPolynomial::U128Scalars(poly) => poly
                 .coeffs
                 .par_chunks(row_len)
@@ -840,7 +841,8 @@ where
                     // TODO(moodlezoup): This can be optimized
                     let scalars: Vec<_> = row.iter().map(|x| F::from_u128(*x)).collect();
                     JoltGroupWrapper(
-                        VariableBaseMSM::msm_field_elements(&bases, &scalars, None).unwrap(),
+                        VariableBaseMSM::msm_field_elements(&bases[..row.len()], &scalars, None)
+                            .unwrap(),
                     )
                 })
                 .collect(),
