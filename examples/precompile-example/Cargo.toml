@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 tracer = { path = "../../tracer" }
+common = { path = "../../common" }
 
 # Optional: Use ctor for automatic registration
 ctor = "0.2" 

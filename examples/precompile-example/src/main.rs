@@ -188,11 +188,12 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tracer::emulator::{cpu::Cpu, default_terminal::DefaultTerminal, mmu::DRAM_BASE};
+    use common;
+    use tracer::emulator::{cpu::Cpu, default_terminal::DefaultTerminal};
     use tracer::instruction::format::format_r::FormatR;
     use tracer::instruction::{RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction};
 
-    const TEST_MEMORY_CAPACITY: u64 = 1024 * 1024; // 1MB
+    const TEST_MEMORY_CAPACITY: u64 = 1024 * 1024 * 10; // 10MB to accommodate heap area
 
     // SHA256 initial hash values (FIPS 180-4)
     const SHA256_INITIAL_STATE: [u32; 8] = [
@@ -206,6 +207,30 @@ mod tests {
         0xba7816bf, 0x8f01cfea, 0x414140de, 0x5dae2223, 0xb00361a3, 0x96177a9c, 0xb410ff61,
         0xf20015ad,
     ];
+
+    // Helper function to set up CPU with JoltDevice for tests
+    fn setup_test_cpu() -> Cpu {
+        let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
+        cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
+        
+        // Set up JoltDevice - this is required for memory operations
+        let memory_config = common::jolt_device::MemoryConfig {
+            bytecode_size: Some(1024 * 1024), // 1MB for bytecode
+            ..Default::default()
+        };
+        let jolt_device = common::jolt_device::JoltDevice::new(&memory_config);
+        cpu.get_mut_mmu().jolt_device = Some(jolt_device);
+        
+        cpu
+    }
+
+    // Helper function to get safe memory addresses in the heap area
+    fn get_test_addresses() -> (u64, u64) {
+        // Use addresses in the heap area (after stack_end which is at 0x80100000)
+        let message_addr = 0x80110000;  // In heap area, after stack_end
+        let state_addr = 0x80111000;    // 4KB after message_addr
+        (message_addr, state_addr)
+    }
 
     #[test]
     fn test_sha256_inline_compression_exec() {
@@ -243,10 +268,8 @@ mod tests {
         };
 
         // Set up CPU
-        let mut cpu = Cpu::new(Box::new(DefaultTerminal::new()));
-        cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
-        let message_addr = DRAM_BASE;
-        let state_addr = DRAM_BASE + 1024; // Separate address for state
+        let mut cpu = setup_test_cpu();
+        let (message_addr, state_addr) = get_test_addresses();
         cpu.x[10] = message_addr as i64; // rs1 points to message
         cpu.x[11] = state_addr as i64; // rs2 points to state
 
@@ -321,10 +344,8 @@ mod tests {
         };
 
         // Set up CPU
-        let mut cpu = Cpu::new(Box::new(DefaultTerminal::new()));
-        cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
-        let message_addr = DRAM_BASE;
-        let state_addr = DRAM_BASE + 1024; // Separate address for state
+        let mut cpu = setup_test_cpu();
+        let (message_addr, state_addr) = get_test_addresses();
         cpu.x[10] = message_addr as i64; // rs1 points to message
         cpu.x[11] = state_addr as i64; // rs2 points to state
 
@@ -373,10 +394,8 @@ mod tests {
         message_block[15] = 0x00000018; // bit length = 24 bits (3 bytes * 8)
 
         // Set up CPU
-        let mut cpu = Cpu::new(Box::new(DefaultTerminal::new()));
-        cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
-        let message_addr = DRAM_BASE;
-        let state_addr = DRAM_BASE + 1024; // Separate address for state
+        let mut cpu = setup_test_cpu();
+        let (message_addr, state_addr) = get_test_addresses();
         cpu.x[10] = message_addr as i64; // rs1 points to message
         cpu.x[11] = state_addr as i64; // rs2 points to state
 
@@ -434,10 +453,8 @@ mod tests {
         message_block[15] = 0x00000018; // bit length = 24 bits (3 bytes * 8)
 
         // Set up CPU
-        let mut cpu = Cpu::new(Box::new(DefaultTerminal::new()));
-        cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
-        let message_addr = DRAM_BASE;
-        let state_addr = DRAM_BASE + 1024; // Separate address for state
+        let mut cpu = setup_test_cpu();
+        let (message_addr, state_addr) = get_test_addresses();
         cpu.x[10] = message_addr as i64; // rs1 points to message
         cpu.x[11] = state_addr as i64; // rs2 points to state
 
