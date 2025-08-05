@@ -24,6 +24,8 @@ pub type Sha256State = [u32; 8];
 /// Wrapper around `CpuTestHarness` that offers convenient SHA-256 helpers.
 pub struct Sha256CpuHarness {
     pub harness: CpuTestHarness,
+    // This is needed to pull out the virtual registers in case we need them for tests.
+    #[allow(dead_code)]
     pub vr: [usize; NEEDED_REGISTERS],
 }
 
@@ -44,7 +46,7 @@ impl Sha256CpuHarness {
         Self {
             // RV32. Note that changing this to new() (RV64) causes the tests to fail.
             // TODO: Fix tests for RV64.
-            harness: CpuTestHarness::new_32(),
+            harness: CpuTestHarness::new(),
             vr,
         }
     }

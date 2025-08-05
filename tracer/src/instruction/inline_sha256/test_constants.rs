@@ -42,15 +42,6 @@ impl TestVectors {
         [0xFFFFFFFF; 16]
     }
 
-    /// Create a simple arithmetic pattern for testing
-    pub fn simple_pattern_block() -> Sha256Block {
-        let mut block = [0u32; 16];
-        for i in 0..16 {
-            block[i] = (i * 3 + 5) as u32;
-        }
-        block
-    }
-
     /// SHA-256 initial hash value (IV) as specified in FIPS 180-4
     pub fn sha256_initial_iv() -> Sha256State {
         [
