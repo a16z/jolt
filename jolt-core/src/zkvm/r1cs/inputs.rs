@@ -56,6 +56,7 @@ pub enum JoltR1CSInputs {
     LookupOutput,     // Virtual (instruction rv)
     NextIsNoop,       // Virtual (spartan shift sumcheck)
     ShouldJump,
+    CompressedDoNotUpdateUnexpPC,
     OpFlags(CircuitFlags),
 }
 
@@ -71,6 +72,9 @@ impl TryFrom<JoltR1CSInputs> for CommittedPolynomial {
             JoltR1CSInputs::WritePCtoRD => Ok(CommittedPolynomial::WritePCtoRD),
             JoltR1CSInputs::ShouldBranch => Ok(CommittedPolynomial::ShouldBranch),
             JoltR1CSInputs::ShouldJump => Ok(CommittedPolynomial::ShouldJump),
+            JoltR1CSInputs::CompressedDoNotUpdateUnexpPC => {
+                Ok(CommittedPolynomial::CompressedDoNotUpdateUnexpPC)
+            }
             _ => Err("{value} is not a committed polynomial"),
         }
     }
@@ -119,7 +123,7 @@ impl TryFrom<JoltR1CSInputs> for OpeningId {
 
 /// This const serves to define a canonical ordering over inputs (and thus indices
 /// for each input). This is needed for sumcheck.
-pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 41] = [
+pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 42] = [
     JoltR1CSInputs::LeftInstructionInput,
     JoltR1CSInputs::RightInstructionInput,
     JoltR1CSInputs::Product,
@@ -143,6 +147,7 @@ pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 41] = [
     JoltR1CSInputs::LookupOutput,
     JoltR1CSInputs::NextIsNoop,
     JoltR1CSInputs::ShouldJump,
+    JoltR1CSInputs::CompressedDoNotUpdateUnexpPC,
     JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsRs1Value),
     JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsRs2Value),
     JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsPC),
@@ -165,7 +170,7 @@ pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 41] = [
 
 /// The subset of `ALL_R1CS_INPUTS` that are committed. The rest of
 /// the inputs are virtual polynomials.
-pub const COMMITTED_R1CS_INPUTS: [JoltR1CSInputs; 7] = [
+pub const COMMITTED_R1CS_INPUTS: [JoltR1CSInputs; 8] = [
     JoltR1CSInputs::LeftInstructionInput,
     JoltR1CSInputs::RightInstructionInput,
     JoltR1CSInputs::Product,
@@ -173,6 +178,7 @@ pub const COMMITTED_R1CS_INPUTS: [JoltR1CSInputs; 7] = [
     JoltR1CSInputs::WritePCtoRD,
     JoltR1CSInputs::ShouldBranch,
     JoltR1CSInputs::ShouldJump,
+    JoltR1CSInputs::CompressedDoNotUpdateUnexpPC,
 ];
 
 impl JoltR1CSInputs {
@@ -328,41 +334,9 @@ impl JoltR1CSInputs {
             JoltR1CSInputs::NextUnexpandedPC => {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
-                    .zip(
-                        trace
-                            .par_iter()
-                            .skip(1)
-                            .chain(rayon::iter::once(&RV32IMCycle::NoOp)),
-                    )
-                    .map(|(cycle, next_cycle)| {
-                        let flags = cycle.instruction().circuit_flags();
-                        let is_branch = flags[CircuitFlags::Branch];
-                        let should_branch =
-                            is_branch && LookupQuery::<XLEN>::to_lookup_output(cycle) != 0;
-                        let instr = cycle.instruction().normalize();
-                        if should_branch {
-                            (instr.address as i64 + instr.operands.imm as i64) as u64
-                        } else {
-                            // JoltR1CSInputs::NextPCJump
-                            let is_jump = flags[CircuitFlags::Jump];
-                            let is_compressed = flags[CircuitFlags::IsCompressed];
-                            let do_not_update_pc = cycle.instruction().circuit_flags()
-                                [CircuitFlags::DoNotUpdateUnexpandedPC];
-                            let next_is_noop =
-                                next_cycle.instruction().circuit_flags()[CircuitFlags::IsNoop];
-                            if next_is_noop {
-                                0
-                            } else if is_jump {
-                                LookupQuery::<XLEN>::to_lookup_output(cycle)
-                            } else if do_not_update_pc {
-                                instr.address as u64
-                            } else if is_compressed {
-                                instr.address as u64 + 2
-                            } else {
-                                instr.address as u64 + 4
-                            }
-                        }
-                    })
+                    .skip(1)
+                    .chain(rayon::iter::once(&RV32IMCycle::NoOp))
+                    .map(|cycle| cycle.instruction().normalize().address as u64)
                     .collect();
                 coeffs.into()
             }
@@ -381,6 +355,10 @@ impl JoltR1CSInputs {
                     .chain(rayon::iter::once(0))
                     .collect();
                 coeffs.into()
+            }
+            JoltR1CSInputs::CompressedDoNotUpdateUnexpPC => {
+                CommittedPolynomial::CompressedDoNotUpdateUnexpPC
+                    .generate_witness(preprocessing, trace)
             }
             JoltR1CSInputs::OpFlags(flag) => {
                 // TODO(moodlezoup): Boolean polynomial

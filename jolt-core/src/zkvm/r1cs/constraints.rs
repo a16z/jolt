@@ -249,19 +249,25 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         // if !(ShouldBranch || Jump) {
         //     if DoNotUpdatePC {
         //         assert!(NextUnexpandedPC == UnexpandedPC)
+        //     } else if isCompressed {
+        //         assert!(NextUnexpandedPC == UnexpandedPC + 2)
         //     } else {
         //         assert!(NextUnexpandedPC == UnexpandedPC + 4)
         //     }
         // }
         // Note that ShouldBranch and Jump instructions are mutually exclusive
-        // TODO: This is probably incorrect if DoNotUpdateUnexpandedPC and IsCompressed are both
-        // true
+        cs.constrain_prod(
+            JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed),
+            JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC),
+            JoltR1CSInputs::CompressedDoNotUpdateUnexpPC,
+        );
         cs.constrain_eq_conditional(
             1 - JoltR1CSInputs::ShouldBranch - JoltR1CSInputs::OpFlags(CircuitFlags::Jump),
             JoltR1CSInputs::NextUnexpandedPC,
             JoltR1CSInputs::UnexpandedPC + 4
                 - 4 * JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC)
-                - 2 * JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed),
+                - 2 * JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed)
+                + 2 * JoltR1CSInputs::CompressedDoNotUpdateUnexpPC,
         );
 
         // if Inline {
