@@ -116,12 +116,12 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
 
         let F_1 = compute_ra_evals(bytecode_preprocessing, trace, &E_1);
 
-        let read_raf = ReadRafSumcheck::new_prover(sm);
+        // let read_raf = ReadRafSumcheck::new_prover(sm);
         let booleanity = BooleanitySumcheck::new_prover(sm, E_1, F_1.clone());
         let hamming_weight = HammingWeightSumcheck::new_prover(sm, F_1);
 
         vec![
-            Box::new(read_raf),
+            // Box::new(read_raf),
             Box::new(booleanity),
             Box::new(hamming_weight),
         ]
@@ -131,12 +131,12 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        let read_checking = ReadRafSumcheck::new_verifier(sm);
+        // let read_checking = ReadRafSumcheck::new_verifier(sm);
         let booleanity = BooleanitySumcheck::new_verifier(sm);
         let hamming_weight = HammingWeightSumcheck::new_verifier(sm);
 
         vec![
-            Box::new(read_checking),
+            // Box::new(read_checking),
             Box::new(booleanity),
             Box::new(hamming_weight),
         ]
