@@ -216,12 +216,12 @@ impl Keccak256SequenceBuilder {
     /// Load the initial Keccak state from memory into virtual registers.
     /// Keccak state is NUM_LANES lanes of 64 bits each (200 bytes total).
     fn load_state(&mut self) {
-        (0..NUM_LANES).for_each(|i| self.ld(self.operand_rs1, i as i64, self.vr[i as usize]));
+        (0..NUM_LANES).for_each(|i| self.ld(self.operand_rs1, i as i64, self.vr[i]));
     }
 
     /// Store the final Keccak state from virtual registers back to memory.
     fn store_state(&mut self) {
-        (0..NUM_LANES).for_each(|i| self.sd(self.operand_rs1, self.vr[i as usize], i as i64));
+        (0..NUM_LANES).for_each(|i| self.sd(self.operand_rs1, self.vr[i], i as i64));
     }
 
     // --- Lane / Register Helpers ---
