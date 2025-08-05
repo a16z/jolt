@@ -93,7 +93,6 @@ impl JoltDAG {
             .chain(registers_dag.stage2_prover_instances(&mut state_manager))
             .chain(ram_dag.stage2_prover_instances(&mut state_manager))
             .collect();
-
         let stage2_instances_mut: Vec<&mut dyn SumcheckInstance<F>> = stage2_instances
             .iter_mut()
             .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F>)
@@ -123,7 +122,7 @@ impl JoltDAG {
 
         let mut stage3_instances: Vec<_> = std::iter::empty()
             .chain(spartan_dag.stage3_prover_instances(&mut state_manager))
-            // .chain(registers_dag.stage3_prover_instances(&mut state_manager))
+            .chain(registers_dag.stage3_prover_instances(&mut state_manager))
             .chain(lookups_dag.stage3_prover_instances(&mut state_manager))
             .chain(ram_dag.stage3_prover_instances(&mut state_manager))
             .collect();
@@ -177,42 +176,42 @@ impl JoltDAG {
         drop(_guard);
         drop(span);
 
-        // // Batch-prove all openings
-        // let (_, trace, _, _) = state_manager.get_prover_data();
-        // let mut polynomials_map = HashMap::new();
-        // for polynomial in AllCommittedPolynomials::iter() {
-        //     polynomials_map.insert(
-        //         *polynomial,
-        //         polynomial.generate_witness(preprocessing, trace),
-        //     );
-        // }
-        // let opening_proof = accumulator.borrow_mut().reduce_and_prove(
-        //     polynomials_map,
-        //     opening_proof_hints,
-        //     &preprocessing.generators,
-        //     &mut *transcript.borrow_mut(),
-        // );
-        //
-        // state_manager.proofs.borrow_mut().insert(
-        //     ProofKeys::ReducedOpeningProof,
-        //     ProofData::ReducedOpeningProof(opening_proof),
-        // );
+        // Batch-prove all openings
+        let (_, trace, _, _) = state_manager.get_prover_data();
+        let mut polynomials_map = HashMap::new();
+        for polynomial in AllCommittedPolynomials::iter() {
+            polynomials_map.insert(
+                *polynomial,
+                polynomial.generate_witness(preprocessing, trace),
+            );
+        }
+        let opening_proof = accumulator.borrow_mut().reduce_and_prove(
+            polynomials_map,
+            opening_proof_hints,
+            &preprocessing.generators,
+            &mut *transcript.borrow_mut(),
+        );
 
-        // #[cfg(test)]
-        // assert!(
-        //     state_manager
-        //         .get_prover_accumulator()
-        //         .borrow()
-        //         .appended_virtual_openings
-        //         .borrow()
-        //         .is_empty(),
-        //     "Not all virtual openings have been proven, missing: {:?}",
-        //     state_manager
-        //         .get_prover_accumulator()
-        //         .borrow()
-        //         .appended_virtual_openings
-        //         .borrow()
-        // );
+        state_manager.proofs.borrow_mut().insert(
+            ProofKeys::ReducedOpeningProof,
+            ProofData::ReducedOpeningProof(opening_proof),
+        );
+
+        #[cfg(test)]
+        assert!(
+            state_manager
+                .get_prover_accumulator()
+                .borrow()
+                .appended_virtual_openings
+                .borrow()
+                .is_empty(),
+            "Not all virtual openings have been proven, missing: {:?}",
+            state_manager
+                .get_prover_accumulator()
+                .borrow()
+                .appended_virtual_openings
+                .borrow()
+        );
 
         #[cfg(test)]
         let debug_info = {
@@ -321,7 +320,7 @@ impl JoltDAG {
         // Stage 3:
         let stage3_instances: Vec<_> = std::iter::empty()
             .chain(spartan_dag.stage3_verifier_instances(&mut state_manager))
-            // .chain(registers_dag.stage3_verifier_instances(&mut state_manager))
+            .chain(registers_dag.stage3_verifier_instances(&mut state_manager))
             .chain(lookups_dag.stage3_verifier_instances(&mut state_manager))
             .chain(ram_dag.stage3_verifier_instances(&mut state_manager))
             .collect();
@@ -376,32 +375,32 @@ impl JoltDAG {
         )
         .context("Stage 4")?;
 
-        // // Batch-prove all openings
-        // let batched_opening_proof = proofs
-        //     .get(&ProofKeys::ReducedOpeningProof)
-        //     .expect("Reduced opening proof not found");
-        // let batched_opening_proof = match batched_opening_proof {
-        //     ProofData::ReducedOpeningProof(proof) => proof,
-        //     _ => panic!("Invalid proof type for stage 4"),
-        // };
-        //
-        // let mut commitments_map = HashMap::new();
-        // for polynomial in AllCommittedPolynomials::iter() {
-        //     commitments_map.insert(
-        //         *polynomial,
-        //         commitments.borrow()[polynomial.to_index()].clone(),
-        //     );
-        // }
-        // let accumulator = state_manager.get_verifier_accumulator();
-        // accumulator
-        //     .borrow_mut()
-        //     .reduce_and_verify(
-        //         &preprocessing.generators,
-        //         &mut commitments_map,
-        //         batched_opening_proof,
-        //         &mut *transcript.borrow_mut(),
-        //     )
-        //     .context("Stage 5")?;
+        // Batch-prove all openings
+        let batched_opening_proof = proofs
+            .get(&ProofKeys::ReducedOpeningProof)
+            .expect("Reduced opening proof not found");
+        let batched_opening_proof = match batched_opening_proof {
+            ProofData::ReducedOpeningProof(proof) => proof,
+            _ => panic!("Invalid proof type for stage 4"),
+        };
+
+        let mut commitments_map = HashMap::new();
+        for polynomial in AllCommittedPolynomials::iter() {
+            commitments_map.insert(
+                *polynomial,
+                commitments.borrow()[polynomial.to_index()].clone(),
+            );
+        }
+        let accumulator = state_manager.get_verifier_accumulator();
+        accumulator
+            .borrow_mut()
+            .reduce_and_verify(
+                &preprocessing.generators,
+                &mut commitments_map,
+                batched_opening_proof,
+                &mut *transcript.borrow_mut(),
+            )
+            .context("Stage 5")?;
 
         Ok(())
     }
