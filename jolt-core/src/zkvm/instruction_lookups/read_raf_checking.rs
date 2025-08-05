@@ -1264,4 +1264,14 @@ mod tests {
     fn test_virtualsignextend() {
         test_read_raf_sumcheck(Some(RV32IMCycle::VirtualSignExtend(Default::default())));
     }
+
+    #[test]
+    fn test_virtualchangedivisor() {
+        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualChangeDivisor(Default::default())));
+    }
+
+    #[test]
+    fn test_virtualchangedivisorw() {
+        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualChangeDivisorW(Default::default())));
+    }
 }
