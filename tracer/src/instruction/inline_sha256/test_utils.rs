@@ -44,9 +44,10 @@ impl Sha256CpuHarness {
         }
 
         Self {
-            // RV32. Note that changing this to new() (RV64) causes the tests to fail.
-            // TODO: Fix tests for RV64.
-            harness: CpuTestHarness::new(),
+            // RV32.
+            harness: CpuTestHarness::new_32(),
+            // TODO: Fix RV64 failure (below)
+            // harness: CpuTestHarness::new(),
             vr,
         }
     }
