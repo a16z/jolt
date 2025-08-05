@@ -46,14 +46,14 @@ mod test {
     use ark_bn254::Fr;
 
     use super::RangeCheckTable;
-    use crate::zkvm::instruction_lookups::WORD_SIZE;
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
+    use common::constants::XLEN;
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<WORD_SIZE, Fr, RangeCheckTable<WORD_SIZE>>();
+        prefix_suffix_test::<XLEN, Fr, RangeCheckTable<XLEN>>();
     }
 
     #[test]
@@ -63,6 +63,6 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, RangeCheckTable<WORD_SIZE>>();
+        lookup_table_mle_random_test::<Fr, RangeCheckTable<XLEN>>();
     }
 }

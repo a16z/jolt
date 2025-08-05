@@ -16,7 +16,7 @@ impl<F: JoltField> ProgramIOPolynomial<F> {
         let range_end = remap_address(RAM_START_ADDRESS, &program_io.memory_layout).unwrap();
 
         // TODO(moodlezoup) avoid next_power_of_two
-        let mut coeffs: Vec<u32> = vec![0; range_end.next_power_of_two() as usize];
+        let mut coeffs: Vec<u64> = vec![0; range_end.next_power_of_two() as usize];
 
         let mut input_index = remap_address(
             program_io.memory_layout.input_start,
@@ -24,12 +24,12 @@ impl<F: JoltField> ProgramIOPolynomial<F> {
         )
         .unwrap() as usize;
         // Convert input bytes into words and populate `coeffs`
-        for chunk in program_io.inputs.chunks(4) {
-            let mut word = [0u8; 4];
+        for chunk in program_io.inputs.chunks(8) {
+            let mut word = [0u8; 8];
             for (i, byte) in chunk.iter().enumerate() {
                 word[i] = *byte;
             }
-            let word = u32::from_le_bytes(word);
+            let word = u64::from_le_bytes(word);
             coeffs[input_index] = word;
             input_index += 1;
         }
@@ -40,12 +40,12 @@ impl<F: JoltField> ProgramIOPolynomial<F> {
         )
         .unwrap() as usize;
         // Convert output bytes into words and populate `coeffs`
-        for chunk in program_io.outputs.chunks(4) {
-            let mut word = [0u8; 4];
+        for chunk in program_io.outputs.chunks(8) {
+            let mut word = [0u8; 8];
             for (i, byte) in chunk.iter().enumerate() {
                 word[i] = *byte;
             }
-            let word = u32::from_le_bytes(word);
+            let word = u64::from_le_bytes(word);
             coeffs[output_index] = word;
             output_index += 1;
         }
@@ -53,7 +53,7 @@ impl<F: JoltField> ProgramIOPolynomial<F> {
         // Copy panic bit
         let panic_index = remap_address(program_io.memory_layout.panic, &program_io.memory_layout)
             .unwrap() as usize;
-        coeffs[panic_index] = program_io.panic as u32;
+        coeffs[panic_index] = program_io.panic as u64;
 
         if !program_io.panic {
             // Set termination bit

@@ -19,7 +19,7 @@ pub struct NormalizedOperands {
     pub rs1: usize,
     pub rs2: usize,
     pub rd: usize,
-    pub imm: i64,
+    pub imm: i128,
 }
 
 pub trait InstructionFormat: Default + Debug {

@@ -2,6 +2,7 @@
 
 use std::sync::LazyLock;
 
+use common::constants::XLEN;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
@@ -16,9 +17,7 @@ use crate::{
     },
     utils::math::Math,
     zkvm::{
-        instruction_lookups::{self, WORD_SIZE},
-        lookup_table::LookupTables,
-        ram::remap_address,
+        instruction_lookups, lookup_table::LookupTables, ram::remap_address,
         JoltProverPreprocessing,
     },
 };
@@ -54,6 +53,8 @@ pub enum CommittedPolynomial {
     ShouldBranch,
     /// Whether the current instruction triggers a jump
     ShouldJump,
+    /// Product of `IsCompressed` and `DoNotUpdateUnexpPC`
+    CompressedDoNotUpdateUnexpPC,
     /*  Twist/Shout witnesses */
     /// Inc polynomial for the registers instance of Twist
     RdInc,
@@ -83,6 +84,7 @@ impl AllCommittedPolynomials {
             CommittedPolynomial::WritePCtoRD,
             CommittedPolynomial::ShouldBranch,
             CommittedPolynomial::ShouldJump,
+            CommittedPolynomial::CompressedDoNotUpdateUnexpPC,
             CommittedPolynomial::RdInc,
             CommittedPolynomial::RamInc,
             CommittedPolynomial::InstructionRa(0),
@@ -191,6 +193,7 @@ impl CommittedPolynomial {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "CommittedPolynomial::generate_witness")]
     pub fn generate_witness<F, PCS>(
         &self,
         preprocessing: &JoltProverPreprocessing<F, PCS>,
@@ -204,14 +207,14 @@ impl CommittedPolynomial {
             CommittedPolynomial::LeftInstructionInput => {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
-                    .map(|cycle| LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle).0)
+                    .map(|cycle| LookupQuery::<XLEN>::to_instruction_inputs(cycle).0)
                     .collect();
                 coeffs.into()
             }
             CommittedPolynomial::RightInstructionInput => {
-                let coeffs: Vec<i64> = trace
+                let coeffs: Vec<i128> = trace
                     .par_iter()
-                    .map(|cycle| LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle).1)
+                    .map(|cycle| LookupQuery::<XLEN>::to_instruction_inputs(cycle).1)
                     .collect();
                 coeffs.into()
             }
@@ -220,7 +223,7 @@ impl CommittedPolynomial {
                     .par_iter()
                     .map(|cycle| {
                         let (left_input, right_input) =
-                            LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle);
+                            LookupQuery::<XLEN>::to_instruction_inputs(cycle);
                         left_input as u128 * (right_input as u64) as u128
                     })
                     .collect();
@@ -253,7 +256,7 @@ impl CommittedPolynomial {
                     .map(|cycle| {
                         let is_branch =
                             cycle.instruction().circuit_flags()[CircuitFlags::Branch as usize];
-                        (LookupQuery::<WORD_SIZE>::to_lookup_output(cycle) as u8) * is_branch as u8
+                        (LookupQuery::<XLEN>::to_lookup_output(cycle) as u8) * is_branch as u8
                     })
                     .collect();
                 coeffs.into()
@@ -272,6 +275,17 @@ impl CommittedPolynomial {
                         let is_next_noop =
                             next_cycle.instruction().circuit_flags()[CircuitFlags::IsNoop];
                         is_jump as u8 * (1 - is_next_noop as u8)
+                    })
+                    .collect();
+                coeffs.into()
+            }
+            CommittedPolynomial::CompressedDoNotUpdateUnexpPC => {
+                let coeffs: Vec<u8> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        let flags = cycle.instruction().circuit_flags();
+                        flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] as u8
+                            * flags[CircuitFlags::IsCompressed as usize] as u8
                     })
                     .collect();
                 coeffs.into()
@@ -346,7 +360,7 @@ impl CommittedPolynomial {
                 let addresses: Vec<_> = trace
                     .par_iter()
                     .map(|cycle| {
-                        let lookup_index = LookupQuery::<WORD_SIZE>::to_lookup_index(cycle);
+                        let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
                         let k = (lookup_index
                             >> (instruction_lookups::LOG_K_CHUNK
                                 * (instruction_lookups::D - 1 - i)))
@@ -437,7 +451,7 @@ pub static ALL_VIRTUAL_POLYNOMIALS: LazyLock<Vec<VirtualPolynomial>> = LazyLock:
     }
     for table in LookupTables::iter() {
         polynomials.push(VirtualPolynomial::LookupTableFlag(
-            LookupTables::<32>::enum_index(&table),
+            LookupTables::<XLEN>::enum_index(&table),
         ));
     }
 

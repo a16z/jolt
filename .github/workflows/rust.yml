@@ -33,7 +33,7 @@ jobs:
         with:
           components: clippy
       - name: cargo clippy
-        run: cargo clippy --all
+        run: cargo clippy --all --all-targets
 
   machete:
     runs-on: ubuntu-latest
@@ -56,6 +56,7 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    name: Test jolt-core
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -69,7 +70,25 @@ jobs:
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Run jolt-core tests
-        run: cargo nextest run --release -p jolt-core
+        run: cargo nextest run --release -p jolt-core --no-fail-fast
+
+  test-tracer:
+    runs-on: ubuntu-latest
+    name: Test tracer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Cache Jolt RISC-V Rust toolchain
+        uses: actions/cache@v4
+        with:
+          key: jolt-rust-toolchain-${{hashFiles('guest-toolchain-tag')}}
+          path: ~/.jolt
+      - name: Install Jolt RISC-V Rust toolchain
+        run: cargo run install-toolchain
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Run tracer tests
+        run: cargo nextest run --release -p tracer --no-fail-fast
 
   typos:
     runs-on: ubuntu-latest
@@ -94,6 +113,17 @@ jobs:
       - name: Make sure the generated code runs
         working-directory: ./sample_project
         run: cargo run --release
+
+  test-verifier:
+    name: Jolt Verifier Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install Jolt RISC-V Rust toolchain
+        run: cargo run install-toolchain
+      - name: Run verifier tests
+        run: cargo nextest run --release --p jolt-verifier --no-fail-fast
 
   # zklean-extractor-tests:
   #   name: ZkLean extractor tests

@@ -1,6 +1,6 @@
 use std::ops::{Index, IndexMut};
 
-use crate::zkvm::instruction_lookups::WORD_SIZE;
+use common::constants::XLEN;
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
@@ -16,7 +16,7 @@ pub trait InstructionLookup<const WORD_SIZE: usize> {
 pub trait LookupQuery<const WORD_SIZE: usize> {
     /// Returns a tuple of the instruction's inputs. If the instruction has only one input,
     /// one of the tuple values will be 0.
-    fn to_instruction_inputs(&self) -> (u64, i64);
+    fn to_instruction_inputs(&self) -> (u64, i128);
 
     /// Returns a tuple of the instruction's lookup operands. By default, these are the
     /// same as the instruction inputs returned by `to_instruction_inputs`, but in some cases
@@ -116,8 +116,8 @@ macro_rules! define_rv32im_trait_impls {
     (
         instructions: [$($instr:ident),* $(,)?]
     ) => {
-        impl InstructionLookup<WORD_SIZE> for RV32IMInstruction {
-            fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
+        impl InstructionLookup<XLEN> for RV32IMInstruction {
+            fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
                 match self {
                     RV32IMInstruction::NoOp => None,
                     $(
@@ -160,7 +160,7 @@ macro_rules! define_rv32im_trait_impls {
         }
 
         impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RV32IMCycle {
-            fn to_instruction_inputs(&self) -> (u64, i64) {
+            fn to_instruction_inputs(&self) -> (u64, i128) {
                 match self {
                     RV32IMCycle::NoOp => (0, 0),
                     $(

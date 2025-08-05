@@ -45,7 +45,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             1 - JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsRs1Value)
                 - JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsPC),
             JoltR1CSInputs::LeftInstructionInput,
-            0,
+            0i128,
         );
 
         // if RightOperandIsRs2Value { assert!(RightInstructionInput == Rs2Value) }
@@ -70,7 +70,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             1 - JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsRs2Value)
                 - JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm),
             JoltR1CSInputs::RightInstructionInput,
-            0,
+            0i128,
         );
 
         // if Load || Store {
@@ -83,7 +83,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         cs.constrain_if_else(
             is_load_or_store,
             JoltR1CSInputs::Rs1Value + JoltR1CSInputs::Imm,
-            0,
+            0i128,
             JoltR1CSInputs::RamAddress,
         );
 
@@ -124,7 +124,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands)
                 + JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands)
                 + JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands),
-            0,
+            0i128,
             JoltR1CSInputs::LeftInstructionInput,
             JoltR1CSInputs::LeftLookupOperand,
         );
@@ -146,7 +146,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::RightLookupOperand,
             // Converts from unsigned to twos-complement representation
             JoltR1CSInputs::LeftInstructionInput - JoltR1CSInputs::RightInstructionInput
-                + (0xffffffffi64 + 1),
+                + (0xffffffffffffffffi128 + 1),
         );
 
         // if MultiplyOperands {
@@ -182,7 +182,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::Assert),
             JoltR1CSInputs::LookupOutput,
-            1,
+            1i128,
         );
 
         // if Rd != 0 && WriteLookupOutputToRD {
@@ -214,7 +214,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         cs.constrain_eq_conditional(
             JoltR1CSInputs::WritePCtoRD,
             JoltR1CSInputs::RdWriteValue,
-            JoltR1CSInputs::UnexpandedPC + 4
+            JoltR1CSInputs::UnexpandedPC + 4i128
                 - 2 * JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed),
         );
 
@@ -249,19 +249,25 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         // if !(ShouldBranch || Jump) {
         //     if DoNotUpdatePC {
         //         assert!(NextUnexpandedPC == UnexpandedPC)
+        //     } else if isCompressed {
+        //         assert!(NextUnexpandedPC == UnexpandedPC + 2)
         //     } else {
         //         assert!(NextUnexpandedPC == UnexpandedPC + 4)
         //     }
         // }
         // Note that ShouldBranch and Jump instructions are mutually exclusive
-        // TODO: This is probably incorrect if DoNotUpdateUnexpandedPC and IsCompressed are both
-        // true
+        cs.constrain_prod(
+            JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed),
+            JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC),
+            JoltR1CSInputs::CompressedDoNotUpdateUnexpPC,
+        );
         cs.constrain_eq_conditional(
             1 - JoltR1CSInputs::ShouldBranch - JoltR1CSInputs::OpFlags(CircuitFlags::Jump),
             JoltR1CSInputs::NextUnexpandedPC,
-            JoltR1CSInputs::UnexpandedPC + 4
+            JoltR1CSInputs::UnexpandedPC + 4i128
                 - 4 * JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC)
-                - 2 * JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed),
+                - 2 * JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed)
+                + 2 * JoltR1CSInputs::CompressedDoNotUpdateUnexpPC,
         );
 
         // if Inline {
@@ -270,7 +276,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::InlineSequenceInstruction),
             JoltR1CSInputs::NextPC,
-            JoltR1CSInputs::PC + 1,
+            JoltR1CSInputs::PC + 1i128,
         );
     }
 }

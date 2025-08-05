@@ -1,3 +1,4 @@
+use common::constants::XLEN;
 use rayon::prelude::*;
 use tracer::instruction::RV32IMCycle;
 
@@ -24,8 +25,7 @@ pub mod booleanity;
 pub mod hamming_weight;
 pub mod read_raf_checking;
 
-pub const WORD_SIZE: usize = 64;
-const LOG_K: usize = WORD_SIZE * 2;
+const LOG_K: usize = XLEN * 2;
 const PHASES: usize = 8;
 pub const LOG_M: usize = LOG_K / PHASES;
 const M: usize = 1 << LOG_M;
@@ -97,7 +97,7 @@ fn compute_ra_evals<F: JoltField>(trace: &[RV32IMCycle], eq_r_cycle: &[F]) -> [V
                 std::array::from_fn(|_| unsafe_allocate_zero_vec(K_CHUNK));
             let mut j = chunk_index * chunk_size;
             for cycle in trace_chunk {
-                let mut lookup_index = LookupQuery::<WORD_SIZE>::to_lookup_index(cycle);
+                let mut lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
                 for i in (0..D).rev() {
                     let k = lookup_index % K_CHUNK as u128;
                     result[i][k as usize] += eq_r_cycle[j];

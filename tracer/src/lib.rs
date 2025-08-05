@@ -282,7 +282,7 @@ pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>, Xlen) {
                     if let Ok(inst) = RV32IMInstruction::decode(
                         uncompress_instruction(compressed_inst as u32, xlen),
                         address,
-                        false,
+                        true,
                     ) {
                         instructions.push(inst);
                     } else {

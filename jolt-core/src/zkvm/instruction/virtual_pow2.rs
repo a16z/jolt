@@ -27,7 +27,7 @@ impl InstructionFlags for VirtualPow2 {
 }
 
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualPow2> {
-    fn to_instruction_inputs(&self) -> (u64, i64) {
+    fn to_instruction_inputs(&self) -> (u64, i128) {
         match WORD_SIZE {
             #[cfg(test)]
             8 => (self.register_state.rs1 as u8 as u64, 0),
@@ -39,7 +39,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualPow2> 
 
     fn to_lookup_operands(&self) -> (u64, u128) {
         let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
-        (0, x as u128 + y as u128)
+        (0, x as u128 + y as u64 as u128)
     }
 
     fn to_lookup_index(&self) -> u128 {

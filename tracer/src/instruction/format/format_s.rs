@@ -80,7 +80,7 @@ impl InstructionFormat for FormatS {
             rs1: self.rs1,
             rs2: self.rs2,
             rd: 0,
-            imm: self.imm,
+            imm: self.imm as i128,
         }
     }
 }

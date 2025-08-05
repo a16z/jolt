@@ -61,7 +61,7 @@ impl InstructionFormat for HalfwordAlignFormat {
             rs1: self.rs1,
             rs2: 0,
             rd: 0,
-            imm: self.imm,
+            imm: self.imm as i128,
         }
     }
 }

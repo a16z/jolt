@@ -14,7 +14,7 @@ pub enum Variable {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Term(pub Variable, pub i64);
+pub struct Term(pub Variable, pub i128);
 impl Term {
     #[cfg(test)]
     fn pretty_fmt(&self, f: &mut String) -> std::fmt::Result {
@@ -60,7 +60,7 @@ impl LC {
 
     pub fn constant_term_field(&self) -> i128 {
         if let Some(term) = self.constant_term() {
-            term.1 as i128
+            term.1
         } else {
             0
         }
@@ -69,7 +69,7 @@ impl LC {
     pub fn to_field_elements<F: JoltField>(&self) -> Vec<F> {
         self.terms()
             .iter()
-            .map(|term| F::from_i64(term.1))
+            .map(|term| F::from_i128(term.1))
             .collect()
     }
 
@@ -94,8 +94,8 @@ impl LC {
             .map(|term| match term.0 {
                 Variable::Input(var_index) => flattened_polynomials[var_index]
                     .get_coeff(row)
-                    .mul_i128(term.1 as i128),
-                Variable::Constant => F::from_i64(term.1),
+                    .mul_i128(term.1),
+                Variable::Constant => F::from_i128(term.1),
             })
             .sum()
     }
@@ -224,6 +224,12 @@ impl std::ops::Neg for Term {
 
 impl From<i64> for Term {
     fn from(val: i64) -> Self {
+        Term(Variable::Constant, val as i128)
+    }
+}
+
+impl From<i128> for Term {
+    fn from(val: i128) -> Self {
         Term(Variable::Constant, val)
     }
 }
@@ -248,6 +254,12 @@ impl std::ops::Sub for Variable {
 
 impl From<i64> for LC {
     fn from(val: i64) -> Self {
+        LC::new(vec![Term(Variable::Constant, val as i128)])
+    }
+}
+
+impl From<i128> for LC {
+    fn from(val: i128) -> Self {
         LC::new(vec![Term(Variable::Constant, val)])
     }
 }
@@ -276,7 +288,7 @@ impl std::ops::Mul<i64> for Variable {
     type Output = Term;
 
     fn mul(self, other: i64) -> Self::Output {
-        Term(self, other)
+        Term(self, other as i128)
     }
 }
 
@@ -284,7 +296,7 @@ impl std::ops::Mul<Variable> for i64 {
     type Output = Term;
 
     fn mul(self, other: Variable) -> Self::Output {
-        Term(other, self)
+        Term(other, self as i128)
     }
 }
 
@@ -351,7 +363,7 @@ macro_rules! impl_r1cs_input_lc_conversions {
             fn mul(self, rhs: i64) -> Self::Output {
                 $crate::zkvm::r1cs::ops::Term(
                     $crate::zkvm::r1cs::ops::Variable::Input(self.to_index()),
-                    rhs,
+                    rhs as i128,
                 )
             }
         }
@@ -362,7 +374,7 @@ macro_rules! impl_r1cs_input_lc_conversions {
             fn mul(self, rhs: $ConcreteInput) -> Self::Output {
                 $crate::zkvm::r1cs::ops::Term(
                     $crate::zkvm::r1cs::ops::Variable::Input(rhs.to_index()),
-                    self,
+                    self as i128,
                 )
             }
         }
@@ -377,7 +389,7 @@ macro_rules! impl_r1cs_input_lc_conversions {
                 );
                 let term2 = $crate::zkvm::r1cs::ops::Term(
                     $crate::zkvm::r1cs::ops::Variable::Constant,
-                    self,
+                    self as i128,
                 );
                 $crate::zkvm::r1cs::ops::LC::new(vec![term1, term2])
             }
@@ -393,7 +405,7 @@ macro_rules! impl_r1cs_input_lc_conversions {
                 );
                 let term2 = $crate::zkvm::r1cs::ops::Term(
                     $crate::zkvm::r1cs::ops::Variable::Constant,
-                    self,
+                    self as i128,
                 );
                 $crate::zkvm::r1cs::ops::LC::new(vec![term1, term2])
             }

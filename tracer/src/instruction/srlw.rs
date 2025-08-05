@@ -49,7 +49,7 @@ impl RISCVTrace for SRLW {
 }
 
 impl VirtualInstructionSequence for SRLW {
-    fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_bitmask = virtual_register_index(6) as usize;
         let v_rs1 = virtual_register_index(5) as usize;
@@ -66,7 +66,7 @@ impl VirtualInstructionSequence for SRLW {
             virtual_sequence_remaining: Some(4),
             is_compressed: self.is_compressed,
         };
-        sequence.push(slli.into());
+        sequence.extend(slli.virtual_sequence(xlen));
 
         let ori = ORI {
             address: self.address,

@@ -40,16 +40,16 @@ impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for SubTable<W
 mod test {
     use ark_bn254::Fr;
 
-    use crate::zkvm::instruction_lookups::WORD_SIZE;
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
+    use common::constants::XLEN;
 
     use super::SubTable;
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<WORD_SIZE, Fr, SubTable<WORD_SIZE>>();
+        prefix_suffix_test::<XLEN, Fr, SubTable<XLEN>>();
     }
 
     #[test]
@@ -59,6 +59,6 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, SubTable<WORD_SIZE>>();
+        lookup_table_mle_random_test::<Fr, SubTable<XLEN>>();
     }
 }

@@ -60,7 +60,7 @@ impl VirtualInstructionSequence for SRLIW {
             virtual_sequence_remaining: Some(2),
             is_compressed: self.is_compressed,
         };
-        sequence.push(slli.into());
+        sequence.extend(slli.virtual_sequence(xlen));
 
         let (shift, len) = match xlen {
             Xlen::Bit32 => panic!("SRLIW is invalid in 32b mode"),

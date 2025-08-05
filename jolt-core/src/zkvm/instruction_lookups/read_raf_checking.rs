@@ -1,9 +1,10 @@
+use common::constants::XLEN;
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
 use strum::{EnumCount, IntoEnumIterator};
 use tracer::instruction::RV32IMCycle;
 
-use super::{D, K_CHUNK, LOG_K, LOG_K_CHUNK, LOG_M, M, PHASES, RA_PER_LOG_M, WORD_SIZE};
+use super::{D, K_CHUNK, LOG_K, LOG_K_CHUNK, LOG_M, M, PHASES, RA_PER_LOG_M};
 
 use crate::{
     field::JoltField,
@@ -51,7 +52,7 @@ struct ReadRafProverState<F: JoltField> {
     lookup_indices_uninterleave: Vec<(usize, LookupBits)>,
     lookup_indices_identity: Vec<(usize, LookupBits)>,
     is_interleaved_operands: Vec<bool>,
-    lookup_tables: Vec<Option<LookupTables<WORD_SIZE>>>,
+    lookup_tables: Vec<Option<LookupTables<XLEN>>>,
 
     prefix_checkpoints: Vec<PrefixCheckpoint<F>>,
     suffix_polys: Vec<Vec<DensePolynomial<F>>>,
@@ -166,9 +167,9 @@ impl<'a, F: JoltField> ReadRafProverState<F> {
         // TODO: This was probably already calculated in Spartan, maybe we should just get it.
         let lookup_indices: Vec<_> = trace
             .par_iter()
-            .map(|cycle| LookupBits::new(LookupQuery::<WORD_SIZE>::to_lookup_index(cycle), LOG_K))
+            .map(|cycle| LookupBits::new(LookupQuery::<XLEN>::to_lookup_index(cycle), LOG_K))
             .collect();
-        let lookup_indices_by_table: Vec<_> = LookupTables::<WORD_SIZE>::iter()
+        let lookup_indices_by_table: Vec<_> = LookupTables::<XLEN>::iter()
             .collect::<Vec<_>>()
             .par_iter()
             .map(|table| {
@@ -178,7 +179,7 @@ impl<'a, F: JoltField> ReadRafProverState<F> {
                     .enumerate()
                     .filter_map(|(j, (cycle, k))| match cycle.lookup_table() {
                         Some(lookup) => {
-                            if LookupTables::<WORD_SIZE>::enum_index(&lookup)
+                            if LookupTables::<XLEN>::enum_index(&lookup)
                                 == LookupTables::enum_index(table)
                             {
                                 Some((j, k))
@@ -222,7 +223,7 @@ impl<'a, F: JoltField> ReadRafProverState<F> {
                 )
             })
             .collect();
-        let suffix_polys: Vec<Vec<DensePolynomial<F>>> = LookupTables::<WORD_SIZE>::iter()
+        let suffix_polys: Vec<Vec<DensePolynomial<F>>> = LookupTables::<XLEN>::iter()
             .collect::<Vec<_>>()
             .par_iter()
             .map(|table| {
@@ -333,7 +334,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
             });
             {
                 if ps.r.len().is_multiple_of(2) {
-                    Prefixes::update_checkpoints::<WORD_SIZE, F>(
+                    Prefixes::update_checkpoints::<XLEN, F>(
                         &mut ps.prefix_checkpoints,
                         ps.r[ps.r.len() - 2],
                         ps.r[ps.r.len() - 1],
@@ -376,7 +377,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
         let right_operand_eval =
             OperandPolynomial::new(LOG_K, OperandSide::Right).evaluate(r_address_prime);
         let identity_poly_eval = IdentityPolynomial::new(LOG_K).evaluate(r_address_prime);
-        let val_evals: Vec<_> = LookupTables::<WORD_SIZE>::iter()
+        let val_evals: Vec<_> = LookupTables::<XLEN>::iter()
             .map(|table| table.evaluate_mle(r_address_prime))
             .collect();
         let eq_eval_cycle = EqPolynomial::mle(&self.r_cycle, r_cycle_prime);
@@ -393,7 +394,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
                     .1
             })
             .product();
-        let table_flag_claims: Vec<F> = (0..LookupTables::<WORD_SIZE>::COUNT)
+        let table_flag_claims: Vec<F> = (0..LookupTables::<XLEN>::COUNT)
             .map(|i| {
                 let accumulator = accumulator.borrow();
                 accumulator
@@ -489,7 +490,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
     ) {
         let (r_address, r_cycle) = r_sumcheck.split_at(LOG_K);
 
-        (0..LookupTables::<WORD_SIZE>::COUNT).for_each(|i| {
+        (0..LookupTables::<XLEN>::COUNT).for_each(|i| {
             accumulator.borrow_mut().append_virtual(
                 VirtualPolynomial::LookupTableFlag(i),
                 SumcheckId::InstructionReadRaf,
@@ -539,7 +540,7 @@ impl<F: JoltField> ReadRafProverState<F> {
 
         rayon::scope(|s| {
             s.spawn(|_| {
-                LookupTables::<WORD_SIZE>::iter()
+                LookupTables::<XLEN>::iter()
                     .collect::<Vec<_>>()
                     .par_iter()
                     .zip(self.suffix_polys.par_iter_mut())
@@ -560,7 +561,7 @@ impl<F: JoltField> ReadRafProverState<F> {
                                 for (j, k) in lookup_indices.iter() {
                                     let (prefix_bits, suffix_bits) =
                                         k.split((PHASES - 1 - phase) * LOG_M);
-                                    let t = suffix.suffix_mle::<WORD_SIZE>(suffix_bits);
+                                    let t = suffix.suffix_mle::<XLEN>(suffix_bits);
                                     if t != 0 {
                                         let u = self.u_evals[*j];
                                         poly.Z[prefix_bits % M] += u.mul_u64(t);
@@ -631,9 +632,7 @@ impl<F: JoltField> ReadRafProverState<F> {
                     let suffixes: Vec<_> = table
                         .suffixes()
                         .iter()
-                        .map(|suffix| {
-                            F::from_u64(suffix.suffix_mle::<WORD_SIZE>(LookupBits::new(0, 0)))
-                        })
+                        .map(|suffix| F::from_u64(suffix.suffix_mle::<XLEN>(LookupBits::new(0, 0))))
                         .collect();
                     *val += table.combine(&prefixes, &suffixes);
                 }
@@ -698,7 +697,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
 
     fn prover_msg_read_checking(&self, j: usize) -> [F; 2] {
         let ps = self.prover_state.as_ref().unwrap();
-        let lookup_tables: Vec<_> = LookupTables::<WORD_SIZE>::iter().collect();
+        let lookup_tables: Vec<_> = LookupTables::<XLEN>::iter().collect();
 
         let len = ps.suffix_polys[0][0].len();
         let log_len = len.log_2();
@@ -715,12 +714,12 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 let b = LookupBits::new(b as u128, log_len - 1);
                 let prefixes_c0: Vec<_> = Prefixes::iter()
                     .map(|prefix| {
-                        prefix.prefix_mle::<WORD_SIZE, F>(&ps.prefix_checkpoints, r_x, 0, b, j)
+                        prefix.prefix_mle::<XLEN, F>(&ps.prefix_checkpoints, r_x, 0, b, j)
                     })
                     .collect();
                 let prefixes_c2: Vec<_> = Prefixes::iter()
                     .map(|prefix| {
-                        prefix.prefix_mle::<WORD_SIZE, F>(&ps.prefix_checkpoints, r_x, 2, b, j)
+                        prefix.prefix_mle::<XLEN, F>(&ps.prefix_checkpoints, r_x, 2, b, j)
                     })
                     .collect();
                 lookup_tables
@@ -902,12 +901,12 @@ mod tests {
         let mut right_operand_claim = Fr::zero();
 
         for (i, cycle) in trace.iter().enumerate() {
-            let lookup_index = LookupQuery::<WORD_SIZE>::to_lookup_index(cycle);
-            let table: Option<LookupTables<WORD_SIZE>> = cycle.lookup_table();
+            let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
+            let table: Option<LookupTables<XLEN>> = cycle.lookup_table();
             if let Some(table) = table {
                 rv_claim += eq_r_cycle[i].mul_u64(table.materialize_entry(lookup_index));
             }
-            let (lo, ro) = LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle);
+            let (lo, ro) = LookupQuery::<XLEN>::to_lookup_operands(cycle);
             left_operand_claim += eq_r_cycle[i].mul_u64(lo);
             right_operand_claim += eq_r_cycle[i].mul_u128(ro);
         }

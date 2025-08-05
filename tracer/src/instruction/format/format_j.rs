@@ -71,7 +71,7 @@ impl InstructionFormat for FormatJ {
             rs1: 0,
             rs2: 0,
             rd: self.rd,
-            imm: self.imm as i64,
+            imm: self.imm as i128,
         }
     }
 }
