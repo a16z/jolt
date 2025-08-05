@@ -19,6 +19,11 @@ use crate::instruction::RV32IMInstruction;
 pub mod sha256;
 pub mod sha256init;
 
+#[cfg(test)]
+mod test_constants;
+#[cfg(test)]
+mod test_utils;
+
 /// SHA-256 initial hash values
 pub const BLOCK: [u64; 8] = [
     0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,

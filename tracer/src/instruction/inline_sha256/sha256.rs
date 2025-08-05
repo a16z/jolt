@@ -84,3 +84,52 @@ impl VirtualInstructionSequence for SHA256 {
         builder.build()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::instruction::inline_sha256::test_utils::{sverify, Sha256CpuHarness, TestVectors};
+    use crate::instruction::RISCVInstruction;
+
+    #[test]
+    fn test_sha256_direct_execution() {
+        // Test against multiple canonical NIST test vectors
+        for (desc, block, initial_state, expected) in TestVectors::get_standard_test_vectors() {
+            let mut harness = Sha256CpuHarness::new();
+            harness.load_block(&block);
+            harness.load_state(&initial_state);
+            Sha256CpuHarness::instruction_sha256().execute(&mut harness.harness.cpu, &mut ());
+            let result = harness.read_state();
+
+            sverify::assert_states_equal(
+                &expected,
+                &result,
+                &format!("SHA256 direct execution: {}", desc),
+            );
+        }
+    }
+
+    #[test]
+    fn test_sha256_exec_trace_equal() {
+        // Test exec vs trace equivalence with canonical test vectors
+        for (desc, block, initial_state, _expected) in TestVectors::get_standard_test_vectors() {
+            sverify::assert_exec_trace_equiv_custom(
+                &block,
+                &initial_state,
+                &format!("SHA256 exec vs trace: {}", desc),
+            );
+        }
+    }
+
+    #[test]
+    fn measure_sha256_length() {
+        use crate::instruction::VirtualInstructionSequence;
+        let instr = Sha256CpuHarness::instruction_sha256();
+        let sequence = instr.virtual_sequence(crate::emulator::cpu::Xlen::Bit32);
+        let bytecode_len = sequence.len();
+        println!(
+            "SHA256 compression: bytecode length {}, {:.2} instructions per byte",
+            bytecode_len,
+            bytecode_len as f64 / 64.0,
+        );
+    }
+}
