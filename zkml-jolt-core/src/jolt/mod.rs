@@ -264,7 +264,7 @@ mod e2e_tests {
             JoltSNARK::prover_preprocess(program_bytecode);
 
         // --- Proving ---
-        let input = Tensor::new(Some(&[10, 20, 30, 40, 50, 60, 70, 80]), &[1, 8]).unwrap();
+        let input = Tensor::new(Some(&[10, 20, 30, 40]), &[1, 4]).unwrap();
         let execution_trace = onnx_tracer::execution_trace(custom_addsubmul_model, &input);
         println!("Execution trace: {execution_trace:#?}");
         // let snark: JoltSNARK<Fr, PCS, KeccakTranscript> =

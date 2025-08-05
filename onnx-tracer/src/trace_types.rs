@@ -2,7 +2,10 @@
 //! Used to format the bytecode and define each instr flags and memory access patterns.
 //! Used by the runtime to generate an execution trace for ONNX runtime execution.
 
-use crate::{constants::MEMORY_OPS_PER_INSTRUCTION, tensor::Tensor};
+use crate::{
+    constants::{MAX_TENSOR_SIZE, MEMORY_OPS_PER_INSTRUCTION},
+    tensor::Tensor,
+};
 use core::panic;
 use rand::{rngs::StdRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -195,11 +198,11 @@ impl ONNXCycle {
         let ts2_read = || MemoryOp::Read(self.ts2() as u64, self.ts2_val());
         let td_write = || MemoryOp::Write(self.td() as u64, self.td_pre_val(), self.td_post_val());
 
-        // // Canonical ordering for memory instructions
-        // // 0: ts1
-        // // 1: ts2
-        // // 2: td
-        // // If any are empty a no_op is inserted.
+        // Canonical ordering for memory instructions
+        // 0: ts1
+        // 1: ts2
+        // 2: td
+        // If any are empty a no_op is inserted.
 
         match self.instr.opcode {
             ONNXOpcode::Add | ONNXOpcode::Sub | ONNXOpcode::Mul => {
@@ -218,6 +221,44 @@ impl ONNXCycle {
             ONNXOpcode::Input => [MemoryOp::noop_read(), MemoryOp::noop_read(), td_write()],
             _ => unreachable!("{self:?}"),
         }
+    }
+
+    pub fn to_tensor_memory_ops(
+        &self,
+    ) -> (
+        (usize, Vec<u64>),
+        (usize, Vec<u64>),
+        (usize, Vec<u64>, Vec<u64>),
+    ) {
+        let ts1 = self.memory_state.ts1_val.as_ref().map_or_else(
+            || (0, vec![0; MAX_TENSOR_SIZE]),
+            |t| {
+                (
+                    self.ts1(),
+                    t.inner.iter().map(|&v| v as i32 as u32 as u64).collect(),
+                )
+            },
+        );
+        let ts2 = self.memory_state.ts2_val.as_ref().map_or_else(
+            || (0, vec![0; MAX_TENSOR_SIZE]),
+            |t| {
+                (
+                    self.ts2(),
+                    t.inner.iter().map(|&v| v as i32 as u32 as u64).collect(),
+                )
+            },
+        );
+        let td = self.memory_state.td_post_val.as_ref().map_or_else(
+            || (0, vec![0; MAX_TENSOR_SIZE], vec![0; MAX_TENSOR_SIZE]),
+            |t| {
+                (
+                    self.td(),
+                    t.inner.iter().map(|&v| v as i32 as u32 as u64).collect(),
+                    t.inner.iter().map(|&v| v as i32 as u32 as u64).collect(),
+                )
+            },
+        );
+        (ts1, ts2, td)
     }
 }
 

@@ -1,6 +1,4 @@
 use crate::jolt::JoltProverPreprocessing;
-use crate::jolt::lookup_trace::LookupTrace;
-use crate::tensor_jolt::instruction::ONNXLookupQuery;
 use itertools::Itertools;
 use jolt_core::jolt::instruction::LookupQuery;
 use jolt_core::poly::one_hot_polynomial::OneHotPolynomial;
@@ -12,17 +10,44 @@ use jolt_core::{
     },
     utils::{interleave_bits, transcript::Transcript},
 };
+use onnx_tracer::constants::MAX_TENSOR_SIZE;
+use onnx_tracer::trace_types::ONNXOpcode;
 use onnx_tracer::trace_types::{CircuitFlags, ONNXCycle};
 use onnx_tracer::trace_types::{NUM_CIRCUIT_FLAGS, ONNXInstr};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::jolt::instruction::{add::ADD, mul::MUL, sub::SUB};
+use jolt_core::jolt::{instruction::InstructionLookup, lookup_table::LookupTables};
+
+pub const WORD_SIZE: usize = 32;
+
 pub type ExecutionTrace = Vec<JoltONNXCycle>;
+pub type ONNXLookupQuery = Vec<ONNXLookup>;
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct MemoryOps {
+    ts1_read: (usize, Vec<u64>),
+    ts2_read: (usize, Vec<u64>),
+    td_write: (usize, Vec<u64>, Vec<u64>),
+}
+
+impl MemoryOps {
+    pub fn no_op() -> Self {
+        MemoryOps {
+            ts1_read: (0, vec![0; MAX_TENSOR_SIZE]),
+            ts2_read: (0, vec![0; MAX_TENSOR_SIZE]),
+            td_write: (0, vec![0; MAX_TENSOR_SIZE], vec![0; MAX_TENSOR_SIZE]),
+        }
+    }
+}
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct JoltONNXCycle {
-    pub instruction_lookup: Option<ONNXLookup>,
+    pub instruction_lookups: Option<ONNXLookupQuery>,
     pub circuit_flags: [bool; NUM_CIRCUIT_FLAGS],
+    pub memory_ops: MemoryOps,
+    pub instr: ONNXInstr,
 }
 
 impl JoltONNXCycle {
@@ -52,13 +77,43 @@ impl JoltONNXCycle {
     pub fn bytecode_line(&self) -> ONNXInstr {
         todo!()
     }
+
+    pub fn no_op() -> Self {
+        JoltONNXCycle {
+            instruction_lookups: None,
+            circuit_flags: [false; NUM_CIRCUIT_FLAGS],
+            memory_ops: MemoryOps::no_op(),
+            instr: ONNXInstr::no_op(),
+        }
+    }
+}
+
+impl From<ONNXCycle> for JoltONNXCycle {
+    fn from(raw_cycle: ONNXCycle) -> Self {
+        let mut cycle = JoltONNXCycle::no_op();
+        let (ts1_read, ts2_read, td_write) = raw_cycle.to_tensor_memory_ops();
+        cycle.memory_ops = MemoryOps {
+            ts1_read,
+            ts2_read,
+            td_write,
+        };
+        cycle.circuit_flags = raw_cycle.instr.to_circuit_flags();
+        cycle.instr = raw_cycle.instr;
+        // TODO(Forpee): Refactor this footgun
+        cycle.populate_instruction_lookups();
+        cycle
+    }
+}
+
+pub fn jolt_trace(raw_trace: Vec<ONNXCycle>) -> ExecutionTrace {
+    raw_trace.into_iter().map(JoltONNXCycle::from).collect()
 }
 
 pub trait WitnessGenerator {
     fn generate_witness<F, PCS, ProofTranscript>(
         &self,
-        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
         trace: &[JoltONNXCycle],
+        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
     ) -> MultilinearPolynomial<F>
     where
         F: JoltField,
@@ -72,34 +127,31 @@ pub trait WitnessGenerator {
     fn to_index(&self) -> usize;
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub enum ONNXLookup {}
+// impl<const WORD_SIZE: usize> ONNXLookupQuery<WORD_SIZE> for JoltONNXCycle {
+//     /// Returns a tuple of the instruction's inputs. If the instruction has only one input,
+//     /// one of the tuple values will be 0.
+//     fn to_instruction_inputs(&self) -> (u64, i64) {
+//         todo!()
+//     }
 
-impl<const WORD_SIZE: usize> ONNXLookupQuery<WORD_SIZE> for JoltONNXCycle {
-    /// Returns a tuple of the instruction's inputs. If the instruction has only one input,
-    /// one of the tuple values will be 0.
-    fn to_instruction_inputs(&self) -> (u64, i64) {
-        todo!()
-    }
+//     /// Returns a tuple of the instruction's lookup operands. By default, these are the
+//     /// same as the instruction inputs returned by `to_instruction_inputs`, but in some cases
+//     /// (e.g. ADD, MUL) the instruction inputs are combined to form a single lookup operand.
+//     fn to_lookup_operands(&self) -> (u64, u64) {
+//         todo!()
+//     }
 
-    /// Returns a tuple of the instruction's lookup operands. By default, these are the
-    /// same as the instruction inputs returned by `to_instruction_inputs`, but in some cases
-    /// (e.g. ADD, MUL) the instruction inputs are combined to form a single lookup operand.
-    fn to_lookup_operands(&self) -> (u64, u64) {
-        todo!()
-    }
+//     /// Converts this instruction's operands into a lookup index (as used in sparse-dense Shout).
+//     /// By default, interleaves the two bits of the two operands together.
+//     fn to_lookup_index(&self) -> u64 {
+//         todo!()
+//     }
 
-    /// Converts this instruction's operands into a lookup index (as used in sparse-dense Shout).
-    /// By default, interleaves the two bits of the two operands together.
-    fn to_lookup_index(&self) -> u64 {
-        todo!()
-    }
-
-    /// Computes the output lookup entry for this instruction as a u64.
-    fn to_lookup_output(&self) -> u64 {
-        todo!()
-    }
-}
+//     /// Computes the output lookup entry for this instruction as a u64.
+//     fn to_lookup_output(&self) -> u64 {
+//         todo!()
+//     }
+// }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum CommittedPolynomials {
@@ -136,8 +188,8 @@ pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 8] = [
 impl WitnessGenerator for CommittedPolynomials {
     fn generate_witness<F, PCS, ProofTranscript>(
         &self,
-        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
         trace: &[JoltONNXCycle],
+        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
     ) -> MultilinearPolynomial<F>
     where
         F: JoltField,
@@ -310,8 +362,8 @@ impl WitnessGenerator for JoltONNXR1CSInputs {
 
     fn generate_witness<F, PCS, ProofTranscript>(
         &self,
-        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
         trace: &[JoltONNXCycle],
+        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
     ) -> MultilinearPolynomial<F>
     where
         F: JoltField,
@@ -383,6 +435,103 @@ impl WitnessGenerator for JoltONNXR1CSInputs {
             //     coeffs.into()
             // }
             _ => todo!("Implement witness generation for this input"),
+        }
+    }
+}
+
+macro_rules! define_lookup_enum {
+    (
+        enum $enum_name:ident,
+        const $word_size:ident,
+        trait $trait_name:ident,
+        $($variant:ident : $inner:ty),+ $(,)?
+    ) => {
+        #[derive(Clone, Debug, Serialize, Deserialize)]
+        pub enum $enum_name {
+            $(
+                $variant($inner),
+            )+
+        }
+
+        impl $trait_name<$word_size> for $enum_name {
+            fn to_instruction_inputs(&self) -> (u64, i64) {
+                match self {
+                    $(
+                        $enum_name::$variant(inner) => inner.to_instruction_inputs(),
+                    )+
+                }
+            }
+
+            fn to_lookup_index(&self) -> u64 {
+                match self {
+                    $(
+                        $enum_name::$variant(inner) => inner.to_lookup_index(),
+                    )+
+                }
+            }
+
+            fn to_lookup_operands(&self) -> (u64, u64) {
+                match self {
+                    $(
+                        $enum_name::$variant(inner) => inner.to_lookup_operands(),
+                    )+
+                }
+            }
+
+            fn to_lookup_output(&self) -> u64 {
+                match self {
+                    $(
+                        $enum_name::$variant(inner) => inner.to_lookup_output(),
+                    )+
+                }
+            }
+        }
+    };
+}
+
+define_lookup_enum!(
+    enum ONNXLookup,
+    const WORD_SIZE,
+    trait LookupQuery,
+    Add: ADD<WORD_SIZE>,
+    Sub: SUB<WORD_SIZE>,
+    Mul: MUL<WORD_SIZE>,
+);
+
+impl InstructionLookup<WORD_SIZE> for ONNXLookup {
+    fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
+        match self {
+            ONNXLookup::Add(add) => add.lookup_table(),
+            ONNXLookup::Sub(sub) => sub.lookup_table(),
+            ONNXLookup::Mul(mul) => mul.lookup_table(),
+        }
+    }
+}
+
+impl JoltONNXCycle {
+    pub fn populate_instruction_lookups(&mut self) {
+        self.instruction_lookups = self.to_instruction_lookups();
+    }
+    pub fn to_instruction_lookups(&self) -> Option<ONNXLookupQuery> {
+        let (_, ts1) = self.ts1_read();
+        let (_, ts2) = self.ts2_read();
+        match self.instr().opcode {
+            ONNXOpcode::Add => Some(
+                (0..MAX_TENSOR_SIZE)
+                    .map(|i| ONNXLookup::Add(ADD(ts1[i], ts2[i])))
+                    .collect(),
+            ),
+            ONNXOpcode::Mul => Some(
+                (0..MAX_TENSOR_SIZE)
+                    .map(|i| ONNXLookup::Mul(MUL(ts1[i], ts2[i])))
+                    .collect(),
+            ),
+            ONNXOpcode::Sub => Some(
+                (0..MAX_TENSOR_SIZE)
+                    .map(|i| ONNXLookup::Sub(SUB(ts1[i], ts2[i])))
+                    .collect(),
+            ),
+            _ => None, // TODO(Forpee): Figure out how to ensure sparse-dense-shout handles none to still be no-op lookup queries of len MAX_TENSOR_SIZE
         }
     }
 }

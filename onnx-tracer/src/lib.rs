@@ -431,7 +431,7 @@ pub fn scalar_addsubmul_model() -> Model {
 pub fn custom_addsubmul_model() -> Model {
     const SCALE: i32 = 7;
     const NODE_OUTPUT_IDX: usize = 0;
-    let out_dims = vec![1, 8];
+    let out_dims = vec![1, 4];
     let mut custom_addsubmul_model = Model::default();
     let mut nodes = BTreeMap::new();
 
