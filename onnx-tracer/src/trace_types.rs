@@ -4,6 +4,7 @@
 
 use crate::{constants::MEMORY_OPS_PER_INSTRUCTION, tensor::Tensor};
 use core::panic;
+use rand::{rngs::StdRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::ops::{Index, IndexMut};
 use strum::EnumCount;
@@ -28,6 +29,14 @@ impl ONNXCycle {
         ONNXCycle {
             instr: ONNXInstr::no_op(),
             memory_state: MemoryState::default(),
+            advice_value: None,
+        }
+    }
+
+    pub fn random(opcode: ONNXOpcode, rng: &mut StdRng) -> Self {
+        ONNXCycle {
+            instr: ONNXInstr::dummy(opcode),
+            memory_state: MemoryState::random(rng),
             advice_value: None,
         }
     }
@@ -95,6 +104,17 @@ pub struct MemoryState {
     pub ts2_val: Option<Tensor<i128>>,
     pub td_pre_val: Option<Tensor<i128>>,
     pub td_post_val: Option<Tensor<i128>>,
+}
+
+impl MemoryState {
+    pub fn random(rng: &mut StdRng) -> Self {
+        MemoryState {
+            ts1_val: Some(Tensor::new(Some(&[rng.next_u64() as i128]), &[1]).unwrap()),
+            ts2_val: Some(Tensor::new(Some(&[rng.next_u64() as i128]), &[1]).unwrap()),
+            td_pre_val: Some(Tensor::new(Some(&[rng.next_u64() as i128]), &[1]).unwrap()),
+            td_post_val: Some(Tensor::new(Some(&[rng.next_u64() as i128]), &[1]).unwrap()),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -306,6 +326,18 @@ impl ONNXInstr {
         ONNXInstr {
             address: 0,
             opcode: ONNXOpcode::Noop,
+            ts1: None,
+            ts2: None,
+            td: None,
+            imm: None,
+            virtual_sequence_remaining: None,
+        }
+    }
+
+    pub fn dummy(opcode: ONNXOpcode) -> Self {
+        ONNXInstr {
+            address: 0,
+            opcode,
             ts1: None,
             ts2: None,
             td: None,
