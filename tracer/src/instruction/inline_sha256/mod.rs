@@ -1,19 +1,8 @@
-use self::Value::{Imm, Reg};
-use crate::instruction::add::ADD;
-use crate::instruction::addi::ADDI;
-use crate::instruction::and::AND;
-use crate::instruction::andi::ANDI;
-use crate::instruction::format::format_i::FormatI;
-use crate::instruction::format::format_load::FormatLoad;
-use crate::instruction::format::format_r::FormatR;
-use crate::instruction::format::format_s::FormatS;
-use crate::instruction::format::format_virtual_right_shift_i::FormatVirtualRightShiftI;
-use crate::instruction::lw::LW;
-use crate::instruction::sw::SW;
-use crate::instruction::virtual_rotri::VirtualROTRI;
-use crate::instruction::virtual_srli::VirtualSRLI;
-use crate::instruction::xor::XOR;
-use crate::instruction::xori::XORI;
+use crate::inline_helpers::{
+    InstrAssembler, Value,
+    Value::{Imm, Reg},
+};
+
 use crate::instruction::RV32IMInstruction;
 
 pub mod sha256;
@@ -55,7 +44,7 @@ pub const NEEDED_REGISTERS: usize = 32;
 /// Output will be written to rs2..rs2+8
 struct Sha256SequenceBuilder {
     address: u64,
-    sequence: Vec<RV32IMInstruction>,
+    asm: InstrAssembler,
     /// Round id
     round: i32,
     /// Virtual registers used by the sequence
@@ -80,7 +69,7 @@ impl Sha256SequenceBuilder {
     ) -> Self {
         Sha256SequenceBuilder {
             address,
-            sequence: vec![],
+            asm: InstrAssembler::new(address, is_compressed),
             round: 0,
             vr,
             operand_rs1,
@@ -96,29 +85,20 @@ impl Sha256SequenceBuilder {
             // Load initial hash values from memory when using custom IV
             // A..D loaded into registers 0..3 (will be used immediately)
             // E..H loaded into registers 28..31 (preserved until needed)
-            (0..4).for_each(|i| self.lw(self.operand_rs2, i, self.vr[i as usize]));
-            (0..4).for_each(|i| self.lw(self.operand_rs2, i + 4, self.vr[(i + 28) as usize]));
+            (0..4).for_each(|i| self.asm.lw(self.operand_rs2, i, self.vr[i as usize]));
+            (0..4).for_each(|i| {
+                self.asm
+                    .lw(self.operand_rs2, i + 4, self.vr[(i + 28) as usize])
+            });
         }
         // Load input words into registers 8..23
-        (0..16).for_each(|i| self.lw(self.operand_rs1, i, self.vr[(i + 8) as usize]));
+        (0..16).for_each(|i| self.asm.lw(self.operand_rs1, i, self.vr[(i + 8) as usize]));
         // Run 64 rounds
         (0..64).for_each(|_| self.round());
         self.final_add_iv();
         // Store output values to rs2 location
-        (0..8).for_each(|i| self.sw(self.operand_rs2, self.vr[i as usize], i));
-        self.enumerate_sequence();
-        self.sequence
-    }
-
-    /// Enumerates sequence in reverse order and sets virtual_sequence_remaining
-    fn enumerate_sequence(&mut self) {
-        let len = self.sequence.len();
-        self.sequence
-            .iter_mut()
-            .enumerate()
-            .for_each(|(i, instruction)| {
-                instruction.set_virtual_sequence_remaining(Some(len - i - 1));
-            });
+        (0..8).for_each(|i| self.asm.sw(self.operand_rs2, self.vr[i as usize], i));
+        self.asm.finalize()
     }
 
     /// Adds IV to the final hash value to produce output
@@ -128,25 +108,25 @@ impl Sha256SequenceBuilder {
             // enough space for A, B, C, D, so we need to load them from memory. We can load them
             // into space that was used for t1, t2, ss, ss2. (technically there's no preference,
             // but it just keeps those in order).
-            (0..4).for_each(|i| self.lw(self.operand_rs2, i, self.vr[24 + i as usize]));
-            self.add(self.vri('A'), Reg(self.vr[24]), self.vr('A'));
-            self.add(self.vri('B'), Reg(self.vr[25]), self.vr('B'));
-            self.add(self.vri('C'), Reg(self.vr[26]), self.vr('C'));
-            self.add(self.vri('D'), Reg(self.vr[27]), self.vr('D'));
-            self.add(self.vri('E'), Reg(self.vr[28]), self.vr('E'));
-            self.add(self.vri('F'), Reg(self.vr[29]), self.vr('F'));
-            self.add(self.vri('G'), Reg(self.vr[30]), self.vr('G'));
-            self.add(self.vri('H'), Reg(self.vr[31]), self.vr('H'));
+            (0..4).for_each(|i| self.asm.lw(self.operand_rs2, i, self.vr[24 + i as usize]));
+            self.asm.add(self.vri('A'), Reg(self.vr[24]), self.vr('A'));
+            self.asm.add(self.vri('B'), Reg(self.vr[25]), self.vr('B'));
+            self.asm.add(self.vri('C'), Reg(self.vr[26]), self.vr('C'));
+            self.asm.add(self.vri('D'), Reg(self.vr[27]), self.vr('D'));
+            self.asm.add(self.vri('E'), Reg(self.vr[28]), self.vr('E'));
+            self.asm.add(self.vri('F'), Reg(self.vr[29]), self.vr('F'));
+            self.asm.add(self.vri('G'), Reg(self.vr[30]), self.vr('G'));
+            self.asm.add(self.vri('H'), Reg(self.vr[31]), self.vr('H'));
         } else {
             // We are using constants for final addition round
-            self.add(self.vri('A'), Imm(BLOCK[0]), self.vr('A'));
-            self.add(self.vri('B'), Imm(BLOCK[1]), self.vr('B'));
-            self.add(self.vri('C'), Imm(BLOCK[2]), self.vr('C'));
-            self.add(self.vri('D'), Imm(BLOCK[3]), self.vr('D'));
-            self.add(self.vri('E'), Imm(BLOCK[4]), self.vr('E'));
-            self.add(self.vri('F'), Imm(BLOCK[5]), self.vr('F'));
-            self.add(self.vri('G'), Imm(BLOCK[6]), self.vr('G'));
-            self.add(self.vri('H'), Imm(BLOCK[7]), self.vr('H'));
+            self.asm.add(self.vri('A'), Imm(BLOCK[0]), self.vr('A'));
+            self.asm.add(self.vri('B'), Imm(BLOCK[1]), self.vr('B'));
+            self.asm.add(self.vri('C'), Imm(BLOCK[2]), self.vr('C'));
+            self.asm.add(self.vri('D'), Imm(BLOCK[3]), self.vr('D'));
+            self.asm.add(self.vri('E'), Imm(BLOCK[4]), self.vr('E'));
+            self.asm.add(self.vri('F'), Imm(BLOCK[5]), self.vr('F'));
+            self.asm.add(self.vri('G'), Imm(BLOCK[6]), self.vr('G'));
+            self.asm.add(self.vri('H'), Imm(BLOCK[7]), self.vr('H'));
         }
     }
 
@@ -162,15 +142,15 @@ impl Sha256SequenceBuilder {
         // Put T_1 into register t1
         // Put H + K
         // We do this first because H is going to be Imm the longest of all inputs
-        let h_add_k = self.add(Imm(K[self.round as usize]), self.vri('H'), t1);
+        let h_add_k = self.asm.add(Imm(K[self.round as usize]), self.vri('H'), t1);
         let sigma_1 = self.sha_sigma_1(self.vri('E'), ss, ss2);
-        let add_sigma_1 = self.add(h_add_k, sigma_1, t1);
+        let add_sigma_1 = self.asm.add(h_add_k, sigma_1, t1);
         // Put Ch(E_0, F_0, G_0) into register t2
         let ch = self.sha_ch(self.vri('E'), self.vri('F'), self.vri('G'), ss, ss2);
-        let add_ch = self.add(add_sigma_1, ch, t1);
+        let add_ch = self.asm.add(add_sigma_1, ch, t1);
         self.update_w([ss, ss2]);
         // Add W_(rid)
-        let t1 = self.add(add_ch, Reg(self.w(0)), t1);
+        let t1 = self.asm.add(add_ch, Reg(self.w(0)), t1);
         // Done with T_1
 
         // Put T_2 into register t2
@@ -179,15 +159,15 @@ impl Sha256SequenceBuilder {
         // Put Maj(A_0, B_0, C_0) into register ss
         let maj = self.sha_maj(self.vri('A'), self.vri('B'), self.vri('C'), ss, ss2);
         // Add Maj to t2
-        let t2 = self.add(sigma_0, maj, t2);
+        let t2 = self.asm.add(sigma_0, maj, t2);
         // Done with T_2
 
         let old_d = self.vri('D');
         self.round += 1;
         // Overwrite new A with T_1 + T_2
-        self.add(t1, t2, self.vr('A'));
+        self.asm.add(t1, t2, self.vr('A'));
         // Overwrite D_0 with D_0 + T_1
-        self.add(t1, old_d, self.vr('E'));
+        self.asm.add(t1, old_d, self.vr('E'));
     }
 
     /// Returns either Register or Immediate input for a working variable (A-H)
@@ -249,222 +229,196 @@ impl Sha256SequenceBuilder {
         // Calculate σ₀(W[t-15])
         self.sha_word_sigma_0(self.w(-15), ss[0], ss[1]);
         // Add σ₀ to W[t-16]
-        self.add(Reg(self.w(-16)), Reg(ss[0]), self.w(-16));
+        self.asm.add(Reg(self.w(-16)), Reg(ss[0]), self.w(-16));
         // Add W[t-7] to W[t-16]
-        self.add(Reg(self.w(-7)), Reg(self.w(-16)), self.w(-16));
+        self.asm.add(Reg(self.w(-7)), Reg(self.w(-16)), self.w(-16));
         // Calculate σ₁(W[t-2])
         self.sha_word_sigma_1(self.w(-2), ss[0], ss[1]);
         // Add σ₁ to W[t-16] to get final W[t]
-        self.add(Reg(self.w(-16)), Reg(ss[0]), self.w(-16));
+        self.asm.add(Reg(self.w(-16)), Reg(ss[0]), self.w(-16));
     }
 
     /// Computes sha256 Ch function
     /// Ch(E, F, G) = (E and F) xor ((not E) and G)
     fn sha_ch(&mut self, rs1: Value, rs2: Value, rs3: Value, rd: usize, ss: usize) -> Value {
-        let e_and_f = self.and(rs1, rs2, ss);
-        let neg_e = self.xor(rs1, Imm(u32::MAX as u64), rd);
-        let neg_e_and_g = self.and(neg_e, rs3, rd);
-        self.xor(e_and_f, neg_e_and_g, rd)
+        let e_and_f = self.asm.and(rs1, rs2, ss);
+        let neg_e = self.asm.xor(rs1, Imm(u32::MAX as u64), rd);
+        let neg_e_and_g = self.asm.and(neg_e, rs3, rd);
+        self.asm.xor(e_and_f, neg_e_and_g, rd)
     }
 
     /// Computes sha256 Maj function: Maj(A, B, C) = (A and B) xor (A and C) xor (B and C)
     fn sha_maj(&mut self, rs1: Value, rs2: Value, rs3: Value, rd: usize, ss: usize) -> Value {
-        let b_and_c = self.and(rs2, rs3, ss);
-        let b_xor_c = self.xor(rs2, rs3, rd);
-        let a_and_b_xor_c = self.and(rs1, b_xor_c, rd);
-        self.xor(b_and_c, a_and_b_xor_c, rd)
+        let b_and_c = self.asm.and(rs2, rs3, ss);
+        let b_xor_c = self.asm.xor(rs2, rs3, rd);
+        let a_and_b_xor_c = self.asm.and(rs1, b_xor_c, rd);
+        self.asm.xor(b_and_c, a_and_b_xor_c, rd)
     }
 
     /// Sigma_0 function of SHA256 compression function: Σ₀(x) = ROTR²(x) ⊕ ROTR¹³(x) ⊕ ROTR²²(x)
     fn sha_sigma_0(&mut self, rs1: Value, rd: usize, ss: usize) -> Value {
-        let rotri_xor = self.rotri_xor_rotri(rs1, 2, 13, rd, ss);
-        let rotri_22 = self.rotri(rs1, 22, ss);
-        self.xor(rotri_xor, rotri_22, rd)
+        let rotri_xor = self.asm.rotri_xor_rotri32(rs1, 2, 13, rd, ss);
+        let rotri_22 = self.asm.rotri32(rs1, 22, ss);
+        self.asm.xor(rotri_xor, rotri_22, rd)
     }
 
     /// Sigma_1 function of SHA256 compression function: Σ₁(x) = ROTR⁶(x) ⊕ ROTR¹¹(x) ⊕ ROTR²⁵(x)
     fn sha_sigma_1(&mut self, rs1: Value, rd: usize, ss: usize) -> Value {
-        let rotri_xor = self.rotri_xor_rotri(rs1, 6, 11, rd, ss);
-        let rotri_25 = self.rotri(rs1, 25, ss);
-        self.xor(rotri_xor, rotri_25, rd)
+        let rotri_xor = self.asm.rotri_xor_rotri32(rs1, 6, 11, rd, ss);
+        let rotri_25 = self.asm.rotri32(rs1, 25, ss);
+        self.asm.xor(rotri_xor, rotri_25, rd)
     }
 
     /// sigma_0 for word computation: σ₀(x) = ROTR⁷(x) ⊕ ROTR¹⁸(x) ⊕ SHR³(x)
     fn sha_word_sigma_0(&mut self, rs1: usize, rd: usize, ss: usize) {
-        self.rotri_xor_rotri(Reg(rs1), 7, 18, rd, ss);
-        let srli = VirtualSRLI {
-            address: self.address,
-            operands: FormatVirtualRightShiftI {
-                rd: ss,
-                rs1,
-                imm: 0xFFFFFFF8, // SRLI by 3
-            },
-            virtual_sequence_remaining: Some(0),
-            is_compressed: self.is_compressed,
-        };
-        self.sequence.push(srli.into());
-        self.xor(Reg(rd), Reg(ss), rd);
+        self.asm.rotri_xor_rotri32(Reg(rs1), 7, 18, rd, ss);
+        self.asm.srli(Reg(rs1), 3, ss);
+        self.asm.xor(Reg(rd), Reg(ss), rd);
     }
 
     /// sigma_1 for word computation: σ₁(x) = ROTR¹⁷(x) ⊕ ROTR¹⁹(x) ⊕ SHR¹⁰(x)
     fn sha_word_sigma_1(&mut self, rs1: usize, rd: usize, ss: usize) {
         // We don't need to do Imm shenanigans here since words are always in registers
-        self.rotri_xor_rotri(Reg(rs1), 17, 19, rd, ss);
-        let srli = VirtualSRLI {
-            address: self.address,
-            operands: FormatVirtualRightShiftI {
-                rd: ss,
-                rs1,
-                imm: 0xFFFFFC00, // SRLI by 10
-            },
-            virtual_sequence_remaining: Some(0),
-            is_compressed: self.is_compressed,
-        };
-        self.sequence.push(srli.into());
-        self.xor(Reg(rd), Reg(ss), rd);
+        self.asm.rotri_xor_rotri32(Reg(rs1), 17, 19, rd, ss);
+        self.asm.srli(Reg(rs1), 10, ss);
+        self.asm.xor(Reg(rd), Reg(ss), rd);
     }
 
-    fn lw(&mut self, rs1: usize, offset: i64, rd: usize) {
-        let lw = LW {
-            address: self.address,
-            operands: FormatLoad {
-                rd,
-                rs1,
-                imm: offset * 4,
-            },
-            virtual_sequence_remaining: Some(0),
-            is_compressed: self.is_compressed,
-        };
-        self.sequence.push(lw.into());
-    }
+    // fn lw(&mut self, rs1: usize, offset: i64, rd: usize) {
+    //     let lw = LW {
+    //         address: self.address,
+    //         operands: FormatLoad {
+    //             rd,
+    //             rs1,
+    //             imm: offset * 4,
+    //         },
+    //         virtual_sequence_remaining: Some(0),
+    //         is_compressed: self.is_compressed,
+    //     };
+    //     self.sequence.push(lw.into());
+    // }
 
-    fn sw(&mut self, rs1: usize, rs2: usize, offset: i64) {
-        let sw = SW {
-            address: self.address,
-            operands: FormatS {
-                rs1,
-                rs2,
-                imm: offset * 4,
-            },
-            virtual_sequence_remaining: Some(0),
-            is_compressed: self.is_compressed,
-        };
-        self.sequence.push(sw.into());
-    }
+    // fn sw(&mut self, rs1: usize, rs2: usize, offset: i64) {
+    //     let sw = SW {
+    //         address: self.address,
+    //         operands: FormatS {
+    //             rs1,
+    //             rs2,
+    //             imm: offset * 4,
+    //         },
+    //         virtual_sequence_remaining: Some(0),
+    //         is_compressed: self.is_compressed,
+    //     };
+    //     self.sequence.push(sw.into());
+    // }
 
-    /// Addition modulo 2^32
-    fn add(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
-        match (rs1, rs2) {
-            (Reg(rs1), Reg(rs2)) => {
-                let add = ADD {
-                    address: self.address,
-                    operands: FormatR { rd, rs1, rs2 },
-                    virtual_sequence_remaining: Some(0),
-                    is_compressed: self.is_compressed,
-                };
-                self.sequence.push(add.into());
-                Reg(rd)
-            }
-            (Reg(rs1), Imm(imm)) => {
-                let addi = ADDI {
-                    address: self.address,
-                    operands: FormatI { rd, rs1, imm },
-                    virtual_sequence_remaining: Some(0),
-                    is_compressed: self.is_compressed,
-                };
-                self.sequence.push(addi.into());
-                Reg(rd)
-            }
-            (Imm(_), Reg(_)) => self.add(rs2, rs1, rd),
-            (Imm(imm1), Imm(imm2)) => Imm((imm1 as u32).wrapping_add(imm2 as u32) as u64),
-        }
-    }
+    // /// Addition modulo 2^32
+    // fn add(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
+    //     match (rs1, rs2) {
+    //         (Reg(rs1), Reg(rs2)) => {
+    //             let add = ADD {
+    //                 address: self.address,
+    //                 operands: FormatR { rd, rs1, rs2 },
+    //                 virtual_sequence_remaining: Some(0),
+    //                 is_compressed: self.is_compressed,
+    //             };
+    //             self.sequence.push(add.into());
+    //             Reg(rd)
+    //         }
+    //         (Reg(rs1), Imm(imm)) => {
+    //             let addi = ADDI {
+    //                 address: self.address,
+    //                 operands: FormatI { rd, rs1, imm },
+    //                 virtual_sequence_remaining: Some(0),
+    //                 is_compressed: self.is_compressed,
+    //             };
+    //             self.sequence.push(addi.into());
+    //             Reg(rd)
+    //         }
+    //         (Imm(_), Reg(_)) => self.add(rs2, rs1, rd),
+    //         (Imm(imm1), Imm(imm2)) => Imm((imm1 as u32).wrapping_add(imm2 as u32) as u64),
+    //     }
+    // }
 
-    fn and(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
-        match (rs1, rs2) {
-            (Reg(rs1), Reg(rs2)) => {
-                let add = AND {
-                    address: self.address,
-                    operands: FormatR { rd, rs1, rs2 },
-                    virtual_sequence_remaining: Some(0),
-                    is_compressed: self.is_compressed,
-                };
-                self.sequence.push(add.into());
-                Reg(rd)
-            }
-            (Reg(rs1), Imm(imm)) => {
-                let add = ANDI {
-                    address: self.address,
-                    operands: FormatI { rd, rs1, imm },
-                    virtual_sequence_remaining: Some(0),
-                    is_compressed: self.is_compressed,
-                };
-                self.sequence.push(add.into());
-                Reg(rd)
-            }
-            (Imm(_), Reg(_)) => self.and(rs2, rs1, rd),
-            (Imm(imm1), Imm(imm2)) => Imm(imm1 & imm2),
-        }
-    }
+    // fn and(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
+    //     match (rs1, rs2) {
+    //         (Reg(rs1), Reg(rs2)) => {
+    //             let add = AND {
+    //                 address: self.address,
+    //                 operands: FormatR { rd, rs1, rs2 },
+    //                 virtual_sequence_remaining: Some(0),
+    //                 is_compressed: self.is_compressed,
+    //             };
+    //             self.sequence.push(add.into());
+    //             Reg(rd)
+    //         }
+    //         (Reg(rs1), Imm(imm)) => {
+    //             let add = ANDI {
+    //                 address: self.address,
+    //                 operands: FormatI { rd, rs1, imm },
+    //                 virtual_sequence_remaining: Some(0),
+    //                 is_compressed: self.is_compressed,
+    //             };
+    //             self.sequence.push(add.into());
+    //             Reg(rd)
+    //         }
+    //         (Imm(_), Reg(_)) => self.asm.and(rs2, rs1, rd),
+    //         (Imm(imm1), Imm(imm2)) => Imm(imm1 & imm2),
+    //     }
+    // }
 
-    fn xor(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
-        match (rs1, rs2) {
-            (Reg(rs1), Reg(rs2)) => {
-                let xor = XOR {
-                    address: self.address,
-                    operands: FormatR { rd, rs1, rs2 },
-                    virtual_sequence_remaining: Some(0),
-                    is_compressed: self.is_compressed,
-                };
-                self.sequence.push(xor.into());
-                Reg(rd)
-            }
-            (Reg(rs1), Imm(imm)) => {
-                let xori = XORI {
-                    address: self.address,
-                    operands: FormatI { rd, rs1, imm },
-                    virtual_sequence_remaining: Some(0),
-                    is_compressed: self.is_compressed,
-                };
-                self.sequence.push(xori.into());
-                Reg(rd)
-            }
-            (Imm(_), Reg(_)) => self.xor(rs2, rs1, rd),
-            (Imm(imm1), Imm(imm2)) => Imm(imm1 ^ imm2),
-        }
-    }
+    // fn xor(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
+    //     match (rs1, rs2) {
+    //         (Reg(rs1), Reg(rs2)) => {
+    //             let xor = XOR {
+    //                 address: self.address,
+    //                 operands: FormatR { rd, rs1, rs2 },
+    //                 virtual_sequence_remaining: Some(0),
+    //                 is_compressed: self.is_compressed,
+    //             };
+    //             self.sequence.push(xor.into());
+    //             Reg(rd)
+    //         }
+    //         (Reg(rs1), Imm(imm)) => {
+    //             let xori = XORI {
+    //                 address: self.address,
+    //                 operands: FormatI { rd, rs1, imm },
+    //                 virtual_sequence_remaining: Some(0),
+    //                 is_compressed: self.is_compressed,
+    //             };
+    //             self.sequence.push(xori.into());
+    //             Reg(rd)
+    //         }
+    //         (Imm(_), Reg(_)) => self.asm.xor(rs2, rs1, rd),
+    //         (Imm(imm1), Imm(imm2)) => Imm(imm1 ^ imm2),
+    //     }
+    // }
 
-    /// ROTRI instruction - Rotate Right Immediate
-    fn rotri(&mut self, rs1: Value, imm: u64, rd: usize) -> Value {
-        match rs1 {
-            Reg(rs1) => {
-                // Construct bitmask: (32-imm) ones followed by imm zeros
-                let ones = (1u64 << (32 - imm)) - 1;
-                let imm = ones << imm;
-                let rotri = VirtualROTRI {
-                    address: self.address,
-                    operands: FormatVirtualRightShiftI { rd, rs1, imm },
-                    virtual_sequence_remaining: Some(0),
-                    is_compressed: self.is_compressed,
-                };
-                self.sequence.push(rotri.into());
-                Reg(rd)
-            }
-            Imm(val) => Imm((val as u32).rotate_right(imm as u32) as u64),
-        }
-    }
+    // /// ROTRI instruction - Rotate Right Immediate
+    // fn rotri(&mut self, rs1: Value, imm: u64, rd: usize) -> Value {
+    //     match rs1 {
+    //         Reg(rs1) => {
+    //             // Construct bitmask: (32-imm) ones followed by imm zeros
+    //             let ones = (1u64 << (32 - imm)) - 1;
+    //             let imm = ones << imm;
+    //             let rotri = VirtualROTRI {
+    //                 address: self.address,
+    //                 operands: FormatVirtualRightShiftI { rd, rs1, imm },
+    //                 virtual_sequence_remaining: Some(0),
+    //                 is_compressed: self.is_compressed,
+    //             };
+    //             self.sequence.push(rotri.into());
+    //             Reg(rd)
+    //         }
+    //         Imm(val) => Imm((val as u32).rotate_right(imm as u32) as u64),
+    //     }
+    // }
 
-    fn rotri_xor_rotri(&mut self, rs1: Value, imm1: u32, imm2: u32, rd: usize, ss: usize) -> Value {
-        let rotri = self.rotri(rs1, imm1 as u64, ss);
-        let rotri2 = self.rotri(rs1, imm2 as u64, rd);
-        self.xor(rotri, rotri2, rd)
-    }
-}
-
-#[derive(Clone, Copy)]
-enum Value {
-    Imm(u64),
-    Reg(usize),
+    // fn rotri_xor_rotri(&mut self, rs1: Value, imm1: u32, imm2: u32, rd: usize, ss: usize) -> Value {
+    //     let rotri = self.rotri(rs1, imm1 as u64, ss);
+    //     let rotri2 = self.rotri(rs1, imm2 as u64, rd);
+    //     self.asm.xor(rotri, rotri2, rd)
+    // }
 }
 
 pub fn execute_sha256_compression_initial(input: [u32; 16]) -> [u32; 8] {
