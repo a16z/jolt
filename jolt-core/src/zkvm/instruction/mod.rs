@@ -1,6 +1,6 @@
 use std::ops::{Index, IndexMut};
 
-use crate::zkvm::instruction_lookups::WORD_SIZE;
+use common::constants::XLEN;
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
@@ -116,8 +116,8 @@ macro_rules! define_rv32im_trait_impls {
     (
         instructions: [$($instr:ident),* $(,)?]
     ) => {
-        impl InstructionLookup<WORD_SIZE> for RV32IMInstruction {
-            fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
+        impl InstructionLookup<XLEN> for RV32IMInstruction {
+            fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
                 match self {
                     RV32IMInstruction::NoOp => None,
                     $(

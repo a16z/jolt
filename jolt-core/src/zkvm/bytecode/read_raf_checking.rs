@@ -26,12 +26,11 @@ use crate::{
             CircuitFlags, InstructionFlags, InstructionLookup, InterleavedBitsMarker,
             NUM_CIRCUIT_FLAGS,
         },
-        instruction_lookups::WORD_SIZE,
         lookup_table::{LookupTables, NUM_LOOKUP_TABLES},
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
-use common::constants::REGISTER_COUNT;
+use common::constants::{REGISTER_COUNT, XLEN};
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
 use tracer::instruction::NormalizedInstruction;
@@ -495,7 +494,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             .chain(once(rd_wa_claim))
             .chain(once(unexpanded_pc_claim))
             .chain(once(raf_flag_claim))
-            .chain((0..LookupTables::<WORD_SIZE>::COUNT).map(|i| {
+            .chain((0..LookupTables::<XLEN>::COUNT).map(|i| {
                 sm.get_virtual_polynomial_opening(
                     VirtualPolynomial::LookupTableFlag(i),
                     SumcheckId::InstructionReadRaf,

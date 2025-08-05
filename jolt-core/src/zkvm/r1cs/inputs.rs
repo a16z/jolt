@@ -10,7 +10,6 @@ use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{OpeningId, SumcheckId};
 use crate::utils::transcript::Transcript;
 use crate::zkvm::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
-use crate::zkvm::instruction_lookups::WORD_SIZE;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::zkvm::JoltProverPreprocessing;
 
@@ -19,6 +18,7 @@ use super::spartan::UniformSpartanProof;
 
 use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use common::constants::XLEN;
 use rayon::prelude::*;
 use std::fmt::Debug;
 use std::marker::PhantomData;
@@ -298,14 +298,14 @@ impl JoltR1CSInputs {
             JoltR1CSInputs::LeftLookupOperand => {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
-                    .map(|cycle| LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle).0)
+                    .map(|cycle| LookupQuery::<XLEN>::to_lookup_operands(cycle).0)
                     .collect();
                 coeffs.into()
             }
             JoltR1CSInputs::RightLookupOperand => {
                 let coeffs: Vec<u128> = trace
                     .par_iter()
-                    .map(|cycle| LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle).1)
+                    .map(|cycle| LookupQuery::<XLEN>::to_lookup_operands(cycle).1)
                     .collect();
                 coeffs.into()
             }
@@ -321,7 +321,7 @@ impl JoltR1CSInputs {
             JoltR1CSInputs::LookupOutput => {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
-                    .map(LookupQuery::<WORD_SIZE>::to_lookup_output)
+                    .map(LookupQuery::<XLEN>::to_lookup_output)
                     .collect();
                 coeffs.into()
             }
@@ -338,7 +338,7 @@ impl JoltR1CSInputs {
                         let flags = cycle.instruction().circuit_flags();
                         let is_branch = flags[CircuitFlags::Branch];
                         let should_branch =
-                            is_branch && LookupQuery::<WORD_SIZE>::to_lookup_output(cycle) != 0;
+                            is_branch && LookupQuery::<XLEN>::to_lookup_output(cycle) != 0;
                         let instr = cycle.instruction().normalize();
                         if should_branch {
                             (instr.address as i64 + instr.operands.imm as i64) as u64
@@ -353,7 +353,7 @@ impl JoltR1CSInputs {
                             if next_is_noop {
                                 0
                             } else if is_jump {
-                                LookupQuery::<WORD_SIZE>::to_lookup_output(cycle)
+                                LookupQuery::<XLEN>::to_lookup_output(cycle)
                             } else if do_not_update_pc {
                                 instr.address as u64
                             } else if is_compressed {

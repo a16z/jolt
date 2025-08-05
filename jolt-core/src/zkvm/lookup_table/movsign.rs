@@ -51,10 +51,10 @@ impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for MovsignTab
 mod test {
     use ark_bn254::Fr;
 
-    use crate::zkvm::instruction_lookups::WORD_SIZE;
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
+    use common::constants::XLEN;
 
     use super::MovsignTable;
 
@@ -65,11 +65,11 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, MovsignTable<WORD_SIZE>>();
+        lookup_table_mle_random_test::<Fr, MovsignTable<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<WORD_SIZE, Fr, MovsignTable<WORD_SIZE>>();
+        prefix_suffix_test::<XLEN, Fr, MovsignTable<XLEN>>();
     }
 }
