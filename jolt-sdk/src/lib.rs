@@ -21,6 +21,11 @@ pub mod sha256;
 #[cfg(feature = "sha256")]
 pub use sha256::*;
 
+#[cfg(feature = "keccak256")]
+pub mod keccak256;
+#[cfg(feature = "keccak256")]
+pub use keccak256::*;
+
 // This is a dummy _HEAP_PTR to keep the compiler happy.
 // It should never be used when compiled as a guest or with
 // our custom allocator

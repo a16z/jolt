@@ -9,6 +9,8 @@ use self::fnv::FnvHashMap;
 use alloc::collections::btree_map::BTreeMap as FnvHashMap;
 use core::convert::TryInto;
 
+use common::constants::REGISTER_COUNT;
+
 use crate::instruction::{uncompress_instruction, RV32IMCycle, RV32IMInstruction};
 
 use super::mmu::{AddressingMode, Mmu};
@@ -87,7 +89,7 @@ pub struct Cpu {
     wfi: bool,
     // using only lower 32bits of x, pc, and csr registers
     // for 32-bit mode
-    pub x: [i64; 64],
+    pub x: [i64; REGISTER_COUNT as usize],
     f: [f64; 32],
     pub(crate) pc: u64,
     csr: [u64; CSR_CAPACITY],
@@ -102,7 +104,7 @@ pub struct Cpu {
     active_markers: FnvHashMap<u32, ActiveMarker>,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Xlen {
     Bit32,
     Bit64, // @TODO: Support Bit128
@@ -251,7 +253,7 @@ impl Cpu {
             xlen: Xlen::Bit64,
             privilege_mode: PrivilegeMode::Machine,
             wfi: false,
-            x: [0; 64],
+            x: [0; REGISTER_COUNT as usize],
             f: [0.0; 32],
             pc: 0,
             csr: [0; CSR_CAPACITY],

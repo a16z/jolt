@@ -1,7 +1,7 @@
 pub const XLEN: usize = 64;
 const RISCV_REGISTER_COUNT: u64 = 32;
-const VIRTUAL_REGISTER_COUNT: u64 = 32; //  see Section 6.1 of Jolt paper
-pub const REGISTER_COUNT: u64 = RISCV_REGISTER_COUNT + VIRTUAL_REGISTER_COUNT;
+const VIRTUAL_REGISTER_COUNT: u64 = 96; //  see Section 6.1 of Jolt paper
+pub const REGISTER_COUNT: u64 = RISCV_REGISTER_COUNT + VIRTUAL_REGISTER_COUNT; // must be a power of 2
 pub const BYTES_PER_INSTRUCTION: usize = 4;
 pub const ALIGNMENT_FACTOR_BYTECODE: usize = 2;
 
@@ -18,7 +18,7 @@ pub const DEFAULT_MAX_OUTPUT_SIZE: u64 = 4096;
 pub const DEFAULT_MAX_TRACE_LENGTH: u64 = 1 << 24;
 
 pub const fn virtual_register_index(index: u64) -> u64 {
-    index + VIRTUAL_REGISTER_COUNT
+    index + RISCV_REGISTER_COUNT
 }
 
 // Layout of the witness (where || denotes concatenation):

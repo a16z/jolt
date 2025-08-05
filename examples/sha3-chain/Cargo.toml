@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-jolt-sdk = { path = "../../jolt-sdk", features = ["host"] }
+jolt-sdk = { path = "../../jolt-sdk", features = ["host", "keccak256"] }
 guest = { package = "sha3-chain-guest", path = "./guest" }
 hex = "0.4.3"
 

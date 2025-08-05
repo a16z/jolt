@@ -2129,9 +2129,11 @@ dependencies = [
  "ark-bn254",
  "ark-ec",
  "common",
+ "hex-literal",
  "jolt-core",
  "jolt-sdk-macros",
  "postcard",
+ "sha3",
  "tracer",
 ]
 
@@ -3575,7 +3577,6 @@ name = "sha3-guest"
 version = "0.1.0"
 dependencies = [
  "jolt-sdk",
- "sha3",
 ]
 
 [[package]]
@@ -4024,6 +4025,7 @@ dependencies = [
  "common",
  "derive_more 2.0.1",
  "fnv",
+ "hex-literal",
  "itertools 0.10.5",
  "object",
  "paste",

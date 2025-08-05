@@ -46,6 +46,8 @@ impl VirtualInstructionSequence for SLLI {
         let mut sequence = vec![];
         let virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(0);
 
+        // Determine word size based on immediate value and instruction encoding
+        // For SLLI: RV32 uses 5-bit immediates (0-31), RV64 uses 6-bit immediates (0-63)
         let mask = match xlen {
             Xlen::Bit32 => 0x1f, //low 5bits
             Xlen::Bit64 => 0x3f, //low 6bits

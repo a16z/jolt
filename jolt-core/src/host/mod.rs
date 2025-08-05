@@ -225,6 +225,7 @@ impl Program {
                     RV32IMInstruction::DIVU(divu) => divu.virtual_sequence(xlen),
                     RV32IMInstruction::DIVUW(divuw) => divuw.virtual_sequence(xlen),
                     RV32IMInstruction::DIVW(divw) => divw.virtual_sequence(xlen),
+                    RV32IMInstruction::KECCAK256(keccak256) => keccak256.virtual_sequence(xlen),
                     RV32IMInstruction::LB(lb) => lb.virtual_sequence(xlen),
                     RV32IMInstruction::LBU(lbu) => lbu.virtual_sequence(xlen),
                     RV32IMInstruction::LH(lh) => lh.virtual_sequence(xlen),

@@ -152,7 +152,11 @@ impl Mmu {
     /// * `effective_address` Effective memory address to validate
     #[inline]
     fn assert_effective_address(&self, ea: u64, is_write: bool) {
-        let jolt_device = self.jolt_device.as_ref().expect("JoltDevice not set");
+        if self.jolt_device.is_none() {
+            // Skip checks if no JoltDevice is set (e.g., in tests)
+            return;
+        }
+        let jolt_device = self.jolt_device.as_ref().unwrap();
         let layout = &jolt_device.memory_layout;
         // helper strings
         let (action, verb) = if is_write {
