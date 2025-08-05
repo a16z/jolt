@@ -4,7 +4,7 @@ Jolt proves the validity of registers and RAM using offline memory checking.
 
 ## Decoding an ELF file
 
-The tracer iterates over the `.text` sections of the program ELF file and decode RISC-V instructions. Each instruction gets mapped to a `BytecodeRow` struct: 
+The tracer iterates over the `.text` sections of the program ELF file and decodes RISC-V instructions. Each instruction gets mapped to a `BytecodeRow` struct: 
 
 ```rust
 pub struct BytecodeRow {

@@ -83,6 +83,18 @@ pub trait JoltField:
     fn mul_i128(&self, n: i128) -> Self {
         *self * Self::from_i128(n)
     }
+
+    fn mul_pow_2(&self, mut pow: usize) -> Self {
+        if pow > 255 {
+            panic!("pow > 255");
+        }
+        let mut res = *self;
+        while pow >= 64 {
+            res = res.mul_u64(1 << 63);
+            pow -= 63;
+        }
+        res.mul_u64(1 << pow)
+    }
 }
 
 pub trait OptimizedMul<Rhs, Output>: Sized + Mul<Rhs, Output = Output> {

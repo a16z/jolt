@@ -269,6 +269,7 @@ impl Cpu {
         cpu.write_csr_raw(CSR_MISA_ADDRESS, 0x800000008014312f);
         cpu
     }
+
     /// trap wrapper for cycle tracking tool
     #[inline(always)]
     pub fn raise_trap(&mut self, trap: Trap, faulting_pc: u64) {
@@ -1656,7 +1657,7 @@ mod test_cpu {
     use crate::emulator::terminal::DummyTerminal;
 
     fn create_cpu() -> Cpu {
-        Cpu::new(Box::new(DummyTerminal::new()))
+        Cpu::new(Box::new(DummyTerminal::default()))
     }
 
     #[test]

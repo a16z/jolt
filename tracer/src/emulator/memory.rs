@@ -9,11 +9,6 @@ pub struct Memory {
 }
 
 impl Memory {
-    /// Creates a new `Memory`
-    pub fn new() -> Self {
-        Memory { data: vec![] }
-    }
-
     /// Initializes memory content.
     /// This method is expected to be called only once.
     ///
@@ -167,6 +162,7 @@ impl Memory {
     /// # Arguments
     /// * `address`
     pub fn validate_address(&self, address: u64) -> bool {
-        (address as usize) < self.data.len()
+        let word_index = (address >> 3) as usize;
+        word_index < self.data.len()
     }
 }

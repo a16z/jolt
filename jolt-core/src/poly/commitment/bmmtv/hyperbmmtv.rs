@@ -8,7 +8,6 @@ use std::{borrow::Borrow, marker::PhantomData, sync::Arc};
 
 use crate::{
     field::JoltField,
-    msm::Icicle,
     poly::{
         commitment::{
             bmmtv::poly_commit::{OpeningProof, UnivariatePolynomialCommitment},
@@ -31,8 +30,8 @@ use rand_core::SeedableRng;
 use rayon::prelude::*;
 
 #[derive(Clone)]
-pub struct HyperBmmtv<P: Pairing, ProofTranscript: Transcript> {
-    _phantom: PhantomData<(P, ProofTranscript)>,
+pub struct HyperBmmtv<P: Pairing> {
+    _phantom: PhantomData<P>,
 }
 
 #[derive(PartialEq, Eq, Clone, CanonicalSerialize, CanonicalDeserialize, Debug)]
@@ -85,31 +84,24 @@ pub struct SubProof<P: Pairing> {
     y: P::ScalarField,
 }
 
-impl<P: Pairing, ProofTranscript: Transcript> CommitmentScheme<ProofTranscript>
-    for HyperBmmtv<P, ProofTranscript>
+impl<P: Pairing> CommitmentScheme for HyperBmmtv<P>
 where
     PairingOutput<P>: CanonicalSerialize,
     P::ScalarField: JoltField,
-    P::G1: Icicle,
-    P::G2: Icicle,
 {
     type Field = P::ScalarField;
-
     type ProverSetup = KZGProverKey<P>;
     type VerifierSetup = KZGVerifierKey<P>;
-
     type Commitment = HyperBmmtvCommitment<P>;
-
     type Proof = HyperBmmtvProof<P>;
-
     type BatchedProof = ();
+    type OpeningProofHint = ();
 
     #[tracing::instrument(skip_all, name = "HyperBmmtv::setup")]
-    fn setup_prover(max_len: usize) -> Self::ProverSetup {
+    fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
         let mut rng = ChaCha20Rng::from_seed(*b"HyperBMMTV_POLY_COMMITMENTSCHEME");
         let srs =
-            UnivariatePolynomialCommitment::<P, ProofTranscript>::setup(&mut rng, max_len - 1)
-                .unwrap();
+            UnivariatePolynomialCommitment::<P>::setup(&mut rng, (1 << max_num_vars) - 1).unwrap();
         let powers_len = srs.g1_powers.len();
 
         SRS::trim(Arc::new(srs), powers_len - 1).0
@@ -120,19 +112,15 @@ where
         KZGVerifierKey::<P>::from(setup)
     }
 
-    fn srs_size(setup: &Self::ProverSetup) -> usize {
-        setup.g1_powers().len()
-    }
-
     #[tracing::instrument(skip_all, name = "HyperBmmtv::commit")]
     fn commit(
         poly: &MultilinearPolynomial<Self::Field>,
         setup: &Self::ProverSetup,
-    ) -> Self::Commitment {
+    ) -> (Self::Commitment, Self::OpeningProofHint) {
         let unipoly: UniPoly<Self::Field> = poly.into();
-        let commitment =
-            UnivariatePolynomialCommitment::<P, ProofTranscript>::commit(setup, &unipoly).unwrap();
-        HyperBmmtvCommitment(commitment.0, commitment.1)
+        let commitment = UnivariatePolynomialCommitment::<P>::commit(setup, &unipoly).unwrap();
+        let commitment = HyperBmmtvCommitment(commitment.0, commitment.1);
+        (commitment, ())
     }
 
     #[tracing::instrument(skip_all, name = "HyperBmmtv::batch_commit")]
@@ -142,15 +130,16 @@ where
     {
         polys
             .par_iter()
-            .map(|poly| Self::commit(poly.borrow(), gens))
+            .map(|poly| Self::commit(poly.borrow(), gens).0)
             .collect()
     }
 
     #[tracing::instrument(skip_all, name = "HyperBmmtv::prove")]
-    fn prove(
+    fn prove<ProofTranscript: Transcript>(
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
+        _: Self::OpeningProofHint,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         let ell = opening_point.len();
@@ -187,9 +176,7 @@ where
         // Todo: Batch commit
         let com_list: Vec<_> = polys[1..]
             .par_iter()
-            .map(|poly| {
-                UnivariatePolynomialCommitment::<P, ProofTranscript>::commit(setup, poly).unwrap()
-            })
+            .map(|poly| UnivariatePolynomialCommitment::<P>::commit(setup, poly).unwrap())
             .collect();
 
         // Phase 2
@@ -205,8 +192,7 @@ where
         // open all commits
 
         // TODO Get this from the Commitment
-        let (_, kzg_comms) =
-            UnivariatePolynomialCommitment::<P, ProofTranscript>::commit(setup, &polys[0]).unwrap();
+        let (_, kzg_comms) = UnivariatePolynomialCommitment::<P>::commit(setup, &polys[0]).unwrap();
 
         let (sub_polynomials_commitments, com_list): (Vec<_>, Vec<_>) =
             com_list.into_iter().unzip();
@@ -238,7 +224,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "HyperBmmtv::verify")]
-    fn verify(
+    fn verify<ProofTranscript: Transcript>(
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
         transcript: &mut ProofTranscript,
@@ -349,7 +335,7 @@ mod tests {
 
     #[test]
     fn test_hyper_bmmtv() {
-        type HyperTest = HyperBmmtv<Bn254, KeccakTranscript>;
+        type HyperTest = HyperBmmtv<Bn254>;
         let ell = 4;
         let n = 1 << ell; // n = 2^ell
         let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(0);
@@ -362,7 +348,7 @@ mod tests {
         let setup = HyperTest::setup_prover(poly.len());
         let verifier_setup = HyperTest::setup_verifier(&setup);
 
-        let commit = HyperTest::commit(&poly, &setup);
+        let commit = HyperTest::commit(&poly, &setup).0;
 
         let point = (0..ell)
             .map(|_| <Bn254 as Pairing>::ScalarField::rand(&mut rng))
@@ -370,7 +356,7 @@ mod tests {
 
         let mut prover_transcript = KeccakTranscript::new(b"TestEval");
 
-        let proof = HyperTest::prove(&setup, &poly, &point, &mut prover_transcript);
+        let proof = HyperTest::prove(&setup, &poly, &point, (), &mut prover_transcript);
 
         let mut verifier_transcript = KeccakTranscript::new(b"TestEval");
         verifier_transcript.compare_to(prover_transcript);

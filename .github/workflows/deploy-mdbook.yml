@@ -9,7 +9,7 @@ jobs:
   deploy_gcloud:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@stable
 
     - id: 'auth'
@@ -36,7 +36,7 @@ jobs:
   deploy_firebase:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Setup mdBook
         uses: peaceiris/actions-mdbook@v1

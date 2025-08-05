@@ -6,7 +6,7 @@ use ark_ec::{
     CurveGroup,
 };
 
-use crate::msm::{use_icicle, Icicle, VariableBaseMSM};
+use crate::msm::VariableBaseMSM;
 use rayon::prelude::*;
 
 #[derive(Debug, thiserror::Error)]
@@ -81,7 +81,7 @@ pub enum MultiexponentiationInnerProduct {}
 impl MultiexponentiationInnerProduct {
     pub fn inner_product<G>(left: &[G], right: &[G::ScalarField]) -> Result<G, InnerProductError>
     where
-        G: CurveGroup + Icicle,
+        G: CurveGroup,
         G::ScalarField: JoltField,
     {
         if left.len() != right.len() {
@@ -92,13 +92,9 @@ impl MultiexponentiationInnerProduct {
         };
 
         // Can unwrap because we did the length check above
-        Ok(<G as VariableBaseMSM>::msm_field_elements(
-            &G::normalize_batch(left),
-            None,
-            right,
-            None,
-            use_icicle(),
+        Ok(
+            <G as VariableBaseMSM>::msm_field_elements(&G::normalize_batch(left), right, None)
+                .unwrap(),
         )
-        .unwrap())
     }
 }

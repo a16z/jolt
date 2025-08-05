@@ -1,0 +1,9 @@
+[package]
+name = "jolt-verifier"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+#TODO(sagar): use the host-verifier feature of jolt-core
+jolt-core = { path = "../jolt-core", default-features = false, features = ["host"] }
+common = { path = "../common" }

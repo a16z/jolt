@@ -1,17 +1,16 @@
 use super::{
     eq_poly::EqPolynomial, multilinear_polynomial::MultilinearPolynomial,
-    sparse_interleaved_poly::SparseCoefficient, split_eq_poly::GruenSplitEqPolynomial,
-    unipoly::CompressedUniPoly,
+    split_eq_poly::GruenSplitEqPolynomial, unipoly::CompressedUniPoly,
 };
 use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
 use crate::{
     field::{JoltField, OptimizedMul, OptimizedMulI128},
-    r1cs::builder::Constraint,
     utils::{
         math::Math,
         small_value::{svo_helpers, NUM_SVO_ROUNDS},
         transcript::Transcript,
     },
+    zkvm::r1cs::builder::Constraint,
 };
 use ark_ff::Zero;
 use rayon::prelude::*;
@@ -28,6 +27,21 @@ pub const Y_SVO_RELATED_COEFF_BLOCK_SIZE: usize = 4 * Y_SVO_SPACE_SIZE; // Az/Bz
 // Modifications for streaming version:
 // 1. Do not have the `unbound_coeffs` in the struct
 // 2. Do streaming rounds until we get to a small enough cached size that we can store `bound_coeffs`
+
+#[derive(Default, Debug, Clone, Copy, PartialEq)]
+pub struct SparseCoefficient<T> {
+    pub(crate) index: usize,
+    pub(crate) value: T,
+}
+
+impl<T> From<(usize, T)> for SparseCoefficient<T> {
+    fn from(x: (usize, T)) -> Self {
+        Self {
+            index: x.0,
+            value: x.1,
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct SpartanInterleavedPolynomial<const NUM_SVO_ROUNDS: usize, F: JoltField> {
@@ -265,6 +279,31 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                     if !bz.is_zero() {
                                         binary_bz_block[idx_in_svo_block] = bz;
                                         chunk_ab_coeffs.push((global_r1cs_idx + 1, bz).into());
+                                    }
+                                }
+
+                                #[cfg(test)] {
+                                    let az = constraint
+                                        .a
+                                        .evaluate_row(flattened_polynomials, current_step_idx);
+                                    let bz = constraint
+                                        .b
+                                        .evaluate_row(flattened_polynomials, current_step_idx);
+                                    let cz = constraint
+                                        .c
+                                        .evaluate_row(flattened_polynomials, current_step_idx);
+                                    let mut constraint_string = String::new();
+                                    let _ = constraint
+                                        .pretty_fmt(
+                                            &mut constraint_string,
+                                            flattened_polynomials,
+                                            current_step_idx,
+                                        );
+                                    if az * bz != cz {
+                                        println!("{constraint_string}");
+                                        panic!(
+                                            "Constraint violated at step {current_step_idx}",
+                                        );
                                     }
                                 }
                             }

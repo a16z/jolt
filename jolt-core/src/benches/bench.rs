@@ -1,28 +1,14 @@
-#![allow(unused_imports)]
-#![allow(clippy::extra_unused_type_parameters)]
-
 use crate::field::JoltField;
 use crate::host;
-use crate::jolt::vm::rv32i_vm::RV32IJoltVM;
-use crate::jolt::vm::{Jolt, JoltProverPreprocessing, JoltVerifierPreprocessing};
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::commitment::dory::DoryCommitmentScheme as Dory;
-use crate::poly::commitment::hyperkzg::HyperKZG;
-use crate::subprotocols::shout::ShoutProof;
 use crate::subprotocols::twist::{TwistAlgorithm, TwistProof};
 use crate::utils::math::Math;
 use crate::utils::transcript::{KeccakTranscript, Transcript};
-use ark_bn254::{Bn254, Fr};
+use crate::zkvm::JoltVerifierPreprocessing;
+use crate::zkvm::{Jolt, JoltRV32IM};
+use ark_bn254::Fr;
 use ark_std::test_rng;
 use rand_core::RngCore;
 use rand_distr::{Distribution, Zipf};
-use serde::Serialize;
-
-#[derive(Debug, Copy, Clone, clap::ValueEnum)]
-pub enum PCSType {
-    Dory,
-    HyperKZG,
-}
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
 pub enum BenchType {
@@ -31,7 +17,6 @@ pub enum BenchType {
     Sha3,
     Sha2Chain,
     Shout,
-    SparseDenseShout,
     Twist,
 }
 
@@ -74,137 +59,19 @@ fn auto_register() {
     }
 }
 
-#[allow(unreachable_patterns)] // good errors on new BenchTypes
-pub fn benchmarks(
-    pcs_type: PCSType,
-    bench_type: BenchType,
-) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    match pcs_type {
-        PCSType::Dory => match bench_type {
-            BenchType::Sha2 => sha2::<Fr, Dory<KeccakTranscript>, KeccakTranscript>(),
-            BenchType::Sha3 => sha3::<Fr, Dory<KeccakTranscript>, KeccakTranscript>(),
-            BenchType::Sha2Chain => sha2chain::<Fr, Dory<KeccakTranscript>, KeccakTranscript>(),
-            BenchType::Fibonacci => fibonacci::<Fr, Dory<KeccakTranscript>, KeccakTranscript>(),
-            BenchType::Shout => shout::<Fr, KeccakTranscript>(),
-            BenchType::Twist => twist::<Fr, KeccakTranscript>(),
-            BenchType::SparseDenseShout => sparse_dense_shout::<Fr, KeccakTranscript>(),
-            _ => panic!("BenchType does not have a mapping"),
-        },
-        PCSType::HyperKZG => match bench_type {
-            BenchType::Sha2 => sha2::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>(),
-            BenchType::Sha3 => sha3::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>(),
-            BenchType::Sha2Chain => {
-                sha2chain::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>()
-            }
-            BenchType::Fibonacci => {
-                fibonacci::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>()
-            }
-            BenchType::Shout => shout::<Fr, KeccakTranscript>(),
-            BenchType::Twist => twist::<Fr, KeccakTranscript>(),
-            BenchType::SparseDenseShout => sparse_dense_shout::<Fr, KeccakTranscript>(),
-            _ => panic!("BenchType does not have a mapping"),
-        },
-        _ => panic!("PCS Type does not have a mapping"),
+pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    match bench_type {
+        BenchType::Sha2 => sha2(),
+        BenchType::Sha3 => sha3(),
+        BenchType::Sha2Chain => sha2_chain(),
+        BenchType::Fibonacci => fibonacci(),
+        BenchType::Shout => shout(),
+        BenchType::Twist => twist::<Fr, KeccakTranscript>(),
     }
 }
 
-fn shout<F, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
-where
-    F: JoltField,
-    ProofTranscript: Transcript,
-{
-    let small_value_lookup_tables = F::compute_lookup_tables();
-    F::initialize_lookup_tables(small_value_lookup_tables);
-
-    let mut tasks = Vec::new();
-
-    const TABLE_SIZE: usize = 1 << 16;
-    const NUM_LOOKUPS: usize = 1 << 20;
-
-    let mut rng = test_rng();
-
-    let lookup_table: Vec<F> = (0..TABLE_SIZE).map(|_| F::random(&mut rng)).collect();
-    let read_addresses: Vec<usize> = (0..NUM_LOOKUPS)
-        .map(|_| rng.next_u32() as usize % TABLE_SIZE)
-        .collect();
-
-    let mut prover_transcript = ProofTranscript::new(b"test_transcript");
-    let r_cycle: Vec<F> = prover_transcript.challenge_vector(NUM_LOOKUPS.log_2());
-
-    let task = move || {
-        let _proof = ShoutProof::prove(
-            lookup_table,
-            read_addresses,
-            &r_cycle,
-            &mut prover_transcript,
-        );
-    };
-
-    tasks.push((
-        tracing::info_span!("Shout d=1"),
-        Box::new(task) as Box<dyn FnOnce()>,
-    ));
-
-    tasks
-}
-
-fn sparse_dense_shout<F, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
-where
-    F: JoltField,
-    ProofTranscript: Transcript,
-{
+fn shout() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     todo!()
-    // let small_value_lookup_tables = F::compute_lookup_tables();
-    // F::initialize_lookup_tables(small_value_lookup_tables);
-
-    // let mut tasks = Vec::new();
-
-    // const WORD_SIZE: usize = 32;
-    // const LOG_K: usize = 2 * WORD_SIZE;
-    // const LOG_T: usize = 19;
-    // const T: u64 = 1 << LOG_T;
-
-    // let mut rng = StdRng::seed_from_u64(12345);
-
-    // let trace: Vec<_> = (0..T)
-    //     .map(|_| {
-    //         let mut step = JoltTraceStep::no_op();
-    //         step.instruction_lookup = Some(LookupTables::random(&mut rng, None));
-    //         step
-    //     })
-    //     .collect();
-
-    // let mut prover_transcript = ProofTranscript::new(b"test_transcript");
-    // let r_cycle: Vec<F> = prover_transcript.challenge_vector(LOG_T);
-
-    // let task = move || {
-    //     let (proof, rv_claim, ra_claims, flag_claims) =
-    //         prove_sparse_dense_shout::<WORD_SIZE, _, _>(&trace, r_cycle, &mut prover_transcript);
-
-    //     let mut verifier_transcript = ProofTranscript::new(b"test_transcript");
-    //     let r_cycle: Vec<F> = verifier_transcript.challenge_vector(LOG_T);
-    //     let verification_result = verify_sparse_dense_shout::<WORD_SIZE, _, _>(
-    //         &proof,
-    //         LOG_T,
-    //         r_cycle,
-    //         rv_claim,
-    //         ra_claims,
-    //         &flag_claims,
-    //         &mut verifier_transcript,
-    //     );
-    //     assert!(
-    //         verification_result.is_ok(),
-    //         "Verification failed with error: {:?}",
-    //         verification_result.err()
-    //     );
-    // };
-
-    // tasks.push((
-    //     tracing::info_span!("Sparse-dense shout d=4"),
-    //     Box::new(task) as Box<dyn FnOnce()>,
-    // ));
-
-    // tasks
 }
 
 fn twist<F, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
@@ -275,156 +142,48 @@ where
     tasks
 }
 
-fn fibonacci<F, PCS, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
-{
-    prove_example::<u32, PCS, F, ProofTranscript>("fibonacci-guest", &400000u32)
+fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    prove_example("fibonacci-guest", postcard::to_stdvec(&400000u32).unwrap())
 }
 
-fn sha2<F, PCS, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
-{
-    prove_example::<Vec<u8>, PCS, F, ProofTranscript>("sha2-guest", &vec![5u8; 2048])
+fn sha2() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    prove_example("sha2-guest", postcard::to_stdvec(&vec![5u8; 2048]).unwrap())
 }
 
-fn sha3<F, PCS, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
-{
-    prove_example::<Vec<u8>, PCS, F, ProofTranscript>("sha3-guest", &vec![5u8; 2048])
+fn sha3() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    prove_example("sha3-guest", postcard::to_stdvec(&vec![5u8; 2048]).unwrap())
 }
 
-#[allow(dead_code)]
-fn serialize_and_print_size(name: &str, item: &impl ark_serialize::CanonicalSerialize) {
-    use std::fs::File;
-    let mut file = File::create("temp_file").unwrap();
-    item.serialize_compressed(&mut file).unwrap();
-    let file_size_bytes = file.metadata().unwrap().len();
-    let file_size_kb = file_size_bytes as f64 / 1024.0;
-    let file_size_mb = file_size_kb / 1024.0;
-    println!("{name:<30} : {file_size_mb:.3} MB");
-}
-
-fn prove_example<T: Serialize, PCS, F, ProofTranscript>(
-    example_name: &str,
-    input: &T,
-) -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
-{
-    let mut tasks = Vec::new();
-    let mut program = host::Program::new(example_name);
-    let inputs = postcard::to_stdvec(input).unwrap();
-
-    let task = move || {
-        let (trace, final_memory_state, io_device) = program.trace(&inputs);
-        let (bytecode, init_memory_state) = program.decode();
-
-        println!(
-            "Trace Length: {}  ----   Bytecode Length: {}",
-            trace.len(),
-            bytecode.len()
-        );
-
-        let preprocessing: JoltProverPreprocessing<F, PCS, ProofTranscript> =
-            RV32IJoltVM::prover_preprocess(
-                bytecode.clone(),
-                io_device.memory_layout.clone(),
-                init_memory_state,
-                1 << 18,
-                1 << 18,
-                1 << 20,
-            );
-
-        let (jolt_proof, program_io, _) = <RV32IJoltVM as Jolt<32, _, PCS, ProofTranscript>>::prove(
-            io_device,
-            trace,
-            final_memory_state,
-            preprocessing.clone(),
-        );
-
-        let verifier_preprocessing =
-            JoltVerifierPreprocessing::<F, PCS, ProofTranscript>::from(&preprocessing);
-
-        println!("Proof sizing:");
-        serialize_and_print_size("jolt_proof", &jolt_proof);
-        serialize_and_print_size(" jolt_proof.commitments", &jolt_proof.commitments);
-        serialize_and_print_size(" jolt_proof.r1cs", &jolt_proof.r1cs);
-        serialize_and_print_size(" jolt_proof.bytecode", &jolt_proof.bytecode);
-        serialize_and_print_size(" jolt_proof.ram", &jolt_proof.ram);
-        serialize_and_print_size(" jolt_proof.registers", &jolt_proof.registers);
-        serialize_and_print_size(
-            " jolt_proof.instruction_lookups",
-            &jolt_proof.instruction_lookups,
-        );
-        serialize_and_print_size(" jolt_proof.opening_proof", &jolt_proof.opening_proof);
-
-        let verification_result =
-            RV32IJoltVM::verify(verifier_preprocessing, jolt_proof, program_io, None);
-        assert!(
-            verification_result.is_ok(),
-            "Verification failed with error: {:?}",
-            verification_result.err()
-        );
-    };
-
-    tasks.push((
-        tracing::info_span!("Example_E2E"),
-        Box::new(task) as Box<dyn FnOnce()>,
-    ));
-
-    tasks
-}
-
-fn sha2chain<F, PCS, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
-{
-    let mut tasks = Vec::new();
-    let mut program = host::Program::new("sha2-chain-guest");
-
+fn sha2_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     let mut inputs = vec![];
     inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
-    inputs.append(&mut postcard::to_stdvec(&1500u32).unwrap());
+    inputs.append(&mut postcard::to_stdvec(&1000u32).unwrap());
+    prove_example("sha2-chain-guest", inputs)
+}
+
+fn prove_example(
+    example_name: &str,
+    serialized_input: Vec<u8>,
+) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    let mut tasks = Vec::new();
+    let mut program = host::Program::new(example_name);
+    let (bytecode, init_memory_state, _) = program.decode();
+    let (_, _, program_io) = program.trace(&serialized_input);
 
     let task = move || {
-        let (trace, final_memory_state, io_device) = program.trace(&inputs);
-        let (bytecode, init_memory_state) = program.decode();
-
-        let preprocessing: JoltProverPreprocessing<F, PCS, ProofTranscript> =
-            RV32IJoltVM::prover_preprocess(
-                bytecode.clone(),
-                io_device.memory_layout.clone(),
-                init_memory_state,
-                1 << 20,
-                1 << 20,
-                1 << 24,
-            );
-
-        let (jolt_proof, program_io, _) = <RV32IJoltVM as Jolt<32, _, PCS, ProofTranscript>>::prove(
-            io_device,
-            trace,
-            final_memory_state,
-            preprocessing.clone(),
+        let preprocessing = JoltRV32IM::prover_preprocess(
+            bytecode.clone(),
+            program_io.memory_layout.clone(),
+            init_memory_state,
+            1 << 24,
         );
 
-        let verifier_preprocessing =
-            JoltVerifierPreprocessing::<F, PCS, ProofTranscript>::from(&preprocessing);
+        let (jolt_proof, program_io, _) =
+            JoltRV32IM::prove(&preprocessing, &mut program, &serialized_input);
 
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
-            RV32IJoltVM::verify(verifier_preprocessing, jolt_proof, program_io, None);
+            JoltRV32IM::verify(&verifier_preprocessing, jolt_proof, program_io, None);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
