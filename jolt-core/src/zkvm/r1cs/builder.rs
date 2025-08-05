@@ -218,13 +218,13 @@ impl R1CSBuilder {
             lc.terms().iter().for_each(|term| {
                 match term.0 {
                     Variable::Input(inner) => {
-                        sparse.vars.push((row_index, inner, F::from_i64(term.1)))
+                        sparse.vars.push((row_index, inner, F::from_i128(term.1)))
                     }
                     Variable::Constant => {}
                 };
             });
             if let Some(term) = lc.constant_term() {
-                sparse.consts.push((row_index, F::from_i64(term.1)));
+                sparse.consts.push((row_index, F::from_i128(term.1)));
             }
         };
 
