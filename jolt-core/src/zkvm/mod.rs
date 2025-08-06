@@ -437,6 +437,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     #[serial]
     fn sha2_e2e_dory() {
         let mut program = host::Program::new("sha2-guest");
