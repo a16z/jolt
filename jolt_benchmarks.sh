@@ -6,13 +6,10 @@
 TRACE_LENGTH=${1:-22}
 echo "Running benchmarks with TRACE_LENGTH=$TRACE_LENGTH"
 
-# Create output directory
 mkdir -p perfetto_traces
 
-# Initialize CSV header
 echo "type,scale,time" > perfetto_traces/timings.csv
 
-# Run all benchmarks at all scales
 for scale in $(seq 20 $TRACE_LENGTH); do
     echo "================================================"
     echo "Running benchmarks at scale 2^$scale"
