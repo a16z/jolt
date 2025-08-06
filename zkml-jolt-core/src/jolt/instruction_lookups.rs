@@ -131,6 +131,7 @@ where
             ra_claims,
         };
 
+        // TODO: Openings: https://github.com/ICME-Lab/zkml-jolt/issues/66
         // let unbound_ra_polys = vec![
         //     CommittedPolynomials::InstructionRa(0).generate_witness(preprocessing, trace),
         //     CommittedPolynomials::InstructionRa(1).generate_witness(preprocessing, trace),
