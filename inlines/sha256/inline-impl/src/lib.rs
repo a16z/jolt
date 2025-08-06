@@ -49,7 +49,7 @@ fn auto_register() {
 mod tests {
     use super::*;
     use common;
-    use tracer::emulator::{cpu::Cpu, default_terminal::DefaultTerminal};
+    use tracer::emulator::{cpu::Cpu, default_terminal::DefaultTerminal, cpu::Xlen};
     use tracer::instruction::format::format_r::FormatR;
     use tracer::instruction::{RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction};
 
@@ -71,6 +71,7 @@ mod tests {
     // Helper function to set up CPU with JoltDevice for tests
     fn setup_test_cpu() -> Cpu {
         let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
+        cpu.update_xlen(Xlen::Bit32);
         cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
         
         // Set up JoltDevice - this is required for memory operations
