@@ -54,12 +54,12 @@ impl JoltONNXCycle {
         self.circuit_flags
     }
 
-    pub fn instr(&self) -> ONNXInstr {
-        self.instr.clone()
+    pub fn instr(&self) -> &ONNXInstr {
+        &self.instr
     }
 
-    pub fn bytecode_line(&self) -> ONNXInstr {
-        self.instr.clone()
+    pub fn bytecode_line(&self) -> &ONNXInstr {
+        &self.instr
     }
 
     pub fn no_op() -> Self {
@@ -83,7 +83,8 @@ impl From<ONNXCycle> for JoltONNXCycle {
         };
         cycle.circuit_flags = raw_cycle.instr.to_circuit_flags();
         cycle.instr = raw_cycle.instr;
-        // TODO(Forpee): Refactor this footgun (we should prevent a user from calling this method before memory_ops are set)
+        // TODO(Forpee): Refactor this footgun (we should prevent a user from calling this method before memory_ops are set).
+        //               Builder pattern might be a good idea.
         cycle.populate_instruction_lookups();
         cycle
     }
@@ -215,32 +216,49 @@ pub enum CommittedPolynomials {
     /* R1CS aux variables */
     /// The "left" input to the current instruction. Typically either the
     /// rs1 value or the current program counter.
-    LeftInstructionInput,
+    LeftInstructionInput(usize),
     /// The "right" input to the current instruction. Typically either the
     /// rs2 value or the immediate value.
-    RightInstructionInput,
+    RightInstructionInput(usize),
     /// Product of `LeftInstructionInput` and `RightInstructionInput`
-    Product,
-    /// Whether the current instruction should write the lookup output to
-    /// the destination register
+    Product(usize),
+    // /// Whether the current instruction should write the lookup output to
+    // /// the destination register
     WriteLookupOutputToRD,
-    /// Inc polynomial for the registers instance of Twist
-    RdInc,
+    // /// Inc polynomial for the registers instance of Twist
+    // RdInc,
     /// One-hot ra polynomial for the instruction lookups instance of Shout.
     /// There are four (d=4) of these polynomials, `InstructionRa(0) .. InstructionRa(3)`
     InstructionRa(usize),
 }
 
-pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 8] = [
-    CommittedPolynomials::LeftInstructionInput,
-    CommittedPolynomials::RightInstructionInput,
-    CommittedPolynomials::Product,
-    CommittedPolynomials::WriteLookupOutputToRD,
-    CommittedPolynomials::InstructionRa(0),
-    CommittedPolynomials::InstructionRa(1),
-    CommittedPolynomials::InstructionRa(2),
-    CommittedPolynomials::InstructionRa(3),
-];
+pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 3 * MAX_TENSOR_SIZE + 1 + 4] = {
+    let mut arr = [CommittedPolynomials::LeftInstructionInput(0); 3 * MAX_TENSOR_SIZE + 1 + 4];
+    let mut idx = 0;
+    while idx < MAX_TENSOR_SIZE {
+        arr[idx] = CommittedPolynomials::LeftInstructionInput(idx);
+        idx += 1;
+    }
+    let mut j = 0;
+    while j < MAX_TENSOR_SIZE {
+        arr[idx] = CommittedPolynomials::RightInstructionInput(j);
+        idx += 1;
+        j += 1;
+    }
+    let mut k = 0;
+    while k < MAX_TENSOR_SIZE {
+        arr[idx] = CommittedPolynomials::Product(k);
+        idx += 1;
+        k += 1;
+    }
+    arr[idx] = CommittedPolynomials::WriteLookupOutputToRD;
+    idx += 1;
+    arr[idx] = CommittedPolynomials::InstructionRa(0);
+    arr[idx + 1] = CommittedPolynomials::InstructionRa(1);
+    arr[idx + 2] = CommittedPolynomials::InstructionRa(2);
+    arr[idx + 3] = CommittedPolynomials::InstructionRa(3);
+    arr
+};
 
 impl WitnessGenerator for CommittedPolynomials {
     fn generate_witness<F, PCS, ProofTranscript>(
@@ -254,62 +272,54 @@ impl WitnessGenerator for CommittedPolynomials {
         ProofTranscript: Transcript,
     {
         match self {
-            // CommittedPolynomials::LeftInstructionInput => {
-            //     let coeffs: Vec<u64> = trace
-            //         .par_iter()
-            //         .map(|cycle| {
-            //             cycle
-            //                 .to_lookup()
-            //                 .map(|lookup| LookupQuery::<32>::to_instruction_inputs(&lookup).0)
-            //                 .unwrap_or_default()
-            //         })
-            //         .collect();
-            //     coeffs.into()
-            // }
-            // CommittedPolynomials::RightInstructionInput => {
-            //     let coeffs: Vec<i64> = trace
-            //         .par_iter()
-            //         .map(|cycle| {
-            //             cycle
-            //                 .to_lookup()
-            //                 .map(|lookup| LookupQuery::<32>::to_instruction_inputs(&lookup).1)
-            //                 .unwrap_or_default()
-            //         })
-            //         .collect();
-            //     coeffs.into()
-            // }
-            // CommittedPolynomials::Product => {
-            //     let coeffs: Vec<u64> = trace
-            //         .par_iter()
-            //         .map(|cycle| {
-            //             cycle
-            //                 .to_lookup()
-            //                 .map(|lookup| {
-            //                     let (left_input, right_input) =
-            //                         LookupQuery::<32>::to_instruction_inputs(&lookup);
-            //                     if left_input.checked_mul(right_input as u64).is_none() {
-            //                         panic!(
-            //                             "At cycle {cycle:?} Overflow in multiplication: {left_input} * {right_input}"
-            //                         );
-            //                     }
-            //                     left_input * right_input as u64
-            //                 })
-            //                 .unwrap_or_default()
-            //         })
-            //         .collect();
-            //     coeffs.into()
-            // }
-            // CommittedPolynomials::WriteLookupOutputToRD => {
-            //     let coeffs: Vec<u8> = trace
-            //         .par_iter()
-            //         .map(|cycle| {
-            //             let flag = cycle.instr.to_circuit_flags()
-            //                 [CircuitFlags::WriteLookupOutputToRD as usize];
-            //             (cycle.td() as u8) * (flag as u8)
-            //         })
-            //         .collect();
-            //     coeffs.into()
-            // }
+            CommittedPolynomials::LeftInstructionInput(i) => {
+                let coeffs: Vec<u64> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        ONNXLookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle)
+                            .0
+                            .get(*i)
+                            .cloned()
+                            .unwrap()
+                    })
+                    .collect();
+                coeffs.into()
+            }
+            CommittedPolynomials::RightInstructionInput(i) => {
+                let coeffs: Vec<i64> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        ONNXLookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle)
+                            .1
+                            .get(*i)
+                            .cloned()
+                            .unwrap()
+                    })
+                    .collect();
+                coeffs.into()
+            }
+            CommittedPolynomials::Product(i) => {
+                let coeffs: Vec<u64> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        let (left_input, right_input) =
+                            ONNXLookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle);
+                        left_input[*i] * right_input[*i] as u64
+                    })
+                    .collect();
+                coeffs.into()
+            }
+            CommittedPolynomials::WriteLookupOutputToRD => {
+                let coeffs: Vec<u8> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        let flag = cycle.instr.to_circuit_flags()
+                            [CircuitFlags::WriteLookupOutputToRD as usize];
+                        (cycle.td_write().0 as u8) * (flag as u8)
+                    })
+                    .collect();
+                coeffs.into()
+            }
             // CommittedPolynomials::RdInc => {
             //     let coeffs: Vec<i64> = trace
             //         .par_iter()
@@ -321,21 +331,26 @@ impl WitnessGenerator for CommittedPolynomials {
             //         .collect();
             //     coeffs.into()
             // }
-            // CommittedPolynomials::InstructionRa(i) => {
-            //     if *i > 3 {
-            //         panic!("Unexpected i: {i}");
-            //     }
-            //     let addresses: Vec<usize> = trace
-            //         .par_iter()
-            //         .map(|cycle| {
-            //             let lookup_index = cycle.to_lookup().map_or(0, |x| x.to_lookup_index());
-            //             let k = (lookup_index >> (16 * (3 - i))) % (1 << 16);
-            //             k as usize
-            //         })
-            //         .collect();
-            //     MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(addresses, 1 << 16))
-            // }
-            _ => todo!("Witness generation for {self:?} is not implemented"),
+
+            // FIXME: I think all polynomials in Spartan have to be the same length (either T or T * MAX_TENSOR_SIZE)
+            CommittedPolynomials::InstructionRa(i) => {
+                if *i > 3 {
+                    panic!("Unexpected i: {i}");
+                }
+                let addresses: Vec<usize> = trace
+                    .par_iter()
+                    .flat_map(|cycle| {
+                        ONNXLookupQuery::<WORD_SIZE>::to_lookup_index(cycle)
+                            .iter()
+                            .map(|lookup_index| {
+                                let k = (lookup_index >> (16 * (3 - i))) % (1 << 16);
+                                k as usize
+                            })
+                            .collect_vec()
+                    })
+                    .collect();
+                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(addresses, 1 << 16))
+            }
         }
     }
 
@@ -358,44 +373,69 @@ impl WitnessGenerator for CommittedPolynomials {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum JoltONNXR1CSInputs {
-    Rd, // Virtual (bytecode rv)
-    RdWriteValue,
-    LeftInstructionInput,  // to_lookup_query -> to_instruction_operands
-    RightInstructionInput, // to_lookup_query -> to_instruction_operands
-    LeftLookupOperand,     // Virtual (instruction raf)
-    RightLookupOperand,    // Virtual (instruction raf)
-    Product,               // LeftInstructionOperand * RightInstructionOperand
-    WriteLookupOutputToRD,
-    LookupOutput, // Virtual (instruction rv)
+    // Rd, // Virtual (bytecode rv)
+    // RdWriteValue,
+    LeftInstructionInput(usize), // to_lookup_query -> to_instruction_operands
+    RightInstructionInput(usize), // to_lookup_query -> to_instruction_operands
+    LeftLookupOperand(usize),    // Virtual (instruction raf)
+    RightLookupOperand(usize),   // Virtual (instruction raf)
+    Product(usize),              // LeftInstructionOperand * RightInstructionOperand
+    // LookupOutput, // Virtual (instruction rv)
+    // WriteLookupOutputToRD,
     OpFlags(CircuitFlags),
 }
 
 /// This const serves to define a canonical ordering over inputs (and thus indices
 /// for each input). This is needed for sumcheck.
-pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs; 13] = [
-    JoltONNXR1CSInputs::LeftInstructionInput,
-    JoltONNXR1CSInputs::RightInstructionInput,
-    JoltONNXR1CSInputs::Product,
-    JoltONNXR1CSInputs::WriteLookupOutputToRD,
-    JoltONNXR1CSInputs::Rd,
-    JoltONNXR1CSInputs::RdWriteValue,
-    JoltONNXR1CSInputs::LeftLookupOperand,
-    JoltONNXR1CSInputs::RightLookupOperand,
-    JoltONNXR1CSInputs::LookupOutput,
-    JoltONNXR1CSInputs::OpFlags(CircuitFlags::AddOperands),
-    JoltONNXR1CSInputs::OpFlags(CircuitFlags::SubtractOperands),
-    JoltONNXR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands),
-    JoltONNXR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD),
-];
+pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs; 5 * MAX_TENSOR_SIZE + 4] = {
+    let mut arr = [JoltONNXR1CSInputs::LeftInstructionInput(0); 5 * MAX_TENSOR_SIZE + 4];
+    let mut idx = 0;
+    while idx < MAX_TENSOR_SIZE {
+        arr[idx] = JoltONNXR1CSInputs::LeftInstructionInput(idx);
+        idx += 1;
+    }
+    let mut j = 0;
+    while j < MAX_TENSOR_SIZE {
+        arr[idx] = JoltONNXR1CSInputs::RightInstructionInput(j);
+        idx += 1;
+        j += 1;
+    }
+    let mut k = 0;
+    while k < MAX_TENSOR_SIZE {
+        arr[idx] = JoltONNXR1CSInputs::Product(k);
+        idx += 1;
+        k += 1;
+    }
+    let mut l = 0;
+    while l < MAX_TENSOR_SIZE {
+        arr[idx] = JoltONNXR1CSInputs::LeftLookupOperand(l);
+        idx += 1;
+        l += 1;
+    }
+    let mut m = 0;
+    while m < MAX_TENSOR_SIZE {
+        arr[idx] = JoltONNXR1CSInputs::RightLookupOperand(m);
+        idx += 1;
+        m += 1;
+    }
+    arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::AddOperands);
+    idx += 1;
+    arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::SubtractOperands);
+    idx += 1;
+    arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands);
+    idx += 1;
+    arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD);
+    arr
+};
 
-/// The subset of `ALL_R1CS_INPUTS` that are committed. The rest of
-/// the inputs are virtual polynomials.
-pub const COMMITTED_R1CS_INPUTS: [JoltONNXR1CSInputs; 4] = [
-    JoltONNXR1CSInputs::LeftInstructionInput,
-    JoltONNXR1CSInputs::RightInstructionInput,
-    JoltONNXR1CSInputs::Product,
-    JoltONNXR1CSInputs::WriteLookupOutputToRD,
-];
+// /// The subset of `ALL_R1CS_INPUTS` that are committed. The rest of
+// /// the inputs are virtual polynomials.
+// pub const COMMITTED_R1CS_INPUTS: [JoltONNXR1CSInputs; 3] = [
+//     JoltONNXR1CSInputs::LeftInstructionInput,
+//     JoltONNXR1CSInputs::RightInstructionInput,
+//     JoltONNXR1CSInputs::Product,
+//     // JoltONNXR1CSInputs::WriteLookupOutputToRD,
+// ];
 
 impl WitnessGenerator for JoltONNXR1CSInputs {
     /// The total number of unique constraint inputs
@@ -436,39 +476,43 @@ impl WitnessGenerator for JoltONNXR1CSInputs {
             //     let coeffs: Vec<u64> = trace.par_iter().map(|cycle| cycle.td_post_val()).collect();
             //     coeffs.into()
             // }
-            // JoltONNXR1CSInputs::LeftInstructionInput => {
-            //     CommittedPolynomials::LeftInstructionInput.generate_witness(preprocessing, trace)
-            // }
-            // JoltONNXR1CSInputs::RightInstructionInput => {
-            //     CommittedPolynomials::RightInstructionInput.generate_witness(preprocessing, trace)
-            // }
-            // JoltONNXR1CSInputs::LeftLookupOperand => {
-            //     let coeffs: Vec<u64> = trace
-            //         .par_iter()
-            //         .map(|cycle| {
-            //             cycle
-            //                 .to_lookup()
-            //                 .map(|lookup| LookupQuery::<32>::to_lookup_operands(&lookup).0)
-            //                 .unwrap_or(0)
-            //         })
-            //         .collect();
-            //     coeffs.into()
-            // }
-            // JoltONNXR1CSInputs::RightLookupOperand => {
-            //     let coeffs: Vec<u64> = trace
-            //         .par_iter()
-            //         .map(|cycle| {
-            //             cycle
-            //                 .to_lookup()
-            //                 .map(|lookup| LookupQuery::<32>::to_lookup_operands(&lookup).1)
-            //                 .unwrap_or(0)
-            //         })
-            //         .collect();
-            //     coeffs.into()
-            // }
-            // JoltONNXR1CSInputs::Product => {
-            //     CommittedPolynomials::Product.generate_witness(preprocessing, trace)
-            // }
+            JoltONNXR1CSInputs::LeftInstructionInput(i) => {
+                CommittedPolynomials::LeftInstructionInput(*i)
+                    .generate_witness(trace, preprocessing)
+            }
+            JoltONNXR1CSInputs::RightInstructionInput(i) => {
+                CommittedPolynomials::RightInstructionInput(*i)
+                    .generate_witness(trace, preprocessing)
+            }
+            JoltONNXR1CSInputs::LeftLookupOperand(i) => {
+                let coeffs: Vec<u64> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        ONNXLookupQuery::<WORD_SIZE>::to_lookup_operands(cycle)
+                            .0
+                            .get(*i)
+                            .cloned()
+                            .unwrap()
+                    })
+                    .collect();
+                coeffs.into()
+            }
+            JoltONNXR1CSInputs::RightLookupOperand(i) => {
+                let coeffs: Vec<u64> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        ONNXLookupQuery::<WORD_SIZE>::to_lookup_operands(cycle)
+                            .1
+                            .get(*i)
+                            .cloned()
+                            .unwrap()
+                    })
+                    .collect();
+                coeffs.into()
+            }
+            JoltONNXR1CSInputs::Product(i) => {
+                CommittedPolynomials::Product(*i).generate_witness(trace, preprocessing)
+            }
             // JoltONNXR1CSInputs::WriteLookupOutputToRD => {
             //     CommittedPolynomials::WriteLookupOutputToRD.generate_witness(preprocessing, trace)
             // }
@@ -484,14 +528,13 @@ impl WitnessGenerator for JoltONNXR1CSInputs {
             //         .collect();
             //     coeffs.into()
             // }
-            // JoltONNXR1CSInputs::OpFlags(flag) => {
-            //     let coeffs: Vec<u8> = trace
-            //         .par_iter()
-            //         .map(|cycle| cycle.instr.to_circuit_flags()[*flag as usize] as u8)
-            //         .collect();
-            //     coeffs.into()
-            // }
-            _ => todo!("Implement witness generation for this input"),
+            JoltONNXR1CSInputs::OpFlags(flag) => {
+                let coeffs: Vec<u8> = trace
+                    .par_iter()
+                    .map(|cycle| cycle.instr.to_circuit_flags()[*flag as usize] as u8)
+                    .collect();
+                coeffs.into()
+            }
         }
     }
 }

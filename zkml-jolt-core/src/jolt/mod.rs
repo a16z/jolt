@@ -95,7 +95,7 @@ where
     F: JoltField,
 {
     #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
-    fn shared_preprocess(bytecode: Vec<ONNXInstr>) -> JoltSharedPreprocessing {
+    pub fn shared_preprocess(bytecode: Vec<ONNXInstr>) -> JoltSharedPreprocessing {
         let bytecode_preprocessing = BytecodePreprocessing::preprocess(bytecode);
         JoltSharedPreprocessing {
             bytecode: bytecode_preprocessing,
@@ -103,7 +103,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
-    fn prover_preprocess(
+    pub fn prover_preprocess(
         bytecode: Vec<ONNXInstr>,
     ) -> JoltProverPreprocessing<F, PCS, ProofTranscript> {
         let small_value_lookup_tables = F::compute_lookup_tables();
