@@ -93,7 +93,7 @@ impl AMOMAXUW {
         let v_tmp = virtual_register_index(11) as usize;
 
         let mut sequence = vec![];
-        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(19);
+        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(10);
 
         virtual_sequence_remaining = amo_pre32(
             &mut sequence,

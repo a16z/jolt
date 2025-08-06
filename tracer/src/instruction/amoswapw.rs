@@ -79,7 +79,7 @@ impl AMOSWAPW {
         let v_rd = virtual_register_index(7) as usize;
 
         let mut sequence = vec![];
-        let mut remaining = 4;
+        let mut remaining = 3;
         remaining = amo_pre32(
             &mut sequence,
             self.address,
