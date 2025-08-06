@@ -28,6 +28,8 @@ members = [
     "jolt-sdk",
     "jolt-sdk/macros",
     "jolt-verifier",
+    "examples/btreemap/host",
+    "examples/btreemap/guest",
     "examples/collatz",
     "examples/collatz/guest",
     "examples/fibonacci",
@@ -105,3 +107,6 @@ ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/tw
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]
+
+[workspace.dependencies]
+spinners = { version= "4.1.1", default-features = false }
