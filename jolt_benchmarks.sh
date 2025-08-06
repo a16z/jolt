@@ -20,14 +20,14 @@ for scale in $(seq 20 $TRACE_LENGTH); do
     BENCH_TYPE=fib BENCH_SCALE=$scale \
         cargo run --release -p jolt-core -- profile --name master-benchmark --format chrome
     
-    # SHA2
-    echo ">>> SHA2 at scale 2^$scale"
-    BENCH_TYPE=sha2 BENCH_SCALE=$scale \
+    # SHA2-chain
+    echo ">>> SHA2-chain at scale 2^$scale"
+    BENCH_TYPE=sha2-chain BENCH_SCALE=$scale \
         cargo run --release -p jolt-core -- profile --name master-benchmark --format chrome
     
-    # SHA3
-    echo ">>> SHA3 at scale 2^$scale"
-    BENCH_TYPE=sha3 BENCH_SCALE=$scale \
+    # SHA3-chain
+    echo ">>> SHA3-chain at scale 2^$scale"
+    BENCH_TYPE=sha3-chain BENCH_SCALE=$scale \
         cargo run --release -p jolt-core -- profile --name master-benchmark --format chrome
     
     # BTreeMap

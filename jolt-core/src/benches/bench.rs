@@ -23,6 +23,7 @@ pub enum BenchType {
     Sha2,
     Sha3,
     Sha2Chain,
+    Sha3Chain,
     Shout,
     Twist,
     MasterBenchmark,
@@ -34,6 +35,7 @@ pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()
         BenchType::Sha2 => sha2(),
         BenchType::Sha3 => sha3(),
         BenchType::Sha2Chain => sha2_chain(),
+        BenchType::Sha3Chain => sha3_chain(),
         BenchType::Fibonacci => fibonacci(),
         BenchType::Shout => shout(),
         BenchType::Twist => twist::<Fr, KeccakTranscript>(),
@@ -136,6 +138,13 @@ fn sha2_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     prove_example("sha2-chain-guest", inputs)
 }
 
+fn sha3_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    let mut inputs = vec![];
+    inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
+    inputs.append(&mut postcard::to_stdvec(&1000u32).unwrap());
+    prove_example("sha3-chain-guest", inputs)
+}
+
 // Helper functions for input scaling
 fn get_fib_input(scale: usize) -> u32 {
     let scale_factor = 1 << (scale - 20);
@@ -145,6 +154,11 @@ fn get_fib_input(scale: usize) -> u32 {
 fn get_sha_input_size(scale: usize) -> usize {
     let scale_factor = 1 << (scale - 20);
     2048
+}
+
+fn get_sha_chain_iterations(scale: usize) -> u32 {
+    let scale_factor = 1 << (scale - 20);
+    1000u32 * scale_factor as u32
 }
 
 fn get_btreemap_ops(scale: usize) -> u32 {
@@ -186,39 +200,43 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                     bench_scale,
                 )
             }
-            "sha2" => {
-                println!("Running SHA2 benchmark at scale 2^{}", bench_scale);
+            "sha2" | "sha2-chain" => {
+                println!("Running SHA2-chain benchmark at scale 2^{}", bench_scale);
                 let (chrome_layer, _guard) = ChromeLayerBuilder::new()
-                    .file(format!("perfetto_traces/sha2_{}.json", bench_scale))
+                    .file(format!("perfetto_traces/sha2_chain_{}.json", bench_scale))
                     .build();
                 let subscriber = tracing_subscriber::registry().with(chrome_layer);
                 let _guard = tracing::subscriber::set_default(subscriber);
                 
-                let sha2_len = get_sha_input_size(bench_scale);
-                let sha2_input = vec![5u8; sha2_len];
+                let iterations = get_sha_chain_iterations(bench_scale);
+                let mut inputs = vec![];
+                inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
+                inputs.append(&mut postcard::to_stdvec(&iterations).unwrap());
                 prove_example_with_trace(
-                    "sha2-guest",
-                    postcard::to_stdvec(&sha2_input).unwrap(),
+                    "sha2-chain-guest",
+                    inputs,
                     max_trace_length,
-                    "SHA2",
+                    "SHA2_chain",
                     bench_scale,
                 )
             }
-            "sha3" => {
-                println!("Running SHA3 benchmark at scale 2^{}", bench_scale);
+            "sha3" | "sha3-chain" => {
+                println!("Running SHA3-chain benchmark at scale 2^{}", bench_scale);
                 let (chrome_layer, _guard) = ChromeLayerBuilder::new()
-                    .file(format!("perfetto_traces/sha3_{}.json", bench_scale))
+                    .file(format!("perfetto_traces/sha3_chain_{}.json", bench_scale))
                     .build();
                 let subscriber = tracing_subscriber::registry().with(chrome_layer);
                 let _guard = tracing::subscriber::set_default(subscriber);
                 
-                let sha3_len = get_sha_input_size(bench_scale);
-                let sha3_input = vec![5u8; sha3_len];
+                let iterations = get_sha_chain_iterations(bench_scale);
+                let mut inputs = vec![];
+                inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
+                inputs.append(&mut postcard::to_stdvec(&iterations).unwrap());
                 prove_example_with_trace(
-                    "sha3-guest",
-                    postcard::to_stdvec(&sha3_input).unwrap(),
+                    "sha3-chain-guest",
+                    inputs,
                     max_trace_length,
-                    "SHA3",
+                    "SHA3_chain",
                     bench_scale,
                 )
             }
@@ -240,7 +258,7 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                 )
             }
             _ => {
-                eprintln!("Unknown benchmark type: {}. Use fib, sha2, sha3, or btreemap", bench_type);
+                eprintln!("Unknown benchmark type: {}. Use fib, sha2, sha2-chain, sha3, sha3-chain, or btreemap", bench_type);
                 return;
             }
         };
