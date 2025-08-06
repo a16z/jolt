@@ -276,7 +276,7 @@ fn prove_ra_booleanity<F: JoltField, ProofTranscript: Transcript>(
 
     let lookup_indices: Vec<u64> = trace
         .par_iter()
-        .flat_map(|cycle| ONNXLookupQuery::<32>::to_lookup_index(cycle))
+        .flat_map(ONNXLookupQuery::<32>::to_lookup_index)
         .collect();
     assert_eq!(lookup_indices.len(), T);
     let G: [Vec<F>; 4] = lookup_indices
@@ -614,7 +614,7 @@ fn prove_ra_hamming_weight<F: JoltField, ProofTranscript: Transcript>(
 
     let lookup_indices: Vec<u64> = trace
         .par_iter()
-        .flat_map(|cycle| ONNXLookupQuery::<32>::to_lookup_index(cycle))
+        .flat_map(ONNXLookupQuery::<32>::to_lookup_index)
         .collect();
     assert_eq!(lookup_indices.len(), T);
     let mut F: [Vec<F>; 4] = lookup_indices

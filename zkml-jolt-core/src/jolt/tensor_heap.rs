@@ -273,7 +273,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                     let (k, pre_value, post_value) = cycle;
                     let increment = *post_value as i64 - *pre_value as i64;
                     debug_assert!(*k != 0 || increment == 0, "{cycle:?}"); // Zero register
-                    delta[*k as usize] += increment;
+                    delta[*k] += increment;
                 }
                 debug_assert_eq!(delta[0], 0); // Zero register
                 delta
@@ -356,7 +356,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                     .iter()
                     .map(|cycle| {
                         let (k, pre_value, post_value) = *cycle;
-                        let k = k as usize;
                         let increment = post_value as i64 - pre_value as i64;
                         let inc = if increment == 0 {
                             (j, k, F::zero(), F::zero())
