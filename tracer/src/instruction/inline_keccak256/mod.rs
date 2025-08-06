@@ -738,9 +738,9 @@ mod tests {
         );
 
         // Verify other lanes unchanged
-        for i in 1..NUM_LANES {
-            assert_eq!(state[i], 0, "Iota should only affect first lane");
-        }
+        state
+            .into_iter()
+            .for_each(|s| assert_eq!(s, 0, "Iota should only affect first lane"));
     }
 
     #[test]
@@ -751,6 +751,7 @@ mod tests {
         let round = 1;
         let expected_states = &xkcp_vectors::EXPECTED_AFTER_ROUND1;
 
+        #[allow(clippy::type_complexity)]
         let steps: &[(&str, fn(&mut [u64; NUM_LANES]), [u64; NUM_LANES])] = &[
             ("theta", execute_theta, expected_states.theta),
             ("rho and pi", execute_rho_and_pi, expected_states.rho_pi),
@@ -759,15 +760,14 @@ mod tests {
 
         for &(name, step_fn, expected) in steps {
             step_fn(&mut state);
-            assert_eq!(state, expected, "Round {}: Failed after {}", round, name);
+            assert_eq!(state, expected, "Round {round}: Failed after {name}");
         }
 
         // Handle iota separately as it has a different signature
         execute_iota(&mut state, ROUND_CONSTANTS[round]);
         assert_eq!(
             state, expected_states.iota,
-            "Round {}: Failed after iota",
-            round
+            "Round {round}: Failed after iota"
         );
     }
 
@@ -778,7 +778,7 @@ mod tests {
         let mut builder = Keccak256SequenceBuilder::new(0x0, false, [0; NEEDED_REGISTERS], 0, 0);
         let dest_reg = 0; // dummy register index
         for (value, amount, expected) in TestVectors::get_rotation_test_vectors() {
-            if amount as u32 >= 64 {
+            if amount >= 64 {
                 // Our rotl64 expects amount < 64; vectors use 32,36 which are fine
             }
             let result_val = match builder.rotl64(Value::Imm(value), amount, dest_reg) {
@@ -787,8 +787,7 @@ mod tests {
             };
             assert_eq!(
                 result_val, expected,
-                "rotl64(0x{:016x}, {}) produced 0x{:016x}, expected 0x{:016x}",
-                value, amount, result_val, expected
+                "rotl64(0x{value:016x}, {amount}) produced 0x{result_val:016x}, expected 0x{expected:016x}"
             );
         }
     }

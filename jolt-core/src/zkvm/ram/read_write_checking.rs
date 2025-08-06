@@ -112,50 +112,60 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         drop(_guard);
         drop(span);
 
-        #[cfg(feature = "test_incremental")]
-        let mut val_test: MultilinearPolynomial<F> = {
-            // Compute Val in cycle-major order, since we will be binding
-            // from low-to-high starting with the cycle variables
-            let mut val: Vec<i128> = vec![0; K * T];
-            val.par_chunks_mut(T).enumerate().for_each(|(k, val_k)| {
-                let mut current_val = initial_memory_state[k];
-                for j in 0..T {
-                    val_k[j] = current_val;
-                    if addresses[j] == k {
-                        current_val = write_values[j] as i128;
-                    }
-                }
-            });
-            MultilinearPolynomial::from(val.iter().map(|v| F::from_i128(*v)).collect::<Vec<F>>())
-        };
+        let ram_addresses = trace
+            .par_iter()
+            .map(|cycle| {
+                remap_address(
+                    cycle.ram_access().address() as u64,
+                    &program_io.memory_layout,
+                )
+            })
+            .collect::<Vec<_>>();
 
-        #[cfg(feature = "test_incremental")]
-        let mut ra_test = {
-            // Compute ra in cycle-major order, since we will be binding
-            // from low-to-high starting with the cycle variables
-            let mut ra: Vec<F> = unsafe_allocate_zero_vec(K * T);
-            ra.par_chunks_mut(T).enumerate().for_each(|(k, ra_k)| {
-                for j in 0..T {
-                    if addresses[j] == k {
-                        ra_k[j] = F::one();
-                    }
-                }
-            });
-            MultilinearPolynomial::from(ra)
-        };
+        // #[cfg(feature = "test_incremental")]
+        // let mut val_test: MultilinearPolynomial<F> = {
+        //     // Compute Val in cycle-major order, since we will be binding
+        //     // from low-to-high starting with the cycle variables
+        //     let mut val: Vec<i128> = vec![0; K * T];
+        //     val.par_chunks_mut(T).enumerate().for_each(|(k, val_k)| {
+        //         let mut current_val = initial_memory_state[k];
+        //         for j in 0..T {
+        //             val_k[j] = current_val as i128;
+        //             if ram_addresses[j] == Some(k as u64) {
+        //                 current_val = write_values[j] as i128;
+        //             }
+        //         }
+        //     });
+        //     MultilinearPolynomial::from(val.iter().map(|v| F::from_i128(*v)).collect::<Vec<F>>())
+        // };
 
-        #[cfg(feature = "test_incremental")]
-        let mut inc_test = {
-            let mut inc = unsafe_allocate_zero_vec(K * T);
-            inc.par_chunks_mut(T).enumerate().for_each(|(k, inc_k)| {
-                for j in 0..T {
-                    if addresses[j] == k {
-                        inc_k[j] = F::from_i128(write_increments[j]);
-                    }
-                }
-            });
-            MultilinearPolynomial::from(inc)
-        };
+        // #[cfg(feature = "test_incremental")]
+        // let mut ra_test = {
+        //     // Compute ra in cycle-major order, since we will be binding
+        //     // from low-to-high starting with the cycle variables
+        //     let mut ra: Vec<F> = unsafe_allocate_zero_vec(K * T);
+        //     ra.par_chunks_mut(T).enumerate().for_each(|(k, ra_k)| {
+        //         for j in 0..T {
+        //             if ram_addresses[j] == Some(k as u64) {
+        //                 ra_k[j] = F::one();
+        //             }
+        //         }
+        //     });
+        //     MultilinearPolynomial::from(ra)
+        // };
+        //
+        // #[cfg(feature = "test_incremental")]
+        // let mut inc_test = {
+        //     let mut inc = unsafe_allocate_zero_vec(K * T);
+        //     inc.par_chunks_mut(T).enumerate().for_each(|(k, inc_k)| {
+        //         for j in 0..T {
+        //             if ram_addresses[j] == Some(k as u64) {
+        //                 inc_k[j] = F::from_i128(deltas[k][j]);
+        //             }
+        //         }
+        //     });
+        //     MultilinearPolynomial::from(inc)
+        // };
 
         let span = tracing::span!(tracing::Level::INFO, "compute checkpoints");
         let _guard = span.enter();
@@ -194,20 +204,20 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         drop(_guard);
         drop(span);
 
-        #[cfg(feature = "test_incremental")]
-        {
-            // Check that checkpoints are correct
-            for (chunk_index, checkpoint) in val_checkpoints.chunks(K).enumerate() {
-                let j = chunk_index * chunk_size;
-                for (k, V_k) in checkpoint.iter().enumerate() {
-                    assert_eq!(
-                        *V_k,
-                        val_test.get_bound_coeff(k * T + j),
-                        "k = {k}, j = {j}"
-                    );
-                }
-            }
-        }
+        // #[cfg(feature = "test_incremental")]
+        // {
+        //     // Check that checkpoints are correct
+        //     for (chunk_index, checkpoint) in val_checkpoints.chunks(K).enumerate() {
+        //         let j = chunk_index * chunk_size;
+        //         for (k, V_k) in checkpoint.iter().enumerate() {
+        //             assert_eq!(
+        //                 *V_k,
+        //                 val_test.get_bound_coeff(k * T + j),
+        //                 "k = {k}, j = {j}"
+        //             );
+        //         }
+        //     }
+        // }
 
         // A table that, in round i of sumcheck, stores all evaluations
         //     EQ(x, r_i, ..., r_1)
@@ -267,16 +277,6 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
                 dirty_indices: Vec::with_capacity(K),
             })
             .collect();
-
-        let ram_addresses = trace
-            .par_iter()
-            .map(|cycle| {
-                remap_address(
-                    cycle.ram_access().address() as u64,
-                    &program_io.memory_layout,
-                )
-            })
-            .collect::<Vec<_>>();
 
         ReadWriteCheckingProverState {
             ram_addresses,
