@@ -24,7 +24,7 @@ use jolt_core::{
     },
     utils::{errors::ProofVerifyError, transcript::Transcript},
 };
-use onnx_tracer::trace_types::{ONNXCycle, ONNXInstr};
+use onnx_tracer::trace_types::ONNXInstr;
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 
@@ -225,16 +225,14 @@ mod tests {
     };
     use onnx_tracer::{constants::MAX_TENSOR_SIZE, custom_addsubmul_model, tensor::Tensor};
 
-    use crate::{
-        tensor_jolt::{JoltProverPreprocessing, JoltSNARK},
-        tensor_jolt::{
-            execution_trace::{JoltONNXCycle, jolt_trace},
-            r1cs::{
-                constraints::{JoltONNXConstraints, R1CSConstraints},
-                spartan::UniformSpartanProof,
-            },
-            sparse_dense_shout::{prove_sparse_dense_shout, verify_sparse_dense_shout},
+    use crate::tensor_jolt::{
+        JoltProverPreprocessing, JoltSNARK,
+        execution_trace::{JoltONNXCycle, jolt_execution_trace},
+        r1cs::{
+            constraints::{JoltONNXConstraints, R1CSConstraints},
+            spartan::UniformSpartanProof,
         },
+        sparse_dense_shout::{prove_sparse_dense_shout, verify_sparse_dense_shout},
     };
 
     type PCS = DoryCommitmentScheme<KeccakTranscript>;
@@ -251,7 +249,7 @@ mod tests {
         // Get execution trace
         let input = Tensor::new(Some(&[10, 20, 30, 40]), &[1, 4]).unwrap();
         let raw_trace = onnx_tracer::execution_trace(custom_addsubmul_model, &input);
-        let mut execution_trace = jolt_trace(raw_trace);
+        let execution_trace = jolt_execution_trace(raw_trace);
         println!("Execution trace: {execution_trace:#?}");
         let snark: JoltSNARK<Fr, PCS, KeccakTranscript> =
             JoltSNARK::prove(pp.clone(), execution_trace);
@@ -272,7 +270,7 @@ mod tests {
         // Get execution trace
         let input = Tensor::new(Some(&[10, 20, 30, 40]), &[1, 4]).unwrap();
         let raw_trace = onnx_tracer::execution_trace(custom_addsubmul_model, &input);
-        let mut execution_trace = jolt_trace(raw_trace);
+        let mut execution_trace = jolt_execution_trace(raw_trace);
         execution_trace.resize(
             execution_trace.len().next_power_of_two(),
             JoltONNXCycle::no_op(),

@@ -6,7 +6,7 @@ use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_core::{
     field::JoltField,
     jolt::{
-        instruction::{InstructionLookup, LookupQuery},
+        instruction::InstructionLookup,
         lookup_table::{
             LookupTables,
             prefixes::{PrefixCheckpoint, PrefixEval, Prefixes},
@@ -30,7 +30,7 @@ use jolt_core::{
     },
 };
 use onnx_tracer::constants::MAX_TENSOR_SIZE;
-use onnx_tracer::trace_types::{InterleavedBitsMarker, ONNXCycle};
+use onnx_tracer::trace_types::InterleavedBitsMarker;
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
 

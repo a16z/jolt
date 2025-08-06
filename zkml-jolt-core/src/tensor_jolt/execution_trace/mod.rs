@@ -90,7 +90,7 @@ impl From<ONNXCycle> for JoltONNXCycle {
     }
 }
 
-pub fn jolt_trace(raw_trace: Vec<ONNXCycle>) -> ExecutionTrace {
+pub fn jolt_execution_trace(raw_trace: Vec<ONNXCycle>) -> ExecutionTrace {
     raw_trace.into_iter().map(JoltONNXCycle::from).collect()
 }
 
@@ -264,7 +264,7 @@ impl WitnessGenerator for CommittedPolynomials {
     fn generate_witness<F, PCS, ProofTranscript>(
         &self,
         trace: &[JoltONNXCycle],
-        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
+        _preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
     ) -> MultilinearPolynomial<F>
     where
         F: JoltField,
