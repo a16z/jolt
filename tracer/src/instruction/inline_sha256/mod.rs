@@ -3,6 +3,7 @@ use crate::inline_helpers::{
     Value::{Imm, Reg},
 };
 
+use crate::instruction::andn::ANDN;
 use crate::instruction::lw::LW;
 use crate::instruction::sw::SW;
 use crate::instruction::RV32IMInstruction;
@@ -252,9 +253,21 @@ impl Sha256SequenceBuilder {
     /// Ch(E, F, G) = (E and F) xor ((not E) and G)
     fn sha_ch(&mut self, rs1: Value, rs2: Value, rs3: Value, rd: usize, ss: usize) -> Value {
         let e_and_f = self.asm.and(rs1, rs2, ss);
-        let neg_e = self.asm.xor(rs1, Imm(u32::MAX as u64), rd);
-        let neg_e_and_g = self.asm.and(neg_e, rs3, rd);
-        self.asm.xor(e_and_f, neg_e_and_g, rd)
+        // Use ANDN to compute (not E) and G in one instruction
+        // ANDN computes rs1 & !rs2, so andn(G, E) gives G & !E = !E & G
+        match (rs1, rs3) {
+            (Reg(r1), Reg(r3)) => {
+                self.asm.emit_r::<ANDN>(rd, r3, r1);
+                let neg_e_and_g = Reg(rd);
+                self.asm.xor(e_and_f, neg_e_and_g, rd)
+            }
+            _ => {
+                // Fallback for immediate values (used in first few rounds)
+                let neg_e = self.asm.xor(rs1, Imm(u32::MAX as u64), rd);
+                let neg_e_and_g = self.asm.and(neg_e, rs3, rd);
+                self.asm.xor(e_and_f, neg_e_and_g, rd)
+            }
+        }
     }
 
     /// Computes sha256 Maj function: Maj(A, B, C) = (A and B) xor (A and C) xor (B and C)
