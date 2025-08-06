@@ -101,7 +101,7 @@ pub fn prove_sparse_dense_shout<F: JoltField, ProofTranscript: Transcript>(
     // TODO: these claims should be connected from spartan
     let (right_operand_evals, left_operand_evals): (Vec<u64>, Vec<u64>) = trace
         .par_iter()
-        .flat_map(|cycle| ONNXLookupQuery::<WORD_SIZE>::to_lookup_operands(cycle))
+        .flat_map(ONNXLookupQuery::<WORD_SIZE>::to_lookup_operands)
         .unzip();
 
     let right_operand_claim = MultilinearPolynomial::from(right_operand_evals).evaluate(r_cycle);
