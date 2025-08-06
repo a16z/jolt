@@ -1,4 +1,5 @@
 use and::AndTable;
+use andn::AndnTable;
 use enum_dispatch::enum_dispatch;
 use equal::EqualTable;
 use halfword_alignment::HalfwordAlignmentTable;
@@ -68,6 +69,7 @@ pub mod prefixes;
 pub mod suffixes;
 
 pub mod and;
+pub mod andn;
 pub mod equal;
 pub mod halfword_alignment;
 pub mod lower_half_word;
@@ -107,6 +109,7 @@ pub const NUM_LOOKUP_TABLES: usize = LookupTables::<32>::COUNT;
 pub enum LookupTables<const WORD_SIZE: usize> {
     RangeCheck(RangeCheckTable<WORD_SIZE>),
     And(AndTable<WORD_SIZE>),
+    Andn(AndnTable<WORD_SIZE>),
     Or(OrTable<WORD_SIZE>),
     Xor(XorTable<WORD_SIZE>),
     Equal(EqualTable<WORD_SIZE>),
@@ -147,6 +150,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
         match self {
             LookupTables::RangeCheck(table) => table.materialize(),
             LookupTables::And(table) => table.materialize(),
+            LookupTables::Andn(table) => table.materialize(),
             LookupTables::Or(table) => table.materialize(),
             LookupTables::Xor(table) => table.materialize(),
             LookupTables::Equal(table) => table.materialize(),
@@ -180,6 +184,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
         match self {
             LookupTables::RangeCheck(table) => table.materialize_entry(index),
             LookupTables::And(table) => table.materialize_entry(index),
+            LookupTables::Andn(table) => table.materialize_entry(index),
             LookupTables::Or(table) => table.materialize_entry(index),
             LookupTables::Xor(table) => table.materialize_entry(index),
             LookupTables::Equal(table) => table.materialize_entry(index),
@@ -213,6 +218,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
         match self {
             LookupTables::RangeCheck(table) => table.evaluate_mle(r),
             LookupTables::And(table) => table.evaluate_mle(r),
+            LookupTables::Andn(table) => table.evaluate_mle(r),
             LookupTables::Or(table) => table.evaluate_mle(r),
             LookupTables::Xor(table) => table.evaluate_mle(r),
             LookupTables::Equal(table) => table.evaluate_mle(r),
@@ -246,6 +252,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
         match self {
             LookupTables::RangeCheck(table) => table.suffixes(),
             LookupTables::And(table) => table.suffixes(),
+            LookupTables::Andn(table) => table.suffixes(),
             LookupTables::Or(table) => table.suffixes(),
             LookupTables::Xor(table) => table.suffixes(),
             LookupTables::Equal(table) => table.suffixes(),
@@ -283,6 +290,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
         match self {
             LookupTables::RangeCheck(table) => table.combine(prefixes, suffixes),
             LookupTables::And(table) => table.combine(prefixes, suffixes),
+            LookupTables::Andn(table) => table.combine(prefixes, suffixes),
             LookupTables::Or(table) => table.combine(prefixes, suffixes),
             LookupTables::Xor(table) => table.combine(prefixes, suffixes),
             LookupTables::Equal(table) => table.combine(prefixes, suffixes),

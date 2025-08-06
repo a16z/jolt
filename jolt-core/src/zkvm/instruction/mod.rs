@@ -205,7 +205,7 @@ macro_rules! define_rv32im_trait_impls {
 
 define_rv32im_trait_impls! {
     instructions: [
-        ADD, ADDI, AND, ANDI, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
+        ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
         ECALL, FENCE, JAL, JALR, LUI, LD, MUL, MULHU, OR, ORI,
         SLT, SLTI, SLTIU, SLTU, SUB, SD, XOR, XORI,
         VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment,
@@ -222,6 +222,7 @@ pub mod add;
 pub mod addi;
 pub mod and;
 pub mod andi;
+pub mod andn;
 pub mod auipc;
 pub mod beq;
 pub mod bge;
