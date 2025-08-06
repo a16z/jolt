@@ -26,7 +26,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for AndnPrefix<W
             // c * (1 - y_msb) = c when y_msb = 0, 0 when y_msb = 1
             result += F::from_u32(c * (1 - y_msb)) * F::from_u64(1 << shift);
         }
-        
+
         // ANDN remaining x and y bits
         let (x, y) = b.uninterleave();
         let suffix_len = current_suffix_len(j);

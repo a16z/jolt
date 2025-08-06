@@ -3,7 +3,7 @@ use crate::field::JoltField;
 use crate::utils::uninterleave_bits;
 use serde::{Deserialize, Serialize};
 
-use super::prefixes::PrefixEval;
+use super::prefixes::{PrefixEval, Prefixes};
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 
@@ -89,11 +89,14 @@ impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
     for VirtualChangeDivisorTable<WORD_SIZE>
 {
     fn suffixes(&self) -> Vec<Suffixes> {
-        vec![]
+        vec![Suffixes::One, Suffixes::YSum, Suffixes::AllYProduct]
     }
 
-    fn combine<F: JoltField>(&self, _prefixes: &[PrefixEval<F>], _suffixes: &[SuffixEval<F>]) -> F {
-        todo!("combine for VirtualChangeDivisorTable")
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        debug_assert_eq!(self.suffixes().len(), suffixes.len());
+        let [one, y_sum, all_y_product] = suffixes.try_into().unwrap();
+
+        prefixes[Prefixes::YSum] * one + y_sum + prefixes[Prefixes::ChangeDivisor] * all_y_product
     }
 }
 
@@ -109,7 +112,6 @@ mod test {
     use super::VirtualChangeDivisorTable;
 
     #[test]
-    #[ignore] // Remove when prefix-suffix decomposition is implemented
     fn prefix_suffix() {
         prefix_suffix_test::<XLEN, Fr, VirtualChangeDivisorTable<XLEN>>();
     }

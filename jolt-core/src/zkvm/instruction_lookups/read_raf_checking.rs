@@ -792,6 +792,7 @@ mod tests {
             RV32IMCycle::ADD(cycle) => cycle.random(rng).into(),
             RV32IMCycle::ADDI(cycle) => cycle.random(rng).into(),
             RV32IMCycle::AND(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::ANDN(cycle) => cycle.random(rng).into(),
             RV32IMCycle::ANDI(cycle) => cycle.random(rng).into(),
             RV32IMCycle::AUIPC(cycle) => cycle.random(rng).into(),
             RV32IMCycle::BEQ(cycle) => cycle.random(rng).into(),
@@ -1003,6 +1004,11 @@ mod tests {
     #[test]
     fn test_and() {
         test_read_raf_sumcheck(Some(RV32IMCycle::AND(Default::default())));
+    }
+
+    #[test]
+    fn test_andn() {
+        test_read_raf_sumcheck(Some(RV32IMCycle::ANDN(Default::default())));
     }
 
     #[test]

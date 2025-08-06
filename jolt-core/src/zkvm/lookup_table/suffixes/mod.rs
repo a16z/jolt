@@ -18,6 +18,7 @@ use sign_extension::SignExtensionSuffix;
 use sign_extension_upper_half::SignExtensionUpperHalfSuffix;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
+use all_y_product::AllYProductSuffix;
 use and::AndSuffix;
 use lower_half_word::LowerHalfWordSuffix;
 use lower_word::LowerWordSuffix;
@@ -26,18 +27,20 @@ use one::OneSuffix;
 use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
 use xor::XorSuffix;
+use y_sum::YSumSuffix;
 
+pub mod all_y_product;
 pub mod and;
 pub mod div_by_zero;
 pub mod eq;
 pub mod gt;
-pub mod notand;
 pub mod left_is_zero;
 pub mod left_shift;
 pub mod lower_half_word;
 pub mod lower_word;
 pub mod lsb;
 pub mod lt;
+pub mod notand;
 pub mod one;
 pub mod or;
 pub mod pow2;
@@ -51,6 +54,7 @@ pub mod sign_extension_upper_half;
 pub mod two_lsb;
 pub mod upper_word;
 pub mod xor;
+pub mod y_sum;
 
 pub trait SparseDenseSuffix: 'static + Sync {
     /// Evaluates the MLE for this suffix on the bitvector `b`, where
@@ -67,6 +71,8 @@ pub enum Suffixes {
     NotAnd,
     Xor,
     Or,
+    YSum,
+    AllYProduct,
     UpperWord,
     LowerWord,
     LowerHalfWord,
@@ -100,6 +106,8 @@ impl Suffixes {
             Suffixes::NotAnd => NotAndSuffix::suffix_mle(b),
             Suffixes::Or => OrSuffix::suffix_mle(b),
             Suffixes::Xor => XorSuffix::suffix_mle(b),
+            Suffixes::YSum => YSumSuffix::suffix_mle(b),
+            Suffixes::AllYProduct => AllYProductSuffix::suffix_mle(b),
             Suffixes::UpperWord => UpperWordSuffix::<WORD_SIZE>::suffix_mle(b),
             Suffixes::LowerWord => LowerWordSuffix::<WORD_SIZE>::suffix_mle(b),
             Suffixes::LowerHalfWord => LowerHalfWordSuffix::<WORD_SIZE>::suffix_mle(b),
