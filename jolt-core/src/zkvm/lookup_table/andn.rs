@@ -31,11 +31,13 @@ impl<const WORD_SIZE: usize> JoltLookupTable for AndnTable<WORD_SIZE> {
 
 impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for AndnTable<WORD_SIZE> {
     fn suffixes(&self) -> Vec<Suffixes> {
-        todo!()
+        vec![Suffixes::One, Suffixes::NotAnd]
     }
 
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
-        todo!()
+        debug_assert_eq!(self.suffixes().len(), suffixes.len());
+        let [one, andn] = suffixes.try_into().unwrap();
+        prefixes[Prefixes::Andn] * one + andn
     }
 }
 

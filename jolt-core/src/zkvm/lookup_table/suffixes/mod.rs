@@ -21,6 +21,7 @@ use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 use and::AndSuffix;
 use lower_half_word::LowerHalfWordSuffix;
 use lower_word::LowerWordSuffix;
+use notand::NotAndSuffix;
 use one::OneSuffix;
 use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
@@ -30,6 +31,7 @@ pub mod and;
 pub mod div_by_zero;
 pub mod eq;
 pub mod gt;
+pub mod notand;
 pub mod left_is_zero;
 pub mod left_shift;
 pub mod lower_half_word;
@@ -62,6 +64,7 @@ pub trait SparseDenseSuffix: 'static + Sync {
 pub enum Suffixes {
     One,
     And,
+    NotAnd,
     Xor,
     Or,
     UpperWord,
@@ -94,6 +97,7 @@ impl Suffixes {
         match self {
             Suffixes::One => OneSuffix::suffix_mle(b),
             Suffixes::And => AndSuffix::suffix_mle(b),
+            Suffixes::NotAnd => NotAndSuffix::suffix_mle(b),
             Suffixes::Or => OrSuffix::suffix_mle(b),
             Suffixes::Xor => XorSuffix::suffix_mle(b),
             Suffixes::UpperWord => UpperWordSuffix::<WORD_SIZE>::suffix_mle(b),

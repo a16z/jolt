@@ -19,6 +19,7 @@ use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
 use and::AndPrefix;
+use andn::AndnPrefix;
 use div_by_zero::DivByZeroPrefix;
 use eq::EqPrefix;
 use left_is_zero::LeftOperandIsZeroPrefix;
@@ -35,6 +36,7 @@ use upper_word::UpperWordPrefix;
 use xor::XorPrefix;
 
 pub mod and;
+pub mod andn;
 pub mod div_by_zero;
 pub mod eq;
 pub mod left_is_zero;
@@ -108,6 +110,7 @@ pub enum Prefixes {
     UpperWord,
     Eq,
     And,
+    Andn,
     Or,
     Xor,
     LessThan,
@@ -197,6 +200,7 @@ impl Prefixes {
                 UpperWordPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
             }
             Prefixes::And => AndPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::Andn => AndnPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::Or => OrPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::Xor => XorPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::Eq => EqPrefix::prefix_mle(checkpoints, r_x, c, b, j),
@@ -298,6 +302,9 @@ impl Prefixes {
             }
             Prefixes::And => {
                 AndPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::Andn => {
+                AndnPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
             Prefixes::Or => {
                 OrPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
