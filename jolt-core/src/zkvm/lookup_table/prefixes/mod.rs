@@ -1,5 +1,3 @@
-use crate::zkvm::lookup_table::prefixes::left_shift::LeftShiftPrefix;
-use crate::zkvm::lookup_table::prefixes::left_shift_helper::LeftShiftHelperPrefix;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 use lsb::LsbPrefix;
 use negative_divisor_equals_remainder::NegativeDivisorEqualsRemainderPrefix;
@@ -19,10 +17,14 @@ use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
 use and::AndPrefix;
+use andn::AndnPrefix;
+use change_divisor::ChangeDivisorPrefix;
 use div_by_zero::DivByZeroPrefix;
 use eq::EqPrefix;
 use left_is_zero::LeftOperandIsZeroPrefix;
 use left_msb::LeftMsbPrefix;
+use left_shift::LeftShiftPrefix;
+use left_shift_helper::LeftShiftHelperPrefix;
 use lower_half_word::LowerHalfWordPrefix;
 use lower_word::LowerWordPrefix;
 use lt::LessThanPrefix;
@@ -30,11 +32,14 @@ use num::FromPrimitive;
 use or::OrPrefix;
 use right_is_zero::RightOperandIsZeroPrefix;
 use right_msb::RightMsbPrefix;
+use right_operand::RightOperandPrefix;
 use two_lsb::TwoLsbPrefix;
 use upper_word::UpperWordPrefix;
 use xor::XorPrefix;
 
 pub mod and;
+pub mod andn;
+pub mod change_divisor;
 pub mod div_by_zero;
 pub mod eq;
 pub mod left_is_zero;
@@ -55,6 +60,7 @@ pub mod pow2;
 pub mod pow2_w;
 pub mod right_is_zero;
 pub mod right_msb;
+pub mod right_operand;
 pub mod right_shift;
 pub mod sign_extension;
 pub mod sign_extension_upper_half;
@@ -108,6 +114,7 @@ pub enum Prefixes {
     UpperWord,
     Eq,
     And,
+    Andn,
     Or,
     Xor,
     LessThan,
@@ -130,6 +137,8 @@ pub enum Prefixes {
     LeftShiftHelper,
     TwoLsb,
     SignExtensionUpperHalf,
+    ChangeDivisor,
+    RightOperand,
 }
 
 #[derive(Clone, Copy)]
@@ -197,6 +206,7 @@ impl Prefixes {
                 UpperWordPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
             }
             Prefixes::And => AndPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::Andn => AndnPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::Or => OrPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::Xor => XorPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::Eq => EqPrefix::prefix_mle(checkpoints, r_x, c, b, j),
@@ -241,6 +251,12 @@ impl Prefixes {
             Prefixes::TwoLsb => TwoLsbPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::SignExtensionUpperHalf => {
                 SignExtensionUpperHalfPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::ChangeDivisor => {
+                ChangeDivisorPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::RightOperand => {
+                RightOperandPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
             }
         };
         PrefixEval(eval)
@@ -298,6 +314,9 @@ impl Prefixes {
             }
             Prefixes::And => {
                 AndPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::Andn => {
+                AndnPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
             Prefixes::Or => {
                 OrPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
@@ -395,6 +414,12 @@ impl Prefixes {
                     r_y,
                     j,
                 )
+            }
+            Prefixes::ChangeDivisor => {
+                ChangeDivisorPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::RightOperand => {
+                RightOperandPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
         }
     }
