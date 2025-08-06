@@ -75,7 +75,7 @@ impl JoltONNXCycle {
 impl From<ONNXCycle> for JoltONNXCycle {
     fn from(raw_cycle: ONNXCycle) -> Self {
         let mut cycle = JoltONNXCycle::no_op();
-        let (ts1_read, ts2_read, td_write) = raw_cycle.to_tensor_memory_ops();
+        let (ts1_read, ts2_read, td_write) = raw_cycle.to_memory_ops();
         cycle.memory_ops = MemoryOps {
             ts1_read,
             ts2_read,
@@ -228,7 +228,7 @@ pub enum CommittedPolynomials {
     Product(usize),
     // /// Whether the current instruction should write the lookup output to
     // /// the destination register
-    WriteLookupOutputToRD(usize),
+    WriteLookupOutputToTD(usize),
     // /// Inc polynomial for the registers instance of Twist
     // RdInc,
     /// One-hot ra polynomial for the instruction lookups instance of Shout.
@@ -257,7 +257,7 @@ pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 4 * MAX_TENSOR_SIZE 
     }
     let mut n = 0;
     while n < MAX_TENSOR_SIZE {
-        arr[idx] = CommittedPolynomials::WriteLookupOutputToRD(n);
+        arr[idx] = CommittedPolynomials::WriteLookupOutputToTD(n);
         idx += 1;
         n += 1;
     }
@@ -317,12 +317,12 @@ impl WitnessGenerator for CommittedPolynomials {
                     .collect();
                 coeffs.into()
             }
-            CommittedPolynomials::WriteLookupOutputToRD(i) => {
+            CommittedPolynomials::WriteLookupOutputToTD(i) => {
                 let coeffs: Vec<u8> = trace
                     .par_iter()
                     .map(|cycle| {
                         let flag = cycle.instr.to_circuit_flags()
-                            [CircuitFlags::WriteLookupOutputToRD as usize];
+                            [CircuitFlags::WriteLookupOutputToTD as usize];
                         (cycle.td_write().0[*i] as u8) * (flag as u8)
                     })
                     .collect();
@@ -389,7 +389,7 @@ pub enum JoltONNXR1CSInputs {
     RightLookupOperand(usize),   // Virtual (instruction raf)
     Product(usize),              // LeftInstructionOperand * RightInstructionOperand
     LookupOutput(usize),         // Virtual (instruction rv)
-    WriteLookupOutputToRD(usize),
+    WriteLookupOutputToTD(usize),
     OpFlags(CircuitFlags),
 }
 
@@ -446,7 +446,7 @@ pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs; 9 * MAX_TENSOR_SIZE + 4] = {
     }
     let mut o = 0;
     while o < MAX_TENSOR_SIZE {
-        arr[idx] = JoltONNXR1CSInputs::WriteLookupOutputToRD(o);
+        arr[idx] = JoltONNXR1CSInputs::WriteLookupOutputToTD(o);
         idx += 1;
         o += 1;
     }
@@ -456,7 +456,7 @@ pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs; 9 * MAX_TENSOR_SIZE + 4] = {
     idx += 1;
     arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands);
     idx += 1;
-    arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD);
+    arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToTD);
     arr
 };
 
@@ -551,8 +551,8 @@ impl WitnessGenerator for JoltONNXR1CSInputs {
             JoltONNXR1CSInputs::Product(i) => {
                 CommittedPolynomials::Product(*i).generate_witness(trace, preprocessing)
             }
-            JoltONNXR1CSInputs::WriteLookupOutputToRD(i) => {
-                CommittedPolynomials::WriteLookupOutputToRD(*i)
+            JoltONNXR1CSInputs::WriteLookupOutputToTD(i) => {
+                CommittedPolynomials::WriteLookupOutputToTD(*i)
                     .generate_witness(trace, preprocessing)
             }
             JoltONNXR1CSInputs::LookupOutput(i) => {
