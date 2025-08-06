@@ -818,12 +818,20 @@ impl Model {
         Ok(node_id)
     }
 
-    pub fn add_inputs(&mut self, inputs: Vec<usize>) {
-        self.graph.inputs.extend(inputs);
+    pub fn insert_node(&mut self, node: Node) {
+        let node_id = node.idx;
+        if self.graph.nodes.contains_key(&node_id) {
+            panic!("Node with index {node_id} already exists.");
+        }
+        self.graph.nodes.insert(node_id, NodeType::Node(node));
     }
 
-    pub fn add_outputs(&mut self, outputs: Vec<Outlet>) {
-        self.graph.outputs.extend(outputs);
+    pub fn set_inputs(&mut self, inputs: Vec<usize>) {
+        self.graph.inputs = inputs;
+    }
+
+    pub fn set_outputs(&mut self, outputs: Vec<Outlet>) {
+        self.graph.outputs = outputs;
     }
 }
 
@@ -1240,9 +1248,12 @@ fn output_state_idx(output_mappings: &[Vec<OutputMapping>]) -> Vec<usize> {
 
 #[cfg(test)]
 mod tests {
-    use crate::circuit::{
-        ops::{lookup::LookupOp, poly::PolyOp, InputType},
-        utils::F32,
+    use crate::{
+        circuit::ops::poly::PolyOp,
+        graph::utilities::{
+            create_input_node, create_matmul_node, create_polyop_node, create_relu_node,
+            create_sigmoid_node,
+        },
     };
 
     use super::*;
@@ -1251,29 +1262,26 @@ mod tests {
     fn test_model_builder_mat_mul() {
         let mut model = Model::default();
 
-        let input_node = SupportedOp::Input(Input {
-            scale: 1,
-            datum_type: InputType::F32,
-        });
+        // Create input nodes using the helper
+        let input_node0 = create_input_node(1, vec![2, 2], 0, 1);
+        let input_node1 = create_input_node(1, vec![1, 2], 1, 1);
 
-        // Add matrix node input
-        model
-            .add_node(input_node.clone(), vec![], vec![2, 2])
-            .unwrap();
-        // Add vector node input
-        model
-            .add_node(input_node.clone(), vec![], vec![1, 2])
-            .unwrap();
+        model.insert_node(input_node0);
+        model.insert_node(input_node1);
 
-        let mat_mul_node = SupportedOp::Linear(PolyOp::Einsum {
-            equation: "ij,bj->bi".to_string(),
-        });
+        // Create matmul node using the helper
+        let matmul_node = create_matmul_node(
+            "ij,bj->bi".to_string(),
+            1,
+            vec![(0, 0), (1, 0)],
+            vec![1, 2],
+            2,
+            1,
+        );
+        model.insert_node(matmul_node);
 
-        model
-            .add_node(mat_mul_node, vec![(0, 0), (1, 0)], vec![1, 2])
-            .unwrap();
-        model.add_inputs(vec![0, 1]);
-        model.add_outputs(vec![(2, 0)]);
+        model.set_inputs(vec![0, 1]);
+        model.set_outputs(vec![(2, 0)]);
 
         // Test execution with vector-matrix multiplication
         // Vector: [1, 2]
@@ -1294,26 +1302,21 @@ mod tests {
     fn test_model_builder_relu() {
         let mut model = Model::default();
 
-        let input_node = SupportedOp::Input(Input {
-            scale: 1,
-            datum_type: InputType::F32,
-        });
+        // Use helper to create input node
+        let input_node = create_input_node(1, vec![1, 4], 0, 1);
+        model.insert_node(input_node);
 
-        model
-            .add_node(input_node.clone(), vec![], vec![1, 4])
-            .unwrap();
+        // Use helper to create relu node
+        let relu_node = create_relu_node(1, vec![(0, 0)], vec![1, 4], 1, 1);
+        model.insert_node(relu_node);
 
-        let relu_node = SupportedOp::Nonlinear(LookupOp::ReLU);
-
-        model.add_node(relu_node, vec![(0, 0)], vec![1, 4]).unwrap();
-        model.add_inputs(vec![0]);
-        model.add_outputs(vec![(1, 0)]);
+        model.set_inputs(vec![0]);
+        model.set_outputs(vec![(1, 0)]);
 
         // Test execution with various inputs
         let input = Tensor::new(Some(&[-1, 0, 1, 2]), &[1, 4]).unwrap();
         let result = model.forward(&[input]).unwrap();
 
-        // Expected result: [0.0, 0.0, 1.0, 2.0]
         assert_eq!(result.outputs.len(), 1);
         assert_eq!(
             result.outputs[0],
@@ -1325,24 +1328,16 @@ mod tests {
     fn test_model_builder_sigmoid() {
         let mut model = Model::default();
 
-        let input_node = SupportedOp::Input(Input {
-            scale: 1,
-            datum_type: InputType::F32,
-        });
+        // Use helper to create input node
+        let input_node = create_input_node(1, vec![1, 3], 0, 1);
+        model.insert_node(input_node);
 
-        // input: shape [1, 3]
-        model
-            .add_node(input_node.clone(), vec![], vec![1, 3])
-            .unwrap();
+        // Use helper to create sigmoid node
+        let sigmoid_node = create_sigmoid_node(1, vec![(0, 0)], vec![1, 3], 1, 1);
+        model.insert_node(sigmoid_node);
 
-        // sigmoid node
-        let sigmoid_node = SupportedOp::Nonlinear(LookupOp::Sigmoid { scale: F32(1.0) });
-        model
-            .add_node(sigmoid_node, vec![(0, 0)], vec![1, 3])
-            .unwrap();
-
-        model.add_inputs(vec![0]);
-        model.add_outputs(vec![(1, 0)]);
+        model.set_inputs(vec![0]);
+        model.set_outputs(vec![(1, 0)]);
 
         // x = [-2.0, 0.0, 2.0]
         let x = Tensor::new(Some(&[-2, 0, 2]), &[1, 3]).unwrap();
@@ -1363,27 +1358,18 @@ mod tests {
     fn test_model_builder_add() {
         let mut model = Model::default();
 
-        let input_node = SupportedOp::Input(Input {
-            scale: 1,
-            datum_type: InputType::F32,
-        });
+        // Use helper to create input nodes
+        let input_node0 = create_input_node(1, vec![1, 3], 0, 1);
+        let input_node1 = create_input_node(1, vec![1, 3], 1, 1);
+        model.insert_node(input_node0);
+        model.insert_node(input_node1);
 
-        // two inputs: shape [1, 3]
-        model
-            .add_node(input_node.clone(), vec![], vec![1, 3])
-            .unwrap(); // id 0
-        model
-            .add_node(input_node.clone(), vec![], vec![1, 3])
-            .unwrap(); // id 1
+        // Use helper to create add node
+        let add_node = create_polyop_node(PolyOp::Add, 1, vec![(0, 0), (1, 0)], vec![1, 3], 2, 1);
+        model.insert_node(add_node);
 
-        // elementwise add
-        let add_node = SupportedOp::Linear(PolyOp::Add);
-        model
-            .add_node(add_node, vec![(0, 0), (1, 0)], vec![1, 3])
-            .unwrap();
-
-        model.add_inputs(vec![0, 1]);
-        model.add_outputs(vec![(2, 0)]);
+        model.set_inputs(vec![0, 1]);
+        model.set_outputs(vec![(2, 0)]);
 
         let a = Tensor::new(Some(&[1, 2, 3]), &[1, 3]).unwrap();
         let b = Tensor::new(Some(&[4, 5, 6]), &[1, 3]).unwrap();

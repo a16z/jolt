@@ -149,6 +149,7 @@ impl MemoryOp {
 }
 
 impl ONNXCycle {
+    #[allow(clippy::type_complexity)]
     pub fn to_memory_ops(
         &self,
     ) -> (
