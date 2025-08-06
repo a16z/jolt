@@ -1,10 +1,10 @@
 use rand::{rngs::StdRng, RngCore};
 use serde::{Deserialize, Serialize};
 
-use crate::emulator::cpu::Cpu;
+use crate::{emulator::cpu::Cpu, instruction::add};
 
 use super::{
-    format::{format_j::FormatJ, InstructionFormat},
+    format::{format_j::FormatJ, InstructionFormat, NormalizedOperands},
     RISCVInstruction, RISCVTrace,
 };
 
@@ -36,6 +36,16 @@ impl RISCVInstruction for VirtualAdvice {
 
     fn new(_: u32, _: u64, _: bool, _: bool) -> Self {
         panic!("virtual instruction `VirtualAdvice` cannot be built from a machine word");
+    }
+
+    fn from_normalized(operands: NormalizedOperands, address: u64, is_compressed: bool) -> Self {
+        Self {
+            address,
+            operands: FormatJ::from_normalized(operands),
+            advice: 0,
+            virtual_sequence_remaining: None,
+            is_compressed,
+        }
     }
 
     fn random(rng: &mut StdRng) -> Self {

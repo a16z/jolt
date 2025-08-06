@@ -8,6 +8,16 @@
 //! pushing the correct instruction variant into `sequence`, and is meant to be used
 //! by higher-level builders.
 //!
+//! ## Generic Emission
+//!
+//! The assembler provides format-aware generic helpers:
+//! * `emit_r::<XOR>(rd, rs1, rs2)` - R-type (register-register)
+//! * `emit_i::<ADDI>(rd, rs1, imm)` - I-type (immediate)
+//! * `emit_s::<SW>(rs1, rs2, offset)` - S-type (store)
+//!
+//! And a generic binary operation helper:
+//! * `bin::<XOR, XORI>(a, b, rd, |x, y| x ^ y)` - handles constant folding
+//!
 //! Assumptions:
 //! * The helpers are infallible (in terms of error handling) and run in constant time.
 //! * Composite helpers such as `xor64` and `rotl64` expand into multiple 32-bit
@@ -17,11 +27,17 @@ use crate::instruction::addi::ADDI;
 use crate::instruction::and::AND;
 use crate::instruction::andi::ANDI;
 use crate::instruction::andn::ANDN;
+use crate::instruction::format::format_b::FormatB;
 use crate::instruction::format::format_i::FormatI;
+use crate::instruction::format::format_j::FormatJ;
 use crate::instruction::format::format_load::FormatLoad;
 use crate::instruction::format::format_r::FormatR;
 use crate::instruction::format::format_s::FormatS;
+use crate::instruction::format::format_u::FormatU;
+use crate::instruction::format::format_virtual_halfword_alignment::HalfwordAlignFormat;
 use crate::instruction::format::format_virtual_right_shift_i::FormatVirtualRightShiftI;
+use crate::instruction::format::format_virtual_right_shift_r::FormatVirtualRightShiftR;
+use crate::instruction::format::NormalizedOperands;
 use crate::instruction::ld::LD;
 use crate::instruction::lw::LW;
 use crate::instruction::sd::SD;
@@ -30,6 +46,7 @@ use crate::instruction::virtual_rotri::VirtualROTRI;
 use crate::instruction::virtual_srli::VirtualSRLI;
 use crate::instruction::xor::XOR;
 use crate::instruction::xori::XORI;
+use crate::instruction::RISCVInstruction;
 use crate::instruction::RV32IMInstruction;
 
 /// Operand that can be either an immediate or a register.
@@ -76,104 +93,273 @@ impl InstrAssembler {
         self.sequence
     }
 
-    // ---------------------------------------------------------------------
-    // RV64 Load/Store helpers (Keccak needs 64-bit variants)
-    // ---------------------------------------------------------------------
+    /// Emit any R-type instruction (rd, rs1, rs2).
+    #[track_caller]
+    #[inline]
+    pub fn emit_r<Op: RISCVInstruction<Format = FormatR>>(
+        &mut self,
+        rd: usize,
+        rs1: usize,
+        rs2: usize,
+    ) {
+        let inst = Op::from_normalized(
+            NormalizedOperands {
+                rd,
+                rs1,
+                rs2,
+                imm: 0,
+            },
+            self.address,
+            self.is_compressed,
+        );
+        self.sequence.push(inst.into());
+    }
+
+    /// Emit any I-type instruction (rd, rs1, imm).
+    #[track_caller]
+    #[inline]
+    pub fn emit_i<Op: RISCVInstruction<Format = FormatI>>(
+        &mut self,
+        rd: usize,
+        rs1: usize,
+        imm: u64,
+    ) {
+        let inst = Op::from_normalized(
+            NormalizedOperands {
+                rd,
+                rs1,
+                rs2: 0,
+                imm: imm as i128,
+            },
+            self.address,
+            self.is_compressed,
+        );
+        self.sequence.push(inst.into());
+    }
+
+    /// Emit any S-type instruction (rs1, rs2, imm).
+    #[track_caller]
+    #[inline]
+    pub fn emit_s<Op: RISCVInstruction<Format = FormatS>>(
+        &mut self,
+        rs1: usize,
+        rs2: usize,
+        imm: i64,
+    ) {
+        let inst = Op::from_normalized(
+            NormalizedOperands {
+                rd: 0,
+                rs1,
+                rs2,
+                imm: imm as i128,
+            },
+            self.address,
+            self.is_compressed,
+        );
+        self.sequence.push(inst.into());
+    }
+
+    /// Emit any Load-type instruction (rd, rs1, imm) - like FormatI but with signed imm.
+    #[track_caller]
+    #[inline]
+    pub fn emit_ld<Op: RISCVInstruction<Format = FormatLoad>>(
+        &mut self,
+        rd: usize,
+        rs1: usize,
+        imm: i64,
+    ) {
+        let inst = Op::from_normalized(
+            NormalizedOperands {
+                rd,
+                rs1,
+                rs2: 0,
+                imm: imm as i128,
+            },
+            self.address,
+            self.is_compressed,
+        );
+        self.sequence.push(inst.into());
+    }
+
+    /// Emit any B-type instruction (rs1, rs2, imm) - branch instructions.
+    #[track_caller]
+    #[inline]
+    #[allow(dead_code)]
+    pub fn emit_b<Op: RISCVInstruction<Format = FormatB>>(
+        &mut self,
+        rs1: usize,
+        rs2: usize,
+        imm: i128,
+    ) {
+        let inst = Op::from_normalized(
+            NormalizedOperands {
+                rd: 0,
+                rs1,
+                rs2,
+                imm,
+            },
+            self.address,
+            self.is_compressed,
+        );
+        self.sequence.push(inst.into());
+    }
+
+    /// Emit any J-type instruction (rd, imm) - jump instructions.
+    #[track_caller]
+    #[inline]
+    #[allow(dead_code)]
+    pub fn emit_j<Op: RISCVInstruction<Format = FormatJ>>(&mut self, rd: usize, imm: u64) {
+        let inst = Op::from_normalized(
+            NormalizedOperands {
+                rd,
+                rs1: 0,
+                rs2: 0,
+                imm: imm as i128,
+            },
+            self.address,
+            self.is_compressed,
+        );
+        self.sequence.push(inst.into());
+    }
+
+    /// Emit any U-type instruction (rd, imm) - upper immediate instructions.
+    #[track_caller]
+    #[inline]
+    #[allow(dead_code)]
+    pub fn emit_u<Op: RISCVInstruction<Format = FormatU>>(&mut self, rd: usize, imm: u64) {
+        let inst = Op::from_normalized(
+            NormalizedOperands {
+                rd,
+                rs1: 0,
+                rs2: 0,
+                imm: imm as i128,
+            },
+            self.address,
+            self.is_compressed,
+        );
+        self.sequence.push(inst.into());
+    }
+
+    /// Emit any virtual right shift I-type instruction (rd, rs1, imm).
+    #[track_caller]
+    #[inline]
+    #[allow(dead_code)]
+    pub fn emit_vshift_i<Op: RISCVInstruction<Format = FormatVirtualRightShiftI>>(
+        &mut self,
+        rd: usize,
+        rs1: usize,
+        imm: u64,
+    ) {
+        let inst = Op::from_normalized(
+            NormalizedOperands {
+                rd,
+                rs1,
+                rs2: 0,
+                imm: imm as i128,
+            },
+            self.address,
+            self.is_compressed,
+        );
+        self.sequence.push(inst.into());
+    }
+
+    /// Emit any virtual right shift R-type instruction (rd, rs1, rs2).
+    #[track_caller]
+    #[inline]
+    #[allow(dead_code)]
+    pub fn emit_vshift_r<Op: RISCVInstruction<Format = FormatVirtualRightShiftR>>(
+        &mut self,
+        rd: usize,
+        rs1: usize,
+        rs2: usize,
+    ) {
+        let inst = Op::from_normalized(
+            NormalizedOperands {
+                rd,
+                rs1,
+                rs2,
+                imm: 0,
+            },
+            self.address,
+            self.is_compressed,
+        );
+        self.sequence.push(inst.into());
+    }
+
+    /// Emit any halfword alignment instruction (rs1, imm).
+    #[track_caller]
+    #[inline]
+    #[allow(dead_code)]
+    pub fn emit_halign<Op: RISCVInstruction<Format = HalfwordAlignFormat>>(
+        &mut self,
+        rs1: usize,
+        imm: i64,
+    ) {
+        let inst = Op::from_normalized(
+            NormalizedOperands {
+                rd: 0,
+                rs1,
+                rs2: 0,
+                imm: imm as i128,
+            },
+            self.address,
+            self.is_compressed,
+        );
+        self.sequence.push(inst.into());
+    }
+
+    /// Generic binary operation with constant folding.
+    /// Automatically selects R-type vs I-type encoding based on operand types.
+    pub fn bin<OR: RISCVInstruction<Format = FormatR>, OI: RISCVInstruction<Format = FormatI>>(
+        &mut self,
+        rs1: Value,
+        rs2: Value,
+        rd: usize,
+        fold: fn(u64, u64) -> u64,
+    ) -> Value {
+        match (rs1, rs2) {
+            (Reg(r1), Reg(r2)) => {
+                self.emit_r::<OR>(rd, r1, r2);
+                Reg(rd)
+            }
+            (Reg(r1), Imm(imm)) => {
+                self.emit_i::<OI>(rd, r1, imm);
+                Reg(rd)
+            }
+            (Imm(_), Reg(_)) => self.bin::<OR, OI>(rs2, rs1, rd, fold),
+            (Imm(i1), Imm(i2)) => Imm(fold(i1, i2)),
+        }
+    }
 
     /// Emit `LD rd, offset(rs1)` where `offset` is in *lanes* (8-byte units).
     #[inline]
     pub fn ld(&mut self, rs1: usize, offset_lanes: i64, rd: usize) {
-        let inst = LD {
-            address: self.address,
-            operands: FormatI {
-                rd,
-                rs1,
-                imm: (offset_lanes * 8) as u64,
-            },
-            virtual_sequence_remaining: Some(0),
-            is_compressed: self.is_compressed,
-        };
-        self.sequence.push(inst.into());
+        self.emit_i::<LD>(rd, rs1, (offset_lanes * 8) as u64);
     }
 
     /// Emit `SD rs2, offset(rs1)` where `offset` is in *lanes* (8-byte units).
     #[inline]
     pub fn sd(&mut self, rs1: usize, rs2: usize, offset_lanes: i64) {
-        let inst = SD {
-            address: self.address,
-            operands: FormatS {
-                rs1,
-                rs2,
-                imm: offset_lanes * 8,
-            },
-            virtual_sequence_remaining: Some(0),
-            is_compressed: self.is_compressed,
-        };
-        self.sequence.push(inst.into());
+        self.emit_s::<SD>(rs1, rs2, offset_lanes * 8);
     }
-
-    // ---------------------------------------------------------------------
-    // RV32 Load/Store & arithmetic helpers (SHA-256)
-    // ---------------------------------------------------------------------
 
     /// Emit `LW rd, offset(rs1)` where `offset` is in *words* (4-byte units).
     #[inline]
     pub fn lw(&mut self, rs1: usize, offset_words: i64, rd: usize) {
-        let inst = LW {
-            address: self.address,
-            operands: FormatLoad {
-                rd,
-                rs1,
-                imm: offset_words * 4,
-            },
-            virtual_sequence_remaining: Some(0),
-            is_compressed: self.is_compressed,
-        };
-        self.sequence.push(inst.into());
+        self.emit_ld::<LW>(rd, rs1, offset_words * 4);
     }
 
     /// Emit `SW rs2, offset(rs1)` where `offset` is in *words* (4-byte units).
     #[inline]
     pub fn sw(&mut self, rs1: usize, rs2: usize, offset_words: i64) {
-        let inst = SW {
-            address: self.address,
-            operands: FormatS {
-                rs1,
-                rs2,
-                imm: offset_words * 4,
-            },
-            virtual_sequence_remaining: Some(0),
-            is_compressed: self.is_compressed,
-        };
-        self.sequence.push(inst.into());
+        self.emit_s::<SW>(rs1, rs2, offset_words * 4);
     }
 
     /// 32-bit wrapping add (ADD/ADDI) with constant folding.
     pub fn add(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
-        match (rs1, rs2) {
-            (Reg(rs1), Reg(rs2)) => {
-                let inst = ADD {
-                    address: self.address,
-                    operands: FormatR { rd, rs1, rs2 },
-                    virtual_sequence_remaining: Some(0),
-                    is_compressed: self.is_compressed,
-                };
-                self.sequence.push(inst.into());
-                Reg(rd)
-            }
-            (Reg(rs1), Imm(imm)) => {
-                let inst = ADDI {
-                    address: self.address,
-                    operands: FormatI { rd, rs1, imm },
-                    virtual_sequence_remaining: Some(0),
-                    is_compressed: self.is_compressed,
-                };
-                self.sequence.push(inst.into());
-                Reg(rd)
-            }
-            (Imm(_), Reg(_)) => self.add(rs2, rs1, rd),
-            (Imm(i1), Imm(i2)) => Imm(((i1 as u32).wrapping_add(i2 as u32)) as u64),
-        }
+        self.bin::<ADD, ADDI>(rs1, rs2, rd, |x, y| {
+            ((x as u32).wrapping_add(y as u32)) as u64
+        })
     }
 
     /// Logical right-shift immediate on a 32-bit word.
@@ -221,65 +407,15 @@ impl InstrAssembler {
         self.xor(r1, r2, rd)
     }
 
-    // ---------------------------------------------------------------------
-    // Logical & immediate helpers
-    // ---------------------------------------------------------------------
-
     /// Emit `XOR rd, rs1, rs2` / `XORI rd, rs1, imm` and return `Reg(rd)` or
     /// an `Imm` result when both operands are immediates.
     pub fn xor(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
-        match (rs1, rs2) {
-            (Reg(rs1), Reg(rs2)) => {
-                let inst = XOR {
-                    address: self.address,
-                    operands: FormatR { rd, rs1, rs2 },
-                    virtual_sequence_remaining: Some(0),
-                    is_compressed: self.is_compressed,
-                };
-                self.sequence.push(inst.into());
-                Reg(rd)
-            }
-            (Reg(rs1), Imm(imm)) => {
-                let inst = XORI {
-                    address: self.address,
-                    operands: FormatI { rd, rs1, imm },
-                    virtual_sequence_remaining: Some(0),
-                    is_compressed: self.is_compressed,
-                };
-                self.sequence.push(inst.into());
-                Reg(rd)
-            }
-            (Imm(_), Reg(_)) => self.xor(rs2, rs1, rd), // swap & reuse logic
-            (Imm(imm1), Imm(imm2)) => Imm(imm1 ^ imm2),
-        }
+        self.bin::<XOR, XORI>(rs1, rs2, rd, |x, y| x ^ y)
     }
 
     /// Emit `AND`/`ANDI` similarly to `xor`.
     pub fn and(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
-        match (rs1, rs2) {
-            (Reg(rs1), Reg(rs2)) => {
-                let inst = AND {
-                    address: self.address,
-                    operands: FormatR { rd, rs1, rs2 },
-                    virtual_sequence_remaining: Some(0),
-                    is_compressed: self.is_compressed,
-                };
-                self.sequence.push(inst.into());
-                Reg(rd)
-            }
-            (Reg(rs1), Imm(imm)) => {
-                let inst = ANDI {
-                    address: self.address,
-                    operands: FormatI { rd, rs1, imm },
-                    virtual_sequence_remaining: Some(0),
-                    is_compressed: self.is_compressed,
-                };
-                self.sequence.push(inst.into());
-                Reg(rd)
-            }
-            (Imm(_), Reg(_)) => self.and(rs2, rs1, rd),
-            (Imm(imm1), Imm(imm2)) => Imm(imm1 & imm2),
-        }
+        self.bin::<AND, ANDI>(rs1, rs2, rd, |x, y| x & y)
     }
 
     /// Emit virtual `ROTRI` (rotate-right immediate) or compute constant fold.
@@ -303,23 +439,13 @@ impl InstrAssembler {
         }
     }
 
-    // ---------------------------------------------------------------------
-    // 64-bit composite helpers (policy fixed, documented here)
-    // ---------------------------------------------------------------------
-
     /// A & ~B via the `ANDN` (bit-clear) instruction when both operands are
     /// registers.  When immediates are involved we fall back to constant-fold
     /// or NOT+AND sequences.  Scratch-register handling is left to the caller.
     pub fn andn64(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
         match (rs1, rs2) {
             (Reg(rs1), Reg(rs2)) => {
-                let inst = ANDN {
-                    address: self.address,
-                    operands: FormatR { rd, rs1, rs2 },
-                    virtual_sequence_remaining: Some(0),
-                    is_compressed: self.is_compressed,
-                };
-                self.sequence.push(inst.into());
+                self.emit_r::<ANDN>(rd, rs1, rs2);
                 Reg(rd)
             }
             (Imm(imm1), Imm(imm2)) => Imm(imm1 & !imm2),

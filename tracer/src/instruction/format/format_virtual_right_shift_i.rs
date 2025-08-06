@@ -65,6 +65,15 @@ impl InstructionFormat for FormatVirtualRightShiftI {
             rs1: (rng.next_u64() % REGISTER_COUNT) as usize,
         }
     }
+
+    fn from_normalized(operands: NormalizedOperands) -> Self {
+        Self {
+            rd: operands.rd,
+            rs1: operands.rs1,
+            imm: operands.imm as u64,
+        }
+    }
+
     fn normalize(&self) -> NormalizedOperands {
         NormalizedOperands {
             rs1: self.rs1,

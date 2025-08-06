@@ -73,6 +73,14 @@ impl InstructionFormat for FormatVirtualRightShiftR {
         }
     }
 
+    fn from_normalized(operands: NormalizedOperands) -> Self {
+        Self {
+            rd: operands.rd,
+            rs1: operands.rs1,
+            rs2: operands.rs2,
+        }
+    }
+
     fn normalize(&self) -> NormalizedOperands {
         NormalizedOperands {
             rs1: self.rs1,

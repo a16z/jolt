@@ -73,6 +73,13 @@ impl InstructionFormat for FormatR {
             rs2: (rng.next_u64() % REGISTER_COUNT) as usize,
         }
     }
+    fn from_normalized(operands: NormalizedOperands) -> Self {
+        Self {
+            rd: operands.rd,
+            rs1: operands.rs1,
+            rs2: operands.rs2,
+        }
+    }
 
     fn normalize(&self) -> NormalizedOperands {
         NormalizedOperands {

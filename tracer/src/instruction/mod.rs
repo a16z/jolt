@@ -335,6 +335,7 @@ pub trait RISCVInstruction: std::fmt::Debug + Sized + Copy + Into<RV32IMInstruct
 
     fn operands(&self) -> &Self::Format;
     fn new(word: u32, address: u64, validate: bool, compressed: bool) -> Self;
+    fn from_normalized(operands: NormalizedOperands, address: u64, compressed: bool) -> Self;
     fn random(rng: &mut StdRng) -> Self {
         Self::new(rng.next_u32(), rng.next_u64(), false, false)
     }

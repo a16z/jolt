@@ -56,6 +56,13 @@ impl InstructionFormat for HalfwordAlignFormat {
         }
     }
 
+    fn from_normalized(operands: NormalizedOperands) -> Self {
+        Self {
+            rs1: operands.rs1,
+            imm: operands.imm as i64,
+        }
+    }
+
     fn normalize(&self) -> NormalizedOperands {
         NormalizedOperands {
             rs1: self.rs1,

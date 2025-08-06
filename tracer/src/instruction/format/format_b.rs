@@ -76,6 +76,14 @@ impl InstructionFormat for FormatB {
         }
     }
 
+    fn from_normalized(operands: NormalizedOperands) -> Self {
+        Self {
+            rs1: operands.rs1,
+            rs2: operands.rs2,
+            imm: operands.imm,
+        }
+    }
+
     fn normalize(&self) -> NormalizedOperands {
         NormalizedOperands {
             rs1: self.rs1,

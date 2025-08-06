@@ -64,6 +64,13 @@ impl InstructionFormat for FormatU {
         }
     }
 
+    fn from_normalized(operands: NormalizedOperands) -> Self {
+        Self {
+            rd: operands.rd,
+            imm: operands.imm as u64,
+        }
+    }
+
     fn normalize(&self) -> NormalizedOperands {
         NormalizedOperands {
             rs1: 0,
