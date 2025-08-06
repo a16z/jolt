@@ -167,9 +167,8 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     
     let task = move || {
         let max_trace_length = 1 << bench_scale;
-        let start = Instant::now();
         
-        match bench_type.as_str() {
+        let duration = match bench_type.as_str() {
             "fib" => {
                 println!("Running Fibonacci benchmark at scale 2^{}", bench_scale);
                 let (chrome_layer, _guard) = ChromeLayerBuilder::new()
@@ -179,14 +178,13 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                 let _guard = tracing::subscriber::set_default(subscriber);
                 
                 let fib_input = get_fib_input(bench_scale);
-                let span = tracing::info_span!("Fibonacci_2^{}", bench_scale);
-                span.in_scope(|| {
-                    prove_example_with_trace(
-                        "fibonacci-guest",
-                        postcard::to_stdvec(&fib_input).unwrap(),
-                        max_trace_length,
-                    );
-                });
+                prove_example_with_trace(
+                    "fibonacci-guest",
+                    postcard::to_stdvec(&fib_input).unwrap(),
+                    max_trace_length,
+                    "Fibonacci",
+                    bench_scale,
+                )
             }
             "sha2" => {
                 println!("Running SHA2 benchmark at scale 2^{}", bench_scale);
@@ -198,14 +196,13 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                 
                 let sha2_len = get_sha_input_size(bench_scale);
                 let sha2_input = vec![5u8; sha2_len];
-                let span = tracing::info_span!("SHA2_2^{}", bench_scale);
-                span.in_scope(|| {
-                    prove_example_with_trace(
-                        "sha2-guest",
-                        postcard::to_stdvec(&sha2_input).unwrap(),
-                        max_trace_length,
-                    );
-                });
+                prove_example_with_trace(
+                    "sha2-guest",
+                    postcard::to_stdvec(&sha2_input).unwrap(),
+                    max_trace_length,
+                    "SHA2",
+                    bench_scale,
+                )
             }
             "sha3" => {
                 println!("Running SHA3 benchmark at scale 2^{}", bench_scale);
@@ -217,14 +214,13 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                 
                 let sha3_len = get_sha_input_size(bench_scale);
                 let sha3_input = vec![5u8; sha3_len];
-                let span = tracing::info_span!("SHA3_2^{}", bench_scale);
-                span.in_scope(|| {
-                    prove_example_with_trace(
-                        "sha3-guest",
-                        postcard::to_stdvec(&sha3_input).unwrap(),
-                        max_trace_length,
-                    );
-                });
+                prove_example_with_trace(
+                    "sha3-guest",
+                    postcard::to_stdvec(&sha3_input).unwrap(),
+                    max_trace_length,
+                    "SHA3",
+                    bench_scale,
+                )
             }
             "btreemap" => {
                 println!("Running BTreeMap benchmark at scale 2^{}", bench_scale);
@@ -235,25 +231,22 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                 let _guard = tracing::subscriber::set_default(subscriber);
                 
                 let btreemap_ops = get_btreemap_ops(bench_scale);
-                let span = tracing::info_span!("BTreeMap_2^{}", bench_scale);
-                span.in_scope(|| {
-                    prove_example_with_trace(
-                        "btreemap-guest",
-                        postcard::to_stdvec(&btreemap_ops).unwrap(),
-                        max_trace_length,
-                    );
-                });
+                prove_example_with_trace(
+                    "btreemap-guest",
+                    postcard::to_stdvec(&btreemap_ops).unwrap(),
+                    max_trace_length,
+                    "BTreeMap",
+                    bench_scale,
+                )
             }
             _ => {
                 eprintln!("Unknown benchmark type: {}. Use fib, sha2, sha3, or btreemap", bench_type);
                 return;
             }
-        }
+        };
         
-        let duration = start.elapsed();
-        println!("  Completed in {:.2}s", duration.as_secs_f64());
+        println!("  Prover completed in {:.2}s", duration.as_secs_f64());
         
-        // Append timing to summary file
         let summary_line = format!("{},{},{:.2}\n", bench_type, bench_scale, duration.as_secs_f64());
         if let Err(e) = fs::OpenOptions::new()
             .create(true)
@@ -313,7 +306,9 @@ fn prove_example_with_trace(
     example_name: &str,
     serialized_input: Vec<u8>,
     max_trace_length: usize,
-) {
+    bench_name: &str,
+    scale: usize,
+) -> std::time::Duration {
     let mut program = host::Program::new(example_name);
     let (bytecode, init_memory_state, _) = program.decode();
     let (_, _, program_io) = program.trace(&serialized_input);
@@ -325,8 +320,12 @@ fn prove_example_with_trace(
         max_trace_length,
     );
 
-    let (jolt_proof, program_io, _) =
-        JoltRV32IM::prove(&preprocessing, &mut program, &serialized_input);
+    let span = tracing::info_span!("{}_2^{}", bench_name, scale);
+    let start = Instant::now();
+    let (jolt_proof, program_io, _) = span.in_scope(|| {
+        JoltRV32IM::prove(&preprocessing, &mut program, &serialized_input)
+    });
+    let prove_duration = start.elapsed();
 
     let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
     let verification_result =
@@ -336,4 +335,6 @@ fn prove_example_with_trace(
         "Verification failed with error: {:?}",
         verification_result.err()
     );
+
+    prove_duration
 }
