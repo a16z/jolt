@@ -229,7 +229,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (preprocessing, trace, _, _) = state_manager.get_prover_data();
+        let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
         let accumulator = state_manager.get_prover_accumulator();
 
         let (r_cycle, rs1_rv_claim) = accumulator

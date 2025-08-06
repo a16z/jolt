@@ -127,7 +127,7 @@ where
             twist_sumcheck_switch_index,
             prover_state: Some(ProverState {
                 preprocessing,
-                lazy_trace,
+                lazy_trace: Some(lazy_trace),
                 trace,
                 final_memory_state,
                 accumulator: opening_accumulator,
@@ -180,7 +180,7 @@ where
         if let Some(ref prover_state) = self.prover_state {
             (
                 prover_state.preprocessing,
-                &prover_state.lazy_trace
+                &prover_state.lazy_trace.as_ref().unwrap(),//AZ: todo: maybe not unwrap and handle it better
                 &prover_state.trace,
                 &self.program_io,
                 &prover_state.final_memory_state,

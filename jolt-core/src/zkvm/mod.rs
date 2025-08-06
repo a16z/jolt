@@ -9,7 +9,7 @@ use crate::poly::commitment::dory::DoryGlobals;
 use crate::{
     field::JoltField,
     poly::{
-        commitment::commitment_scheme::CommitmentScheme, opening_proof::ProverOpeningAccumulator,
+        commitment::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme}, opening_proof::ProverOpeningAccumulator,
     },
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math},
@@ -151,7 +151,7 @@ where
 
 pub trait Jolt<F: JoltField, PCS, FS: Transcript>
 where
-    PCS: CommitmentScheme<Field = F>,
+    PCS: StreamingCommitmentScheme<Field = F>,
 {
     fn shared_preprocess(
         bytecode: Vec<Instruction>,
@@ -209,7 +209,7 @@ where
             program_size: Some(preprocessing.shared.memory_layout.program_size),
         };
 
-        let (mut trace, final_memory_state, mut program_io) =
+        let (lazy_trace, mut trace, final_memory_state, mut program_io) =
             guest::program::trace(elf_contents, None, inputs, &memory_config);
         let num_riscv_cycles: usize = trace
             .par_iter()
@@ -247,7 +247,7 @@ where
         );
 
         let state_manager =
-            StateManager::new_prover(preprocessing, trace, program_io.clone(), final_memory_state);
+            StateManager::new_prover(preprocessing, lazy_trace, trace, program_io.clone(), final_memory_state);
         let (proof, debug_info) = JoltDAG::prove(state_manager).ok().unwrap();
 
         (proof, program_io, debug_info)

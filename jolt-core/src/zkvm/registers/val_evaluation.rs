@@ -41,7 +41,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (preprocessing, trace, _, _) = state_manager.get_prover_data();
+        let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
         let accumulator = state_manager.get_prover_accumulator();
 
         // Get val_claim from the accumulator (from stage 2 RegistersReadWriteChecking)

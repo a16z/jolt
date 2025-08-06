@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::field::JoltField;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme};
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance};
 use crate::transcripts::Transcript;
@@ -29,6 +29,7 @@ use allocative::FlameGraphBuilder;
 use anyhow::Context;
 use itertools::Itertools;
 use rayon::prelude::*;
+use tracer::instruction::RV32IMCycle;
 
 pub enum JoltDAG {}
 
@@ -38,7 +39,7 @@ impl JoltDAG {
         'a,
         F: JoltField,
         ProofTranscript: Transcript,
-        PCS: CommitmentScheme<Field = F>,
+        PCS: StreamingCommitmentScheme<Field = F>,
     >(
         mut state_manager: StateManager<'a, F, ProofTranscript, PCS>,
     ) -> Result<
@@ -51,7 +52,7 @@ impl JoltDAG {
         state_manager.fiat_shamir_preamble();
 
         // Initialize DoryGlobals at the beginning to keep it alive for the entire proof
-        let (_, preprocessing, trace, _, _) = state_manager.get_prover_data();
+        let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
         let trace_length = trace.len();
         let padded_trace_length = trace_length.next_power_of_two();
 
@@ -479,15 +480,16 @@ impl JoltDAG {
         'a,
         F: JoltField,
         ProofTranscript: Transcript,
-        PCS: CommitmentScheme<Field = F>,
+        PCS: StreamingCommitmentScheme<Field = F>,
+        
     >(
         prover_state_manager: &mut StateManager<'a, F, ProofTranscript, PCS>,
     ) -> Result<HashMap<CommittedPolynomial, PCS::OpeningProofHint>, anyhow::Error> {
         let (preprocessing, lazy_trace, trace, _program_io, _final_memory_state) =
             prover_state_manager.get_prover_data();
 
-        let size = _trace.len(); // Remove this from the trait??? Or get from preprocessing?
-        let trace = lazy_trace.clone();
+        let size = trace.len(); // Remove this from the trait??? Or get from preprocessing?
+        let lazy_trace_clone = lazy_trace.clone();
 
 
         let init_pcss: Vec<_> = AllCommittedPolynomials::iter()
@@ -495,9 +497,9 @@ impl JoltDAG {
             .collect();
         // TODO: Process in chunks with parallelization.
         // let pcss = trace.chunks(CHUNK_SIZE).into_iter().fold(init_pcss, |pcss, trace_chunk| {
-        let pcss = trace.clone() // TODO(JP): More efficient way to zip_with_self_next
+        let pcss = lazy_trace_clone.clone() // TODO(JP): More efficient way to zip_with_self_next
             .zip(
-                trace
+                lazy_trace_clone
                     .skip(1)
                     .chain(std::iter::once(RV32IMCycle::NoOp)),
             )
@@ -526,7 +528,7 @@ impl JoltDAG {
         #[cfg(test)]
         {
             let committed_polys: Vec<_> = AllCommittedPolynomials::par_iter()
-                .map(|poly| poly.generate_witness(preprocessing, _trace))
+                .map(|poly| poly.generate_witness(preprocessing, trace))
                 .collect();
 
             let commitments_non_streaming: Vec<_> = committed_polys
