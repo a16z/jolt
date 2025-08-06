@@ -231,7 +231,9 @@ mod tests {
             transcript::{KeccakTranscript, Transcript},
         },
     };
-    use onnx_tracer::{constants::MAX_TENSOR_SIZE, custom_addsubmul_model, tensor::Tensor};
+    use onnx_tracer::{
+        constants::MAX_TENSOR_SIZE, custom_addsubmul_model, scalar_addsubmul_model, tensor::Tensor,
+    };
 
     use crate::tensor_jolt::{
         JoltProverPreprocessing, JoltSNARK,
@@ -267,76 +269,24 @@ mod tests {
     }
 
     #[test]
-    fn test_custom_addsubmul_expanded() {
+    fn test_scalar_addsubmul() {
         // --- Preprocessing ---
-        let custom_addsubmul_model = custom_addsubmul_model();
-        let program_bytecode = onnx_tracer::decode_model(custom_addsubmul_model.clone());
+        let scalar_addsubmul_model = scalar_addsubmul_model();
+        let program_bytecode = onnx_tracer::decode_model(scalar_addsubmul_model.clone());
+        println!("Program code: {program_bytecode:#?}");
         let pp: JoltProverPreprocessing<Fr, PCS, KeccakTranscript> =
             JoltSNARK::prover_preprocess(program_bytecode);
 
         // --- Proving ---
-        // Get execution trace
-        let input = Tensor::new(Some(&[10, 20, 30, 40]), &[1, 4]).unwrap();
-        let raw_trace = onnx_tracer::execution_trace(custom_addsubmul_model, &input);
-        let mut execution_trace = jolt_execution_trace(raw_trace);
-        execution_trace.resize(
-            execution_trace.len().next_power_of_two(),
-            JoltONNXCycle::no_op(),
-        );
-        let padded_trace_length = execution_trace.len();
-        println!("Execution trace: {execution_trace:#?}");
-        // Setup transcript
-        let mut prover_transcript = KeccakTranscript::new(b"Jolt transcript");
-        // --- Execution proof ---
-        // --- Spartan ---
-        let constraint_builder = JoltONNXConstraints::construct_constraints(padded_trace_length);
-        let spartan_key = UniformSpartanProof::<Fr, KeccakTranscript>::setup(
-            &constraint_builder,
-            padded_trace_length,
-        );
-        prover_transcript.append_scalar(&spartan_key.vk_digest);
-        let r1cs_snark = UniformSpartanProof::prove::<PCS>(
-            &pp,
-            &constraint_builder,
-            &spartan_key,
-            &execution_trace,
-            &mut prover_transcript,
-        )
-        .ok()
-        .unwrap();
-        // --- Instruction lookups snark ---
-        let T = execution_trace.len() * MAX_TENSOR_SIZE;
-        let log_T = T.log_2();
-        let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(log_T);
-        let (proof, rv_claim, ra_claims, add_mul_sub_claim, flag_claims, _) =
-            prove_sparse_dense_shout::<_, _>(&execution_trace, &r_cycle, &mut prover_transcript);
+        let input = Tensor::new(Some(&[60]), &[1]).unwrap();
+        let raw_trace = onnx_tracer::execution_trace(scalar_addsubmul_model, &input);
+        println!("Execution trace: {raw_trace:#?}");
+        let execution_trace = jolt_execution_trace(raw_trace);
+
+        let snark: JoltSNARK<Fr, PCS, KeccakTranscript> =
+            JoltSNARK::prove(pp.clone(), execution_trace);
 
         // --- Verification ---
-        // Setup transcript
-        let mut verifier_transcript = KeccakTranscript::new(b"Jolt transcript");
-        verifier_transcript.compare_to(prover_transcript);
-        verifier_transcript.append_scalar(&spartan_key.vk_digest);
-        // --- Execution proof ---
-        // --- Spartan ---
-        r1cs_snark
-            .verify::<PCS>(&spartan_key, &mut verifier_transcript)
-            .unwrap();
-        // --- Instruction lookups snark ---
-        let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(log_T);
-        let verification_result = verify_sparse_dense_shout::<32, _, _>(
-            &proof,
-            log_T,
-            r_cycle,
-            rv_claim,
-            ra_claims,
-            add_mul_sub_claim,
-            &flag_claims,
-            &mut verifier_transcript,
-        );
-        assert!(
-            verification_result.is_ok(),
-            "Verification failed with error: {:?}",
-            verification_result.err()
-        );
+        snark.verify((&pp).into()).unwrap();
     }
 }

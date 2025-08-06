@@ -238,19 +238,25 @@ impl ONNXCycle {
         let ts1 = self.memory_state.ts1_val.as_ref().map_or_else(
             || (vec![0usize; MAX_TENSOR_SIZE], vec![0; MAX_TENSOR_SIZE]),
             |t| {
-                (
-                    get_tensor_addresses(self.ts1()),
-                    t.inner.iter().map(normalize).collect(),
-                )
+                assert!(
+                    t.inner.len() <= MAX_TENSOR_SIZE,
+                    "ts1_val length exceeds MAX_TENSOR_SIZE"
+                );
+                let mut val: Vec<u64> = t.inner.iter().map(normalize).collect();
+                val.resize(MAX_TENSOR_SIZE, 0);
+                (get_tensor_addresses(self.ts1()), val)
             },
         );
         let ts2 = self.memory_state.ts2_val.as_ref().map_or_else(
             || (vec![0usize; MAX_TENSOR_SIZE], vec![0; MAX_TENSOR_SIZE]),
             |t| {
-                (
-                    get_tensor_addresses(self.ts2()),
-                    t.inner.iter().map(normalize).collect(),
-                )
+                assert!(
+                    t.inner.len() <= MAX_TENSOR_SIZE,
+                    "ts2_val length exceeds MAX_TENSOR_SIZE"
+                );
+                let mut val: Vec<u64> = t.inner.iter().map(normalize).collect();
+                val.resize(MAX_TENSOR_SIZE, 0);
+                (get_tensor_addresses(self.ts2()), val)
             },
         );
         let td = self.memory_state.td_post_val.as_ref().map_or_else(
@@ -262,10 +268,16 @@ impl ONNXCycle {
                 )
             },
             |t| {
+                assert!(
+                    t.inner.len() <= MAX_TENSOR_SIZE,
+                    "ts2_val length exceeds MAX_TENSOR_SIZE"
+                );
+                let mut post_val: Vec<u64> = t.inner.iter().map(normalize).collect();
+                post_val.resize(MAX_TENSOR_SIZE, 0);
                 (
                     get_tensor_addresses(self.td()),
                     vec![0; MAX_TENSOR_SIZE], // TODO: It is not guaranteed that td_pre_val is always 0. For example const opcodes.
-                    t.inner.iter().map(normalize).collect(),
+                    post_val,
                 )
             },
         );
