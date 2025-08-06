@@ -1,0 +1,17 @@
+#!/bin/bash
+git submodule update --init --recursive
+
+apt-get update && apt-get install -y --no-install-recommends gh python3 python3-pip device-tree-compiler gcc-riscv64-unknown-elf binutils-riscv64-unknown-elf
+
+if ! gh auth status >/dev/null 2>&1; then
+    echo "GitHub authentication required. Please login:"
+    gh auth login
+fi
+
+mkdir -p /opt/riscv/
+gh release download --clobber spike-1.1.1 --repo a16z/jolt --pattern "spike-1.1.1-$(uname -s)-$(uname -m).tar.gz" -O /tmp/spike.tar.gz && tar -xzf /tmp/spike.tar.gz -C /opt/riscv/
+
+pushd third-party/riscv-arch-test/riscv-ctg && pip3 install -e . && popd
+pushd third-party/riscv-arch-test/riscv-isac && pip3 install -e . && popd
+pip3 install git+https://github.com/riscv/riscof.git@dev
+riscof --version
