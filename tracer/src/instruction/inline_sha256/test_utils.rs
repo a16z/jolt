@@ -1,4 +1,3 @@
-#![cfg(test)]
 // Test utilities for SHA256 instruction tests.
 //
 // This module contains SHA256-specific setup code, utilities, and helper

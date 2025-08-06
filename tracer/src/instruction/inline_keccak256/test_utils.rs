@@ -1,4 +1,3 @@
-#[cfg(test)]
 // Test utilities for Keccak256 instruction tests
 //
 // This module contains Keccak-specific setup code, utilities, and helper functions

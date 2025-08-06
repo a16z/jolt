@@ -1,4 +1,3 @@
-#[cfg(test)]
 /// Common test vectors used across multiple tests
 pub struct TestVectors;
 

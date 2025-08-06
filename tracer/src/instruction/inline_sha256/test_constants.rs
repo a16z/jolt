@@ -1,4 +1,3 @@
-#[cfg(test)]
 /// Common test vectors used across multiple SHA-256 tests
 pub struct TestVectors;
 
