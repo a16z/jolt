@@ -26,7 +26,7 @@ use crate::instruction::add::ADD;
 use crate::instruction::addi::ADDI;
 use crate::instruction::and::AND;
 use crate::instruction::andi::ANDI;
-use crate::instruction::andn::ANDN;
+
 use crate::instruction::format::format_b::FormatB;
 use crate::instruction::format::format_i::FormatI;
 use crate::instruction::format::format_j::FormatJ;
@@ -38,10 +38,7 @@ use crate::instruction::format::format_virtual_halfword_alignment::HalfwordAlign
 use crate::instruction::format::format_virtual_right_shift_i::FormatVirtualRightShiftI;
 use crate::instruction::format::format_virtual_right_shift_r::FormatVirtualRightShiftR;
 use crate::instruction::format::NormalizedOperands;
-use crate::instruction::ld::LD;
-use crate::instruction::lw::LW;
-use crate::instruction::sd::SD;
-use crate::instruction::sw::SW;
+
 use crate::instruction::virtual_rotri::VirtualROTRI;
 use crate::instruction::virtual_srli::VirtualSRLI;
 use crate::instruction::xor::XOR;
@@ -331,30 +328,6 @@ impl InstrAssembler {
         }
     }
 
-    /// Emit `LD rd, offset(rs1)` where `offset` is in *lanes* (8-byte units).
-    #[inline]
-    pub fn ld(&mut self, rs1: usize, offset_lanes: i64, rd: usize) {
-        self.emit_i::<LD>(rd, rs1, (offset_lanes * 8) as u64);
-    }
-
-    /// Emit `SD rs2, offset(rs1)` where `offset` is in *lanes* (8-byte units).
-    #[inline]
-    pub fn sd(&mut self, rs1: usize, rs2: usize, offset_lanes: i64) {
-        self.emit_s::<SD>(rs1, rs2, offset_lanes * 8);
-    }
-
-    /// Emit `LW rd, offset(rs1)` where `offset` is in *words* (4-byte units).
-    #[inline]
-    pub fn lw(&mut self, rs1: usize, offset_words: i64, rd: usize) {
-        self.emit_ld::<LW>(rd, rs1, offset_words * 4);
-    }
-
-    /// Emit `SW rs2, offset(rs1)` where `offset` is in *words* (4-byte units).
-    #[inline]
-    pub fn sw(&mut self, rs1: usize, rs2: usize, offset_words: i64) {
-        self.emit_s::<SW>(rs1, rs2, offset_words * 4);
-    }
-
     /// 32-bit wrapping add (ADD/ADDI) with constant folding.
     pub fn add(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
         self.bin::<ADD, ADDI>(rs1, rs2, rd, |x, y| {
@@ -435,23 +408,6 @@ impl InstrAssembler {
                 // `imm` is a rotate-right bit-mask (trailing zeros denote shift amount).
                 let shift = imm.trailing_zeros();
                 Imm(((val as u32).rotate_right(shift)) as u64)
-            }
-        }
-    }
-
-    /// A & ~B via the `ANDN` (bit-clear) instruction when both operands are
-    /// registers.  When immediates are involved we fall back to constant-fold
-    /// or NOT+AND sequences.  Scratch-register handling is left to the caller.
-    pub fn andn64(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
-        match (rs1, rs2) {
-            (Reg(rs1), Reg(rs2)) => {
-                self.emit_r::<ANDN>(rd, rs1, rs2);
-                Reg(rd)
-            }
-            (Imm(imm1), Imm(imm2)) => Imm(imm1 & !imm2),
-            // Mixed case: caller must provide scratch register management.
-            (Reg(_), Imm(_)) | (Imm(_), Reg(_)) => {
-                panic!("andn64 with mixed operands requires caller-provided NOT+AND sequence")
             }
         }
     }

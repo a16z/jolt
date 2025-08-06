@@ -15,6 +15,9 @@
 
 use crate::inline_helpers::InstrAssembler;
 use crate::inline_helpers::Value::{Imm, Reg};
+use crate::instruction::andn::ANDN;
+use crate::instruction::ld::LD;
+use crate::instruction::sd::SD;
 use crate::instruction::RV32IMInstruction;
 
 pub mod keccak256;
@@ -193,12 +196,18 @@ impl Keccak256SequenceBuilder {
     /// Load the initial Keccak state from memory into virtual registers.
     /// Keccak state is NUM_LANES lanes of 64 bits each (200 bytes total).
     fn load_state(&mut self) {
-        (0..NUM_LANES).for_each(|i| self.asm.ld(self.operand_rs1, i as i64, self.vr[i]));
+        (0..NUM_LANES).for_each(|i| {
+            self.asm
+                .emit_i::<LD>(self.vr[i], self.operand_rs1, (i * 8) as u64)
+        });
     }
 
     /// Store the final Keccak state from virtual registers back to memory.
     fn store_state(&mut self) {
-        (0..NUM_LANES).for_each(|i| self.asm.sd(self.operand_rs1, self.vr[i], i as i64));
+        (0..NUM_LANES).for_each(|i| {
+            self.asm
+                .emit_s::<SD>(self.operand_rs1, self.vr[i], (i * 8) as i64)
+        });
     }
 
     /// Get the register index for a given lane in the state matrix.
@@ -291,7 +300,7 @@ impl Keccak256SequenceBuilder {
                 // Implement A[x,y] ^= (~A[x+1,y] & A[x+2,y])
                 // 1. not_next_and_two_next = A[x+2,y] & ~A[x+1,y] using ANDN
                 self.asm
-                    .andn64(Reg(two_next), Reg(next), not_next_and_two_next);
+                    .emit_r::<ANDN>(not_next_and_two_next, two_next, next);
                 // 2. A[x,y] ^= not_next_and_two_next
                 self.asm
                     .xor(Reg(current), Reg(not_next_and_two_next), dest_a_reg);

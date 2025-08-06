@@ -1,7 +1,7 @@
 use rand::{rngs::StdRng, RngCore};
 use serde::{Deserialize, Serialize};
 
-use crate::{emulator::cpu::Cpu, instruction::add};
+use crate::emulator::cpu::Cpu;
 
 use super::{
     format::{format_j::FormatJ, InstructionFormat, NormalizedOperands},

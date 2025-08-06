@@ -3,6 +3,8 @@ use crate::inline_helpers::{
     Value::{Imm, Reg},
 };
 
+use crate::instruction::lw::LW;
+use crate::instruction::sw::SW;
 use crate::instruction::RV32IMInstruction;
 
 pub mod sha256;
@@ -81,19 +83,28 @@ impl Sha256SequenceBuilder {
             // Load initial hash values from memory when using custom IV
             // A..D loaded into registers 0..3 (will be used immediately)
             // E..H loaded into registers 28..31 (preserved until needed)
-            (0..4).for_each(|i| self.asm.lw(self.operand_rs2, i, self.vr[i as usize]));
             (0..4).for_each(|i| {
                 self.asm
-                    .lw(self.operand_rs2, i + 4, self.vr[(i + 28) as usize])
+                    .emit_ld::<LW>(self.vr[i as usize], self.operand_rs2, i * 4)
+            });
+            (0..4).for_each(|i| {
+                self.asm
+                    .emit_ld::<LW>(self.vr[(i + 28) as usize], self.operand_rs2, (i + 4) * 4)
             });
         }
         // Load input words into registers 8..23
-        (0..16).for_each(|i| self.asm.lw(self.operand_rs1, i, self.vr[(i + 8) as usize]));
+        (0..16).for_each(|i| {
+            self.asm
+                .emit_ld::<LW>(self.vr[(i + 8) as usize], self.operand_rs1, i * 4)
+        });
         // Run 64 rounds
         (0..64).for_each(|_| self.round());
         self.final_add_iv();
         // Store output values to rs2 location
-        (0..8).for_each(|i| self.asm.sw(self.operand_rs2, self.vr[i as usize], i));
+        (0..8).for_each(|i| {
+            self.asm
+                .emit_s::<SW>(self.operand_rs2, self.vr[i as usize], i * 4)
+        });
         self.asm.finalize()
     }
 
@@ -104,7 +115,10 @@ impl Sha256SequenceBuilder {
             // enough space for A, B, C, D, so we need to load them from memory. We can load them
             // into space that was used for t1, t2, ss, ss2. (technically there's no preference,
             // but it just keeps those in order).
-            (0..4).for_each(|i| self.asm.lw(self.operand_rs2, i, self.vr[24 + i as usize]));
+            (0..4).for_each(|i| {
+                self.asm
+                    .emit_ld::<LW>(self.vr[24 + i as usize], self.operand_rs2, i * 4)
+            });
             self.asm.add(self.vri('A'), Reg(self.vr[24]), self.vr('A'));
             self.asm.add(self.vri('B'), Reg(self.vr[25]), self.vr('B'));
             self.asm.add(self.vri('C'), Reg(self.vr[26]), self.vr('C'));
