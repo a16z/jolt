@@ -2,7 +2,7 @@
 
 use super::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme};
 use crate::{
-    field::JoltField, jolt::vm::instruction_lookups::D, msm::VariableBaseMSM, poly::{compact_polynomial::SmallScalar, multilinear_polynomial::MultilinearPolynomial}, utils::{
+    field::JoltField, msm::VariableBaseMSM, poly::{compact_polynomial::SmallScalar, multilinear_polynomial::MultilinearPolynomial}, utils::{
         errors::ProofVerifyError,
         math::Math,
         transcript::{AppendToTranscript, Transcript},

@@ -1,5 +1,9 @@
 use crate::{
-    poly::{one_hot_polynomial::OneHotPolynomial, rlc_polynomial::RLCPolynomial},
+    poly::{
+        compact_polynomial::StreamingCompactWitness, dense_mlpoly::StreamingDenseWitness,
+        one_hot_polynomial::OneHotPolynomial, one_hot_polynomial::StreamingOneHotWitness,
+        rlc_polynomial::RLCPolynomial,
+    },
     utils::compute_dotproduct,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
