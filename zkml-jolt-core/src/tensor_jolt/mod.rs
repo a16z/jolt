@@ -1,7 +1,7 @@
 pub mod execution_trace;
 // pub mod tensor_heap;
-pub mod instruction_lookups;
 pub mod r1cs;
+pub mod sparse_dense_shout;
 
 #[cfg(test)]
 mod tests {
@@ -14,7 +14,7 @@ mod tests {
 
     use crate::tensor_jolt::{
         execution_trace::{JoltONNXCycle, jolt_trace},
-        instruction_lookups::{prove_sparse_dense_shout, verify_sparse_dense_shout},
+        sparse_dense_shout::{prove_sparse_dense_shout, verify_sparse_dense_shout},
     };
 
     #[test]

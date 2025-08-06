@@ -63,23 +63,6 @@ pub fn prove_sparse_dense_shout<F: JoltField, ProofTranscript: Transcript>(
 
     let span = tracing::span!(tracing::Level::INFO, "compute lookup indices");
     let _guard = span.enter();
-    // let lookup_indices: Vec<LookupBits> = trace
-    //     .par_iter()
-    //     .map(|cycle| {
-    //         cycle
-    //             .instruction_lookups
-    //             .as_ref()
-    //             .map(|queries| {
-    //                 queries
-    //                     .iter()
-    //                     .map(LookupQuery::<WORD_SIZE>::to_lookup_index)
-    //                     .map(|index| LookupBits::new(index, log_K))
-    //                     .collect::<Vec<_>>()
-    //             })
-    //             .unwrap_or_else(|| vec![LookupBits::new(0, log_K); MAX_TENSOR_SIZE])
-    //     })
-    //     .flatten()
-    //     .collect();
     let lookup_indices: Vec<LookupBits> = trace
         .par_iter()
         .map(|cycle| {

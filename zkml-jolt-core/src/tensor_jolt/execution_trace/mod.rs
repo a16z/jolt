@@ -26,23 +26,6 @@ pub type ExecutionTrace = Vec<JoltONNXCycle>;
 pub type ONNXLookup = Vec<ElementWiseLookup>;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct MemoryOps {
-    ts1_read: (usize, Vec<u64>),
-    ts2_read: (usize, Vec<u64>),
-    td_write: (usize, Vec<u64>, Vec<u64>),
-}
-
-impl MemoryOps {
-    pub fn no_op() -> Self {
-        MemoryOps {
-            ts1_read: (0, vec![0; MAX_TENSOR_SIZE]),
-            ts2_read: (0, vec![0; MAX_TENSOR_SIZE]),
-            td_write: (0, vec![0; MAX_TENSOR_SIZE], vec![0; MAX_TENSOR_SIZE]),
-        }
-    }
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct JoltONNXCycle {
     pub instruction_lookups: Option<ONNXLookup>,
     pub circuit_flags: [bool; NUM_CIRCUIT_FLAGS],
@@ -100,7 +83,7 @@ impl From<ONNXCycle> for JoltONNXCycle {
         };
         cycle.circuit_flags = raw_cycle.instr.to_circuit_flags();
         cycle.instr = raw_cycle.instr;
-        // TODO(Forpee): Refactor this footgun
+        // TODO(Forpee): Refactor this footgun (we should prevent a user from calling this method before memory_ops are set)
         cycle.populate_instruction_lookups();
         cycle
     }
@@ -108,6 +91,23 @@ impl From<ONNXCycle> for JoltONNXCycle {
 
 pub fn jolt_trace(raw_trace: Vec<ONNXCycle>) -> ExecutionTrace {
     raw_trace.into_iter().map(JoltONNXCycle::from).collect()
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct MemoryOps {
+    ts1_read: (usize, Vec<u64>),
+    ts2_read: (usize, Vec<u64>),
+    td_write: (usize, Vec<u64>, Vec<u64>),
+}
+
+impl MemoryOps {
+    pub fn no_op() -> Self {
+        MemoryOps {
+            ts1_read: (0, vec![0; MAX_TENSOR_SIZE]),
+            ts2_read: (0, vec![0; MAX_TENSOR_SIZE]),
+            td_write: (0, vec![0; MAX_TENSOR_SIZE], vec![0; MAX_TENSOR_SIZE]),
+        }
+    }
 }
 
 pub trait WitnessGenerator {
@@ -588,7 +588,7 @@ impl JoltONNXCycle {
                     .map(|i| ElementWiseLookup::Sub(SUB(ts1[i], ts2[i])))
                     .collect(),
             ),
-            _ => None, // TODO(Forpee): Figure out how to ensure sparse-dense-shout handles none to still be no-op lookup queries of len MAX_TENSOR_SIZE
+            _ => None,
         }
     }
 }
