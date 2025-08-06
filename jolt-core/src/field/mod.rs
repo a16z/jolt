@@ -177,3 +177,4 @@ where
 }
 
 pub mod ark;
+pub mod tracked_ark;
