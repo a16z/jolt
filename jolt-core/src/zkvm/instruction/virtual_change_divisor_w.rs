@@ -1,14 +1,12 @@
 use tracer::instruction::{virtual_change_divisor_w::VirtualChangeDivisorW, RISCVCycle};
 
-use crate::zkvm::lookup_table::{
-    virtual_change_divisor_w::VirtualChangeDivisorWTable, LookupTables,
-};
+use crate::zkvm::lookup_table::LookupTables;
 
 use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
 impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for VirtualChangeDivisorW {
     fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
-        Some(VirtualChangeDivisorWTable.into())
+        todo!()
     }
 }
 

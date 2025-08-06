@@ -75,11 +75,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for VirtualChangeDivisorTable<WORD_
             y_product *= r[2 * i + 1];
         }
 
-        let adjustment = if WORD_SIZE == 64 {
-            F::from_u64(2) - F::from_u128(1u128 << 64)
-        } else {
-            F::from_u64(2) - F::from_u64(1u64 << WORD_SIZE)
-        };
+        let adjustment = F::from_u64(2) - F::from_u128(1u128 << WORD_SIZE);
 
         divisor_value + x_product * y_product * adjustment
     }
@@ -89,14 +85,20 @@ impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
     for VirtualChangeDivisorTable<WORD_SIZE>
 {
     fn suffixes(&self) -> Vec<Suffixes> {
-        vec![Suffixes::One, Suffixes::YSum, Suffixes::AllYProduct]
+        vec![
+            Suffixes::One,
+            Suffixes::RightOperand,
+            Suffixes::ChangeDivisor,
+        ]
     }
 
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
-        let [one, y_sum, all_y_product] = suffixes.try_into().unwrap();
+        let [one, right_operand, change_divisor] = suffixes.try_into().unwrap();
 
-        prefixes[Prefixes::YSum] * one + y_sum + prefixes[Prefixes::ChangeDivisor] * all_y_product
+        prefixes[Prefixes::RightOperand] * one
+            + right_operand
+            + prefixes[Prefixes::ChangeDivisor] * change_divisor
     }
 }
 

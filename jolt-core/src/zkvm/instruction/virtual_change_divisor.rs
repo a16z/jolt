@@ -1,6 +1,7 @@
 use tracer::instruction::{virtual_change_divisor::VirtualChangeDivisor, RISCVCycle};
 
-use crate::zkvm::lookup_table::{virtual_change_divisor::VirtualChangeDivisorTable, LookupTables};
+use crate::zkvm::lookup_table::virtual_change_divisor::VirtualChangeDivisorTable;
+use crate::zkvm::lookup_table::LookupTables;
 
 use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 

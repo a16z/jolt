@@ -1,5 +1,3 @@
-use crate::zkvm::lookup_table::prefixes::left_shift::LeftShiftPrefix;
-use crate::zkvm::lookup_table::prefixes::left_shift_helper::LeftShiftHelperPrefix;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 use lsb::LsbPrefix;
 use negative_divisor_equals_remainder::NegativeDivisorEqualsRemainderPrefix;
@@ -25,6 +23,8 @@ use div_by_zero::DivByZeroPrefix;
 use eq::EqPrefix;
 use left_is_zero::LeftOperandIsZeroPrefix;
 use left_msb::LeftMsbPrefix;
+use left_shift::LeftShiftPrefix;
+use left_shift_helper::LeftShiftHelperPrefix;
 use lower_half_word::LowerHalfWordPrefix;
 use lower_word::LowerWordPrefix;
 use lt::LessThanPrefix;
@@ -32,10 +32,10 @@ use num::FromPrimitive;
 use or::OrPrefix;
 use right_is_zero::RightOperandIsZeroPrefix;
 use right_msb::RightMsbPrefix;
+use right_operand::RightOperandPrefix;
 use two_lsb::TwoLsbPrefix;
 use upper_word::UpperWordPrefix;
 use xor::XorPrefix;
-use y_sum::YSumPrefix;
 
 pub mod and;
 pub mod andn;
@@ -60,13 +60,13 @@ pub mod pow2;
 pub mod pow2_w;
 pub mod right_is_zero;
 pub mod right_msb;
+pub mod right_operand;
 pub mod right_shift;
 pub mod sign_extension;
 pub mod sign_extension_upper_half;
 pub mod two_lsb;
 pub mod upper_word;
 pub mod xor;
-pub mod y_sum;
 
 pub trait SparseDensePrefix<F: JoltField>: 'static + Sync {
     /// Evalautes the MLE for this prefix:
@@ -137,8 +137,8 @@ pub enum Prefixes {
     LeftShiftHelper,
     TwoLsb,
     SignExtensionUpperHalf,
-    YSum,
     ChangeDivisor,
+    RightOperand,
 }
 
 #[derive(Clone, Copy)]
@@ -252,9 +252,11 @@ impl Prefixes {
             Prefixes::SignExtensionUpperHalf => {
                 SignExtensionUpperHalfPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
             }
-            Prefixes::YSum => YSumPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::ChangeDivisor => {
                 ChangeDivisorPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::RightOperand => {
+                RightOperandPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
             }
         };
         PrefixEval(eval)
@@ -413,11 +415,11 @@ impl Prefixes {
                     j,
                 )
             }
-            Prefixes::YSum => {
-                YSumPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
-            }
             Prefixes::ChangeDivisor => {
                 ChangeDivisorPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::RightOperand => {
+                RightOperandPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
         }
     }
