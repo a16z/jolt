@@ -523,8 +523,6 @@ impl JoltDAG {
             hint_map.insert(*poly, hint);
         }
 
-        prover_state_manager.set_commitments(commitments);
-
         #[cfg(test)]
         {
             let committed_polys: Vec<_> = AllCommittedPolynomials::par_iter()
@@ -536,8 +534,23 @@ impl JoltDAG {
                 .map(|poly| PCS::commit(poly, &preprocessing.generators).0)
                 .collect();
 
-            assert_eq!(commitments, commitments_non_streaming);
+            // assert_eq!(commitments, commitments_non_streaming);
+            // compare commitments and commitments_non_streaming iteratively and print indices that do not match
+            // if an index does not match, print the index and the two commitments and panic.
+            for (i, (commitment, commitment_non_streaming)) in commitments
+                .iter()
+                .zip(commitments_non_streaming.iter())
+                .enumerate()
+            {
+                assert_eq!(
+                    commitment, commitment_non_streaming,
+                    "Commitment mismatch at index {}: {:?} != {:?}",
+                    i, commitment, commitment_non_streaming
+                );
+            }
         }
+
+        prover_state_manager.set_commitments(commitments);
 
         Ok(hint_map)
     }

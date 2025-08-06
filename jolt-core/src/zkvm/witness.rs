@@ -726,64 +726,24 @@ impl CommittedPolynomial {
                 StreamingWitness::OneHot(witness)
             }
 
-            // CommittedPolynomial::RamRa(i) => {
-            //     let d = self.ram_d();
-            //     debug_assert!(*i < d);
-            //     let addresses: Vec<_> = trace
-            //         .par_iter()
-            //         .map(|cycle| {
-            //             remap_address(
-            //                 cycle.ram_access().address() as u64,
-            //                 &preprocessing.shared.memory_layout,
-            //             )
-            //             .map(|address| {
-            //                 (address as usize >> (NUM_RA_I_VARS * (d - 1 - i)))
-            //                     % (1 << NUM_RA_I_VARS)
-            //             })
-            //         })
-            //         .collect();
-            //     MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
-            //         addresses,
-            //         1 << NUM_RA_I_VARS,
-            //     ))
-            // }
-
-            // CommittedPolynomial::RamRa(i) => {
-            //     let d = self.ram_d();
-            //     debug_assert!(*i < d);
-            //     let addresses: Vec<_> = trace
-            //         .par_iter()
-            //         .map(|cycle| {
-            //             remap_address(
-            //                 cycle.ram_access().address() as u64,
-            //                 &preprocessing.shared.memory_layout,
-            //             )
-            //             .map(|address| {
-            //                 (address as usize >> (DTH_ROOT_OF_K.log_2() * (d - 1 - i)))
-            //                     % DTH_ROOT_OF_K
-            //             })
-            //         })
-            //         .collect();
-
             CommittedPolynomial::RamRa(i) => {
                 // // TODO: Compute this up front?
-                // let d = self.ram_d();
-                // debug_assert!(*i < d);
-                // let v = {
-                //     remap_address(
-                //         cycle.ram_access().address() as u64,
-                //         &preprocessing.shared.memory_layout,
-                //     )
-                //     .map(|address| {
-                //         (address as usize >> (NUM_RA_I_VARS * (d - 1 - i)))
-                //             % (1 << NUM_RA_I_VARS)
-                //     })
-                // };
+                let d = self.ram_d();
+                debug_assert!(*i < d);
+                let v = {
+                    remap_address(
+                        cycle.ram_access().address() as u64,
+                        &preprocessing.shared.memory_layout,
+                    )
+                    .map(|address| {
+                        (address as usize >> (DTH_ROOT_OF_K.log_2() * (d - 1 - i)))
+                            % DTH_ROOT_OF_K
+                    })
+                };
 
                 // // TODO: Handle zeroes properly
-                // let witness = StreamingOneHotWitness::new(v.unwrap_or(0));
-                // StreamingWitness::OneHot(witness)
-                todo!("come back to this later")
+                let witness = StreamingOneHotWitness::new(v.unwrap_or(0));
+                StreamingWitness::OneHot(witness)
             }
             CommittedPolynomial::RdInc => {
                 let v = {
