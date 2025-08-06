@@ -9,6 +9,10 @@ use ark_bn254::Fr;
 use ark_std::test_rng;
 use rand_core::RngCore;
 use rand_distr::{Distribution, Zipf};
+use std::env;
+use std::fs;
+use tracing_chrome::ChromeLayerBuilder;
+use tracing_subscriber::prelude::*;
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
 pub enum BenchType {
@@ -19,6 +23,7 @@ pub enum BenchType {
     Sha2Chain,
     Shout,
     Twist,
+    MasterBenchmark,
 }
 
 pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
@@ -30,6 +35,7 @@ pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()
         BenchType::Fibonacci => fibonacci(),
         BenchType::Shout => shout(),
         BenchType::Twist => twist::<Fr, KeccakTranscript>(),
+        BenchType::MasterBenchmark => master_benchmark(),
     }
 }
 
@@ -128,6 +134,110 @@ fn sha2_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     prove_example("sha2-chain-guest", inputs)
 }
 
+fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    let trace_length_exp = env::var("TRACE_LENGTH")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(21);
+    
+    println!("Running master benchmark with TRACE_LENGTH={}", trace_length_exp);
+    
+    if let Err(e) = fs::create_dir_all("perfetto_traces") {
+        eprintln!("Warning: Failed to create perfetto_traces directory: {}", e);
+    }
+    
+    let task = move || {
+        // Run benchmarks for trace lengths from 2^20 to 2^TRACE_LENGTH
+        for scale in 20..=trace_length_exp {
+            let scale_factor = 1 << (scale - 20);
+            let max_trace_length = 1 << scale;
+            
+            println!("Running benchmarks at scale 2^{} ({}x base inputs)", scale, scale_factor);
+            
+            // Fib
+            {
+                let (chrome_layer, _guard) = ChromeLayerBuilder::new()
+                    .file(format!("perfetto_traces/fib_{}.json", scale))
+                    .build();
+                let subscriber = tracing_subscriber::registry().with(chrome_layer);
+                let _guard = tracing::subscriber::set_default(subscriber);
+                
+                let fib_input = 25000u32 * scale_factor as u32;
+                let span = tracing::info_span!("Fibonacci_2^{}", scale);
+                span.in_scope(|| {
+                    prove_example_with_trace(
+                        "fibonacci-guest",
+                        postcard::to_stdvec(&fib_input).unwrap(),
+                        max_trace_length,
+                    );
+                });
+            }
+            
+            // SHA2
+            {
+                let (chrome_layer, _guard) = ChromeLayerBuilder::new()
+                    .file(format!("perfetto_traces/sha2_{}.json", scale))
+                    .build();
+                let subscriber = tracing_subscriber::registry().with(chrome_layer);
+                let _guard = tracing::subscriber::set_default(subscriber);
+                
+                let sha2_len = 2048 * scale_factor;
+                let span = tracing::info_span!("SHA2_2^{}", scale);
+                span.in_scope(|| {
+                    prove_example_with_trace(
+                        "sha2-guest",
+                        postcard::to_stdvec(&vec![5u8; sha2_len]).unwrap(),
+                        max_trace_length,
+                    );
+                });
+            }
+            
+            // SHA3
+            {
+                let (chrome_layer, _guard) = ChromeLayerBuilder::new()
+                    .file(format!("perfetto_traces/sha3_{}.json", scale))
+                    .build();
+                let subscriber = tracing_subscriber::registry().with(chrome_layer);
+                let _guard = tracing::subscriber::set_default(subscriber);
+                
+                let sha3_len = 2048 * scale_factor;
+                let span = tracing::info_span!("SHA3_2^{}", scale);
+                span.in_scope(|| {
+                    prove_example_with_trace(
+                        "sha3-guest",
+                        postcard::to_stdvec(&vec![5u8; sha3_len]).unwrap(),
+                        max_trace_length,
+                    );
+                });
+            }
+            
+            // BTreeMap
+            {
+                let (chrome_layer, _guard) = ChromeLayerBuilder::new()
+                    .file(format!("perfetto_traces/btreemap_{}.json", scale))
+                    .build();
+                let subscriber = tracing_subscriber::registry().with(chrome_layer);
+                let _guard = tracing::subscriber::set_default(subscriber);
+                
+                let btreemap_ops = 50u32 * scale_factor as u32;
+                let span = tracing::info_span!("BTreeMap_2^{}", scale);
+                span.in_scope(|| {
+                    prove_example_with_trace(
+                        "btreemap-guest",
+                        postcard::to_stdvec(&btreemap_ops).unwrap(),
+                        max_trace_length,
+                    );
+                });
+            }
+        }
+    };
+    
+    vec![(
+        tracing::info_span!("MasterBenchmark"),
+        Box::new(task) as Box<dyn FnOnce()>,
+    )]
+}
+
 fn prove_example(
     example_name: &str,
     serialized_input: Vec<u8>,
@@ -164,4 +274,33 @@ fn prove_example(
     ));
 
     tasks
+}
+
+fn prove_example_with_trace(
+    example_name: &str,
+    serialized_input: Vec<u8>,
+    max_trace_length: usize,
+) {
+    let mut program = host::Program::new(example_name);
+    let (bytecode, init_memory_state, _) = program.decode();
+    let (_, _, program_io) = program.trace(&serialized_input);
+
+    let preprocessing = JoltRV32IM::prover_preprocess(
+        bytecode.clone(),
+        program_io.memory_layout.clone(),
+        init_memory_state,
+        max_trace_length,
+    );
+
+    let (jolt_proof, program_io, _) =
+        JoltRV32IM::prove(&preprocessing, &mut program, &serialized_input);
+
+    let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+    let verification_result =
+        JoltRV32IM::verify(&verifier_preprocessing, jolt_proof, program_io, None);
+    assert!(
+        verification_result.is_ok(),
+        "Verification failed with error: {:?}",
+        verification_result.err()
+    );
 }
