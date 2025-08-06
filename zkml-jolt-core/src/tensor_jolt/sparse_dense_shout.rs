@@ -1,4 +1,6 @@
 #![allow(clippy::too_many_arguments)]
+use crate::tensor_jolt::execution_trace::WORD_SIZE;
+use crate::tensor_jolt::execution_trace::{JoltONNXCycle, ONNXLookupQuery};
 use jolt_core::subprotocols::sparse_dense_shout::{ExpandingTable, LookupBits};
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_core::{
@@ -31,10 +33,6 @@ use onnx_tracer::constants::MAX_TENSOR_SIZE;
 use onnx_tracer::trace_types::{InterleavedBitsMarker, ONNXCycle};
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
-
-use crate::jolt::lookup_trace::LookupTrace;
-use crate::jolt::lookup_trace::WORD_SIZE;
-use crate::tensor_jolt::execution_trace::{JoltONNXCycle, ONNXLookupQuery};
 
 #[allow(clippy::type_complexity)]
 pub fn prove_sparse_dense_shout<F: JoltField, ProofTranscript: Transcript>(

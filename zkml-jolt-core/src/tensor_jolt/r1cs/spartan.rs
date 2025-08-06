@@ -19,7 +19,7 @@ use std::marker::PhantomData;
 use thiserror::Error;
 use tracing::{Level, span};
 
-use crate::jolt::JoltProverPreprocessing;
+use crate::tensor_jolt::JoltProverPreprocessing;
 use crate::tensor_jolt::execution_trace::{ALL_R1CS_INPUTS, JoltONNXCycle, WitnessGenerator};
 use crate::tensor_jolt::r1cs::builder::CombinedUniformBuilder;
 use crate::tensor_jolt::r1cs::key::UniformSpartanKey;

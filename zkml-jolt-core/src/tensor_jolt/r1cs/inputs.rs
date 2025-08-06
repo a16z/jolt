@@ -5,9 +5,6 @@
 )]
 
 use super::spartan::UniformSpartanProof;
-use crate::jolt::JoltProverPreprocessing;
-use crate::jolt::lookup_trace::LookupTrace;
-use crate::jolt::witness::CommittedPolynomials;
 use crate::tensor_jolt::execution_trace::{JoltONNXR1CSInputs, WitnessGenerator};
 use jolt_core::field::JoltField;
 use jolt_core::jolt::instruction::LookupQuery;
