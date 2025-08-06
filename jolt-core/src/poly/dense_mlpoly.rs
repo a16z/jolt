@@ -5,7 +5,7 @@ use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::{compute_dotproduct, compute_dotproduct_low_optimized};
 
-use crate::field::JoltField;
+use crate::field::{JoltField, OptimizedMul};
 use crate::utils::math::Math;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use core::ops::Index;
@@ -249,6 +249,25 @@ impl<F: JoltField> DensePolynomial<F> {
         let chis = EqPolynomial::evals(r);
         assert_eq!(chis.len(), self.Z.len());
         compute_dotproduct(&self.Z, &chis)
+    }
+    pub fn evaluate_at_chi_split_eq(&self, eq_one: &[F], eq_two: &[F]) -> F {
+        // Serial and parallel based on the size of the the problem
+        // Neeed to handle case by case
+        let eval: F = (0..eq_one.len())
+            .flat_map(|x1| (0..eq_two.len()).map(move |x2| (x1, x2)))
+            .collect::<Vec<_>>()
+            .into_par_iter()
+            .map(|(x1, x2)| {
+                let idx = x1 * eq_two.len() + x2;
+                if self.Z[idx].is_zero() || eq_one[x1].is_zero() || eq_two[x2].is_zero() {
+                    F::zero()
+                } else {
+                    let coef = OptimizedMul::mul_01_optimized(self.Z[idx], eq_two[x2]);
+                    OptimizedMul::mul_01_optimized(eq_one[x1], coef)
+                }
+            })
+            .reduce(|| F::zero(), |acc, v| acc + v);
+        eval
     }
 
     // Faster evaluation based on

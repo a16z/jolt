@@ -8,7 +8,6 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use num_integer::Integer;
 use rayon::prelude::*;
 use std::cmp::Ordering;
-
 /// A trait for small scalars ({u/i}{8/16/32/64})
 pub trait SmallScalar: Copy + Integer + Sync + CanonicalSerialize + CanonicalDeserialize {
     /// Performs a field multiplication. Uses `JoltField::mul_u64` under the hood.
@@ -147,6 +146,65 @@ impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
     pub fn coeffs_as_field_elements(&self) -> Vec<F> {
         self.coeffs.par_iter().map(|x| x.to_field()).collect()
     }
+
+    pub fn split_eq_evaluate(&self, r: &[F], eq_one: &[F], eq_two: &[F]) -> F {
+        const PARALLEL_THRESHOLD: usize = 16;
+        // r must have a value for each variable
+        assert_eq!(r.len(), self.get_num_vars());
+        if r.len() < PARALLEL_THRESHOLD {
+            self.evaluate_split_eq_serial(eq_one, eq_two)
+        } else {
+            self.evaluate_split_eq_parallel(eq_one, eq_two)
+        }
+    }
+
+    fn evaluate_split_eq_parallel(&self, eq_one: &[F], eq_two: &[F]) -> F {
+        let eval: F = (0..eq_one.len())
+            .flat_map(|x1| (0..eq_two.len()).map(move |x2| (x1, x2)))
+            .collect::<Vec<_>>()
+            .into_par_iter()
+            .map(|(x1, x2)| {
+                let idx = x1 * eq_two.len() + x2;
+                if self.coeffs[idx].is_zero() || eq_one[x1].is_zero() || eq_two[x2].is_zero() {
+                    F::zero()
+                } else if eq_two[x2].is_one() && eq_one[x1].is_one() {
+                    self.coeffs[idx].to_field()
+                } else if eq_one[x1].is_one() {
+                    self.coeffs[idx].field_mul(eq_two[x2])
+                } else if eq_two[x2].is_one() {
+                    self.coeffs[idx].field_mul(eq_one[x1])
+                } else {
+                    self.coeffs[idx].field_mul(eq_one[x1]) * eq_two[x2]
+                }
+            })
+            .reduce(|| F::zero(), |acc, v| acc + v);
+
+        eval
+    }
+    fn evaluate_split_eq_serial(&self, eq_one: &[F], eq_two: &[F]) -> F {
+        let eval: F = (0..eq_one.len())
+            .flat_map(|x1| (0..eq_two.len()).map(move |x2| (x1, x2)))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|(x1, x2)| {
+                let idx = x1 * eq_two.len() + x2;
+                if self.coeffs[idx].is_zero() || eq_one[x1].is_zero() || eq_two[x2].is_zero() {
+                    F::zero()
+                } else if eq_two[x2].is_one() && eq_one[x1].is_one() {
+                    self.coeffs[idx].to_field()
+                } else if eq_one[x1].is_one() {
+                    self.coeffs[idx].field_mul(eq_two[x2])
+                } else if eq_two[x2].is_one() {
+                    self.coeffs[idx].field_mul(eq_one[x1])
+                } else {
+                    self.coeffs[idx].field_mul(eq_one[x1]) * eq_two[x2]
+                }
+            })
+            .fold(F::zero(), |acc, v| acc + v);
+
+        eval
+    }
+
     // Faster evaluation based on
     // https://randomwalks.xyz/publish/fast_polynomial_evaluation.html
     // Shaves a factor of 2 from run time.
