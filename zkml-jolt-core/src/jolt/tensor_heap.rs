@@ -59,6 +59,7 @@ impl<F: JoltField, ProofTranscript: Transcript> TensorHeapTwistProof<F, ProofTra
         // Cycle variables are bound from low to high
         r_cycle_prime.reverse();
 
+        // TODO: Openings: https://github.com/ICME-Lab/zkml-jolt/issues/66
         // let _rd_inc_poly = CommittedPolynomials::RdInc.generate_witness(preprocessing, trace);
         // opening_accumulator.append_sparse(
         //     vec![rd_inc_poly],

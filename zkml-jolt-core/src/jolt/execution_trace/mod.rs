@@ -328,6 +328,8 @@ impl WitnessGenerator for CommittedPolynomials {
                     .collect();
                 coeffs.into()
             }
+
+            // TODO: Openings: https://github.com/ICME-Lab/zkml-jolt/issues/66
             // CommittedPolynomials::RdInc => {
             //     let coeffs: Vec<i64> = trace
             //         .par_iter()
