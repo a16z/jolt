@@ -3,7 +3,6 @@ pub mod execution_trace;
 pub mod instruction;
 pub mod instruction_lookups;
 pub mod r1cs;
-pub mod sparse_dense_shout;
 pub mod tensor_heap;
 
 use crate::jolt::{

@@ -1,10 +1,12 @@
 #![allow(clippy::too_many_arguments)]
+use crate::jolt::execution_trace::WORD_SIZE;
+use crate::jolt::execution_trace::{JoltONNXCycle, ONNXLookupQuery};
 use jolt_core::subprotocols::sparse_dense_shout::{ExpandingTable, LookupBits};
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_core::{
     field::JoltField,
     jolt::{
-        instruction::{InstructionLookup, LookupQuery},
+        instruction::InstructionLookup,
         lookup_table::{
             LookupTables,
             prefixes::{PrefixCheckpoint, PrefixEval, Prefixes},
@@ -27,145 +29,14 @@ use jolt_core::{
         transcript::{AppendToTranscript, Transcript},
     },
 };
-use onnx_tracer::trace_types::{InterleavedBitsMarker, ONNXCycle};
+use onnx_tracer::constants::MAX_TENSOR_SIZE;
+use onnx_tracer::trace_types::InterleavedBitsMarker;
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
 
-use crate::jolt::lookup_trace::LookupTrace;
-use crate::jolt::lookup_trace::WORD_SIZE;
-
-/// Computes the bit-length of the suffix, for the current (`j`th) round
-/// of sumcheck.
-pub fn current_suffix_len(log_K: usize, j: usize) -> usize {
-    // Number of sumcheck rounds per "phase" of sparse-dense sumcheck.
-    let phase_length = log_K / 4;
-    // The suffix length is 3/4 * log_K at the beginning and shrinks by
-    // log_K / 4 after each phase.
-    log_K - (j / phase_length + 1) * phase_length
-}
-
-/// Compute the sumcheck prover message in round `j` using the prefix-suffix
-/// decomposition. In the first log(K) rounds of sumcheck, while we're
-/// binding the "address" variables (and the "cycle" variables remain unbound),
-/// the univariate polynomial computed each round is degree 2.
-///
-/// To see this, observe that:
-///   eq(r', j) * ra_1(k_1, j) * ra_2(k_2, j) * ra_3(k_3, j) * ra_4(k_4, j)
-/// is multilinear in k, since ra_1, ra_2, ra_3, and ra_4 are polynomials in
-/// non-overlapping variables of k (and the eq term doesn't involve k at all).
-/// Val(k) is clearly multilinear in k, so the whole summand
-///   eq(r', j) (\prod_i ra_i(k_i, j)) * \sum_l flag_l * Val_l(k)
-/// is degree 2 in each "address" variable k.
-#[tracing::instrument(skip_all)]
-fn compute_sumcheck_prover_message<const WORD_SIZE: usize, F: JoltField>(
-    prefix_checkpoints: &[PrefixCheckpoint<F>],
-    suffix_polys: &[Vec<DensePolynomial<F>>],
-    identity_ps: &PrefixSuffixDecomposition<F, 2>,
-    right_operand_ps: &PrefixSuffixDecomposition<F, 2>,
-    left_operand_ps: &PrefixSuffixDecomposition<F, 2>,
-    gamma: F,
-    r: &[F],
-    j: usize,
-) -> [F; 2] {
-    let mut read_checking = [F::zero(), F::zero()];
-    let mut raf = [F::zero(), F::zero()];
-
-    rayon::join(
-        || {
-            read_checking =
-                prover_msg_read_checking::<WORD_SIZE, _>(prefix_checkpoints, suffix_polys, r, j);
-        },
-        || {
-            raf = prover_msg_raf(identity_ps, right_operand_ps, left_operand_ps, gamma);
-        },
-    );
-
-    [read_checking[0] + raf[0], read_checking[1] + raf[1]]
-}
-
-fn prover_msg_raf<F: JoltField>(
-    identity_ps: &PrefixSuffixDecomposition<F, 2>,
-    right_operand_ps: &PrefixSuffixDecomposition<F, 2>,
-    left_operand_ps: &PrefixSuffixDecomposition<F, 2>,
-    gamma: F,
-) -> [F; 2] {
-    let len = identity_ps.Q_len();
-    let gamma_squared = gamma.square();
-    let (left_0, left_2, right_0, right_2) = (0..len / 2)
-        .into_par_iter()
-        .map(|b| {
-            let (i0, i2) = identity_ps.sumcheck_evals(b);
-            let (r0, r2) = right_operand_ps.sumcheck_evals(b);
-            let (l0, l2) = left_operand_ps.sumcheck_evals(b);
-            (i0 + l0, i2 + l2, r0, r2)
-        })
-        .reduce(
-            || (F::zero(), F::zero(), F::zero(), F::zero()),
-            |running, new| {
-                (
-                    running.0 + new.0,
-                    running.1 + new.1,
-                    running.2 + new.2,
-                    running.3 + new.3,
-                )
-            },
-        );
-    [
-        gamma * right_0 + gamma_squared * left_0,
-        gamma * right_2 + gamma_squared * left_2,
-    ]
-}
-
-fn prover_msg_read_checking<const WORD_SIZE: usize, F: JoltField>(
-    prefix_checkpoints: &[PrefixCheckpoint<F>],
-    suffix_polys: &[Vec<DensePolynomial<F>>],
-    r: &[F],
-    j: usize,
-) -> [F; 2] {
-    let lookup_tables: Vec<_> = LookupTables::<WORD_SIZE>::iter().collect();
-
-    let len = suffix_polys[0][0].len();
-    let log_len = len.log_2();
-
-    let r_x = if j % 2 == 1 { r.last().copied() } else { None };
-
-    let (eval_0, eval_2_left, eval_2_right) = (0..len / 2)
-        .into_par_iter()
-        .flat_map_iter(|b| {
-            let b = LookupBits::new(b as u64, log_len - 1);
-            let prefixes_c0: Vec<_> = Prefixes::iter()
-                .map(|prefix| prefix.prefix_mle::<WORD_SIZE, F>(prefix_checkpoints, r_x, 0, b, j))
-                .collect();
-            let prefixes_c2: Vec<_> = Prefixes::iter()
-                .map(|prefix| prefix.prefix_mle::<WORD_SIZE, F>(prefix_checkpoints, r_x, 2, b, j))
-                .collect();
-            lookup_tables
-                .iter()
-                .zip(suffix_polys.iter())
-                .map(move |(table, suffixes)| {
-                    let suffixes_left: Vec<_> =
-                        suffixes.iter().map(|suffix| suffix[b.into()]).collect();
-                    let suffixes_right: Vec<_> = suffixes
-                        .iter()
-                        .map(|suffix| suffix[usize::from(b) + len / 2])
-                        .collect();
-                    (
-                        table.combine(&prefixes_c0, &suffixes_left),
-                        table.combine(&prefixes_c2, &suffixes_left),
-                        table.combine(&prefixes_c2, &suffixes_right),
-                    )
-                })
-        })
-        .reduce(
-            || (F::zero(), F::zero(), F::zero()),
-            |running, new| (running.0 + new.0, running.1 + new.1, running.2 + new.2),
-        );
-    [eval_0, eval_2_right + eval_2_right - eval_2_left]
-}
-
 #[allow(clippy::type_complexity)]
 pub fn prove_sparse_dense_shout<F: JoltField, ProofTranscript: Transcript>(
-    trace: &[ONNXCycle],
+    trace: &[JoltONNXCycle],
     r_cycle: &[F],
     transcript: &mut ProofTranscript,
 ) -> (
@@ -180,7 +51,7 @@ pub fn prove_sparse_dense_shout<F: JoltField, ProofTranscript: Transcript>(
     let log_m = log_K / 4;
     let m = log_m.pow2();
 
-    let T = trace.len();
+    let T = trace.len() * MAX_TENSOR_SIZE;
     let log_T = T.log_2();
     debug_assert_eq!(r_cycle.len(), log_T);
 
@@ -190,10 +61,17 @@ pub fn prove_sparse_dense_shout<F: JoltField, ProofTranscript: Transcript>(
 
     let span = tracing::span!(tracing::Level::INFO, "compute lookup indices");
     let _guard = span.enter();
-    let lookup_indices: Vec<_> = trace
+    let lookup_indices: Vec<LookupBits> = trace
         .par_iter()
-        .map(|cycle| LookupBits::new(cycle.to_lookup().map_or(0, |x| x.to_lookup_index()), log_K))
+        .map(|cycle| {
+            ONNXLookupQuery::<WORD_SIZE>::to_lookup_index(cycle)
+                .iter()
+                .map(|&index| LookupBits::new(index, log_K))
+                .collect::<Vec<_>>()
+        })
+        .flatten()
         .collect();
+
     drop(_guard);
     drop(span);
 
@@ -208,14 +86,13 @@ pub fn prove_sparse_dense_shout<F: JoltField, ProofTranscript: Transcript>(
 
     let span = tracing::span!(tracing::Level::INFO, "compute input claim");
     let _guard = span.enter();
-    let rv_input_claim: F = trace
+    let rv_input_claim: F = lookup_indices
         .par_iter()
-        .zip(lookup_indices.par_iter())
         .zip(u_evals.par_iter())
-        .map(|((cycle, k), u)| {
-            let table: Option<LookupTables<WORD_SIZE>> =
-                cycle.to_lookup().and_then(|lookup| lookup.lookup_table());
-            match table {
+        .enumerate()
+        .map(|(i, (k, u))| {
+            let cycle = trace.get(i / MAX_TENSOR_SIZE).unwrap();
+            match cycle.lookup_table() {
                 Some(table) => u.mul_u64(table.materialize_entry(k.into())),
                 None => F::zero(),
             }
@@ -224,13 +101,9 @@ pub fn prove_sparse_dense_shout<F: JoltField, ProofTranscript: Transcript>(
     // TODO: these claims should be connected from spartan
     let (right_operand_evals, left_operand_evals): (Vec<u64>, Vec<u64>) = trace
         .par_iter()
-        .map(|cycle| {
-            let (right, left) = cycle
-                .to_lookup()
-                .map_or((0, 0), |lookup| lookup.to_lookup_operands());
-            (right, left)
-        })
-        .collect();
+        .flat_map(|cycle| ONNXLookupQuery::<WORD_SIZE>::to_lookup_operands(cycle))
+        .unzip();
+
     let right_operand_claim = MultilinearPolynomial::from(right_operand_evals).evaluate(r_cycle);
     let left_operand_claim = MultilinearPolynomial::from(left_operand_evals).evaluate(r_cycle);
 
@@ -274,21 +147,23 @@ pub fn prove_sparse_dense_shout<F: JoltField, ProofTranscript: Transcript>(
     let lookup_indices_by_table: Vec<_> = lookup_tables
         .par_iter()
         .map(|table| {
-            let table_lookups: Vec<_> = trace
+            let table_lookups: Vec<_> = lookup_indices
                 .iter()
-                .zip(lookup_indices.iter())
                 .enumerate()
-                .filter_map(|(j, (cycle, k))| match cycle.to_lookup()?.lookup_table() {
-                    Some(lookup) => {
-                        if LookupTables::<WORD_SIZE>::enum_index(&lookup)
-                            == LookupTables::enum_index(table)
-                        {
-                            Some((j, k))
-                        } else {
-                            None
+                .filter_map(|(j, k)| {
+                    let cycle = trace.get(j / MAX_TENSOR_SIZE).unwrap();
+                    match cycle.lookup_table() {
+                        Some(lookup) => {
+                            if LookupTables::<WORD_SIZE>::enum_index(&lookup)
+                                == LookupTables::enum_index(table)
+                            {
+                                Some((j, k))
+                            } else {
+                                None
+                            }
                         }
+                        None => None,
                     }
-                    None => None,
                 })
                 .collect();
             table_lookups
@@ -297,9 +172,9 @@ pub fn prove_sparse_dense_shout<F: JoltField, ProofTranscript: Transcript>(
     let (lookup_indices_uninterleave, lookup_indices_identity): (Vec<_>, Vec<_>) = lookup_indices
         .par_iter()
         .enumerate()
-        .zip(trace.par_iter())
-        .partition_map(|((idx, item), cycle)| {
-            if cycle.instr.to_circuit_flags().is_interleaved_operands() {
+        .partition_map(|(idx, item)| {
+            let cycle = trace.get(idx / MAX_TENSOR_SIZE).unwrap();
+            if cycle.instr().to_circuit_flags().is_interleaved_operands() {
                 itertools::Either::Left((idx, item))
             } else {
                 itertools::Either::Right((idx, item))
@@ -471,10 +346,10 @@ pub fn prove_sparse_dense_shout<F: JoltField, ProofTranscript: Transcript>(
     let mut combined_instruction_val_poly: Vec<F> = unsafe_allocate_zero_vec(T);
     combined_instruction_val_poly
         .par_iter_mut()
-        .zip(trace.par_iter())
-        .for_each(|(val, step)| {
-            let table: Option<LookupTables<WORD_SIZE>> =
-                step.to_lookup().and_then(|lookup| lookup.lookup_table());
+        .enumerate()
+        .for_each(|(i, val)| {
+            let cycle = trace.get(i / MAX_TENSOR_SIZE).unwrap();
+            let table: Option<LookupTables<WORD_SIZE>> = cycle.lookup_table();
             if let Some(table) = table {
                 let suffixes: Vec<_> = table
                     .suffixes()
@@ -486,7 +361,7 @@ pub fn prove_sparse_dense_shout<F: JoltField, ProofTranscript: Transcript>(
                 *val += table.combine(&prefixes, &suffixes);
             }
 
-            if step.instr.to_circuit_flags().is_interleaved_operands() {
+            if cycle.instr().to_circuit_flags().is_interleaved_operands() {
                 *val += gamma * prefix_registry.checkpoints[Prefix::RightOperand].unwrap()
                     + gamma_squared * prefix_registry.checkpoints[Prefix::LeftOperand].unwrap();
             } else {
@@ -673,29 +548,160 @@ pub fn verify_sparse_dense_shout<
     Ok(())
 }
 
+/// Computes the bit-length of the suffix, for the current (`j`th) round
+/// of sumcheck.
+pub fn current_suffix_len(log_K: usize, j: usize) -> usize {
+    // Number of sumcheck rounds per "phase" of sparse-dense sumcheck.
+    let phase_length = log_K / 4;
+    // The suffix length is 3/4 * log_K at the beginning and shrinks by
+    // log_K / 4 after each phase.
+    log_K - (j / phase_length + 1) * phase_length
+}
+
+/// Compute the sumcheck prover message in round `j` using the prefix-suffix
+/// decomposition. In the first log(K) rounds of sumcheck, while we're
+/// binding the "address" variables (and the "cycle" variables remain unbound),
+/// the univariate polynomial computed each round is degree 2.
+///
+/// To see this, observe that:
+///   eq(r', j) * ra_1(k_1, j) * ra_2(k_2, j) * ra_3(k_3, j) * ra_4(k_4, j)
+/// is multilinear in k, since ra_1, ra_2, ra_3, and ra_4 are polynomials in
+/// non-overlapping variables of k (and the eq term doesn't involve k at all).
+/// Val(k) is clearly multilinear in k, so the whole summand
+///   eq(r', j) (\prod_i ra_i(k_i, j)) * \sum_l flag_l * Val_l(k)
+/// is degree 2 in each "address" variable k.
+#[tracing::instrument(skip_all)]
+fn compute_sumcheck_prover_message<const WORD_SIZE: usize, F: JoltField>(
+    prefix_checkpoints: &[PrefixCheckpoint<F>],
+    suffix_polys: &[Vec<DensePolynomial<F>>],
+    identity_ps: &PrefixSuffixDecomposition<F, 2>,
+    right_operand_ps: &PrefixSuffixDecomposition<F, 2>,
+    left_operand_ps: &PrefixSuffixDecomposition<F, 2>,
+    gamma: F,
+    r: &[F],
+    j: usize,
+) -> [F; 2] {
+    let mut read_checking = [F::zero(), F::zero()];
+    let mut raf = [F::zero(), F::zero()];
+
+    rayon::join(
+        || {
+            read_checking =
+                prover_msg_read_checking::<WORD_SIZE, _>(prefix_checkpoints, suffix_polys, r, j);
+        },
+        || {
+            raf = prover_msg_raf(identity_ps, right_operand_ps, left_operand_ps, gamma);
+        },
+    );
+
+    [read_checking[0] + raf[0], read_checking[1] + raf[1]]
+}
+
+fn prover_msg_raf<F: JoltField>(
+    identity_ps: &PrefixSuffixDecomposition<F, 2>,
+    right_operand_ps: &PrefixSuffixDecomposition<F, 2>,
+    left_operand_ps: &PrefixSuffixDecomposition<F, 2>,
+    gamma: F,
+) -> [F; 2] {
+    let len = identity_ps.Q_len();
+    let gamma_squared = gamma.square();
+    let (left_0, left_2, right_0, right_2) = (0..len / 2)
+        .into_par_iter()
+        .map(|b| {
+            let (i0, i2) = identity_ps.sumcheck_evals(b);
+            let (r0, r2) = right_operand_ps.sumcheck_evals(b);
+            let (l0, l2) = left_operand_ps.sumcheck_evals(b);
+            (i0 + l0, i2 + l2, r0, r2)
+        })
+        .reduce(
+            || (F::zero(), F::zero(), F::zero(), F::zero()),
+            |running, new| {
+                (
+                    running.0 + new.0,
+                    running.1 + new.1,
+                    running.2 + new.2,
+                    running.3 + new.3,
+                )
+            },
+        );
+    [
+        gamma * right_0 + gamma_squared * left_0,
+        gamma * right_2 + gamma_squared * left_2,
+    ]
+}
+
+fn prover_msg_read_checking<const WORD_SIZE: usize, F: JoltField>(
+    prefix_checkpoints: &[PrefixCheckpoint<F>],
+    suffix_polys: &[Vec<DensePolynomial<F>>],
+    r: &[F],
+    j: usize,
+) -> [F; 2] {
+    let lookup_tables: Vec<_> = LookupTables::<WORD_SIZE>::iter().collect();
+
+    let len = suffix_polys[0][0].len();
+    let log_len = len.log_2();
+
+    let r_x = if j % 2 == 1 { r.last().copied() } else { None };
+
+    let (eval_0, eval_2_left, eval_2_right) = (0..len / 2)
+        .into_par_iter()
+        .flat_map_iter(|b| {
+            let b = LookupBits::new(b as u64, log_len - 1);
+            let prefixes_c0: Vec<_> = Prefixes::iter()
+                .map(|prefix| prefix.prefix_mle::<WORD_SIZE, F>(prefix_checkpoints, r_x, 0, b, j))
+                .collect();
+            let prefixes_c2: Vec<_> = Prefixes::iter()
+                .map(|prefix| prefix.prefix_mle::<WORD_SIZE, F>(prefix_checkpoints, r_x, 2, b, j))
+                .collect();
+            lookup_tables
+                .iter()
+                .zip(suffix_polys.iter())
+                .map(move |(table, suffixes)| {
+                    let suffixes_left: Vec<_> =
+                        suffixes.iter().map(|suffix| suffix[b.into()]).collect();
+                    let suffixes_right: Vec<_> = suffixes
+                        .iter()
+                        .map(|suffix| suffix[usize::from(b) + len / 2])
+                        .collect();
+                    (
+                        table.combine(&prefixes_c0, &suffixes_left),
+                        table.combine(&prefixes_c2, &suffixes_left),
+                        table.combine(&prefixes_c2, &suffixes_right),
+                    )
+                })
+        })
+        .reduce(
+            || (F::zero(), F::zero(), F::zero()),
+            |running, new| (running.0 + new.0, running.1 + new.1, running.2 + new.2),
+        );
+    [eval_0, eval_2_right + eval_2_right - eval_2_left]
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::jolt::execution_trace::jolt_execution_trace;
+
     use super::*;
     use ark_bn254::Fr;
     use jolt_core::utils::transcript::KeccakTranscript;
-    use onnx_tracer::trace_types::ONNXOpcode;
+    use onnx_tracer::trace_types::{ONNXCycle, ONNXOpcode};
     use rand::{SeedableRng, rngs::StdRng};
 
     const WORD_SIZE: usize = 32;
-    const LOG_T: usize = 8;
-    const T: usize = 1 << LOG_T;
+    const TRACE_LEN: usize = 1 << 8;
 
     fn test_sparse_dense_shout(opcode: ONNXOpcode) {
+        let LOG_T: usize = (TRACE_LEN * MAX_TENSOR_SIZE).log_2();
         let mut rng = StdRng::from_seed([0u8; 32]);
 
-        let mut trace = Vec::with_capacity(T);
-        trace.resize(T, ONNXCycle::random(opcode, &mut rng));
-
+        let mut trace = Vec::with_capacity(TRACE_LEN);
+        trace.resize(TRACE_LEN, ONNXCycle::random(opcode, &mut rng));
+        let execution_trace = jolt_execution_trace(trace);
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(LOG_T);
 
         let (proof, rv_claim, ra_claims, add_mul_sub_claim, flag_claims, _) =
-            prove_sparse_dense_shout::<_, _>(&trace, &r_cycle, &mut prover_transcript);
+            prove_sparse_dense_shout::<_, _>(&execution_trace, &r_cycle, &mut prover_transcript);
 
         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
         let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(LOG_T);

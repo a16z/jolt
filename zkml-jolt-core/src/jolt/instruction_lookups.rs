@@ -24,10 +24,12 @@ use jolt_core::{
     },
 };
 
-use crate::jolt::{
-    JoltProverPreprocessing,
-    execution_trace::{JoltONNXCycle, ONNXLookupQuery},
-    sparse_dense_shout::{prove_sparse_dense_shout, verify_sparse_dense_shout},
+use crate::{
+    jolt::{
+        JoltProverPreprocessing,
+        execution_trace::{JoltONNXCycle, ONNXLookupQuery},
+    },
+    subprotocols::sparse_dense_shout::{prove_sparse_dense_shout, verify_sparse_dense_shout},
 };
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
