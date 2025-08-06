@@ -36,17 +36,17 @@ pub struct JoltONNXCycle {
 // TODO(Forpee): Refactor these clones in JoltONNXCycle::ts1_read, ts2_read, td_write
 impl JoltONNXCycle {
     /// # Returns: (address, read_value)
-    pub fn ts1_read(&self) -> (usize, Vec<u64>) {
+    pub fn ts1_read(&self) -> (Vec<usize>, Vec<u64>) {
         self.memory_ops.ts1_read.clone()
     }
 
     /// # Returns: (address, read_value)
-    pub fn ts2_read(&self) -> (usize, Vec<u64>) {
+    pub fn ts2_read(&self) -> (Vec<usize>, Vec<u64>) {
         self.memory_ops.ts2_read.clone()
     }
 
     /// # Returns: (address, pre_value, post_value)
-    pub fn td_write(&self) -> (usize, Vec<u64>, Vec<u64>) {
+    pub fn td_write(&self) -> (Vec<usize>, Vec<u64>, Vec<u64>) {
         self.memory_ops.td_write.clone()
     }
 
@@ -96,17 +96,21 @@ pub fn jolt_execution_trace(raw_trace: Vec<ONNXCycle>) -> ExecutionTrace {
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct MemoryOps {
-    ts1_read: (usize, Vec<u64>),
-    ts2_read: (usize, Vec<u64>),
-    td_write: (usize, Vec<u64>, Vec<u64>),
+    ts1_read: (Vec<usize>, Vec<u64>),
+    ts2_read: (Vec<usize>, Vec<u64>),
+    td_write: (Vec<usize>, Vec<u64>, Vec<u64>),
 }
 
 impl MemoryOps {
     pub fn no_op() -> Self {
         MemoryOps {
-            ts1_read: (0, vec![0; MAX_TENSOR_SIZE]),
-            ts2_read: (0, vec![0; MAX_TENSOR_SIZE]),
-            td_write: (0, vec![0; MAX_TENSOR_SIZE], vec![0; MAX_TENSOR_SIZE]),
+            ts1_read: (vec![0usize; MAX_TENSOR_SIZE], vec![0; MAX_TENSOR_SIZE]),
+            ts2_read: (vec![0usize; MAX_TENSOR_SIZE], vec![0; MAX_TENSOR_SIZE]),
+            td_write: (
+                vec![0usize; MAX_TENSOR_SIZE],
+                vec![0; MAX_TENSOR_SIZE],
+                vec![0; MAX_TENSOR_SIZE],
+            ),
         }
     }
 }
@@ -315,7 +319,7 @@ impl WitnessGenerator for CommittedPolynomials {
                     .map(|cycle| {
                         let flag = cycle.instr.to_circuit_flags()
                             [CircuitFlags::WriteLookupOutputToRD as usize];
-                        (cycle.td_write().0 as u8) * (flag as u8)
+                        (cycle.td_write().0[0] as u8) * (flag as u8)
                     })
                     .collect();
                 coeffs.into()

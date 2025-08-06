@@ -60,7 +60,6 @@ impl KeccakTranscript {
     fn update_state(&mut self, new_state: [u8; 32]) {
         self.state = new_state;
         self.n_rounds += 1;
-        #[cfg(test)]
         {
             if let Some(expected_state_history) = &self.expected_state_history {
                 assert!(

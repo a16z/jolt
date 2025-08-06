@@ -44,17 +44,22 @@ impl ONNXCycle {
         }
     }
 
-    // HACKS(Forpee): These methods are going to be removed once we 1. migrate runtime to 64-bit and 2. allow jolt-prover to intake tensor ops at each cycle.
-    // TODO: Also Refactor execution trace.
+    // # NOTE: Adds [ZERO_REGISTER_PREPEND] to the orignal traced value
     pub fn td(&self) -> usize {
         self.instr.td.map_or(0, |td| td + ZERO_REGISTER_PREPEND)
     }
+
+    // # NOTE: Adds [ZERO_REGISTER_PREPEND] to the orignal traced value
     pub fn ts1(&self) -> usize {
         self.instr.ts1.map_or(0, |ts1| ts1 + ZERO_REGISTER_PREPEND)
     }
+
+    // # NOTE: Adds [ZERO_REGISTER_PREPEND] to the orignal traced value
     pub fn ts2(&self) -> usize {
         self.instr.ts2.map_or(0, |ts2| ts2 + ZERO_REGISTER_PREPEND)
     }
+
+    // HACKS(Forpee): These methods are going to be removed once we 1. migrate runtime to 64-bit and 2. allow jolt-prover to intake tensor ops at each cycle.
     pub fn td_write(&self) -> (usize, u64, u64) {
         match self.to_memory_ops()[2] {
             MemoryOp::Write(td, pre_val, post_val) => (td as usize, pre_val, post_val),
@@ -226,30 +231,54 @@ impl ONNXCycle {
     pub fn to_tensor_memory_ops(
         &self,
     ) -> (
-        (usize, Vec<u64>),
-        (usize, Vec<u64>),
-        (usize, Vec<u64>, Vec<u64>),
+        (Vec<usize>, Vec<u64>),
+        (Vec<usize>, Vec<u64>),
+        (Vec<usize>, Vec<u64>, Vec<u64>),
     ) {
         let ts1 = self.memory_state.ts1_val.as_ref().map_or_else(
-            || (0, vec![0; MAX_TENSOR_SIZE]),
-            |t| (self.ts1(), t.inner.iter().map(normalize).collect()),
-        );
-        let ts2 = self.memory_state.ts2_val.as_ref().map_or_else(
-            || (0, vec![0; MAX_TENSOR_SIZE]),
-            |t| (self.ts2(), t.inner.iter().map(normalize).collect()),
-        );
-        let td = self.memory_state.td_post_val.as_ref().map_or_else(
-            || (0, vec![0; MAX_TENSOR_SIZE], vec![0; MAX_TENSOR_SIZE]),
+            || (vec![0usize; MAX_TENSOR_SIZE], vec![0; MAX_TENSOR_SIZE]),
             |t| {
                 (
-                    self.td(),
+                    get_tensor_addresses(self.ts1()),
                     t.inner.iter().map(normalize).collect(),
+                )
+            },
+        );
+        let ts2 = self.memory_state.ts2_val.as_ref().map_or_else(
+            || (vec![0usize; MAX_TENSOR_SIZE], vec![0; MAX_TENSOR_SIZE]),
+            |t| {
+                (
+                    get_tensor_addresses(self.ts2()),
+                    t.inner.iter().map(normalize).collect(),
+                )
+            },
+        );
+        let td = self.memory_state.td_post_val.as_ref().map_or_else(
+            || {
+                (
+                    vec![0usize; MAX_TENSOR_SIZE],
+                    vec![0; MAX_TENSOR_SIZE],
+                    vec![0; MAX_TENSOR_SIZE],
+                )
+            },
+            |t| {
+                (
+                    get_tensor_addresses(self.td()),
+                    vec![0; MAX_TENSOR_SIZE], // TODO: It is not guaranteed that td_pre_val is always 0. For example const opcodes.
                     t.inner.iter().map(normalize).collect(),
                 )
             },
         );
         (ts1, ts2, td)
     }
+}
+
+fn get_tensor_addresses(t: usize) -> Vec<usize> {
+    let mut addresses = Vec::new();
+    for i in 0..MAX_TENSOR_SIZE {
+        addresses.push(t * MAX_TENSOR_SIZE + i);
+    }
+    addresses
 }
 
 // HACK(Forpee): This is a temporary function to normalize i128 values to u64 for the jolt execution trace.

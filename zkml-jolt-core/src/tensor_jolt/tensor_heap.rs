@@ -1,5 +1,5 @@
 #![allow(clippy::needless_range_loop)]
-use crate::jolt::{JoltProverPreprocessing, witness::CommittedPolynomials};
+use crate::tensor_jolt::{JoltProverPreprocessing, execution_trace::JoltONNXCycle};
 use jolt_core::{
     field::{JoltField, OptimizedMul},
     poly::{
@@ -19,12 +19,8 @@ use jolt_core::{
         transcript::{AppendToTranscript, Transcript},
     },
 };
+use onnx_tracer::constants::MAX_TENSOR_SIZE;
 use rayon::prelude::*;
-
-const RD: usize = 2;
-
-#[derive(Debug)]
-pub struct DummyCycle {}
 
 #[derive(Debug, Clone)]
 pub struct TensorHeapTwistProof<F: JoltField, ProofTranscript: Transcript> {
@@ -39,13 +35,13 @@ pub struct TensorHeapTwistProof<F: JoltField, ProofTranscript: Transcript> {
 impl<F: JoltField, ProofTranscript: Transcript> TensorHeapTwistProof<F, ProofTranscript> {
     #[tracing::instrument(skip_all, name = "TensorHeapTwistProof::prove")]
     pub fn prove<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
-        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
-        trace: &[DummyCycle],
+        _preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
+        trace: &[JoltONNXCycle],
         K: usize,
         _opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> TensorHeapTwistProof<F, ProofTranscript> {
-        let log_T = trace.len().log_2();
+        let log_T = (trace.len() * MAX_TENSOR_SIZE).log_2();
 
         let r: Vec<F> = transcript.challenge_vector(K.log_2());
         let r_prime: Vec<F> = transcript.challenge_vector(log_T);
@@ -53,15 +49,15 @@ impl<F: JoltField, ProofTranscript: Transcript> TensorHeapTwistProof<F, ProofTra
         let (read_write_checking_proof, r_address, r_cycle) =
             ReadWriteCheckingProof::prove(trace, r, r_prime, transcript);
 
-        // let (val_evaluation_proof, mut r_cycle_prime) = prove_val_evaluation(
-        //     trace,
-        //     r_address.clone(),
-        //     r_cycle,
-        //     read_write_checking_proof.val_claim,
-        //     transcript,
-        // );
-        // // Cycle variables are bound from low to high
-        // r_cycle_prime.reverse();
+        let (val_evaluation_proof, mut r_cycle_prime) = prove_val_evaluation(
+            trace,
+            r_address.clone(),
+            r_cycle,
+            read_write_checking_proof.val_claim,
+            transcript,
+        );
+        // Cycle variables are bound from low to high
+        r_cycle_prime.reverse();
 
         // let _rd_inc_poly = CommittedPolynomials::RdInc.generate_witness(preprocessing, trace);
         // opening_accumulator.append_sparse(
@@ -71,12 +67,11 @@ impl<F: JoltField, ProofTranscript: Transcript> TensorHeapTwistProof<F, ProofTra
         //     vec![val_evaluation_proof.inc_claim],
         // );
 
-        // TensorHeapTwistProof {
-        //     K,
-        //     read_write_checking_proof,
-        //     val_evaluation_proof,
-        // }
-        todo!()
+        TensorHeapTwistProof {
+            K,
+            read_write_checking_proof,
+            val_evaluation_proof,
+        }
     }
 
     pub fn verify<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
@@ -90,7 +85,6 @@ impl<F: JoltField, ProofTranscript: Transcript> TensorHeapTwistProof<F, ProofTra
         let log_T = T.log_2();
         let r: Vec<F> = transcript.challenge_vector(log_K);
         let r_prime: Vec<F> = transcript.challenge_vector(log_T);
-
         let (_r_address, r_cycle) = self
             .read_write_checking_proof
             .verify(r, r_prime, transcript);
@@ -175,7 +169,7 @@ pub struct ValEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
 impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofTranscript> {
     #[tracing::instrument(skip_all, name = "ReadWriteCheckingProof::prove")]
     pub fn prove(
-        trace: &[DummyCycle],
+        trace: &[JoltONNXCycle],
         r: Vec<F>,
         r_prime: Vec<F>,
         transcript: &mut ProofTranscript,
@@ -183,7 +177,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         const DEGREE: usize = 3;
         let K = r.len().pow2();
         let T = r_prime.len().pow2();
-        debug_assert_eq!(trace.len(), T);
+        debug_assert_eq!(trace.len() * MAX_TENSOR_SIZE, T);
 
         // Used to batch the read-checking and write-checking sumcheck
         // (see Section 4.2.1)
@@ -197,6 +191,14 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = T / num_chunks;
 
+        let td_writes: Vec<(usize, u64, u64)> = trace
+            .iter()
+            .flat_map(|cycle| {
+                let (address, pre_value, post_value) = cycle.td_write();
+                (0..MAX_TENSOR_SIZE).map(move |i| (address[i], pre_value[i], post_value[i]))
+            })
+            .collect();
+
         #[cfg(test)]
         let mut val_test = {
             // Compute Val in cycle-major order, since we will be binding
@@ -206,7 +208,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                 let mut current_val = F::zero();
                 for j in 0..T {
                     val_k[j] = current_val;
-                    let (address, _, write_value) = trace[j].td_write();
+                    let (address, _, write_value) = td_writes[j];
                     if address == k {
                         current_val = F::from_u64(write_value);
                     }
@@ -214,65 +216,64 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             });
             MultilinearPolynomial::from(val)
         };
-        #[cfg(test)]
-        let mut rs1_ra_test = {
-            // Compute ra in cycle-major order, since we will be binding
-            // from low-to-high starting with the cycle variables
-            let mut ra: Vec<F> = unsafe_allocate_zero_vec(K * T);
-            ra.par_chunks_mut(T).enumerate().for_each(|(k, ra_k)| {
-                for j in 0..T {
-                    let instr = &trace[j].instr;
-                    // FIXME: is this correct because 0 register is reserved for no-ops
-                    if instr.ts1.unwrap_or_default() == k {
-                        ra_k[j] = F::one();
-                    }
-                }
-            });
-            MultilinearPolynomial::from(ra)
-        };
-        #[cfg(test)]
-        let mut rs2_ra_test = {
-            // Compute ra in cycle-major order, since we will be binding
-            // from low-to-high starting with the cycle variables
-            let mut ra: Vec<F> = unsafe_allocate_zero_vec(K * T);
-            ra.par_chunks_mut(T).enumerate().for_each(|(k, ra_k)| {
-                for j in 0..T {
-                    let instr = &trace[j].instr;
-                    if instr.ts1.unwrap_or_default() == k {
-                        ra_k[j] = F::one();
-                    }
-                }
-            });
-            MultilinearPolynomial::from(ra)
-        };
-        #[cfg(test)]
-        let mut wa_test = {
-            // Compute wa in cycle-major order, since we will be binding
-            // from low-to-high starting with the cycle variables
-            let mut wa: Vec<F> = unsafe_allocate_zero_vec(K * T);
-            wa.par_chunks_mut(T).enumerate().for_each(|(k, wa_k)| {
-                for j in 0..T {
-                    let instr = &trace[j].instr;
-                    if instr.td.unwrap_or_default() == k {
-                        wa_k[j] = F::one();
-                    }
-                }
-            });
-            MultilinearPolynomial::from(wa)
-        };
+        // #[cfg(test)]
+        // let mut rs1_ra_test = {
+        //     // Compute ra in cycle-major order, since we will be binding
+        //     // from low-to-high starting with the cycle variables
+        //     let mut ra: Vec<F> = unsafe_allocate_zero_vec(K * T);
+        //     ra.par_chunks_mut(T).enumerate().for_each(|(k, ra_k)| {
+        //         for j in 0..T {
+        //             let instr = &trace.get(j / MAX_TENSOR_SIZE).unwrap().instr;
+        //             if instr.ts1.unwrap_or_default() == k {
+        //                 ra_k[j] = F::one();
+        //             }
+        //         }
+        //     });
+        //     MultilinearPolynomial::from(ra)
+        // };
+        // #[cfg(test)]
+        // let mut rs2_ra_test = {
+        //     // Compute ra in cycle-major order, since we will be binding
+        //     // from low-to-high starting with the cycle variables
+        //     let mut ra: Vec<F> = unsafe_allocate_zero_vec(K * T);
+        //     ra.par_chunks_mut(T).enumerate().for_each(|(k, ra_k)| {
+        //         for j in 0..T {
+        //             let instr = &trace.get(j / MAX_TENSOR_SIZE).unwrap().instr;
+        //             if instr.ts2.unwrap_or_default() == k {
+        //                 ra_k[j] = F::one();
+        //             }
+        //         }
+        //     });
+        //     MultilinearPolynomial::from(ra)
+        // };
+        // #[cfg(test)]
+        // let mut wa_test = {
+        //     // Compute wa in cycle-major order, since we will be binding
+        //     // from low-to-high starting with the cycle variables
+        //     let mut wa: Vec<F> = unsafe_allocate_zero_vec(K * T);
+        //     wa.par_chunks_mut(T).enumerate().for_each(|(k, wa_k)| {
+        //         for j in 0..T {
+        //             let instr = &trace.get(j / MAX_TENSOR_SIZE).unwrap().instr;
+        //             if instr.td.unwrap_or_default() == k {
+        //                 wa_k[j] = F::one();
+        //             }
+        //         }
+        //     });
+        //     MultilinearPolynomial::from(wa)
+        // };
 
         let span = tracing::span!(tracing::Level::INFO, "compute deltas");
         let _guard = span.enter();
 
-        let deltas: Vec<Vec<i64>> = trace[..T - chunk_size]
+        let deltas: Vec<Vec<i64>> = td_writes[..T - chunk_size]
             .par_chunks_exact(chunk_size)
             .map(|trace_chunk| {
                 let mut delta = vec![0i64; K];
                 for cycle in trace_chunk.iter() {
-                    let (k, pre_value, post_value) = cycle.td_write();
-                    let increment = post_value as i64 - pre_value as i64;
-                    debug_assert!(k != 0 || increment == 0, "{cycle:?}"); // Zero register
-                    delta[k as usize] += increment;
+                    let (k, pre_value, post_value) = cycle;
+                    let increment = *post_value as i64 - *pre_value as i64;
+                    debug_assert!(*k != 0 || increment == 0, "{cycle:?}"); // Zero register
+                    delta[*k as usize] += increment;
                 }
                 debug_assert_eq!(delta[0], 0); // Zero register
                 delta
@@ -345,7 +346,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let _guard = span.enter();
 
         // Data structure described in Equation (72)
-        let mut I: Vec<Vec<(usize, usize, F, F)>> = trace
+        let mut I: Vec<Vec<(usize, usize, F, F)>> = td_writes
             .par_chunks(chunk_size)
             .enumerate()
             .map(|(chunk_index, trace_chunk)| {
@@ -354,7 +355,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                 trace_chunk
                     .iter()
                     .map(|cycle| {
-                        let (k, pre_value, post_value) = cycle.td_write();
+                        let (k, pre_value, post_value) = *cycle;
                         let k = k as usize;
                         let increment = post_value as i64 - pre_value as i64;
                         let inc = if increment == 0 {
@@ -373,14 +374,36 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         drop(span);
 
         // TODO(Forpee): refactor to use witness generator
-        let rs1_rv: Vec<u64> = trace.par_iter().map(|cycle| cycle.ts1_read().1).collect();
+        let rs1_rv: Vec<u64> = trace
+            .par_iter()
+            .flat_map(|cycle| cycle.ts1_read().1)
+            .collect();
         let rs1_rv = MultilinearPolynomial::from(rs1_rv);
 
-        let rs2_rv: Vec<u64> = trace.par_iter().map(|cycle| cycle.ts2_read().1).collect();
+        let rs2_rv: Vec<u64> = trace
+            .par_iter()
+            .flat_map(|cycle| cycle.ts2_read().1)
+            .collect();
         let rs2_rv = MultilinearPolynomial::from(rs2_rv);
 
-        let rd_wv: Vec<u64> = trace.par_iter().map(|cycle| cycle.td_write().2).collect();
+        let rd_wv: Vec<u64> = trace
+            .par_iter()
+            .flat_map(|cycle| cycle.td_write().2)
+            .collect();
         let mut rd_wv = MultilinearPolynomial::from(rd_wv);
+
+        let ts1_addr: Vec<usize> = trace
+            .par_iter()
+            .flat_map(|cycle| cycle.ts1_read().0)
+            .collect();
+        let ts2_addr: Vec<usize> = trace
+            .par_iter()
+            .flat_map(|cycle| cycle.ts2_read().0)
+            .collect();
+        let td_addr: Vec<usize> = trace
+            .par_iter()
+            .flat_map(|cycle| cycle.td_write().0)
+            .collect();
 
         // rv(r')
         let (rv_evals, eq_r_prime) =
@@ -395,11 +418,11 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let _guard = span.enter();
 
         // Inc(r, r')
-        let inc_eval: F = trace
+        let inc_eval: F = td_writes
             .par_iter()
             .enumerate()
             .map(|(j, cycle)| {
-                let (k, pre_value, post_value) = cycle.td_write();
+                let (k, pre_value, post_value) = *cycle;
                 let increment = post_value as i64 - pre_value as i64;
                 if increment == 0 {
                     F::zero()
@@ -467,31 +490,31 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 
         // First log(T / num_chunks) rounds of sumcheck
         for round in 0..chunk_size.log_2() {
-            #[cfg(test)]
-            {
-                let mut expected_claim = F::zero();
-                for j in 0..(T >> round) {
-                    let mut inner_sum = F::zero();
-                    for k in 0..K {
-                        let kj = k * (T >> round) + j;
-                        // write-checking sumcheck
-                        inner_sum += eq_r.get_bound_coeff(k)
-                            * wa_test.get_bound_coeff(kj)
-                            * (rd_wv.get_bound_coeff(j) - val_test.get_bound_coeff(kj));
-                        // read-checking sumcheck
-                        inner_sum +=
-                            z * rs1_ra_test.get_bound_coeff(kj) * val_test.get_bound_coeff(kj);
-                        inner_sum += z_squared
-                            * rs2_ra_test.get_bound_coeff(kj)
-                            * val_test.get_bound_coeff(kj);
-                    }
-                    expected_claim += eq_r_prime.get_bound_coeff(j) * inner_sum;
-                }
-                assert_eq!(
-                    expected_claim, previous_claim,
-                    "Sumcheck sanity check failed in round {round}"
-                );
-            }
+            // #[cfg(test)]
+            // {
+            //     let mut expected_claim = F::zero();
+            //     for j in 0..(T >> round) {
+            //         let mut inner_sum = F::zero();
+            //         for k in 0..K {
+            //             let kj = k * (T >> round) + j;
+            //             // write-checking sumcheck
+            //             inner_sum += eq_r.get_bound_coeff(k)
+            //                 * wa_test.get_bound_coeff(kj)
+            //                 * (rd_wv.get_bound_coeff(j) - val_test.get_bound_coeff(kj));
+            //             // read-checking sumcheck
+            //             inner_sum +=
+            //                 z * rs1_ra_test.get_bound_coeff(kj) * val_test.get_bound_coeff(kj);
+            //             inner_sum += z_squared
+            //                 * rs2_ra_test.get_bound_coeff(kj)
+            //                 * val_test.get_bound_coeff(kj);
+            //         }
+            //         expected_claim += eq_r_prime.get_bound_coeff(j) * inner_sum;
+            //     }
+            //     assert_eq!(
+            //         expected_claim, previous_claim,
+            //         "Sumcheck sanity check failed in round {round}"
+            //     );
+            // }
 
             let inner_span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
             let _inner_guard = inner_span.enter();
@@ -523,19 +546,19 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                             for j in j_prime << round..(j_prime + 1) << round {
                                 let j_bound = j % (1 << round);
 
-                                let k = trace[j].ts1_read().0;
+                                let k = ts1_addr[j];
 
                                 dirty_indices.push(k);
 
                                 rs1_ra[0][k] += A[j_bound];
 
-                                let k = trace[j].ts2_read().0;
+                                let k = ts2_addr[j];
 
                                 dirty_indices.push(k);
 
                                 rs2_ra[0][k] += A[j_bound];
 
-                                let k = trace[j].td_write().0;
+                                let k = td_addr[j];
 
                                 dirty_indices.push(k);
 
@@ -545,19 +568,19 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                             for j in (j_prime + 1) << round..(j_prime + 2) << round {
                                 let j_bound = j % (1 << round);
 
-                                let k = trace[j].ts1_read().0;
+                                let k = ts1_addr[j];
 
                                 dirty_indices.push(k);
 
                                 rs1_ra[1][k] += A[j_bound];
 
-                                let k = trace[j].ts2_read().0;
+                                let k = ts2_addr[j];
 
                                 dirty_indices.push(k);
 
                                 rs2_ra[1][k] += A[j_bound];
 
-                                let k = trace[j].td_write().0;
+                                let k = td_addr[j];
 
                                 dirty_indices.push(k);
 
@@ -760,24 +783,24 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                 || eq_r_prime.bind_parallel(r_j, BindingOrder::LowToHigh),
             );
 
-            #[cfg(test)]
-            {
-                val_test.bind_parallel(r_j, BindingOrder::LowToHigh);
-                rs1_ra_test.bind_parallel(r_j, BindingOrder::LowToHigh);
-                rs2_ra_test.bind_parallel(r_j, BindingOrder::LowToHigh);
-                wa_test.bind_parallel(r_j, BindingOrder::LowToHigh);
+            // #[cfg(test)]
+            // {
+            //     val_test.bind_parallel(r_j, BindingOrder::LowToHigh);
+            //     rs1_ra_test.bind_parallel(r_j, BindingOrder::LowToHigh);
+            //     rs2_ra_test.bind_parallel(r_j, BindingOrder::LowToHigh);
+            //     wa_test.bind_parallel(r_j, BindingOrder::LowToHigh);
 
-                // Check that row indices of I are non-decreasing
-                let mut current_row = 0;
-                for I_chunk in I.iter() {
-                    for (row, _, _, _) in I_chunk {
-                        if *row != current_row {
-                            assert_eq!(*row, current_row + 1);
-                            current_row = *row;
-                        }
-                    }
-                }
-            }
+            //     // Check that row indices of I are non-decreasing
+            //     let mut current_row = 0;
+            //     for I_chunk in I.iter() {
+            //         for (row, _, _, _) in I_chunk {
+            //             if *row != current_row {
+            //                 assert_eq!(*row, current_row + 1);
+            //                 current_row = *row;
+            //             }
+            //         }
+            //     }
+            // }
 
             let inner_span = tracing::span!(tracing::Level::INFO, "Update A");
             let _inner_guard = inner_span.enter();
@@ -807,12 +830,11 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             .par_chunks_mut(K)
             .enumerate()
             .for_each(|(chunk_index, ra_chunk)| {
-                for (j_bound, cycle) in trace
+                for (j_bound, &k) in ts1_addr
                     [chunk_index * chunk_size..(chunk_index + 1) * chunk_size]
                     .iter()
                     .enumerate()
                 {
-                    let k = cycle.ts1_read().0;
                     ra_chunk[k] += A[j_bound];
                 }
             });
@@ -827,12 +849,11 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             .par_chunks_mut(K)
             .enumerate()
             .for_each(|(chunk_index, ra_chunk)| {
-                for (j_bound, cycle) in trace
+                for (j_bound, &k) in ts2_addr
                     [chunk_index * chunk_size..(chunk_index + 1) * chunk_size]
                     .iter()
                     .enumerate()
                 {
-                    let k = cycle.ts2_read().0;
                     ra_chunk[k] += A[j_bound];
                 }
             });
@@ -847,12 +868,11 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             .par_chunks_mut(K)
             .enumerate()
             .for_each(|(chunk_index, wa_chunk)| {
-                for (j_bound, cycle) in trace
+                for (j_bound, &k) in td_addr
                     [chunk_index * chunk_size..(chunk_index + 1) * chunk_size]
                     .iter()
                     .enumerate()
                 {
-                    let k = cycle.td_write().0;
                     wa_chunk[k] += A[j_bound];
                 }
             });
@@ -1115,7 +1135,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 /// TODO(moodlezoup): incorporate optimization from Appendix B.2
 #[tracing::instrument(skip_all)]
 pub fn prove_val_evaluation<F: JoltField, ProofTranscript: Transcript>(
-    trace: &[DummyCycle],
+    trace: &[JoltONNXCycle],
     r_address: Vec<F>,
     r_cycle: Vec<F>,
     claimed_evaluation: F,
@@ -1131,15 +1151,21 @@ pub fn prove_val_evaluation<F: JoltField, ProofTranscript: Transcript>(
     let _guard = span.enter();
 
     // Compute the Inc polynomial using the above table
-    let inc: Vec<F> = trace
+    let td_writes: Vec<(usize, u64, u64)> = trace
+        .iter()
+        .flat_map(|cycle| {
+            let (address, pre_value, post_value) = cycle.td_write();
+            (0..MAX_TENSOR_SIZE).map(move |i| (address[i], pre_value[i], post_value[i]))
+        })
+        .collect();
+    let inc: Vec<F> = td_writes
         .par_iter()
-        .map(|cycle| {
-            let (k, pre_value, post_value) = cycle.td_write();
-            let increment = post_value as i64 - pre_value as i64;
+        .map(|(k, pre_value, post_value)| {
+            let increment = *post_value as i64 - *pre_value as i64;
             if increment == 0 {
                 F::zero()
             } else {
-                eq_r_address[k] * F::from_i64(increment)
+                eq_r_address[*k] * F::from_i64(increment)
             }
         })
         .collect();

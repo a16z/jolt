@@ -1,10 +1,10 @@
-pub mod execution_trace;
-// pub mod tensor_heap;
 pub mod bytecode;
+pub mod execution_trace;
 pub mod instruction;
 pub mod instruction_lookups;
 pub mod r1cs;
 pub mod sparse_dense_shout;
+pub mod tensor_heap;
 
 use crate::tensor_jolt::{
     bytecode::{BytecodePreprocessing, BytecodeProof},
@@ -14,6 +14,7 @@ use crate::tensor_jolt::{
         constraints::{JoltONNXConstraints, R1CSConstraints},
         spartan::UniformSpartanProof,
     },
+    tensor_heap::TensorHeapTwistProof,
 };
 use execution_trace::WORD_SIZE;
 use jolt_core::{
@@ -24,7 +25,7 @@ use jolt_core::{
     },
     utils::{errors::ProofVerifyError, transcript::Transcript},
 };
-use onnx_tracer::trace_types::ONNXInstr;
+use onnx_tracer::{constants::MAX_TENSOR_SIZE, trace_types::ONNXInstr};
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 
@@ -80,7 +81,7 @@ where
     pub trace_length: usize,
     bytecode: BytecodeProof<F, ProofTranscript>,
     instruction_lookups: LookupsProof<WORD_SIZE, F, PCS, ProofTranscript>,
-    // registers: RegistersTwistProof<F, ProofTranscript>,
+    tensor_heap: TensorHeapTwistProof<F, ProofTranscript>,
     r1cs: UniformSpartanProof<F, ProofTranscript>,
     _p: PhantomData<PCS>,
 }
@@ -124,11 +125,18 @@ where
         // pad trace to the next power of two
         trace.resize(trace.len().next_power_of_two(), JoltONNXCycle::no_op());
         let padded_trace_length = trace.len();
-        let ram_addresses: Vec<usize> = trace.iter().map(|cycle| cycle.td_write().0 + 1).collect();
-        let ram_K = ram_addresses.iter().max().unwrap().next_power_of_two();
+        let tensor_heap_addresses: Vec<usize> = trace
+            .iter()
+            .map(|cycle| cycle.td_write().0.last().unwrap() + 1)
+            .collect();
+        let tensor_heap_K = tensor_heap_addresses
+            .iter()
+            .max()
+            .unwrap()
+            .next_power_of_two();
         let K = [
             preprocessing.shared.bytecode.code_size,
-            ram_K,
+            tensor_heap_K,
             1 << 16, // K for instruction lookups Shout
         ]
         .into_iter()
@@ -161,19 +169,19 @@ where
                 &mut opening_accumulator,
                 &mut transcript,
             );
-        // let registers_snark = RegistersTwistProof::prove(
-        //     &preprocessing,
-        //     &trace,
-        //     ram_K,
-        //     &mut opening_accumulator,
-        //     &mut transcript,
-        // );
         let bytecode_snark =
             BytecodeProof::prove(&preprocessing.shared.bytecode, &trace, &mut transcript);
+        let tensor_heap_snark = TensorHeapTwistProof::prove(
+            &preprocessing,
+            &trace,
+            tensor_heap_K,
+            &mut opening_accumulator,
+            &mut transcript,
+        );
         JoltSNARK {
             trace_length,
             r1cs: r1cs_snark,
-            // registers: registers_snark,
+            tensor_heap: tensor_heap_snark,
             instruction_lookups: instruction_lookups_snark,
             bytecode: bytecode_snark,
             _p: PhantomData,
@@ -199,14 +207,14 @@ where
             .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))?;
         self.instruction_lookups
             .verify(&mut opening_accumulator, &mut transcript)?;
-        // self.registers.verify(
-        //     padded_trace_length,
-        //     &mut opening_accumulator,
-        //     &mut transcript,
-        // )?;
         self.bytecode.verify(
             &preprocessing.shared.bytecode,
-            self.trace_length,
+            padded_trace_length,
+            &mut transcript,
+        )?;
+        self.tensor_heap.verify(
+            padded_trace_length * MAX_TENSOR_SIZE,
+            &mut opening_accumulator,
             &mut transcript,
         )?;
         Ok(())
