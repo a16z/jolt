@@ -709,7 +709,6 @@ impl RV32IMInstruction {
                     (0b101, 0b0100000) => Ok(SRA::new(instr, address, true, compressed).into()),
                     (0b110, 0b0000000) => Ok(OR::new(instr, address, true, compressed).into()),
                     (0b111, 0b0000000) => Ok(AND::new(instr, address, true, compressed).into()),
-                    (0b111, 0b0100000) => Ok(ANDN::new(instr, address, true, compressed).into()),
 
                     // RV32M extension
                     (0b000, 0b0000001) => Ok(MUL::new(instr, address, true, compressed).into()),
