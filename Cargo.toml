@@ -91,6 +91,7 @@ lto = "fat"
 inherits = "release"
 incremental = true
 lto = "off"
+overflow-checks = true
 
 [profile.guest]
 inherits = "release"
