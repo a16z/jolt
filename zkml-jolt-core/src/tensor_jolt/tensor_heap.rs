@@ -200,7 +200,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             .collect();
 
         #[cfg(test)]
-        let mut val_test = {
+        let val_test = {
             // Compute Val in cycle-major order, since we will be binding
             // from low-to-high starting with the cycle variables
             let mut val: Vec<F> = unsafe_allocate_zero_vec(K * T);

@@ -72,20 +72,20 @@ impl<F: JoltField> R1CSConstraints<F> for JoltONNXConstraints {
                 JoltONNXR1CSInputs::RightLookupOperand(i),
                 JoltONNXR1CSInputs::Product(i),
             );
-        }
 
-        // // if Rd != 0 && WriteLookupOutputToRD {
-        // //     assert!(RdWriteValue == LookupOutput)
-        // // }
-        // cs.constrain_prod(
-        //     JoltONNXR1CSInputs::Rd,
-        //     JoltONNXR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD),
-        //     JoltONNXR1CSInputs::WriteLookupOutputToRD,
-        // );
-        // cs.constrain_eq_conditional(
-        //     JoltONNXR1CSInputs::WriteLookupOutputToRD,
-        //     JoltONNXR1CSInputs::RdWriteValue,
-        //     JoltONNXR1CSInputs::LookupOutput,
-        // );
+            // if Rd != 0 && WriteLookupOutputToRD {
+            //     assert!(RdWriteValue == LookupOutput)
+            // }
+            cs.constrain_prod(
+                JoltONNXR1CSInputs::Rd(i),
+                JoltONNXR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD),
+                JoltONNXR1CSInputs::WriteLookupOutputToRD(i),
+            );
+            cs.constrain_eq_conditional(
+                JoltONNXR1CSInputs::WriteLookupOutputToRD(i),
+                JoltONNXR1CSInputs::RdWriteValue(i),
+                JoltONNXR1CSInputs::LookupOutput(i),
+            );
+        }
     }
 }
