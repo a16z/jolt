@@ -1,8 +1,8 @@
 use crate::{
-    circuit::ops::{hybrid::HybridOp, lookup::LookupOp, poly::PolyOp, InputType, Op},
+    circuit::ops::{hybrid::HybridOp, lookup::LookupOp, poly::PolyOp, Input, InputType, Op},
     graph::{
         model::NodeType,
-        node::{Rescaled, SupportedOp},
+        node::{Node, Rescaled, SupportedOp},
         vars::VarScales,
         GraphError,
     },
@@ -1455,4 +1455,126 @@ pub fn homogenize_input_scales(
     } else {
         Ok(op)
     }
+}
+
+pub fn create_node(
+    opkind: SupportedOp,
+    out_scale: i32,
+    inputs: Vec<(usize, usize)>,
+    out_dims: Vec<usize>,
+    idx: usize,
+    num_uses: usize,
+) -> Node {
+    Node {
+        opkind,
+        out_scale,
+        inputs,
+        out_dims,
+        idx,
+        num_uses,
+    }
+}
+
+pub fn create_const_node(
+    quantized: Tensor<i128>,
+    raw: Tensor<f32>,
+    out_scale: i32,
+    out_dims: Vec<usize>,
+    idx: usize,
+    num_uses: usize,
+) -> Node {
+    create_node(
+        SupportedOp::Constant(crate::circuit::ops::Constant::new(quantized, raw)),
+        out_scale,
+        vec![],
+        out_dims,
+        idx,
+        num_uses,
+    )
+}
+
+pub fn create_input_node(out_scale: i32, shape: Vec<usize>, idx: usize, num_uses: usize) -> Node {
+    create_node(
+        SupportedOp::Input(Input {
+            scale: out_scale,
+            datum_type: InputType::F32,
+        }),
+        out_scale,
+        vec![],
+        shape,
+        idx,
+        num_uses,
+    )
+}
+
+pub fn create_polyop_node(
+    op: PolyOp<i128>,
+    out_scale: i32,
+    inputs: Vec<(usize, usize)>,
+    shape: Vec<usize>,
+    idx: usize,
+    num_uses: usize,
+) -> Node {
+    create_node(
+        SupportedOp::Linear(op),
+        out_scale,
+        inputs,
+        shape,
+        idx,
+        num_uses,
+    )
+}
+
+pub fn create_relu_node(
+    out_scale: i32,
+    inputs: Vec<(usize, usize)>,
+    out_dims: Vec<usize>,
+    idx: usize,
+    num_uses: usize,
+) -> Node {
+    create_node(
+        SupportedOp::Nonlinear(LookupOp::ReLU),
+        out_scale,
+        inputs,
+        out_dims,
+        idx,
+        num_uses,
+    )
+}
+
+pub fn create_matmul_node(
+    equation: String,
+    out_scale: i32,
+    inputs: Vec<(usize, usize)>,
+    out_dims: Vec<usize>,
+    idx: usize,
+    num_uses: usize,
+) -> Node {
+    create_node(
+        SupportedOp::Linear(PolyOp::Einsum { equation }),
+        out_scale,
+        inputs,
+        out_dims,
+        idx,
+        num_uses,
+    )
+}
+
+pub fn create_sigmoid_node(
+    out_scale: i32,
+    inputs: Vec<(usize, usize)>,
+    out_dims: Vec<usize>,
+    idx: usize,
+    num_uses: usize,
+) -> Node {
+    create_node(
+        SupportedOp::Nonlinear(LookupOp::Sigmoid {
+            scale: scale_to_multiplier(out_scale).into(),
+        }),
+        out_scale,
+        inputs,
+        out_dims,
+        idx,
+        num_uses,
+    )
 }

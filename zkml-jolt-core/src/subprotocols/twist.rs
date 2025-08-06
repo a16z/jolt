@@ -1,3 +1,4 @@
+#![allow(clippy::too_many_arguments)]
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_core::{
     field::{JoltField, OptimizedMul},
@@ -382,7 +383,7 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
         .map(|(chunk_index, (address_chunk, increment_chunk))| {
             // Row index of the I matrix
             let mut j = chunk_index * chunk_size;
-            let I_chunk = address_chunk
+            address_chunk
                 .iter()
                 .zip(increment_chunk.iter())
                 .map(|(k, increment)| {
@@ -390,8 +391,7 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
                     j += 1;
                     inc
                 })
-                .collect();
-            I_chunk
+                .collect()
         })
         .collect();
 

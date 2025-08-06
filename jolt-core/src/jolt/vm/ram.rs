@@ -1168,7 +1168,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
             })
             .collect();
 
-        println!("picked D={:?} for RAM", d);
+        println!("picked D={d:?} for RAM");
 
         let ra_claim = ra_claims[0]; // d = 1
 
