@@ -27,3 +27,5 @@ temp_file
 .vscode
 
 *.patch
+
+/perfetto_traces/
