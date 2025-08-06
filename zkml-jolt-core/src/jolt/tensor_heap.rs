@@ -1,5 +1,5 @@
 #![allow(clippy::needless_range_loop)]
-use crate::tensor_jolt::{JoltProverPreprocessing, execution_trace::JoltONNXCycle};
+use crate::jolt::{JoltProverPreprocessing, execution_trace::JoltONNXCycle};
 use jolt_core::{
     field::{JoltField, OptimizedMul},
     poly::{

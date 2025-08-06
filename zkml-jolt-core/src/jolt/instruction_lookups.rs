@@ -1,11 +1,11 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use onnx_tracer::trace_types::ONNXCycle;
+use onnx_tracer::constants::MAX_TENSOR_SIZE;
 use rayon::prelude::*;
 use std::marker::PhantomData;
 
 use jolt_core::{
     field::JoltField,
-    jolt::{instruction::LookupQuery, lookup_table::LookupTables},
+    jolt::lookup_table::LookupTables,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
@@ -24,9 +24,10 @@ use jolt_core::{
     },
 };
 
-use crate::{
-    jolt::{JoltProverPreprocessing, lookup_trace::LookupTrace, witness::CommittedPolynomials},
-    subprotocols::sparse_dense_shout::{prove_sparse_dense_shout, verify_sparse_dense_shout},
+use crate::jolt::{
+    JoltProverPreprocessing,
+    execution_trace::{JoltONNXCycle, ONNXLookupQuery},
+    sparse_dense_shout::{prove_sparse_dense_shout, verify_sparse_dense_shout},
 };
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
@@ -87,12 +88,13 @@ where
 
     #[tracing::instrument(skip_all, name = "LookupsProof::prove")]
     pub fn prove(
-        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
-        trace: &[ONNXCycle],
-        opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
+        _preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
+        execution_trace: &[JoltONNXCycle],
+        _opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Self {
-        let log_T = trace.len().log_2();
+        let T = execution_trace.len() * MAX_TENSOR_SIZE;
+        let log_T = T.log_2();
         let r_cycle: Vec<F> = transcript.challenge_vector(log_T);
         let (
             read_checking_sumcheck,
@@ -101,7 +103,7 @@ where
             add_sub_mul_flag_claim,
             flag_claims,
             eq_r_cycle,
-        ) = prove_sparse_dense_shout::<_, _>(trace, &r_cycle, transcript);
+        ) = prove_sparse_dense_shout::<_, _>(execution_trace, &r_cycle, transcript);
         let read_checking_proof = ReadCheckingProof {
             sumcheck_proof: read_checking_sumcheck,
             rv_claim,
@@ -111,36 +113,39 @@ where
         };
 
         // TODO(moodlezoup): Openings
-        let (booleanity_sumcheck, _, _, ra_claims) =
-            prove_ra_booleanity::<F, ProofTranscript>(trace, eq_r_cycle.clone(), transcript);
+        let (booleanity_sumcheck, _, _, ra_claims) = prove_ra_booleanity::<F, ProofTranscript>(
+            execution_trace,
+            eq_r_cycle.clone(),
+            transcript,
+        );
         let booleanity_proof = BooleanityProof {
             sumcheck_proof: booleanity_sumcheck,
             ra_claims,
         };
 
         // TODO(moodlezoup): Openings
-        let (hamming_weight_sumcheck, r_address, ra_claims) =
-            prove_ra_hamming_weight::<F, ProofTranscript>(trace, eq_r_cycle, transcript);
+        let (hamming_weight_sumcheck, _r_address, ra_claims) =
+            prove_ra_hamming_weight::<F, ProofTranscript>(execution_trace, eq_r_cycle, transcript);
         let hamming_weight_proof = HammingWeightProof {
             sumcheck_proof: hamming_weight_sumcheck,
             ra_claims,
         };
 
-        let unbound_ra_polys = vec![
-            CommittedPolynomials::InstructionRa(0).generate_witness(preprocessing, trace),
-            CommittedPolynomials::InstructionRa(1).generate_witness(preprocessing, trace),
-            CommittedPolynomials::InstructionRa(2).generate_witness(preprocessing, trace),
-            CommittedPolynomials::InstructionRa(3).generate_witness(preprocessing, trace),
-        ];
+        // let unbound_ra_polys = vec![
+        //     CommittedPolynomials::InstructionRa(0).generate_witness(preprocessing, trace),
+        //     CommittedPolynomials::InstructionRa(1).generate_witness(preprocessing, trace),
+        //     CommittedPolynomials::InstructionRa(2).generate_witness(preprocessing, trace),
+        //     CommittedPolynomials::InstructionRa(3).generate_witness(preprocessing, trace),
+        // ];
 
-        let r_address_rev = r_address.iter().copied().rev().collect::<Vec<_>>();
+        // let r_address_rev = r_address.iter().copied().rev().collect::<Vec<_>>();
 
-        opening_accumulator.append_sparse(
-            unbound_ra_polys,
-            r_address_rev,
-            r_cycle,
-            ra_claims.to_vec(),
-        );
+        // opening_accumulator.append_sparse(
+        //     unbound_ra_polys,
+        //     r_address_rev,
+        //     r_cycle,
+        //     ra_claims.to_vec(),
+        // );
 
         // TODO(moodlezoup): Interleaved raf evaluation
 
@@ -242,7 +247,7 @@ where
 
 #[tracing::instrument(skip_all)]
 fn prove_ra_booleanity<F: JoltField, ProofTranscript: Transcript>(
-    trace: &[ONNXCycle],
+    trace: &[JoltONNXCycle],
     eq_r_cycle: Vec<F>,
     transcript: &mut ProofTranscript,
 ) -> (
@@ -254,7 +259,7 @@ fn prove_ra_booleanity<F: JoltField, ProofTranscript: Transcript>(
     const DEGREE: usize = 3;
     const LOG_K: usize = 16;
     const K: usize = 1 << LOG_K;
-    let T = trace.len();
+    let T = trace.len() * MAX_TENSOR_SIZE;
     let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
     let chunk_size = (T / num_chunks).max(1);
 
@@ -266,7 +271,12 @@ fn prove_ra_booleanity<F: JoltField, ProofTranscript: Transcript>(
     let span = tracing::span!(tracing::Level::INFO, "compute G");
     let _guard = span.enter();
 
-    let G: [Vec<F>; 4] = trace
+    let lookup_indices: Vec<u64> = trace
+        .par_iter()
+        .flat_map(|cycle| ONNXLookupQuery::<32>::to_lookup_index(cycle))
+        .collect();
+    assert_eq!(lookup_indices.len(), T);
+    let G: [Vec<F>; 4] = lookup_indices
         .par_chunks(chunk_size)
         .enumerate()
         .map(|(chunk_index, trace_chunk)| {
@@ -277,8 +287,8 @@ fn prove_ra_booleanity<F: JoltField, ProofTranscript: Transcript>(
                 unsafe_allocate_zero_vec(K),
             ];
             let mut j = chunk_index * chunk_size;
-            for cycle in trace_chunk {
-                let mut lookup_index = cycle.to_lookup().map_or(0, |x| x.to_lookup_index());
+            for lookup_index in trace_chunk {
+                let mut lookup_index = *lookup_index;
                 let k = lookup_index % K as u64;
                 result[3][k as usize] += eq_r_cycle[j];
 
@@ -470,10 +480,9 @@ fn prove_ra_booleanity<F: JoltField, ProofTranscript: Transcript>(
     let eq_r_r = B.final_sumcheck_claim();
 
     let mut H: [MultilinearPolynomial<F>; 4] = std::array::from_fn(|i| {
-        let coeffs: Vec<F> = trace
+        let coeffs: Vec<F> = lookup_indices
             .par_iter()
-            .map(|cycle| {
-                let lookup_index = cycle.to_lookup().map_or(0, |x| x.to_lookup_index());
+            .map(|lookup_index| {
                 let k = (lookup_index >> (LOG_K * (3 - i))) % K as u64;
                 F[k as usize]
             })
@@ -583,13 +592,13 @@ fn prove_ra_booleanity<F: JoltField, ProofTranscript: Transcript>(
 
 #[tracing::instrument(skip_all)]
 fn prove_ra_hamming_weight<F: JoltField, ProofTranscript: Transcript>(
-    trace: &[ONNXCycle],
+    trace: &[JoltONNXCycle],
     eq_r_cycle: Vec<F>,
     transcript: &mut ProofTranscript,
 ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, [F; 4]) {
     const LOG_K: usize = 16;
     const K: usize = 1 << LOG_K;
-    let T = trace.len();
+    let T = trace.len() * MAX_TENSOR_SIZE;
     let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
     let chunk_size = (T / num_chunks).max(1);
 
@@ -600,7 +609,12 @@ fn prove_ra_hamming_weight<F: JoltField, ProofTranscript: Transcript>(
     let num_rounds = LOG_K;
     let mut r_address_double_prime: Vec<F> = Vec::with_capacity(num_rounds);
 
-    let mut F: [Vec<F>; 4] = trace
+    let lookup_indices: Vec<u64> = trace
+        .par_iter()
+        .flat_map(|cycle| ONNXLookupQuery::<32>::to_lookup_index(cycle))
+        .collect();
+    assert_eq!(lookup_indices.len(), T);
+    let mut F: [Vec<F>; 4] = lookup_indices
         .par_chunks(chunk_size)
         .enumerate()
         .map(|(chunk_index, trace_chunk)| {
@@ -611,8 +625,8 @@ fn prove_ra_hamming_weight<F: JoltField, ProofTranscript: Transcript>(
                 unsafe_allocate_zero_vec(K),
             ];
             let mut j = chunk_index * chunk_size;
-            for cycle in trace_chunk {
-                let mut lookup_index = cycle.to_lookup().map_or(0, |x| x.to_lookup_index());
+            for lookup_index in trace_chunk {
+                let mut lookup_index = *lookup_index;
                 let k = lookup_index % K as u64;
                 result[3][k as usize] += eq_r_cycle[j];
 

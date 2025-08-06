@@ -19,9 +19,11 @@ use jolt_core::{
         transcript::{AppendToTranscript, Transcript},
     },
 };
-use onnx_tracer::trace_types::{ONNXCycle, ONNXInstr};
+use onnx_tracer::trace_types::ONNXInstr;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+
+use crate::jolt::execution_trace::JoltONNXCycle;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BytecodePreprocessing {
@@ -64,7 +66,7 @@ where
 {
     pub fn prove(
         preprocessing: &BytecodePreprocessing,
-        trace: &[ONNXCycle],
+        trace: &[JoltONNXCycle],
         transcript: &mut ProofTranscript,
     ) -> Self {
         let K = preprocessing.code_size;
@@ -169,7 +171,7 @@ where
 /// - `Vec<F>`: r_cycle_prime.
 /// - `F`: ra_claim_prime.
 pub fn prove_booleanity<F, ProofTranscript>(
-    trace: &[ONNXCycle],
+    trace: &[JoltONNXCycle],
     r: &[F],
     D: Vec<F>,
     G: Vec<F>,

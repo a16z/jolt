@@ -13,15 +13,15 @@ use jolt_core::{
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPlusOnePolynomial},
     subprotocols::sumcheck::BatchableSumcheckInstance,
 };
-use onnx_tracer::trace_types::ONNXCycle;
+
 use rayon::prelude::*;
 use std::marker::PhantomData;
 use thiserror::Error;
 use tracing::{Level, span};
 
 use crate::jolt::JoltProverPreprocessing;
+use crate::jolt::execution_trace::{ALL_R1CS_INPUTS, JoltONNXCycle, WitnessGenerator};
 use crate::jolt::r1cs::builder::CombinedUniformBuilder;
-use crate::jolt::r1cs::inputs::ALL_R1CS_INPUTS;
 use crate::jolt::r1cs::key::UniformSpartanKey;
 #[cfg(test)]
 use crate::jolt::r1cs::spartan_interleaved_poly::SpartanInterleavedPolynomial;
@@ -116,7 +116,7 @@ where
         preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
         constraint_builder: &CombinedUniformBuilder<F>,
         key: &UniformSpartanKey<F>,
-        trace: &[ONNXCycle],
+        trace: &[JoltONNXCycle],
         // opening_accumulator: &mut ProverOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<Self, SpartanError>

@@ -1,6 +1,6 @@
 #![allow(clippy::too_many_arguments)]
-use crate::tensor_jolt::execution_trace::WORD_SIZE;
-use crate::tensor_jolt::execution_trace::{JoltONNXCycle, ONNXLookupQuery};
+use crate::jolt::execution_trace::WORD_SIZE;
+use crate::jolt::execution_trace::{JoltONNXCycle, ONNXLookupQuery};
 use jolt_core::subprotocols::sparse_dense_shout::{ExpandingTable, LookupBits};
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_core::{
@@ -679,7 +679,7 @@ fn prover_msg_read_checking<const WORD_SIZE: usize, F: JoltField>(
 
 #[cfg(test)]
 mod tests {
-    use crate::tensor_jolt::execution_trace::jolt_execution_trace;
+    use crate::jolt::execution_trace::jolt_execution_trace;
 
     use super::*;
     use ark_bn254::Fr;

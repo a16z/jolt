@@ -1,4 +1,4 @@
-use crate::tensor_jolt::JoltProverPreprocessing;
+use crate::jolt::JoltProverPreprocessing;
 use itertools::Itertools;
 use jolt_core::jolt::instruction::LookupQuery;
 use jolt_core::poly::one_hot_polynomial::OneHotPolynomial;
@@ -17,7 +17,7 @@ use onnx_tracer::trace_types::{NUM_CIRCUIT_FLAGS, ONNXInstr};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::tensor_jolt::instruction::{add::ADD, mul::MUL, sub::SUB};
+use crate::jolt::instruction::{add::ADD, mul::MUL, sub::SUB};
 use jolt_core::jolt::{instruction::InstructionLookup, lookup_table::LookupTables};
 
 pub const WORD_SIZE: usize = 32;
