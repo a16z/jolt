@@ -26,6 +26,7 @@ use crate::instruction::add::ADD;
 use crate::instruction::addi::ADDI;
 use crate::instruction::and::AND;
 use crate::instruction::andi::ANDI;
+use crate::instruction::srli::SRLI;
 
 use crate::instruction::format::format_b::FormatB;
 use crate::instruction::format::format_i::FormatI;
@@ -40,7 +41,6 @@ use crate::instruction::format::format_virtual_right_shift_r::FormatVirtualRight
 use crate::instruction::format::NormalizedOperands;
 
 use crate::instruction::virtual_rotri::VirtualROTRI;
-use crate::instruction::virtual_srli::VirtualSRLI;
 use crate::instruction::xor::XOR;
 use crate::instruction::xori::XORI;
 use crate::instruction::RISCVInstruction;
@@ -342,14 +342,7 @@ impl InstrAssembler {
         }
         match rs1 {
             Reg(rs1) => {
-                let mask = (!0u32 << shamt) as u64;
-                let inst = VirtualSRLI {
-                    address: self.address,
-                    operands: FormatVirtualRightShiftI { rd, rs1, imm: mask },
-                    virtual_sequence_remaining: Some(0),
-                    is_compressed: self.is_compressed,
-                };
-                self.sequence.push(inst.into());
+                self.emit_i::<SRLI>(rd, rs1, shamt as u64);
                 Reg(rd)
             }
             Imm(val) => Imm(((val as u32) >> shamt) as u64),
@@ -395,13 +388,7 @@ impl InstrAssembler {
     pub fn rotri(&mut self, rs1: Value, imm: u64, rd: usize) -> Value {
         match rs1 {
             Reg(rs1) => {
-                let inst = VirtualROTRI {
-                    address: self.address,
-                    operands: FormatVirtualRightShiftI { rd, rs1, imm },
-                    virtual_sequence_remaining: Some(0),
-                    is_compressed: self.is_compressed,
-                };
-                self.sequence.push(inst.into());
+                self.emit_vshift_i::<VirtualROTRI>(rd, rs1, imm);
                 Reg(rd)
             }
             Imm(val) => {
