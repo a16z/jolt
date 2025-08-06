@@ -677,62 +677,64 @@ fn prover_msg_read_checking<const WORD_SIZE: usize, F: JoltField>(
     [eval_0, eval_2_right + eval_2_right - eval_2_left]
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use ark_bn254::Fr;
-//     use jolt_core::utils::transcript::KeccakTranscript;
-//     use onnx_tracer::trace_types::ONNXOpcode;
-//     use rand::{SeedableRng, rngs::StdRng};
+#[cfg(test)]
+mod tests {
+    use crate::tensor_jolt::execution_trace::jolt_execution_trace;
 
-//     const WORD_SIZE: usize = 32;
-//     const LOG_T: usize = 8;
-//     const T: usize = 1 << LOG_T;
+    use super::*;
+    use ark_bn254::Fr;
+    use jolt_core::utils::transcript::KeccakTranscript;
+    use onnx_tracer::trace_types::{ONNXCycle, ONNXOpcode};
+    use rand::{SeedableRng, rngs::StdRng};
 
-//     fn test_sparse_dense_shout(opcode: ONNXOpcode) {
-//         let mut rng = StdRng::from_seed([0u8; 32]);
+    const WORD_SIZE: usize = 32;
+    const TRACE_LEN: usize = 1 << 8;
 
-//         let mut trace = Vec::with_capacity(T);
-//         trace.resize(T, ONNXCycle::random(opcode, &mut rng));
+    fn test_sparse_dense_shout(opcode: ONNXOpcode) {
+        let LOG_T: usize = (TRACE_LEN * MAX_TENSOR_SIZE).log_2();
+        let mut rng = StdRng::from_seed([0u8; 32]);
 
-//         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
-//         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(LOG_T);
+        let mut trace = Vec::with_capacity(TRACE_LEN);
+        trace.resize(TRACE_LEN, ONNXCycle::random(opcode, &mut rng));
+        let execution_trace = jolt_execution_trace(trace);
+        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+        let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(LOG_T);
 
-//         let (proof, rv_claim, ra_claims, add_mul_sub_claim, flag_claims, _) =
-//             prove_sparse_dense_shout::<_, _>(&trace, &r_cycle, &mut prover_transcript);
+        let (proof, rv_claim, ra_claims, add_mul_sub_claim, flag_claims, _) =
+            prove_sparse_dense_shout::<_, _>(&execution_trace, &r_cycle, &mut prover_transcript);
 
-//         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
-//         let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(LOG_T);
+        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+        let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(LOG_T);
 
-//         let verification_result = verify_sparse_dense_shout::<WORD_SIZE, _, _>(
-//             &proof,
-//             LOG_T,
-//             r_cycle,
-//             rv_claim,
-//             ra_claims,
-//             add_mul_sub_claim,
-//             &flag_claims,
-//             &mut verifier_transcript,
-//         );
-//         assert!(
-//             verification_result.is_ok(),
-//             "Verification failed with error: {:?}",
-//             verification_result.err()
-//         );
-//     }
+        let verification_result = verify_sparse_dense_shout::<WORD_SIZE, _, _>(
+            &proof,
+            LOG_T,
+            r_cycle,
+            rv_claim,
+            ra_claims,
+            add_mul_sub_claim,
+            &flag_claims,
+            &mut verifier_transcript,
+        );
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+    }
 
-//     #[test]
-//     fn test_add() {
-//         test_sparse_dense_shout(ONNXOpcode::Add);
-//     }
+    #[test]
+    fn test_add() {
+        test_sparse_dense_shout(ONNXOpcode::Add);
+    }
 
-//     #[test]
-//     fn test_sub() {
-//         test_sparse_dense_shout(ONNXOpcode::Sub);
-//     }
+    #[test]
+    fn test_sub() {
+        test_sparse_dense_shout(ONNXOpcode::Sub);
+    }
 
-//     #[test]
-//     fn test_mul() {
-//         test_sparse_dense_shout(ONNXOpcode::Mul);
-//     }
-// }
+    #[test]
+    fn test_mul() {
+        test_sparse_dense_shout(ONNXOpcode::Mul);
+    }
+}
