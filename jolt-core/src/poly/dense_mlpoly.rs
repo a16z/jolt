@@ -371,13 +371,13 @@ impl<F: JoltField> PolynomialEvaluation<F> for DensePolynomial<F> {
         self.evaluate(r)
     }
 
-    fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<F>, Vec<F>) {
+    fn batch_evaluate(polys: &[&Self], r: &[F]) -> Vec<F> {
         let eq = EqPolynomial::evals(r);
         let evals: Vec<F> = polys
             .into_par_iter()
             .map(|&poly| poly.evaluate_at_chi_low_optimized(&eq))
             .collect();
-        (evals, eq)
+        evals
     }
 
     fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F> {

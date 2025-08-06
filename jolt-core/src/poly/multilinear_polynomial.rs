@@ -520,7 +520,7 @@ pub trait PolynomialEvaluation<F: JoltField> {
     /// Returns: (evals, EQ table)
     /// where EQ table is EQ(x, r) for x \in {0, 1}^|r|. This is used for
     /// batched opening proofs (see opening_proof.rs)
-    fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<F>, Vec<F>)
+    fn batch_evaluate(polys: &[&Self], r: &[F]) -> Vec<F>
     where
         Self: Sized;
     /// Computes this polynomial's contribution to the computation of a prover
@@ -599,7 +599,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
     }
 
     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::batch_evaluate")]
-    fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<F>, Vec<F>) {
+    fn batch_evaluate(polys: &[&Self], r: &[F]) -> Vec<F> {
         let eq = EqPolynomial::evals(r);
         let evals: Vec<F> = polys
             .into_par_iter()
@@ -610,7 +610,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
                 _ => poly.dot_product(&eq),
             })
             .collect();
-        (evals, eq)
+        evals
     }
 
     #[inline]
