@@ -11,7 +11,7 @@ use rand_core::RngCore;
 use rand_distr::{Distribution, Zipf};
 use std::env;
 use std::fs;
-use std::thread;
+use std::io::Write;
 use std::time::Instant;
 use tracing_chrome::ChromeLayerBuilder;
 use tracing_subscriber::prelude::*;
@@ -136,43 +136,50 @@ fn sha2_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     prove_example("sha2-chain-guest", inputs)
 }
 
+// Helper functions for input scaling
+fn get_fib_input(scale: usize) -> u32 {
+    let scale_factor = 1 << (scale - 20);
+    35000u32 * scale_factor as u32
+}
+
+fn get_sha_input_size(scale: usize) -> usize {
+    let scale_factor = 1 << (scale - 20);
+    2048
+}
+
+fn get_btreemap_ops(scale: usize) -> u32 {
+    let scale_factor = 1 << (scale - 20);
+    250u32 * scale_factor as u32
+}
+
 fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    let trace_length_exp = env::var("TRACE_LENGTH")
+    // Read environment variables
+    let bench_type = env::var("BENCH_TYPE").unwrap_or_else(|_| "all".to_string());
+    let bench_scale = env::var("BENCH_SCALE")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(21);
+        .unwrap_or(20);
     
-    println!("Running master benchmark with TRACE_LENGTH={}", trace_length_exp);
-    
+    // Create perfetto_traces directory
     if let Err(e) = fs::create_dir_all("perfetto_traces") {
         eprintln!("Warning: Failed to create perfetto_traces directory: {}", e);
     }
     
     let task = move || {
-        let mut summary = Vec::new();
-        summary.push("Scale | Fibonacci | SHA2     | SHA3     | BTreeMap\n".to_string());
-        summary.push("------|-----------|----------|----------|----------\n".to_string());
+        let max_trace_length = 1 << bench_scale;
+        let start = Instant::now();
         
-        // Run benchmarks for trace lengths from 2^20 to 2^TRACE_LENGTH
-        for scale in 20..=trace_length_exp {
-            let scale_factor = 1 << (scale - 20);
-            let max_trace_length = 1 << scale;
-            
-            println!("Running benchmarks at scale 2^{} ({}x base inputs)", scale, scale_factor);
-            let mut row_times = Vec::new();
-            
-            // Fib
-            {
-                println!("Running Fibonacci benchmark at scale 2^{}", scale);
-                let start = Instant::now();
-                let (chrome_layer, chrome_guard) = ChromeLayerBuilder::new()
-                    .file(format!("perfetto_traces/fib_{}.json", scale))
+        match bench_type.as_str() {
+            "fib" => {
+                println!("Running Fibonacci benchmark at scale 2^{}", bench_scale);
+                let (chrome_layer, _guard) = ChromeLayerBuilder::new()
+                    .file(format!("perfetto_traces/fib_{}.json", bench_scale))
                     .build();
                 let subscriber = tracing_subscriber::registry().with(chrome_layer);
-                let guard = tracing::subscriber::set_default(subscriber);
+                let _guard = tracing::subscriber::set_default(subscriber);
                 
-                let fib_input = 35000u32 * scale_factor as u32;
-                let span = tracing::info_span!("Fibonacci_2^{}", scale);
+                let fib_input = get_fib_input(bench_scale);
+                let span = tracing::info_span!("Fibonacci_2^{}", bench_scale);
                 span.in_scope(|| {
                     prove_example_with_trace(
                         "fibonacci-guest",
@@ -180,91 +187,55 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                         max_trace_length,
                     );
                 });
-                let duration = start.elapsed();
-                row_times.push(format!("{:9.2}s", duration.as_secs_f64()));
-                println!("  Completed in {:.2}s", duration.as_secs_f64());
-                
-                // Explicit cleanup
-                drop(span);
-                drop(guard);
-                drop(chrome_guard);
-                thread::yield_now();
             }
-            
-            // // SHA2
-            // {
-            //     println!("Running SHA2 benchmark at scale 2^{}", scale);
-            //     let start = Instant::now();
-            //     let (chrome_layer, chrome_guard) = ChromeLayerBuilder::new()
-            //         .file(format!("perfetto_traces/sha2_{}.json", scale))
-            //         .build();
-            //     let subscriber = tracing_subscriber::registry().with(chrome_layer);
-            //     let guard = tracing::subscriber::set_default(subscriber);
-                
-            //     let sha2_len = 2048 * scale_factor;
-            //     let sha2_input = vec![5u8; sha2_len];
-            //     let span = tracing::info_span!("SHA2_2^{}", scale);
-            //     span.in_scope(|| {
-            //         prove_example_with_trace(
-            //             "sha2-guest",
-            //             postcard::to_stdvec(&sha2_input).unwrap(),
-            //             max_trace_length,
-            //         );
-            //     });
-            //     let duration = start.elapsed();
-            //     row_times.push(format!("{:9.2}s", duration.as_secs_f64()));
-            //     println!("  Completed in {:.2}s", duration.as_secs_f64());
-                
-            //     drop(sha2_input);
-            //     drop(span);
-            //     drop(guard);
-            //     drop(chrome_guard);
-            //     thread::yield_now();
-            // }
-            
-            // // SHA3
-            // {
-            //     println!("Running SHA3 benchmark at scale 2^{}", scale);
-            //     let start = Instant::now();
-            //     let (chrome_layer, chrome_guard) = ChromeLayerBuilder::new()
-            //         .file(format!("perfetto_traces/sha3_{}.json", scale))
-            //         .build();
-            //     let subscriber = tracing_subscriber::registry().with(chrome_layer);
-            //     let guard = tracing::subscriber::set_default(subscriber);
-                
-            //     let sha3_len = 2048 * scale_factor;
-            //     let sha3_input = vec![5u8; sha3_len];
-            //     let span = tracing::info_span!("SHA3_2^{}", scale);
-            //     span.in_scope(|| {
-            //         prove_example_with_trace(
-            //             "sha3-guest",
-            //             postcard::to_stdvec(&sha3_input).unwrap(),
-            //             max_trace_length,
-            //         );
-            //     });
-            //     let duration = start.elapsed();
-            //     row_times.push(format!("{:9.2}s", duration.as_secs_f64()));
-            //     println!("  Completed in {:.2}s", duration.as_secs_f64());
-                
-            //     drop(sha3_input);
-            //     drop(span);
-            //     drop(guard);
-            //     drop(chrome_guard);
-            //     thread::yield_now();
-            // }
-            
-            // BTreeMap
-            {
-                println!("Running BTreeMap benchmark at scale 2^{}", scale);
-                let start = Instant::now();
-                let (chrome_layer, chrome_guard) = ChromeLayerBuilder::new()
-                    .file(format!("perfetto_traces/btreemap_{}.json", scale))
+            "sha2" => {
+                println!("Running SHA2 benchmark at scale 2^{}", bench_scale);
+                let (chrome_layer, _guard) = ChromeLayerBuilder::new()
+                    .file(format!("perfetto_traces/sha2_{}.json", bench_scale))
                     .build();
                 let subscriber = tracing_subscriber::registry().with(chrome_layer);
-                let guard = tracing::subscriber::set_default(subscriber);
+                let _guard = tracing::subscriber::set_default(subscriber);
                 
-                let btreemap_ops = 250u32 * scale_factor as u32;
-                let span = tracing::info_span!("BTreeMap_2^{}", scale);
+                let sha2_len = get_sha_input_size(bench_scale);
+                let sha2_input = vec![5u8; sha2_len];
+                let span = tracing::info_span!("SHA2_2^{}", bench_scale);
+                span.in_scope(|| {
+                    prove_example_with_trace(
+                        "sha2-guest",
+                        postcard::to_stdvec(&sha2_input).unwrap(),
+                        max_trace_length,
+                    );
+                });
+            }
+            "sha3" => {
+                println!("Running SHA3 benchmark at scale 2^{}", bench_scale);
+                let (chrome_layer, _guard) = ChromeLayerBuilder::new()
+                    .file(format!("perfetto_traces/sha3_{}.json", bench_scale))
+                    .build();
+                let subscriber = tracing_subscriber::registry().with(chrome_layer);
+                let _guard = tracing::subscriber::set_default(subscriber);
+                
+                let sha3_len = get_sha_input_size(bench_scale);
+                let sha3_input = vec![5u8; sha3_len];
+                let span = tracing::info_span!("SHA3_2^{}", bench_scale);
+                span.in_scope(|| {
+                    prove_example_with_trace(
+                        "sha3-guest",
+                        postcard::to_stdvec(&sha3_input).unwrap(),
+                        max_trace_length,
+                    );
+                });
+            }
+            "btreemap" => {
+                println!("Running BTreeMap benchmark at scale 2^{}", bench_scale);
+                let (chrome_layer, _guard) = ChromeLayerBuilder::new()
+                    .file(format!("perfetto_traces/btreemap_{}.json", bench_scale))
+                    .build();
+                let subscriber = tracing_subscriber::registry().with(chrome_layer);
+                let _guard = tracing::subscriber::set_default(subscriber);
+                
+                let btreemap_ops = get_btreemap_ops(bench_scale);
+                let span = tracing::info_span!("BTreeMap_2^{}", bench_scale);
                 span.in_scope(|| {
                     prove_example_with_trace(
                         "btreemap-guest",
@@ -272,27 +243,25 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                         max_trace_length,
                     );
                 });
-                let duration = start.elapsed();
-                row_times.push(format!("{:9.2}s", duration.as_secs_f64()));
-                println!("  Completed in {:.2}s", duration.as_secs_f64());
-                
-                // Explicit cleanup
-                drop(span);
-                drop(guard);
-                drop(chrome_guard);
-                thread::yield_now();
             }
-            
-            // Add the row to summary
-            summary.push(format!("2^{:2} | {} | {} | {} | {}\n", 
-                scale, row_times[0], row_times[1], row_times[2], row_times[3]));
+            _ => {
+                eprintln!("Unknown benchmark type: {}. Use fib, sha2, sha3, or btreemap", bench_type);
+                return;
+            }
         }
         
-        let summary_content = summary.join("");
-        if let Err(e) = fs::write("perfetto_traces/benchmark_summary.txt", &summary_content) {
-            eprintln!("Failed to write summary file: {}", e);
-        } else {
-            println!("\nBenchmark summary saved to perfetto_traces/benchmark_summary.txt");
+        let duration = start.elapsed();
+        println!("  Completed in {:.2}s", duration.as_secs_f64());
+        
+        // Append timing to summary file
+        let summary_line = format!("{},{},{:.2}\n", bench_type, bench_scale, duration.as_secs_f64());
+        if let Err(e) = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("perfetto_traces/timings.csv")
+            .and_then(|mut f| f.write_all(summary_line.as_bytes()))
+        {
+            eprintln!("Failed to write timing: {}", e);
         }
     };
     
