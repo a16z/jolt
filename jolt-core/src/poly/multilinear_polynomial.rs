@@ -233,7 +233,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
         MultilinearPolynomial::from(lc_coeffs)
     }
 
-    /// Gets the polynomial coefficient at the given `index`
+    /// Gets the polynomial coefficient at the given `index`, returning a field element
     pub fn get_coeff(&self, index: usize) -> F {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly[index],

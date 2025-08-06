@@ -84,6 +84,28 @@ impl LC {
             .count()
     }
 
+    // This should be used for all constraints besides the ones involving the product
+    // pub fn evaluate_row_i65?
+
+    // This should be used for the product constraint
+    // pub fn evaluate_row_i129?
+    pub fn evaluate_row_i128<F: JoltField>(
+        &self,
+        flattened_polynomials: &[MultilinearPolynomial<F>],
+        row: usize,
+    ) -> i128 {
+        self.terms()
+            .iter()
+            .map(|term| match term.0 {
+                Variable::Input(var_index) => {
+                    term.1 as i128 * flattened_polynomials[var_index].get_coeff_i128(row)
+                }
+                Variable::Constant => term.1 as i128,
+            })
+            .sum()
+    }
+
+    // This should be special-cased via the prior two functions
     pub fn evaluate_row<F: JoltField>(
         &self,
         flattened_polynomials: &[MultilinearPolynomial<F>],

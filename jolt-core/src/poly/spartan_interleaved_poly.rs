@@ -10,7 +10,10 @@ use crate::{
         small_value::{svo_helpers, NUM_SVO_ROUNDS},
         transcript::Transcript,
     },
-    zkvm::r1cs::builder::Constraint,
+    zkvm::{
+        instruction::CircuitFlags,
+        r1cs::{builder::Constraint, inputs::JoltR1CSInputs},
+    },
 };
 use rayon::prelude::*;
 
@@ -196,6 +199,10 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
             E_in_evals.len()
         );
 
+        let multiply_flag_index =
+            JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands).to_index();
+        let multiply_poly = &flattened_polynomials[multiply_flag_index];
+
         // Define the structure returned by each parallel map task
         struct PrecomputeTaskOutput<F: JoltField> {
             ab_coeffs_local: Vec<SparseCoefficient<F>>,
@@ -248,6 +255,9 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     // Iterate over x_in_step_vals in this chunk
                     for x_in_step_val in 0..num_x_in_step_vals {
                         let current_step_idx = (x_out_val << iter_num_x_in_step_vars) | x_in_step_val;
+                        let _is_multiply_cycle =
+                            !multiply_poly.get_coeff(current_step_idx).is_zero();
+                        // This can be used to specialize SVO subroutines
 
                         let mut current_x_in_constraint_val = 0;
 

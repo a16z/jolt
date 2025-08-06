@@ -111,7 +111,7 @@ where
         tau: &[F],
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, [F; 3]) {
-        SumcheckInstanceProof::prove_spartan_small_value::<NUM_SVO_ROUNDS>(
+        SumcheckInstanceProof::prove_spartan_outer::<NUM_SVO_ROUNDS>(
             num_rounds_x,
             uniform_constraints_only_padded,
             uniform_constraints,
@@ -719,9 +719,9 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 
         // Evaluate all witness polynomials P_i at r_cycle for the verifier
         // Verifier computes: z(r_inner, r_cycle) = Σ_i eq(r_inner, i) * P_i(r_cycle)
-        let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
+        let input_polys_ref: Vec<_> = input_polys.iter().collect();
         let (claimed_witness_evals, _) =
-            MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
+            MultilinearPolynomial::batch_evaluate(&input_polys_ref, r_cycle);
 
         // Only non-virtual (i.e. committed) polynomials' openings are
         // proven using the PCS opening proof, which we add for future opening proof here

@@ -373,12 +373,12 @@ impl BatchedSumcheck {
 }
 
 impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTranscript> {
-    #[tracing::instrument(skip_all, name = "Spartan::prove_spartan_small_value")]
-    pub fn prove_spartan_small_value<const NUM_SVO_ROUNDS: usize>(
+    #[tracing::instrument(skip_all, name = "Spartan::prove_spartan_outer")]
+    pub fn prove_spartan_outer<const NUM_SVO_ROUNDS: usize>(
         num_rounds: usize,
         padded_num_constraints: usize,
         uniform_constraints: &[Constraint],
-        flattened_polys: &[MultilinearPolynomial<F>],
+        input_polys: &[MultilinearPolynomial<F>],
         tau: &[F],
         transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>, [F; 3]) {
@@ -391,7 +391,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             SpartanInterleavedPolynomial::<NUM_SVO_ROUNDS, F>::new_with_precompute(
                 padded_num_constraints,
                 uniform_constraints,
-                flattened_polys,
+                input_polys,
                 tau,
             );
 
