@@ -1,0 +1,16 @@
+[package]
+name = "inline-impl"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+host = ["dep:ctor", "dep:tracer", "dep:jolt-core"]
+
+[dependencies]
+ctor = { version = "0.2", optional = true }
+tracer = { path = "../../../tracer", optional = true }
+jolt-core = { path = "../../../jolt-core", optional = true }
+
+[dev-dependencies]
+common = { path = "../../../common" }

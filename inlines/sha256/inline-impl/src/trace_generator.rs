@@ -10,7 +10,7 @@ use tracer::instruction::{
     },
     inline_sha256::{BLOCK, K},
     lw::LW,
-    srli::SRLI,
+    virtual_srli::VirtualSRLI,
     sw::SW,
     virtual_rotri::VirtualROTRI,
     xor::XOR,
@@ -36,7 +36,7 @@ enum Value {
 /// Expects input words to be in RAM at location rs1..rs1+16
 /// Expects A..H to be in RAM at location rs2..rs2+8
 /// Output will be written to rs2..rs2+8
-pub struct Sha256SequenceBuilder {
+struct Sha256SequenceBuilder {
     address: u64,
     sequence: Vec<RV32IMInstruction>,
     /// Round id
@@ -52,7 +52,7 @@ pub struct Sha256SequenceBuilder {
 }
 
 impl Sha256SequenceBuilder {
-    pub fn new(
+    fn new(
         address: u64,
         vr: [usize; NEEDED_REGISTERS],
         operand_rs1: usize,
@@ -71,7 +71,7 @@ impl Sha256SequenceBuilder {
     }
 
     /// Loads and runs all SHA256 rounds
-    pub fn build(mut self) -> Vec<RV32IMInstruction> {
+    fn build(mut self) -> Vec<RV32IMInstruction> {
         if !self.initial {
             // Load initial hash values from memory when using custom IV
             // A..D loaded into registers 0..3 (will be used immediately)
@@ -272,12 +272,12 @@ impl Sha256SequenceBuilder {
     /// sigma_0 for word computation: σ₀(x) = ROTR⁷(x) ⊕ ROTR¹⁸(x) ⊕ SHR³(x)
     fn sha_word_sigma_0(&mut self, rs1: usize, rd: usize, ss: usize) {
         self.rotri_xor_rotri(Reg(rs1), 7, 18, rd, ss);
-        let srli = SRLI {
+        let srli = VirtualSRLI {
             address: self.address,
-            operands: FormatI {
+            operands: FormatVirtualRightShiftI {
                 rd: ss,
                 rs1,
-                imm: 3,
+                imm: 0xFFFFFFF8, // SRLI by 3
             },
             virtual_sequence_remaining: Some(0),
         };
@@ -289,12 +289,12 @@ impl Sha256SequenceBuilder {
     fn sha_word_sigma_1(&mut self, rs1: usize, rd: usize, ss: usize) {
         // We don't need to do Imm shenanigans here since words are always in registers
         self.rotri_xor_rotri(Reg(rs1), 17, 19, rd, ss);
-        let srli = SRLI {
+        let srli = VirtualSRLI {
             address: self.address,
-            operands: FormatI {
+            operands: FormatVirtualRightShiftI {
                 rd: ss,
                 rs1,
-                imm: 10,
+                imm: 0xFFFFFC00, // SRLI by 10
             },
             virtual_sequence_remaining: Some(0),
         };

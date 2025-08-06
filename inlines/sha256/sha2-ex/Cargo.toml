@@ -1,0 +1,10 @@
+[package]
+name = "sha2-ex"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+jolt-sdk = { path = "../../../jolt-sdk", features = ["host"] }
+inline-impl = { path = "../inline-impl", features = ["host"]}
+guest = { package = "sha2-ex-guest", path = "./guest" }
+hex = "0.4.3"
