@@ -1,8 +1,6 @@
 use crate::{
     poly::{
-        compact_polynomial::StreamingCompactWitness, dense_mlpoly::StreamingDenseWitness,
-        one_hot_polynomial::OneHotPolynomial, one_hot_polynomial::StreamingOneHotWitness,
-        rlc_polynomial::RLCPolynomial,
+        commitment::commitment_scheme::StreamingCommitmentScheme, compact_polynomial::StreamingCompactWitness, dense_mlpoly::StreamingDenseWitness, one_hot_polynomial::{OneHotPolynomial, StreamingOneHotWitness}, rlc_polynomial::RLCPolynomial
     },
     utils::compute_dotproduct,
 };
@@ -10,6 +8,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
 use num_traits::MulAdd;
 use rayon::prelude::*;
 use strum_macros::EnumIter;
+use tracer::instruction::RV32IMCycle;
 
 use super::{
     compact_polynomial::{CompactPolynomial, SmallScalar},
@@ -20,6 +19,19 @@ use crate::{
     field::{JoltField, OptimizedMul},
     utils::thread::unsafe_allocate_zero_vec,
 };
+
+// Enum to identify the type of the polynomial.
+#[derive(Clone, Copy)]
+pub enum Multilinear {
+    LargeScalars,
+    U8Scalars,
+    U16Scalars,
+    U32Scalars,
+    U64Scalars,
+    I64Scalars,
+    RLC,
+    OneHot,
+}
 
 /// Wrapper enum for the various multilinear polynomial types used in Jolt
 #[repr(u8)]

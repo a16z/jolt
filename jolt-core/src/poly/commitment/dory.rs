@@ -2,11 +2,11 @@
 
 use super::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme};
 use crate::{
-    field::JoltField, msm::VariableBaseMSM, poly::{compact_polynomial::SmallScalar, multilinear_polynomial::MultilinearPolynomial}, utils::{
+    field::JoltField, msm::VariableBaseMSM, poly::{commitment::commitment_scheme::StreamingProcessChunk, compact_polynomial::{SmallScalar, StreamingCompactWitness}, dense_mlpoly::StreamingDenseWitness, multilinear_polynomial::{Multilinear, MultilinearPolynomial}, one_hot_polynomial::StreamingOneHotWitness}, utils::{
         errors::ProofVerifyError,
         math::Math,
         transcript::{AppendToTranscript, Transcript},
-    }
+    }, zkvm::witness::CommittedPolynomial
 };
 use ark_bn254::{Bn254, Fr, G1Projective, G2Projective};
 use ark_ec::{
@@ -30,7 +30,7 @@ use dory::{
     curve::G2Cache,
     evaluate, setup_with_srs_file,
     transcript::Transcript as DoryTranscript,
-    verify, DoryProof, DoryProofBuilder, Polynomial as DoryPolynomial, ProverSetup, StreamingDory,
+    verify, DoryProof, DoryProofBuilder, Polynomial as DoryPolynomial, ProverSetup,
     VerifierSetup,
 };
 
@@ -1230,22 +1230,108 @@ impl CommitmentScheme for DoryCommitmentScheme {
     }
 }
 
-impl StreamingCommitmentScheme for DoryCommitmentScheme {
-    type State<'a> = StreamingDory<'a, JoltBn254>;
+pub struct StreamingDoryCommitment<'a, E: DoryPairing> {
+    // // // The polynomial that this commitment corresponds to.
+    // // polynomial: CommittedPolynomial,
+    // // Pending row commitments.
+    // streaming_state: Vec<JoltG1Wrapper>,
+    // Setup
+    setup: &'a ProverSetup<E>,
+    // Pending row commitments.
+    row_commitments: Vec<E::G1>,
+}
 
-    fn initialize<'a>(_size: usize, setup: &'a Self::ProverSetup) -> Self::State<'a> {
-        let sigma = DoryGlobals::get_num_columns().log_2();
-        StreamingDory::initialize(sigma, setup)
+impl<'a> StreamingProcessChunk<StreamingDenseWitness<Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
+    fn process_chunk(self, chunk: &[StreamingDenseWitness<Fr>]) -> Self {
+        todo!()
+    }
+}
+impl<'a> StreamingProcessChunk<StreamingCompactWitness<u8, Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
+    fn process_chunk(self, chunk: &[StreamingCompactWitness<u8, Fr>]) -> Self {
+        todo!()
+    }
+}
+impl<'a> StreamingProcessChunk<StreamingCompactWitness<u16, Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
+    fn process_chunk(self, chunk: &[StreamingCompactWitness<u16, Fr>]) -> Self {
+        todo!()
+    }
+}
+impl<'a> StreamingProcessChunk<StreamingCompactWitness<u32, Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
+    fn process_chunk(self, chunk: &[StreamingCompactWitness<u32, Fr>]) -> Self {
+        todo!()
+    }
+}
+impl<'a> StreamingProcessChunk<StreamingCompactWitness<u64, Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
+    fn process_chunk(self, chunk: &[StreamingCompactWitness<u64, Fr>]) -> Self {
+        todo!()
+    }
+}
+impl<'a> StreamingProcessChunk<StreamingCompactWitness<i64, Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
+    fn process_chunk(self, chunk: &[StreamingCompactWitness<i64, Fr>]) -> Self {
+        todo!()
+    }
+}
+impl<'a> StreamingProcessChunk<StreamingOneHotWitness<Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
+    fn process_chunk(self, chunk: &[StreamingOneHotWitness<Fr>]) -> Self {
+        todo!()
+    }
+}
+
+// impl StreamingDoryCommitment {
+//     // pub fn generate_streaming_witness<'a, F, PCS>(
+//     //     &self,
+//     //     preprocessing: &'a JoltProverPreprocessing<F, PCS>,
+//     //     cycle: &RV32IMCycle,
+//     //     next_cycle: &RV32IMCycle,
+//     // ) -> StreamingWitness<F>
+//     // where
+//     //     F: JoltField,
+//     //     PCS: CommitmentScheme<Field = F>,
+//     // {
+//     //     self.polynomial.generate_streaming_witness(preprocessing, cycle, next_cycle)
+//     // }
+// 
+//     pub fn commit_row<F: JoltField>(
+//         self,
+//         row: &[StreamingWitness<F>]
+//     ) -> Self {
+//         todo!()
+//     }
+// 
+//     pub fn finalize_commitment(&self) -> DoryCommitment {
+//         todo!()
+//     }
+// }
+
+
+impl StreamingCommitmentScheme for DoryCommitmentScheme {
+    type State<'a> = StreamingDoryCommitment<'a, JoltBn254>;
+
+    fn initialize<'a>(ty: Multilinear, _size: usize, setup: &'a Self::ProverSetup) -> Self::State<'a> {
+        // let sigma = DoryGlobals::get_num_columns().log_2();
+        // StreamingDory::initialize(sigma, setup)
+        todo!();
     }
 
-    fn process<'a>(state: Self::State<'a>, eval: Self::Field) -> Self::State<'a> {
-        state.process::<JoltMsmG1>(JoltFieldWrapper(eval))
+    fn process<'a>(poly: Multilinear, state: Self::State<'a>, eval: Self::Field) -> Self::State<'a> {
+        // state.process::<JoltMsmG1>(JoltFieldWrapper(eval))
+        todo!("Processing individual elements is not supported for Dory.")
+    }
+
+    fn process_chunk<'a, T>(state: Self::State<'a>, chunk: &[T]) -> Self::State<'a>
+    where
+        Self::State<'a>: StreamingProcessChunk<T>,
+    {
+        // We require that a chunk is a full row.
+        debug_assert_eq!(chunk.len(), DoryGlobals::get_num_columns());
+
+        state.process_chunk(chunk)
     }
 
     fn finalize<'a>(state: Self::State<'a>) -> (Self::Commitment, Self::OpeningProofHint) {
-        let (commitment, hint) = state.finalize::<JoltMsmG1>();
-        (DoryCommitment(commitment), hint)
-        // DoryCommitment(state.finalize::<JoltMsmG1>())
+        // JP: We could reshuffle one hots here instead.
+        let commitment = JoltBn254::multi_pair(&state.row_commitments, &state.setup.g2_vec()[..state.row_commitments.len()]);
+        (DoryCommitment(commitment), state.row_commitments)
     }
 }
 

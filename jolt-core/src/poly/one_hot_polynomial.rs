@@ -21,11 +21,9 @@ use rayon::prelude::*;
 use std::marker::PhantomData;
 use std::mem;
 use std::sync::{Arc, Mutex};
-use tracer::instruction::RV32IMCycle;
-use tracer::LazyTraceIterator;
 
 // #[derive(Clone, Debug, Default, PartialEq)]
-pub struct StreamingOneHotWitness<F: JoltField> {
+pub struct StreamingOneHotWitness<F> { // : JoltField> {
     pub value: usize, // JP: ???
     phantom: PhantomData<fn(F)>,
 }
