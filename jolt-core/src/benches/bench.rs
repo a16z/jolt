@@ -372,19 +372,16 @@ where
             }
         }
 
-        let val_mle = val_vec
+        val_vec
             .into_par_iter()
-            .map(|val| MultilinearPolynomial::from(val))
-            .collect::<Vec<_>>();
-
-        val_mle
+            .map(MultilinearPolynomial::from)
+            .collect::<Vec<_>>()
     };
 
     let mut transcript = ProofTranscript::new(b"test_transcript");
     let r_cycle: Vec<F> = transcript.challenge_vector(T.log_2());
 
-    let previous_claim =
-        compute_initial_eval_claim(&ra.iter().map(|x| &*x).collect::<Vec<_>>(), &r_cycle);
+    let previous_claim = compute_initial_eval_claim(&ra.iter().collect::<Vec<_>>(), &r_cycle);
 
     let (mut ra, mut transcript, mut previous_claim) = (
         vec![ra; NUM_COPIES],
