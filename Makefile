@@ -6,7 +6,7 @@ MAKEFILE_DIR := $(abspath $(dir $(firstword $(MAKEFILE_LIST))))
 define RISCOF_RUN
 	export PATH=$(MAKEFILE_DIR)/target/release:$(PATH); \
 	export RUST_BACKTRACE=full; \
-	riscof run --no-browser --config tests/arch-tests/$(1).ini \
+	riscof --verbose info run --no-browser --config tests/arch-tests/$(1).ini \
 		--suite third-party/riscv-arch-test/riscv-test-suite/ \
 		--env third-party/riscv-arch-test/riscv-test-suite/env
 endef
@@ -16,7 +16,8 @@ help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
 bootstrap: ## Install required dependencies
-	scripts/bootstrap
+	./scripts/bootstrap
+	./scripts/apply-patches
 
 build-emulator: ## Build the emulator
 	cargo build --release -p tracer --bin jolt-emu

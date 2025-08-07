@@ -26,7 +26,9 @@ temp_file
 .idea
 .vscode
 
+# Ignore .patch files everywhere except in patches/ directory
 *.patch
+!patches/**/*.patch
 
 prebuilt-files/
 riscof_work/
