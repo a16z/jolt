@@ -524,8 +524,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                 while az_iter.peek().is_some() || bz_iter.peek().is_some() {
                     let next_az_index = az_iter.peek().map_or(usize::MAX, |c| c.index);
                     let next_bz_index = bz_iter.peek().map_or(usize::MAX, |c| c.index);
-                    let current_block_id =
-                        std::cmp::min(next_az_index, next_bz_index) / Y_SVO_RELATED_COEFF_BLOCK_SIZE;
+                    let current_block_id = std::cmp::min(next_az_index, next_bz_index)
+                        / Y_SVO_RELATED_COEFF_BLOCK_SIZE;
 
                     let x_out_val_stream = current_block_id >> num_streaming_x_in_vars;
                     let x_in_val_stream = current_block_id & ((1 << num_streaming_x_in_vars) - 1);
@@ -547,8 +547,12 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     let mut cz1_at_r = F::zero();
 
                     loop {
-                        let az_in_block = az_iter.peek().map_or(false, |c| c.index / Y_SVO_RELATED_COEFF_BLOCK_SIZE == current_block_id);
-                        let bz_in_block = bz_iter.peek().map_or(false, |c| c.index / Y_SVO_RELATED_COEFF_BLOCK_SIZE == current_block_id);
+                        let az_in_block = az_iter.peek().is_some_and(|c| {
+                            c.index / Y_SVO_RELATED_COEFF_BLOCK_SIZE == current_block_id
+                        });
+                        let bz_in_block = bz_iter.peek().is_some_and(|c| {
+                            c.index / Y_SVO_RELATED_COEFF_BLOCK_SIZE == current_block_id
+                        });
 
                         if !az_in_block && !bz_in_block {
                             break;
@@ -584,7 +588,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                     }
                                 }
                             }
-                             if az_orig_val != 0 && !bz_orig_for_this_az.is_zero() {
+                            if az_orig_val != 0 && !bz_orig_for_this_az.is_zero() {
                                 let cz_orig_val = bz_orig_for_this_az.mul_i128(az_orig_val);
                                 match x_next_val {
                                     0 => cz0_at_r += eq_r_y * cz_orig_val,
@@ -600,7 +604,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             let y_val_idx = (local_offset / 2) % Y_SVO_SPACE_SIZE;
                             let x_next_val = (local_offset / 2) / Y_SVO_SPACE_SIZE;
                             let eq_r_y = eq_r_evals[y_val_idx];
-                            
+
                             match x_next_val {
                                 0 => bz0_at_r += eq_r_y * bz_orig_val,
                                 1 => bz1_at_r += eq_r_y * bz_orig_val,
@@ -609,12 +613,24 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         }
                     }
 
-                    if !az0_at_r.is_zero() { task_bound_coeffs.push((6 * current_block_id, az0_at_r).into()); }
-                    if !bz0_at_r.is_zero() { task_bound_coeffs.push((6 * current_block_id + 1, bz0_at_r).into()); }
-                    if !cz0_at_r.is_zero() { task_bound_coeffs.push((6 * current_block_id + 2, cz0_at_r).into()); }
-                    if !az1_at_r.is_zero() { task_bound_coeffs.push((6 * current_block_id + 3, az1_at_r).into()); }
-                    if !bz1_at_r.is_zero() { task_bound_coeffs.push((6 * current_block_id + 4, bz1_at_r).into()); }
-                    if !cz1_at_r.is_zero() { task_bound_coeffs.push((6 * current_block_id + 5, cz1_at_r).into()); }
+                    if !az0_at_r.is_zero() {
+                        task_bound_coeffs.push((6 * current_block_id, az0_at_r).into());
+                    }
+                    if !bz0_at_r.is_zero() {
+                        task_bound_coeffs.push((6 * current_block_id + 1, bz0_at_r).into());
+                    }
+                    if !cz0_at_r.is_zero() {
+                        task_bound_coeffs.push((6 * current_block_id + 2, cz0_at_r).into());
+                    }
+                    if !az1_at_r.is_zero() {
+                        task_bound_coeffs.push((6 * current_block_id + 3, az1_at_r).into());
+                    }
+                    if !bz1_at_r.is_zero() {
+                        task_bound_coeffs.push((6 * current_block_id + 4, bz1_at_r).into());
+                    }
+                    if !cz1_at_r.is_zero() {
+                        task_bound_coeffs.push((6 * current_block_id + 5, cz1_at_r).into());
+                    }
 
                     let p_at_xk0 = az0_at_r * bz0_at_r - cz0_at_r;
                     let az_eval_infty = az1_at_r - az0_at_r;

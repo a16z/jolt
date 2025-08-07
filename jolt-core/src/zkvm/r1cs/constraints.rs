@@ -289,7 +289,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::LeftInstructionInput,
             JoltR1CSInputs::Product,
         );
-        
+
         // if MultiplyOperands {
         //     assert!(RightLookupOperand == Product)
         // }

@@ -295,7 +295,7 @@ pub mod svo_helpers {
         let az_I = binary_az_evals[1] - binary_az_evals[0];
         if az_I != 0 {
             let bz_I = binary_bz_evals[1] - binary_bz_evals[0];
-                temp_tA[0] += e_in_val.mul_i128(az_I) * bz_I;
+            temp_tA[0] += e_in_val.mul_i128(az_I) * bz_I;
         }
     }
 
@@ -657,7 +657,7 @@ pub mod svo_helpers {
         F: JoltField,
     >(
         binary_az_evals_input: &[i128], // Source of 2^N binary evals for Az
-        binary_bz_evals_input: &[F],   // Source of 2^N binary evals for Bz
+        binary_bz_evals_input: &[F],    // Source of 2^N binary evals for Bz
         e_in_val: &F,
         temp_tA: &mut [F], // Target for M_NON_BINARY_POINTS_CONST non-binary extended products
     ) {
