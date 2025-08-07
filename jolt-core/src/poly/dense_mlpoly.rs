@@ -251,22 +251,23 @@ impl<F: JoltField> DensePolynomial<F> {
         compute_dotproduct(&self.Z, &chis)
     }
     pub fn evaluate_at_chi_split_eq(&self, eq_one: &[F], eq_two: &[F]) -> F {
-        // Serial and parallel based on the size of the the problem
-        // Neeed to handle case by case
         let eval: F = (0..eq_one.len())
-            .flat_map(|x1| (0..eq_two.len()).map(move |x2| (x1, x2)))
-            .collect::<Vec<_>>()
             .into_par_iter()
-            .map(|(x1, x2)| {
-                let idx = x1 * eq_two.len() + x2;
-                if self.Z[idx].is_zero() || eq_one[x1].is_zero() || eq_two[x2].is_zero() {
+            .map(|x1| {
+                if eq_one[x1].is_zero() {
                     F::zero()
                 } else {
-                    let coef = OptimizedMul::mul_01_optimized(self.Z[idx], eq_two[x2]);
-                    OptimizedMul::mul_01_optimized(eq_one[x1], coef)
+                    let partial_sum = (0..eq_two.len())
+                        .into_par_iter()
+                        .map(|x2| {
+                            let idx = x1 * eq_two.len() + x2;
+                            OptimizedMul::mul_01_optimized(eq_two[x2], self.Z[idx])
+                        })
+                        .reduce(|| F::zero(), |acc, val| acc + val);
+                    OptimizedMul::mul_01_optimized(eq_one[x1], partial_sum)
                 }
             })
-            .reduce(|| F::zero(), |acc, v| acc + v);
+            .reduce(|| F::zero(), |acc, val| acc + val);
         eval
     }
 

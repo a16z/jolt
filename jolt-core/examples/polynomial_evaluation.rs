@@ -59,7 +59,7 @@ fn sparse_inputs(n: usize, c: f64) -> (MultilinearPolynomial<Fr>, Vec<Fr>) {
 
     (poly, eval_point)
 }
-fn benchmark_batch_polynomial_evaluation() {
+fn benchmark_batch_polynomial_evaluation(batch_size: usize) {
     let mut file = OpenOptions::new()
         .create(true)
         .write(true)
@@ -67,7 +67,6 @@ fn benchmark_batch_polynomial_evaluation() {
         .open("batch_results.csv")
         .expect("Unable to open file");
 
-    let batch_size = 10;
     // Write CSV header
     writeln!(
         file,
@@ -191,5 +190,5 @@ fn benchmark_single_polynomial_evaluation() {
 
 fn main() {
     //benchmark_single_polynomial_evaluation();
-    benchmark_batch_polynomial_evaluation();
+    benchmark_batch_polynomial_evaluation(49);
 }

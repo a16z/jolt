@@ -654,7 +654,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
         let (eq_one, eq_two) = rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
 
         let evals: Vec<F> = polys
-            .into_par_iter()
+            .iter()
             .map(|&poly| match poly {
                 MultilinearPolynomial::LargeScalars(poly) => {
                     poly.evaluate_at_chi_split_eq(&eq_one, &eq_two)
@@ -676,7 +676,6 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                 }
 
                 _ => {
-                    // THIS SHOULD BE DIFFERENT
                     let eq = EqPolynomial::evals(r);
                     poly.dot_product(&eq)
                 }

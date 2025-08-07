@@ -149,8 +149,6 @@ impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
 
     pub fn split_eq_evaluate(&self, r: &[F], eq_one: &[F], eq_two: &[F]) -> F {
         const PARALLEL_THRESHOLD: usize = 16;
-        // r must have a value for each variable
-        assert_eq!(r.len(), self.get_num_vars());
         if r.len() < PARALLEL_THRESHOLD {
             self.evaluate_split_eq_serial(eq_one, eq_two)
         } else {
@@ -160,48 +158,64 @@ impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
 
     fn evaluate_split_eq_parallel(&self, eq_one: &[F], eq_two: &[F]) -> F {
         let eval: F = (0..eq_one.len())
-            .flat_map(|x1| (0..eq_two.len()).map(move |x2| (x1, x2)))
-            .collect::<Vec<_>>()
             .into_par_iter()
-            .map(|(x1, x2)| {
-                let idx = x1 * eq_two.len() + x2;
-                if self.coeffs[idx].is_zero() || eq_one[x1].is_zero() || eq_two[x2].is_zero() {
+            .map(|x1| {
+                if eq_one[x1].is_zero() {
                     F::zero()
-                } else if eq_two[x2].is_one() && eq_one[x1].is_one() {
-                    self.coeffs[idx].to_field()
-                } else if eq_one[x1].is_one() {
-                    self.coeffs[idx].field_mul(eq_two[x2])
-                } else if eq_two[x2].is_one() {
-                    self.coeffs[idx].field_mul(eq_one[x1])
                 } else {
-                    self.coeffs[idx].field_mul(eq_one[x1]) * eq_two[x2]
+                    let partial_sum = (0..eq_two.len())
+                        .into_par_iter()
+                        .map(|x2| {
+                            let idx = x1 * eq_two.len() + x2;
+                            if self.coeffs[idx].is_zero() {
+                                F::zero()
+                            } else if self.coeffs[idx].is_one() {
+                                eq_two[x2]
+                            } else {
+                                self.coeffs[idx].field_mul(eq_two[x2])
+                            }
+                        })
+                        .reduce(|| F::zero(), |acc, val| acc + val);
+                    if partial_sum.is_zero() {
+                        F::zero()
+                    } else if partial_sum.is_one() {
+                        eq_one[x1]
+                    } else {
+                        partial_sum * eq_one[x1]
+                    }
                 }
             })
-            .reduce(|| F::zero(), |acc, v| acc + v);
-
+            .reduce(|| F::zero(), |acc, val| acc + val);
         eval
     }
     fn evaluate_split_eq_serial(&self, eq_one: &[F], eq_two: &[F]) -> F {
         let eval: F = (0..eq_one.len())
-            .flat_map(|x1| (0..eq_two.len()).map(move |x2| (x1, x2)))
-            .collect::<Vec<_>>()
-            .into_iter()
-            .map(|(x1, x2)| {
-                let idx = x1 * eq_two.len() + x2;
-                if self.coeffs[idx].is_zero() || eq_one[x1].is_zero() || eq_two[x2].is_zero() {
+            .map(|x1| {
+                if eq_one[x1].is_zero() {
                     F::zero()
-                } else if eq_two[x2].is_one() && eq_one[x1].is_one() {
-                    self.coeffs[idx].to_field()
-                } else if eq_one[x1].is_one() {
-                    self.coeffs[idx].field_mul(eq_two[x2])
-                } else if eq_two[x2].is_one() {
-                    self.coeffs[idx].field_mul(eq_one[x1])
                 } else {
-                    self.coeffs[idx].field_mul(eq_one[x1]) * eq_two[x2]
+                    let partial_sum = (0..eq_two.len())
+                        .map(|x2| {
+                            let idx = x1 * eq_two.len() + x2;
+                            if self.coeffs[idx].is_zero() {
+                                F::zero()
+                            } else if self.coeffs[idx].is_one() {
+                                eq_two[x2]
+                            } else {
+                                self.coeffs[idx].field_mul(eq_two[x2])
+                            }
+                        })
+                        .fold(F::zero(), |acc, val| acc + val);
+                    if partial_sum.is_zero() {
+                        F::zero()
+                    } else if partial_sum.is_one() {
+                        eq_one[x1]
+                    } else {
+                        partial_sum * eq_one[x1]
+                    }
                 }
             })
-            .fold(F::zero(), |acc, v| acc + v);
-
+            .fold(F::zero(), |acc, val| acc + val);
         eval
     }
 
