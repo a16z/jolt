@@ -250,7 +250,15 @@ impl<F: JoltField> DensePolynomial<F> {
         assert_eq!(chis.len(), self.Z.len());
         compute_dotproduct(&self.Z, &chis)
     }
-    pub fn evaluate_at_chi_split_eq(&self, eq_one: &[F], eq_two: &[F]) -> F {
+    pub fn split_eq_evaluate(&self, r: &[F], eq_one: &[F], eq_two: &[F]) -> F {
+        const PARALLEL_THRESHOLD: usize = 16;
+        if r.len() < PARALLEL_THRESHOLD {
+            self.evaluate_split_eq_serial(eq_one, eq_two)
+        } else {
+            self.evaluate_split_eq_parallel(eq_one, eq_two)
+        }
+    }
+    fn evaluate_split_eq_parallel(&self, eq_one: &[F], eq_two: &[F]) -> F {
         let eval: F = (0..eq_one.len())
             .into_par_iter()
             .map(|x1| {
@@ -268,6 +276,25 @@ impl<F: JoltField> DensePolynomial<F> {
                 }
             })
             .reduce(|| F::zero(), |acc, val| acc + val);
+        eval
+    }
+
+    fn evaluate_split_eq_serial(&self, eq_one: &[F], eq_two: &[F]) -> F {
+        let eval: F = (0..eq_one.len())
+            .map(|x1| {
+                if eq_one[x1].is_zero() {
+                    F::zero()
+                } else {
+                    let partial_sum = (0..eq_two.len())
+                        .map(|x2| {
+                            let idx = x1 * eq_two.len() + x2;
+                            OptimizedMul::mul_01_optimized(eq_two[x2], self.Z[idx])
+                        })
+                        .fold(F::zero(), |acc, val| acc + val);
+                    OptimizedMul::mul_01_optimized(eq_one[x1], partial_sum)
+                }
+            })
+            .fold(F::zero(), |acc, val| acc + val);
         eval
     }
 

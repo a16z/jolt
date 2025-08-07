@@ -319,7 +319,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                 let (eq_one, eq_two) =
                     rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
 
-                poly.evaluate_at_chi_split_eq(&eq_one, &eq_two)
+                poly.split_eq_evaluate(r, &eq_one, &eq_two)
             }
             MultilinearPolynomial::U8Scalars(poly) => {
                 let m = r.len() / 2;
@@ -649,38 +649,104 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
 impl<F: JoltField> MultilinearPolynomial<F> {
     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::batch_evaluate_sparse")]
     pub fn batch_evaluate_optimised_for_sparse_polynomials(polys: &[&Self], r: &[F]) -> Vec<F> {
+        let num_polys = polys.len();
         let m = r.len() / 2;
         let (r2, r1) = r.split_at(m);
         let (eq_one, eq_two) = rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
 
-        let evals: Vec<F> = polys
-            .iter()
-            .map(|&poly| match poly {
-                MultilinearPolynomial::LargeScalars(poly) => {
-                    poly.evaluate_at_chi_split_eq(&eq_one, &eq_two)
-                }
-                MultilinearPolynomial::U8Scalars(poly) => {
-                    poly.split_eq_evaluate(r, &eq_one, &eq_two)
-                }
-                MultilinearPolynomial::U16Scalars(poly) => {
-                    poly.split_eq_evaluate(r, &eq_one, &eq_two)
-                }
-                MultilinearPolynomial::U32Scalars(poly) => {
-                    poly.split_eq_evaluate(r, &eq_one, &eq_two)
-                }
-                MultilinearPolynomial::U64Scalars(poly) => {
-                    poly.split_eq_evaluate(r, &eq_one, &eq_two)
-                }
-                MultilinearPolynomial::I64Scalars(poly) => {
-                    poly.split_eq_evaluate(r, &eq_one, &eq_two)
-                }
+        let evals = (0..eq_one.len())
+            .into_par_iter()
+            .map(|x1| {
+                let eq1_val = eq_one[x1];
+                if eq1_val.is_zero() {
+                    // Tha answer for agg[x1] is 0 for all poly
+                    vec![F::zero(); num_polys]
+                } else {
+                    // computing agg[x1]
+                    let mut inner_sums = vec![F::zero(); num_polys];
 
-                _ => {
-                    let eq = EqPolynomial::evals(r);
-                    poly.dot_product(&eq)
+                    (0..eq_two.len()).for_each(|x2| {
+                        let eq2_val = eq_two[x2];
+                        if eq2_val.is_zero() {
+                            return;
+                        }
+                        // add this point x1 and x2 non zero
+                        let idx = x1 * eq_two.len() + x2;
+                        // for each polynomial
+                        // we compute inner_sums[i] = \sum_{x2 != 0} f_i(x1||x2)*eq(x2)
+                        for (i, poly) in polys.iter().enumerate() {
+                            let prod = match poly {
+                                MultilinearPolynomial::LargeScalars(poly) => {
+                                    let z_val = poly.Z[idx];
+                                    if z_val.is_zero() {
+                                        F::zero()
+                                    } else {
+                                        eq2_val * z_val
+                                    }
+                                }
+                                MultilinearPolynomial::U8Scalars(poly) => {
+                                    let z_val = poly.coeffs[idx];
+                                    if z_val == 0 {
+                                        F::zero()
+                                    } else {
+                                        z_val.field_mul(eq2_val)
+                                    }
+                                }
+                                MultilinearPolynomial::U16Scalars(poly) => {
+                                    let z_val = poly.coeffs[idx];
+                                    if z_val == 0 {
+                                        F::zero()
+                                    } else {
+                                        z_val.field_mul(eq2_val)
+                                    }
+                                }
+                                MultilinearPolynomial::U32Scalars(poly) => {
+                                    let z_val = poly.coeffs[idx];
+                                    if z_val == 0 {
+                                        F::zero()
+                                    } else {
+                                        z_val.field_mul(eq2_val)
+                                    }
+                                }
+                                MultilinearPolynomial::U64Scalars(poly) => {
+                                    let z_val = poly.coeffs[idx];
+                                    if z_val == 0 {
+                                        F::zero()
+                                    } else {
+                                        z_val.field_mul(eq2_val)
+                                    }
+                                }
+                                MultilinearPolynomial::I64Scalars(poly) => {
+                                    let z_val = poly.coeffs[idx];
+                                    if z_val == 0 {
+                                        F::zero()
+                                    } else {
+                                        z_val.field_mul(eq2_val)
+                                    }
+                                }
+                                _ => unimplemented!(),
+                            };
+                            inner_sums[i] += prod;
+                        }
+                    });
+
+                    // now inner_sums[i] = eq1[x1]*\sum_{x_2} eq2[x2]*f(x1||x2)
+                    inner_sums
+                        .into_iter()
+                        .map(|s| OptimizedMul::mul_01_optimized(eq1_val, s))
+                        .collect::<Vec<_>>()
                 }
             })
-            .collect();
+            .reduce(
+                || vec![F::zero(); num_polys],
+                |mut acc, item| {
+                    for i in 0..num_polys {
+                        acc[i] += item[i];
+                    }
+                    acc
+                },
+            );
+
         evals
     }
 

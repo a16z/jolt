@@ -73,8 +73,8 @@ fn benchmark_batch_polynomial_evaluation(batch_size: usize) {
         "exp,num_vars,c,algorithm,time_ms,mults,trial,batch_size"
     )
     .unwrap();
-    let num_trials = 1;
-    for exp in [14, 16, 18, 20] {
+    let num_trials = 10;
+    for exp in [14, 16, 18, 20, 22] {
         let num_evals = 1 << exp;
 
         for c in [0.005, 0.20, 0.50, 0.75] {
