@@ -25,7 +25,6 @@ use rand_distr::{Distribution, Zipf};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use serde::Serialize;
 
-
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
 pub enum PCSType {
     Dory,

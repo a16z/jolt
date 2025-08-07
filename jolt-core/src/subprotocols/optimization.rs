@@ -100,8 +100,7 @@ fn compute_mle_product_evals_generic<F: JoltField, const D: usize, const D_PLUS_
                     &right[..8].try_into().unwrap(),
                 )[..]
                     .try_into()
-                    .unwrap
-                    (),
+                    .unwrap(),
                 _ => unimplemented!(),
             };
 
@@ -933,14 +932,18 @@ mod test {
     use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
     use crate::{
-        field::JoltField, jolt::vm::Jolt, poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding}, subprotocols::optimization::{
+        field::JoltField,
+        jolt::vm::Jolt,
+        poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
+        subprotocols::optimization::{
             compute_initial_eval_claim, KaratsubaSumCheckProof, LargeDSumCheckProof,
             NaiveSumCheckProof,
-        }, utils::{
+        },
+        utils::{
             math::Math,
             thread::unsafe_allocate_zero_vec,
             transcript::{KeccakTranscript, Transcript},
-        }
+        },
     };
 
     const MAX_NUM_BITS: u32 = 32;
