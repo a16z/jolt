@@ -134,49 +134,44 @@ fn btreemap() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 fn sha2_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     let mut inputs = vec![];
     inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
-    inputs.append(&mut postcard::to_stdvec(&1000u32).unwrap());
+    inputs.append(&mut postcard::to_stdvec(&50u32).unwrap());
     prove_example("sha2-chain-guest", inputs)
 }
 
 fn sha3_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     let mut inputs = vec![];
     inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
-    inputs.append(&mut postcard::to_stdvec(&1000u32).unwrap());
+    inputs.append(&mut postcard::to_stdvec(&20u32).unwrap());
     prove_example("sha3-chain-guest", inputs)
 }
 
-// Helper functions for input scaling
 fn get_fib_input(scale: usize) -> u32 {
     let scale_factor = 1 << (scale - 20);
     35000u32 * scale_factor as u32
 }
 
-fn get_sha_input_size(scale: usize) -> usize {
-    let scale_factor = 1 << (scale - 20);
-    2048
+fn get_sha2_chain_iterations(scale: usize) -> u32 {
+    200 * (1 << (scale - 20)) as u32
 }
 
-fn get_sha_chain_iterations(scale: usize) -> u32 {
-    let scale_factor = 1 << (scale - 20);
-    1000u32 * scale_factor as u32
+fn get_sha3_chain_iterations(scale: usize) -> u32 {
+    20 * (1 << (scale - 20)) as u32
 }
 
 fn get_btreemap_ops(scale: usize) -> u32 {
     let scale_factor = 1 << (scale - 20);
-    250u32 * scale_factor as u32
+    400u32 * scale_factor as u32
 }
 
 fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    // Read environment variables
     let bench_type = env::var("BENCH_TYPE").unwrap_or_else(|_| "all".to_string());
     let bench_scale = env::var("BENCH_SCALE")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(20);
 
-    // Create perfetto_traces directory
     if let Err(e) = fs::create_dir_all("perfetto_traces") {
-        eprintln!("Warning: Failed to create perfetto_traces directory: {}", e);
+        eprintln!("Warning: Failed to create perfetto_traces directory: {e}");
     }
 
     let task = move || {
@@ -184,9 +179,9 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 
         let duration = match bench_type.as_str() {
             "fib" => {
-                println!("Running Fibonacci benchmark at scale 2^{}", bench_scale);
+                println!("Running Fibonacci benchmark at scale 2^{bench_scale}");
                 let (chrome_layer, _guard) = ChromeLayerBuilder::new()
-                    .file(format!("perfetto_traces/fib_{}.json", bench_scale))
+                    .file(format!("perfetto_traces/fib_{bench_scale}.json"))
                     .build();
                 let subscriber = tracing_subscriber::registry().with(chrome_layer);
                 let _guard = tracing::subscriber::set_default(subscriber);
@@ -201,14 +196,14 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                 )
             }
             "sha2" | "sha2-chain" => {
-                println!("Running SHA2-chain benchmark at scale 2^{}", bench_scale);
+                println!("Running SHA2-chain benchmark at scale 2^{bench_scale}");
                 let (chrome_layer, _guard) = ChromeLayerBuilder::new()
-                    .file(format!("perfetto_traces/sha2_chain_{}.json", bench_scale))
+                    .file(format!("perfetto_traces/sha2_chain_{bench_scale}.json"))
                     .build();
                 let subscriber = tracing_subscriber::registry().with(chrome_layer);
                 let _guard = tracing::subscriber::set_default(subscriber);
 
-                let iterations = get_sha_chain_iterations(bench_scale);
+                let iterations = get_sha2_chain_iterations(bench_scale);
                 let mut inputs = vec![];
                 inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
                 inputs.append(&mut postcard::to_stdvec(&iterations).unwrap());
@@ -221,14 +216,14 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                 )
             }
             "sha3" | "sha3-chain" => {
-                println!("Running SHA3-chain benchmark at scale 2^{}", bench_scale);
+                println!("Running SHA3-chain benchmark at scale 2^{bench_scale}");
                 let (chrome_layer, _guard) = ChromeLayerBuilder::new()
-                    .file(format!("perfetto_traces/sha3_chain_{}.json", bench_scale))
+                    .file(format!("perfetto_traces/sha3_chain_{bench_scale}.json"))
                     .build();
                 let subscriber = tracing_subscriber::registry().with(chrome_layer);
                 let _guard = tracing::subscriber::set_default(subscriber);
 
-                let iterations = get_sha_chain_iterations(bench_scale);
+                let iterations = get_sha3_chain_iterations(bench_scale);
                 let mut inputs = vec![];
                 inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
                 inputs.append(&mut postcard::to_stdvec(&iterations).unwrap());
@@ -241,9 +236,9 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                 )
             }
             "btreemap" => {
-                println!("Running BTreeMap benchmark at scale 2^{}", bench_scale);
+                println!("Running BTreeMap benchmark at scale 2^{bench_scale}");
                 let (chrome_layer, _guard) = ChromeLayerBuilder::new()
-                    .file(format!("perfetto_traces/btreemap_{}.json", bench_scale))
+                    .file(format!("perfetto_traces/btreemap_{bench_scale}.json"))
                     .build();
                 let subscriber = tracing_subscriber::registry().with(chrome_layer);
                 let _guard = tracing::subscriber::set_default(subscriber);
@@ -258,7 +253,7 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                 )
             }
             _ => {
-                eprintln!("Unknown benchmark type: {}. Use fib, sha2, sha2-chain, sha3, sha3-chain, or btreemap", bench_type);
+                eprintln!("Unknown benchmark type: {bench_type}. Use fib, sha2, sha2-chain, sha3, sha3-chain, or btreemap");
                 return;
             }
         };
@@ -277,7 +272,7 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             .open("perfetto_traces/timings.csv")
             .and_then(|mut f| f.write_all(summary_line.as_bytes()))
         {
-            eprintln!("Failed to write timing: {}", e);
+            eprintln!("Failed to write timing: {e}");
         }
     };
 
