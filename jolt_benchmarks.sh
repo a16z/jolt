@@ -26,11 +26,11 @@ for scale in $(seq 20 $TRACE_LENGTH); do
     export BENCH_SCALE=$scale
     cargo run --release -p jolt-core -- profile --name master-benchmark --format chrome
     
-    # SHA2-chain
-    echo ">>> SHA2-chain at scale 2^$scale"
-    export BENCH_TYPE=sha2-chain
-    export BENCH_SCALE=$scale
-    cargo run --release -p jolt-core -- profile --name master-benchmark --format chrome
+    # # SHA2-chain
+    # echo ">>> SHA2-chain at scale 2^$scale"
+    # export BENCH_TYPE=sha2-chain
+    # export BENCH_SCALE=$scale
+    # cargo run --release -p jolt-core -- profile --name master-benchmark --format chrome
     
     # SHA3-chain
     echo ">>> SHA3-chain at scale 2^$scale"
@@ -38,11 +38,11 @@ for scale in $(seq 20 $TRACE_LENGTH); do
     export BENCH_SCALE=$scale
     cargo run --release -p jolt-core -- profile --name master-benchmark --format chrome
     
-    # BTreeMap
-    echo ">>> BTreeMap at scale 2^$scale"
-    export BENCH_TYPE=btreemap
-    export BENCH_SCALE=$scale
-    cargo run --release -p jolt-core -- profile --name master-benchmark --format chrome
+    # # BTreeMap
+    # echo ">>> BTreeMap at scale 2^$scale"
+    # export BENCH_TYPE=btreemap
+    # export BENCH_SCALE=$scale
+    # cargo run --release -p jolt-core -- profile --name master-benchmark --format chrome
     
     echo ""
 done
