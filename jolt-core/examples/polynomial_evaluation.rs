@@ -70,18 +70,25 @@ fn benchmark_batch_polynomial_evaluation(batch_size: usize) {
     // Write CSV header
     writeln!(
         file,
-        "exp,num_vars,c,algorithm,time_ms,mults,trial,batch_size"
+        "exp,num_vars,c,algorithm,time_ms,mults,trial,num_non_zero,batch_size"
     )
     .unwrap();
-    let num_trials = 10;
-    for exp in [14, 16, 18, 20, 22] {
+    let num_trials = 1;
+    for exp in [16, 18, 20] {
         let num_evals = 1 << exp;
 
-        for c in [0.005, 0.20, 0.50, 0.75] {
+        for c in [0.005, 0.50, 0.75] {
             for trial in 0..num_trials {
                 let (polys, eval_point) = setup_batch_inputs(num_evals, batch_size, c);
                 let poly_refs: Vec<&MultilinearPolynomial<Fr>> = polys.iter().collect();
 
+                let mut num_non_zero = 0;
+                for poly in &polys {
+                    let sparsity: u64 = (0..poly.len())
+                        .map(|i| if poly.get_coeff(i).is_zero() { 1 } else { 0 })
+                        .sum();
+                    num_non_zero += poly.len() as u64 - sparsity;
+                }
                 // --- Algorithm 1: Dot Product ---
                 reset_mult_count();
                 let start = Instant::now();
@@ -90,11 +97,11 @@ fn benchmark_batch_polynomial_evaluation(batch_size: usize) {
                 let mults = get_mult_count();
                 writeln!(
                     file,
-                    "{exp},{num_evals},{c},DotProduct,{time_ms}, {mults}, {trial}, {batch_size}",
+                    "{exp},{num_evals},{c},DotProduct,{time_ms}, {mults}, {trial}, {num_non_zero}, {batch_size}",
                 )
                 .unwrap();
 
-                // --- Algorithm 2: Sparse Dot Product ---
+                // --- Algorithm 2: Inside/Out ---
                 reset_mult_count();
                 let start = Instant::now();
                 MultilinearPolynomial::batch_evaluate_inside_out(&poly_refs, &eval_point);
@@ -102,7 +109,7 @@ fn benchmark_batch_polynomial_evaluation(batch_size: usize) {
                 let mults = get_mult_count();
                 writeln!(
                     file,
-                    "{exp},{num_evals},{c},InsideOut,{time_ms}, {mults}, {trial}, {batch_size}",
+                    "{exp},{num_evals},{c},InsideOut,{time_ms}, {mults}, {trial},{num_non_zero},{batch_size}",
                 )
                 .unwrap();
 
@@ -117,7 +124,7 @@ fn benchmark_batch_polynomial_evaluation(batch_size: usize) {
                 let mults = get_mult_count();
                 writeln!(
                     file,
-                    "{exp},{num_evals},{c},SparseDot,{time_ms}, {mults}, {trial}, {batch_size}",
+                    "{exp},{num_evals},{c},SparseDot,{time_ms}, {mults}, {trial},{num_non_zero}, {batch_size}",
                 )
                 .unwrap();
             }
@@ -133,14 +140,23 @@ fn benchmark_single_polynomial_evaluation() {
         .expect("Unable to open file");
 
     // Write CSV header
-    writeln!(file, "exp,num_vars,c,algorithm,time_ms,mults,trial").unwrap();
-    let num_trials = 10;
+    writeln!(
+        file,
+        "exp,num_vars,c,algorithm,time_ms,mults,num_non_zero,trial"
+    )
+    .unwrap();
+    let num_trials = 3;
     for exp in [14, 16, 18, 20, 22] {
         let num_vars = 1 << exp;
 
         for c in [0.20, 0.35, 0.50, 0.66, 0.75, 0.95] {
             for trial in 0..num_trials {
                 let (poly, eval_point) = sparse_inputs(num_vars, c);
+
+                let sparsity: u64 = (0..poly.len())
+                    .map(|i| if poly.get_coeff(i).is_zero() { 1 } else { 0 })
+                    .sum();
+                let num_non_zero = poly.len() as u64 - sparsity;
 
                 // --- Algorithm 1: Dot Product ---
                 reset_mult_count();
@@ -150,8 +166,8 @@ fn benchmark_single_polynomial_evaluation() {
                 let mults = get_mult_count();
                 writeln!(
                     file,
-                    "{},{},{},DotProduct,{}, {}, {}",
-                    exp, num_vars, c, time_ms, mults, trial
+                    "{},{},{},DotProduct,{},{},{},{}",
+                    exp, num_vars, c, time_ms, mults, num_non_zero, trial
                 )
                 .unwrap();
 
@@ -163,8 +179,8 @@ fn benchmark_single_polynomial_evaluation() {
                 let mults = get_mult_count();
                 writeln!(
                     file,
-                    "{},{},{},InsideOut,{}, {}, {}",
-                    exp, num_vars, c, time_ms, mults, trial
+                    "{},{},{},InsideOut,{},{},{},{}",
+                    exp, num_vars, c, time_ms, mults, num_non_zero, trial
                 )
                 .unwrap();
 
@@ -176,8 +192,8 @@ fn benchmark_single_polynomial_evaluation() {
                 let mults = get_mult_count();
                 writeln!(
                     file,
-                    "{},{},{},SparseDot,{}, {}, {}",
-                    exp, num_vars, c, time_ms, mults, trial
+                    "{},{},{},SparseDot,{},{},{},{}",
+                    exp, num_vars, c, time_ms, mults, num_non_zero, trial
                 )
                 .unwrap();
 
@@ -189,6 +205,6 @@ fn benchmark_single_polynomial_evaluation() {
 }
 
 fn main() {
-    //benchmark_single_polynomial_evaluation();
+    benchmark_single_polynomial_evaluation();
     benchmark_batch_polynomial_evaluation(49);
 }
