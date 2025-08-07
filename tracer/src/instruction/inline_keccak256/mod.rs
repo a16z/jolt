@@ -741,6 +741,7 @@ mod tests {
         // Verify other lanes unchanged
         state
             .into_iter()
+            .skip(1)
             .for_each(|s| assert_eq!(s, 0, "Iota should only affect first lane"));
     }
 

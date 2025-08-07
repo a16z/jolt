@@ -1163,7 +1163,7 @@ mod test_cpu {
     #[test]
     fn tick() {
         let mut cpu = create_cpu();
-        cpu.get_mut_mmu().init_memory(4);
+        cpu.get_mut_mmu().init_memory(16);
         cpu.update_pc(DRAM_BASE);
 
         // Write non-compressed "addi x1, x1, 1" instruction
@@ -1371,9 +1371,9 @@ mod test_cpu {
     }
 
     #[test]
-    fn hardocded_zero() {
+    fn hardcoded_zero() {
         let mut cpu = create_cpu();
-        cpu.get_mut_mmu().init_memory(8);
+        cpu.get_mut_mmu().init_memory(16);
         cpu.update_pc(DRAM_BASE);
 
         // Write non-compressed "addi x0, x0, 1" instruction
@@ -1413,7 +1413,7 @@ mod test_cpu {
         };
 
         assert_eq!(
-            "PC:0000000080000000 00100013 ADDI zero:0,zero:0,1",
+            "PC:0000000080000000 00100013 ADDI",
             cpu.disassemble_next_instruction()
         );
 

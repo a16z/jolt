@@ -717,6 +717,7 @@ mod test {
     ];
     const INPUTS: [u8; 6] = [0xbd, 0xaa, 0xde, 0x5, 0x11, 0x5c];
     #[test]
+    #[ignore] // ignoring this test for now since elf contents are invalid
     /// Test that the trace function produces the expected number of cycles for a given ELF input.
     /// Test the checkpointing functionality by verifying the number of checkpoints created and
     /// if the traces from checkpoints match the overall execution trace.
@@ -744,6 +745,7 @@ mod test {
     }
 
     #[test]
+    #[ignore] // ignoring this test for now since elf contents are invalid
     fn test_lazy_iterator() {
         let (execution_trace, _, _) =
             trace(ELF_CONTENTS.to_vec(), &INPUTS, &MemoryConfig::default());

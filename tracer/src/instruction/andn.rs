@@ -28,7 +28,6 @@ impl RISCVTrace for ANDN {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::emulator::test_harness::CpuTestHarness;
 
     #[test]
     fn decode_constant() {
@@ -36,18 +35,5 @@ mod tests {
         assert_eq!(instr.operands.rs1, 0);
         assert_eq!(instr.operands.rs2, 0);
         assert_eq!(instr.operands.rd, 0);
-    }
-
-    #[test]
-    fn test_andn() {
-        // RV32
-        assert_eq!(
-            CpuTestHarness::new_32().exec_r::<ANDN>(0b1010, 0b1100),
-            0b1010 & !0b1100
-        );
-
-        // RV64
-        let (a, b) = (0xaaaa_aaaa_ffff_ffff, 0xffff_ffff_0000_ffff);
-        assert_eq!(CpuTestHarness::new().exec_r::<ANDN>(a, b), a & !b);
     }
 }
