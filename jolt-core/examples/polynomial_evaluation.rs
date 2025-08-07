@@ -1,0 +1,195 @@
+#![allow(clippy::uninlined_format_args)]
+use ark_ff::Zero;
+use ark_std::rand::{rngs::StdRng, Rng, SeedableRng};
+use jolt_core::field::tracked_ark::TrackedFr as Fr;
+use jolt_core::field::JoltField;
+use jolt_core::utils::counters::{get_mult_count, reset_mult_count};
+use jolt_core::{
+    poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
+    utils::math::Math,
+};
+
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::time::Instant;
+
+fn setup_batch_inputs(
+    n: usize,
+    batch_size: usize,
+    sparsity: f64,
+) -> (Vec<MultilinearPolynomial<Fr>>, Vec<Fr>) {
+    let mut rng = StdRng::seed_from_u64(123);
+    let eval_loc: Vec<Fr> = (0..n.log_2())
+        .map(|_| Fr::random(&mut rng))
+        .collect::<Vec<Fr>>();
+
+    // Get many dense polynomials
+    let polys: Vec<MultilinearPolynomial<Fr>> = (0..batch_size)
+        .map(|_| {
+            let (poly, _) = sparse_inputs(n, sparsity);
+            poly
+        })
+        .collect();
+
+    (polys, eval_loc)
+}
+
+fn sparse_inputs(n: usize, c: f64) -> (MultilinearPolynomial<Fr>, Vec<Fr>) {
+    assert!(n.is_power_of_two(), "n must be a power of 2");
+
+    let mut rng = StdRng::seed_from_u64(123);
+    // Compute number of zeros
+    // Each position independently: zero with prob c, random otherwise
+    let values: Vec<Fr> = (0..n)
+        .map(|_| {
+            if rng.gen::<f64>() < c {
+                Fr::zero()
+            } else {
+                Fr::random(&mut rng)
+            }
+        })
+        .collect();
+
+    let poly = MultilinearPolynomial::from(values);
+
+    // Random evaluation point remains unchanged
+    let eval_point = (0..n.log_2())
+        .map(|_| Fr::random(&mut rng))
+        .collect::<Vec<_>>();
+
+    (poly, eval_point)
+}
+fn benchmark_batch_polynomial_evaluation() {
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open("batch_results.csv")
+        .expect("Unable to open file");
+
+    let batch_size = 10;
+    // Write CSV header
+    writeln!(
+        file,
+        "exp,num_vars,c,algorithm,time_ms,mults,trial,batch_size"
+    )
+    .unwrap();
+    let num_trials = 1;
+    for exp in [14, 16, 18, 20] {
+        let num_evals = 1 << exp;
+
+        for c in [0.20, 0.50, 0.75] {
+            for trial in 0..num_trials {
+                let (polys, eval_point) = setup_batch_inputs(num_evals, batch_size, c);
+                let poly_refs: Vec<&MultilinearPolynomial<Fr>> = polys.iter().collect();
+
+                // --- Algorithm 1: Dot Product ---
+                reset_mult_count();
+                let start = Instant::now();
+                MultilinearPolynomial::batch_evaluate(&poly_refs, &eval_point);
+                let time_ms = start.elapsed().as_millis();
+                let mults = get_mult_count();
+                writeln!(
+                    file,
+                    "{exp},{num_evals},{c},DotProduct,{time_ms}, {mults}, {trial}, {batch_size}",
+                )
+                .unwrap();
+
+                // --- Algorithm 2: Sparse Dot Product ---
+                reset_mult_count();
+                let start = Instant::now();
+                MultilinearPolynomial::batch_evaluate_inside_out(&poly_refs, &eval_point);
+                let time_ms = start.elapsed().as_millis();
+                let mults = get_mult_count();
+                writeln!(
+                    file,
+                    "{exp},{num_evals},{c},InsideOut,{time_ms}, {mults}, {trial}, {batch_size}",
+                )
+                .unwrap();
+
+                // --- Algorithm 3: Sparse Dot Product ---
+                reset_mult_count();
+                let start = Instant::now();
+                MultilinearPolynomial::batch_evaluate_optimised_for_sparse_polynomials(
+                    &poly_refs,
+                    &eval_point,
+                );
+                let time_ms = start.elapsed().as_millis();
+                let mults = get_mult_count();
+                writeln!(
+                    file,
+                    "{exp},{num_evals},{c},SparseDot,{time_ms}, {mults}, {trial}, {batch_size}",
+                )
+                .unwrap();
+            }
+        }
+    }
+}
+fn benchmark_single_polynomial_evaluation() {
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open("results.csv")
+        .expect("Unable to open file");
+
+    // Write CSV header
+    writeln!(file, "exp,num_vars,c,algorithm,time_ms,mults,trial").unwrap();
+    let num_trials = 10;
+    for exp in [14, 16, 18, 20, 22] {
+        let num_vars = 1 << exp;
+
+        for c in [0.20, 0.35, 0.50, 0.66, 0.75, 0.95] {
+            for trial in 0..num_trials {
+                let (poly, eval_point) = sparse_inputs(num_vars, c);
+
+                // --- Algorithm 1: Dot Product ---
+                reset_mult_count();
+                let start = Instant::now();
+                let dot_prod = poly.evaluate_dot_product(&eval_point);
+                let time_ms = start.elapsed().as_millis();
+                let mults = get_mult_count();
+                writeln!(
+                    file,
+                    "{},{},{},DotProduct,{}, {}, {}",
+                    exp, num_vars, c, time_ms, mults, trial
+                )
+                .unwrap();
+
+                // --- Algorithm 2: Inside-Out Product ---
+                reset_mult_count();
+                let start = Instant::now();
+                let inside_out_prod = poly.evaluate(&eval_point);
+                let time_ms = start.elapsed().as_millis();
+                let mults = get_mult_count();
+                writeln!(
+                    file,
+                    "{},{},{},InsideOut,{}, {}, {}",
+                    exp, num_vars, c, time_ms, mults, trial
+                )
+                .unwrap();
+
+                // --- Algorithm 3: Sparse Dot Product ---
+                reset_mult_count();
+                let start = Instant::now();
+                let sparse_prod = poly.evaluate_sparse_dot_product(&eval_point);
+                let time_ms = start.elapsed().as_millis();
+                let mults = get_mult_count();
+                writeln!(
+                    file,
+                    "{},{},{},SparseDot,{}, {}, {}",
+                    exp, num_vars, c, time_ms, mults, trial
+                )
+                .unwrap();
+
+                assert_eq!(dot_prod, inside_out_prod);
+                assert_eq!(dot_prod, sparse_prod);
+            }
+        }
+    }
+}
+
+fn main() {
+    benchmark_single_polynomial_evaluation();
+    benchmark_batch_polynomial_evaluation();
+}
