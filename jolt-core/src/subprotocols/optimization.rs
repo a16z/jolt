@@ -42,6 +42,9 @@ fn compute_mle_product_evals_generic<F: JoltField, const D: usize, const D_PLUS_
                 factor.clone()
             };
 
+            let span = tracing::span!(tracing::Level::INFO, "Initialize left and right arrays");
+            let _guard = span.enter();
+
             let left: [F; D] = core::array::from_fn(|i| {
                 // Optimization
                 if i < 2 {
@@ -73,9 +76,15 @@ fn compute_mle_product_evals_generic<F: JoltField, const D: usize, const D_PLUS_
                 }
             });
 
+            drop(_guard);
+            drop(span);
+
+            let span = tracing::span!(tracing::Level::INFO, "Karatsuba step");
+            let _guard = span.enter();
+
             let res: [F; D_PLUS_ONE] = match D {
                 32 => coeff_kara_32(
-                    left[..32].try_into().unwrap(),
+                    &left[..32].try_into().unwrap(),
                     &right[..32].try_into().unwrap(),
                 )[..]
                     .try_into()
@@ -91,9 +100,13 @@ fn compute_mle_product_evals_generic<F: JoltField, const D: usize, const D_PLUS_
                     &right[..8].try_into().unwrap(),
                 )[..]
                     .try_into()
-                    .unwrap(),
+                    .unwrap
+                    (),
                 _ => unimplemented!(),
             };
+
+            drop(_guard);
+            drop(span);
 
             res
         })
@@ -385,7 +398,7 @@ impl<F: JoltField, ProofTranscript: Transcript> KaratsubaSumCheckProof<F, ProofT
         let _guard = span.enter();
 
         for round in 0..r_cycle.len() {
-            let inner_span = tracing::span!(tracing::Level::INFO, "Compute evals");
+            let inner_span = tracing::span!(tracing::Level::INFO, "Compute MLE product");
             let _guard = inner_span.enter();
 
             let mle_product_evals = match mle_vec.len() {
@@ -406,6 +419,12 @@ impl<F: JoltField, ProofTranscript: Transcript> KaratsubaSumCheckProof<F, ProofT
 
             assert_eq!(mle_product_evals.len(), mle_vec.len() + 1);
 
+            drop(_guard);
+            drop(inner_span);
+
+            let inner_span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
+            let _guard = inner_span.enter();
+
             let mut univariate_evals: Vec<F> = Vec::with_capacity(mle_vec.len() + 2);
 
             // Recall that the eq polynomial is rc + (1 - r)(1 - c), which has constant term 1 - r and slope (2r - 1)
@@ -419,17 +438,20 @@ impl<F: JoltField, ProofTranscript: Transcript> KaratsubaSumCheckProof<F, ProofT
 
             // Middle terms
             let mul_by_evals_0 = mle_product_evals[1..]
-                .iter()
+                .par_iter()
                 .map(|x| *x * eq_coeffs[0])
                 .collect::<Vec<_>>();
             let mul_by_evals_1 = mle_product_evals[..mle_vec.len()]
-                .iter()
+                .par_iter()
                 .map(|x| *x * eq_coeffs[1])
                 .collect::<Vec<_>>();
 
-            (0..mle_vec.len()).into_iter().for_each(|i| {
-                univariate_evals.push(mul_by_evals_0[i] + mul_by_evals_1[i]);
-            });
+            univariate_evals.extend(
+                (0..mle_vec.len())
+                    .into_par_iter()
+                    .map(|i| mul_by_evals_0[i] + mul_by_evals_1[i])
+                    .collect::<Vec<_>>(),
+            );
 
             // Last term
             univariate_evals.push(mle_product_evals[mle_vec.len()] * eq_coeffs[1]);
@@ -670,7 +692,7 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
     // val = \sum_{j_1, ..., j_d \in \{0, 1\}^T} eq(j, j_1, ..., j_d) \prod_{i=1}^d func(j_i)
     //     = \sum_{j' \in \{0, 1\}^T} eq(j, j', ..., j') \prod_{i=1}^d func(j)
     #[tracing::instrument(skip_all, name = "LargeDSumCheckProof::prove")]
-    pub fn prove<const D1: usize>(
+    pub fn prove<const D_MINUS_ONE: usize>(
         mle_vec: &mut Vec<&mut MultilinearPolynomial<F>>,
         r_cycle: &Vec<F>,
         previous_claim: &mut F,
@@ -727,9 +749,9 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTran
                         mle_vec[0].get_bound_coeff(j + mle_vec[0].len() / 2),
                     );
 
-                    let res: [(F, F); D1] = std::array::from_fn(|i| {
+                    let res: [(F, F); D_MINUS_ONE] = std::array::from_fn(|i| {
                         let entry = cur;
-                        if i < D1 - 1 {
+                        if i < D_MINUS_ONE - 1 {
                             cur = (
                                 cur.0 * mle_vec[i + 1].get_bound_coeff(j),
                                 cur.1
@@ -911,17 +933,14 @@ mod test {
     use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
     use crate::{
-        field::JoltField,
-        poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
-        subprotocols::optimization::{
+        field::JoltField, jolt::vm::Jolt, poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding}, subprotocols::optimization::{
             compute_initial_eval_claim, KaratsubaSumCheckProof, LargeDSumCheckProof,
             NaiveSumCheckProof,
-        },
-        utils::{
+        }, utils::{
             math::Math,
             thread::unsafe_allocate_zero_vec,
             transcript::{KeccakTranscript, Transcript},
-        },
+        }
     };
 
     const MAX_NUM_BITS: u32 = 32;
@@ -1004,13 +1023,13 @@ mod test {
         karatsuba_optimization(16, 1 << 10);
     }
 
-    fn test_func_data(D: usize, T: usize) -> Vec<MultilinearPolynomial<Fr>> {
+    fn test_func_data<F: JoltField>(D: usize, T: usize) -> Vec<MultilinearPolynomial<F>> {
         let mut rng = test_rng();
-        let mut val_vec: Vec<Vec<Fr>> = vec![unsafe_allocate_zero_vec(T); D];
+        let mut val_vec: Vec<Vec<F>> = vec![unsafe_allocate_zero_vec(T); D];
 
         for j in 0..T {
             for i in 0..D {
-                val_vec[i][j] = Fr::from_u32(rng.next_u32());
+                val_vec[i][j] = F::from_u32(rng.next_u32());
             }
         }
 
