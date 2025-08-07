@@ -184,12 +184,12 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             1i128,
         );
 
-        // if Rd != 0 && WriteLookupOutputToRD {
+        // if WriteLookupOutputToRD && Rd != 0 {
         //     assert!(RdWriteValue == LookupOutput)
         // }
         cs.constrain_prod(
-            JoltR1CSInputs::Rd,
             JoltR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD),
+            JoltR1CSInputs::Rd,
             JoltR1CSInputs::WriteLookupOutputToRD,
         );
         cs.constrain_eq_conditional(
@@ -198,7 +198,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::LookupOutput,
         );
 
-        // if Rd != 0 && Jump {
+        // if Jump && Rd != 0 {
         //     if !isCompressed {
         //          assert!(RdWriteValue == UnexpandedPC + 4)
         //     } else {
@@ -206,8 +206,8 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         //     }
         // }
         cs.constrain_prod(
-            JoltR1CSInputs::Rd,
             JoltR1CSInputs::OpFlags(CircuitFlags::Jump),
+            JoltR1CSInputs::Rd,
             JoltR1CSInputs::WritePCtoRD,
         );
         cs.constrain_eq_conditional(
