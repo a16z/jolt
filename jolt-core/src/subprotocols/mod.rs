@@ -10,6 +10,7 @@ pub mod sparse_grand_product;
 pub mod sumcheck;
 pub mod twist;
 pub mod karatsuba;
+pub mod quang_optimization;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub enum QuarkHybridLayerDepth {
