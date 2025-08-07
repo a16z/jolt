@@ -377,8 +377,11 @@ impl Cpu {
         };
 
         let instr = RV32IMInstruction::decode(word, instruction_address, is_compressed)
-            .ok()
-            .unwrap();
+            .unwrap_or_else(|e| {
+                panic!(
+                    "Failed to decode instruction: word=0x{word:08x}, address=0x{instruction_address:x}, compressed={is_compressed}: {e}"
+                )
+            });
 
         if trace.is_none() {
             instr.execute(self);

@@ -64,16 +64,69 @@ class spike(pluginTemplate):
         #TODO: The following assumes you are using the riscv-gcc toolchain. If
         #      not please change appropriately
         self.compile_cmd = self.compile_cmd+' -mabi='+('lp64 ' if 64 in ispec['supported_xlen'] else 'ilp32 ')
+        # RISC-V standard canonical order: I, E, M, A, F, D, Q, C, V, Z extensions
         if "I" in ispec["ISA"]:
             self.isa += 'i'
+        if "E" in ispec["ISA"]:
+            self.isa += 'e'
         if "M" in ispec["ISA"]:
             self.isa += 'm'
-        if "C" in ispec["ISA"]:
-            self.isa += 'c'
+        if "A" in ispec["ISA"]:
+            self.isa += 'a'
         if "F" in ispec["ISA"]:
             self.isa += 'f'
         if "D" in ispec["ISA"]:
             self.isa += 'd'
+        if "Q" in ispec["ISA"]:
+            self.isa += 'q'
+        if "C" in ispec["ISA"]:
+            self.isa += 'c'
+        if "V" in ispec["ISA"]:
+            self.isa += 'v'
+        
+        # Z extensions (alphabetical order)
+        if "Zba" in ispec["ISA"]:
+            self.isa += '_Zba'
+        if "Zbb" in ispec["ISA"]:
+            self.isa += '_Zbb'
+        if "Zbc" in ispec["ISA"]:
+            self.isa += '_Zbc'
+        if "Zbkb" in ispec["ISA"]:
+            self.isa += '_Zbkb'
+        if "Zbkc" in ispec["ISA"]:
+            self.isa += '_Zbkc'
+        if "Zbkx" in ispec["ISA"]:
+            self.isa += '_Zbkx'
+        if "Zbs" in ispec["ISA"]:
+            self.isa += '_Zbs'
+        if "Zca" in ispec["ISA"]:
+            self.isa += '_Zca'
+        if "Zcb" in ispec["ISA"]:
+            self.isa += '_Zcb'
+        if "Zcmop" in ispec["ISA"]:
+            self.isa += '_Zcmop'
+        if "Zfa" in ispec["ISA"]:
+            self.isa += '_Zfa'
+        if "Zfh" in ispec["ISA"]:
+            self.isa += '_Zfh'
+        if "Zicboz" in ispec["ISA"]:
+            self.isa += '_Zicboz'
+        if "Zicond" in ispec["ISA"]:
+            self.isa += '_Zicond'
+        if "Zicsr" in ispec["ISA"]:
+            self.isa += '_Zicsr'
+        if "Zimop" in ispec["ISA"]:
+            self.isa += '_Zimop'
+        if "Zknd" in ispec["ISA"]:
+            self.isa += '_Zknd'
+        if "Zkne" in ispec["ISA"]:
+            self.isa += '_Zkne'
+        if "Zknh" in ispec["ISA"]:
+            self.isa += '_Zknh'
+        if "Zksed" in ispec["ISA"]:
+            self.isa += '_Zksed'
+        if "Zksh" in ispec["ISA"]:
+            self.isa += '_Zksh'
 
         # based on the validated isa and platform configure your simulator or
         # build your RTL here
@@ -105,7 +158,7 @@ class spike(pluginTemplate):
 
             #TODO: You will need to add any other arguments to your DUT
             #      executable if any in the quotes below
-            execute += self.ref_exe + ' --misaligned --isa={0} +signature={1} +signature-granularity=4 {2}'.format(self.isa, sig_file, elf)
+            execute += self.ref_exe + ' --instructions=10000000 --misaligned --isa={0} +signature={1} +signature-granularity=4 {2}'.format(self.isa, sig_file, elf)
 
             #TODO: The following is useful only if your reference model can
             #      support coverage extraction from riscv-isac. Else leave it
