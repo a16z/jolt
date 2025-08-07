@@ -81,7 +81,7 @@ impl AMOORW {
         let v_rs2 = virtual_register_index(8) as usize;
 
         let mut sequence = vec![];
-        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(9);
+        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(4);
 
         virtual_sequence_remaining = amo_pre32(
             &mut sequence,

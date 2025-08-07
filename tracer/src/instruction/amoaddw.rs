@@ -81,7 +81,7 @@ impl AMOADDW {
         let v_rs2 = virtual_register_index(8) as usize;
 
         let mut sequence = vec![];
-        let mut remaining = 5;
+        let mut remaining = 4;
         remaining = amo_pre32(
             &mut sequence,
             self.address,

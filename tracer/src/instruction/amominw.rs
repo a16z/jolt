@@ -93,7 +93,7 @@ impl AMOMINW {
         let v_tmp = virtual_register_index(11) as usize;
 
         let mut sequence = vec![];
-        let mut remaining = 11;
+        let mut remaining = 10;
         remaining = amo_pre32(
             &mut sequence,
             self.address,
