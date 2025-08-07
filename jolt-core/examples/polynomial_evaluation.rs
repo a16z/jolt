@@ -78,7 +78,7 @@ fn benchmark_batch_polynomial_evaluation() {
     for exp in [14, 16, 18, 20] {
         let num_evals = 1 << exp;
 
-        for c in [0.20, 0.50, 0.75] {
+        for c in [0.005, 0.20, 0.50, 0.75] {
             for trial in 0..num_trials {
                 let (polys, eval_point) = setup_batch_inputs(num_evals, batch_size, c);
                 let poly_refs: Vec<&MultilinearPolynomial<Fr>> = polys.iter().collect();
@@ -190,6 +190,6 @@ fn benchmark_single_polynomial_evaluation() {
 }
 
 fn main() {
-    benchmark_single_polynomial_evaluation();
+    //benchmark_single_polynomial_evaluation();
     benchmark_batch_polynomial_evaluation();
 }
