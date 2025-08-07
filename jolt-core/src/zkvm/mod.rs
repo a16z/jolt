@@ -13,11 +13,12 @@ use tracer::{
     JoltDevice,
 };
 
+#[cfg(feature = "host")]
+use crate::host::Program;
 #[cfg(test)]
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::{
     field::JoltField,
-    host::Program,
     poly::{
         commitment::commitment_scheme::CommitmentScheme, opening_proof::ProverOpeningAccumulator,
     },

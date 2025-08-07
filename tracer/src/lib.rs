@@ -243,7 +243,7 @@ impl Iterator for LazyTraceIterator {
 }
 
 #[tracing::instrument(skip_all)]
-pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>) {
+pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>, u64) {
     let obj = object::File::parse(elf).unwrap();
 
     let sections = obj
@@ -254,7 +254,14 @@ pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>) {
     let mut instructions = Vec::new();
     let mut data = Vec::new();
 
+    // keeps track of the highest address used in the program as the end address
+    let mut program_end = RAM_START_ADDRESS;
     for section in sections {
+        let start = section.address();
+        let length = section.size();
+        let end = start + length;
+        program_end = program_end.max(end);
+
         let raw_data = section.data().unwrap();
 
         if let SectionKind::Text = section.kind() {
@@ -276,8 +283,7 @@ pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>) {
             data.push((address + offset as u64, *byte));
         }
     }
-
-    (instructions, data)
+    (instructions, data, program_end)
 }
 
 fn get_xlen() -> Xlen {
