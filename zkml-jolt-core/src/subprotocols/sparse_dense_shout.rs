@@ -737,4 +737,29 @@ mod tests {
     fn test_mul() {
         test_sparse_dense_shout(ONNXOpcode::Mul);
     }
+
+    #[test]
+    fn test_asserteq() {
+        test_sparse_dense_shout(ONNXOpcode::VirtualAssertEq);
+    }
+
+    #[test]
+    fn test_advice() {
+        test_sparse_dense_shout(ONNXOpcode::VirtualAdvice);
+    }
+
+    #[test]
+    fn test_assertvaliddiv0() {
+        test_sparse_dense_shout(ONNXOpcode::VirtualAssertValidDiv0);
+    }
+
+    #[test]
+    fn test_assertvalidsignedremainder() {
+        test_sparse_dense_shout(ONNXOpcode::VirtualAssertValidSignedRemainder);
+    }
+
+    #[test]
+    fn test_move() {
+        test_sparse_dense_shout(ONNXOpcode::VirtualMove);
+    }
 }

@@ -36,7 +36,9 @@ impl ONNXCycle {
         ONNXCycle {
             instr: ONNXInstr::dummy(opcode),
             memory_state: MemoryState::random(rng),
-            advice_value: None,
+            advice_value: Some(Tensor::from(
+                (0..MAX_TENSOR_SIZE).map(|_| rng.next_u64() as i128),
+            )),
         }
     }
 
@@ -307,8 +309,8 @@ pub enum CircuitFlags {
     // Assert,
     // /// Used in virtual sequences; the program counter should be the same for the full sequence.
     // DoNotUpdateUnexpandedPC,
-    // /// Is (virtual) advice instruction
-    // Advice,
+    /// Is (virtual) advice instruction
+    Advice,
 }
 
 pub const NUM_CIRCUIT_FLAGS: usize = CircuitFlags::COUNT;
@@ -323,6 +325,7 @@ impl ONNXInstr {
             ONNXOpcode::Add
             | ONNXOpcode::Sub
             | ONNXOpcode::Mul
+            | ONNXOpcode::VirtualMove
         );
 
         flags[CircuitFlags::RightOperandIsTs2Value as usize] = matches!(
@@ -334,7 +337,8 @@ impl ONNXInstr {
 
         flags[CircuitFlags::AddOperands as usize] = matches!(
             self.opcode,
-            ONNXOpcode::Add,
+            ONNXOpcode::Add
+            | ONNXOpcode::VirtualMove
         );
 
         flags[CircuitFlags::SubtractOperands as usize] = matches!(
@@ -352,6 +356,13 @@ impl ONNXInstr {
             ONNXOpcode::Add
             | ONNXOpcode::Sub
             | ONNXOpcode::Mul
+            | ONNXOpcode::VirtualAdvice
+            | ONNXOpcode::VirtualMove
+        );
+
+        flags[CircuitFlags::Advice as usize] = matches!(
+            self.opcode,
+            ONNXOpcode::VirtualAdvice
         );
 
         flags
@@ -367,8 +378,7 @@ impl InterleavedBitsMarker for [bool; NUM_CIRCUIT_FLAGS] {
         !self[CircuitFlags::AddOperands]
             && !self[CircuitFlags::SubtractOperands]
             && !self[CircuitFlags::MultiplyOperands]
-        // TODO(Forpee): Virtual Instructions (#20 https://github.com/ICME-Lab/zkml-jolt/issues/20)
-        // && !self[CircuitFlags::Advice]
+            && !self[CircuitFlags::Advice]
     }
 }
 
