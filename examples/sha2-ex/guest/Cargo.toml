@@ -8,4 +8,4 @@ guest = []
 
 [dependencies]
 jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [] }
-inlines = { package = "jolt-inlines", path = "../../../jolt-inlines", features = ["sha256"] }
+inlines = { package = "jolt-inlines-sha2", path = "../../../jolt-inlines/sha2" }

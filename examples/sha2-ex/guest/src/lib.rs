@@ -3,5 +3,5 @@
 #[jolt::provable(memory_size = 10240, max_trace_length = 65536)]
 fn sha2(input: &[u8]) -> [u8; 32] {
     // Use Jolt's optimized SHA256 implementation
-    inlines::sha256::Sha256::digest(input)
+    inlines::Sha256::digest(input)
 }

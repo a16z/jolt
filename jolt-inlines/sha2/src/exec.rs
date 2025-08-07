@@ -1,4 +1,7 @@
-use tracer::{emulator::cpu::Cpu, instruction::{inline::INLINE, RISCVInstruction}};
+use tracer::{
+    emulator::cpu::Cpu,
+    instruction::{inline::INLINE, RISCVInstruction},
+};
 
 use crate::trace_generator::{BLOCK, K};
 

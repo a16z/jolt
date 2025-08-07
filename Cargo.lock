@@ -2061,7 +2061,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-inlines"
+name = "jolt-inlines-sha2"
 version = "0.1.0"
 dependencies = [
  "ctor",
@@ -3468,7 +3468,7 @@ name = "sha2-chain"
 version = "0.1.0"
 dependencies = [
  "hex",
- "jolt-inlines",
+ "jolt-inlines-sha2",
  "jolt-sdk",
  "sha2-chain-guest",
 ]
@@ -3477,7 +3477,7 @@ dependencies = [
 name = "sha2-chain-guest"
 version = "0.1.0"
 dependencies = [
- "jolt-inlines",
+ "jolt-inlines-sha2",
  "jolt-sdk",
 ]
 
@@ -3486,7 +3486,7 @@ name = "sha2-ex"
 version = "0.1.0"
 dependencies = [
  "hex",
- "jolt-inlines",
+ "jolt-inlines-sha2",
  "jolt-sdk",
  "sha2-guest",
 ]
@@ -3495,7 +3495,7 @@ dependencies = [
 name = "sha2-guest"
 version = "0.1.0"
 dependencies = [
- "jolt-inlines",
+ "jolt-inlines-sha2",
  "jolt-sdk",
 ]
 

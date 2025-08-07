@@ -155,8 +155,11 @@ pub mod bltu;
 pub mod bne;
 pub mod div;
 pub mod divu;
+pub mod divuw;
+pub mod divw;
 pub mod ecall;
 pub mod fence;
+pub mod inline;
 pub mod jal;
 pub mod jalr;
 pub mod lb;
@@ -173,10 +176,13 @@ pub mod mul;
 pub mod mulh;
 pub mod mulhsu;
 pub mod mulhu;
+pub mod mulw;
 pub mod or;
 pub mod ori;
 pub mod rem;
 pub mod remu;
+pub mod remuw;
+pub mod remw;
 pub mod sb;
 pub mod scd;
 pub mod scw;
@@ -222,12 +228,6 @@ pub mod virtual_srl;
 pub mod virtual_srli;
 pub mod xor;
 pub mod xori;
-pub mod divuw;
-pub mod divw;
-pub mod mulw;
-pub mod remuw;
-pub mod remw;
-pub mod inline;
 
 #[cfg(test)]
 pub mod test;
@@ -817,9 +817,7 @@ impl RV32IMInstruction {
             // while funct3 should hold all necessary instructions for that operation.
             // funct7:
             // - 0x00: SHA256
-            0b0001011 => {
-                Ok(INLINE::new(instr, address, false).into())
-            }
+            0b0001011 => Ok(INLINE::new(instr, address, false).into()),
             // 0x2B is reserved for external inlines
             0b0101011 => Ok(INLINE::new(instr, address, false).into()),
             _ => Err("Unknown opcode"),

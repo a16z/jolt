@@ -23,7 +23,7 @@ keywords = ["SNARK", "cryptography", "proofs"]
 [workspace]
 members = [
     "jolt-core",
-    "jolt-inlines",
+    "jolt-inlines/sha2",
     "tracer",
     "common",
     "jolt-sdk",

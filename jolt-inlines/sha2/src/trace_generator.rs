@@ -1,5 +1,6 @@
 use self::Value::{Imm, Reg};
 use tracer::instruction::{
+    RV32IMInstruction,
     add::ADD,
     addi::ADDI,
     and::AND,
@@ -9,12 +10,11 @@ use tracer::instruction::{
         format_virtual_right_shift_i::FormatVirtualRightShiftI,
     },
     lw::LW,
-    virtual_srli::VirtualSRLI,
     sw::SW,
     virtual_rotri::VirtualROTRI,
+    virtual_srli::VirtualSRLI,
     xor::XOR,
     xori::XORI,
-    RV32IMInstruction,
 };
 
 /// SHA-256 initial hash values
@@ -452,7 +452,11 @@ pub const fn virtual_register_index(index: u64) -> u64 {
 }
 
 // Virtual instructions builder for sha256 - returns empty sequence as XOR is atomic
-pub fn sha2_virtual_sequence_builder(_address: u64, _rs1: usize, _rs2: usize) -> Vec<RV32IMInstruction> {
+pub fn sha2_virtual_sequence_builder(
+    _address: u64,
+    _rs1: usize,
+    _rs2: usize,
+) -> Vec<RV32IMInstruction> {
     // Virtual registers used as a scratch space
     let mut vr = [0; 32];
     (0..32).for_each(|i| {
@@ -465,7 +469,11 @@ pub fn sha2_virtual_sequence_builder(_address: u64, _rs1: usize, _rs2: usize) ->
 }
 
 // Virtual instructions builder for sha256_init - returns empty sequence as XOR is atomic
-pub fn sha2_init_virtual_sequence_builder(_address: u64, _rs1: usize, _rs2: usize) -> Vec<RV32IMInstruction> {
+pub fn sha2_init_virtual_sequence_builder(
+    _address: u64,
+    _rs1: usize,
+    _rs2: usize,
+) -> Vec<RV32IMInstruction> {
     // Virtual registers used as a scratch space
     let mut vr = [0; 32];
     (0..32).for_each(|i| {
