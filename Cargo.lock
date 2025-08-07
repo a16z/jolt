@@ -976,6 +976,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctor"
+version = "0.2.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32a2785755761f3ddc1492979ce1e48d2c00d09311c39e4466429188f3dd6501"
+dependencies = [
+ "quote",
+ "syn 2.0.104",
+]
+
+[[package]]
 name = "der"
 version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2048,6 +2058,14 @@ dependencies = [
  "tracing",
  "tracing-chrome",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "jolt-inlines"
+version = "0.1.0"
+dependencies = [
+ "ctor",
+ "tracer",
 ]
 
 [[package]]
@@ -3450,6 +3468,7 @@ name = "sha2-chain"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "jolt-inlines",
  "jolt-sdk",
  "sha2-chain-guest",
 ]
@@ -3458,6 +3477,7 @@ dependencies = [
 name = "sha2-chain-guest"
 version = "0.1.0"
 dependencies = [
+ "jolt-inlines",
  "jolt-sdk",
 ]
 
@@ -3466,6 +3486,7 @@ name = "sha2-ex"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "jolt-inlines",
  "jolt-sdk",
  "sha2-guest",
 ]
@@ -3474,6 +3495,7 @@ dependencies = [
 name = "sha2-guest"
 version = "0.1.0"
 dependencies = [
+ "jolt-inlines",
  "jolt-sdk",
 ]
 

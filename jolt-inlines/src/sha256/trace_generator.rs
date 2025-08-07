@@ -1,23 +1,21 @@
 use self::Value::{Imm, Reg};
-use crate::instruction::add::ADD;
-use crate::instruction::addi::ADDI;
-use crate::instruction::and::AND;
-use crate::instruction::andi::ANDI;
-use crate::instruction::format::format_i::FormatI;
-use crate::instruction::format::format_load::FormatLoad;
-use crate::instruction::format::format_r::FormatR;
-use crate::instruction::format::format_s::FormatS;
-use crate::instruction::format::format_virtual_right_shift_i::FormatVirtualRightShiftI;
-use crate::instruction::lw::LW;
-use crate::instruction::sw::SW;
-use crate::instruction::virtual_rotri::VirtualROTRI;
-use crate::instruction::virtual_srli::VirtualSRLI;
-use crate::instruction::xor::XOR;
-use crate::instruction::xori::XORI;
-use crate::instruction::RV32IMInstruction;
-
-pub mod sha256;
-pub mod sha256init;
+use tracer::instruction::{
+    add::ADD,
+    addi::ADDI,
+    and::AND,
+    andi::ANDI,
+    format::{
+        format_i::FormatI, format_load::FormatLoad, format_r::FormatR, format_s::FormatS,
+        format_virtual_right_shift_i::FormatVirtualRightShiftI,
+    },
+    lw::LW,
+    virtual_srli::VirtualSRLI,
+    sw::SW,
+    virtual_rotri::VirtualROTRI,
+    xor::XOR,
+    xori::XORI,
+    RV32IMInstruction,
+};
 
 /// SHA-256 initial hash values
 pub const BLOCK: [u64; 8] = [
@@ -43,6 +41,12 @@ pub const K: [u64; 64] = [
 /// - 24..27: Temporary registers (t1, t2, scratch space)
 /// - 28..31: Initial E-H values when using custom IV
 pub const NEEDED_REGISTERS: usize = 32;
+
+#[derive(Clone, Copy)]
+enum Value {
+    Imm(u64),
+    Reg(usize),
+}
 
 /// Builds assembly sequence for SHA256 compression
 /// Expects input words to be in RAM at location rs1..rs1+16
@@ -442,75 +446,33 @@ impl Sha256SequenceBuilder {
     }
 }
 
-#[derive(Clone, Copy)]
-enum Value {
-    Imm(u64),
-    Reg(usize),
+const VIRTUAL_REGISTER_COUNT: u64 = 32; //  see Section 6.1 of Jolt paper
+pub const fn virtual_register_index(index: u64) -> u64 {
+    index + VIRTUAL_REGISTER_COUNT
 }
 
-pub fn execute_sha256_compression_initial(input: [u32; 16]) -> [u32; 8] {
-    execute_sha256_compression(BLOCK.map(|x| x as u32), input)
+// Virtual instructions builder for sha256 - returns empty sequence as XOR is atomic
+pub fn sha2_virtual_sequence_builder(_address: u64, _rs1: usize, _rs2: usize) -> Vec<RV32IMInstruction> {
+    // Virtual registers used as a scratch space
+    let mut vr = [0; 32];
+    (0..32).for_each(|i| {
+        vr[i] = virtual_register_index(i as u64) as usize;
+    });
+    let builder = Sha256SequenceBuilder::new(
+        _address, vr, _rs1, _rs2, false, // not initial - uses custom IV from rs2
+    );
+    builder.build()
 }
 
-pub fn execute_sha256_compression(initial_state: [u32; 8], input: [u32; 16]) -> [u32; 8] {
-    let mut a = initial_state[0];
-    let mut b = initial_state[1];
-    let mut c = initial_state[2];
-    let mut d = initial_state[3];
-    let mut e = initial_state[4];
-    let mut f = initial_state[5];
-    let mut g = initial_state[6];
-    let mut h = initial_state[7];
-
-    let mut w = [0u32; 64];
-
-    w[..16].copy_from_slice(&input);
-
-    // Calculate word schedule
-    for i in 16..64 {
-        // σ₁(w[i-2]) + w[i-7] + σ₀(w[i-15]) + w[i-16]
-        let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
-        let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
-        w[i] = w[i - 16]
-            .wrapping_add(s0)
-            .wrapping_add(w[i - 7])
-            .wrapping_add(s1);
-    }
-
-    // Perform 64 rounds
-    for i in 0..64 {
-        let ch = (e & f) ^ ((!e) & g);
-        let maj = (a & b) ^ (a & c) ^ (b & c);
-
-        let sigma0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22); // Σ₀(a)
-        let sigma1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25); // Σ₁(e)
-
-        let t1 = h
-            .wrapping_add(sigma1)
-            .wrapping_add(ch)
-            .wrapping_add(K[i] as u32)
-            .wrapping_add(w[i]);
-        let t2 = sigma0.wrapping_add(maj);
-
-        h = g;
-        g = f;
-        f = e;
-        e = d.wrapping_add(t1);
-        d = c;
-        c = b;
-        b = a;
-        a = t1.wrapping_add(t2);
-    }
-
-    // Final IV addition
-    [
-        initial_state[0].wrapping_add(a),
-        initial_state[1].wrapping_add(b),
-        initial_state[2].wrapping_add(c),
-        initial_state[3].wrapping_add(d),
-        initial_state[4].wrapping_add(e),
-        initial_state[5].wrapping_add(f),
-        initial_state[6].wrapping_add(g),
-        initial_state[7].wrapping_add(h),
-    ]
+// Virtual instructions builder for sha256_init - returns empty sequence as XOR is atomic
+pub fn sha2_init_virtual_sequence_builder(_address: u64, _rs1: usize, _rs2: usize) -> Vec<RV32IMInstruction> {
+    // Virtual registers used as a scratch space
+    let mut vr = [0; 32];
+    (0..32).for_each(|i| {
+        vr[i] = virtual_register_index(i as u64) as usize;
+    });
+    let builder = Sha256SequenceBuilder::new(
+        _address, vr, _rs1, _rs2, true, // initial - uses BLOCK constants
+    );
+    builder.build()
 }

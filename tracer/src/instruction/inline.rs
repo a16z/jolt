@@ -5,9 +5,9 @@
 //!
 //! # Architecture
 //!
-//! The inline system uses the RISC-V custom-1 opcode (0x2B) with the R-format
-//! instruction encoding. inlines are uniquely identified by their funct3 and
-//! funct7 fields, allowing up to 1,024 different inline operations.
+//! The inline system uses the RISC-V custom-0 (0x0B) and custom-1 (0x2B) opcodes
+//! with the R-format instruction encoding. Inlines are uniquely identified by their
+//! opcode, funct3, and funct7 fields.
 
 use super::{
     format::{format_r::FormatR, InstructionFormat},
@@ -25,10 +25,10 @@ pub type ExecFunction = Box<dyn Fn(&INLINE, &mut Cpu, &mut ()) + Send + Sync>;
 pub type VirtualSequenceFunction =
     Box<dyn Fn(u64, usize, usize) -> Vec<RV32IMInstruction> + Send + Sync>;
 
-// Key type for the registry: (funct3, funct7)
-type InlineKey = (u32, u32);
+// Key type for the registry: (opcode, funct3, funct7)
+type InlineKey = (u32, u32, u32);
 
-// Global registry that maps (funct3, funct7) pairs to inline implementations
+// Global registry that maps (opcode, funct3, funct7) tuples to inline implementations
 lazy_static! {
     static ref INLINE_REGISTRY: RwLock<HashMap<InlineKey, (String, ExecFunction, VirtualSequenceFunction)>> =
         RwLock::new(HashMap::new());
@@ -38,6 +38,7 @@ lazy_static! {
 ///
 /// # Arguments
 ///
+/// * `opcode` - The 7-bit opcode (0-127)
 /// * `funct3` - The 3-bit function code (0-7)
 /// * `funct7` - The 7-bit function code (0-127)
 /// * `name` - Human-readable name for the inline
@@ -45,13 +46,19 @@ lazy_static! {
 /// * `virtual_sequence_fn` - Function to generate virtual instruction sequence
 #[allow(dead_code)]
 pub fn register_inline(
+    opcode: u32,
     funct3: u32,
     funct7: u32,
     name: &str,
     exec_fn: ExecFunction,
     virtual_sequence_fn: VirtualSequenceFunction,
 ) -> Result<(), String> {
-    // Validate input ranges
+    if opcode != 0x0B && opcode != 0x2B {
+        return Err(format!(
+            "opcode value {:#04x} is invalid. Only 0x0B (custom-0) and 0x2B (custom-1) are allowed for inline in",
+            opcode
+        ));
+    }
     if funct3 > 7 {
         return Err(format!("funct3 value {} exceeds maximum of 7", funct3));
     }
@@ -63,14 +70,15 @@ pub fn register_inline(
         .write()
         .map_err(|_| "Failed to acquire write lock on inline registry")?;
 
-    let key = (funct3, funct7);
+    let key = (opcode, funct3, funct7);
     if registry.contains_key(&key) {
         return Err(format!(
-            "Inline '{}' with funct3={}, funct7={} is already registered",
+            "Inline '{}' with opcode={:#x}, funct3={}, funct7={} is already registered",
             registry
                 .get(&key)
                 .map(|(name, _, _)| name.as_str())
                 .unwrap_or("unknown"),
+            opcode,
             funct3,
             funct7
         ));
@@ -85,10 +93,10 @@ pub fn register_inline(
 /// # Returns
 ///
 /// A vector of tuples containing:
-/// - `(funct3, funct7)` pair
+/// - `(opcode, funct3, funct7)` tuple
 /// - Inline name
 #[allow(dead_code)]
-pub fn list_registered_inlines() -> Vec<((u32, u32), String)> {
+pub fn list_registered_inlines() -> Vec<((u32, u32, u32), String)> {
     match INLINE_REGISTRY.read() {
         Ok(registry) => registry
             .iter()
@@ -101,11 +109,11 @@ pub fn list_registered_inlines() -> Vec<((u32, u32), String)> {
     }
 }
 
-/// Checks if a inline is registered for the given funct3 and funct7 values.
+/// Checks if a inline is registered for the given opcode, funct3 and funct7 values.
 #[allow(dead_code)]
-pub fn is_inline_registered(funct3: u32, funct7: u32) -> bool {
+pub fn is_inline_registered(opcode: u32, funct3: u32, funct7: u32) -> bool {
     match INLINE_REGISTRY.read() {
-        Ok(registry) => registry.contains_key(&(funct3, funct7)),
+        Ok(registry) => registry.contains_key(&(opcode, funct3, funct7)),
         Err(_) => false,
     }
 }
@@ -113,12 +121,12 @@ pub fn is_inline_registered(funct3: u32, funct7: u32) -> bool {
 /// RISC-V inline instruction.
 /// # Note
 ///
-/// This struct is manually implemented instead of using the `declare_riscv_instr!`
-/// macro because we need to:
-/// 1. Store funct3 and funct7 fields for dispatch
-/// 2. Implement custom parsing behavior in the `new()` method
+/// This struct is manually implemented instead of using the `declare_riscv_instr!` macro because we need to:
+/// Store opcode, funct3 and funct7 fields for dispatch
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
 pub struct INLINE {
+    /// 7-bit opcode (bits 6:0 of instruction)
+    pub opcode: u32,
     /// 3-bit function selector (bits 14:12 of instruction)
     pub funct3: u32,
     /// 7-bit function selector (bits 31:25 of instruction)
@@ -144,6 +152,7 @@ impl RISCVInstruction for INLINE {
 
     fn new(word: u32, address: u64, _validate: bool) -> Self {
         Self {
+            opcode: word & 0x7f,
             funct3: (word >> 12) & 0x7,
             funct7: (word >> 25) & 0x7f,
             address,
@@ -154,6 +163,7 @@ impl RISCVInstruction for INLINE {
 
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
         Self {
+            opcode: rng.next_u32() & 0x7f,
             funct3: rng.next_u32() & 0x7,
             funct7: rng.next_u32() & 0x7f,
             address: rng.next_u64(),
@@ -170,7 +180,7 @@ impl RISCVInstruction for INLINE {
 impl INLINE {
     pub fn exec(&self, cpu: &mut Cpu, _: &mut <INLINE as RISCVInstruction>::RAMAccess) {
         // Look up the inline function in the registry
-        let key = (self.funct3, self.funct7);
+        let key = (self.opcode, self.funct3, self.funct7);
 
         match INLINE_REGISTRY.read() {
             Ok(registry) => {
@@ -181,9 +191,9 @@ impl INLINE {
                     }
                     None => {
                         panic!(
-                            "No inline handler registered for funct3={:#03b}, funct7={:#09b} \
+                            "No inline handler registered for opcode={:#04x}, funct3={:#03b}, funct7={:#09b} \
                             Register a handler using register_inline().",
-                            self.funct3, self.funct7
+                            self.opcode, self.funct3, self.funct7
                         );
                     }
                 }
@@ -210,7 +220,7 @@ impl RISCVTrace for INLINE {
 
 impl VirtualInstructionSequence for INLINE {
     fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
-        let key = (self.funct3, self.funct7);
+        let key = (self.opcode, self.funct3, self.funct7);
 
         match INLINE_REGISTRY.read() {
             Ok(registry) => {
@@ -222,9 +232,9 @@ impl VirtualInstructionSequence for INLINE {
                     None => {
                         panic!(
                             "No virtual sequence builder registered for inline \
-                            with funct3={:#03b}, funct7={:#09b}. \
+                            with opcode={:#04x}, funct3={:#03b}, funct7={:#09b}. \
                             Register a builder using register_inline().",
-                            self.funct3, self.funct7
+                            self.opcode, self.funct3, self.funct7
                         );
                     }
                 }
@@ -245,9 +255,21 @@ mod tests {
 
     #[test]
     fn test_register_inline_validation() {
+        // Test opcode validation
+        let result = register_inline(
+            128, // Invalid opcode (> 127)
+            0,
+            0,
+            "test",
+            Box::new(|_, _, _| {}),
+            Box::new(|_, _, _| vec![]),
+        );
+        assert!(result.is_err());
+
         // Test funct3 validation
         let result = register_inline(
-            8, // Invalid funct3 (> 7)
+            0x2B, // Valid opcode
+            8,    // Invalid funct3 (> 7)
             0,
             "test",
             Box::new(|_, _, _| {}),
@@ -260,6 +282,7 @@ mod tests {
 
         // Test funct7 validation
         let result = register_inline(
+            0x2B, // Valid opcode
             0,
             128, // Invalid funct7 (> 127)
             "test",
@@ -273,12 +296,38 @@ mod tests {
     }
 
     #[test]
+    fn test_valid_opcodes() {
+        // Test that 0x0B (custom-0) is valid
+        let result = register_inline(
+            0x0B,
+            0,
+            0,
+            "test_custom0",
+            Box::new(|_, _, _| {}),
+            Box::new(|_, _, _| vec![]),
+        );
+        assert!(result.is_ok());
+
+        // Test that 0x2B (custom-1) is valid
+        let result = register_inline(
+            0x2B,
+            0,
+            1, // Different funct7 to avoid duplicate registration
+            "test_custom1",
+            Box::new(|_, _, _| {}),
+            Box::new(|_, _, _| vec![]),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
     fn test_inline_parsing() {
         // Test instruction word parsing
         // funct7=0x7f, rs2=0x1f, rs1=0x1f, funct3=0x7, rd=0x1f, opcode=0x2b
         let word: u32 = 0xff_ff_f_f_ab;
         let inline = INLINE::new(word, 0x1000, false);
 
+        assert_eq!(inline.opcode, 0x2b);
         assert_eq!(inline.funct3, 0x7);
         assert_eq!(inline.funct7, 0x7f);
         assert_eq!(inline.address, 0x1000);

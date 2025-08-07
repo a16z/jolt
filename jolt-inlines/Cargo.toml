@@ -1,0 +1,14 @@
+[package]
+name = "jolt-inlines"
+version = "0.1.0"
+edition = "2021"
+description = "Inline implementations for Jolt VM"
+
+[features]
+default = []
+sha256 = []
+host = ["dep:ctor", "dep:tracer"]
+
+[dependencies]
+ctor = { version = "0.2", optional = true }
+tracer = { path = "../tracer", optional = true }

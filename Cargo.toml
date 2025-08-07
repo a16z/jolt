@@ -23,6 +23,7 @@ keywords = ["SNARK", "cryptography", "proofs"]
 [workspace]
 members = [
     "jolt-core",
+    "jolt-inlines",
     "tracer",
     "common",
     "jolt-sdk",
@@ -52,9 +53,6 @@ members = [
     "examples/overflow/guest",
     "examples/memory-ops",
     "examples/memory-ops/guest",
-]
-exclude = [
-    "inlines"
 ]
 
 [features]
