@@ -92,7 +92,8 @@ fn benchmark_batch_polynomial_evaluation(batch_size: usize) {
                 // --- Algorithm 1: Dot Product ---
                 reset_mult_count();
                 let start = Instant::now();
-                MultilinearPolynomial::batch_evaluate_with_eq(&poly_refs, &eval_point);
+                let evals_eq =
+                    MultilinearPolynomial::batch_evaluate_with_eq(&poly_refs, &eval_point);
                 let time_ms = start.elapsed().as_millis();
                 let mults = get_mult_count();
                 writeln!(
@@ -116,7 +117,7 @@ fn benchmark_batch_polynomial_evaluation(batch_size: usize) {
                 // --- Algorithm 3: Sparse Dot Product ---
                 reset_mult_count();
                 let start = Instant::now();
-                MultilinearPolynomial::batch_evaluate(&poly_refs, &eval_point);
+                let evals_split = MultilinearPolynomial::batch_evaluate(&poly_refs, &eval_point);
                 let time_ms = start.elapsed().as_millis();
                 let mults = get_mult_count();
                 writeln!(
@@ -124,6 +125,10 @@ fn benchmark_batch_polynomial_evaluation(batch_size: usize) {
                     "{exp},{num_evals},{c},SparseDot,{time_ms}, {mults}, {trial},{num_non_zero}, {batch_size}",
                 )
                 .unwrap();
+
+                for (x, y) in evals_eq.iter().zip(evals_split.iter()) {
+                    assert_eq!(x, y);
+                }
             }
         }
     }
