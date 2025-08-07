@@ -22,7 +22,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for RightOperand
         }
 
         let suffix_len = current_suffix_len(j);
-        if suffix_len <= WORD_SIZE {
+        if suffix_len < WORD_SIZE {
             let (_x, y) = b.uninterleave();
             result += F::from_u128(u128::from(y) << (suffix_len / 2));
         }

@@ -41,7 +41,6 @@ impl<const WORD_SIZE: usize> JoltLookupTable for VirtualChangeDivisorWTable<WORD
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
         debug_assert_eq!(r.len(), 2 * WORD_SIZE);
-        println!("r: {r:?}");
 
         let sign_bit = r[WORD_SIZE + 1];
 
@@ -83,18 +82,18 @@ impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
             Suffixes::One,
             Suffixes::RightOperandW,
             Suffixes::ChangeDivisorW,
-            Suffixes::SignExtensionUpperHalf,
+            Suffixes::SignExtensionRightOperand,
         ]
     }
 
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
-        let [one, right_operand, change_divisor, sign_extension] = suffixes.try_into().unwrap();
+        let [one, right_operand_w, change_divisor_w, sign_extension] = suffixes.try_into().unwrap();
 
         prefixes[Prefixes::RightOperandW] * one
-            + right_operand
-            + prefixes[Prefixes::ChangeDivisorW] * change_divisor
-            + prefixes[Prefixes::SignExtensionUpperHalf] * sign_extension
+            + right_operand_w
+            + prefixes[Prefixes::ChangeDivisorW] * change_divisor_w
+            + prefixes[Prefixes::SignExtensionRightOperand] * sign_extension
     }
 }
 

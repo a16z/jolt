@@ -11,6 +11,7 @@ use pow2_w::Pow2WPrefix;
 use rayon::prelude::*;
 use right_shift::RightShiftPrefix;
 use sign_extension::SignExtensionPrefix;
+use sign_extension_right_operand::SignExtensionRightOperandPrefix;
 use sign_extension_upper_half::SignExtensionUpperHalfPrefix;
 use std::{fmt::Display, ops::Index};
 use strum::EnumCount;
@@ -67,6 +68,7 @@ pub mod right_operand;
 pub mod right_operand_w;
 pub mod right_shift;
 pub mod sign_extension;
+pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
 pub mod two_lsb;
 pub mod upper_word;
@@ -145,6 +147,7 @@ pub enum Prefixes {
     ChangeDivisorW,
     RightOperand,
     RightOperandW,
+    SignExtensionRightOperand,
 }
 
 #[derive(Clone, Copy)]
@@ -269,6 +272,9 @@ impl Prefixes {
             }
             Prefixes::RightOperandW => {
                 RightOperandWPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::SignExtensionRightOperand => {
+                SignExtensionRightOperandPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
             }
         };
         PrefixEval(eval)
@@ -443,6 +449,14 @@ impl Prefixes {
             }
             Prefixes::RightOperandW => {
                 RightOperandWPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::SignExtensionRightOperand => {
+                SignExtensionRightOperandPrefix::<WORD_SIZE>::update_prefix_checkpoint(
+                    checkpoints,
+                    r_x,
+                    r_y,
+                    j,
+                )
             }
         }
     }
