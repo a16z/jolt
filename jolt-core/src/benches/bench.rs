@@ -173,15 +173,15 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(20);
-    
+
     // Create perfetto_traces directory
     if let Err(e) = fs::create_dir_all("perfetto_traces") {
         eprintln!("Warning: Failed to create perfetto_traces directory: {}", e);
     }
-    
+
     let task = move || {
         let max_trace_length = 1 << bench_scale;
-        
+
         let duration = match bench_type.as_str() {
             "fib" => {
                 println!("Running Fibonacci benchmark at scale 2^{}", bench_scale);
@@ -190,7 +190,7 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                     .build();
                 let subscriber = tracing_subscriber::registry().with(chrome_layer);
                 let _guard = tracing::subscriber::set_default(subscriber);
-                
+
                 let fib_input = get_fib_input(bench_scale);
                 prove_example_with_trace(
                     "fibonacci-guest",
@@ -207,7 +207,7 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                     .build();
                 let subscriber = tracing_subscriber::registry().with(chrome_layer);
                 let _guard = tracing::subscriber::set_default(subscriber);
-                
+
                 let iterations = get_sha_chain_iterations(bench_scale);
                 let mut inputs = vec![];
                 inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
@@ -227,7 +227,7 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                     .build();
                 let subscriber = tracing_subscriber::registry().with(chrome_layer);
                 let _guard = tracing::subscriber::set_default(subscriber);
-                
+
                 let iterations = get_sha_chain_iterations(bench_scale);
                 let mut inputs = vec![];
                 inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
@@ -247,7 +247,7 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                     .build();
                 let subscriber = tracing_subscriber::registry().with(chrome_layer);
                 let _guard = tracing::subscriber::set_default(subscriber);
-                
+
                 let btreemap_ops = get_btreemap_ops(bench_scale);
                 prove_example_with_trace(
                     "btreemap-guest",
@@ -262,10 +262,15 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                 return;
             }
         };
-        
+
         println!("  Prover completed in {:.2}s", duration.as_secs_f64());
-        
-        let summary_line = format!("{},{},{:.2}\n", bench_type, bench_scale, duration.as_secs_f64());
+
+        let summary_line = format!(
+            "{},{},{:.2}\n",
+            bench_type,
+            bench_scale,
+            duration.as_secs_f64()
+        );
         if let Err(e) = fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -275,7 +280,7 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             eprintln!("Failed to write timing: {}", e);
         }
     };
-    
+
     vec![(
         tracing::info_span!("MasterBenchmark"),
         Box::new(task) as Box<dyn FnOnce()>,
@@ -340,9 +345,8 @@ fn prove_example_with_trace(
 
     let span = tracing::info_span!("{}_2^{}", bench_name, scale);
     let start = Instant::now();
-    let (jolt_proof, program_io, _) = span.in_scope(|| {
-        JoltRV32IM::prove(&preprocessing, &mut program, &serialized_input)
-    });
+    let (jolt_proof, program_io, _) =
+        span.in_scope(|| JoltRV32IM::prove(&preprocessing, &mut program, &serialized_input));
     let prove_duration = start.elapsed();
 
     let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
