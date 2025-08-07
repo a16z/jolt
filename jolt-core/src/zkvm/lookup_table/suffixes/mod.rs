@@ -1,6 +1,8 @@
 use crate::zkvm::lookup_table::suffixes::change_divisor::ChangeDivisorSuffix;
+use crate::zkvm::lookup_table::suffixes::change_divisor_w::ChangeDivisorWSuffix;
 use crate::zkvm::lookup_table::suffixes::left_shift::LeftShiftSuffix;
 use crate::zkvm::lookup_table::suffixes::right_operand::RightOperandSuffix;
+use crate::zkvm::lookup_table::suffixes::right_operand_w::RightOperandWSuffix;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 use div_by_zero::DivByZeroSuffix;
 use eq::EqSuffix;
@@ -31,6 +33,7 @@ use xor::XorSuffix;
 
 pub mod and;
 pub mod change_divisor;
+pub mod change_divisor_w;
 pub mod div_by_zero;
 pub mod eq;
 pub mod gt;
@@ -47,6 +50,7 @@ pub mod pow2;
 pub mod pow2_w;
 pub mod right_is_zero;
 pub mod right_operand;
+pub mod right_operand_w;
 pub mod right_shift;
 pub mod right_shift_helper;
 pub mod right_shift_padding;
@@ -72,7 +76,9 @@ pub enum Suffixes {
     Xor,
     Or,
     RightOperand,
+    RightOperandW,
     ChangeDivisor,
+    ChangeDivisorW,
     UpperWord,
     LowerWord,
     LowerHalfWord,
@@ -107,7 +113,9 @@ impl Suffixes {
             Suffixes::Or => OrSuffix::suffix_mle(b),
             Suffixes::Xor => XorSuffix::suffix_mle(b),
             Suffixes::RightOperand => RightOperandSuffix::suffix_mle(b),
+            Suffixes::RightOperandW => RightOperandWSuffix::suffix_mle(b),
             Suffixes::ChangeDivisor => ChangeDivisorSuffix::suffix_mle(b),
+            Suffixes::ChangeDivisorW => ChangeDivisorWSuffix::<WORD_SIZE>::suffix_mle(b),
             Suffixes::UpperWord => UpperWordSuffix::<WORD_SIZE>::suffix_mle(b),
             Suffixes::LowerWord => LowerWordSuffix::<WORD_SIZE>::suffix_mle(b),
             Suffixes::LowerHalfWord => LowerHalfWordSuffix::<WORD_SIZE>::suffix_mle(b),

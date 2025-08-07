@@ -1,6 +1,7 @@
 use super::PrefixSuffixDecomposition;
 use crate::field::JoltField;
 use crate::utils::uninterleave_bits;
+use crate::zkvm::lookup_table::prefixes::Prefixes;
 use serde::{Deserialize, Serialize};
 
 use super::prefixes::PrefixEval;
@@ -12,28 +13,40 @@ pub struct VirtualChangeDivisorWTable<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for VirtualChangeDivisorWTable<WORD_SIZE> {
     fn materialize_entry(&self, index: u128) -> u64 {
-        // VirtualChangeDivisorW handles 32-bit division in 64-bit mode
-        // If lower 32 bits represent (INT32_MIN, -1), return 1, otherwise return divisor
         let (remainder, divisor) = uninterleave_bits(index);
+        match WORD_SIZE {
+            8 => {
+                let remainder = ((remainder & 0xF) as i8) << 4 >> 4;
+                let divisor = ((divisor & 0xF) as i8) << 4 >> 4;
 
-        // Check if lower 32 bits match the special case
-        let remainder_lower32 = remainder as u32 as i32;
-        let divisor_lower32 = divisor as u32 as i32;
+                if remainder == -8 && divisor == -1 {
+                    1
+                } else {
+                    divisor as u8 as u64
+                }
+            }
+            64 => {
+                let remainder = remainder as u32 as i32;
+                let divisor = divisor as u32 as i32;
 
-        if remainder_lower32 == i32::MIN && divisor_lower32 == -1 {
-            1
-        } else {
-            divisor
+                if remainder == i32::MIN && divisor == -1 {
+                    1
+                } else {
+                    divisor as i64 as u64
+                }
+            }
+            _ => panic!("Unsupported {WORD_SIZE} word size"),
         }
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
         debug_assert_eq!(r.len(), 2 * WORD_SIZE);
+        println!("r: {r:?}");
 
-        // MLE: f(x, y) = Σᵢ yᵢ * 2^(n-1-i) + x₃₁ * ∏ᵢ₌₀³⁰(1 - xᵢ) * ∏ᵢ₌₀³¹ yᵢ * (2 - 2^32)
-        // For W variant, we check lower 32 bits for INT32_MIN and -1
+        let sign_bit = r[WORD_SIZE + 1];
+
         let mut divisor_value = F::zero();
-        for i in 0..WORD_SIZE {
+        for i in WORD_SIZE / 2..WORD_SIZE {
             let bit_value = r[2 * i + 1];
             let shift = WORD_SIZE - 1 - i;
             if shift >= 64 {
@@ -43,26 +56,22 @@ impl<const WORD_SIZE: usize> JoltLookupTable for VirtualChangeDivisorWTable<WORD
             }
         }
 
-        // Check lower 32 bits for x == INT32_MIN (bit 31 = 1, bits 0-30 = 0)
-        let mut x_product = if 31 < WORD_SIZE {
-            r[2 * 31] // x₃₁ should be 1
-        } else {
-            F::zero()
-        };
-
-        for i in 0..31.min(WORD_SIZE) {
-            x_product *= F::one() - r[2 * i]; // (1 - xᵢ) for i < 31
+        let mut x_product = r[WORD_SIZE];
+        for i in WORD_SIZE / 2 + 1..WORD_SIZE {
+            x_product *= F::one() - r[2 * i];
         }
 
-        // Check lower 32 bits for y == -1 (all 32 bits = 1)
         let mut y_product = F::one();
-        for i in 0..32.min(WORD_SIZE) {
+        for i in WORD_SIZE / 2..WORD_SIZE {
             y_product *= r[2 * i + 1];
         }
 
-        let adjustment = F::from_u64(2) - F::from_u64(1u64 << 32);
+        let sign_extension =
+            F::from_u128((1u128 << WORD_SIZE) - (1u128 << (WORD_SIZE / 2))) * sign_bit;
 
-        divisor_value + x_product * y_product * adjustment
+        let adjustment = F::from_u64(2) - F::from_u128(1u128 << WORD_SIZE);
+
+        divisor_value + adjustment * x_product * y_product + sign_extension
     }
 }
 
@@ -70,11 +79,22 @@ impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
     for VirtualChangeDivisorWTable<WORD_SIZE>
 {
     fn suffixes(&self) -> Vec<Suffixes> {
-        vec![]
+        vec![
+            Suffixes::One,
+            Suffixes::RightOperandW,
+            Suffixes::ChangeDivisorW,
+            Suffixes::SignExtensionUpperHalf,
+        ]
     }
 
-    fn combine<F: JoltField>(&self, _prefixes: &[PrefixEval<F>], _suffixes: &[SuffixEval<F>]) -> F {
-        todo!("combine for VirtualChangeDivisorWTable")
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        debug_assert_eq!(self.suffixes().len(), suffixes.len());
+        let [one, right_operand, change_divisor, sign_extension] = suffixes.try_into().unwrap();
+
+        prefixes[Prefixes::RightOperandW] * one
+            + right_operand
+            + prefixes[Prefixes::ChangeDivisorW] * change_divisor
+            + prefixes[Prefixes::SignExtensionUpperHalf] * sign_extension
     }
 }
 
@@ -90,7 +110,6 @@ mod test {
     use super::VirtualChangeDivisorWTable;
 
     #[test]
-    #[ignore] // Remove when prefix-suffix decomposition is implemented
     fn prefix_suffix() {
         prefix_suffix_test::<XLEN, Fr, VirtualChangeDivisorWTable<XLEN>>();
     }

@@ -12,8 +12,6 @@ pub struct VirtualChangeDivisorTable<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for VirtualChangeDivisorTable<WORD_SIZE> {
     fn materialize_entry(&self, index: u128) -> u64 {
-        // VirtualChangeDivisor takes remainder as first operand and divisor as second
-        // If remainder == MIN && divisor == -1, return 1, otherwise return divisor
         let (remainder, divisor) = uninterleave_bits(index);
 
         match WORD_SIZE {
@@ -51,8 +49,6 @@ impl<const WORD_SIZE: usize> JoltLookupTable for VirtualChangeDivisorTable<WORD_
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
         debug_assert_eq!(r.len(), 2 * WORD_SIZE);
-
-        // MLE: f(x, y) = Σᵢ yᵢ * 2^(n-1-i) + x₀ * ∏ᵢ₌₁ⁿ⁻¹(1 - xᵢ) * ∏ᵢ₌₀ⁿ⁻¹ yᵢ * (2 - 2^n)
 
         let mut divisor_value = F::zero();
         for i in 0..WORD_SIZE {

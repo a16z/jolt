@@ -19,6 +19,7 @@ use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 use and::AndPrefix;
 use andn::AndnPrefix;
 use change_divisor::ChangeDivisorPrefix;
+use change_divisor_w::ChangeDivisorWPrefix;
 use div_by_zero::DivByZeroPrefix;
 use eq::EqPrefix;
 use left_is_zero::LeftOperandIsZeroPrefix;
@@ -33,6 +34,7 @@ use or::OrPrefix;
 use right_is_zero::RightOperandIsZeroPrefix;
 use right_msb::RightMsbPrefix;
 use right_operand::RightOperandPrefix;
+use right_operand_w::RightOperandWPrefix;
 use two_lsb::TwoLsbPrefix;
 use upper_word::UpperWordPrefix;
 use xor::XorPrefix;
@@ -40,6 +42,7 @@ use xor::XorPrefix;
 pub mod and;
 pub mod andn;
 pub mod change_divisor;
+pub mod change_divisor_w;
 pub mod div_by_zero;
 pub mod eq;
 pub mod left_is_zero;
@@ -61,6 +64,7 @@ pub mod pow2_w;
 pub mod right_is_zero;
 pub mod right_msb;
 pub mod right_operand;
+pub mod right_operand_w;
 pub mod right_shift;
 pub mod sign_extension;
 pub mod sign_extension_upper_half;
@@ -138,7 +142,9 @@ pub enum Prefixes {
     TwoLsb,
     SignExtensionUpperHalf,
     ChangeDivisor,
+    ChangeDivisorW,
     RightOperand,
+    RightOperandW,
 }
 
 #[derive(Clone, Copy)]
@@ -257,6 +263,12 @@ impl Prefixes {
             }
             Prefixes::RightOperand => {
                 RightOperandPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::ChangeDivisorW => {
+                ChangeDivisorWPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::RightOperandW => {
+                RightOperandWPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
             }
         };
         PrefixEval(eval)
@@ -420,6 +432,17 @@ impl Prefixes {
             }
             Prefixes::RightOperand => {
                 RightOperandPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::ChangeDivisorW => {
+                ChangeDivisorWPrefix::<WORD_SIZE>::update_prefix_checkpoint(
+                    checkpoints,
+                    r_x,
+                    r_y,
+                    j,
+                )
+            }
+            Prefixes::RightOperandW => {
+                RightOperandWPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
         }
     }
