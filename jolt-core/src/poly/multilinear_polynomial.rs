@@ -683,16 +683,8 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
 
                 poly.split_eq_evaluate(r, &eq_one, &eq_two)
             }
-            MultilinearPolynomial::RLC(_) => {
-                // TODO(moodlezoup): This case is only hit in the Dory opening proof,
-                // which doesn't actually do anything with this value. We should
-                // remove that call from Dory.
-                F::zero()
-            }
-            _ => {
-                let chis = EqPolynomial::evals(r);
-                self.dot_product(&chis)
-            }
+            MultilinearPolynomial::OneHot(poly) => poly.evaluate(r),
+            _ => unimplemented!("Unsupported MultilinearPolynomial variant"),
         }
     }
 
