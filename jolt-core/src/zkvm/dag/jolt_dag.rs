@@ -481,7 +481,6 @@ impl JoltDAG {
         F: JoltField,
         ProofTranscript: Transcript,
         PCS: StreamingCommitmentScheme<Field = F>,
-        
     >(
         prover_state_manager: &mut StateManager<'a, F, ProofTranscript, PCS>,
     ) -> Result<HashMap<CommittedPolynomial, PCS::OpeningProofHint>, anyhow::Error> {
@@ -489,35 +488,40 @@ impl JoltDAG {
             prover_state_manager.get_prover_data();
 
         let size = trace.len(); // Remove this from the trait??? Or get from preprocessing?
-        let lazy_trace_clone = lazy_trace.clone();
+        // let lazy_trace_clone = lazy_trace.clone();
 
 
-        let init_pcss: Vec<_> = AllCommittedPolynomials::iter()
-            .map(|_poly| PCS::initialize(size, &preprocessing.generators))
+        let polys : Vec<_> = AllCommittedPolynomials::iter().collect();
+        let init_pcss: Vec<_> = polys
+            .iter()
+            .map(|poly| PCS::initialize(poly.to_polynomial_type(), size, &preprocessing.generators))
             .collect();
-        // TODO: Process in chunks with parallelization.
-        // let pcss = trace.chunks(CHUNK_SIZE).into_iter().fold(init_pcss, |pcss, trace_chunk| {
-        let pcss = lazy_trace_clone.clone() // TODO(JP): More efficient way to zip_with_self_next
+        let row_len = DoryGlobals::get_num_columns();
+        let chunks = lazy_trace.clone() // TODO(JP): More efficient way to zip_with_self_next and chunkify in parallel
             .zip(
-                lazy_trace_clone
+                lazy_trace.clone() // JP: Why are two clones needed?
                     .skip(1)
                     .chain(std::iter::once(RV32IMCycle::NoOp)),
             )
-            .fold(init_pcss, |pcss, (cycle, next_cycle)| {
-                // let offset = offset; // TODO: Can we get this from `cycle`?
-
-                AllCommittedPolynomials::iter()
-                    .zip(pcss.into_iter())
-                    .map(|(poly, pcs)| {
-                        let witness = poly.generate_streaming_witness(preprocessing, &cycle, &next_cycle);
-                        let witness = witness.to_field(); // JP: Can we leave this as a small value? Is it more efficient?
-                        PCS::process(pcs, witness)
+            .chunks(row_len);
+        let pcs_state = chunks
+            .into_iter()
+            .fold(init_pcss, |pcss, row_cycles| {
+                let row_cycles: Vec<_> = row_cycles.collect();
+                pcss.into_iter()
+                    .enumerate()
+                    .map(|(i, pcs)| {
+                        let poly = polys[i];
+                        poly.generate_witness_and_commit_row::<_, PCS>(pcs, preprocessing, &row_cycles) // TODO: Don't pass preprocessing here. Instead pass precomputed constants.
                     })
                     .collect()
-        });
+            });
 
-        let (commitments, hints): (Vec<_>, Vec<PCS::OpeningProofHint>) = pcss.into_iter().map(|pcs| PCS::finalize(pcs)).unzip();//.collect();
-        // let hints: Vec<PCS::OpeningProofHint> = todo!("Compute hints in a streaming manner");
+        let (commitments, hints): (Vec<_>, Vec<_>) = pcs_state
+            .into_iter()
+            .map(|s| PCS::finalize(s))
+            .unzip();
+
         let mut hint_map = HashMap::with_capacity(AllCommittedPolynomials::len());
         for (poly, hint) in AllCommittedPolynomials::iter().zip(hints) {
             hint_map.insert(*poly, hint);
@@ -544,8 +548,8 @@ impl JoltDAG {
             {
                 assert_eq!(
                     commitment, commitment_non_streaming,
-                    "Commitment mismatch at index {}: {:?} != {:?}",
-                    i, commitment, commitment_non_streaming
+                    "Commitment mismatch at {:?} ({}): {:?} != {:?}",
+                    AllCommittedPolynomials::iter().collect::<Vec<_>>()[i], i, commitment, commitment_non_streaming
                 );
             }
         }

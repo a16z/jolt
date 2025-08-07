@@ -7,11 +7,25 @@ use ark_ff::biginteger::S128;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
 use rayon::prelude::*;
 use strum_macros::EnumIter;
+use tracer::instruction::RV32IMCycle;
 
 use super::{
     compact_polynomial::CompactPolynomial, dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial,
 };
 use crate::field::JoltField;
+
+// Enum to identify the type of the polynomial.
+#[derive(Clone, Copy)]
+pub enum Multilinear {
+    LargeScalars,
+    U8Scalars,
+    U16Scalars,
+    U32Scalars,
+    U64Scalars,
+    I64Scalars,
+    RLC,
+    OneHot,
+}
 
 /// Wrapper enum for the various multilinear polynomial types used in Jolt
 #[repr(u8)]

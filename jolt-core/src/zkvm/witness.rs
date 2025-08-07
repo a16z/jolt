@@ -16,9 +16,9 @@ use tracer::instruction::Cycle;
 use crate::{
     field::JoltField,
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
+        commitment::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme},
         compact_polynomial::StreamingCompactWitness,
-        multilinear_polynomial::{MultilinearPolynomial, StreamingWitness},
+        multilinear_polynomial::{Multilinear, MultilinearPolynomial, StreamingWitness},
         one_hot_polynomial::{OneHotPolynomial, StreamingOneHotWitness},
     },
     utils::math::Math,
@@ -82,6 +82,61 @@ pub enum CommittedPolynomial {
     /// Note that for RAM, ra and wa are the same polynomial because
     /// there is at most one load or store per cycle.
     RamRa(usize),
+}
+
+// Types of witness polynomials.
+struct LeftInstructionInput;
+struct RightInstructionInput;
+struct Product;
+struct WriteLookupOutputToRD;
+struct WritePCtoRD;
+struct ShouldBranch;
+struct ShouldJump;
+struct RdInc;
+struct RamInc;
+struct InstructionRa(usize);
+struct BytecodeRa(usize);
+struct RamRa(usize);
+
+trait StreamWitness<F: JoltField> {
+    type WitnessType;
+
+    fn generate_streaming_witness<'a, PCS>(
+        &self,
+        preprocessing: &'a JoltProverPreprocessing<F, PCS>,
+        cycle: &RV32IMCycle,
+        next_cycle: &RV32IMCycle,
+    ) -> Self::WitnessType
+    where
+        PCS: CommitmentScheme<Field = F>;
+}
+
+impl<F: JoltField> StreamWitness<F> for InstructionRa {
+    type WitnessType = StreamingOneHotWitness<F>;
+
+    fn generate_streaming_witness<'a, PCS>(
+        &self,
+        _preprocessing: &'a JoltProverPreprocessing<F, PCS>,
+        cycle: &RV32IMCycle,
+        _next_cycle: &RV32IMCycle,
+    ) -> Self::WitnessType
+    where
+        PCS: CommitmentScheme<Field = F>
+    {
+        let i = self.0;
+        // if *i > instruction_lookups::D {
+        //     panic!("Unexpected i: {i}");
+        // }
+        let v = {
+            let lookup_index = LookupQuery::<32>::to_lookup_index(cycle);
+            let k = (lookup_index
+                >> (instruction_lookups::LOG_K_CHUNK * (instruction_lookups::D - 1 - i)))
+                % instruction_lookups::K_CHUNK as u64;
+            k as usize
+        };
+
+        StreamingOneHotWitness::new(v)
+    }
 }
 
 pub static mut ALL_COMMITTED_POLYNOMIALS: OnceCell<Vec<CommittedPolynomial>> = OnceCell::new();
@@ -199,7 +254,6 @@ impl AllCommittedPolynomials {
                 .len()
         }
     }
-
 }
 
 impl Drop for AllCommittedPolynomials {
@@ -781,6 +835,55 @@ impl CommittedPolynomial {
                 let witness = StreamingOneHotWitness::new(v);
                 StreamingWitness::OneHot(witness)
             }
+        }
+    }
+
+    pub fn to_polynomial_type(
+        &self,
+    ) -> Multilinear {
+        match self {
+            CommittedPolynomial::LeftInstructionInput => todo!("Match these with the types from `generate_streaming_witness`"),
+            CommittedPolynomial::RightInstructionInput => todo!(),
+            CommittedPolynomial::Product => todo!(),
+            CommittedPolynomial::WriteLookupOutputToRD => todo!(),
+            CommittedPolynomial::WritePCtoRD => todo!(),
+            CommittedPolynomial::ShouldBranch => todo!(),
+            CommittedPolynomial::ShouldJump => todo!(),
+            CommittedPolynomial::RdInc => todo!(),
+            CommittedPolynomial::RamInc => todo!(),
+            CommittedPolynomial::InstructionRa(_) => Multilinear::OneHot,
+            CommittedPolynomial::BytecodeRa(_) => Multilinear::OneHot,
+            CommittedPolynomial::RamRa(_) => Multilinear::OneHot,
+        }
+    }
+
+    // TODO: Make this more amenable to parallelization.
+    pub fn generate_witness_and_commit_row<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>>(
+        &self,
+        pcs: PCS::State<'a>,
+        preprocessing: &'a JoltProverPreprocessing<F, PCS>,
+        row_cycles: &[(RV32IMCycle, RV32IMCycle)], // impl Iterator<Item = (RV32IMCycle, RV32IMCycle)>
+    ) -> PCS::State<'a> {
+        match self {
+            CommittedPolynomial::LeftInstructionInput => todo!(),
+            CommittedPolynomial::RightInstructionInput => todo!(),
+            CommittedPolynomial::Product => todo!(),
+            CommittedPolynomial::WriteLookupOutputToRD => todo!(),
+            CommittedPolynomial::WritePCtoRD => todo!(),
+            CommittedPolynomial::ShouldBranch => todo!(),
+            CommittedPolynomial::ShouldJump => todo!(),
+            CommittedPolynomial::RdInc => todo!(),
+            CommittedPolynomial::RamInc => todo!(),
+            CommittedPolynomial::InstructionRa(i) => {
+                // TODO: Make this a helper function
+                let row: Vec<_> = row_cycles
+                    .iter()
+                    .map(|(cycle, next_cycle)| InstructionRa(*i).generate_streaming_witness(preprocessing, &cycle, &next_cycle))
+                    .collect();
+                PCS::process_chunk(pcs, &row)
+            }
+            CommittedPolynomial::BytecodeRa(_) => todo!(),
+            CommittedPolynomial::RamRa(_) => todo!(),
         }
     }
 }
