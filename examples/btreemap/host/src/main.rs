@@ -36,7 +36,7 @@ pub fn btreemap() {
     let (output, proof, io_device) = step!("Proving", { prove(n) });
     assert!(output >= 1);
 
-    let is_valid = step!("Verifying", { verify(n, output, io_device.panic,proof) });
+    let is_valid = step!("Verifying", { verify(n, output, io_device.panic, proof) });
     assert!(is_valid);
 }
 
