@@ -147,20 +147,22 @@ fn sha3_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 
 fn get_fib_input(scale: usize) -> u32 {
     let scale_factor = 1 << (scale - 20);
-    35000u32 * scale_factor as u32
+    70000u32 * scale_factor as u32
 }
 
 fn get_sha2_chain_iterations(scale: usize) -> u32 {
-    200 * (1 << (scale - 20)) as u32
+    400 * (1 << (scale - 20)) as u32
 }
 
 fn get_sha3_chain_iterations(scale: usize) -> u32 {
-    20 * (1 << (scale - 20)) as u32
+    let iterations = 200 * (1 << (scale - 20)) as u32;
+    println!("number of sha3 iterations: {:?}", iterations);
+    iterations
 }
 
 fn get_btreemap_ops(scale: usize) -> u32 {
     let scale_factor = 1 << (scale - 20);
-    400u32 * scale_factor as u32
+    800u32 * scale_factor as u32
 }
 
 fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
