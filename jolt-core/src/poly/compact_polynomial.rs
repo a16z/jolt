@@ -208,7 +208,7 @@ impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
     // Faster evaluation based on
     // https://randomwalks.xyz/publish/fast_polynomial_evaluation.html
     // Shaves a factor of 2 from run time.
-    pub fn optimised_evaluate(&self, r: &[F]) -> F {
+    pub fn inside_out_evaluate(&self, r: &[F]) -> F {
         // Copied over from eq_poly
         // If the number of variables are greater
         // than 2^16 -- use parallel evaluate
@@ -218,13 +218,14 @@ impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
         assert_eq!(r.len(), self.get_num_vars());
         let m = r.len();
         if m < PARALLEL_THRESHOLD {
-            self.evaluate_optimised_serial(r)
+            self.inside_out_serial(r)
         } else {
-            self.evaluate_optimised_parallel(r)
+            self.inside_out_parallel(r)
         }
     }
 
-    fn evaluate_optimised_serial(&self, r: &[F]) -> F {
+    fn inside_out_serial(&self, r: &[F]) -> F {
+        // coeffs is a vector small scalars
         let mut current: Vec<F> = self.coeffs.iter().map(|&c| c.to_field()).collect();
         let m = r.len();
         for i in (0..m).rev() {
@@ -233,12 +234,21 @@ impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
             for j in 0..stride {
                 let f0 = current[j];
                 let f1 = current[j + stride];
-                current[j] = f0 + (f1 - f0) * (r_val);
+                let slope = f1 - f0;
+                if slope.is_zero() {
+                    current[j] = f0;
+                }
+                if slope.is_one() {
+                    current[j] = f0 + r_val;
+                } else {
+                    current[j] = f0 + slope * (r_val);
+                }
             }
         }
         current[0]
     }
-    fn evaluate_optimised_parallel(&self, r: &[F]) -> F {
+
+    fn inside_out_parallel(&self, r: &[F]) -> F {
         let mut current: Vec<F> = self.coeffs.par_iter().map(|&c| c.to_field()).collect();
         let m = r.len();
         for i in (0..m).rev() {
@@ -251,7 +261,16 @@ impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
                 .par_iter_mut()
                 .zip(evals_right.par_iter())
                 .for_each(|(x, y)| {
-                    *x = *x + r_val * (*y - *x);
+                    //*x = *x + r_val * (*y - *x);
+                    let slope = *y - *x;
+                    if slope.is_zero() {
+                        return;
+                    }
+                    if slope.is_one() {
+                        *x += r_val;
+                    } else {
+                        *x += r_val * slope;
+                    }
                 });
         }
         current[0]

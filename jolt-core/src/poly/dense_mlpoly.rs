@@ -273,7 +273,7 @@ impl<F: JoltField> DensePolynomial<F> {
     // Faster evaluation based on
     // https://randomwalks.xyz/publish/fast_polynomial_evaluation.html
     // Shaves a factor of 2 from run time.
-    pub fn optimised_evaluate(&self, r: &[F]) -> F {
+    pub fn inside_out_evaluate(&self, r: &[F]) -> F {
         // Copied over from eq_poly
         // If the number of variables are greater
         // than 2^16 -- use parallel evaluate
@@ -284,23 +284,35 @@ impl<F: JoltField> DensePolynomial<F> {
         assert_eq!(r.len(), self.get_num_vars());
         let m = r.len();
         if m < PARALLEL_THRESHOLD {
-            self.evaluate_optimised_serial(r)
+            self.inside_out_serial(r)
         } else {
-            self.evaluate_optimised_parallel(r)
+            self.inside_out_parallel(r)
         }
     }
 
-    fn evaluate_optimised_serial(&self, r: &[F]) -> F {
+    fn inside_out_serial(&self, r: &[F]) -> F {
+        // r is expected to be big endinan
+        // r[0] is the most significant digit
         let mut current = self.Z.clone();
-
         let m = r.len();
         for i in (0..m).rev() {
             let stride = 1 << i;
 
+            // Note that as r is big endian
+            // and i is reversed
+            // r[m-1-i] actually starts at the big endian digit
+            // and moves towards the little endian digit.
             for j in 0..stride {
                 let f0 = current[j];
                 let f1 = current[j + stride];
-                current[j] = f0 + r[m - 1 - i] * (f1 - f0);
+                let slope = f1 - f0;
+                if slope.is_zero() {
+                    current[j] = f0;
+                } else if slope.is_one() {
+                    current[j] = f0 + r[m - 1 - i];
+                } else {
+                    current[j] = f0 + r[m - 1 - i] * slope;
+                }
             }
             // No benefit to truncating really.
             //current.truncate(stride);
@@ -308,7 +320,7 @@ impl<F: JoltField> DensePolynomial<F> {
         current[0]
     }
 
-    fn evaluate_optimised_parallel(&self, r: &[F]) -> F {
+    fn inside_out_parallel(&self, r: &[F]) -> F {
         let mut current: Vec<_> = self.Z.par_iter().cloned().collect();
         let m = r.len();
         // Invoking the same parallelisation structure
@@ -324,12 +336,19 @@ impl<F: JoltField> DensePolynomial<F> {
                 .par_iter_mut()
                 .zip(evals_right.par_iter())
                 .for_each(|(x, y)| {
-                    *x = *x + r_val * (*y - *x);
+                    let slope = *y - *x;
+                    if slope.is_zero() {
+                        return;
+                    }
+                    if slope.is_one() {
+                        *x += r_val;
+                    } else {
+                        *x += r_val * slope;
+                    }
                 });
         }
         current[0]
     }
-
     pub fn evaluate_at_chi(&self, chis: &[F]) -> F {
         compute_dotproduct(&self.Z, chis)
     }
@@ -521,7 +540,7 @@ mod tests {
                 let eval_point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
 
                 let eval1 = poly.evaluate(&eval_point);
-                let eval2 = poly.optimised_evaluate(&eval_point);
+                let eval2 = poly.inside_out_evaluate(&eval_point);
 
                 assert_eq!(
                     eval1, eval2,
@@ -551,7 +570,7 @@ mod tests {
         // g(3, 4) = 8*(1 - 3)(1 - 4) + 8*(1-3)(4) + 8*(3)(1-4) + 8*(3)(4) = 48 + -64 + -72 + 96  = 8
         // g(5, 10) = 8*(1 - 5)(1 - 10) + 8*(1 - 5)(10) + 8*(5)(1-10) + 8*(5)(10) = 96 + -16 + -72 + 96  = 8
         assert_eq!(
-            dense_poly.optimised_evaluate(vec![Fr::from(3), Fr::from(4)].as_slice()),
+            dense_poly.inside_out_evaluate(vec![Fr::from(3), Fr::from(4)].as_slice()),
             Fr::from(8)
         );
     }
