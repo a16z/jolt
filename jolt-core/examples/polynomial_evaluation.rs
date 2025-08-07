@@ -92,7 +92,7 @@ fn benchmark_batch_polynomial_evaluation(batch_size: usize) {
                 // --- Algorithm 1: Dot Product ---
                 reset_mult_count();
                 let start = Instant::now();
-                MultilinearPolynomial::batch_evaluate(&poly_refs, &eval_point);
+                MultilinearPolynomial::batch_evaluate_with_eq(&poly_refs, &eval_point);
                 let time_ms = start.elapsed().as_millis();
                 let mults = get_mult_count();
                 writeln!(
@@ -116,10 +116,7 @@ fn benchmark_batch_polynomial_evaluation(batch_size: usize) {
                 // --- Algorithm 3: Sparse Dot Product ---
                 reset_mult_count();
                 let start = Instant::now();
-                MultilinearPolynomial::batch_evaluate_optimised_for_sparse_polynomials(
-                    &poly_refs,
-                    &eval_point,
-                );
+                MultilinearPolynomial::batch_evaluate(&poly_refs, &eval_point);
                 let time_ms = start.elapsed().as_millis();
                 let mults = get_mult_count();
                 writeln!(
@@ -174,7 +171,7 @@ fn benchmark_single_polynomial_evaluation() {
                 // --- Algorithm 2: Inside-Out Product ---
                 reset_mult_count();
                 let start = Instant::now();
-                let inside_out_prod = poly.evaluate(&eval_point);
+                let inside_out_prod = poly.evaluate_inside_out(&eval_point);
                 let time_ms = start.elapsed().as_millis();
                 let mults = get_mult_count();
                 writeln!(
@@ -187,7 +184,7 @@ fn benchmark_single_polynomial_evaluation() {
                 // --- Algorithm 3: Sparse Dot Product ---
                 reset_mult_count();
                 let start = Instant::now();
-                let sparse_prod = poly.evaluate_sparse_dot_product(&eval_point);
+                let sparse_prod = poly.evaluate(&eval_point);
                 let time_ms = start.elapsed().as_millis();
                 let mults = get_mult_count();
                 writeln!(

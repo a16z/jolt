@@ -310,67 +310,16 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             }
         }
     }
-
-    pub fn evaluate_sparse_dot_product(&self, r: &[F]) -> F {
+    pub fn evaluate_inside_out(&self, r: &[F]) -> F {
         match self {
-            MultilinearPolynomial::LargeScalars(poly) => {
-                let m = r.len() / 2;
-                let (r2, r1) = r.split_at(m);
-                let (eq_one, eq_two) =
-                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
-
-                poly.split_eq_evaluate(r, &eq_one, &eq_two)
-            }
-            MultilinearPolynomial::U8Scalars(poly) => {
-                let m = r.len() / 2;
-                let (r2, r1) = r.split_at(m);
-                let (eq_one, eq_two) =
-                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
-
-                poly.split_eq_evaluate(r, &eq_one, &eq_two)
-            }
-            MultilinearPolynomial::U16Scalars(poly) => {
-                let m = r.len() / 2;
-                let (r2, r1) = r.split_at(m);
-                let (eq_one, eq_two) =
-                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
-
-                poly.split_eq_evaluate(r, &eq_one, &eq_two)
-            }
-            MultilinearPolynomial::U32Scalars(poly) => {
-                let m = r.len() / 2;
-                let (r2, r1) = r.split_at(m);
-                let (eq_one, eq_two) =
-                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
-
-                poly.split_eq_evaluate(r, &eq_one, &eq_two)
-            }
-            MultilinearPolynomial::U64Scalars(poly) => {
-                let m = r.len() / 2;
-                let (r2, r1) = r.split_at(m);
-                let (eq_one, eq_two) =
-                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
-
-                poly.split_eq_evaluate(r, &eq_one, &eq_two)
-            }
-            MultilinearPolynomial::I64Scalars(poly) => {
-                let m = r.len() / 2;
-                let (r2, r1) = r.split_at(m);
-                let (eq_one, eq_two) =
-                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
-
-                poly.split_eq_evaluate(r, &eq_one, &eq_two)
-            }
-            MultilinearPolynomial::RLC(_) => {
-                // TODO(moodlezoup): This case is only hit in the Dory opening proof,
-                // which doesn't actually do anything with this value. We should
-                // remove that call from Dory.
-                F::zero()
-            }
-            _ => {
-                let chis = EqPolynomial::evals(r);
-                self.dot_product(&chis)
-            }
+            MultilinearPolynomial::LargeScalars(poly) => poly.inside_out_evaluate(r),
+            MultilinearPolynomial::U8Scalars(poly) => poly.inside_out_evaluate(r),
+            MultilinearPolynomial::U16Scalars(poly) => poly.inside_out_evaluate(r),
+            MultilinearPolynomial::U32Scalars(poly) => poly.inside_out_evaluate(r),
+            MultilinearPolynomial::U64Scalars(poly) => poly.inside_out_evaluate(r),
+            MultilinearPolynomial::I64Scalars(poly) => poly.inside_out_evaluate(r),
+            MultilinearPolynomial::OneHot(poly) => poly.evaluate(r),
+            _ => unimplemented!("Unsupported MultilinearPolynomial variant"),
         }
     }
 
@@ -647,8 +596,108 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
 }
 
 impl<F: JoltField> MultilinearPolynomial<F> {
-    #[tracing::instrument(skip_all, name = "MultilinearPolynomial::batch_evaluate_sparse")]
-    pub fn batch_evaluate_optimised_for_sparse_polynomials(polys: &[&Self], r: &[F]) -> Vec<F> {
+    #[tracing::instrument(skip_all, name = "MultilinearPolynomial::batch_evaluate_with_eq")]
+    pub fn batch_evaluate_with_eq(polys: &[&Self], r: &[F]) -> Vec<F> {
+        let eq = EqPolynomial::evals(r);
+        let evals: Vec<F> = polys
+            .into_par_iter()
+            .map(|&poly| match poly {
+                MultilinearPolynomial::LargeScalars(poly) => {
+                    poly.evaluate_at_chi_low_optimized(&eq)
+                }
+                _ => poly.dot_product(&eq),
+            })
+            .collect();
+        evals
+    }
+
+    #[tracing::instrument(skip_all, name = "MultilinearPolynomial::batch_evaluate_inside_out")]
+    pub fn batch_evaluate_inside_out(polys: &[&Self], r: &[F]) -> Vec<F> {
+        let evals: Vec<F> = polys
+            .into_par_iter()
+            .map(|&poly| match poly {
+                MultilinearPolynomial::LargeScalars(poly) => poly.inside_out_evaluate(r),
+                MultilinearPolynomial::U8Scalars(poly) => poly.inside_out_evaluate(r),
+                MultilinearPolynomial::U16Scalars(poly) => poly.inside_out_evaluate(r),
+                MultilinearPolynomial::U32Scalars(poly) => poly.inside_out_evaluate(r),
+                MultilinearPolynomial::U64Scalars(poly) => poly.inside_out_evaluate(r),
+                MultilinearPolynomial::I64Scalars(poly) => poly.inside_out_evaluate(r),
+                _ => {
+                    let eq = EqPolynomial::evals(r);
+                    poly.dot_product(&eq)
+                }
+            })
+            .collect();
+        evals
+    }
+}
+impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
+    #[tracing::instrument(skip_all, name = "MultilinearPolynomial::evaluate")]
+    fn evaluate(&self, r: &[F]) -> F {
+        match self {
+            MultilinearPolynomial::LargeScalars(poly) => {
+                let m = r.len() / 2;
+                let (r2, r1) = r.split_at(m);
+                let (eq_one, eq_two) =
+                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+
+                poly.split_eq_evaluate(r, &eq_one, &eq_two)
+            }
+            MultilinearPolynomial::U8Scalars(poly) => {
+                let m = r.len() / 2;
+                let (r2, r1) = r.split_at(m);
+                let (eq_one, eq_two) =
+                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+
+                poly.split_eq_evaluate(r, &eq_one, &eq_two)
+            }
+            MultilinearPolynomial::U16Scalars(poly) => {
+                let m = r.len() / 2;
+                let (r2, r1) = r.split_at(m);
+                let (eq_one, eq_two) =
+                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+
+                poly.split_eq_evaluate(r, &eq_one, &eq_two)
+            }
+            MultilinearPolynomial::U32Scalars(poly) => {
+                let m = r.len() / 2;
+                let (r2, r1) = r.split_at(m);
+                let (eq_one, eq_two) =
+                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+
+                poly.split_eq_evaluate(r, &eq_one, &eq_two)
+            }
+            MultilinearPolynomial::U64Scalars(poly) => {
+                let m = r.len() / 2;
+                let (r2, r1) = r.split_at(m);
+                let (eq_one, eq_two) =
+                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+
+                poly.split_eq_evaluate(r, &eq_one, &eq_two)
+            }
+            MultilinearPolynomial::I64Scalars(poly) => {
+                let m = r.len() / 2;
+                let (r2, r1) = r.split_at(m);
+                let (eq_one, eq_two) =
+                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+
+                poly.split_eq_evaluate(r, &eq_one, &eq_two)
+            }
+            MultilinearPolynomial::RLC(_) => {
+                // TODO(moodlezoup): This case is only hit in the Dory opening proof,
+                // which doesn't actually do anything with this value. We should
+                // remove that call from Dory.
+                F::zero()
+            }
+            _ => {
+                let chis = EqPolynomial::evals(r);
+                self.dot_product(&chis)
+            }
+        }
+    }
+
+    #[tracing::instrument(skip_all, name = "MultilinearPolynomial::batch_evaluate")]
+    fn batch_evaluate(polys: &[&Self], r: &[F]) -> Vec<F> {
         let num_polys = polys.len();
         let m = r.len() / 2;
         let (r2, r1) = r.split_at(m);
@@ -755,56 +804,6 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                 },
             );
 
-        evals
-    }
-
-    #[tracing::instrument(skip_all, name = "MultilinearPolynomial::batch_evaluate_inside_out")]
-    pub fn batch_evaluate_inside_out(polys: &[&Self], r: &[F]) -> Vec<F> {
-        let evals: Vec<F> = polys
-            .into_par_iter()
-            .map(|&poly| match poly {
-                MultilinearPolynomial::LargeScalars(poly) => poly.inside_out_evaluate(r),
-                MultilinearPolynomial::U8Scalars(poly) => poly.inside_out_evaluate(r),
-                MultilinearPolynomial::U16Scalars(poly) => poly.inside_out_evaluate(r),
-                MultilinearPolynomial::U32Scalars(poly) => poly.inside_out_evaluate(r),
-                MultilinearPolynomial::U64Scalars(poly) => poly.inside_out_evaluate(r),
-                MultilinearPolynomial::I64Scalars(poly) => poly.inside_out_evaluate(r),
-                _ => {
-                    let eq = EqPolynomial::evals(r);
-                    poly.dot_product(&eq)
-                }
-            })
-            .collect();
-        evals
-    }
-}
-impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
-    #[tracing::instrument(skip_all, name = "MultilinearPolynomial::evaluate")]
-    fn evaluate(&self, r: &[F]) -> F {
-        match self {
-            MultilinearPolynomial::LargeScalars(poly) => poly.inside_out_evaluate(r),
-            MultilinearPolynomial::U8Scalars(poly) => poly.inside_out_evaluate(r),
-            MultilinearPolynomial::U16Scalars(poly) => poly.inside_out_evaluate(r),
-            MultilinearPolynomial::U32Scalars(poly) => poly.inside_out_evaluate(r),
-            MultilinearPolynomial::U64Scalars(poly) => poly.inside_out_evaluate(r),
-            MultilinearPolynomial::I64Scalars(poly) => poly.inside_out_evaluate(r),
-            MultilinearPolynomial::OneHot(poly) => poly.evaluate(r),
-            _ => unimplemented!("Unsupported MultilinearPolynomial variant"),
-        }
-    }
-
-    #[tracing::instrument(skip_all, name = "MultilinearPolynomial::batch_evaluate")]
-    fn batch_evaluate(polys: &[&Self], r: &[F]) -> Vec<F> {
-        let eq = EqPolynomial::evals(r);
-        let evals: Vec<F> = polys
-            .into_par_iter()
-            .map(|&poly| match poly {
-                MultilinearPolynomial::LargeScalars(poly) => {
-                    poly.evaluate_at_chi_low_optimized(&eq)
-                }
-                _ => poly.dot_product(&eq),
-            })
-            .collect();
         evals
     }
 
