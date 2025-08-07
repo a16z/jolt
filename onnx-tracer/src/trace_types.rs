@@ -2,17 +2,16 @@
 //! Used to format the bytecode and define each instr flags and memory access patterns.
 //! Used by the runtime to generate an execution trace for ONNX runtime execution.
 
-use crate::{constants::MAX_TENSOR_SIZE, tensor::Tensor};
+use crate::{
+    constants::{MAX_TENSOR_SIZE, ZERO_ADDR_PREPEND},
+    tensor::Tensor,
+};
 use core::panic;
 use rand::{rngs::StdRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::ops::{Index, IndexMut};
 use strum::EnumCount;
 use strum_macros::EnumCount as EnumCountMacro;
-
-/// Used to calculate the zkVM address's from the execution trace.
-/// Since the 0 address is reserved for the zero register, we prepend a 1 to the address's in the execution trace.
-const ZERO_ADDR_PREPEND: usize = 1;
 
 /// Represents a step in the execution trace, where an execution trace is a `Vec<ONNXCycle>`.
 /// Records what the VM did at a cycle of execution.
@@ -21,7 +20,7 @@ const ZERO_ADDR_PREPEND: usize = 1;
 pub struct ONNXCycle {
     pub instr: ONNXInstr,
     pub memory_state: MemoryState,
-    pub advice_value: Option<i128>,
+    pub advice_value: Option<Tensor<i128>>,
 }
 
 impl ONNXCycle {
@@ -150,6 +149,13 @@ impl MemoryOp {
 
 impl ONNXCycle {
     #[allow(clippy::type_complexity)]
+    /// Converts the cycle's tensor state into memory operation tuples for ts1, ts2, and td.
+    ///
+    /// Each returned tuple contains:
+    /// - A vector of memory addresses, obtained via `get_tensor_addresses`.
+    /// - A vector of normalized values (u64), padded with zeros up to `MAX_TENSOR_SIZE`.
+    ///
+    /// Panics if any underlying tensor's length exceeds `MAX_TENSOR_SIZE`.
     pub fn to_memory_ops(
         &self,
     ) -> (
@@ -157,57 +163,114 @@ impl ONNXCycle {
         (Vec<usize>, Vec<u64>),
         (Vec<usize>, Vec<u64>, Vec<u64>),
     ) {
-        let ts1 = self.memory_state.ts1_val.as_ref().map_or_else(
-            || (vec![0usize; MAX_TENSOR_SIZE], vec![0; MAX_TENSOR_SIZE]),
-            |t| {
-                assert!(
-                    t.inner.len() <= MAX_TENSOR_SIZE,
-                    "ts1_val length exceeds MAX_TENSOR_SIZE"
-                );
-                let mut val: Vec<u64> = t.inner.iter().map(normalize).collect();
-                val.resize(MAX_TENSOR_SIZE, 0);
-                (get_tensor_addresses(self.ts1()), val)
-            },
-        );
-        let ts2 = self.memory_state.ts2_val.as_ref().map_or_else(
-            || (vec![0usize; MAX_TENSOR_SIZE], vec![0; MAX_TENSOR_SIZE]),
-            |t| {
-                assert!(
-                    t.inner.len() <= MAX_TENSOR_SIZE,
-                    "ts2_val length exceeds MAX_TENSOR_SIZE"
-                );
-                let mut val: Vec<u64> = t.inner.iter().map(normalize).collect();
-                val.resize(MAX_TENSOR_SIZE, 0);
-                (get_tensor_addresses(self.ts2()), val)
-            },
-        );
-        let td = self.memory_state.td_post_val.as_ref().map_or_else(
-            || {
-                (
-                    vec![0usize; MAX_TENSOR_SIZE],
-                    vec![0; MAX_TENSOR_SIZE],
-                    vec![0; MAX_TENSOR_SIZE],
-                )
-            },
-            |t| {
-                assert!(
-                    t.inner.len() <= MAX_TENSOR_SIZE,
-                    "ts2_val length exceeds MAX_TENSOR_SIZE"
-                );
-                let mut post_val: Vec<u64> = t.inner.iter().map(normalize).collect();
-                post_val.resize(MAX_TENSOR_SIZE, 0);
-                (
-                    get_tensor_addresses(self.td()),
-                    vec![0; MAX_TENSOR_SIZE], // TODO: It is not guaranteed that td_pre_val is always 0. For example const opcodes.
-                    post_val,
-                )
-            },
+        let ts1 = (get_tensor_addresses(self.ts1()), self.ts1_vals());
+        let ts2 = (get_tensor_addresses(self.ts2()), self.ts2_vals());
+        let td = (
+            get_tensor_addresses(self.td()),
+            self.td_pre_vals(),
+            self.td_post_vals(),
         );
         (ts1, ts2, td)
     }
+
+    /// Returns normalized and padded values for ts1.
+    ///
+    /// - Normalizes each element of `ts1_val` via `normalize`.
+    /// - Pads the resulting Vec<u64> with zeros up to `MAX_TENSOR_SIZE`.
+    ///
+    /// If no `ts1_val` is present, returns a zero-filled Vec<u64> of length `MAX_TENSOR_SIZE`.
+    ///
+    /// # Panics
+    /// Panics if the tensor's length exceeds `MAX_TENSOR_SIZE`.
+    pub fn ts1_vals(&self) -> Vec<u64> {
+        self.build_vals(self.memory_state.ts1_val.as_ref(), "ts1_val")
+    }
+
+    /// Returns normalized and padded values for ts2.
+    ///
+    /// Behaves like `ts1_vals`, but for `ts2_val`.
+    pub fn ts2_vals(&self) -> Vec<u64> {
+        self.build_vals(self.memory_state.ts2_val.as_ref(), "ts2_val")
+    }
+
+    /// Returns normalized and padded post-execution values for td.
+    ///
+    /// - Normalizes each element of `td_post_val` via `normalize`.
+    /// - Pads the Vec<u64> with zeros up to `MAX_TENSOR_SIZE`.
+    ///
+    /// If no `td_post_val` is present, returns a zero-filled Vec<u64> of length `MAX_TENSOR_SIZE`.
+    ///
+    /// # Panics
+    /// Panics if `td_post_val`'s length exceeds `MAX_TENSOR_SIZE`.
+    pub fn td_post_vals(&self) -> Vec<u64> {
+        self.build_vals(self.memory_state.td_post_val.as_ref(), "td_post_val")
+    }
+
+    /// Returns a zero-filled Vec<u64> for pre-execution values of td.
+    ///
+    /// Currently always zeros; may change for const opcodes.
+    pub fn td_pre_vals(&self) -> Vec<u64> {
+        vec![0u64; MAX_TENSOR_SIZE] // TODO: It is not guaranteed that td_pre_val is always 0. For example const opcodes.
+    }
+
+    /// Helper to build normalized and padded u64 values from an optional TensorValue.
+    ///
+    /// - `tensor_opt`: Optional reference to the raw tensor values.
+    /// - `name`: Used in panic message if length exceeds limit.
+    ///
+    /// # Panics
+    /// - Panics if the tensor's length exceeds `MAX_TENSOR_SIZE`.
+    /// ---
+    /// Returns a Vec<u64> of normalized values, padded with zeros to `MAX_TENSOR_SIZE`.
+    fn build_vals(&self, tensor_opt: Option<&Tensor<i128>>, name: &str) -> Vec<u64> {
+        match tensor_opt {
+            Some(t) => {
+                assert!(
+                    t.inner.len() <= MAX_TENSOR_SIZE,
+                    "{name} length exceeds MAX_TENSOR_SIZE",
+                );
+                let mut vals: Vec<u64> = t.inner.iter().map(normalize).collect();
+                vals.resize(MAX_TENSOR_SIZE, 0);
+                vals
+            }
+            None => vec![0u64; MAX_TENSOR_SIZE],
+        }
+    }
+
+    /// Returns the optional tensor for ts1 (unmodified).
+    pub fn ts1_val_raw(&self) -> Option<&Tensor<i128>> {
+        self.memory_state.ts1_val.as_ref()
+    }
+
+    /// Returns the optional tensor for ts2 (unmodified).
+    pub fn ts2_val_raw(&self) -> Option<&Tensor<i128>> {
+        self.memory_state.ts2_val.as_ref()
+    }
+
+    /// Returns the optional tensor for td_post (unmodified).
+    pub fn td_post_val_raw(&self) -> Option<&Tensor<i128>> {
+        self.memory_state.td_post_val.as_ref()
+    }
+
+    /// Returns the optional tensor for advice.
+    /// # Note normalizes the advice value to u64 and pads it to `MAX_TENSOR_SIZE`.
+    /// # Panics if the advice value's length exceeds `MAX_TENSOR_SIZE`.
+    pub fn advice_value(&self) -> Option<Vec<u64>> {
+        self.advice_value.as_ref().map(|adv| {
+            assert!(
+                adv.inner.len() <= MAX_TENSOR_SIZE,
+                "advice_value length exceeds MAX_TENSOR_SIZE"
+            );
+            let mut vals: Vec<u64> = adv.inner.iter().map(normalize).collect();
+            vals.resize(MAX_TENSOR_SIZE, 0);
+            vals
+        })
+    }
 }
 
-fn get_tensor_addresses(t: usize) -> Vec<usize> {
+/// Converts a tensor index to a vector of addresses.
+/// Used in the zkVM to track all the onnx runtime machine tensor read and write addresses.
+pub fn get_tensor_addresses(t: usize) -> Vec<usize> {
     let mut addresses = Vec::new();
     for i in 0..MAX_TENSOR_SIZE {
         addresses.push(t * MAX_TENSOR_SIZE + i);

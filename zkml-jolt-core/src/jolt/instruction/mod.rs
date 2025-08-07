@@ -8,11 +8,14 @@ pub mod sub;
 // TODO(WIP: Forpee) Rebase Scale Virtual Instr ICME-Lab/zkml-jolt#60
 //
 // pub mod rebase_scale;
-// pub mod div;
-// pub mod virtual_advice;
-// pub mod virtual_assert_valid_div0;
-// pub mod virtual_assert_valid_signed_remainder;
-// pub mod virtual_move;
+pub mod div;
+pub mod virtual_advice;
+pub mod virtual_assert_valid_div0;
+pub mod virtual_assert_valid_signed_remainder;
+pub mod virtual_move;
+
+#[cfg(test)]
+pub mod test;
 
 pub trait VirtualInstructionSequence {
     const SEQUENCE_LENGTH: usize;
@@ -28,5 +31,5 @@ pub trait VirtualInstructionSequence {
             .collect()
     }
     fn virtual_trace(cycle: ONNXCycle) -> Vec<ONNXCycle>;
-    fn sequence_output(x: u64, y: u64) -> u64;
+    fn sequence_output(x: Vec<u64>, y: Vec<u64>) -> Vec<u64>;
 }

@@ -1,4 +1,5 @@
 use crate::jolt::JoltProverPreprocessing;
+use crate::jolt::instruction::virtual_advice::ADVICEInstruction;
 use itertools::Itertools;
 use jolt_core::jolt::instruction::LookupQuery;
 use jolt_core::poly::one_hot_polynomial::OneHotPolynomial;
@@ -17,7 +18,12 @@ use onnx_tracer::trace_types::{NUM_CIRCUIT_FLAGS, ONNXInstr};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::jolt::instruction::{add::ADD, mul::MUL, sub::SUB};
+use crate::jolt::instruction::{
+    add::ADD, beq::BEQInstruction, mul::MUL, sub::SUB,
+    virtual_assert_valid_div0::AssertValidDiv0Instruction,
+    virtual_assert_valid_signed_remainder::AssertValidSignedRemainderInstruction,
+    virtual_move::MOVEInstruction,
+};
 use jolt_core::jolt::{instruction::InstructionLookup, lookup_table::LookupTables};
 
 pub const WORD_SIZE: usize = 32;
@@ -31,6 +37,7 @@ pub struct JoltONNXCycle {
     pub circuit_flags: [bool; NUM_CIRCUIT_FLAGS],
     pub memory_ops: MemoryOps,
     pub instr: ONNXInstr,
+    pub advice_value: Option<Vec<u64>>,
 }
 
 // TODO(Forpee): Refactor these clones in JoltONNXCycle::ts1_read, ts2_read, td_write
@@ -68,6 +75,7 @@ impl JoltONNXCycle {
             circuit_flags: [false; NUM_CIRCUIT_FLAGS],
             memory_ops: MemoryOps::no_op(),
             instr: ONNXInstr::no_op(),
+            advice_value: None,
         }
     }
 }
@@ -75,15 +83,25 @@ impl JoltONNXCycle {
 impl From<ONNXCycle> for JoltONNXCycle {
     fn from(raw_cycle: ONNXCycle) -> Self {
         let mut cycle = JoltONNXCycle::no_op();
+        // 1. Set memory ops
         let (ts1_read, ts2_read, td_write) = raw_cycle.to_memory_ops();
         cycle.memory_ops = MemoryOps {
             ts1_read,
             ts2_read,
             td_write,
         };
+
+        // 2. Set circuit flags
         cycle.circuit_flags = raw_cycle.instr.to_circuit_flags();
-        cycle.instr = raw_cycle.instr;
-        // TODO(Forpee): Refactor this footgun (we should prevent a user from calling this method before memory_ops are set).
+
+        // 3. Set bytecode line
+        cycle.instr = raw_cycle.instr.clone();
+
+        // 4. Set advice value
+        cycle.advice_value = raw_cycle.advice_value();
+
+        // 5. Populate instruction lookups
+        // TODO(Forpee): Refactor this footgun (we should prevent a user from calling this method before memory_ops and advice is set).
         //               Builder pattern might be a good idea.
         cycle.populate_instruction_lookups();
         cycle
@@ -637,6 +655,11 @@ define_lookup_enum!(
     Add: ADD<WORD_SIZE>,
     Sub: SUB<WORD_SIZE>,
     Mul: MUL<WORD_SIZE>,
+    Advice: ADVICEInstruction<WORD_SIZE>,
+    VirtualAssertValidSignedRemainder: AssertValidSignedRemainderInstruction<WORD_SIZE>,
+    VirtualAssertValidDiv0: AssertValidDiv0Instruction<WORD_SIZE>,
+    VirtualAssertEq: BEQInstruction<WORD_SIZE>,
+    VirtualMove: MOVEInstruction<WORD_SIZE>,
 );
 
 impl InstructionLookup<WORD_SIZE> for ElementWiseLookup {
@@ -645,6 +668,11 @@ impl InstructionLookup<WORD_SIZE> for ElementWiseLookup {
             ElementWiseLookup::Add(add) => add.lookup_table(),
             ElementWiseLookup::Sub(sub) => sub.lookup_table(),
             ElementWiseLookup::Mul(mul) => mul.lookup_table(),
+            ElementWiseLookup::Advice(advice) => advice.lookup_table(),
+            ElementWiseLookup::VirtualAssertValidSignedRemainder(assert) => assert.lookup_table(),
+            ElementWiseLookup::VirtualAssertValidDiv0(assert) => assert.lookup_table(),
+            ElementWiseLookup::VirtualAssertEq(beq) => beq.lookup_table(),
+            ElementWiseLookup::VirtualMove(move_instr) => move_instr.lookup_table(),
         }
     }
 }
@@ -672,7 +700,46 @@ impl JoltONNXCycle {
                     .map(|i| ElementWiseLookup::Sub(SUB(ts1[i], ts2[i])))
                     .collect(),
             ),
-            _ => None,
+            ONNXOpcode::VirtualAdvice => {
+                let advice_value = self.advice_value.as_ref().unwrap();
+                (0..MAX_TENSOR_SIZE)
+                    .map(|i| ElementWiseLookup::Advice(ADVICEInstruction(advice_value[i])))
+                    .collect::<Vec<_>>()
+                    .into()
+            }
+            ONNXOpcode::VirtualAssertValidSignedRemainder => Some(
+                (0..MAX_TENSOR_SIZE)
+                    .map(|i| {
+                        ElementWiseLookup::VirtualAssertValidSignedRemainder(
+                            AssertValidSignedRemainderInstruction(ts1[i], ts2[i]),
+                        )
+                    })
+                    .collect(),
+            ),
+            ONNXOpcode::VirtualAssertValidDiv0 => Some(
+                (0..MAX_TENSOR_SIZE)
+                    .map(|i| {
+                        ElementWiseLookup::VirtualAssertValidDiv0(AssertValidDiv0Instruction(
+                            ts1[i], ts2[i],
+                        ))
+                    })
+                    .collect(),
+            ),
+            ONNXOpcode::VirtualAssertEq => Some(
+                (0..MAX_TENSOR_SIZE)
+                    .map(|i| ElementWiseLookup::VirtualAssertEq(BEQInstruction(ts1[i], ts2[i])))
+                    .collect(),
+            ),
+            ONNXOpcode::VirtualMove => Some(
+                (0..MAX_TENSOR_SIZE)
+                    .map(|i| ElementWiseLookup::VirtualMove(MOVEInstruction(ts1[i])))
+                    .collect(),
+            ),
+            // _ => None,
+            _ => panic!(
+                "Unsupported opcode for instruction lookups: {:?}",
+                self.instr().opcode
+            ),
         }
     }
 }
