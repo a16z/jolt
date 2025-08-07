@@ -130,10 +130,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
 
         let is_valid: Vec<u64> = (0..MAX_TENSOR_SIZE)
             .map(|i| {
-                AssertValidSignedRemainderInstruction::<WORD_SIZE>(
-                    r[i], y[i], // TODO(Forpee): Double check negative semantics here
-                )
-                .to_lookup_output()
+                AssertValidSignedRemainderInstruction::<WORD_SIZE>(r[i], y[i]).to_lookup_output()
             })
             .collect_vec();
         is_valid.iter().for_each(|&valid| {
@@ -205,7 +202,6 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
             advice_value: None,
         });
 
-        // let add_0 = ADD::<WORD_SIZE>(q_y, r).to_lookup_output();
         let add_0 = (0..MAX_TENSOR_SIZE)
             .map(|i| ADD::<WORD_SIZE>(q_y[i], r[i]).to_lookup_output())
             .collect_vec();
