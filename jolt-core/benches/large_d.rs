@@ -5,7 +5,7 @@ use jolt_core::{
     field::JoltField,
     poly::multilinear_polynomial::MultilinearPolynomial,
     subprotocols::optimization::{
-        compute_initial_eval_claim, LargeDSumCheckProof, NaiveSumCheckProof,
+        compute_initial_eval_claim, KaratsubaSumCheckProof, LargeDSumCheckProof, NaiveSumCheckProof,
     },
     utils::{
         math::Math,
@@ -64,6 +64,32 @@ fn benchmark_large_d_sumcheck<const D1: usize>(c: &mut Criterion, d: usize, t: u
     );
 }
 
+fn benchmark_karatsuba_sumcheck<F: JoltField>(c: &mut Criterion, d: usize, t: usize) {
+    let ra = test_func_data(d, t);
+
+    let mut transcript = KeccakTranscript::new(b"test_transcript");
+    let r_cycle: Vec<Fr> = transcript.challenge_vector(t.log_2());
+    let previous_claim =
+        compute_initial_eval_claim(&ra.iter().map(|x| &*x).collect::<Vec<_>>(), &r_cycle);
+
+    c.bench_function(
+        &format!("karatsuba_sumcheck_{}_{}", ra.len(), r_cycle.len().pow2()),
+        |b| {
+            b.iter_with_setup(
+                || (ra.clone(), transcript.clone(), previous_claim.clone()),
+                |(mut ra, mut transcript, mut previous_claim)| {
+                    criterion::black_box(KaratsubaSumCheckProof::prove(
+                        &mut ra.iter_mut().collect::<Vec<_>>(),
+                        &r_cycle,
+                        &mut previous_claim,
+                        &mut transcript,
+                    ));
+                },
+            );
+        },
+    );
+}
+
 fn benchmark_naive_sumcheck<F: JoltField>(c: &mut Criterion, d: usize, t: usize) {
     let ra = test_func_data(d, t);
 
@@ -97,8 +123,9 @@ fn main() {
 
     let t = 1 << 20;
 
-    benchmark_large_d_sumcheck::<31>(&mut criterion, 32, t);
-    benchmark_naive_sumcheck::<Fr>(&mut criterion, 32, t);
+    benchmark_karatsuba_sumcheck::<Fr>(&mut criterion, 16, t);
+    // benchmark_large_d_sumcheck::<15>(&mut criterion, 16, t);
+    benchmark_naive_sumcheck::<Fr>(&mut criterion, 16, t);
 
     criterion.final_summary();
 }

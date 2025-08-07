@@ -123,6 +123,10 @@ name = "large_d"
 harness = false
 
 [[bench]]
+name = "karatsuba"
+harness = false
+
+[[bench]]
 name = "compute_cubic"
 harness = false
 

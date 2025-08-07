@@ -17,12 +17,14 @@ use crate::subprotocols::twist::{TwistAlgorithm, TwistProof};
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::transcript::{KeccakTranscript, Transcript};
-use ark_bn254::{Bn254, Fr};
+use ark_bn254::{Bn254, Fr, FrConfig};
+use ark_ff::{Fp512, MontBackend};
 use ark_std::test_rng;
 use rand_core::RngCore;
 use rand_distr::{Distribution, Zipf};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use serde::Serialize;
+
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
 pub enum PCSType {
@@ -354,19 +356,14 @@ where
     tasks
 }
 
-fn large_d_sumcheck<F, PCS, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
+fn benchmark_proof<F, ProofTranscript, const D_MINUS_ONE: usize>(D: usize, T: usize)
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
-    let mut tasks = Vec::new();
+    let NUM_COPIES: usize = 3;
 
-    let D = 16;
-    let T = 1 << 20;
-    const D1: usize = 15;
-
-    let mut ra = {
+    let ra = {
         let mut rng = test_rng();
         let mut val_vec: Vec<Vec<F>> = vec![unsafe_allocate_zero_vec(T); D];
 
@@ -386,38 +383,52 @@ where
 
     let mut transcript = ProofTranscript::new(b"test_transcript");
     let r_cycle: Vec<F> = transcript.challenge_vector(T.log_2());
-    let mut previous_claim =
+
+    let previous_claim =
         compute_initial_eval_claim(&ra.iter().map(|x| &*x).collect::<Vec<_>>(), &r_cycle);
 
-    let mut transcript_copy = transcript.clone();
-    let mut previous_claim_copy = previous_claim.clone();
-    let mut ra_copy = ra.clone();
+    let (mut ra, mut transcript, mut previous_claim) = (
+        vec![ra; NUM_COPIES],
+        vec![transcript; NUM_COPIES],
+        vec![previous_claim; NUM_COPIES],
+    );
 
-    let mut transcript_copy2 = transcript.clone();
-    let mut previous_claim_copy2 = previous_claim.clone();
-    let mut ra_copy2 = ra.clone();
+    let _proof = LargeDSumCheckProof::<F, ProofTranscript>::prove::<D_MINUS_ONE>(
+        &mut ra[0].iter_mut().collect::<Vec<_>>(),
+        &r_cycle,
+        &mut previous_claim[0],
+        &mut transcript[0],
+    );
+
+    let _proof = NaiveSumCheckProof::<F, ProofTranscript>::prove(
+        &mut ra[1].iter_mut().collect::<Vec<_>>(),
+        &r_cycle,
+        &mut previous_claim[1],
+        &mut transcript[1],
+    );
+
+    let _proof = KaratsubaSumCheckProof::<F, ProofTranscript>::prove(
+        &mut ra[2].iter_mut().collect::<Vec<_>>(),
+        &r_cycle,
+        &mut previous_claim[2],
+        &mut transcript[2],
+    );
+}
+
+fn large_d_sumcheck<F, PCS, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
+    let mut tasks = Vec::new();
+
+    let T = 1 << 10;
 
     let task = move || {
-        let _proof = LargeDSumCheckProof::<F, ProofTranscript>::prove::<D1>(
-            &mut ra.iter_mut().collect::<Vec<_>>(),
-            &r_cycle,
-            &mut previous_claim,
-            &mut transcript,
-        );
-
-        let _proof = NaiveSumCheckProof::<F, ProofTranscript>::prove(
-            &mut ra_copy.iter_mut().collect::<Vec<_>>(),
-            &r_cycle,
-            &mut previous_claim_copy,
-            &mut transcript_copy,
-        );
-
-        let _proof = KaratsubaSumCheckProof::<F, ProofTranscript>::prove(
-            &mut ra_copy2.iter_mut().collect::<Vec<_>>(),
-            &r_cycle,
-            &mut previous_claim_copy2,
-            &mut transcript_copy2,
-        );
+        benchmark_proof::<F, ProofTranscript, 31>(32, T);
+        benchmark_proof::<F, ProofTranscript, 15>(16, T);
+        benchmark_proof::<F, ProofTranscript, 7>(8, T);
     };
 
     tasks.push((
