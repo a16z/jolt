@@ -551,6 +551,7 @@ mod tests {
         );
 
         // Verify other lanes unchanged
+        #[allow(clippy::needless_range_loop)]
         for i in 1..NUM_LANES {
             assert_eq!(state[i], 0, "Iota should only affect first lane");
         }
@@ -572,15 +573,14 @@ mod tests {
 
         for &(name, step_fn, expected) in steps {
             step_fn(&mut state);
-            assert_eq!(state, expected, "Round {}: Failed after {}", round, name);
+            assert_eq!(state, expected, "Round {round}: Failed after {name}");
         }
 
         // Handle iota separately as it has a different signature
         execute_iota(&mut state, ROUND_CONSTANTS[round]);
         assert_eq!(
             state, expected_states.iota,
-            "Round {}: Failed after iota",
-            round
+            "Round {round}: Failed after iota"
         );
     }
 
@@ -600,8 +600,7 @@ mod tests {
             };
             assert_eq!(
                 result_val, expected,
-                "rotl64(0x{:016x}, {}) produced 0x{:016x}, expected 0x{:016x}",
-                value, amount, result_val, expected
+                "rotl64(0x{value:016x}, {amount}) produced 0x{result_val:016x}, expected 0x{expected:016x}"
             );
         }
     }

@@ -96,7 +96,7 @@ mod tests {
             sverify::assert_states_equal(
                 &expected,
                 &result,
-                &format!("SHA256INIT direct execution: {}", desc),
+                &format!("SHA256INIT direct execution: {desc}"),
             );
         }
     }
@@ -107,7 +107,7 @@ mod tests {
         for (desc, block, _initial_state, _expected) in TestVectors::get_standard_test_vectors() {
             sverify::assert_exec_trace_equiv_initial(
                 &block,
-                &format!("SHA256INIT exec vs trace: {}", desc),
+                &format!("SHA256INIT exec vs trace: {desc}"),
             );
         }
     }

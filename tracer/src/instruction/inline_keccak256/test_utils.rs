@@ -34,10 +34,8 @@ impl KeccakCpuHarness {
 
     /// Create a new harness with initialized memory.
     pub fn new() -> Self {
-        let mut vr = [0; NEEDED_REGISTERS];
-        for i in 0..NEEDED_REGISTERS {
-            vr[i] = common::constants::virtual_register_index(i as u64) as usize;
-        }
+        let vr: [usize; NEEDED_REGISTERS] =
+            std::array::from_fn(|i| common::constants::virtual_register_index(i as u64) as usize);
 
         Self {
             harness: CpuTestHarness::new(),
@@ -151,7 +149,7 @@ pub fn print_state_hex(state: &Keccak256State) {
         if i % 5 == 0 {
             println!();
         }
-        print!("{:#018x} ", lane);
+        print!("{lane:#018x} ");
     }
     println!();
 }
@@ -164,6 +162,7 @@ pub fn execute_reference_up_to_step(
 ) -> Keccak256State {
     let mut state = *initial_state;
 
+    #[allow(clippy::needless_range_loop)]
     for round in 0..=target_round {
         execute_theta(&mut state);
         if round == target_round && target_step == "theta" {
@@ -200,7 +199,7 @@ pub mod kverify {
         test_name: &str,
     ) {
         if expected != actual {
-            println!("\n❌ {} FAILED", test_name);
+            println!("\n❌ {test_name} FAILED");
             println!("Expected state:");
             print_state_hex(expected);
             println!("Actual state:");
@@ -211,8 +210,8 @@ pub mod kverify {
             for i in 0..25 {
                 if expected[i] != actual[i] {
                     println!(
-                        "  Lane {}: expected 0x{:016x}, got 0x{:016x}",
-                        i, expected[i], actual[i]
+                        "  Lane {i}: expected 0x{:016x}, got 0x{:016x}",
+                        expected[i], actual[i]
                     );
                     mismatch_count += 1;
                     if mismatch_count >= 5 {
@@ -221,7 +220,7 @@ pub mod kverify {
                     }
                 }
             }
-            panic!("{} failed: states do not match", test_name);
+            panic!("{test_name} failed: states do not match");
         }
     }
 
@@ -247,7 +246,7 @@ pub mod kverify {
         self::assert_states_equal(
             &exec_result,
             &trace_result,
-            &format!("Exec vs Trace equivalence: {}", desc),
+            &format!("Exec vs Trace equivalence: {desc}"),
         );
     }
 }

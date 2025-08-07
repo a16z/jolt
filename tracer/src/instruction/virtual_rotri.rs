@@ -151,23 +151,19 @@ mod tests {
 
         for xlen in [Xlen::Bit32, Xlen::Bit64] {
             let mut cpu = CpuTestHarness::new().cpu;
-            cpu.update_xlen(xlen.clone());
+            cpu.update_xlen(xlen);
 
             for (i, &(rs1_val, imm, rs1, rd, expected_rv32, msg)) in test_cases.iter().enumerate() {
                 let result = exec_and_read_rotri(&mut cpu, rs1_val, imm, rs1, rd);
                 let shift = imm.trailing_zeros();
                 let expected = match xlen {
                     Xlen::Bit32 => expected_rv32,
-                    Xlen::Bit64 => {
-                        let rot = (rs1_val as u64).rotate_right(shift) as i64;
-                        rot
-                    }
+                    Xlen::Bit64 => (rs1_val as u64).rotate_right(shift) as i64,
                 };
 
                 assert_eq!(
                     result, expected,
-                    "Test case {} failed: {} (xlen={:?})",
-                    i, msg, xlen
+                    "Test case {i} failed: {msg} (xlen={xlen:?})"
                 );
             }
         }
@@ -245,8 +241,7 @@ mod tests {
 
                 assert_eq!(
                     result_exec, result_trace,
-                    "ROTRI(xlen={:?}, val={:?}): Mismatch between exec and trace",
-                    xlen, val,
+                    "ROTRI(xlen={xlen:?}, val={val:?}): Mismatch between exec and trace"
                 );
             }
         }

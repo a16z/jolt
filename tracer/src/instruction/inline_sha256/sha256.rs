@@ -103,7 +103,7 @@ mod tests {
             sverify::assert_states_equal(
                 &expected,
                 &result,
-                &format!("SHA256 direct execution: {}", desc),
+                &format!("SHA256 direct execution: {desc}"),
             );
         }
     }
@@ -115,7 +115,7 @@ mod tests {
             sverify::assert_exec_trace_equiv_custom(
                 &block,
                 &initial_state,
-                &format!("SHA256 exec vs trace: {}", desc),
+                &format!("SHA256 exec vs trace: {desc}"),
             );
         }
     }

@@ -37,11 +37,8 @@ impl Sha256CpuHarness {
 
     /// Create a new harness.
     pub fn new() -> Self {
-        let mut vr = [0; NEEDED_REGISTERS];
-        for i in 0..NEEDED_REGISTERS {
-            vr[i] = common::constants::virtual_register_index(i as u64) as usize;
-        }
-
+        let vr: [usize; NEEDED_REGISTERS] =
+            std::array::from_fn(|i| common::constants::virtual_register_index(i as u64) as usize);
         Self {
             // RV32.
             harness: CpuTestHarness::new_32(),
@@ -111,10 +108,10 @@ pub mod sverify {
     /// Assert two SHA-256 states are identical.
     pub fn assert_states_equal(expected: &Sha256State, actual: &Sha256State, test_name: &str) {
         if expected != actual {
-            println!("\n❌ {} FAILED", test_name);
-            println!("Expected state: {:08x?}", expected);
-            println!("Actual state:   {:08x?}", actual);
-            panic!("{} failed: states do not match", test_name);
+            println!("\n❌ {test_name} FAILED");
+            println!("Expected state: {expected:08x?}");
+            println!("Actual state:   {actual:08x?}");
+            panic!("{test_name} failed: states do not match");
         }
     }
 
@@ -142,7 +139,7 @@ pub mod sverify {
         assert_states_equal(
             &exec_result,
             &trace_result,
-            &format!("Exec vs Trace equivalence (initial): {}", desc),
+            &format!("Exec vs Trace equivalence (initial): {desc}"),
         );
     }
 
@@ -170,7 +167,7 @@ pub mod sverify {
         assert_states_equal(
             &exec_result,
             &trace_result,
-            &format!("Exec vs Trace equivalence (custom): {}", desc),
+            &format!("Exec vs Trace equivalence (custom): {desc}"),
         );
     }
 }
