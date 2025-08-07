@@ -517,14 +517,15 @@ impl Cpu {
             let call_id = self.x[10] as u32; // a0
             if call_id == JOLT_CYCLE_TRACK_ECALL_NUM {
                 let marker_ptr = self.x[11] as u32; // a1
-                let event_type = self.x[12] as u32; // a2
+                let marker_len = self.x[12] as u32; // a2
+                let event_type = self.x[13] as u32; // a3
 
                 // Read / update the per-label counters.
                 //
                 // Any fault raised while touching guest memory (e.g. a bad
                 // string pointer) is swallowed here and will manifest as the
                 // usual access-fault on the *next* instruction fetch.
-                let _ = self.handle_jolt_cycle_marker(marker_ptr, event_type);
+                let _ = self.handle_jolt_cycle_marker(marker_ptr, marker_len, event_type);
 
                 return false; // we don't take the trap
             }
@@ -1524,10 +1525,10 @@ impl Cpu {
         &mut self.mmu
     }
 
-    fn handle_jolt_cycle_marker(&mut self, ptr: u32, event: u32) -> Result<(), Trap> {
+    fn handle_jolt_cycle_marker(&mut self, ptr: u32, len: u32, event: u32) -> Result<(), Trap> {
         match event {
             JOLT_CYCLE_MARKER_START => {
-                let label = self.read_c_string(ptr)?; // guest NUL-string
+                let label = self.read_c_string(ptr, len)?; // guest NUL-string
 
                 // Check if there's already an active marker with the same label
                 let duplicate = self
@@ -1570,15 +1571,17 @@ impl Cpu {
     }
 
     /// Read a NUL-terminated guest string from memory.
-    fn read_c_string(&mut self, mut addr: u32) -> Result<String, Trap> {
-        let mut bytes = Vec::new();
+    fn read_c_string(&mut self, mut addr: u32, len: u32) -> Result<String, Trap> {
+        let mut bytes = Vec::with_capacity(len as usize);
+        let mut remaining_len = len as usize;
         loop {
             let (b, _) = self.mmu.load(addr.into())?;
-            if b == 0 {
+            if b == 0 || remaining_len == 0 {
                 break;
             }
             bytes.push(b);
             addr += 1;
+            remaining_len -= 1;
         }
         Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
