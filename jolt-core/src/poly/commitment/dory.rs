@@ -17,7 +17,7 @@ use ark_ec::{
     pairing::{MillerLoopOutput, Pairing as ArkPairing, PairingOutput},
     AffineRepr, CurveGroup,
 };
-use ark_ff::{Field, One, PrimeField, UniformRand};
+use ark_ff::{CyclotomicMultSubgroup, Field, One, PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{rand::RngCore, Zero};
 use once_cell::sync::OnceCell;
@@ -252,7 +252,7 @@ where
     }
 
     fn scale(&self, k: &Self::Scalar) -> Self {
-        Self(self.0.pow(k.0.into_bigint()))
+        Self(self.0.cyclotomic_exp(k.0.into_bigint()))
     }
 
     fn random<R: RngCore>(rng: &mut R) -> Self {
