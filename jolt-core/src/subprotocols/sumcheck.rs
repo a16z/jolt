@@ -377,7 +377,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
     pub fn prove_spartan_outer<const NUM_SVO_ROUNDS: usize>(
         num_rounds: usize,
         padded_num_constraints: usize,
-        uniform_constraints: &[Constraint],
+        r1cs_constraints: &[Constraint],
         input_polys: &[MultilinearPolynomial<F>],
         tau: &[F],
         transcript: &mut ProofTranscript,
@@ -390,7 +390,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         let (accums_zero, accums_infty, mut az_bz_cz_poly) =
             SpartanInterleavedPolynomial::<NUM_SVO_ROUNDS, F>::new_with_precompute(
                 padded_num_constraints,
-                uniform_constraints,
+                r1cs_constraints,
                 input_polys,
                 tau,
             );

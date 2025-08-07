@@ -8,21 +8,30 @@ use super::{
 pub const PC_START_ADDRESS: i64 = 0x80000000;
 
 pub trait R1CSConstraints<F: JoltField> {
-    fn construct_constraints(padded_trace_length: usize) -> CombinedUniformBuilder<F> {
-        let mut uniform_builder = R1CSBuilder::new();
-        Self::uniform_constraints(&mut uniform_builder);
-
-        CombinedUniformBuilder::construct(uniform_builder, padded_trace_length)
-    }
-    /// Constructs Jolt's uniform constraints.
-    /// Uniform constraints are constraints that hold for each step of
+    /// Constructs the R1CS constraints for Jolt. These constraints must hold for every step of
     /// the execution trace.
-    fn uniform_constraints(builder: &mut R1CSBuilder);
+    fn construct_constraints(padded_trace_length: usize) -> CombinedUniformBuilder<F> {
+        let mut r1cs_builder = R1CSBuilder::new();
+        Self::normal_constraints(&mut r1cs_builder);
+        Self::may_overflow_constraints(&mut r1cs_builder);
+
+        CombinedUniformBuilder::construct(r1cs_builder, padded_trace_length)
+    }
+
+    /// Most of Jolt's constraints are "normal", meaning their Az/Bz/Cz values will not
+    /// overflow a `i128`.
+    fn normal_constraints(builder: &mut R1CSBuilder);
+
+    /// There are some constraints that may involve arithmetic operations that can overflow a `i128`.
+    /// We collect them here for special handling.
+    /// TODO: distinguish between overflow on Az/Bz and overflow on Cz. The latter is actually
+    /// not a problem in the small value rounds.
+    fn may_overflow_constraints(builder: &mut R1CSBuilder);
 }
 
 pub struct JoltRV32IMConstraints;
 impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
-    fn uniform_constraints(cs: &mut R1CSBuilder) {
+    fn normal_constraints(cs: &mut R1CSBuilder) {
         // if LeftOperandIsRs1Value { assert!(LeftInstructionInput == Rs1Value) }
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsRs1Value),
@@ -149,19 +158,9 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
                 + (0xffffffffffffffffi128 + 1),
         );
 
-        // if MultiplyOperands {
-        //     assert!(RightLookupOperand == Rs1Value * Rs2Value)
-        // }
-        cs.constrain_prod(
-            JoltR1CSInputs::RightInstructionInput,
-            JoltR1CSInputs::LeftInstructionInput,
-            JoltR1CSInputs::Product,
-        );
-        cs.constrain_eq_conditional(
-            JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands),
-            JoltR1CSInputs::RightLookupOperand,
-            JoltR1CSInputs::Product,
-        );
+        // Two constraints that can overflow are moved to `may_overflow_constraints`
+        // 1. Product constraint: assert(Product = RightInstructionInput * LeftInstructionInput)
+        // 2. Conditional constraint: if MultiplyOperands is true, assert(RightLookupOperand = Product)
 
         // if !(AddOperands || SubtractOperands || MultiplyOperands || Advice) {
         //     assert!(RightLookupOperand == RightInstructionInput)
@@ -277,6 +276,28 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::OpFlags(CircuitFlags::InlineSequenceInstruction),
             JoltR1CSInputs::NextPC,
             JoltR1CSInputs::PC + 1i128,
+        );
+    }
+
+    /// Among the uniform constraints, there are some that may involve arithmetic operations that
+    /// can overflow a `i128`. We collect them here for special handling.
+    fn may_overflow_constraints(cs: &mut R1CSBuilder) {
+        // assert!(Product == RightInstructionInput * LeftInstructionInput)
+        // This constraint only overflows on Cz, as it is u128 instead of i128. This can be handled.
+        cs.constrain_prod(
+            JoltR1CSInputs::RightInstructionInput,
+            JoltR1CSInputs::LeftInstructionInput,
+            JoltR1CSInputs::Product,
+        );
+        
+        // if MultiplyOperands {
+        //     assert!(RightLookupOperand == Product)
+        // }
+        // This constraint only overflows on Bz, and since it is `u128 - u64`, it only fits in `i129`.
+        cs.constrain_eq_conditional(
+            JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands),
+            JoltR1CSInputs::RightLookupOperand,
+            JoltR1CSInputs::Product,
         );
     }
 }

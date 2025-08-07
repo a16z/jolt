@@ -105,16 +105,16 @@ where
     #[tracing::instrument(skip_all)]
     fn prove_outer_sumcheck(
         num_rounds_x: usize,
-        uniform_constraints_only_padded: usize,
-        uniform_constraints: &[Constraint],
+        r1cs_constraints_only_padded: usize,
+        r1cs_constraints: &[Constraint],
         input_polys: &[MultilinearPolynomial<F>],
         tau: &[F],
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, [F; 3]) {
         SumcheckInstanceProof::prove_spartan_outer::<NUM_SVO_ROUNDS>(
             num_rounds_x,
-            uniform_constraints_only_padded,
-            uniform_constraints,
+            r1cs_constraints_only_padded,
+            r1cs_constraints,
             input_polys,
             tau,
             transcript,
@@ -660,7 +660,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         let constraint_builder: CombinedUniformBuilder<F> =
             JoltRV32IMConstraints::construct_constraints(padded_trace_length);
 
-        let uniform_constraints_only_padded = constraint_builder
+        let r1cs_constraints_only_padded = constraint_builder
             .uniform_builder
             .constraints
             .len()
@@ -670,7 +670,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             let mut transcript = state_manager.transcript.borrow_mut();
             UniformSpartanProof::<F, ProofTranscript>::prove_outer_sumcheck(
                 num_rounds_x,
-                uniform_constraints_only_padded,
+                r1cs_constraints_only_padded,
                 &constraint_builder.uniform_builder.constraints,
                 &input_polys,
                 &tau,
