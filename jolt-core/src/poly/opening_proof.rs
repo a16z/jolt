@@ -748,9 +748,7 @@ where
         );
 
         // We pre-extract gamma values deterministically to prepare sumchecks in parallel
-        let gammas: Vec<F> = (0..self.sumchecks.len())
-            .map(|_| transcript.challenge_scalar())
-            .collect();
+        let gammas: Vec<F> = transcript.challenge_vector(self.sumchecks.len());
 
         let prepare_span = tracing::span!(
             tracing::Level::INFO,
@@ -1079,9 +1077,7 @@ where
             assert_eq!(prover_openings.len(), self.len());
         }
 
-        let gammas: Vec<F> = (0..self.sumchecks.len())
-            .map(|_| transcript.challenge_scalar())
-            .collect();
+        let gammas: Vec<F> = transcript.challenge_vector(self.sumchecks.len());
 
         self.sumchecks
             .par_iter_mut()
