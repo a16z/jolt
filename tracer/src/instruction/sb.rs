@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
+    instruction::format::format_load::FormatLoad,
 };
 
 use super::addi::ADDI;
@@ -249,7 +250,7 @@ impl SB {
 
         let ld = LD {
             address: self.address,
-            operands: FormatI {
+            operands: FormatLoad {
                 rd: v_dword,
                 rs1: v_dword_address,
                 imm: 0,

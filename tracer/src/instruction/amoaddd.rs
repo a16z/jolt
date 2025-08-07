@@ -10,6 +10,7 @@ use super::RV32IMInstruction;
 use super::VirtualInstructionSequence;
 use common::constants::virtual_register_index;
 
+use crate::instruction::format::format_load::FormatLoad;
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
@@ -79,7 +80,7 @@ impl VirtualInstructionSequence for AMOADDD {
 
         let ld = LD {
             address: self.address,
-            operands: FormatI {
+            operands: FormatLoad {
                 rd: v_rd,
                 rs1: self.operands.rs1,
                 imm: 0,

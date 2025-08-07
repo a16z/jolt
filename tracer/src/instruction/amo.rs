@@ -17,6 +17,7 @@ use super::xor::XOR;
 use super::RV32IMInstruction;
 use super::VirtualInstructionSequence;
 
+use crate::instruction::format::format_load::FormatLoad;
 use crate::instruction::ori::ORI;
 use crate::instruction::srli::SRLI;
 
@@ -60,7 +61,7 @@ pub fn amo_pre64(
 
     let ld = LD {
         address,
-        operands: FormatI {
+        operands: FormatLoad {
             rd: v_dword,
             rs1: v_dword_address,
             imm: 0,

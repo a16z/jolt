@@ -16,6 +16,7 @@ use crate::instruction::and::AND;
 use crate::instruction::andi::ANDI;
 use crate::instruction::andn::ANDN;
 use crate::instruction::format::format_i::FormatI;
+use crate::instruction::format::format_load::FormatLoad;
 use crate::instruction::format::format_r::FormatR;
 use crate::instruction::format::format_s::FormatS;
 use crate::instruction::format::format_virtual_right_shift_i::FormatVirtualRightShiftI;
@@ -395,10 +396,10 @@ impl Keccak256SequenceBuilder {
     fn ld(&mut self, rs1: usize, offset: i64, rd: usize) {
         let ld = LD {
             address: self.address,
-            operands: FormatI {
+            operands: FormatLoad {
                 rd,
                 rs1,
-                imm: (offset * 8) as u64, // 64-bit lanes are 8 bytes
+                imm: offset * 8, // 64-bit lanes are 8 bytes
             },
             virtual_sequence_remaining: Some(0),
             is_compressed: self.is_compressed,

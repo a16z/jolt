@@ -492,6 +492,33 @@ mod tests {
 
     #[test]
     #[serial]
+    fn btreemap_e2e_dory() {
+        let mut program = host::Program::new("btreemap-guest");
+        let (bytecode, init_memory_state, _) = program.decode();
+        let inputs = postcard::to_stdvec(&50u32).unwrap();
+        let (_, _, io_device) = program.trace(&inputs);
+
+        let preprocessing = JoltRV32IM::prover_preprocess(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            init_memory_state,
+            1 << 16,
+        );
+        let (jolt_proof, io_device, debug_info) =
+            JoltRV32IM::prove(&preprocessing, &mut program, &inputs);
+
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        let verification_result =
+            JoltRV32IM::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+    }
+
+    #[test]
+    #[serial]
     fn muldiv_e2e_dory() {
         let mut program = host::Program::new("muldiv-guest");
         let (bytecode, init_memory_state, _) = program.decode();

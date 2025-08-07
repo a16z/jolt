@@ -129,7 +129,7 @@ impl LW {
 
         let ld = LD {
             address: self.address,
-            operands: FormatI {
+            operands: FormatLoad {
                 rd: v_dword,
                 rs1: v_dword_address,
                 imm: 0,
