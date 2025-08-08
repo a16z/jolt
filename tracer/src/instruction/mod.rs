@@ -483,6 +483,16 @@ macro_rules! define_rv32im_enums {
                 }
             }
 
+            pub fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+                match self {
+                    RV32IMInstruction::NoOp => vec![],
+                    RV32IMInstruction::UNIMPL => vec![],
+                    $(
+                        RV32IMInstruction::$instr(instr) => instr.virtual_sequence(xlen),
+                    )*
+                }
+            }
+
             pub fn set_virtual_sequence_remaining(&mut self, remaining: Option<u16>) {
                 match self {
                     RV32IMInstruction::NoOp => (),
