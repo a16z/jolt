@@ -93,8 +93,6 @@ use sw::SW;
 use xor::XOR;
 use xori::XORI;
 
-use inline_sha256::sha256::SHA256;
-use inline_sha256::sha256init::SHA256INIT;
 use virtual_advice::VirtualAdvice;
 use virtual_assert_eq::VirtualAssertEQ;
 use virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment;
@@ -114,6 +112,8 @@ use virtual_sra::VirtualSRA;
 use virtual_srai::VirtualSRAI;
 use virtual_srl::VirtualSRL;
 use virtual_srli::VirtualSRLI;
+
+use self::inline::INLINE;
 
 use crate::emulator::cpu::Cpu;
 use derive_more::From;
@@ -156,9 +156,11 @@ pub mod bltu;
 pub mod bne;
 pub mod div;
 pub mod divu;
+pub mod divuw;
+pub mod divw;
 pub mod ecall;
 pub mod fence;
-pub mod inline_sha256;
+pub mod inline;
 pub mod jal;
 pub mod jalr;
 pub mod lb;
@@ -175,10 +177,13 @@ pub mod mul;
 pub mod mulh;
 pub mod mulhsu;
 pub mod mulhu;
+pub mod mulw;
 pub mod or;
 pub mod ori;
 pub mod rem;
 pub mod remu;
+pub mod remuw;
+pub mod remw;
 pub mod sb;
 pub mod scd;
 pub mod scw;
@@ -224,12 +229,6 @@ pub mod virtual_srl;
 pub mod virtual_srli;
 pub mod xor;
 pub mod xori;
-
-pub mod divuw;
-pub mod divw;
-pub mod mulw;
-pub mod remuw;
-pub mod remw;
 
 #[cfg(test)]
 pub mod test;
@@ -341,6 +340,8 @@ macro_rules! define_rv32im_enums {
             $(
                 $instr($instr),
             )*
+            /// Inline instruction from external crates
+            INLINE(INLINE),
         }
 
         #[derive(
@@ -352,6 +353,7 @@ macro_rules! define_rv32im_enums {
             $(
                 $instr(RISCVCycle<$instr>),
             )*
+            INLINE(RISCVCycle<INLINE>),
         }
 
         impl RV32IMCycle {
@@ -361,6 +363,7 @@ macro_rules! define_rv32im_enums {
                     $(
                         RV32IMCycle::$instr(cycle) => cycle.ram_access.into(),
                     )*
+                    RV32IMCycle::INLINE(cycle) => cycle.ram_access.into(),
                 }
             }
 
@@ -373,6 +376,10 @@ macro_rules! define_rv32im_enums {
                             cycle.register_state.rs1_value(),
                         ),
                     )*
+                    RV32IMCycle::INLINE(cycle) => (
+                        cycle.instruction.operands.rs1,
+                        cycle.register_state.rs1_value(),
+                    ),
                 }
             }
 
@@ -385,6 +392,10 @@ macro_rules! define_rv32im_enums {
                             cycle.register_state.rs2_value(),
                         ),
                     )*
+                    RV32IMCycle::INLINE(cycle) => (
+                        cycle.instruction.operands.rs2,
+                        cycle.register_state.rs2_value(),
+                    ),
                 }
             }
 
@@ -398,6 +409,11 @@ macro_rules! define_rv32im_enums {
                             cycle.register_state.rd_values().1,
                         ),
                     )*
+                    RV32IMCycle::INLINE(cycle) => (
+                        cycle.instruction.operands.rd,
+                        cycle.register_state.rd_values().0,
+                        cycle.register_state.rd_values().1,
+                    ),
                 }
             }
 
@@ -407,6 +423,7 @@ macro_rules! define_rv32im_enums {
                     $(
                         RV32IMCycle::$instr(cycle) => cycle.instruction.into(),
                     )*
+                    RV32IMCycle::INLINE(cycle) => cycle.instruction.into(),
                 }
             }
         }
@@ -419,6 +436,7 @@ macro_rules! define_rv32im_enums {
                     $(
                         RV32IMInstruction::$instr(instr) => instr.trace(cpu, trace),
                     )*
+                    RV32IMInstruction::INLINE(instr) => instr.trace(cpu, trace),
                 }
             }
 
@@ -436,6 +454,14 @@ macro_rules! define_rv32im_enums {
                             instr.execute(cpu, &mut cycle.ram_access);
                         }
                     )*
+                    RV32IMInstruction::INLINE(instr) => {
+                        let mut cycle: RISCVCycle<INLINE> = RISCVCycle {
+                            instruction: *instr,
+                            register_state: Default::default(),
+                            ram_access: Default::default(),
+                        };
+                        instr.execute(cpu, &mut cycle.ram_access);
+                    }
                 }
             }
 
@@ -450,6 +476,11 @@ macro_rules! define_rv32im_enums {
                             virtual_sequence_remaining: instr.virtual_sequence_remaining,
                         },
                     )*
+                    RV32IMInstruction::INLINE(instr) => NormalizedInstruction {
+                        address: instr.address as usize,
+                        operands: instr.operands.normalize(),
+                        virtual_sequence_remaining: instr.virtual_sequence_remaining,
+                    },
                 }
             }
 
@@ -460,6 +491,7 @@ macro_rules! define_rv32im_enums {
                     $(
                         RV32IMInstruction::$instr(instr) => {instr.virtual_sequence_remaining = remaining;}
                     )*
+                    RV32IMInstruction::INLINE(instr) => {instr.virtual_sequence_remaining = remaining;}
                 }
             }
         }
@@ -486,8 +518,6 @@ define_rv32im_enums! {
         VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I, VirtualROTRI,
         VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
-        // Extension
-        SHA256, SHA256INIT,
     ]
 }
 
@@ -767,26 +797,15 @@ impl RV32IMInstruction {
                     Err("Unsupported SYSTEM instruction")
                 }
             }
-            // 0x0B is reserved for RISC-V extension
+            // 0x0B is reserved for inlines supported by Jolt in jolt-inlines crate.
             // In attempt to standardize this space for precompiles and inlines,
             // each new type of operation should be placed under different funct7,
             // while funct3 should hold all necessary instructions for that operation.
             // funct7:
             // - 0x00: SHA256
-            0b0001011 => {
-                // Custom-0 opcode: SHA256 compression instructions
-                let funct3 = (instr >> 12) & 0x7;
-                let funct7 = (instr >> 25) & 0x7f;
-                if funct7 == 0x00 {
-                    match funct3 {
-                        0x0 => Ok(SHA256::new(instr, address, true).into()),
-                        0x1 => Ok(SHA256INIT::new(instr, address, true).into()),
-                        _ => Err("Unknown funct3 for custom SHA256 instruction"),
-                    }
-                } else {
-                    Err("Unknown funct7 for custom-0 opcode")
-                }
-            }
+            0b0001011 => Ok(INLINE::new(instr, address, false).into()),
+            // 0x2B is reserved for external inlines
+            0b0101011 => Ok(INLINE::new(instr, address, false).into()),
             _ => Err("Unknown opcode"),
         }
     }

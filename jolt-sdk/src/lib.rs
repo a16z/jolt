@@ -16,12 +16,6 @@ pub use alloc::*;
 pub mod cycle_tracking;
 pub use cycle_tracking::*;
 
-#[cfg(feature = "sha256")]
-pub mod sha256;
-
-#[cfg(feature = "sha256")]
-pub use sha256::*;
-
 // This is a dummy _HEAP_PTR to keep the compiler happy.
 // It should never be used when compiled as a guest or with
 // our custom allocator
