@@ -310,18 +310,6 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             }
         }
     }
-    pub fn evaluate_inside_out(&self, r: &[F]) -> F {
-        match self {
-            MultilinearPolynomial::LargeScalars(poly) => poly.inside_out_evaluate(r),
-            MultilinearPolynomial::U8Scalars(poly) => poly.inside_out_evaluate(r),
-            MultilinearPolynomial::U16Scalars(poly) => poly.inside_out_evaluate(r),
-            MultilinearPolynomial::U32Scalars(poly) => poly.inside_out_evaluate(r),
-            MultilinearPolynomial::U64Scalars(poly) => poly.inside_out_evaluate(r),
-            MultilinearPolynomial::I64Scalars(poly) => poly.inside_out_evaluate(r),
-            MultilinearPolynomial::OneHot(poly) => poly.evaluate(r),
-            _ => unimplemented!("Unsupported MultilinearPolynomial variant"),
-        }
-    }
 
     /// Computes the dot product of the polynomial's coefficients and a vector
     /// of field elements.

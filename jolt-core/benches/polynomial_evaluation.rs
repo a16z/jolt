@@ -176,7 +176,7 @@ fn benchmark_single_polynomial_evaluation() {
                 // --- Algorithm 2: Inside-Out Product ---
                 reset_mult_count();
                 let start = Instant::now();
-                let inside_out_prod = poly.evaluate_inside_out(&eval_point);
+                let inside_out_prod = evaluate_inside_out(&poly, &eval_point);
                 let time_ms = start.elapsed().as_millis();
                 let mults = get_mult_count();
                 writeln!(
@@ -203,6 +203,18 @@ fn benchmark_single_polynomial_evaluation() {
                 assert_eq!(dot_prod, sparse_prod);
             }
         }
+    }
+}
+pub fn evaluate_inside_out(poly: &MultilinearPolynomial<Fr>, r: &[Fr]) -> Fr {
+    match poly {
+        MultilinearPolynomial::LargeScalars(poly) => poly.inside_out_evaluate(r),
+        MultilinearPolynomial::U8Scalars(poly) => poly.inside_out_evaluate(r),
+        MultilinearPolynomial::U16Scalars(poly) => poly.inside_out_evaluate(r),
+        MultilinearPolynomial::U32Scalars(poly) => poly.inside_out_evaluate(r),
+        MultilinearPolynomial::U64Scalars(poly) => poly.inside_out_evaluate(r),
+        MultilinearPolynomial::I64Scalars(poly) => poly.inside_out_evaluate(r),
+        MultilinearPolynomial::OneHot(poly) => poly.evaluate(r),
+        _ => unimplemented!("Unsupported MultilinearPolynomial variant"),
     }
 }
 
