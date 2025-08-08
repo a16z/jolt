@@ -29,7 +29,6 @@ pub trait InstructionFormat: Default + Debug {
     fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu);
     fn capture_post_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu);
     fn random(rng: &mut StdRng) -> Self;
-    fn from_normalized(operands: NormalizedOperands) -> Self;
     fn normalize(&self) -> NormalizedOperands;
 }
 

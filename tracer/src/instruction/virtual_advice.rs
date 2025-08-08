@@ -41,7 +41,7 @@ impl RISCVInstruction for VirtualAdvice {
     fn from_normalized(operands: NormalizedOperands, address: u64, is_compressed: bool) -> Self {
         Self {
             address,
-            operands: FormatJ::from_normalized(operands),
+            operands: operands.into(),
             advice: 0,
             virtual_sequence_remaining: None,
             is_compressed,

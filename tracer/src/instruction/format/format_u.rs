@@ -15,6 +15,15 @@ pub struct FormatU {
     pub imm: u64,
 }
 
+impl From<NormalizedOperands> for FormatU {
+    fn from(operands: NormalizedOperands) -> Self {
+        Self {
+            rd: operands.rd,
+            imm: operands.imm as u64,
+        }
+    }
+}
+
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RegisterStateFormatU {
     pub rd: (u64, u64), // (old_value, new_value)
@@ -61,13 +70,6 @@ impl InstructionFormat for FormatU {
         Self {
             rd: (rng.next_u64() as u8 % REGISTER_COUNT),
             imm: rng.next_u64(),
-        }
-    }
-
-    fn from_normalized(operands: NormalizedOperands) -> Self {
-        Self {
-            rd: operands.rd,
-            imm: operands.imm as u64,
         }
     }
 

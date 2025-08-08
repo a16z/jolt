@@ -16,6 +16,16 @@ pub struct FormatB {
     pub imm: i128,
 }
 
+impl From<NormalizedOperands> for FormatB {
+    fn from(operands: NormalizedOperands) -> Self {
+        Self {
+            rs1: operands.rs1,
+            rs2: operands.rs2,
+            imm: operands.imm,
+        }
+    }
+}
+
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RegisterStateFormatB {
     pub rs1: u64,
@@ -73,14 +83,6 @@ impl InstructionFormat for FormatB {
             imm: rng.gen(),
             rs1: (rng.next_u64() as u8 % REGISTER_COUNT),
             rs2: (rng.next_u64() as u8 % REGISTER_COUNT),
-        }
-    }
-
-    fn from_normalized(operands: NormalizedOperands) -> Self {
-        Self {
-            rs1: operands.rs1,
-            rs2: operands.rs2,
-            imm: operands.imm,
         }
     }
 

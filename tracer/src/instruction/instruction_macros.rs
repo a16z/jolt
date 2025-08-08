@@ -50,7 +50,7 @@ macro_rules! declare_riscv_instr {
             fn from_normalized(operands: $crate::instruction::NormalizedOperands, address: u64, compressed: bool) -> Self {
                 Self {
                     address,
-                    operands: <$format>::from_normalized(operands),
+                    operands: operands.into(),
                     virtual_sequence_remaining: None,
                     is_compressed: compressed,
                 }
