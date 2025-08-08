@@ -84,8 +84,7 @@ where
             let mut buf = BufWriter::with_capacity(buffer_size, file);
 
             while let Ok(chunk) = receiver.recv() {
-                postcard::to_io(&chunk, &mut buf)
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                postcard::to_io(&chunk, &mut buf).map_err(std::io::Error::other)?;
             }
 
             buf.flush()?;
@@ -121,9 +120,9 @@ where
         let start = Instant::now();
 
         if let Some(handle) = self.writer_handle.take() {
-            let result = handle.join().map_err(|_| {
-                std::io::Error::new(std::io::ErrorKind::Other, "Writer thread panicked")
-            })?;
+            let result = handle
+                .join()
+                .map_err(|_| std::io::Error::other("Writer thread panicked"))?;
 
             println!(
                 "Writer thread finished in {:.2}ms",

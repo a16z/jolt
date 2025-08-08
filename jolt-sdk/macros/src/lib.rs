@@ -251,7 +251,7 @@ impl MacroBuilder {
         });
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub fn #trace_to_file_fn_name(#inputs, target_dir: &str) {
+            pub fn #trace_to_file_fn_name(target_dir: &str, #inputs) {
                 #imports
 
                 let mut program = Program::new(#guest_name);

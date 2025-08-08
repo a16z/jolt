@@ -102,7 +102,7 @@ pub fn trace_to_file(
         .finalize()
         .expect("Failed to finalize trace writer");
 
-    println!("trace length: {}", total);
+    println!("trace length: {total} cycles");
 
     let final_mem = lazy.final_memory_state.take().unwrap();
     (final_mem, lazy.get_jolt_device())

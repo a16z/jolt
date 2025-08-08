@@ -29,7 +29,7 @@ pub fn main() {
         .expect("should write");
 
     let trace_file = "/tmp/fib_trace.bin";
-    guest::trace_fib_to_file(50, trace_file);
+    guest::trace_fib_to_file(trace_file, 50);
     println!("Trace file written to: {trace_file}.");
 
     let now = Instant::now();
