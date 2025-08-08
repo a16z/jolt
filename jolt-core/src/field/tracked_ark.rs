@@ -249,7 +249,7 @@ impl<'a, 'b> Mul<&'b TrackedFr> for &'a TrackedFr {
     }
 }
 
-// &TrackedFr / &TrackedFr[allow(clippy::needless_lifetimes)]
+// &TrackedFr / &Tracked
 #[allow(clippy::needless_lifetimes)]
 #[allow(clippy::suspicious_arithmetic_impl)]
 impl<'a, 'b> Div<&'b TrackedFr> for &'a TrackedFr {
