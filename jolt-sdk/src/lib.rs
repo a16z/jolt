@@ -10,14 +10,15 @@ pub mod host_utils;
 #[cfg(feature = "host")]
 pub use host_utils::*;
 
-pub mod cycle_tracking;
-pub use cycle_tracking::*;
-
 pub mod alloc;
 pub use alloc::*;
 
+pub mod cycle_tracking;
+pub use cycle_tracking::*;
+
 #[cfg(feature = "sha256")]
 pub mod sha256;
+
 #[cfg(feature = "sha256")]
 pub use sha256::*;
 

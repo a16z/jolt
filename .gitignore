@@ -30,5 +30,7 @@ temp_file
 *.patch
 !patches/**/*.patch
 
-prebuilt-files/
 riscof_work/
+
+# Spike tarballs
+/prebuilt-files/

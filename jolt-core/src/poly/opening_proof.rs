@@ -350,10 +350,10 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "OpeningProofReductionSumcheck::prepare_sumcheck")]
-    fn prepare_sumcheck<ProofTranscript: Transcript>(
+    fn prepare_sumcheck(
         &mut self,
         polynomials_map: Option<&HashMap<CommittedPolynomial, MultilinearPolynomial<F>>>,
-        transcript: &mut ProofTranscript,
+        gamma: F,
     ) {
         #[cfg(test)]
         {
@@ -374,7 +374,6 @@ where
 
         self.rlc_coeffs = vec![F::one()];
         if self.polynomials.len() > 1 {
-            let gamma: F = transcript.challenge_scalar();
             for i in 1..self.polynomials.len() {
                 self.rlc_coeffs.push(self.rlc_coeffs[i - 1] * gamma);
             }
@@ -748,10 +747,22 @@ where
             self.sumchecks.len()
         );
 
-        // @TODO(markosg04) better parallelism here? being mindful of the transcript ordering
+        // We pre-extract gamma values deterministically to prepare sumchecks in parallel
+        let gammas: Vec<F> = transcript.challenge_vector(self.sumchecks.len());
+
+        let prepare_span = tracing::span!(
+            tracing::Level::INFO,
+            "prepare_all_sumchecks",
+            count = self.sumchecks.len()
+        );
+        let _enter = prepare_span.enter();
+
         self.sumchecks
-            .iter_mut()
-            .for_each(|sumcheck| sumcheck.prepare_sumcheck(Some(&polynomials), transcript));
+            .par_iter_mut()
+            .zip(gammas.par_iter())
+            .for_each(|(sumcheck, gamma)| sumcheck.prepare_sumcheck(Some(&polynomials), *gamma));
+
+        drop(_enter);
 
         // Use sumcheck reduce many openings to one
         let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
@@ -1066,9 +1077,12 @@ where
             assert_eq!(prover_openings.len(), self.len());
         }
 
+        let gammas: Vec<F> = transcript.challenge_vector(self.sumchecks.len());
+
         self.sumchecks
-            .iter_mut()
-            .for_each(|sumcheck| sumcheck.prepare_sumcheck(None, transcript));
+            .par_iter_mut()
+            .zip(gammas.par_iter())
+            .for_each(|(sumcheck, gamma)| sumcheck.prepare_sumcheck(None, *gamma));
 
         let num_sumcheck_rounds = self
             .sumchecks
