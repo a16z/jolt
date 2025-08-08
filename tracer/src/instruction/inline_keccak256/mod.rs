@@ -28,6 +28,7 @@ pub mod test_constants;
 mod test_utils;
 
 pub const NUM_LANES: usize = 25;
+pub type Keccak256State = [u64; NUM_LANES];
 
 /// The 24 round constants for the Keccak-f[1600] permutation.
 /// These values are XORed into the state during the `iota` step of each round.
@@ -368,7 +369,7 @@ pub fn execute_keccak256(msg: &[u8]) -> [u8; 32] {
 }
 
 /// Executes the 24-round Keccak-f[1600] permutation.
-pub fn execute_keccak_f(state: &mut [u64; NUM_LANES]) {
+pub fn execute_keccak_f(state: &mut Keccak256State) {
     for rc in ROUND_CONSTANTS {
         execute_theta(state);
         execute_rho_and_pi(state);
@@ -379,7 +380,7 @@ pub fn execute_keccak_f(state: &mut [u64; NUM_LANES]) {
 
 /// The `theta` step of the Keccak-f permutation mixes columns to provide diffusion.
 /// This step XORs each bit in the state with the parities of two columns in the state array.
-fn execute_theta(state: &mut [u64; NUM_LANES]) {
+fn execute_theta(state: &mut Keccak256State) {
     // 1. Compute the parity of each of the 5 columns (an array `C` of 5 lanes).
     let mut c = [0u64; 5];
     for x in 0..5 {
@@ -400,7 +401,7 @@ fn execute_theta(state: &mut [u64; NUM_LANES]) {
 
 /// The `rho` and `pi` steps of the Keccak-f permutation shuffles the state to provide diffusion.
 /// `rho` rotates each lane by a different fixed offset. `pi` permutes positions of the lanes.
-fn execute_rho_and_pi(state: &mut [u64; NUM_LANES]) {
+fn execute_rho_and_pi(state: &mut Keccak256State) {
     let mut b = [0u64; NUM_LANES];
     for x in 0..5 {
         for y in 0..5 {
@@ -414,7 +415,7 @@ fn execute_rho_and_pi(state: &mut [u64; NUM_LANES]) {
 }
 
 /// The `chi` step of the Keccak-f permutation introduces non-linearity (relationships between input and output).
-fn execute_chi(state: &mut [u64; NUM_LANES]) {
+fn execute_chi(state: &mut Keccak256State) {
     // For each row, it updates each lane as: lane[x] ^= (~lane[x+1] & lane[x+2])
     // This ensures output bit is a non-linear function of three input bits.
     for y in 0..5 {
@@ -429,7 +430,7 @@ fn execute_chi(state: &mut [u64; NUM_LANES]) {
 }
 
 /// The `iota` step of Keccak-f breaks the symmetry of the rounds by injecting a round constant into the first lane.
-fn execute_iota(state: &mut [u64; NUM_LANES], round_constant: u64) {
+fn execute_iota(state: &mut Keccak256State, round_constant: u64) {
     state[0] ^= round_constant; // Inject round constant.
 }
 
@@ -565,8 +566,8 @@ mod tests {
         let round = 1;
         let expected_states = &xkcp_vectors::EXPECTED_AFTER_ROUND1;
 
-        #[allow(clippy::type_complexity)]
-        let steps: &[(&str, fn(&mut [u64; NUM_LANES]), [u64; NUM_LANES])] = &[
+        type StepFn = fn(&mut [u64; NUM_LANES]);
+        let steps: &[(&str, StepFn, [u64; NUM_LANES])] = &[
             ("theta", execute_theta, expected_states.theta),
             ("rho and pi", execute_rho_and_pi, expected_states.rho_pi),
             ("chi", execute_chi, expected_states.chi),
