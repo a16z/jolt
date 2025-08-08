@@ -3,7 +3,7 @@
 // /// 1. Sets the registers to given values for rs1 and rs2.
 // /// 2. Constructs an RVTraceRow with the provided instruction and register values.
 // /// 3. Generates the virtual instruction sequence using the RISCVTrace trait.
-// /// 4. Iterates over each row in the virtual sequence and validates the state changes.
+// /// 4. Iterates over each row in the inline sequence and validates the state changes.
 // /// 5. Verifies that rs1 and rs2 have not been clobbered.
 // /// 6. Ensures that the result is correctly written to the rd register.
 // /// 7. Checks that no unintended modifications have been made to other registers.
@@ -268,7 +268,7 @@ mod tests {
         let total_failures = failures_32.len() + failures_64.len();
         assert!(
             total_failures == 0,
-            "Found {} virtual sequence validation failures:\n{}{}",
+            "Found {} inline sequence validation failures:\n{}{}",
             total_failures,
             if !failures_32.is_empty() {
                 format!(

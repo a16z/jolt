@@ -212,9 +212,9 @@ where
         let num_riscv_cycles: usize = trace
             .par_iter()
             .map(|cycle| {
-                // Count the cycle if the instruction is not part of a virtual sequence
+                // Count the cycle if the instruction is not part of a inline sequence
                 // (`inline_sequence_remaining` is `None`) or if it's the first instruction
-                // in a virtual sequence (`inline_sequence_remaining` is `Some(0)`)
+                // in a inline sequence (`inline_sequence_remaining` is `Some(0)`)
                 if let Some(inline_sequence_remaining) =
                     cycle.instruction().normalize().inline_sequence_remaining
                 {

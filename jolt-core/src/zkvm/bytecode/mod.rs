@@ -30,7 +30,7 @@ pub struct BytecodePreprocessing {
     /// Maps the memory address of each instruction in the bytecode to its "virtual" address.
     /// See Section 6.1 of the Jolt paper, "Reflecting the program counter". The virtual address
     /// is the one used to keep track of the next (potentially virtual) instruction to execute.
-    /// Key: (ELF address, virtual sequence index or 0)
+    /// Key: (ELF address, inline sequence index or 0)
     pub virtual_address_map: BTreeMap<(usize, u16), usize>,
     pub d: usize,
 }
@@ -55,7 +55,7 @@ impl BytecodePreprocessing {
                     virtual_address
                 ),
                 None,
-                "Virtual address map already contains entry for address: {:#X}, virtual sequence: {:?}. map size: {}",
+                "Virtual address map already contains entry for address: {:#X}, inline sequence: {:?}. map size: {}",
                 instr.address, instr.inline_sequence_remaining, virtual_address_map.len());
             virtual_address += 1;
         }

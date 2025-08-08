@@ -13,7 +13,7 @@ use super::{
 pub struct VirtualAdvice {
     pub address: u64,
     pub operands: FormatJ,
-    /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
+    /// If this instruction is part of a "inline sequence" (see Section 6.2 of the
     /// Jolt paper), then this contains the number of virtual instructions after this
     /// one in the sequence. I.e. if this is the last instruction in the sequence,
     /// `inline_sequence_remaining` will be Some(0); if this is the penultimate instruction

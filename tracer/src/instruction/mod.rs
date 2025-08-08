@@ -349,7 +349,7 @@ where
             trace_vec.push(cycle.into());
         }
     }
-    // Default implementation. Instructions with virtual sequences will override this.
+    // Default implementation. Instructions with inline sequences will override this.
     // This allows other modules (e.g. inline_helpers) to call this method on all instructions.
     fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction>
 // where
@@ -588,7 +588,7 @@ impl RV32IMInstruction {
 
         match self.normalize().inline_sequence_remaining {
             None => true,     // ordinary instruction
-            Some(0) => true,  // "anchor" of a virtual sequence
+            Some(0) => true,  // "anchor" of a inline sequence
             Some(_) => false, // helper within the sequence
         }
     }

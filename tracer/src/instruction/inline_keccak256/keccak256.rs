@@ -81,7 +81,7 @@ mod tests {
     use crate::instruction::inline_keccak256::test_constants::*;
     use crate::instruction::inline_keccak256::test_utils::*;
 
-    // Test that the virtual sequence and direct execution paths produce the same end result
+    // Test that the inline sequence and direct execution paths produce the same end result
     #[test]
     fn test_keccak_exec_trace_equal() {
         for (desc, state) in TestVectors::get_standard_test_vectors() {
@@ -93,7 +93,7 @@ mod tests {
     #[test]
     fn test_keccak256_direct_execution() {
         // Test that the direct execution (exec method) works correctly against known test vectors
-        // This validates the instruction logic before testing virtual sequences
+        // This validates the instruction logic before testing inline sequences
         for (i, test_case) in keccak_test_vectors().iter().enumerate() {
             let mut setup_exec = KeccakCpuHarness::new();
             setup_exec.load_state(&test_case.input);
@@ -110,7 +110,7 @@ mod tests {
         }
     }
 
-    // Identifies exact point at which direct execution and virtual sequence diverge
+    // Identifies exact point at which direct execution and inline sequence diverge
     // by that virtual registers match (in contrast to test_keccak_state_equivalence which only tests the final state).
     // This test is SUPER useful and has caught the most bugs and regressions.
     #[test]
@@ -126,7 +126,7 @@ mod tests {
                     let mut setup = KeccakCpuHarness::new();
                     setup.load_state(&initial_state);
 
-                    // 2. Generate and execute the virtual sequence up to the current step.
+                    // 2. Generate and execute the inline sequence up to the current step.
                     let builder = super::Keccak256SequenceBuilder::new(
                         0x1000,
                         false,

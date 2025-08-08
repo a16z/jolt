@@ -28,7 +28,7 @@ pub struct KeccakCpuHarness {
 }
 
 impl KeccakCpuHarness {
-    /// Virtual register layout used by the Keccak virtual sequence.
+    /// Virtual register layout used by the Keccak inline sequence.
     const BASE_ADDR: u64 = DRAM_BASE;
     pub const RS1: u8 = 10;
 
