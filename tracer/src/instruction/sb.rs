@@ -34,8 +34,8 @@ impl SB {
         *ram_access = cpu
             .mmu
             .store(
-                cpu.x[self.operands.rs1].wrapping_add(self.operands.imm) as u64,
-                cpu.x[self.operands.rs2] as u8,
+                cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64,
+                cpu.x[self.operands.rs2 as usize] as u8,
             )
             .ok()
             .unwrap();
@@ -56,12 +56,12 @@ impl RISCVTrace for SB {
 impl VirtualInstructionSequence for SB {
     fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
-        let v_address = virtual_register_index(0) as usize;
-        let v_word_address = virtual_register_index(1) as usize;
-        let v_word = virtual_register_index(2) as usize;
-        let v_shift = virtual_register_index(3) as usize;
-        let v_mask = virtual_register_index(4) as usize;
-        let v_byte = virtual_register_index(5) as usize;
+        let v_address = virtual_register_index(0);
+        let v_word_address = virtual_register_index(1);
+        let v_word = virtual_register_index(2);
+        let v_shift = virtual_register_index(3);
+        let v_mask = virtual_register_index(4);
+        let v_byte = virtual_register_index(5);
 
         let mut sequence = vec![];
 

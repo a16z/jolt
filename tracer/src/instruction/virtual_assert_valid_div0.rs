@@ -21,8 +21,8 @@ declare_riscv_instr!(
 
 impl VirtualAssertValidDiv0 {
     fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualAssertValidDiv0 as RISCVInstruction>::RAMAccess) {
-        let divisor = cpu.x[self.operands.rs1];
-        let quotient = cpu.x[self.operands.rs2];
+        let divisor = cpu.x[self.operands.rs1 as usize];
+        let quotient = cpu.x[self.operands.rs2 as usize];
         match cpu.xlen {
             Xlen::Bit32 => {
                 if divisor == 0 {
