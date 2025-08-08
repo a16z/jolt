@@ -453,6 +453,11 @@ mod tests {
     #[test]
     #[serial]
     fn sha2_e2e_dory() {
+        // Ensure SHA2 inline library is linked and auto-registered
+        #[cfg(feature = "host")]
+        extern crate sha2_inline;
+        // SHA2 inlines are automatically registered via #[ctor::ctor]
+        // when the sha2_inline crate is linked (see lib.rs)
         let mut program = host::Program::new("sha2-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
