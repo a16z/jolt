@@ -21,7 +21,6 @@ use super::virtual_sw::VirtualSW;
 use super::xor::XOR;
 use super::RAMWrite;
 use super::RV32IMInstruction;
-use super::VirtualInstructionSequence;
 use common::constants::virtual_register_index;
 
 use super::{
@@ -59,9 +58,7 @@ impl RISCVTrace for SW {
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for SW {
     fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         match xlen {
             Xlen::Bit32 => self.virtual_sequence_32(),

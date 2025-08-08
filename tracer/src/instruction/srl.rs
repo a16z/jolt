@@ -13,7 +13,7 @@ use super::{
     },
     virtual_shift_right_bitmask::VirtualShiftRightBitmask,
     virtual_srl::VirtualSRL,
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
+    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -46,9 +46,7 @@ impl RISCVTrace for SRL {
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for SRL {
     fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_bitmask = virtual_register_index(6);

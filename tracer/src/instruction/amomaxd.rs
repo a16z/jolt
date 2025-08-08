@@ -10,7 +10,6 @@ use super::slt::SLT;
 use super::virtual_move::VirtualMove;
 use super::xori::XORI;
 use super::RV32IMInstruction;
-use super::VirtualInstructionSequence;
 use crate::instruction::format::format_load::FormatLoad;
 use crate::{
     declare_riscv_instr,
@@ -67,9 +66,7 @@ impl RISCVTrace for AMOMAXD {
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for AMOMAXD {
     fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         let v_rs2 = virtual_register_index(6);
         let v_rd = virtual_register_index(7);

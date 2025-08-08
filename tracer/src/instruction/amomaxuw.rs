@@ -8,7 +8,6 @@ use super::virtual_extend::VirtualExtend;
 use super::virtual_move::VirtualMove;
 use super::xori::XORI;
 use super::RV32IMInstruction;
-use super::VirtualInstructionSequence;
 use crate::instruction::format::format_i::FormatI;
 use crate::{
     declare_riscv_instr,
@@ -65,9 +64,7 @@ impl RISCVTrace for AMOMAXUW {
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for AMOMAXUW {
     fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         match xlen {
             Xlen::Bit32 => self.virtual_sequence_32(xlen),

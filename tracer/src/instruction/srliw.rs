@@ -12,7 +12,7 @@ use super::slli::SLLI;
 use super::virtual_sign_extend::VirtualSignExtend;
 use super::{
     format::{format_i::FormatI, InstructionFormat},
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
+    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 use common::constants::virtual_register_index;
 
@@ -44,9 +44,7 @@ impl RISCVTrace for SRLIW {
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for SRLIW {
     fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         let v_rs1 = virtual_register_index(0);
         let mut sequence = vec![];

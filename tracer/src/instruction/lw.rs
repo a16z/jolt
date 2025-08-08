@@ -17,7 +17,7 @@ use super::virtual_assert_word_alignment::VirtualAssertWordAlignment;
 use super::virtual_lw::VirtualLW;
 use super::virtual_sign_extend::VirtualSignExtend;
 use super::{addi::ADDI, RV32IMInstruction};
-use super::{RAMRead, VirtualInstructionSequence};
+use super::RAMRead;
 use common::constants::virtual_register_index;
 
 use super::{format::InstructionFormat, RISCVInstruction, RISCVTrace, RV32IMCycle};
@@ -54,9 +54,7 @@ impl RISCVTrace for LW {
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for LW {
     fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         match xlen {
             Xlen::Bit32 => self.virtual_sequence_32(),

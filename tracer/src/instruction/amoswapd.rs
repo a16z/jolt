@@ -6,7 +6,6 @@ use super::ld::LD;
 use super::sd::SD;
 use super::virtual_move::VirtualMove;
 use super::RV32IMInstruction;
-use super::VirtualInstructionSequence;
 use common::constants::virtual_register_index;
 
 use crate::instruction::format::format_load::FormatLoad;
@@ -59,9 +58,7 @@ impl RISCVTrace for AMOSWAPD {
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for AMOSWAPD {
     fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         let mut sequence = vec![];
         let v_rd = virtual_register_index(6);

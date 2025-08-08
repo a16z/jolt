@@ -14,7 +14,7 @@ use super::slli::SLLI;
 use super::srli::SRLI;
 use super::virtual_lw::VirtualLW;
 use super::xori::XORI;
-use super::{addi::ADDI, VirtualInstructionSequence};
+use super::addi::ADDI;
 use super::{RAMRead, RV32IMInstruction};
 use common::constants::virtual_register_index;
 
@@ -54,9 +54,7 @@ impl RISCVTrace for LBU {
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for LBU {
     fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         match xlen {
             Xlen::Bit32 => self.virtual_sequence_32(),

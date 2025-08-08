@@ -13,6 +13,7 @@
 //! Keccak256 refers to the specific variant where the rate is 1088 bits and the capacity is 512 bits.
 //! Keccak256 differs from SHA3-256 (not implemented here) in the padding scheme.
 
+use crate::emulator::cpu::Xlen;
 use crate::inline_helpers::InstrAssembler;
 use crate::inline_helpers::Value::{Imm, Reg};
 use crate::instruction::andn::ANDN;
@@ -82,8 +83,8 @@ struct Keccak256SequenceBuilder {
     asm: InstrAssembler,
     round: u32,
     vr: [u8; NEEDED_REGISTERS],
-    operand_rs1: usize,
-    _operand_rs2: usize,
+    operand_rs1: u8,
+    _operand_rs2: u8,
 }
 
 /// `Keccak256SequenceBuilder` is a helper struct for constructing the virtual instruction
@@ -126,12 +127,13 @@ impl Keccak256SequenceBuilder {
     fn new(
         address: u64,
         is_compressed: bool,
+        xlen: Xlen,
         vr: [u8; NEEDED_REGISTERS],
         operand_rs1: u8,
         operand_rs2: u8,
     ) -> Self {
         Keccak256SequenceBuilder {
-            asm: InstrAssembler::new(address, is_compressed),
+            asm: InstrAssembler::new(address, is_compressed, xlen),
             round: 0,
             vr,
             operand_rs1,
@@ -590,7 +592,8 @@ mod tests {
     #[test]
     fn test_rotl64() {
         // Set up a minimal builder; VR contents are irrelevant for Imm path
-        let mut builder = Keccak256SequenceBuilder::new(0x0, false, [0; NEEDED_REGISTERS], 0, 0);
+        let mut builder =
+            Keccak256SequenceBuilder::new(0x0, false, Xlen::Bit64, [0; NEEDED_REGISTERS], 0, 0);
         let dest_reg = 0; // dummy register index
         for (value, amount, expected) in TestVectors::get_rotation_test_vectors() {
             if amount >= 64 {

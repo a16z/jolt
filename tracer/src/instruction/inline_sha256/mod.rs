@@ -3,6 +3,7 @@ use crate::inline_helpers::{
     Value::{Imm, Reg},
 };
 
+use crate::emulator::cpu::Xlen;
 use crate::instruction::andn::ANDN;
 use crate::instruction::lw::LW;
 use crate::instruction::sw::SW;
@@ -63,13 +64,14 @@ impl Sha256SequenceBuilder {
     fn new(
         address: u64,
         is_compressed: bool,
+        xlen: Xlen,
         vr: [u8; NEEDED_REGISTERS as usize],
         operand_rs1: u8,
         operand_rs2: u8,
         initial: bool,
     ) -> Self {
         Sha256SequenceBuilder {
-            asm: InstrAssembler::new(address, is_compressed),
+            asm: InstrAssembler::new(address, is_compressed, xlen),
             round: 0,
             vr,
             operand_rs1,

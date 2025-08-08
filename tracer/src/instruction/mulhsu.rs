@@ -15,7 +15,7 @@ use super::{
     sltu::SLTU,
     virtual_movsign::VirtualMovsign,
     xor::XOR,
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
+    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -52,9 +52,7 @@ impl RISCVTrace for MULHSU {
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for MULHSU {
     fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // MULHSU implements signed-unsigned multiplication: rs1 (signed) × rs2 (unsigned)
         //

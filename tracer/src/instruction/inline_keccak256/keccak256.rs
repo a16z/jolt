@@ -10,7 +10,7 @@ use crate::instruction::inline_keccak256::{
     execute_keccak_f, Keccak256SequenceBuilder, NEEDED_REGISTERS,
 };
 use crate::instruction::{
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
+    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -58,10 +58,8 @@ impl RISCVTrace for KECCAK256 {
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for KECCAK256 {
-    fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used as a scratch space
         let mut vr = [0; NEEDED_REGISTERS];
         (0..NEEDED_REGISTERS).for_each(|i| {
@@ -70,6 +68,7 @@ impl VirtualInstructionSequence for KECCAK256 {
         let builder = Keccak256SequenceBuilder::new(
             self.address,
             self.is_compressed,
+            xlen,
             vr,
             self.operands.rs1,
             self.operands.rs2,
@@ -80,6 +79,7 @@ impl VirtualInstructionSequence for KECCAK256 {
 
 #[cfg(test)]
 mod tests {
+    use crate::emulator::cpu::Xlen;
     use crate::instruction::inline_keccak256::test_constants::*;
     use crate::instruction::inline_keccak256::test_utils::*;
 
@@ -129,8 +129,14 @@ mod tests {
                     setup.load_state(&initial_state);
 
                     // 2. Generate and execute the virtual sequence up to the current step.
-                    let builder =
-                        super::Keccak256SequenceBuilder::new(0x1000, false, setup.vr, 10, 11);
+                    let builder = super::Keccak256SequenceBuilder::new(
+                        0x1000,
+                        false,
+                        Xlen::Bit64,
+                        setup.vr,
+                        10,
+                        11,
+                    );
                     let sequence = builder.build_up_to_step(round, step);
                     setup.execute_virtual_sequence(&sequence);
                     let vr_state = if *step == "rho_and_pi" {

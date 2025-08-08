@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 
 use super::amo::{amo_post32, amo_post64, amo_pre32, amo_pre64};
 use super::RV32IMInstruction;
-use super::VirtualInstructionSequence;
 use common::constants::virtual_register_index;
 
 use crate::{
@@ -54,9 +53,7 @@ impl RISCVTrace for AMOSWAPW {
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for AMOSWAPW {
     fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         match xlen {
             Xlen::Bit32 => self.virtual_sequence_32(xlen),

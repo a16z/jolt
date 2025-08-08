@@ -20,7 +20,7 @@ use super::{
     virtual_change_divisor_w::VirtualChangeDivisorW,
     virtual_move::VirtualMove,
     virtual_sign_extend::VirtualSignExtend,
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
+    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -89,9 +89,7 @@ impl RISCVTrace for DIVW {
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for DIVW {
     fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_0 = virtual_register_index(0);

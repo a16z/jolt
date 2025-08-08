@@ -9,7 +9,7 @@ use crate::instruction::inline_sha256::{
     execute_sha256_compression, Sha256SequenceBuilder, NEEDED_REGISTERS,
 };
 use crate::instruction::{
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
+    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -64,10 +64,8 @@ impl RISCVTrace for SHA256 {
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for SHA256 {
-    fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used as a scratch space
         let mut vr = [0; NEEDED_REGISTERS as usize];
         (0..NEEDED_REGISTERS).for_each(|i| {
@@ -76,6 +74,7 @@ impl VirtualInstructionSequence for SHA256 {
         let builder = Sha256SequenceBuilder::new(
             self.address,
             self.is_compressed,
+            xlen,
             vr,
             self.operands.rs1,
             self.operands.rs2,
@@ -122,7 +121,7 @@ mod tests {
 
     #[test]
     fn measure_sha256_length() {
-        use crate::instruction::VirtualInstructionSequence;
+        use crate::instruction::RISCVTrace;
         let instr = Sha256CpuHarness::instruction_sha256();
         let sequence = instr.virtual_sequence(crate::emulator::cpu::Xlen::Bit32);
         let bytecode_len = sequence.len();

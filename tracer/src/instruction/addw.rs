@@ -8,7 +8,6 @@ use crate::{
 use super::add::ADD;
 use super::virtual_sign_extend::VirtualSignExtend;
 use super::RV32IMInstruction;
-use super::VirtualInstructionSequence;
 
 use super::{
     format::{format_i::FormatI, format_r::FormatR, InstructionFormat},
@@ -44,9 +43,7 @@ impl RISCVTrace for ADDW {
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for ADDW {
     fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         let mut sequence = vec![];
         let add = ADD {

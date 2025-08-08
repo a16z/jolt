@@ -25,20 +25,19 @@ pub struct Sha256CpuHarness {
     pub harness: CpuTestHarness,
     // This is needed to pull out the virtual registers in case we need them for tests.
     #[allow(dead_code)]
-    pub vr: [usize; NEEDED_REGISTERS],
+    pub vr: [u8; NEEDED_REGISTERS as usize],
 }
 
 impl Sha256CpuHarness {
     /// Memory layout for tests.
     const BLOCK_ADDR: u64 = DRAM_BASE;
     const STATE_ADDR: u64 = DRAM_BASE + 64; // Place state right after the 64-byte block
-    pub const RS1: usize = 10;
-    pub const RS2: usize = 11;
+    pub const RS1: u8 = 10;
+    pub const RS2: u8 = 11;
 
     /// Create a new harness.
     pub fn new() -> Self {
-        let vr: [usize; NEEDED_REGISTERS] =
-            std::array::from_fn(|i| common::constants::virtual_register_index(i as u64) as usize);
+        let vr = std::array::from_fn(|i| common::constants::virtual_register_index(i as u8));
         Self {
             // RV32.
             harness: CpuTestHarness::new_32(),
@@ -50,19 +49,19 @@ impl Sha256CpuHarness {
 
     /// Load an input block into DRAM and set `x10 = BLOCK_ADDR`.
     pub fn load_block(&mut self, block: &Sha256Block) {
-        self.harness.cpu.x[Self::RS1] = Self::BLOCK_ADDR as i64;
+        self.harness.cpu.x[Self::RS1 as usize] = Self::BLOCK_ADDR as i64;
         self.harness.set_memory32(Self::BLOCK_ADDR, block);
     }
 
     /// Load a state/IV into DRAM and set `x11 = STATE_ADDR`.
     pub fn load_state(&mut self, state: &Sha256State) {
-        self.harness.cpu.x[Self::RS2] = Self::STATE_ADDR as i64;
+        self.harness.cpu.x[Self::RS2 as usize] = Self::STATE_ADDR as i64;
         self.harness.set_memory32(Self::STATE_ADDR, state);
     }
 
     /// Set up output address for SHA256INIT (doesn't load initial state, just sets RS2 address).
     pub fn setup_output_only(&mut self) {
-        self.harness.cpu.x[Self::RS2] = Self::STATE_ADDR as i64;
+        self.harness.cpu.x[Self::RS2 as usize] = Self::STATE_ADDR as i64;
     }
 
     /// Read the SHA-256 state from DRAM.

@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 use super::amo::{amo_post32, amo_post64, amo_pre32, amo_pre64};
 use super::or::OR;
 use super::RV32IMInstruction;
-use super::VirtualInstructionSequence;
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
@@ -55,9 +54,7 @@ impl RISCVTrace for AMOORW {
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for AMOORW {
     fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         match xlen {
             Xlen::Bit32 => self.virtual_sequence_32(xlen),

@@ -14,8 +14,8 @@ use super::virtual_move::VirtualMove;
 use super::virtual_sign_extend::VirtualSignExtend;
 use super::virtual_sw::VirtualSW;
 use super::xor::XOR;
+use super::RISCVTrace;
 use super::RV32IMInstruction;
-use super::VirtualInstructionSequence;
 
 use crate::instruction::format::format_load::FormatLoad;
 use crate::instruction::ori::ORI;

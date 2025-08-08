@@ -10,7 +10,7 @@ use super::{
     format::{format_i::FormatI, format_r::FormatR, InstructionFormat},
     mul::MUL,
     virtual_pow2::VirtualPow2,
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
+    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -43,9 +43,7 @@ impl RISCVTrace for SLL {
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for SLL {
     fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_pow2 = virtual_register_index(6);

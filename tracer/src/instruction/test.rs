@@ -87,12 +87,12 @@ mod tests {
     use crate::{
         emulator::cpu::Xlen,
         instruction::{
-            RISCVInstruction, RV32IMInstruction, VirtualInstructionSequence, ADDIW, ADDW, AMOADDD,
-            AMOADDW, AMOANDD, AMOANDW, AMOMAXD, AMOMAXUD, AMOMAXUW, AMOMAXW, AMOMIND, AMOMINUD,
-            AMOMINUW, AMOMINW, AMOORD, AMOORW, AMOSWAPD, AMOSWAPW, AMOXORD, AMOXORW, DIV, DIVU,
-            DIVUW, DIVW, LB, LBU, LH, LHU, LW, LWU, MULH, MULHSU, MULW, REM, REMU, REMUW, REMW, SB,
-            SH, SHA256, SHA256INIT, SLL, SLLI, SLLIW, SLLW, SRA, SRAI, SRAIW, SRAW, SRL, SRLI,
-            SRLIW, SRLW, SUBW, SW,
+            RISCVCycle, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, ADDIW, ADDW,
+            AMOADDD, AMOADDW, AMOANDD, AMOANDW, AMOMAXD, AMOMAXUD, AMOMAXUW, AMOMAXW, AMOMIND,
+            AMOMINUD, AMOMINUW, AMOMINW, AMOORD, AMOORW, AMOSWAPD, AMOSWAPW, AMOXORD, AMOXORW, DIV,
+            DIVU, DIVUW, DIVW, LB, LBU, LH, LHU, LW, LWU, MULH, MULHSU, MULW, REM, REMU, REMUW,
+            REMW, SB, SH, SHA256, SHA256INIT, SLL, SLLI, SLLIW, SLLW, SRA, SRAI, SRAIW, SRAW, SRL,
+            SRLI, SRLIW, SRLW, SUBW, SW,
         },
     };
     use std::any::type_name;
@@ -135,7 +135,8 @@ mod tests {
 
     impl<T> VirtualInstructionSequenceWrapper for T
     where
-        T: VirtualInstructionSequence + RISCVInstruction,
+        T: RISCVTrace + RISCVInstruction,
+        RISCVCycle<T>: Into<RV32IMCycle>,
     {
         fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
             self.virtual_sequence(xlen)
