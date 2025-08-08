@@ -1,7 +1,13 @@
 use crate::field::JoltField;
 use crate::host;
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+use crate::subprotocols::optimization::{
+    compute_initial_eval_claim, KaratsubaSumCheckProof, LargeDSumCheckProof, NaiveSumCheckProof,
+};
 use crate::subprotocols::twist::{TwistAlgorithm, TwistProof};
 use crate::utils::math::Math;
+use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::transcript::{KeccakTranscript, Transcript};
 use crate::zkvm::JoltVerifierPreprocessing;
 use crate::zkvm::{Jolt, JoltRV32IM};
@@ -9,6 +15,7 @@ use ark_bn254::Fr;
 use ark_std::test_rng;
 use rand_core::RngCore;
 use rand_distr::{Distribution, Zipf};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
 pub enum BenchType {
@@ -19,6 +26,7 @@ pub enum BenchType {
     Sha2Chain,
     Shout,
     Twist,
+    LargeDSumCheck,
 }
 
 pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
@@ -30,6 +38,7 @@ pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()
         BenchType::Fibonacci => fibonacci(),
         BenchType::Shout => shout(),
         BenchType::Twist => twist::<Fr, KeccakTranscript>(),
+        BenchType::LargeDSumCheck => large_d_sumcheck::<Fr, KeccakTranscript>(),
     }
 }
 
@@ -164,4 +173,83 @@ fn prove_example(
     ));
 
     tasks
+}
+
+fn large_d_sumcheck<F, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+{
+    let mut tasks = Vec::new();
+
+    let T = 1 << 10;
+
+    let task = move || {
+        benchmark_proof::<F, ProofTranscript, 31>(32, T);
+        benchmark_proof::<F, ProofTranscript, 15>(16, T);
+        benchmark_proof::<F, ProofTranscript, 7>(8, T);
+    };
+
+    tasks.push((
+        tracing::info_span!("large_d_e2e"),
+        Box::new(task) as Box<dyn FnOnce()>,
+    ));
+
+    tasks
+}
+
+fn benchmark_proof<F, ProofTranscript, const D_MINUS_ONE: usize>(D: usize, T: usize)
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+{
+    let NUM_COPIES: usize = 3;
+
+    let ra = {
+        let mut rng = test_rng();
+        let mut val_vec: Vec<Vec<F>> = vec![unsafe_allocate_zero_vec(T); D];
+
+        for j in 0..T {
+            for i in 0..D {
+                val_vec[i][j] = F::from_u32(rng.next_u32());
+            }
+        }
+
+        val_vec
+            .into_par_iter()
+            .map(MultilinearPolynomial::from)
+            .collect::<Vec<_>>()
+    };
+
+    let mut transcript = ProofTranscript::new(b"test_transcript");
+    let r_cycle: Vec<F> = transcript.challenge_vector(T.log_2());
+
+    let previous_claim = compute_initial_eval_claim(&ra.iter().collect::<Vec<_>>(), &r_cycle);
+
+    let (mut ra, mut transcript, mut previous_claim) = (
+        vec![ra; NUM_COPIES],
+        vec![transcript; NUM_COPIES],
+        vec![previous_claim; NUM_COPIES],
+    );
+
+    let _proof = LargeDSumCheckProof::<F, ProofTranscript>::prove::<D_MINUS_ONE>(
+        &mut ra[0].iter_mut().collect::<Vec<_>>(),
+        &r_cycle,
+        &mut previous_claim[0],
+        &mut transcript[0],
+    );
+
+    let _proof = NaiveSumCheckProof::<F, ProofTranscript>::prove(
+        &mut ra[1].iter_mut().collect::<Vec<_>>(),
+        &r_cycle,
+        &mut previous_claim[1],
+        &mut transcript[1],
+    );
+
+    let _proof = KaratsubaSumCheckProof::<F, ProofTranscript>::prove(
+        &mut ra[2].iter_mut().collect::<Vec<_>>(),
+        &r_cycle,
+        &mut previous_claim[2],
+        &mut transcript[2],
+    );
 }
