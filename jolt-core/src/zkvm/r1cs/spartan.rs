@@ -720,7 +720,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         // Evaluate all witness polynomials P_i at r_cycle for the verifier
         // Verifier computes: z(r_inner, r_cycle) = Σ_i eq(r_inner, i) * P_i(r_cycle)
         let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
-        let (claimed_witness_evals, _) =
+        let claimed_witness_evals =
             MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
 
         // Only non-virtual (i.e. committed) polynomials' openings are
