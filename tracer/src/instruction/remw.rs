@@ -71,26 +71,26 @@ impl RISCVTrace for REMW {
             }
         };
 
-        let mut virtual_sequence = self.virtual_sequence(cpu.xlen);
-        if let RV32IMInstruction::VirtualAdvice(instr) = &mut virtual_sequence[0] {
+        let mut inline_sequence = self.inline_sequence(cpu.xlen);
+        if let RV32IMInstruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
             instr.advice = quotient as u64;
         } else {
             panic!("Expected Advice instruction");
         }
-        if let RV32IMInstruction::VirtualAdvice(instr) = &mut virtual_sequence[1] {
+        if let RV32IMInstruction::VirtualAdvice(instr) = &mut inline_sequence[1] {
             instr.advice = remainder as u64;
         } else {
             panic!("Expected Advice instruction");
         }
 
         let mut trace = trace;
-        for instr in virtual_sequence {
+        for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
-    fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_0 = virtual_register_index(0);
         let v_q = virtual_register_index(1);
@@ -104,7 +104,7 @@ impl RISCVTrace for REMW {
         let advice = VirtualAdvice {
             address: self.address,
             operands: FormatJ { rd: v_q, imm: 0 },
-            virtual_sequence_remaining: Some(12),
+            inline_sequence_remaining: Some(12),
             advice: 0,
             is_compressed: self.is_compressed,
         };
@@ -113,7 +113,7 @@ impl RISCVTrace for REMW {
         let advice = VirtualAdvice {
             address: self.address,
             operands: FormatJ { rd: v_r, imm: 0 },
-            virtual_sequence_remaining: Some(11),
+            inline_sequence_remaining: Some(11),
             advice: 0,
             is_compressed: self.is_compressed,
         };
@@ -126,7 +126,7 @@ impl RISCVTrace for REMW {
                 rs1: self.operands.rs1,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(10),
+            inline_sequence_remaining: Some(10),
             is_compressed: self.is_compressed,
         };
         sequence.push(ext.into());
@@ -138,7 +138,7 @@ impl RISCVTrace for REMW {
                 rs1: self.operands.rs2,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(9),
+            inline_sequence_remaining: Some(9),
             is_compressed: self.is_compressed,
         };
         sequence.push(ext.into());
@@ -150,7 +150,7 @@ impl RISCVTrace for REMW {
                 rs1: v_q,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(8),
+            inline_sequence_remaining: Some(8),
             is_compressed: self.is_compressed,
         };
         sequence.push(ext.into());
@@ -162,7 +162,7 @@ impl RISCVTrace for REMW {
                 rs1: v_r,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(7),
+            inline_sequence_remaining: Some(7),
             is_compressed: self.is_compressed,
         };
         sequence.push(ext.into());
@@ -174,7 +174,7 @@ impl RISCVTrace for REMW {
                 rs1: v_rs1,
                 rs2: v_rs2,
             },
-            virtual_sequence_remaining: Some(6),
+            inline_sequence_remaining: Some(6),
             is_compressed: self.is_compressed,
         };
         sequence.push(change_divisor.into());
@@ -186,7 +186,7 @@ impl RISCVTrace for REMW {
                 rs2: v_rs2,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(5),
+            inline_sequence_remaining: Some(5),
             is_compressed: self.is_compressed,
         };
         sequence.push(is_valid.into());
@@ -198,7 +198,7 @@ impl RISCVTrace for REMW {
                 rs2: v_q,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(4),
+            inline_sequence_remaining: Some(4),
             is_compressed: self.is_compressed,
         };
         sequence.push(is_valid.into());
@@ -210,7 +210,7 @@ impl RISCVTrace for REMW {
                 rs1: v_q,
                 rs2: v_rs2,
             },
-            virtual_sequence_remaining: Some(3),
+            inline_sequence_remaining: Some(3),
             is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
@@ -222,7 +222,7 @@ impl RISCVTrace for REMW {
                 rs1: v_qy,
                 rs2: v_r,
             },
-            virtual_sequence_remaining: Some(2),
+            inline_sequence_remaining: Some(2),
             is_compressed: self.is_compressed,
         };
         sequence.push(add.into());
@@ -234,7 +234,7 @@ impl RISCVTrace for REMW {
                 rs2: v_rs1,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(1),
+            inline_sequence_remaining: Some(1),
             is_compressed: self.is_compressed,
         };
         sequence.push(assert_eq.into());
@@ -246,7 +246,7 @@ impl RISCVTrace for REMW {
                 rs1: v_r,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(0),
+            inline_sequence_remaining: Some(0),
             is_compressed: self.is_compressed,
         };
         sequence.push(virtual_move.into());

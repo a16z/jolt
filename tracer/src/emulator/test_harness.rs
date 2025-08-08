@@ -94,7 +94,7 @@ impl CpuTestHarness {
         }
     }
 
-    pub fn execute_virtual_sequence(&mut self, sequence: &[RV32IMInstruction]) {
+    pub fn execute_inline_sequence(&mut self, sequence: &[RV32IMInstruction]) {
         for instr in sequence {
             instr.execute(&mut self.cpu);
         }

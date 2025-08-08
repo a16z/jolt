@@ -13,7 +13,7 @@ macro_rules! declare_riscv_instr {
         pub struct $name {
             pub address: u64,
             pub operands: $format,
-            pub virtual_sequence_remaining: Option<u16>,
+            pub inline_sequence_remaining: Option<u16>,
             /// Set if instruction is C-Type
             pub is_compressed: bool,
         }
@@ -42,7 +42,7 @@ macro_rules! declare_riscv_instr {
                 Self {
                     address,
                     operands: <$format>::parse(word),
-                    virtual_sequence_remaining: None,
+                    inline_sequence_remaining: None,
                     is_compressed: compressed,
                 }
             }
@@ -51,7 +51,7 @@ macro_rules! declare_riscv_instr {
                 Self {
                     address,
                     operands: operands.into(),
-                    virtual_sequence_remaining: None,
+                    inline_sequence_remaining: None,
                     is_compressed: compressed,
                 }
             }
@@ -60,7 +60,7 @@ macro_rules! declare_riscv_instr {
                 Self {
                     address: rand::RngCore::next_u64(rng),
                     operands: <$format>::random(rng),
-                    virtual_sequence_remaining: None,
+                    inline_sequence_remaining: None,
                     is_compressed: false,
                 }
             }

@@ -45,15 +45,15 @@ impl SHA256INIT {
 
 impl RISCVTrace for SHA256INIT {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(cpu.xlen);
 
         let mut trace = trace;
-        for instr in virtual_sequence {
+        for instr in inline_sequence {
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
-    fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used as a scratch space
         let mut vr = [0; NEEDED_REGISTERS as usize];
         (0..NEEDED_REGISTERS).for_each(|i| {

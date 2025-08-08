@@ -49,15 +49,15 @@ impl KECCAK256 {
 
 impl RISCVTrace for KECCAK256 {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(cpu.xlen);
 
         let mut trace = trace;
-        for instr in virtual_sequence {
+        for instr in inline_sequence {
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
-    fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used as a scratch space
         let mut vr = [0; NEEDED_REGISTERS];
         (0..NEEDED_REGISTERS).for_each(|i| {
@@ -136,7 +136,7 @@ mod tests {
                         11,
                     );
                     let sequence = builder.build_up_to_step(round, step);
-                    setup.execute_virtual_sequence(&sequence);
+                    setup.execute_inline_sequence(&sequence);
                     let vr_state = if *step == "rho_and_pi" {
                         // This is needed because there is an optimization where the instructions in chi read
                         // directly from the rho_and_pi scratch regisers to avoid a copy back.

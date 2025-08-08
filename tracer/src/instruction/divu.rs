@@ -61,26 +61,26 @@ impl RISCVTrace for DIVU {
         };
         let remainder = if y == 0 { x } else { x - quotient * y };
 
-        let mut virtual_sequence = self.virtual_sequence(cpu.xlen);
-        if let RV32IMInstruction::VirtualAdvice(instr) = &mut virtual_sequence[0] {
+        let mut inline_sequence = self.inline_sequence(cpu.xlen);
+        if let RV32IMInstruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
             instr.advice = quotient;
         } else {
             panic!("Expected Advice instruction");
         }
-        if let RV32IMInstruction::VirtualAdvice(instr) = &mut virtual_sequence[1] {
+        if let RV32IMInstruction::VirtualAdvice(instr) = &mut inline_sequence[1] {
             instr.advice = remainder;
         } else {
             panic!("Expected Advice instruction");
         }
 
         let mut trace = trace;
-        for instr in virtual_sequence {
+        for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
-    fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_0 = virtual_register_index(0);
         let v_q = virtual_register_index(1);
@@ -88,27 +88,27 @@ impl RISCVTrace for DIVU {
         let v_qy = virtual_register_index(3);
 
         let mut sequence = vec![];
-        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(7);
+        let mut inline_sequence_remaining = self.inline_sequence_remaining.unwrap_or(7);
 
         let advice = VirtualAdvice {
             address: self.address,
             operands: FormatJ { rd: v_q, imm: 0 },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             advice: 0,
             is_compressed: self.is_compressed,
         };
         sequence.push(advice.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         let advice = VirtualAdvice {
             address: self.address,
             operands: FormatJ { rd: v_r, imm: 0 },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             advice: 0,
             is_compressed: self.is_compressed,
         };
         sequence.push(advice.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         let is_valid = VirtualAssertValidUnsignedRemainder {
             address: self.address,
@@ -117,11 +117,11 @@ impl RISCVTrace for DIVU {
                 rs2: self.operands.rs2,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(is_valid.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         let is_valid = VirtualAssertValidDiv0 {
             address: self.address,
@@ -130,11 +130,11 @@ impl RISCVTrace for DIVU {
                 rs2: v_q,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(is_valid.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         let mul = MUL {
             address: self.address,
@@ -143,11 +143,11 @@ impl RISCVTrace for DIVU {
                 rs1: v_q,
                 rs2: self.operands.rs2,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         let add = ADD {
             address: self.address,
@@ -156,11 +156,11 @@ impl RISCVTrace for DIVU {
                 rs1: v_qy,
                 rs2: v_r,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(add.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         let assert_eq = VirtualAssertEQ {
             address: self.address,
@@ -169,11 +169,11 @@ impl RISCVTrace for DIVU {
                 rs2: self.operands.rs1,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(assert_eq.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         let virtual_move = VirtualMove {
             address: self.address,
@@ -182,7 +182,7 @@ impl RISCVTrace for DIVU {
                 rs1: v_q,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(virtual_move.into());

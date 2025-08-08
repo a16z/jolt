@@ -80,7 +80,7 @@ impl Sha256CpuHarness {
                 rs2: Self::RS2,
                 rd: 0,
             },
-            virtual_sequence_remaining: None,
+            inline_sequence_remaining: None,
             is_compressed: false,
         }
     }
@@ -94,7 +94,7 @@ impl Sha256CpuHarness {
                 rs2: Self::RS2,
                 rd: 0,
             },
-            virtual_sequence_remaining: None,
+            inline_sequence_remaining: None,
             is_compressed: false,
         }
     }

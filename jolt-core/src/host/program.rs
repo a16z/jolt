@@ -142,7 +142,7 @@ impl Program {
         // Expand inline sequences
         instructions = instructions
             .into_par_iter()
-            .flat_map_iter(|instr| instr.virtual_sequence(xlen))
+            .flat_map_iter(|instr| instr.inline_sequence(xlen))
             .collect();
 
         (instructions, raw_bytes, bytecode_size)

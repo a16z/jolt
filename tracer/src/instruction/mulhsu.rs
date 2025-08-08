@@ -45,15 +45,15 @@ impl MULHSU {
 
 impl RISCVTrace for MULHSU {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(cpu.xlen);
         let mut trace = trace;
-        for instr in virtual_sequence {
+        for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
-    fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // MULHSU implements signed-unsigned multiplication: rs1 (signed) × rs2 (unsigned)
         //
         // For negative rs1, two's complement encoding means:
@@ -85,7 +85,7 @@ impl RISCVTrace for MULHSU {
                 rs1: self.operands.rs1,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(10),
+            inline_sequence_remaining: Some(10),
             is_compressed: self.is_compressed,
         };
         sequence.push(movsign.into());
@@ -97,7 +97,7 @@ impl RISCVTrace for MULHSU {
                 rs1: v_sx,
                 imm: 1,
             },
-            virtual_sequence_remaining: Some(9),
+            inline_sequence_remaining: Some(9),
             is_compressed: self.is_compressed,
         };
         sequence.push(take_lsb.into());
@@ -109,7 +109,7 @@ impl RISCVTrace for MULHSU {
                 rs1: self.operands.rs1,
                 rs2: v_sx,
             },
-            virtual_sequence_remaining: Some(8),
+            inline_sequence_remaining: Some(8),
             is_compressed: self.is_compressed,
         };
         sequence.push(xor_0.into());
@@ -121,7 +121,7 @@ impl RISCVTrace for MULHSU {
                 rs1: v_rs1,
                 rs2: v_sx_0,
             },
-            virtual_sequence_remaining: Some(7),
+            inline_sequence_remaining: Some(7),
             is_compressed: self.is_compressed,
         };
         sequence.push(add_0.into());
@@ -133,7 +133,7 @@ impl RISCVTrace for MULHSU {
                 rs1: v_rs1,
                 rs2: self.operands.rs2,
             },
-            virtual_sequence_remaining: Some(6),
+            inline_sequence_remaining: Some(6),
             is_compressed: self.is_compressed,
         };
         sequence.push(mulhu.into());
@@ -145,7 +145,7 @@ impl RISCVTrace for MULHSU {
                 rs1: v_rs1,
                 rs2: self.operands.rs2,
             },
-            virtual_sequence_remaining: Some(5),
+            inline_sequence_remaining: Some(5),
             is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
@@ -157,7 +157,7 @@ impl RISCVTrace for MULHSU {
                 rs1: v_hi,
                 rs2: v_sx,
             },
-            virtual_sequence_remaining: Some(4),
+            inline_sequence_remaining: Some(4),
             is_compressed: self.is_compressed,
         };
         sequence.push(xor_1.into());
@@ -169,7 +169,7 @@ impl RISCVTrace for MULHSU {
                 rs1: v_lo,
                 rs2: v_sx,
             },
-            virtual_sequence_remaining: Some(3),
+            inline_sequence_remaining: Some(3),
             is_compressed: self.is_compressed,
         };
         sequence.push(xor_2.into());
@@ -181,7 +181,7 @@ impl RISCVTrace for MULHSU {
                 rs1: v_lo,
                 rs2: v_sx_0,
             },
-            virtual_sequence_remaining: Some(2),
+            inline_sequence_remaining: Some(2),
             is_compressed: self.is_compressed,
         };
         sequence.push(add_1.into());
@@ -193,7 +193,7 @@ impl RISCVTrace for MULHSU {
                 rs1: v_tmp,
                 rs2: v_lo,
             },
-            virtual_sequence_remaining: Some(1),
+            inline_sequence_remaining: Some(1),
             is_compressed: self.is_compressed,
         };
         sequence.push(sltu_0.into());
@@ -205,7 +205,7 @@ impl RISCVTrace for MULHSU {
                 rs1: v_hi,
                 rs2: v_carry,
             },
-            virtual_sequence_remaining: Some(0),
+            inline_sequence_remaining: Some(0),
             is_compressed: self.is_compressed,
         };
         sequence.push(add_2.into());

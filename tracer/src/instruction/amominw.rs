@@ -57,24 +57,24 @@ impl AMOMINW {
 
 impl RISCVTrace for AMOMINW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(cpu.xlen);
         let mut trace = trace;
-        for instr in virtual_sequence {
+        for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
-    fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         match xlen {
-            Xlen::Bit32 => self.virtual_sequence_32(xlen),
-            Xlen::Bit64 => self.virtual_sequence_64(xlen),
+            Xlen::Bit32 => self.inline_sequence_32(xlen),
+            Xlen::Bit64 => self.inline_sequence_64(xlen),
         }
     }
 }
 
 impl AMOMINW {
-    fn virtual_sequence_32(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence_32(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         let v_rd = virtual_register_index(7);
         let v_rs2 = virtual_register_index(8);
         let v_sel_rs2 = virtual_register_index(9);
@@ -99,7 +99,7 @@ impl AMOMINW {
                 rs1: self.operands.rs2,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(remaining),
+            inline_sequence_remaining: Some(remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(mov.into());
@@ -112,7 +112,7 @@ impl AMOMINW {
                 rs1: v_rd,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(remaining),
+            inline_sequence_remaining: Some(remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(mov.into());
@@ -125,7 +125,7 @@ impl AMOMINW {
                 rs1: v_rs2,
                 rs2: v_tmp,
             },
-            virtual_sequence_remaining: Some(remaining),
+            inline_sequence_remaining: Some(remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(slt.into());
@@ -138,7 +138,7 @@ impl AMOMINW {
                 rs1: v_sel_rs2,
                 imm: 1,
             },
-            virtual_sequence_remaining: Some(remaining),
+            inline_sequence_remaining: Some(remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(xori.into());
@@ -151,7 +151,7 @@ impl AMOMINW {
                 rs1: v_sel_rs2,
                 rs2: self.operands.rs2,
             },
-            virtual_sequence_remaining: Some(remaining),
+            inline_sequence_remaining: Some(remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
@@ -164,7 +164,7 @@ impl AMOMINW {
                 rs1: v_sel_rd,
                 rs2: v_rd,
             },
-            virtual_sequence_remaining: Some(remaining),
+            inline_sequence_remaining: Some(remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
@@ -177,7 +177,7 @@ impl AMOMINW {
                 rs1: v_tmp,
                 rs2: v_rs2,
             },
-            virtual_sequence_remaining: Some(remaining),
+            inline_sequence_remaining: Some(remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(add.into());
@@ -197,7 +197,7 @@ impl AMOMINW {
         sequence
     }
 
-    fn virtual_sequence_64(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence_64(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_mask = virtual_register_index(10);
         let v_dword_address = virtual_register_index(11);
@@ -211,9 +211,9 @@ impl AMOMINW {
         let v_tmp = virtual_register_index(19);
 
         let mut sequence = vec![];
-        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(23);
+        let mut inline_sequence_remaining = self.inline_sequence_remaining.unwrap_or(23);
 
-        virtual_sequence_remaining = amo_pre64(
+        inline_sequence_remaining = amo_pre64(
             &mut sequence,
             self.address,
             self.is_compressed,
@@ -222,7 +222,7 @@ impl AMOMINW {
             v_dword_address,
             v_dword,
             v_shift,
-            virtual_sequence_remaining,
+            inline_sequence_remaining,
         );
 
         let signext = VirtualSignExtend {
@@ -232,11 +232,11 @@ impl AMOMINW {
                 rs1: self.operands.rs2,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(signext.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         let signext = VirtualSignExtend {
             address: self.address,
@@ -245,11 +245,11 @@ impl AMOMINW {
                 rs1: v_rd,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(signext.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         let slt = SLT {
             address: self.address,
@@ -258,11 +258,11 @@ impl AMOMINW {
                 rs1: v_rs2,
                 rs2: v_tmp,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(slt.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         let xori = XORI {
             address: self.address,
@@ -271,11 +271,11 @@ impl AMOMINW {
                 rs1: v_sel_rs2,
                 imm: 1,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(xori.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         let mul = MUL {
             address: self.address,
@@ -284,11 +284,11 @@ impl AMOMINW {
                 rs1: v_sel_rs2,
                 rs2: self.operands.rs2,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         let mul = MUL {
             address: self.address,
@@ -297,11 +297,11 @@ impl AMOMINW {
                 rs1: v_sel_rd,
                 rs2: v_rd,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         let add = ADD {
             address: self.address,
@@ -310,11 +310,11 @@ impl AMOMINW {
                 rs1: v_tmp,
                 rs2: v_rs2,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(add.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         amo_post64(
             &mut sequence,
@@ -328,7 +328,7 @@ impl AMOMINW {
             v_word,
             self.operands.rd,
             v_rd,
-            virtual_sequence_remaining,
+            inline_sequence_remaining,
         );
 
         sequence

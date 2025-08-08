@@ -89,12 +89,12 @@ impl InstrAssembler {
         }
     }
 
-    /// Finalize the instruction buffer: back-fill `virtual_sequence_remaining`
+    /// Finalize the instruction buffer: back-fill `inline_sequence_remaining`
     /// and return ownership of the underlying `Vec`.
     pub fn finalize(mut self) -> Vec<RV32IMInstruction> {
         let len = self.sequence.len();
         for (i, instr) in self.sequence.iter_mut().enumerate() {
-            instr.set_virtual_sequence_remaining(Some((len - i - 1) as u16));
+            instr.set_inline_sequence_remaining(Some((len - i - 1) as u16));
         }
         self.sequence
     }
@@ -104,7 +104,7 @@ impl InstrAssembler {
     where
         RISCVCycle<I>: Into<RV32IMCycle>,
     {
-        self.sequence.extend(inst.virtual_sequence(self.xlen));
+        self.sequence.extend(inst.inline_sequence(self.xlen));
     }
 
     /// Emit any R-type instruction (rd, rs1, rs2).

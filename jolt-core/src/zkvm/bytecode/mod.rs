@@ -51,12 +51,12 @@ impl BytecodePreprocessing {
             debug_assert!(instr.address.is_multiple_of(ALIGNMENT_FACTOR_BYTECODE));
             assert_eq!(
                 virtual_address_map.insert(
-                    (instr.address, instr.virtual_sequence_remaining.unwrap_or(0)),
+                    (instr.address, instr.inline_sequence_remaining.unwrap_or(0)),
                     virtual_address
                 ),
                 None,
                 "Virtual address map already contains entry for address: {:#X}, virtual sequence: {:?}. map size: {}",
-                instr.address, instr.virtual_sequence_remaining, virtual_address_map.len());
+                instr.address, instr.inline_sequence_remaining, virtual_address_map.len());
             virtual_address += 1;
         }
 
@@ -88,7 +88,7 @@ impl BytecodePreprocessing {
         let instr = cycle.instruction().normalize();
         *self
             .virtual_address_map
-            .get(&(instr.address, instr.virtual_sequence_remaining.unwrap_or(0)))
+            .get(&(instr.address, instr.inline_sequence_remaining.unwrap_or(0)))
             .unwrap()
     }
 }

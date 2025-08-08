@@ -7,7 +7,7 @@
 // /// 5. Verifies that rs1 and rs2 have not been clobbered.
 // /// 6. Ensures that the result is correctly written to the rd register.
 // /// 7. Checks that no unintended modifications have been made to other registers.
-// pub fn virtual_sequence_trace_test<I: RISCVInstruction + RISCVTrace + Copy>() {
+// pub fn inline_sequence_trace_test<I: RISCVInstruction + RISCVTrace + Copy>() {
 //     let mut rng = StdRng::seed_from_u64(12345);
 
 //     for _ in 0..1000 {
@@ -102,7 +102,7 @@ mod tests {
 
         for (index, instr) in sequence.iter().enumerate() {
             let normalized = instr.normalize();
-            let current_remaining = normalized.virtual_sequence_remaining;
+            let current_remaining = normalized.inline_sequence_remaining;
 
             if current_remaining.is_none() {
                 return Err(format!("Instruction {index} has no remaining"));
@@ -129,7 +129,7 @@ mod tests {
     }
 
     trait VirtualInstructionSequenceWrapper {
-        fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction>;
+        fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction>;
         fn get_type_name(&self) -> &'static str;
     }
 
@@ -138,8 +138,8 @@ mod tests {
         T: RISCVTrace + RISCVInstruction,
         RISCVCycle<T>: Into<RV32IMCycle>,
     {
-        fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-            self.virtual_sequence(xlen)
+        fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+            self.inline_sequence(xlen)
         }
 
         fn get_type_name(&self) -> &'static str {
@@ -234,7 +234,7 @@ mod tests {
 
         let mut failures_32 = Vec::new();
         for instruction in instruction_pairs_32 {
-            let sequence = instruction.virtual_sequence(xlen_32);
+            let sequence = instruction.inline_sequence(xlen_32);
             if sequence.is_empty() {
                 continue;
             }
@@ -250,7 +250,7 @@ mod tests {
 
         let mut failures_64 = Vec::new();
         for instruction in instruction_sequence_pairs_64 {
-            let sequence = instruction.virtual_sequence(xlen_64);
+            let sequence = instruction.inline_sequence(xlen_64);
             if sequence.is_empty() {
                 continue;
             }

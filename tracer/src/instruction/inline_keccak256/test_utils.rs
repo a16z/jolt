@@ -78,7 +78,7 @@ impl KeccakCpuHarness {
                 rs2: 0,
                 rd: 0,
             },
-            virtual_sequence_remaining: None,
+            inline_sequence_remaining: None,
             is_compressed: false,
         }
     }
@@ -95,8 +95,8 @@ impl KeccakCpuHarness {
         trace
     }
 
-    pub fn execute_virtual_sequence(&mut self, sequence: &[RV32IMInstruction]) {
-        self.harness.execute_virtual_sequence(sequence);
+    pub fn execute_inline_sequence(&mut self, sequence: &[RV32IMInstruction]) {
+        self.harness.execute_inline_sequence(sequence);
     }
 }
 
