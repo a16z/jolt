@@ -24,6 +24,8 @@
 //!   operations; the exact policy is documented where they are defined.
 use crate::instruction::add::ADD;
 use crate::instruction::addi::ADDI;
+use crate::instruction::addiw::ADDIW;
+use crate::instruction::addw::ADDW;
 use crate::instruction::and::AND;
 use crate::instruction::andi::ANDI;
 use crate::instruction::srli::SRLI;
@@ -362,8 +364,20 @@ impl InstrAssembler {
         }
     }
 
-    /// 32-bit wrapping add (ADD/ADDI) with constant folding.
     pub fn add(&mut self, rs1: Value, rs2: Value, rd: u8) -> Value {
+        match self.xlen {
+            Xlen::Bit64 => self.add64(rs1, rs2, rd),
+            Xlen::Bit32 => self.add32(rs1, rs2, rd),
+        }
+    }
+
+    pub fn add64(&mut self, rs1: Value, rs2: Value, rd: u8) -> Value {
+        self.bin::<ADDW, ADDIW>(rs1, rs2, rd, |x, y| {
+            ((x as u32).wrapping_add(y as u32)) as u64
+        })
+    }
+
+    pub fn add32(&mut self, rs1: Value, rs2: Value, rd: u8) -> Value {
         self.bin::<ADD, ADDI>(rs1, rs2, rd, |x, y| {
             ((x as u32).wrapping_add(y as u32)) as u64
         })
