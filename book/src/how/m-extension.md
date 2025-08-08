@@ -12,7 +12,7 @@ but our implementation deviates from the paper in a couple ways (described below
 Section 6.1 of the Jolt paper introduces virtual instructions and registers –– some of the M extension
 instructions cannot be implemented as a single subtable decomposition, but rather must be split into
 a sequence of instructions which together compute the output and places it in the destination register.
-In our implementation, these sequences are captured when `virtual_sequence(...) is overriden in the `RISCVTrace` trait.
+In our implementation, these sequences are captured when `virtual_sequence(...) is overridden in the `RISCVTrace` trait.
 
 The instructions that comprise such a sequence can be a combination of "real" RISC-V instructions and "virtual"
 instructions which only appear in the context of virtual sequences.
