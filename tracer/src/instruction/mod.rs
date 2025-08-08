@@ -359,10 +359,6 @@ where
     }
 }
 
-pub trait VirtualInstructionSequence: RISCVInstruction {
-    // fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction>;
-}
-
 macro_rules! define_rv32im_enums {
     (
         instructions: [$($instr:ident),* $(,)?]

@@ -7,7 +7,7 @@
 // /// 5. Verifies that rs1 and rs2 have not been clobbered.
 // /// 6. Ensures that the result is correctly written to the rd register.
 // /// 7. Checks that no unintended modifications have been made to other registers.
-// pub fn virtual_sequence_trace_test<I: RISCVInstruction + VirtualInstructionSequence + Copy>() {
+// pub fn virtual_sequence_trace_test<I: RISCVInstruction + RISCVTrace + Copy>() {
 //     let mut rng = StdRng::seed_from_u64(12345);
 
 //     for _ in 0..1000 {

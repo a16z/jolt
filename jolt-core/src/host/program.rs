@@ -17,7 +17,6 @@ use std::str::FromStr;
 use std::{fs, io};
 use tracer::emulator::cpu::Xlen;
 use tracer::emulator::memory::Memory;
-use tracer::instruction::VirtualInstructionSequence;
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
 
 impl Program {
