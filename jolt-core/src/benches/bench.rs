@@ -181,12 +181,13 @@ where
 {
     let mut tasks = Vec::new();
 
-    let T = 1 << 10;
+    let T = 1 << 20;
 
     let task = move || {
         benchmark_proof::<F, ProofTranscript, 31>(32, T);
         benchmark_proof::<F, ProofTranscript, 15>(16, T);
         benchmark_proof::<F, ProofTranscript, 7>(8, T);
+        benchmark_proof::<F, ProofTranscript, 3>(4, T);
     };
 
     tasks.push((

@@ -15,7 +15,7 @@ use crate::{
         unipoly::{CompressedUniPoly, UniPoly},
     },
     subprotocols::{
-        karatsuba::{coeff_kara_16, coeff_kara_32, coeff_kara_8},
+        karatsuba::{coeff_kara_16, coeff_kara_32, coeff_kara_4, coeff_kara_8},
         sumcheck::SumcheckInstanceProof,
     },
     utils::{
@@ -42,8 +42,8 @@ fn compute_mle_product_evals_generic<F: JoltField, const D: usize, const D_PLUS_
                 *factor
             };
 
-            let span = tracing::span!(tracing::Level::INFO, "Initialize left and right arrays");
-            let _guard = span.enter();
+            // let span = tracing::span!(tracing::Level::INFO, "Initialize left and right arrays");
+            // let _guard = span.enter();
 
             let left: [F; D] = core::array::from_fn(|i| {
                 // Optimization
@@ -76,11 +76,11 @@ fn compute_mle_product_evals_generic<F: JoltField, const D: usize, const D_PLUS_
                 }
             });
 
-            drop(_guard);
-            drop(span);
+            // drop(_guard);
+            // drop(span);
 
-            let span = tracing::span!(tracing::Level::INFO, "Karatsuba step");
-            let _guard = span.enter();
+            // let span = tracing::span!(tracing::Level::INFO, "Karatsuba step");
+            // let _guard = span.enter();
 
             let res: [F; D_PLUS_ONE] = match D {
                 32 => coeff_kara_32(
@@ -101,11 +101,17 @@ fn compute_mle_product_evals_generic<F: JoltField, const D: usize, const D_PLUS_
                 )[..]
                     .try_into()
                     .unwrap(),
+                4 => coeff_kara_4(
+                    &left[..4].try_into().unwrap(),
+                    &right[..4].try_into().unwrap(),
+                )[..]
+                    .try_into()
+                    .unwrap(),
                 _ => unimplemented!(),
             };
 
-            drop(_guard);
-            drop(span);
+            // drop(_guard);
+            // drop(span);
 
             res
         })
@@ -187,6 +193,9 @@ impl<F: JoltField, ProofTranscript: Transcript> KaratsubaSumCheckProof<F, ProofT
                     mle_vec, round, log_T, &factor, &E_table,
                 ),
                 8 => compute_mle_product_evals_generic::<F, 8, 9>(
+                    mle_vec, round, log_T, &factor, &E_table,
+                ),
+                4 => compute_mle_product_evals_generic::<F, 4, 5>(
                     mle_vec, round, log_T, &factor, &E_table,
                 ),
                 _ => panic!(
