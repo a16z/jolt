@@ -1,0 +1,45 @@
+name: Architecture Tests
+
+on:
+  push:
+    branches:
+      - main
+      - feat/rv64
+    paths:
+      - 'tracer/**'
+  pull_request:
+    branches:
+      - main
+      - feat/rv64
+    paths:
+      - 'tracer/**'
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  arch-tests:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install dependencies
+        run: |
+          make bootstrap
+
+      - name: Setup PATH
+        run: |
+          echo "/opt/riscv/bin" >> $GITHUB_PATH
+
+      - name: Run RV32imac architecture tests      
+        run: make arch-tests-32imac
+
+      - name: Run RV64imac architecture tests
+        run: make arch-tests-64imac

@@ -17,7 +17,7 @@ help:
 
 bootstrap: ## Install required dependencies
 	./scripts/bootstrap
-	./scripts/apply-patches
+	./scripts/apply-patches || true
 
 build-emulator: ## Build the emulator
 	cargo build --release -p tracer --bin jolt-emu
