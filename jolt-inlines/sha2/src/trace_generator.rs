@@ -450,37 +450,37 @@ impl Sha256SequenceBuilder {
     }
 }
 
-const VIRTUAL_REGISTER_COUNT: u64 = 32; //  see Section 6.1 of Jolt paper
-pub const fn virtual_register_index(index: u64) -> u64 {
+const VIRTUAL_REGISTER_COUNT: u8 = 32; //  see Section 6.1 of Jolt paper
+pub const fn virtual_register_index(index: u8) -> u8 {
     index + VIRTUAL_REGISTER_COUNT
 }
 
-// Virtual instructions builder for sha256 - returns empty sequence as XOR is atomic
-pub fn sha2_virtual_sequence_builder(_address: u64, _rs1: u8, _rs2: u8) -> Vec<RV32IMInstruction> {
+// Virtual instructions builder for sha256
+pub fn sha2_virtual_sequence_builder(address: u64, rs1: u8, rs2: u8) -> Vec<RV32IMInstruction> {
     // Virtual registers used as a scratch space
     let mut vr = [0u8; 32];
     (0..32).for_each(|i| {
-        vr[i] = virtual_register_index(i as u64) as u8;
+        vr[i] = virtual_register_index(i as u8);
     });
     let builder = Sha256SequenceBuilder::new(
-        _address, vr, _rs1, _rs2, false, // not initial - uses custom IV from rs2
+        address, vr, rs1, rs2, false, // not initial - uses custom IV from rs2
     );
     builder.build()
 }
 
-// Virtual instructions builder for sha256_init - returns empty sequence as XOR is atomic
+// Virtual instructions builder for sha256_init
 pub fn sha2_init_virtual_sequence_builder(
-    _address: u64,
-    _rs1: u8,
-    _rs2: u8,
+    address: u64,
+    rs1: u8,
+    rs2: u8,
 ) -> Vec<RV32IMInstruction> {
     // Virtual registers used as a scratch space
     let mut vr = [0u8; 32];
     (0..32).for_each(|i| {
-        vr[i] = virtual_register_index(i as u64) as u8;
+        vr[i] = virtual_register_index(i as u8);
     });
     let builder = Sha256SequenceBuilder::new(
-        _address, vr, _rs1, _rs2, true, // initial - uses BLOCK constants
+        address, vr, rs1, rs2, true, // initial - uses BLOCK constants
     );
     builder.build()
 }
