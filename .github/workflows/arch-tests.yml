@@ -2,25 +2,25 @@ name: Architecture Tests
 
 on:
   push:
-    branches:
-      - main
-      - feat/rv64
+    branches: [main]
     paths:
-      - 'tracer/**'
+      - "tracer/**"
   pull_request:
-    branches:
-      - main
-      - feat/rv64
+    branches: ["**", main]
     paths:
-      - 'tracer/**'
+      - "tracer/**"
 
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   arch-tests:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -38,7 +38,7 @@ jobs:
         run: |
           echo "/opt/riscv/bin" >> $GITHUB_PATH
 
-      - name: Run RV32imac architecture tests      
+      - name: Run RV32imac architecture tests
         run: make arch-tests-32imac
 
       - name: Run RV64imac architecture tests
