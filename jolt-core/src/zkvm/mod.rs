@@ -263,6 +263,17 @@ where
         #[cfg(test)]
         let _guard = DoryGlobals::initialize(DTH_ROOT_OF_K, T);
 
+        // Memory layout checks
+        if program_io.memory_layout != preprocessing.shared.memory_layout {
+            return Err(ProofVerifyError::MemoryLayoutMismatch);
+        }
+        if program_io.inputs.len() > preprocessing.shared.memory_layout.max_input_size as usize {
+            return Err(ProofVerifyError::InputTooLarge);
+        }
+        if program_io.outputs.len() > preprocessing.shared.memory_layout.max_output_size as usize {
+            return Err(ProofVerifyError::OutputTooLarge);
+        }
+
         // truncate trailing zeros on device outputs
         program_io.outputs.truncate(
             program_io
