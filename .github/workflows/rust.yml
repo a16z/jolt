@@ -54,7 +54,7 @@ jobs:
         working-directory: ./jolt-core
         run: cargo build --release --target wasm32-unknown-unknown
 
-  test:
+  test-core:
     runs-on: ubuntu-latest
     name: Test jolt-core
     steps:

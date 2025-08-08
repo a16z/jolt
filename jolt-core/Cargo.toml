@@ -29,7 +29,6 @@ parallel = [
     "ark-ff/parallel",
     "ark-std/parallel",
     "ark-ff/asm",
-    "host",
     "rayon",
 ]
 test_incremental = []

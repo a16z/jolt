@@ -3,7 +3,7 @@
 pub const DRAM_BASE: u64 = RAM_START_ADDRESS;
 
 use crate::instruction::{RAMRead, RAMWrite};
-use common::constants::RAM_START_ADDRESS;
+use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
 use common::jolt_device::JoltDevice;
 
 use super::cpu::{get_privilege_mode, PrivilegeMode, Trap, TrapType, Xlen};
@@ -201,17 +201,17 @@ impl Mmu {
                 // These errors aren't necessarily correct as there's no way to distinguish between an
                 // attempt to write to the stack vs heap, but they're trying their best
                 assert!(
-                    ea > layout.stack_end,
-                    "Stack overflow: Attempted to {verb} 0x{ea:X}. Stack too small.\n{layout:#?}",
+                    ea <= layout.stack_end || ea > layout.stack_end + STACK_CANARY_SIZE,
+                    "Stack overflow: Triggered Stack Canary. Attempted to {verb} 0x{ea:X}.\n{layout:#?}",
                 );
                 assert!(
-                    ea <= layout.memory_end,
+                    ea < layout.memory_end,
                     "Heap overflow: Attempted to {verb} 0x{ea:X}. Heap too small.\n{layout:#?}",
                 );
             } else {
                 // allow reads across the whole designated memory region as long as the address is valid
                 assert!(
-                    ea <= layout.memory_end,
+                    ea < layout.memory_end,
                     "Illegal Memory Access: Attempted to {verb} 0x{ea:X}.\n{layout:#?}",
                 );
             }
@@ -1178,5 +1178,63 @@ impl MemoryWrapper {
 
     pub fn validate_address(&self, address: u64) -> bool {
         self.memory.validate_address(address - DRAM_BASE)
+    }
+}
+
+#[cfg(test)]
+mod test_mmu {
+    use super::*;
+    use crate::emulator::terminal::DummyTerminal;
+    use common::constants::DEFAULT_MEMORY_SIZE;
+    use common::jolt_device::MemoryConfig;
+
+    fn setup_mmu() -> Mmu {
+        let terminal = Box::new(DummyTerminal::default());
+        let mut mmu = Mmu::new(Xlen::Bit64, terminal);
+        let memory_config = MemoryConfig {
+            program_size: Some(1024),
+            ..Default::default()
+        };
+        mmu.jolt_device = Some(JoltDevice::new(&memory_config));
+        mmu.init_memory(DEFAULT_MEMORY_SIZE);
+
+        mmu
+    }
+
+    #[test]
+    #[should_panic(expected = "Heap overflow")]
+    fn test_heap_overflow() {
+        let mut mmu = setup_mmu();
+
+        // Try to write beyond the allocated memory
+        let overflow_address = mmu.jolt_device.as_ref().unwrap().memory_layout.memory_end + 1;
+        mmu.trace_store(overflow_address, 0xc50513);
+    }
+
+    #[test]
+    #[should_panic(expected = "Stack Canary")]
+    fn test_stack_overflow() {
+        let mut mmu = setup_mmu();
+
+        let invalid_address = mmu.jolt_device.as_ref().unwrap().memory_layout.stack_end + 1;
+        mmu.trace_store(invalid_address, 0xc50513);
+    }
+
+    #[test]
+    #[should_panic(expected = "I/O underflow")]
+    fn test_io_underflow() {
+        let mut mmu = setup_mmu();
+        let invalid_addr = mmu.jolt_device.as_ref().unwrap().memory_layout.input_start - 1;
+        // illegal write to inputs
+        mmu.store_bytes(invalid_addr, 0xc50513, 2).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "I/O overflow")]
+    fn test_io_overflow() {
+        let mut mmu = setup_mmu();
+        let invalid_addr = mmu.jolt_device.as_ref().unwrap().memory_layout.io_end + 1;
+        // illegal write to inputs
+        mmu.store_bytes(invalid_addr, 0xc50513, 2).unwrap();
     }
 }
