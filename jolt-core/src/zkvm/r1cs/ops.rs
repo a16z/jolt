@@ -84,6 +84,26 @@ impl LC {
             .count()
     }
 
+    /// Evaluate the LC for a given row, returning an i128
+    /// This is to be used for all Az & Bz computations, besides the one(s) associated with the
+    /// product constraint, which may overflow i128
+    pub fn evaluate_row_i128<F: JoltField>(
+        &self,
+        flattened_polynomials: &[MultilinearPolynomial<F>],
+        row: usize,
+    ) -> i128 {
+        self.terms()
+            .iter()
+            .map(|term| match term.0 {
+                Variable::Input(var_index) => {
+                    term.1 * flattened_polynomials[var_index].get_coeff_i128(row)
+                }
+                Variable::Constant => term.1,
+            })
+            .sum()
+    }
+
+    // Evaluate the LC for a given row, returning a field element
     pub fn evaluate_row<F: JoltField>(
         &self,
         flattened_polynomials: &[MultilinearPolynomial<F>],
