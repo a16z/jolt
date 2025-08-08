@@ -5,10 +5,11 @@ use jolt_core::field::tracked_ark::TrackedFr as Fr;
 use jolt_core::field::JoltField;
 use jolt_core::utils::counters::{get_mult_count, reset_mult_count};
 use jolt_core::{
+    poly::eq_poly::EqPolynomial,
     poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     utils::math::Math,
 };
-
+use rayon::prelude::*;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::time::Instant;
@@ -92,8 +93,7 @@ fn benchmark_batch_polynomial_evaluation(batch_size: usize) {
                 // --- Algorithm 1: Dot Product ---
                 reset_mult_count();
                 let start = Instant::now();
-                let evals_eq =
-                    MultilinearPolynomial::batch_evaluate_with_eq(&poly_refs, &eval_point);
+                let evals_eq = batch_evaluate_with_eq(&poly_refs, &eval_point);
                 let time_ms = start.elapsed().as_millis();
                 let mults = get_mult_count();
                 writeln!(
@@ -105,7 +105,7 @@ fn benchmark_batch_polynomial_evaluation(batch_size: usize) {
                 // --- Algorithm 2: Inside/Out ---
                 reset_mult_count();
                 let start = Instant::now();
-                MultilinearPolynomial::batch_evaluate_inside_out(&poly_refs, &eval_point);
+                batch_evaluate_inside_out(&poly_refs, &eval_point);
                 let time_ms = start.elapsed().as_millis();
                 let mults = get_mult_count();
                 writeln!(
@@ -216,6 +216,36 @@ pub fn evaluate_inside_out(poly: &MultilinearPolynomial<Fr>, r: &[Fr]) -> Fr {
         MultilinearPolynomial::OneHot(poly) => poly.evaluate(r),
         _ => unimplemented!("Unsupported MultilinearPolynomial variant"),
     }
+}
+pub fn batch_evaluate_with_eq(polys: &[&MultilinearPolynomial<Fr>], r: &[Fr]) -> Vec<Fr> {
+    let eq = EqPolynomial::evals(r);
+    let evals: Vec<Fr> = polys
+        .into_par_iter()
+        .map(|&poly| match poly {
+            MultilinearPolynomial::LargeScalars(poly) => poly.evaluate_at_chi_low_optimized(&eq),
+            _ => poly.dot_product(&eq),
+        })
+        .collect();
+    evals
+}
+
+pub fn batch_evaluate_inside_out(polys: &[&MultilinearPolynomial<Fr>], r: &[Fr]) -> Vec<Fr> {
+    let evals: Vec<Fr> = polys
+        .into_par_iter()
+        .map(|&poly| match poly {
+            MultilinearPolynomial::LargeScalars(poly) => poly.inside_out_evaluate(r),
+            MultilinearPolynomial::U8Scalars(poly) => poly.inside_out_evaluate(r),
+            MultilinearPolynomial::U16Scalars(poly) => poly.inside_out_evaluate(r),
+            MultilinearPolynomial::U32Scalars(poly) => poly.inside_out_evaluate(r),
+            MultilinearPolynomial::U64Scalars(poly) => poly.inside_out_evaluate(r),
+            MultilinearPolynomial::I64Scalars(poly) => poly.inside_out_evaluate(r),
+            _ => {
+                let eq = EqPolynomial::evals(r);
+                poly.dot_product(&eq)
+            }
+        })
+        .collect();
+    evals
 }
 
 fn main() {

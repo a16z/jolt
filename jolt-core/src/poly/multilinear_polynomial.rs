@@ -583,42 +583,6 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
     }
 }
 
-impl<F: JoltField> MultilinearPolynomial<F> {
-    #[tracing::instrument(skip_all, name = "MultilinearPolynomial::batch_evaluate_with_eq")]
-    pub fn batch_evaluate_with_eq(polys: &[&Self], r: &[F]) -> Vec<F> {
-        let eq = EqPolynomial::evals(r);
-        let evals: Vec<F> = polys
-            .into_par_iter()
-            .map(|&poly| match poly {
-                MultilinearPolynomial::LargeScalars(poly) => {
-                    poly.evaluate_at_chi_low_optimized(&eq)
-                }
-                _ => poly.dot_product(&eq),
-            })
-            .collect();
-        evals
-    }
-
-    #[tracing::instrument(skip_all, name = "MultilinearPolynomial::batch_evaluate_inside_out")]
-    pub fn batch_evaluate_inside_out(polys: &[&Self], r: &[F]) -> Vec<F> {
-        let evals: Vec<F> = polys
-            .into_par_iter()
-            .map(|&poly| match poly {
-                MultilinearPolynomial::LargeScalars(poly) => poly.inside_out_evaluate(r),
-                MultilinearPolynomial::U8Scalars(poly) => poly.inside_out_evaluate(r),
-                MultilinearPolynomial::U16Scalars(poly) => poly.inside_out_evaluate(r),
-                MultilinearPolynomial::U32Scalars(poly) => poly.inside_out_evaluate(r),
-                MultilinearPolynomial::U64Scalars(poly) => poly.inside_out_evaluate(r),
-                MultilinearPolynomial::I64Scalars(poly) => poly.inside_out_evaluate(r),
-                _ => {
-                    let eq = EqPolynomial::evals(r);
-                    poly.dot_product(&eq)
-                }
-            })
-            .collect();
-        evals
-    }
-}
 impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::evaluate")]
     fn evaluate(&self, r: &[F]) -> F {
