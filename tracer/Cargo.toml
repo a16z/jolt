@@ -21,7 +21,7 @@ path = "src/main.rs"
 
 [features]
 default = ["std"]
-std = ["common/std", "fnv/std", "object/std", "tracing/std"]
+std = ["common/std", "fnv/std", "object/std", "tracing/std", "postcard/use-std"]
 
 [dependencies]
 fnv = { version = "1.0.7", default-features = false }
@@ -44,4 +44,6 @@ itertools = "0.10.0"
 tracing-subscriber = "0.3"
 clap = { version = "4.4", features = ["derive"] }
 common = { path = "../common", default-features = false }
+postcard = { version = "1.0.8", default-features = false }
 lazy_static = "1.4"
+

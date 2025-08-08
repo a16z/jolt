@@ -23,6 +23,7 @@ use object::{Object, ObjectSection, SectionKind};
 
 pub mod emulator;
 pub mod instruction;
+pub mod utils;
 
 pub use common::jolt_device::JoltDevice;
 pub use instruction::inline::{list_registered_inlines, register_inline};
@@ -78,6 +79,34 @@ pub fn trace(
     let trace: Vec<RV32IMCycle> = lazy_trace_iter.by_ref().collect();
     let final_memory_state = std::mem::take(lazy_trace_iter.final_memory_state.as_mut().unwrap());
     (trace, final_memory_state, lazy_trace_iter.get_jolt_device())
+}
+use crate::utils::trace_writer::{TraceBatchCollector, TraceWriter, TraceWriterConfig};
+
+pub fn trace_to_file(
+    elf_contents: Vec<u8>,
+    inputs: &[u8],
+    memory_config: &MemoryConfig,
+    out_path: &std::path::PathBuf,
+) -> (Memory, JoltDevice) {
+    let config = TraceWriterConfig::default();
+
+    let writer =
+        TraceWriter::<RV32IMCycle>::new(out_path, config).expect("Failed to create trace writer");
+    let mut collector = TraceBatchCollector::new(writer);
+    let mut lazy = LazyTraceIterator::new(setup_emulator(elf_contents, inputs, memory_config));
+
+    for cycle in &mut lazy {
+        collector.push(cycle);
+    }
+
+    let total = collector
+        .finalize()
+        .expect("Failed to finalize trace writer");
+
+    println!("trace length: {total} cycles");
+
+    let final_mem = lazy.final_memory_state.take().unwrap();
+    (final_mem, lazy.get_jolt_device())
 }
 
 #[tracing::instrument(skip_all)]

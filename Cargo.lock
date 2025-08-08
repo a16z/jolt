@@ -4065,6 +4065,7 @@ dependencies = [
  "lazy_static",
  "object",
  "paste",
+ "postcard",
  "rand 0.7.3",
  "serde",
  "serde_json",

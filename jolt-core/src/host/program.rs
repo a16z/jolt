@@ -192,6 +192,26 @@ impl Program {
         tracer::trace(elf_contents, inputs, &memory_config)
     }
 
+    #[tracing::instrument(skip_all, name = "Program::trace_to_file")]
+    pub fn trace_to_file(&mut self, inputs: &[u8], trace_file: &PathBuf) -> (Memory, JoltDevice) {
+        self.build(DEFAULT_TARGET_DIR);
+        let elf = self.elf.as_ref().unwrap();
+        let mut elf_file =
+            File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
+        let mut elf_contents = Vec::new();
+        elf_file.read_to_end(&mut elf_contents).unwrap();
+        let (_, _, program_end) = tracer::decode(&elf_contents);
+        let program_size = program_end - RAM_START_ADDRESS;
+        let memory_config = MemoryConfig {
+            memory_size: self.memory_size,
+            stack_size: self.stack_size,
+            max_input_size: self.max_input_size,
+            max_output_size: self.max_output_size,
+            program_size: Some(program_size),
+        };
+        tracer::trace_to_file(elf_contents, inputs, &memory_config, trace_file)
+    }
+
     pub fn trace_analyze<F: JoltField>(mut self, inputs: &[u8]) -> ProgramSummary {
         let (bytecode, init_memory_state, _) = self.decode();
         let (trace, _, io_device) = self.trace(inputs);
