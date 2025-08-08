@@ -17,15 +17,6 @@ pub struct HalfwordAlignFormat {
     pub imm: i64,
 }
 
-impl From<NormalizedOperands> for HalfwordAlignFormat {
-    fn from(operands: NormalizedOperands) -> Self {
-        Self {
-            rs1: operands.rs1,
-            imm: operands.imm as i64,
-        }
-    }
-}
-
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HalfwordAlignRegisterState {
     pub rs1: u64,
@@ -64,13 +55,24 @@ impl InstructionFormat for HalfwordAlignFormat {
             imm: rng.next_u64() as i64,
         }
     }
+}
 
-    fn normalize(&self) -> NormalizedOperands {
-        NormalizedOperands {
-            rs1: self.rs1,
+impl From<NormalizedOperands> for HalfwordAlignFormat {
+    fn from(operands: NormalizedOperands) -> Self {
+        Self {
+            rs1: operands.rs1,
+            imm: operands.imm as i64,
+        }
+    }
+}
+
+impl From<HalfwordAlignFormat> for NormalizedOperands {
+    fn from(format: HalfwordAlignFormat) -> Self {
+        Self {
+            rs1: format.rs1,
             rs2: 0,
             rd: 0,
-            imm: self.imm as i128,
+            imm: format.imm as i128,
         }
     }
 }

@@ -16,16 +16,6 @@ pub struct FormatVirtualRightShiftI {
     pub imm: u64,
 }
 
-impl From<NormalizedOperands> for FormatVirtualRightShiftI {
-    fn from(operands: NormalizedOperands) -> Self {
-        Self {
-            rd: operands.rd,
-            rs1: operands.rs1,
-            imm: operands.imm as u64,
-        }
-    }
-}
-
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RegisterStateFormatVirtualI {
     pub rd: (u64, u64), // (old_value, new_value)
@@ -75,13 +65,25 @@ impl InstructionFormat for FormatVirtualRightShiftI {
             rs1: (rng.next_u64() as u8 % REGISTER_COUNT),
         }
     }
+}
 
-    fn normalize(&self) -> NormalizedOperands {
-        NormalizedOperands {
-            rs1: self.rs1,
+impl From<NormalizedOperands> for FormatVirtualRightShiftI {
+    fn from(operands: NormalizedOperands) -> Self {
+        Self {
+            rd: operands.rd,
+            rs1: operands.rs1,
+            imm: operands.imm as u64,
+        }
+    }
+}
+
+impl From<FormatVirtualRightShiftI> for NormalizedOperands {
+    fn from(format: FormatVirtualRightShiftI) -> Self {
+        Self {
+            rd: format.rd,
+            rs1: format.rs1,
             rs2: 0,
-            rd: self.rd,
-            imm: self.imm as i128,
+            imm: format.imm as i128,
         }
     }
 }

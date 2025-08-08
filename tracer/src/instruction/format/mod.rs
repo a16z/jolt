@@ -22,14 +22,15 @@ pub struct NormalizedOperands {
     pub imm: i128,
 }
 
-pub trait InstructionFormat: Default + Debug {
+pub trait InstructionFormat:
+    Default + Debug + From<NormalizedOperands> + Into<NormalizedOperands>
+{
     type RegisterState: InstructionRegisterState + PartialEq;
 
     fn parse(word: u32) -> Self;
     fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu);
     fn capture_post_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu);
     fn random(rng: &mut StdRng) -> Self;
-    fn normalize(&self) -> NormalizedOperands;
 }
 
 pub trait InstructionRegisterState:

@@ -16,16 +16,6 @@ pub struct FormatS {
     pub imm: i64,
 }
 
-impl From<NormalizedOperands> for FormatS {
-    fn from(operands: NormalizedOperands) -> Self {
-        Self {
-            rs1: operands.rs1,
-            rs2: operands.rs2,
-            imm: operands.imm as i64,
-        }
-    }
-}
-
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RegisterStateFormatS {
     pub rs1: u64,
@@ -84,13 +74,25 @@ impl InstructionFormat for FormatS {
             imm: rng.next_u64() as i64,
         }
     }
+}
 
-    fn normalize(&self) -> NormalizedOperands {
-        NormalizedOperands {
-            rs1: self.rs1,
-            rs2: self.rs2,
+impl From<NormalizedOperands> for FormatS {
+    fn from(operands: NormalizedOperands) -> Self {
+        Self {
+            rs1: operands.rs1,
+            rs2: operands.rs2,
+            imm: operands.imm as i64,
+        }
+    }
+}
+
+impl From<FormatS> for NormalizedOperands {
+    fn from(format: FormatS) -> Self {
+        Self {
+            rs1: format.rs1,
+            rs2: format.rs2,
+            imm: format.imm as i128,
             rd: 0,
-            imm: self.imm as i128,
         }
     }
 }

@@ -311,9 +311,17 @@ pub struct NormalizedInstruction {
     pub address: usize,
     pub operands: NormalizedOperands,
     pub inline_sequence_remaining: Option<u16>,
+    pub is_compressed: bool,
 }
 
-pub trait RISCVInstruction: std::fmt::Debug + Sized + Copy + Into<RV32IMInstruction> {
+pub trait RISCVInstruction:
+    std::fmt::Debug
+    + Sized
+    + Copy
+    + Into<RV32IMInstruction>
+    + From<NormalizedInstruction>
+    + Into<NormalizedInstruction>
+{
     const MASK: u32;
     const MATCH: u32;
 
@@ -322,7 +330,6 @@ pub trait RISCVInstruction: std::fmt::Debug + Sized + Copy + Into<RV32IMInstruct
 
     fn operands(&self) -> &Self::Format;
     fn new(word: u32, address: u64, validate: bool, compressed: bool) -> Self;
-    fn from_normalized(operands: NormalizedOperands, address: u64, compressed: bool) -> Self;
     fn random(rng: &mut StdRng) -> Self {
         Self::new(rng.next_u32(), rng.next_u64(), false, false)
     }
@@ -399,7 +406,7 @@ macro_rules! define_rv32im_enums {
                     RV32IMCycle::NoOp => (0, 0),
                     $(
                         RV32IMCycle::$instr(cycle) => (
-                            cycle.instruction.operands.normalize().rs1,
+                            NormalizedOperands::from(cycle.instruction.operands).rs1,
                             cycle.register_state.rs1_value(),
                         ),
                     )*
@@ -411,7 +418,7 @@ macro_rules! define_rv32im_enums {
                     RV32IMCycle::NoOp => (0, 0),
                     $(
                         RV32IMCycle::$instr(cycle) => (
-                            cycle.instruction.operands.normalize().rs2,
+                            NormalizedOperands::from(cycle.instruction.operands).rs2,
                             cycle.register_state.rs2_value(),
                         ),
                     )*
@@ -423,7 +430,7 @@ macro_rules! define_rv32im_enums {
                     RV32IMCycle::NoOp => (0, 0, 0),
                     $(
                         RV32IMCycle::$instr(cycle) => (
-                            cycle.instruction.operands.normalize().rd,
+                            NormalizedOperands::from(cycle.instruction.operands).rd,
                             cycle.register_state.rd_values().0,
                             cycle.register_state.rd_values().1,
                         ),
@@ -470,17 +477,7 @@ macro_rules! define_rv32im_enums {
             }
 
             pub fn normalize(&self) -> NormalizedInstruction {
-                match self {
-                    RV32IMInstruction::NoOp => Default::default(),
-                    RV32IMInstruction::UNIMPL => Default::default(),
-                    $(
-                        RV32IMInstruction::$instr(instr) => NormalizedInstruction {
-                            address: instr.address as usize,
-                            operands: instr.operands.normalize(),
-                            inline_sequence_remaining: instr.inline_sequence_remaining,
-                        },
-                    )*
-                }
+                self.into()
             }
 
             pub fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
@@ -499,6 +496,23 @@ macro_rules! define_rv32im_enums {
                     RV32IMInstruction::UNIMPL => (),
                     $(
                         RV32IMInstruction::$instr(instr) => {instr.inline_sequence_remaining = remaining;}
+                    )*
+                }
+            }
+        }
+
+        impl From<&RV32IMInstruction> for NormalizedInstruction {
+            fn from(instr: &RV32IMInstruction) -> Self {
+                match instr {
+                    RV32IMInstruction::NoOp => Default::default(),
+                    RV32IMInstruction::UNIMPL => Default::default(),
+                    $(
+                        RV32IMInstruction::$instr(instr) => NormalizedInstruction {
+                            address: instr.address as usize,
+                            operands: instr.operands.into(),
+                            inline_sequence_remaining: instr.inline_sequence_remaining,
+                            is_compressed: instr.is_compressed,
+                        },
                     )*
                 }
             }

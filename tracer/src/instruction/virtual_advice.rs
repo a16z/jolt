@@ -1,10 +1,10 @@
 use rand::{rngs::StdRng, RngCore};
 use serde::{Deserialize, Serialize};
 
-use crate::emulator::cpu::Cpu;
+use crate::{emulator::cpu::Cpu, instruction::NormalizedInstruction};
 
 use super::{
-    format::{format_j::FormatJ, InstructionFormat, NormalizedOperands},
+    format::{format_j::FormatJ, InstructionFormat},
     RISCVInstruction, RISCVTrace,
 };
 
@@ -38,16 +38,6 @@ impl RISCVInstruction for VirtualAdvice {
         panic!("virtual instruction `VirtualAdvice` cannot be built from a machine word");
     }
 
-    fn from_normalized(operands: NormalizedOperands, address: u64, is_compressed: bool) -> Self {
-        Self {
-            address,
-            operands: operands.into(),
-            advice: 0,
-            inline_sequence_remaining: None,
-            is_compressed,
-        }
-    }
-
     fn random(rng: &mut StdRng) -> Self {
         Self {
             address: rng.next_u64(),
@@ -60,6 +50,29 @@ impl RISCVInstruction for VirtualAdvice {
 
     fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
         cpu.x[self.operands.rd as usize] = self.advice as i64;
+    }
+}
+
+impl From<NormalizedInstruction> for VirtualAdvice {
+    fn from(ni: NormalizedInstruction) -> Self {
+        Self {
+            address: ni.address as u64,
+            operands: ni.operands.into(),
+            advice: 0,
+            inline_sequence_remaining: ni.inline_sequence_remaining,
+            is_compressed: ni.is_compressed,
+        }
+    }
+}
+
+impl From<VirtualAdvice> for NormalizedInstruction {
+    fn from(val: VirtualAdvice) -> Self {
+        NormalizedInstruction {
+            address: val.address as usize,
+            operands: val.operands.into(),
+            is_compressed: val.is_compressed,
+            inline_sequence_remaining: val.inline_sequence_remaining,
+        }
     }
 }
 

@@ -15,15 +15,6 @@ pub struct FormatJ {
     pub imm: u64,
 }
 
-impl From<NormalizedOperands> for FormatJ {
-    fn from(operands: NormalizedOperands) -> Self {
-        Self {
-            rd: operands.rd,
-            imm: operands.imm as u64,
-        }
-    }
-}
-
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RegisterStateFormatJ {
     pub rd: (u64, u64), // (old_value, new_value)
@@ -74,13 +65,24 @@ impl InstructionFormat for FormatJ {
             imm: rng.next_u64(),
         }
     }
+}
 
-    fn normalize(&self) -> NormalizedOperands {
-        NormalizedOperands {
+impl From<NormalizedOperands> for FormatJ {
+    fn from(operands: NormalizedOperands) -> Self {
+        Self {
+            rd: operands.rd,
+            imm: operands.imm as u64,
+        }
+    }
+}
+
+impl From<FormatJ> for NormalizedOperands {
+    fn from(format: FormatJ) -> Self {
+        Self {
             rs1: 0,
             rs2: 0,
-            rd: self.rd,
-            imm: self.imm as i128,
+            rd: format.rd,
+            imm: format.imm as i128,
         }
     }
 }

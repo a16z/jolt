@@ -46,6 +46,7 @@ use crate::emulator::cpu::Xlen;
 use crate::instruction::virtual_rotri::VirtualROTRI;
 use crate::instruction::xor::XOR;
 use crate::instruction::xori::XORI;
+use crate::instruction::NormalizedInstruction;
 use crate::instruction::RISCVCycle;
 use crate::instruction::RISCVInstruction;
 use crate::instruction::RISCVTrace;
@@ -118,16 +119,17 @@ impl InstrAssembler {
     ) where
         RISCVCycle<Op>: Into<RV32IMCycle>,
     {
-        self.add_to_sequence(Op::from_normalized(
-            NormalizedOperands {
+        self.add_to_sequence(Op::from(NormalizedInstruction {
+            address: self.address as usize,
+            operands: NormalizedOperands {
                 rd,
                 rs1,
                 rs2,
                 imm: 0,
             },
-            self.address,
-            self.is_compressed,
-        ));
+            is_compressed: self.is_compressed,
+            inline_sequence_remaining: Some(0),
+        }));
     }
 
     /// Emit any I-type instruction (rd, rs1, imm).
@@ -141,16 +143,17 @@ impl InstrAssembler {
     ) where
         RISCVCycle<Op>: Into<RV32IMCycle>,
     {
-        self.add_to_sequence(Op::from_normalized(
-            NormalizedOperands {
+        self.add_to_sequence(Op::from(NormalizedInstruction {
+            address: self.address as usize,
+            operands: NormalizedOperands {
                 rd,
                 rs1,
                 rs2: 0,
                 imm: imm as i128,
             },
-            self.address,
-            self.is_compressed,
-        ));
+            is_compressed: self.is_compressed,
+            inline_sequence_remaining: Some(0),
+        }));
     }
 
     /// Emit any S-type instruction (rs1, rs2, imm).
@@ -164,16 +167,17 @@ impl InstrAssembler {
     ) where
         RISCVCycle<Op>: Into<RV32IMCycle>,
     {
-        self.add_to_sequence(Op::from_normalized(
-            NormalizedOperands {
+        self.add_to_sequence(Op::from(NormalizedInstruction {
+            address: self.address as usize,
+            operands: NormalizedOperands {
                 rd: 0,
                 rs1,
                 rs2,
                 imm: imm as i128,
             },
-            self.address,
-            self.is_compressed,
-        ));
+            is_compressed: self.is_compressed,
+            inline_sequence_remaining: Some(0),
+        }));
     }
 
     /// Emit any Load-type instruction (rd, rs1, imm) - like FormatI but with signed imm.
@@ -187,16 +191,17 @@ impl InstrAssembler {
     ) where
         RISCVCycle<Op>: Into<RV32IMCycle>,
     {
-        self.add_to_sequence(Op::from_normalized(
-            NormalizedOperands {
+        self.add_to_sequence(Op::from(NormalizedInstruction {
+            address: self.address as usize,
+            operands: NormalizedOperands {
                 rd,
                 rs1,
                 rs2: 0,
                 imm: imm as i128,
             },
-            self.address,
-            self.is_compressed,
-        ));
+            is_compressed: self.is_compressed,
+            inline_sequence_remaining: Some(0),
+        }));
     }
 
     /// Emit any B-type instruction (rs1, rs2, imm) - branch instructions.
@@ -207,20 +212,21 @@ impl InstrAssembler {
         &mut self,
         rs1: u8,
         rs2: u8,
-        imm: i128,
+        imm: i64,
     ) where
         RISCVCycle<Op>: Into<RV32IMCycle>,
     {
-        self.add_to_sequence(Op::from_normalized(
-            NormalizedOperands {
+        self.add_to_sequence(Op::from(NormalizedInstruction {
+            address: self.address as usize,
+            operands: NormalizedOperands {
                 rd: 0,
                 rs1,
                 rs2,
-                imm,
+                imm: imm as i128,
             },
-            self.address,
-            self.is_compressed,
-        ));
+            is_compressed: self.is_compressed,
+            inline_sequence_remaining: Some(0),
+        }));
     }
 
     /// Emit any J-type instruction (rd, imm) - jump instructions.
@@ -231,16 +237,17 @@ impl InstrAssembler {
     where
         RISCVCycle<Op>: Into<RV32IMCycle>,
     {
-        self.add_to_sequence(Op::from_normalized(
-            NormalizedOperands {
+        self.add_to_sequence(Op::from(NormalizedInstruction {
+            address: self.address as usize,
+            operands: NormalizedOperands {
                 rd,
                 rs1: 0,
                 rs2: 0,
                 imm: imm as i128,
             },
-            self.address,
-            self.is_compressed,
-        ));
+            is_compressed: self.is_compressed,
+            inline_sequence_remaining: Some(0),
+        }));
     }
 
     /// Emit any U-type instruction (rd, imm) - upper immediate instructions.
@@ -251,16 +258,17 @@ impl InstrAssembler {
     where
         RISCVCycle<Op>: Into<RV32IMCycle>,
     {
-        self.add_to_sequence(Op::from_normalized(
-            NormalizedOperands {
+        self.add_to_sequence(Op::from(NormalizedInstruction {
+            address: self.address as usize,
+            operands: NormalizedOperands {
                 rd,
                 rs1: 0,
                 rs2: 0,
                 imm: imm as i128,
             },
-            self.address,
-            self.is_compressed,
-        ));
+            is_compressed: self.is_compressed,
+            inline_sequence_remaining: Some(0),
+        }));
     }
 
     /// Emit any virtual right shift I-type instruction (rd, rs1, imm).
@@ -275,16 +283,17 @@ impl InstrAssembler {
     ) where
         RISCVCycle<Op>: Into<RV32IMCycle>,
     {
-        self.add_to_sequence(Op::from_normalized(
-            NormalizedOperands {
+        self.add_to_sequence(Op::from(NormalizedInstruction {
+            address: self.address as usize,
+            operands: NormalizedOperands {
                 rd,
                 rs1,
                 rs2: 0,
                 imm: imm as i128,
             },
-            self.address,
-            self.is_compressed,
-        ));
+            is_compressed: self.is_compressed,
+            inline_sequence_remaining: Some(0),
+        }));
     }
 
     /// Emit any virtual right shift R-type instruction (rd, rs1, rs2).
@@ -299,16 +308,17 @@ impl InstrAssembler {
     ) where
         RISCVCycle<Op>: Into<RV32IMCycle>,
     {
-        self.add_to_sequence(Op::from_normalized(
-            NormalizedOperands {
+        self.add_to_sequence(Op::from(NormalizedInstruction {
+            address: self.address as usize,
+            operands: NormalizedOperands {
                 rd,
                 rs1,
                 rs2,
                 imm: 0,
             },
-            self.address,
-            self.is_compressed,
-        ));
+            is_compressed: self.is_compressed,
+            inline_sequence_remaining: Some(0),
+        }));
     }
 
     /// Emit any halfword alignment instruction (rs1, imm).
@@ -322,16 +332,17 @@ impl InstrAssembler {
     ) where
         RISCVCycle<Op>: Into<RV32IMCycle>,
     {
-        self.add_to_sequence(Op::from_normalized(
-            NormalizedOperands {
+        self.add_to_sequence(Op::from(NormalizedInstruction {
+            address: self.address as usize,
+            operands: NormalizedOperands {
                 rd: 0,
                 rs1,
                 rs2: 0,
                 imm: imm as i128,
             },
-            self.address,
-            self.is_compressed,
-        ));
+            is_compressed: self.is_compressed,
+            inline_sequence_remaining: Some(0),
+        }));
     }
 
     /// Generic binary operation with constant folding.
