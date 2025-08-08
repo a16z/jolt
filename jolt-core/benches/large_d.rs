@@ -124,7 +124,6 @@ fn main() {
     let t = 1 << 20;
 
     benchmark_karatsuba_sumcheck::<Fr>(&mut criterion, 16, t);
-    // benchmark_large_d_sumcheck::<15>(&mut criterion, 16, t);
     benchmark_naive_sumcheck::<Fr>(&mut criterion, 16, t);
 
     criterion.final_summary();

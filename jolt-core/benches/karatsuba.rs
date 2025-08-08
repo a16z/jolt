@@ -4,7 +4,7 @@ use criterion::Criterion;
 use jolt_core::{
     field::JoltField,
     subprotocols::{
-        karatsuba::{coeff_kara_16, coeff_kara_32, coeff_kara_8, coeff_naive},
+        karatsuba::{coeff_kara_16, coeff_kara_32, coeff_kara_4, coeff_kara_8, coeff_naive},
         quang_optimization::{prod16, prod8, FieldMulSmall},
     },
 };
@@ -23,6 +23,12 @@ fn quang_optimization_branch<F: FieldMulSmall, const D: usize>(polys: &[(F, F); 
 }
 
 fn karatsuba_branch<F: JoltField, const D: usize>(left: &[F; D], right: &[F; D]) {
+    if D == 4 {
+        coeff_kara_4(
+            left[..4].try_into().unwrap(),
+            right[..4].try_into().unwrap(),
+        );
+    }
     if D == 8 {
         coeff_kara_8(
             left[..8].try_into().unwrap(),
@@ -109,6 +115,9 @@ fn main() {
     let mut criterion = Criterion::default()
         .configure_from_args()
         .warm_up_time(std::time::Duration::from_secs(10));
+
+    benchmark_naive::<Fr, 4>(&mut criterion);
+    benchmark_karatsuba::<Fr, 4>(&mut criterion);
 
     benchmark_naive::<Fr, 8>(&mut criterion);
     benchmark_karatsuba::<Fr, 8>(&mut criterion);
