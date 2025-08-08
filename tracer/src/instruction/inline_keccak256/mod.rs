@@ -199,7 +199,7 @@ impl Keccak256SequenceBuilder {
     fn load_state(&mut self) {
         (0..NUM_LANES).for_each(|i| {
             self.asm
-                .emit_i::<LD>(self.vr[i], self.operand_rs1, (i * 8) as u64)
+                .emit_ld::<LD>(self.vr[i], self.operand_rs1, (i * 8) as i64)
         });
     }
 
