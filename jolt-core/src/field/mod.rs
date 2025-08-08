@@ -77,27 +77,11 @@ pub trait JoltField:
     /// The result will be in Montgomery form (if BN254)
     #[inline(always)]
     fn mul_u64(&self, n: u64) -> Self {
-        if n == 0 || self.is_zero() {
-            Self::zero()
-        } else if n == 1 {
-            *self
-        } else if self.is_one() {
-            Self::from_u64(n)
-        } else {
-            *self * Self::from_u64(n)
-        }
+        *self * Self::from_u64(n)
     }
     #[inline(always)]
     fn mul_i128(&self, n: i128) -> Self {
-        if n == 0 || self.is_zero() {
-            Self::zero()
-        } else if n == 1 {
-            *self
-        } else if self.is_one() {
-            Self::from_i128(n)
-        } else {
-            *self * Self::from_i128(n)
-        }
+        *self * Self::from_i128(n)
     }
 
     fn mul_pow_2(&self, mut pow: usize) -> Self {
