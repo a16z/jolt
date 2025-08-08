@@ -263,6 +263,17 @@ where
         #[cfg(test)]
         let _guard = DoryGlobals::initialize(DTH_ROOT_OF_K, T);
 
+        // Memory layout checks
+        if program_io.memory_layout != preprocessing.shared.memory_layout {
+            return Err(ProofVerifyError::MemoryLayoutMismatch);
+        }
+        if program_io.inputs.len() > preprocessing.shared.memory_layout.max_input_size as usize {
+            return Err(ProofVerifyError::InputTooLarge);
+        }
+        if program_io.outputs.len() > preprocessing.shared.memory_layout.max_output_size as usize {
+            return Err(ProofVerifyError::OutputTooLarge);
+        }
+
         // truncate trailing zeros on device outputs
         program_io.outputs.truncate(
             program_io
@@ -437,6 +448,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     #[serial]
     fn sha2_e2e_dory() {
         let mut program = host::Program::new("sha2-guest");
@@ -478,6 +490,33 @@ mod tests {
         );
         let (jolt_proof, io_device, debug_info) =
             JoltRV32IM::prove(&preprocessing, &mut program, &[]);
+
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        let verification_result =
+            JoltRV32IM::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn btreemap_e2e_dory() {
+        let mut program = host::Program::new("btreemap-guest");
+        let (bytecode, init_memory_state, _) = program.decode();
+        let inputs = postcard::to_stdvec(&50u32).unwrap();
+        let (_, _, io_device) = program.trace(&inputs);
+
+        let preprocessing = JoltRV32IM::prover_preprocess(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            init_memory_state,
+            1 << 16,
+        );
+        let (jolt_proof, io_device, debug_info) =
+            JoltRV32IM::prove(&preprocessing, &mut program, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =

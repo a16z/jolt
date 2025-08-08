@@ -34,8 +34,8 @@ impl KeccakCpuHarness {
 
     /// Create a new harness with initialized memory.
     pub fn new() -> Self {
-        let vr: [usize; NEEDED_REGISTERS] =
-            std::array::from_fn(|i| common::constants::virtual_register_index(i as u64) as usize);
+        let vr =
+            core::array::from_fn(|i| common::constants::virtual_register_index(i as u64) as usize);
 
         Self {
             harness: CpuTestHarness::new(),
@@ -162,8 +162,7 @@ pub fn execute_reference_up_to_step(
 ) -> Keccak256State {
     let mut state = *initial_state;
 
-    #[allow(clippy::needless_range_loop)]
-    for round in 0..=target_round {
+    for (round, constant) in ROUND_CONSTANTS.iter().enumerate().take(target_round + 1) {
         execute_theta(&mut state);
         if round == target_round && target_step == "theta" {
             break;
@@ -179,7 +178,7 @@ pub fn execute_reference_up_to_step(
             break;
         }
 
-        execute_iota(&mut state, ROUND_CONSTANTS[round]);
+        execute_iota(&mut state, *constant);
         if round == target_round && target_step == "iota" {
             break;
         }

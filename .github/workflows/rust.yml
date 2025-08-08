@@ -33,7 +33,7 @@ jobs:
         with:
           components: clippy
       - name: cargo clippy
-        run: cargo clippy --all
+        run: cargo clippy --all --all-targets
 
   machete:
     runs-on: ubuntu-latest
@@ -120,10 +120,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Cache Jolt RISC-V Rust toolchain
+        uses: actions/cache@v4
+        with:
+          key: jolt-rust-toolchain-${{hashFiles('guest-toolchain-tag')}}
+          path: ~/.jolt
       - name: Install Jolt RISC-V Rust toolchain
         run: cargo run install-toolchain
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
       - name: Run verifier tests
-        run: cargo test --release --package jolt-verifier
+        run: cargo nextest run --release -p jolt-verifier --no-fail-fast
 
   # zklean-extractor-tests:
   #   name: ZkLean extractor tests

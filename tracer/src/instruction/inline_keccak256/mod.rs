@@ -551,10 +551,10 @@ mod tests {
         );
 
         // Verify other lanes unchanged
-        #[allow(clippy::needless_range_loop)]
-        for i in 1..NUM_LANES {
-            assert_eq!(state[i], 0, "Iota should only affect first lane");
-        }
+        state
+            .into_iter()
+            .skip(1)
+            .for_each(|s| assert_eq!(s, 0, "Iota should only affect first lane"));
     }
 
     #[test]
@@ -565,6 +565,7 @@ mod tests {
         let round = 1;
         let expected_states = &xkcp_vectors::EXPECTED_AFTER_ROUND1;
 
+        #[allow(clippy::type_complexity)]
         let steps: &[(&str, fn(&mut [u64; NUM_LANES]), [u64; NUM_LANES])] = &[
             ("theta", execute_theta, expected_states.theta),
             ("rho and pi", execute_rho_and_pi, expected_states.rho_pi),
@@ -591,7 +592,7 @@ mod tests {
         let mut builder = Keccak256SequenceBuilder::new(0x0, false, [0; NEEDED_REGISTERS], 0, 0);
         let dest_reg = 0; // dummy register index
         for (value, amount, expected) in TestVectors::get_rotation_test_vectors() {
-            if amount as u32 >= 64 {
+            if amount >= 64 {
                 // Our rotl64 expects amount < 64; vectors use 32,36 which are fine
             }
             let result_val = match builder.asm.rotl64(Imm(value), amount, dest_reg) {

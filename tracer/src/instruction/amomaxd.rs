@@ -11,6 +11,7 @@ use super::virtual_move::VirtualMove;
 use super::xori::XORI;
 use super::RV32IMInstruction;
 use super::VirtualInstructionSequence;
+use crate::instruction::format::format_load::FormatLoad;
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
@@ -90,7 +91,7 @@ impl VirtualInstructionSequence for AMOMAXD {
 
         let ld = LD {
             address: self.address,
-            operands: FormatI {
+            operands: FormatLoad {
                 rd: v_rd,
                 rs1: self.operands.rs1,
                 imm: 0,

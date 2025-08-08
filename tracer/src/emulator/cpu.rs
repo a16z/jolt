@@ -377,8 +377,11 @@ impl Cpu {
         };
 
         let instr = RV32IMInstruction::decode(word, instruction_address, is_compressed)
-            .ok()
-            .unwrap();
+            .unwrap_or_else(|e| {
+                panic!(
+                    "Failed to decode instruction: word=0x{word:08x}, address=0x{instruction_address:x}, compressed={is_compressed}: {e}"
+                )
+            });
 
         if trace.is_none() {
             instr.execute(self);
@@ -520,14 +523,15 @@ impl Cpu {
             let call_id = self.x[10] as u32; // a0
             if call_id == JOLT_CYCLE_TRACK_ECALL_NUM {
                 let marker_ptr = self.x[11] as u32; // a1
-                let event_type = self.x[12] as u32; // a2
+                let marker_len = self.x[12] as u32; // a2
+                let event_type = self.x[13] as u32; // a3
 
                 // Read / update the per-label counters.
                 //
                 // Any fault raised while touching guest memory (e.g. a bad
                 // string pointer) is swallowed here and will manifest as the
                 // usual access-fault on the *next* instruction fetch.
-                let _ = self.handle_jolt_cycle_marker(marker_ptr, event_type);
+                let _ = self.handle_jolt_cycle_marker(marker_ptr, marker_len, event_type);
 
                 return false; // we don't take the trap
             }
@@ -954,10 +958,10 @@ impl Cpu {
         &mut self.mmu
     }
 
-    fn handle_jolt_cycle_marker(&mut self, ptr: u32, event: u32) -> Result<(), Trap> {
+    fn handle_jolt_cycle_marker(&mut self, ptr: u32, len: u32, event: u32) -> Result<(), Trap> {
         match event {
             JOLT_CYCLE_MARKER_START => {
-                let label = self.read_c_string(ptr)?; // guest NUL-string
+                let label = self.read_c_string(ptr, len)?; // guest NUL-string
 
                 // Check if there's already an active marker with the same label
                 let duplicate = self
@@ -1000,15 +1004,17 @@ impl Cpu {
     }
 
     /// Read a NUL-terminated guest string from memory.
-    fn read_c_string(&mut self, mut addr: u32) -> Result<String, Trap> {
-        let mut bytes = Vec::new();
+    fn read_c_string(&mut self, mut addr: u32, len: u32) -> Result<String, Trap> {
+        let mut bytes = Vec::with_capacity(len as usize);
+        let mut remaining_len = len as usize;
         loop {
             let (b, _) = self.mmu.load(addr.into())?;
-            if b == 0 {
+            if b == 0 || remaining_len == 0 {
                 break;
             }
             bytes.push(b);
             addr += 1;
+            remaining_len -= 1;
         }
         Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
@@ -1160,7 +1166,7 @@ mod test_cpu {
     #[test]
     fn tick() {
         let mut cpu = create_cpu();
-        cpu.get_mut_mmu().init_memory(4);
+        cpu.get_mut_mmu().init_memory(16);
         cpu.update_pc(DRAM_BASE);
 
         // Write non-compressed "addi x1, x1, 1" instruction
@@ -1368,9 +1374,9 @@ mod test_cpu {
     }
 
     #[test]
-    fn hardocded_zero() {
+    fn hardcoded_zero() {
         let mut cpu = create_cpu();
-        cpu.get_mut_mmu().init_memory(8);
+        cpu.get_mut_mmu().init_memory(16);
         cpu.update_pc(DRAM_BASE);
 
         // Write non-compressed "addi x0, x0, 1" instruction
@@ -1410,7 +1416,7 @@ mod test_cpu {
         };
 
         assert_eq!(
-            "PC:0000000080000000 00100013 ADDI zero:0,zero:0,1",
+            "PC:0000000080000000 00100013 ADDI",
             cpu.disassemble_next_instruction()
         );
 

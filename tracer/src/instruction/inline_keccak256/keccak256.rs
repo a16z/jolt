@@ -151,8 +151,7 @@ mod tests {
                         &expected_vr_state,
                         &vr_state,
                         &format!(
-                            "test_keccak_exec_trace_intermediate_vr_equal(case={}, round={}, step={})",
-                            description, round, step
+                            "test_keccak_exec_trace_intermediate_vr_equal(case={description}, round={round}, step={step})"
                         ),
                     );
                 }

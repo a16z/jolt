@@ -241,7 +241,7 @@ mod tests {
 
                 assert_eq!(
                     result_exec, result_trace,
-                    "ROTRI(xlen={xlen:?}, val={val:?}): Mismatch between exec and trace"
+                    "ROTRI(xlen={xlen:?}, val={val:?}): Mismatch between exec and trace",
                 );
             }
         }

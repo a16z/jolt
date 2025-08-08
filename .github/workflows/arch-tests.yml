@@ -1,0 +1,56 @@
+name: Architecture Tests
+
+on:
+  push:
+    branches:
+      - "**"
+    paths:
+      - "tracer/**"
+  pull_request:
+    branches:
+      - "**"
+    paths:
+      - "tracer/**"
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  arch-tests:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:24.04
+      options: --user root
+    
+    steps:
+      - name: Install Essential Tools
+        run: |
+          apt-get update && apt-get install -y --no-install-recommends ca-certificates curl make git nodejs
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Mark Git repo as safe
+        run: |
+          git config --global --add safe.directory '*'
+
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install dependencies
+        run: |
+          make bootstrap
+
+      - name: Setup PATH
+        run: |
+          echo "/opt/riscv/bin" >> $GITHUB_PATH
+
+      - name: Run RV32imac architecture tests
+        run: make arch-tests-32imac
+
+      - name: Run RV64imac architecture tests
+        run: make arch-tests-64imac

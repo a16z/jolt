@@ -18,7 +18,7 @@ impl TestVectors {
 
     /// Create a simple arithmetic pattern for testing
     pub fn create_simple_pattern() -> Keccak256State {
-        std::array::from_fn(|i| (i * 3 + 5) as u64)
+        core::array::from_fn(|i| (i * 3 + 5) as u64)
     }
 
     /// Get rotation test vectors
