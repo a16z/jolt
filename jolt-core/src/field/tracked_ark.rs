@@ -1,5 +1,5 @@
 use super::{FieldOps, JoltField};
-use crate::utils::counters::MULT_COUNT;
+use crate::utils::counters::{INVERSE_COUNT, MULT_COUNT};
 use ark_bn254::Fr;
 use ark_ff::UniformRand;
 use ark_ff::{One, Zero};
@@ -166,6 +166,7 @@ impl SubAssign for TrackedFr {
 
 impl MulAssign for TrackedFr {
     fn mul_assign(&mut self, other: Self) {
+        MULT_COUNT.fetch_add(1, Ordering::Relaxed);
         self.0 *= other.0;
     }
 }
@@ -204,13 +205,19 @@ impl<'a> Sum<&'a Self> for TrackedFr {
 
 impl Product for TrackedFr {
     fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
-        iter.fold(Self::one(), |a, b| Self(a.0 * b.0))
+        iter.fold(Self::one(), |a, b| {
+            MULT_COUNT.fetch_add(1, Ordering::Relaxed);
+            Self(a.0 * b.0)
+        })
     }
 }
 
 impl<'a> Product<&'a Self> for TrackedFr {
     fn product<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
-        iter.fold(Self::one(), |a, b| Self(a.0 * b.0))
+        iter.fold(Self::one(), |a, b| {
+            MULT_COUNT.fetch_add(1, Ordering::Relaxed);
+            Self(a.0 * b.0)
+        })
     }
 }
 
@@ -306,6 +313,7 @@ impl JoltField for TrackedFr {
     }
 
     fn inverse(&self) -> Option<Self> {
+        INVERSE_COUNT.fetch_add(1, Ordering::Relaxed);
         self.0.inverse().map(TrackedFr)
     }
 
@@ -325,5 +333,72 @@ impl JoltField for TrackedFr {
     fn mul_i128(&self, n: i128) -> Self {
         MULT_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(self.0.mul_i128(n))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::op_ref)]
+    use crate::field::tracked_ark::TrackedFr as Fr;
+    use crate::field::{JoltField, OptimizedMul};
+    use crate::utils::counters::{
+        get_inverse_count, get_mult_count, reset_inverse_count, reset_mult_count,
+    };
+    use std::ops::MulAssign;
+
+    #[test]
+    fn test_if_trackers_are_working() {
+        reset_mult_count();
+        let a = Fr::from_u8(12);
+        let b = Fr::from_u8(12);
+        let _ = a.mul_0_optimized(b);
+        let num_mults = get_mult_count();
+        assert_eq!(num_mults, 1);
+
+        reset_mult_count();
+        let a = Fr::from_u8(12);
+        let b = Fr::from_u8(12);
+        let _ = a * &b;
+        let num_mults = get_mult_count();
+        assert_eq!(num_mults, 1);
+
+        reset_mult_count();
+        let a = Fr::from_u8(12);
+        let b = Fr::from_u8(12);
+        let _ = &a * b;
+        let num_mults = get_mult_count();
+        assert_eq!(num_mults, 1);
+
+        reset_mult_count();
+        let a = Fr::from_u8(12);
+        let b = Fr::from_u8(12);
+        let _ = &a * &b;
+        let num_mults = get_mult_count();
+        assert_eq!(num_mults, 1);
+
+        reset_mult_count();
+        let a = Fr::from_u8(12);
+        let b = Fr::from_u8(12);
+        let _ = a * b;
+        let num_mults = get_mult_count();
+        assert_eq!(num_mults, 1);
+
+        reset_inverse_count();
+        let mut a = Fr::from_u8(12);
+        let _b = Fr::from_u8(12);
+        let c = a.inverse().unwrap();
+        let num_mults = get_inverse_count();
+        assert_eq!(num_mults, 1);
+
+        reset_mult_count();
+        a.mul_assign(b);
+        let num_mults = get_mult_count();
+        assert_eq!(num_mults, 1);
+
+        reset_mult_count();
+        let vals = [&a, &b, &c];
+        let _: Fr = vals.into_iter().product();
+        let num_mults = get_mult_count();
+        assert_eq!(num_mults, 3);
     }
 }
