@@ -6,7 +6,7 @@ use std::path::PathBuf;
 pub mod analyze;
 #[cfg(feature = "host")]
 pub mod program;
-#[cfg(feature = "host")]
+#[cfg(all(feature = "host", not(target_arch = "wasm32")))]
 pub mod toolchain;
 
 #[derive(Clone)]
