@@ -14,8 +14,8 @@ use super::srli::SRLI;
 use super::virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment;
 use super::virtual_lw::VirtualLW;
 use super::xori::XORI;
-use super::{addi::ADDI, RV32IMInstruction};
 use super::RAMRead;
+use super::{addi::ADDI, RV32IMInstruction};
 use common::constants::virtual_register_index;
 
 use super::{

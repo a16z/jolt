@@ -16,8 +16,8 @@ use super::srl::SRL;
 use super::virtual_assert_word_alignment::VirtualAssertWordAlignment;
 use super::virtual_lw::VirtualLW;
 use super::virtual_sign_extend::VirtualSignExtend;
-use super::{addi::ADDI, RV32IMInstruction};
 use super::RAMRead;
+use super::{addi::ADDI, RV32IMInstruction};
 use common::constants::virtual_register_index;
 
 use super::{format::InstructionFormat, RISCVInstruction, RISCVTrace, RV32IMCycle};

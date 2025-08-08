@@ -9,9 +9,7 @@ use crate::instruction::format::InstructionFormat;
 use crate::instruction::inline_keccak256::{
     execute_keccak_f, Keccak256SequenceBuilder, NEEDED_REGISTERS,
 };
-use crate::instruction::{
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
-};
+use crate::instruction::{RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction};
 
 declare_riscv_instr!(
     name   = KECCAK256,

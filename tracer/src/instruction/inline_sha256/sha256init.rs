@@ -8,9 +8,7 @@ use crate::instruction::format::InstructionFormat;
 use crate::instruction::inline_sha256::{
     execute_sha256_compression_initial, Sha256SequenceBuilder, NEEDED_REGISTERS,
 };
-use crate::instruction::{
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
-};
+use crate::instruction::{RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction};
 
 declare_riscv_instr!(
     name   = SHA256INIT,

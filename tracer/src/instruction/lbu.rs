@@ -5,6 +5,7 @@ use crate::{
     emulator::cpu::{Cpu, Xlen},
 };
 
+use super::addi::ADDI;
 use super::andi::ANDI;
 use super::format::format_load::FormatLoad;
 use super::format::format_r::FormatR;
@@ -14,7 +15,6 @@ use super::slli::SLLI;
 use super::srli::SRLI;
 use super::virtual_lw::VirtualLW;
 use super::xori::XORI;
-use super::addi::ADDI;
 use super::{RAMRead, RV32IMInstruction};
 use common::constants::virtual_register_index;
 
