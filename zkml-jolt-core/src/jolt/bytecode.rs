@@ -1,5 +1,7 @@
 //! Implements the fetch-decode portion of the zkVM.
 
+use std::collections::BTreeMap;
+
 use itertools::Itertools;
 use jolt_core::{
     field::JoltField,
@@ -29,11 +31,31 @@ use crate::jolt::execution_trace::JoltONNXCycle;
 pub struct BytecodePreprocessing {
     pub code_size: usize,
     bytecode: Vec<ONNXInstr>,
+    /// Maps the memory address of each instruction in the bytecode to its "virtual" address.
+    /// See Section 6.1 of the Jolt paper, "Reflecting the program counter". The virtual address
+    /// is the one used to keep track of the next (potentially virtual) instruction to execute.
+    /// Key: (ELF address, virtual sequence index or 0)
+    pub virtual_address_map: BTreeMap<(usize, usize), usize>,
 }
 
 impl BytecodePreprocessing {
     #[tracing::instrument(skip_all, name = "BytecodePreprocessing::preprocess")]
     pub fn preprocess(mut bytecode: Vec<ONNXInstr>) -> Self {
+        let mut virtual_address_map = BTreeMap::new();
+        let mut virtual_address = 1; // Account for no-op instruction prepended to bytecode
+        for instruction in bytecode.iter_mut() {
+            assert_eq!(
+                virtual_address_map.insert(
+                    (
+                        instruction.address,
+                        instruction.virtual_sequence_remaining.unwrap_or(0)
+                    ),
+                    virtual_address
+                ),
+                None
+            );
+            virtual_address += 1;
+        }
         // Bytecode: Prepend a single no-op instruction
         bytecode.insert(0, ONNXInstr::no_op());
 
@@ -43,6 +65,7 @@ impl BytecodePreprocessing {
         Self {
             code_size,
             bytecode,
+            virtual_address_map,
         }
     }
 }

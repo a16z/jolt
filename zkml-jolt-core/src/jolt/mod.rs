@@ -8,6 +8,7 @@ pub mod tensor_heap;
 use crate::jolt::{
     bytecode::{BytecodePreprocessing, BytecodeProof},
     execution_trace::JoltONNXCycle,
+    instruction::{VirtualInstructionSequence, div::DIVInstruction},
     instruction_lookups::LookupsProof,
     r1cs::{
         constraints::{JoltONNXConstraints, R1CSConstraints},
@@ -24,7 +25,10 @@ use jolt_core::{
     },
     utils::{errors::ProofVerifyError, transcript::Transcript},
 };
-use onnx_tracer::{constants::MAX_TENSOR_SIZE, trace_types::ONNXInstr};
+use onnx_tracer::{
+    constants::MAX_TENSOR_SIZE,
+    trace_types::{ONNXInstr, ONNXOpcode},
+};
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 
@@ -93,6 +97,13 @@ where
 {
     #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
     pub fn shared_preprocess(bytecode: Vec<ONNXInstr>) -> JoltSharedPreprocessing {
+        let bytecode = bytecode
+            .into_iter()
+            .flat_map(|instr| match instr.opcode {
+                ONNXOpcode::Div => DIVInstruction::<32>::virtual_sequence(instr),
+                _ => vec![instr],
+            })
+            .collect();
         let bytecode_preprocessing = BytecodePreprocessing::preprocess(bytecode);
         JoltSharedPreprocessing {
             bytecode: bytecode_preprocessing,
