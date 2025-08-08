@@ -25,13 +25,14 @@ declare_riscv_instr!(
 
 impl MULH {
     fn exec(&self, cpu: &mut Cpu, _: &mut <MULH as RISCVInstruction>::RAMAccess) {
-        cpu.x[self.operands.rd] = match cpu.xlen {
-            Xlen::Bit32 => {
-                cpu.sign_extend((cpu.x[self.operands.rs1] * cpu.x[self.operands.rs2]) >> 32)
-            }
+        cpu.x[self.operands.rd as usize] = match cpu.xlen {
+            Xlen::Bit32 => cpu.sign_extend(
+                (cpu.x[self.operands.rs1 as usize] * cpu.x[self.operands.rs2 as usize]) >> 32,
+            ),
             Xlen::Bit64 => {
-                (((cpu.x[self.operands.rs1] as i128) * (cpu.x[self.operands.rs2] as i128)) >> 64)
-                    as i64
+                (((cpu.x[self.operands.rs1 as usize] as i128)
+                    * (cpu.x[self.operands.rs2 as usize] as i128))
+                    >> 64) as i64
             }
         };
     }
@@ -51,12 +52,12 @@ impl RISCVTrace for MULH {
 impl VirtualInstructionSequence for MULH {
     fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
-        let v_sx = virtual_register_index(0) as usize;
-        let v_sy = virtual_register_index(1) as usize;
-        let v_0 = virtual_register_index(2) as usize;
-        let v_1 = virtual_register_index(3) as usize;
-        let v_2 = virtual_register_index(4) as usize;
-        let v_3 = virtual_register_index(5) as usize;
+        let v_sx = virtual_register_index(0);
+        let v_sy = virtual_register_index(1);
+        let v_0 = virtual_register_index(2);
+        let v_1 = virtual_register_index(3);
+        let v_2 = virtual_register_index(4);
+        let v_3 = virtual_register_index(5);
 
         let mut sequence = vec![];
 

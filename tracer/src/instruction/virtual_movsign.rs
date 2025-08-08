@@ -27,8 +27,8 @@ declare_riscv_instr!(
 
 impl VirtualMovsign {
     fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualMovsign as RISCVInstruction>::RAMAccess) {
-        let val = cpu.x[self.operands.rs1] as u64;
-        cpu.x[self.operands.rd] = match cpu.xlen {
+        let val = cpu.x[self.operands.rs1 as usize] as u64;
+        cpu.x[self.operands.rd as usize] = match cpu.xlen {
             Xlen::Bit32 => {
                 if val & SIGN_BIT_32 != 0 {
                     // Should this be ALL_ONES_64?

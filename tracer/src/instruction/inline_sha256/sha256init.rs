@@ -27,7 +27,7 @@ impl SHA256INIT {
         for (i, word) in input.iter_mut().enumerate() {
             *word = cpu
                 .mmu
-                .load_word(cpu.x[self.operands.rs1].wrapping_add((i * 4) as i64) as u64)
+                .load_word(cpu.x[self.operands.rs1 as usize].wrapping_add((i * 4) as i64) as u64)
                 .expect("SHA256INIT: Failed to load input word")
                 .0;
         }
@@ -37,7 +37,7 @@ impl SHA256INIT {
         for (i, &word) in result.iter().enumerate() {
             cpu.mmu
                 .store_word(
-                    cpu.x[self.operands.rs2].wrapping_add((i * 4) as i64) as u64,
+                    cpu.x[self.operands.rs2 as usize].wrapping_add((i * 4) as i64) as u64,
                     word,
                 )
                 .expect("SHA256INIT: Failed to store result");
@@ -59,9 +59,9 @@ impl RISCVTrace for SHA256INIT {
 impl VirtualInstructionSequence for SHA256INIT {
     fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
         // Virtual registers used as a scratch space
-        let mut vr = [0; NEEDED_REGISTERS];
+        let mut vr = [0; NEEDED_REGISTERS as usize];
         (0..NEEDED_REGISTERS).for_each(|i| {
-            vr[i] = virtual_register_index(i as u64) as usize;
+            vr[i as usize] = virtual_register_index(i);
         });
         let builder = Sha256SequenceBuilder::new(
             self.address,

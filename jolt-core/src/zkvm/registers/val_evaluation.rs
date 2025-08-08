@@ -59,7 +59,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
             .par_iter()
             .map(|cycle| {
                 let instr = cycle.instruction().normalize();
-                eq_r_address[instr.operands.rd]
+                eq_r_address[instr.operands.rd as usize]
             })
             .collect();
         let wa = MultilinearPolynomial::from(wa);

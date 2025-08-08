@@ -223,7 +223,7 @@ impl CommittedPolynomial {
                     .map(|cycle| {
                         let flag = cycle.instruction().circuit_flags()
                             [CircuitFlags::WriteLookupOutputToRD as usize];
-                        (cycle.rd_write().0 as u8) * (flag as u8)
+                        (cycle.rd_write().0) * (flag as u8)
                     })
                     .collect();
                 coeffs.into()
@@ -233,7 +233,7 @@ impl CommittedPolynomial {
                     .par_iter()
                     .map(|cycle| {
                         let flag = cycle.instruction().circuit_flags()[CircuitFlags::Jump as usize];
-                        (cycle.rd_write().0 as u8) * (flag as u8)
+                        (cycle.rd_write().0) * (flag as u8)
                     })
                     .collect();
                 coeffs.into()

@@ -55,11 +55,11 @@ struct DataBuffers<F: JoltField> {
 }
 
 struct ReadWriteCheckingProverState<F: JoltField> {
-    addresses: Vec<(usize, usize, usize)>,
+    addresses: Vec<(u8, u8, u8)>,
     chunk_size: usize,
     val_checkpoints: Vec<F>,
     data_buffers: Vec<DataBuffers<F>>,
-    I: Vec<Vec<(usize, usize, F, F)>>,
+    I: Vec<Vec<(usize, u8, F, F)>>,
     A: Vec<F>,
     gruens_eq_r_prime: GruenSplitEqPolynomial<F>,
     inc_cycle: MultilinearPolynomial<F>,
@@ -92,7 +92,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
                 let mut delta = [0; K];
                 for cycle in trace_chunk.iter() {
                     let (k, pre_value, post_value) = cycle.rd_write();
-                    delta[k] += post_value as i128 - pre_value as i128;
+                    delta[k as usize] += post_value as i128 - pre_value as i128;
                 }
                 delta
             })
@@ -148,7 +148,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         let _guard = span.enter();
 
         // Data structure described in Equation (72)
-        let I: Vec<Vec<(usize, usize, F, F)>> = trace
+        let I: Vec<Vec<(usize, u8, F, F)>> = trace
             .par_chunks(chunk_size)
             .enumerate()
             .map(|(chunk_index, trace_chunk)| {
@@ -351,21 +351,21 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
 
                                 let k = addresses[j].0;
                                 unsafe {
-                                    dirty_indices.insert_unchecked(k);
+                                    dirty_indices.insert_unchecked(k as usize);
                                 }
-                                rs1_ra[0][k] += A[j_bound];
+                                rs1_ra[0][k as usize] += A[j_bound];
 
                                 let k = addresses[j].1;
                                 unsafe {
-                                    dirty_indices.insert_unchecked(k);
+                                    dirty_indices.insert_unchecked(k as usize);
                                 }
-                                rs2_ra[0][k] += A[j_bound];
+                                rs2_ra[0][k as usize] += A[j_bound];
 
                                 let k = addresses[j].2;
                                 unsafe {
-                                    dirty_indices.insert_unchecked(k);
+                                    dirty_indices.insert_unchecked(k as usize);
                                 }
-                                rd_wa[0][k] += A[j_bound];
+                                rd_wa[0][k as usize] += A[j_bound];
                             }
 
                             for j in (j_prime + 1) << round..(j_prime + 2) << round {
@@ -373,21 +373,21 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
 
                                 let k = addresses[j].0;
                                 unsafe {
-                                    dirty_indices.insert_unchecked(k);
+                                    dirty_indices.insert_unchecked(k as usize);
                                 }
-                                rs1_ra[1][k] += A[j_bound];
+                                rs1_ra[1][k as usize] += A[j_bound];
 
                                 let k = addresses[j].1;
                                 unsafe {
-                                    dirty_indices.insert_unchecked(k);
+                                    dirty_indices.insert_unchecked(k as usize);
                                 }
-                                rs2_ra[1][k] += A[j_bound];
+                                rs2_ra[1][k as usize] += A[j_bound];
 
                                 let k = addresses[j].2;
                                 unsafe {
-                                    dirty_indices.insert_unchecked(k);
+                                    dirty_indices.insert_unchecked(k as usize);
                                 }
-                                rd_wa[1][k] += A[j_bound];
+                                rd_wa[1][k as usize] += A[j_bound];
                             }
 
                             for k in dirty_indices.ones() {
@@ -399,8 +399,8 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                             loop {
                                 let (row, col, inc_lt, inc) = inc_iter.next().unwrap();
                                 debug_assert_eq!(*row, j_prime);
-                                val_j_r[0][*col] += *inc_lt;
-                                val_j_0[*col] += *inc;
+                                val_j_r[0][*col as usize] += *inc_lt;
+                                val_j_0[*col as usize] += *inc;
                                 if inc_iter.peek().unwrap().0 != j_prime {
                                     break;
                                 }
@@ -413,8 +413,8 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                             for inc in inc_iter {
                                 let (row, col, inc_lt, inc) = *inc;
                                 debug_assert_eq!(row, j_prime + 1);
-                                val_j_r[1][col] += inc_lt;
-                                val_j_0[col] += inc;
+                                val_j_r[1][col as usize] += inc_lt;
+                                val_j_0[col as usize] += inc;
                             }
 
                             let eq_r_prime_eval = gruens_eq_r_prime.E_out_current()[j_prime / 2];
@@ -476,12 +476,12 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
 
                             evals[0] += eq_r_prime_eval
                                 * (rd_inner_sum_evals[0]
-                                    + self.gamma * rs1_inner_sum_evals[0]
-                                    + self.gamma_sqr * rs2_inner_sum_evals[0]);
+                                + self.gamma * rs1_inner_sum_evals[0]
+                                + self.gamma_sqr * rs2_inner_sum_evals[0]);
                             evals[1] += eq_r_prime_eval
                                 * (rd_inner_sum_evals[1]
-                                    + self.gamma * rs1_inner_sum_evals[1]
-                                    + self.gamma_sqr * rs2_inner_sum_evals[1]);
+                                + self.gamma * rs1_inner_sum_evals[1]
+                                + self.gamma_sqr * rs2_inner_sum_evals[1]);
                         });
 
                     evals
@@ -525,21 +525,21 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
 
                                 let k = addresses[j].0;
                                 unsafe {
-                                    dirty_indices.insert_unchecked(k);
+                                    dirty_indices.insert_unchecked(k as usize);
                                 }
-                                rs1_ra[0][k] += A[j_bound];
+                                rs1_ra[0][k as usize] += A[j_bound];
 
                                 let k = addresses[j].1;
                                 unsafe {
-                                    dirty_indices.insert_unchecked(k);
+                                    dirty_indices.insert_unchecked(k as usize);
                                 }
-                                rs2_ra[0][k] += A[j_bound];
+                                rs2_ra[0][k as usize] += A[j_bound];
 
                                 let k = addresses[j].2;
                                 unsafe {
-                                    dirty_indices.insert_unchecked(k);
+                                    dirty_indices.insert_unchecked(k as usize);
                                 }
-                                rd_wa[0][k] += A[j_bound];
+                                rd_wa[0][k as usize] += A[j_bound];
                             }
 
                             for j in (j_prime + 1) << round..(j_prime + 2) << round {
@@ -547,21 +547,21 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
 
                                 let k = addresses[j].0;
                                 unsafe {
-                                    dirty_indices.insert_unchecked(k);
+                                    dirty_indices.insert_unchecked(k as usize);
                                 }
-                                rs1_ra[1][k] += A[j_bound];
+                                rs1_ra[1][k as usize] += A[j_bound];
 
                                 let k = addresses[j].1;
                                 unsafe {
-                                    dirty_indices.insert_unchecked(k);
+                                    dirty_indices.insert_unchecked(k as usize);
                                 }
-                                rs2_ra[1][k] += A[j_bound];
+                                rs2_ra[1][k as usize] += A[j_bound];
 
                                 let k = addresses[j].2;
                                 unsafe {
-                                    dirty_indices.insert_unchecked(k);
+                                    dirty_indices.insert_unchecked(k as usize);
                                 }
-                                rd_wa[1][k] += A[j_bound];
+                                rd_wa[1][k as usize] += A[j_bound];
                             }
 
                             for k in dirty_indices.ones() {
@@ -573,8 +573,8 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                             loop {
                                 let (row, col, inc_lt, inc) = inc_iter.next().unwrap();
                                 debug_assert_eq!(*row, j_prime);
-                                val_j_r[0][*col] += *inc_lt;
-                                val_j_0[*col] += *inc;
+                                val_j_r[0][*col as usize] += *inc_lt;
+                                val_j_0[*col as usize] += *inc;
                                 if inc_iter.peek().unwrap().0 != j_prime {
                                     break;
                                 }
@@ -587,8 +587,8 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                             for inc in inc_iter {
                                 let (row, col, inc_lt, inc) = *inc;
                                 debug_assert_eq!(row, j_prime + 1);
-                                val_j_r[1][col] += inc_lt;
-                                val_j_0[col] += inc;
+                                val_j_r[1][col as usize] += inc_lt;
+                                val_j_0[col as usize] += inc;
                             }
 
                             let x_in = (j_prime / 2) & x_bitmask;
@@ -671,12 +671,12 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
 
                             evals_for_current_E_out[0] += E_in_eval
                                 * (rd_inner_sum_evals[0]
-                                    + self.gamma * rs1_inner_sum_evals[0]
-                                    + self.gamma_sqr * rs2_inner_sum_evals[0]);
+                                + self.gamma * rs1_inner_sum_evals[0]
+                                + self.gamma_sqr * rs2_inner_sum_evals[0]);
                             evals_for_current_E_out[1] += E_in_eval
                                 * (rd_inner_sum_evals[1]
-                                    + self.gamma * rs1_inner_sum_evals[1]
-                                    + self.gamma_sqr * rs2_inner_sum_evals[1]);
+                                + self.gamma * rs1_inner_sum_evals[1]
+                                + self.gamma_sqr * rs2_inner_sum_evals[1]);
                         });
 
                     // Multiply the final running sum by the final value of E_out_eval and add the
@@ -872,7 +872,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
 
             for i in 0..I_chunk.len() {
                 let (j_prime, k, inc_lt, inc) = I_chunk[i];
-                if let Some(bound_index) = bound_indices[k] {
+                if let Some(bound_index) = bound_indices[k as usize] {
                     if I_chunk[bound_index].0 == j_prime / 2 {
                         // Neighbor was already processed
                         debug_assert!(j_prime % 2 == 1);
@@ -890,7 +890,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                 };
 
                 I_chunk[next_bound_index] = (j_prime / 2, k, bound_value, inc);
-                bound_indices[k] = Some(next_bound_index);
+                bound_indices[k as usize] = Some(next_bound_index);
                 next_bound_index += 1;
             }
             I_chunk.truncate(next_bound_index);
@@ -934,7 +934,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                         .iter()
                         .enumerate()
                     {
-                        ra_chunk[*k] += A[j_bound];
+                        ra_chunk[*k as usize] += A[j_bound];
                     }
                 });
             *rs1_ra = Some(MultilinearPolynomial::from(rs1_ra_evals));
@@ -956,7 +956,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                         .iter()
                         .enumerate()
                     {
-                        ra_chunk[*k] += A[j_bound];
+                        ra_chunk[*k as usize] += A[j_bound];
                     }
                 });
             *rs2_ra = Some(MultilinearPolynomial::from(rs2_ra_evals));
@@ -978,7 +978,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                         .iter()
                         .enumerate()
                     {
-                        wa_chunk[*k] += A[j_bound];
+                        wa_chunk[*k as usize] += A[j_bound];
                     }
                 });
             *rd_wa = Some(MultilinearPolynomial::from(rd_wa_evals));
@@ -997,7 +997,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                 .for_each(|(chunk_index, (val_chunk, I_chunk))| {
                     for (j, k, inc_lt, _inc) in I_chunk.iter_mut() {
                         debug_assert_eq!(*j, chunk_index);
-                        val_chunk[*k] += *inc_lt;
+                        val_chunk[*k as usize] += *inc_lt;
                     }
                 });
             *val = Some(MultilinearPolynomial::from(val_evals));
@@ -1139,8 +1139,8 @@ impl<F: JoltField> SumcheckInstance<F> for RegistersReadWriteChecking<F> {
 
         eq_eval_cycle
             * (rd_wa_claim * (inc_claim + val_claim)
-                + self.gamma * rs1_ra_claim * val_claim
-                + self.gamma_sqr * rs2_ra_claim * val_claim)
+            + self.gamma * rs1_ra_claim * val_claim
+            + self.gamma_sqr * rs2_ra_claim * val_claim)
     }
 
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
