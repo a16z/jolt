@@ -16,7 +16,7 @@ use std::process::Command;
 use std::str::FromStr;
 use std::{fs, io};
 use tracer::emulator::memory::Memory;
-use tracer::instruction::RV32IMCycle;
+use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
 
 impl Program {
     pub fn new(guest: &str) -> Self {
