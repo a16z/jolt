@@ -27,3 +27,6 @@ temp_file
 .vscode
 
 *.patch
+
+# python virtual environment
+.venv/

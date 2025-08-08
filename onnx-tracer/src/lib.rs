@@ -44,7 +44,7 @@ use crate::{
     constants::BYTECODE_PREPEND_NOOP,
     graph::{
         model::{Model, NodeType},
-        utilities::{create_const_node, create_input_node, create_polyop_node},
+        utilities::{create_const_node, create_div_node, create_input_node, create_polyop_node},
     },
     tensor::Tensor,
     trace_types::{ONNXCycle, ONNXInstr},
@@ -122,7 +122,7 @@ pub fn model(model_path: &PathBuf) -> Model {
 /// Adds 1 to pc to account for prepended no-op
 pub fn decode_node((pc, node): (&usize, &NodeType)) -> ONNXInstr {
     match node {
-        NodeType::Node(node) => node.decode(*pc + BYTECODE_PREPEND_NOOP),
+        NodeType::Node(node) => node.decode(*pc),
         NodeType::SubGraph { .. } => {
             todo!()
         }
@@ -309,6 +309,163 @@ pub fn custom_addsubmul_model() -> Model {
     // Set inputs and outputs
     model.set_inputs(vec![0]);
     model.set_outputs(vec![(4, NODE_OUTPUT_IDX)]);
+    model
+}
+
+/// # Program in (opcode, inputs) tuple format:
+/// [(0, input, []), (1, add, [0, 0]), (2, sub, [1, 0]), (3, mul, [1, 2]), (4, add, [2, 3]), (5, div, [4]), (6, output, [5])]
+pub fn custom_addsubmuldiv_model() -> Model {
+    const SCALE: i32 = 7;
+    const NODE_OUTPUT_IDX: usize = 0;
+    let out_dims = vec![1, 4];
+    let mut model = Model::default();
+
+    // Create and insert input node
+    let input_node = create_input_node(SCALE, out_dims.clone(), 0, 2);
+    model.insert_node(input_node);
+
+    // Create and insert add node
+    let add_node = create_polyop_node(
+        PolyOp::Add,
+        SCALE,
+        vec![(0, NODE_OUTPUT_IDX), (0, NODE_OUTPUT_IDX)],
+        out_dims.clone(),
+        1,
+        2,
+    );
+    model.insert_node(add_node);
+
+    // Create and insert sub node
+    let sub_node = create_polyop_node(
+        PolyOp::Sub,
+        SCALE,
+        vec![(1, NODE_OUTPUT_IDX), (0, NODE_OUTPUT_IDX)],
+        out_dims.clone(),
+        2,
+        1,
+    );
+    model.insert_node(sub_node);
+
+    // Create and insert mul node
+    let mul_node = create_polyop_node(
+        PolyOp::Mult,
+        SCALE,
+        vec![(1, NODE_OUTPUT_IDX), (2, NODE_OUTPUT_IDX)],
+        out_dims.clone(),
+        3,
+        1,
+    );
+    model.insert_node(mul_node);
+
+    // Create and insert second add node
+    let add_node2 = create_polyop_node(
+        PolyOp::Add,
+        SCALE,
+        vec![(2, NODE_OUTPUT_IDX), (3, NODE_OUTPUT_IDX)],
+        out_dims.clone(),
+        4,
+        1,
+    );
+    model.insert_node(add_node2);
+
+    // Create and insert div node
+    let div_node = create_div_node(
+        2i128,
+        SCALE,
+        vec![(4, NODE_OUTPUT_IDX)],
+        out_dims.clone(),
+        5,
+        1,
+    );
+    model.insert_node(div_node);
+
+    // Set inputs and outputs
+    model.set_inputs(vec![0]);
+    model.set_outputs(vec![(5, NODE_OUTPUT_IDX)]);
+    model
+}
+
+/// # Program in (opcode, inputs) tuple format:
+/// [(0, input, []), (1, add, [0, 0]), (2, sub, [1, 0]), (3, mul, [1, 2]), (4, add, [2, 3]), (5, div, [4]), (6, div, [5]), (7, output, [6])]
+pub fn custom_addsubmuldivdiv_model() -> Model {
+    const SCALE: i32 = 7;
+    const NODE_OUTPUT_IDX: usize = 0;
+    let out_dims = vec![1, 4];
+    let mut model = Model::default();
+
+    // Create and insert input node
+    let input_node = create_input_node(SCALE, out_dims.clone(), 0, 2);
+    model.insert_node(input_node);
+
+    // Create and insert add node
+    let add_node = create_polyop_node(
+        PolyOp::Add,
+        SCALE,
+        vec![(0, NODE_OUTPUT_IDX), (0, NODE_OUTPUT_IDX)],
+        out_dims.clone(),
+        1,
+        2,
+    );
+    model.insert_node(add_node);
+
+    // Create and insert sub node
+    let sub_node = create_polyop_node(
+        PolyOp::Sub,
+        SCALE,
+        vec![(1, NODE_OUTPUT_IDX), (0, NODE_OUTPUT_IDX)],
+        out_dims.clone(),
+        2,
+        1,
+    );
+    model.insert_node(sub_node);
+
+    // Create and insert mul node
+    let mul_node = create_polyop_node(
+        PolyOp::Mult,
+        SCALE,
+        vec![(1, NODE_OUTPUT_IDX), (2, NODE_OUTPUT_IDX)],
+        out_dims.clone(),
+        3,
+        1,
+    );
+    model.insert_node(mul_node);
+
+    // Create and insert second add node
+    let add_node2 = create_polyop_node(
+        PolyOp::Add,
+        SCALE,
+        vec![(2, NODE_OUTPUT_IDX), (3, NODE_OUTPUT_IDX)],
+        out_dims.clone(),
+        4,
+        1,
+    );
+    model.insert_node(add_node2);
+
+    // Create and insert div node
+    let div_node = create_div_node(
+        2i128,
+        SCALE,
+        vec![(4, NODE_OUTPUT_IDX)],
+        out_dims.clone(),
+        5,
+        1,
+    );
+    model.insert_node(div_node);
+
+    // Create and insert second div node
+    let div_node2 = create_div_node(
+        5i128,
+        SCALE,
+        vec![(5, NODE_OUTPUT_IDX)],
+        out_dims.clone(),
+        6,
+        1,
+    );
+    model.insert_node(div_node2);
+
+    // Set inputs and outputs
+    model.set_inputs(vec![0]);
+    model.set_outputs(vec![(6, NODE_OUTPUT_IDX)]);
     model
 }
 

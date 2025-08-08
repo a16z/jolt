@@ -1,5 +1,8 @@
 use crate::{
-    circuit::ops::{hybrid::HybridOp, lookup::LookupOp, poly::PolyOp, Input, InputType, Op},
+    circuit::{
+        ops::{hybrid::HybridOp, lookup::LookupOp, poly::PolyOp, Input, InputType, Op},
+        utils::F32,
+    },
     graph::{
         model::NodeType,
         node::{Node, Rescaled, SupportedOp},
@@ -1570,6 +1573,26 @@ pub fn create_sigmoid_node(
     create_node(
         SupportedOp::Nonlinear(LookupOp::Sigmoid {
             scale: scale_to_multiplier(out_scale).into(),
+        }),
+        out_scale,
+        inputs,
+        out_dims,
+        idx,
+        num_uses,
+    )
+}
+
+pub fn create_div_node(
+    denom: i128,
+    out_scale: i32,
+    inputs: Vec<(usize, usize)>,
+    out_dims: Vec<usize>,
+    idx: usize,
+    num_uses: usize,
+) -> Node {
+    create_node(
+        SupportedOp::Nonlinear(LookupOp::Div {
+            denom: F32(denom as f32),
         }),
         out_scale,
         inputs,
