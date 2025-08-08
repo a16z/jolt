@@ -45,8 +45,8 @@ impl SH {
         *ram_access = cpu
             .mmu
             .store_halfword(
-                cpu.x[self.operands.rs1].wrapping_add(self.operands.imm) as u64,
-                cpu.x[self.operands.rs2] as u16,
+                cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64,
+                cpu.x[self.operands.rs2 as usize] as u16,
             )
             .ok()
             .unwrap();
@@ -76,12 +76,12 @@ impl VirtualInstructionSequence for SH {
 impl SH {
     fn virtual_sequence_32(&self) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
-        let v_address = virtual_register_index(0) as usize;
-        let v_word_address = virtual_register_index(1) as usize;
-        let v_word = virtual_register_index(2) as usize;
-        let v_shift = virtual_register_index(3) as usize;
-        let v_mask = virtual_register_index(4) as usize;
-        let v_halfword = virtual_register_index(5) as usize;
+        let v_address = virtual_register_index(0);
+        let v_word_address = virtual_register_index(1);
+        let v_word = virtual_register_index(2);
+        let v_shift = virtual_register_index(3);
+        let v_mask = virtual_register_index(4);
+        let v_halfword = virtual_register_index(5);
 
         let mut sequence = vec![];
 
@@ -232,12 +232,12 @@ impl SH {
 
     fn virtual_sequence_64(&self) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
-        let v_address = virtual_register_index(6) as usize;
-        let v_dword_address = virtual_register_index(7) as usize;
-        let v_dword = virtual_register_index(8) as usize;
-        let v_shift = virtual_register_index(9) as usize;
-        let v_mask = virtual_register_index(10) as usize;
-        let v_halfword = virtual_register_index(11) as usize;
+        let v_address = virtual_register_index(6);
+        let v_dword_address = virtual_register_index(7);
+        let v_dword = virtual_register_index(8);
+        let v_shift = virtual_register_index(9);
+        let v_mask = virtual_register_index(10);
+        let v_halfword = virtual_register_index(11);
 
         let mut sequence = vec![];
 

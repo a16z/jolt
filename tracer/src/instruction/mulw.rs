@@ -25,9 +25,9 @@ impl MULW {
         // MULW is an RV64 instruction that multiplies the lower 32 bits of the source registers,
         // placing the sign extension of the lower 32 bits of the result into the destination
         // register.
-        let a = cpu.x[self.operands.rs1] as i32;
-        let b = cpu.x[self.operands.rs2] as i32;
-        cpu.x[self.operands.rd] = a.wrapping_mul(b) as i64;
+        let a = cpu.x[self.operands.rs1 as usize] as i32;
+        let b = cpu.x[self.operands.rs2 as usize] as i32;
+        cpu.x[self.operands.rd as usize] = a.wrapping_mul(b) as i64;
     }
 }
 

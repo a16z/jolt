@@ -36,9 +36,9 @@ impl REMUW {
         // REMW and REMUW are RV64 instructions that provide the corresponding signed and unsigned
         // remainder operations. Both REMW and REMUW always sign-extend the 32-bit result to 64 bits,
         // including on a divide by zero.
-        let dividend = cpu.x[self.operands.rs1] as u32;
-        let divisor = cpu.x[self.operands.rs2] as u32;
-        cpu.x[self.operands.rd] = (if divisor == 0 {
+        let dividend = cpu.x[self.operands.rs1 as usize] as u32;
+        let divisor = cpu.x[self.operands.rs2 as usize] as u32;
+        cpu.x[self.operands.rd as usize] = (if divisor == 0 {
             dividend
         } else {
             dividend.wrapping_rem(divisor)
@@ -49,8 +49,8 @@ impl REMUW {
 impl RISCVTrace for REMUW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
         // REMUW operands
-        let x = cpu.x[self.operands.rs1] as u32;
-        let y = cpu.x[self.operands.rs2] as u32;
+        let x = cpu.x[self.operands.rs1 as usize] as u32;
+        let y = cpu.x[self.operands.rs2 as usize] as u32;
 
         let (quotient, remainder) = match cpu.xlen {
             Xlen::Bit32 => {
@@ -90,12 +90,12 @@ impl RISCVTrace for REMUW {
 impl VirtualInstructionSequence for REMUW {
     fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
-        let v_0 = virtual_register_index(0) as usize;
-        let v_q = virtual_register_index(1) as usize;
-        let v_r = virtual_register_index(2) as usize;
-        let v_qy = virtual_register_index(3) as usize;
-        let v_rs1 = virtual_register_index(4) as usize;
-        let v_rs2 = virtual_register_index(5) as usize;
+        let v_0 = virtual_register_index(0);
+        let v_q = virtual_register_index(1);
+        let v_r = virtual_register_index(2);
+        let v_qy = virtual_register_index(3);
+        let v_rs1 = virtual_register_index(4);
+        let v_rs2 = virtual_register_index(5);
 
         let mut sequence = vec![];
 

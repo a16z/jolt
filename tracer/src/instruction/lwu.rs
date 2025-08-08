@@ -33,10 +33,10 @@ impl LWU {
     fn exec(&self, cpu: &mut Cpu, ram_access: &mut <LWU as RISCVInstruction>::RAMAccess) {
         // The LWU instruction, on the other hand, zero-extends the 32-bit value from memory for
         // RV64I.
-        let address = cpu.x[self.operands.rs1].wrapping_add(self.operands.imm) as u64;
+        let address = cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64;
         let value = cpu.mmu.load_word(address);
 
-        cpu.x[self.operands.rd] = match value {
+        cpu.x[self.operands.rd as usize] = match value {
             Ok((word, memory_read)) => {
                 *ram_access = memory_read;
                 // Zero extension for unsigned word load
@@ -70,10 +70,10 @@ impl VirtualInstructionSequence for LWU {
 impl LWU {
     fn virtual_sequence_64(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
-        let v_address = virtual_register_index(6) as usize;
-        let v_dword_address = virtual_register_index(7) as usize;
-        let v_dword = virtual_register_index(8) as usize;
-        let v_shift = virtual_register_index(9) as usize;
+        let v_address = virtual_register_index(6);
+        let v_dword_address = virtual_register_index(7);
+        let v_dword = virtual_register_index(8);
+        let v_shift = virtual_register_index(9);
 
         let mut sequence = vec![];
 

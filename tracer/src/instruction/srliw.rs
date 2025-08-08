@@ -30,7 +30,8 @@ impl SRLIW {
         // operate on 32-bit values and sign-extend their 32-bit results to 64 bits. SLLIW, SRLIW,
         // and SRAIW encodings with imm[5] ≠ 0 are reserved.
         let shamt = (self.operands.imm & 0x1f) as u32;
-        cpu.x[self.operands.rd] = ((cpu.x[self.operands.rs1] as u32) >> shamt) as i32 as i64;
+        cpu.x[self.operands.rd as usize] =
+            ((cpu.x[self.operands.rs1 as usize] as u32) >> shamt) as i32 as i64;
     }
 }
 
@@ -47,7 +48,7 @@ impl RISCVTrace for SRLIW {
 
 impl VirtualInstructionSequence for SRLIW {
     fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let v_rs1 = virtual_register_index(0) as usize;
+        let v_rs1 = virtual_register_index(0);
         let mut sequence = vec![];
 
         let slli = SLLI {

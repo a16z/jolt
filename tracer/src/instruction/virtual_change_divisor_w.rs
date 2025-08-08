@@ -26,12 +26,12 @@ impl VirtualChangeDivisorW {
                 panic!("VirtualChangeDivisorW is invalid in 32b mode");
             }
             Xlen::Bit64 => {
-                let remainder = cpu.x[self.operands.rs1] as i32;
-                let divisor = cpu.x[self.operands.rs2] as i32;
+                let remainder = cpu.x[self.operands.rs1 as usize] as i32;
+                let divisor = cpu.x[self.operands.rs2 as usize] as i32;
                 if remainder == i32::MIN && divisor == -1 {
-                    cpu.x[self.operands.rd] = 1;
+                    cpu.x[self.operands.rd as usize] = 1;
                 } else {
-                    cpu.x[self.operands.rd] = divisor as i64;
+                    cpu.x[self.operands.rd as usize] = divisor as i64;
                 }
             }
         }

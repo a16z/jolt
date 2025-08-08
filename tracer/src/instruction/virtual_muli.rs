@@ -20,8 +20,8 @@ declare_riscv_instr!(
 
 impl VirtualMULI {
     fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualMULI as RISCVInstruction>::RAMAccess) {
-        cpu.x[self.operands.rd] =
-            cpu.sign_extend(cpu.x[self.operands.rs1].wrapping_mul(self.operands.imm as i64))
+        cpu.x[self.operands.rd as usize] = cpu
+            .sign_extend(cpu.x[self.operands.rs1 as usize].wrapping_mul(self.operands.imm as i64))
     }
 }
 

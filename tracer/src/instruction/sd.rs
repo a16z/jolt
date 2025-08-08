@@ -24,8 +24,8 @@ impl SD {
         *ram_access = cpu
             .mmu
             .store_doubleword(
-                cpu.x[self.operands.rs1].wrapping_add(self.operands.imm) as u64,
-                cpu.x[self.operands.rs2] as u64,
+                cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64,
+                cpu.x[self.operands.rs2 as usize] as u64,
             )
             .ok()
             .unwrap();

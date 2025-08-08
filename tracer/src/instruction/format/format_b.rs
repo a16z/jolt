@@ -11,8 +11,8 @@ use super::{
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatB {
-    pub rs1: usize,
-    pub rs2: usize,
+    pub rs1: u8,
+    pub rs2: u8,
     pub imm: i128,
 }
 
@@ -44,8 +44,8 @@ impl InstructionFormat for FormatB {
 
     fn parse(word: u32) -> Self {
         FormatB {
-            rs1: ((word >> 15) & 0x1f) as usize, // [19:15]
-            rs2: ((word >> 20) & 0x1f) as usize, // [24:20]
+            rs1: ((word >> 15) & 0x1f) as u8, // [19:15]
+            rs2: ((word >> 20) & 0x1f) as u8, // [24:20]
             imm: (
                 match word & 0x80000000 { // imm[31:12] = [31]
 				0x80000000 => 0xfffff000,
@@ -60,8 +60,8 @@ impl InstructionFormat for FormatB {
     }
 
     fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
-        state.rs1 = normalize_register_value(cpu.x[self.rs1], &cpu.xlen);
-        state.rs2 = normalize_register_value(cpu.x[self.rs2], &cpu.xlen);
+        state.rs1 = normalize_register_value(cpu.x[self.rs1 as usize], &cpu.xlen);
+        state.rs2 = normalize_register_value(cpu.x[self.rs2 as usize], &cpu.xlen);
     }
 
     fn capture_post_execution_state(&self, _: &mut Self::RegisterState, _: &mut Cpu) {
@@ -71,8 +71,8 @@ impl InstructionFormat for FormatB {
     fn random(rng: &mut StdRng) -> Self {
         Self {
             imm: rng.gen(),
-            rs1: (rng.next_u64() % REGISTER_COUNT) as usize,
-            rs2: (rng.next_u64() % REGISTER_COUNT) as usize,
+            rs1: (rng.next_u64() as u8 % REGISTER_COUNT),
+            rs2: (rng.next_u64() as u8 % REGISTER_COUNT),
         }
     }
 

@@ -42,8 +42,8 @@ impl SW {
         *ram_access = cpu
             .mmu
             .store_word(
-                cpu.x[self.operands.rs1].wrapping_add(self.operands.imm) as u64,
-                cpu.x[self.operands.rs2] as u32,
+                cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64,
+                cpu.x[self.operands.rs2 as usize] as u32,
             )
             .ok()
             .unwrap();
@@ -90,12 +90,12 @@ impl SW {
 
     fn virtual_sequence_64(&self) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
-        let v_address = virtual_register_index(6) as usize;
-        let v_dword_address = virtual_register_index(7) as usize;
-        let v_dword = virtual_register_index(8) as usize;
-        let v_shift = virtual_register_index(9) as usize;
-        let v_mask = virtual_register_index(10) as usize;
-        let v_word = virtual_register_index(11) as usize;
+        let v_address = virtual_register_index(6);
+        let v_dword_address = virtual_register_index(7);
+        let v_dword = virtual_register_index(8);
+        let v_shift = virtual_register_index(9);
+        let v_mask = virtual_register_index(10);
+        let v_word = virtual_register_index(11);
 
         let mut sequence = vec![];
         let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(14);
@@ -164,7 +164,7 @@ impl SW {
         let slli_sequence = slli.virtual_sequence(Xlen::Bit64);
         let slli_sequence_len = slli_sequence.len();
         sequence.extend(slli_sequence);
-        virtual_sequence_remaining -= slli_sequence_len;
+        virtual_sequence_remaining -= slli_sequence_len as u16;
 
         let ori = ORI {
             address: self.address,
@@ -205,7 +205,7 @@ impl SW {
         let sll_mask_sequence = sll_mask.virtual_sequence(Xlen::Bit64);
         let sll_mask_sequence_len = sll_mask_sequence.len();
         sequence.extend(sll_mask_sequence);
-        virtual_sequence_remaining -= sll_mask_sequence_len;
+        virtual_sequence_remaining -= sll_mask_sequence_len as u16;
 
         let sll_value = SLL {
             address: self.address,
@@ -220,7 +220,7 @@ impl SW {
         let sll_value_sequence = sll_value.virtual_sequence(Xlen::Bit64);
         let sll_value_sequence_len = sll_value_sequence.len();
         sequence.extend(sll_value_sequence);
-        virtual_sequence_remaining -= sll_value_sequence_len;
+        virtual_sequence_remaining -= sll_value_sequence_len as u16;
 
         let xor = XOR {
             address: self.address,

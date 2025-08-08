@@ -18,7 +18,7 @@ pub struct VirtualAdvice {
     /// one in the sequence. I.e. if this is the last instruction in the sequence,
     /// `virtual_sequence_remaining` will be Some(0); if this is the penultimate instruction
     /// in the sequence, `virtual_sequence_remaining` will be Some(1); etc.
-    pub virtual_sequence_remaining: Option<usize>,
+    pub virtual_sequence_remaining: Option<u16>,
     pub advice: u64,
     pub is_compressed: bool,
 }
@@ -49,7 +49,7 @@ impl RISCVInstruction for VirtualAdvice {
     }
 
     fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
-        cpu.x[self.operands.rd] = self.advice as i64;
+        cpu.x[self.operands.rd as usize] = self.advice as i64;
     }
 }
 

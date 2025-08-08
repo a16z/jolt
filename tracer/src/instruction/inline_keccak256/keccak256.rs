@@ -28,7 +28,7 @@ impl KECCAK256 {
 
         // 1. Read the 25-lane (200-byte) state from memory pointed to by rs1.
         let mut state = [0u64; 25];
-        let base_addr = cpu.x[self.operands.rs1] as u64;
+        let base_addr = cpu.x[self.operands.rs1 as usize] as u64;
         for (i, lane) in state.iter_mut().enumerate() {
             *lane = cpu
                 .mmu
@@ -65,7 +65,7 @@ impl VirtualInstructionSequence for KECCAK256 {
         // Virtual registers used as a scratch space
         let mut vr = [0; NEEDED_REGISTERS];
         (0..NEEDED_REGISTERS).for_each(|i| {
-            vr[i] = virtual_register_index(i as u64) as usize;
+            vr[i] = virtual_register_index(i as u8);
         });
         let builder = Keccak256SequenceBuilder::new(
             self.address,

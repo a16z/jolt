@@ -60,14 +60,14 @@ impl CpuTestHarness {
     ///
     /// # Panics
     /// Panics if the length of `register_indices` does not match the length of `output`.
-    pub fn read_registers(&self, register_indices: &[usize], output: &mut [u64]) {
+    pub fn read_registers(&self, register_indices: &[u8], output: &mut [u64]) {
         assert_eq!(
             register_indices.len(),
             output.len(),
             "Register indices and output buffer must have the same length"
         );
         for (i, &reg_index) in register_indices.iter().enumerate() {
-            output[i] = self.cpu.x[reg_index] as u64;
+            output[i] = self.cpu.x[reg_index as usize] as u64;
         }
     }
 

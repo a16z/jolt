@@ -69,7 +69,7 @@ const ROTATION_OFFSETS: [[u32; 5]; 5] = [
 #[derive(Clone, Copy)]
 enum Value {
     Imm(u64),
-    Reg(usize),
+    Reg(u8),
 }
 use Value::{Imm, Reg};
 
@@ -95,9 +95,9 @@ struct Keccak256SequenceBuilder {
     address: u64,
     sequence: Vec<RV32IMInstruction>,
     round: u32,
-    vr: [usize; NEEDED_REGISTERS],
-    operand_rs1: usize,
-    _operand_rs2: usize,
+    vr: [u8; NEEDED_REGISTERS],
+    operand_rs1: u8,
+    _operand_rs2: u8,
     /// whether the KECCAK256 instruction was compressed (C extension)
     is_compressed: bool,
 }
@@ -142,9 +142,9 @@ impl Keccak256SequenceBuilder {
     fn new(
         address: u64,
         is_compressed: bool,
-        vr: [usize; NEEDED_REGISTERS],
-        operand_rs1: usize,
-        operand_rs2: usize,
+        vr: [u8; NEEDED_REGISTERS],
+        operand_rs1: u8,
+        operand_rs2: u8,
     ) -> Self {
         Keccak256SequenceBuilder {
             address,
@@ -228,7 +228,7 @@ impl Keccak256SequenceBuilder {
     // --- Lane / Register Helpers ---
 
     /// Get the register index for a given lane in the state matrix.
-    fn lane(&self, x: usize, y: usize) -> usize {
+    fn lane(&self, x: usize, y: usize) -> u8 {
         self.vr[5 * y + x]
     }
 
@@ -302,9 +302,9 @@ impl Keccak256SequenceBuilder {
             for x in 0..5 {
                 // Get the registers for the three input values
                 // A[x,y], A[x+1,y], A[x+2,y]
-                let current = NUM_LANES + self.lane(x, y);
-                let next = NUM_LANES + self.lane((x + 1) % 5, y);
-                let two_next = NUM_LANES + self.lane((x + 2) % 5, y);
+                let current = NUM_LANES as u8 + self.lane(x, y);
+                let next = NUM_LANES as u8 + self.lane((x + 1) % 5, y);
+                let two_next = NUM_LANES as u8 + self.lane((x + 2) % 5, y);
 
                 // Define scratch registers for intermediate results.
                 let not_next_and_two_next = self.vr[65]; // reuse scratch
@@ -334,17 +334,17 @@ impl Keccak256SequenceBuilder {
     // --- 64-bit Arithmetic Helpers ---
 
     /// XOR two 64-bit numbers.
-    fn xor64(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
+    fn xor64(&mut self, rs1: Value, rs2: Value, rd: u8) -> Value {
         self.xor(rs1, rs2, rd)
     }
 
     /// AND two 64-bit numbers.
-    fn and64(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
+    fn and64(&mut self, rs1: Value, rs2: Value, rd: u8) -> Value {
         self.and(rs1, rs2, rd)
     }
 
     /// A & ~B via the ANDN instruction (bit clear).
-    fn andn64(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
+    fn andn64(&mut self, rs1: Value, rs2: Value, rd: u8) -> Value {
         match (rs1, rs2) {
             (Reg(rs1), Reg(rs2)) => {
                 let andn = ANDN {
@@ -367,12 +367,12 @@ impl Keccak256SequenceBuilder {
     }
 
     /// NOT a 64-bit number (by XORing with u64::MAX).
-    fn not64(&mut self, rs1: Value, rd: usize) -> Value {
+    fn not64(&mut self, rs1: Value, rd: u8) -> Value {
         self.xor(rs1, Imm(u64::MAX), rd)
     }
 
     /// Rotate a 64-bit number to the left.
-    fn rotl64(&mut self, rs1: Value, amount: u32, rd: usize) -> Value {
+    fn rotl64(&mut self, rs1: Value, amount: u32, rd: u8) -> Value {
         if amount == 0 {
             // rd = rs1
             return self.xor(rs1, Imm(0), rd);
@@ -393,7 +393,7 @@ impl Keccak256SequenceBuilder {
 
     // --- RV64 Instruction Emitters ---
 
-    fn ld(&mut self, rs1: usize, offset: i64, rd: usize) {
+    fn ld(&mut self, rs1: u8, offset: i64, rd: u8) {
         let ld = LD {
             address: self.address,
             operands: FormatLoad {
@@ -407,7 +407,7 @@ impl Keccak256SequenceBuilder {
         self.sequence.push(ld.into());
     }
 
-    fn sd(&mut self, rs1: usize, rs2: usize, offset: i64) {
+    fn sd(&mut self, rs1: u8, rs2: u8, offset: i64) {
         let sd = SD {
             address: self.address,
             operands: FormatS {
@@ -421,7 +421,7 @@ impl Keccak256SequenceBuilder {
         self.sequence.push(sd.into());
     }
 
-    fn xor(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
+    fn xor(&mut self, rs1: Value, rs2: Value, rd: u8) -> Value {
         match (rs1, rs2) {
             (Reg(rs1), Reg(rs2)) => {
                 let xor = XOR {
@@ -448,7 +448,7 @@ impl Keccak256SequenceBuilder {
         }
     }
 
-    fn and(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
+    fn and(&mut self, rs1: Value, rs2: Value, rd: u8) -> Value {
         match (rs1, rs2) {
             (Reg(rs1), Reg(rs2)) => {
                 let and = AND {
@@ -475,7 +475,7 @@ impl Keccak256SequenceBuilder {
         }
     }
 
-    fn rotri(&mut self, rs1: Value, imm: u64, rd: usize) -> Value {
+    fn rotri(&mut self, rs1: Value, imm: u64, rd: u8) -> Value {
         match rs1 {
             Reg(rs1) => {
                 // This is a virtual instruction. The `imm` field for the format is a bitmask,
@@ -501,7 +501,7 @@ impl Keccak256SequenceBuilder {
             .iter_mut()
             .enumerate()
             .for_each(|(i, instruction)| {
-                instruction.set_virtual_sequence_remaining(Some(len - i - 1));
+                instruction.set_virtual_sequence_remaining(Some((len - i - 1) as u16));
             });
     }
 }

@@ -16,9 +16,9 @@ pub mod format_virtual_right_shift_r;
 
 #[derive(Default)]
 pub struct NormalizedOperands {
-    pub rs1: usize,
-    pub rs2: usize,
-    pub rd: usize,
+    pub rs1: u8,
+    pub rs2: u8,
+    pub rd: u8,
     pub imm: i128,
 }
 

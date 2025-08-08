@@ -22,16 +22,16 @@ impl VirtualROTRI {
         // Rotate right by `shift` respecting current XLEN width (matches ROTRI semantics)
         let rotated = match cpu.xlen {
             Xlen::Bit32 => {
-                let val_32 = cpu.x[self.operands.rs1] as u32;
+                let val_32 = cpu.x[self.operands.rs1 as usize] as u32;
                 val_32.rotate_right(shift) as i64
             }
             Xlen::Bit64 => {
-                let val = cpu.x[self.operands.rs1];
+                let val = cpu.x[self.operands.rs1 as usize];
                 val.rotate_right(shift)
             }
         };
 
-        cpu.x[self.operands.rd] = cpu.sign_extend(rotated);
+        cpu.x[self.operands.rd as usize] = cpu.sign_extend(rotated);
     }
 }
 
@@ -56,8 +56,8 @@ mod tests {
         )
     }
 
-    fn get_rotri(cpu: &mut Cpu, rs1_val: i64, imm: u64, rs1: usize, rd: usize) -> VirtualROTRI {
-        cpu.x[rs1] = rs1_val;
+    fn get_rotri(cpu: &mut Cpu, rs1_val: i64, imm: u64, rs1: u8, rd: u8) -> VirtualROTRI {
+        cpu.x[rs1 as usize] = rs1_val;
         VirtualROTRI {
             address: DRAM_BASE,
             operands: FormatVirtualRightShiftI { rd, rs1, imm },
@@ -66,23 +66,23 @@ mod tests {
         }
     }
 
-    fn trace_and_read_rotri(cpu: &mut Cpu, rs1_val: i64, imm: u64, rs1: usize, rd: usize) -> i64 {
+    fn trace_and_read_rotri(cpu: &mut Cpu, rs1_val: i64, imm: u64, rs1: u8, rd: u8) -> i64 {
         let instruction = get_rotri(cpu, rs1_val, imm, rs1, rd);
         let mut dummy: Vec<crate::instruction::RV32IMCycle> = Vec::new();
         instruction.trace(cpu, Some(&mut dummy));
-        cpu.x[rd]
+        cpu.x[rd as usize]
     }
 
     /// Helper function to execute a VirtualROTRI instruction and return the result.
-    fn exec_and_read_rotri(cpu: &mut Cpu, rs1_val: i64, imm: u64, rs1: usize, rd: usize) -> i64 {
+    fn exec_and_read_rotri(cpu: &mut Cpu, rs1_val: i64, imm: u64, rs1: u8, rd: u8) -> i64 {
         let instruction = get_rotri(cpu, rs1_val, imm, rs1, rd);
         instruction.exec(cpu, &mut ());
-        cpu.x[rd]
+        cpu.x[rd as usize]
     }
 
     #[test]
     fn test_virtual_rotri() {
-        let test_cases: [(i64, u64, usize, usize, i64, &'static str); 8] = [
+        let test_cases: [(i64, u64, u8, u8, i64, &'static str); 8] = [
             // Test Case 1: Simple rotation by 1 bit
             // imm = 0b10 has 1 trailing zero, so rotate right by 1.
             // 0x12345678 rotated right by 1 = 0x091A2B3C

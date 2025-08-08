@@ -12,7 +12,7 @@ use common::constants::virtual_register_index;
 
 use super::{
     format::{format_r::FormatR, InstructionFormat},
-    RAMAtomic, RISCVInstruction, RISCVTrace, RV32IMCycle,
+    RISCVInstruction, RISCVTrace, RV32IMCycle,
 };
 
 declare_riscv_instr!(
@@ -20,38 +20,29 @@ declare_riscv_instr!(
     mask   = 0xf800707f,
     match  = 0x0000202f,
     format = FormatR,
-    ram    = RAMAtomic
+    ram    = ()
 );
 
 impl AMOADDW {
-    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <AMOADDW as RISCVInstruction>::RAMAccess) {
-        let address = cpu.x[self.operands.rs1] as u64;
-        let add_value = cpu.x[self.operands.rs2] as i32;
+    fn exec(&self, cpu: &mut Cpu, _: &mut <AMOADDW as RISCVInstruction>::RAMAccess) {
+        let address = cpu.x[self.operands.rs1 as usize] as u64;
+        let add_value = cpu.x[self.operands.rs2 as usize] as i32;
 
         // Load the original word from memory
         let load_result = cpu.mmu.load_word(address);
         let original_value = match load_result {
-            Ok((word, memory_read)) => {
-                // Store the read access
-                ram_access.read = memory_read;
-                word as i32 as i64
-            }
+            Ok((word, _)) => word as i32 as i64,
             Err(_) => panic!("MMU load error"),
         };
 
         // Add the values and store back to memory
         let new_value = (original_value as i32).wrapping_add(add_value) as u32;
-        let store_result = cpu.mmu.store_word(address, new_value);
-        match store_result {
-            Ok(memory_write) => {
-                // Store the write access
-                ram_access.write = memory_write;
-            }
-            Err(_) => panic!("MMU store error"),
-        }
+        cpu.mmu
+            .store_word(address, new_value)
+            .expect("MMU store error");
 
         // Return the original value
-        cpu.x[self.operands.rd] = original_value;
+        cpu.x[self.operands.rd as usize] = original_value;
     }
 }
 
@@ -77,8 +68,8 @@ impl VirtualInstructionSequence for AMOADDW {
 
 impl AMOADDW {
     fn virtual_sequence_32(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let v_rd = virtual_register_index(7) as usize;
-        let v_rs2 = virtual_register_index(8) as usize;
+        let v_rd = virtual_register_index(7);
+        let v_rs2 = virtual_register_index(8);
 
         let mut sequence = vec![];
         let mut remaining = 4;
@@ -120,13 +111,13 @@ impl AMOADDW {
 
     fn virtual_sequence_64(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
-        let v_mask = virtual_register_index(10) as usize;
-        let v_dword_address = virtual_register_index(11) as usize;
-        let v_dword = virtual_register_index(12) as usize;
-        let v_word = virtual_register_index(13) as usize;
-        let v_shift = virtual_register_index(14) as usize;
-        let v_rd = virtual_register_index(15) as usize;
-        let v_rs2 = virtual_register_index(16) as usize;
+        let v_mask = virtual_register_index(10);
+        let v_dword_address = virtual_register_index(11);
+        let v_dword = virtual_register_index(12);
+        let v_word = virtual_register_index(13);
+        let v_shift = virtual_register_index(14);
+        let v_rd = virtual_register_index(15);
+        let v_rs2 = virtual_register_index(16);
 
         let mut sequence = vec![];
         let mut remaining = 17;
