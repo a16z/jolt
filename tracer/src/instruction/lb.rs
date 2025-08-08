@@ -29,9 +29,9 @@ declare_riscv_instr!(
 
 impl LB {
     fn exec(&self, cpu: &mut Cpu, ram_access: &mut <LB as RISCVInstruction>::RAMAccess) {
-        cpu.x[self.operands.rd] = match cpu
+        cpu.x[self.operands.rd as usize] = match cpu
             .mmu
-            .load(cpu.x[self.operands.rs1].wrapping_add(self.operands.imm) as u64)
+            .load(cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64)
         {
             Ok((byte, memory_read)) => {
                 *ram_access = memory_read;
@@ -56,10 +56,10 @@ impl RISCVTrace for LB {
 impl VirtualInstructionSequence for LB {
     fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
-        let v_address = virtual_register_index(0) as usize;
-        let v_word_address = virtual_register_index(1) as usize;
-        let v_word = virtual_register_index(2) as usize;
-        let v_shift = virtual_register_index(3) as usize;
+        let v_address = virtual_register_index(0);
+        let v_word_address = virtual_register_index(1);
+        let v_word = virtual_register_index(2);
+        let v_shift = virtual_register_index(3);
 
         let mut sequence = vec![];
 

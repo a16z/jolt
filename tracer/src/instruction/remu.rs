@@ -31,9 +31,9 @@ declare_riscv_instr!(
 
 impl REMU {
     fn exec(&self, cpu: &mut Cpu, _: &mut <REMU as RISCVInstruction>::RAMAccess) {
-        let dividend = cpu.unsigned_data(cpu.x[self.operands.rs1]);
-        let divisor = cpu.unsigned_data(cpu.x[self.operands.rs2]);
-        cpu.x[self.operands.rd] = match divisor {
+        let dividend = cpu.unsigned_data(cpu.x[self.operands.rs1 as usize]);
+        let divisor = cpu.unsigned_data(cpu.x[self.operands.rs2 as usize]);
+        cpu.x[self.operands.rd as usize] = match divisor {
             0 => cpu.sign_extend(dividend as i64),
             _ => cpu.sign_extend(dividend.wrapping_rem(divisor) as i64),
         };
@@ -44,23 +44,23 @@ impl RISCVTrace for REMU {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
         let mut virtual_sequence = self.virtual_sequence();
         if let RV32IMInstruction::VirtualAdvice(instr) = &mut virtual_sequence[0] {
-            instr.advice = if cpu.unsigned_data(cpu.x[self.operands.rs2]) == 0 {
+            instr.advice = if cpu.unsigned_data(cpu.x[self.operands.rs2 as usize]) == 0 {
                 match cpu.xlen {
                     Xlen::Bit32 => u32::MAX as u64,
                     Xlen::Bit64 => u64::MAX,
                 }
             } else {
-                cpu.unsigned_data(cpu.x[self.operands.rs1])
-                    / cpu.unsigned_data(cpu.x[self.operands.rs2])
+                cpu.unsigned_data(cpu.x[self.operands.rs1 as usize])
+                    / cpu.unsigned_data(cpu.x[self.operands.rs2 as usize])
             };
         } else {
             panic!("Expected Advice instruction");
         }
         if let RV32IMInstruction::VirtualAdvice(instr) = &mut virtual_sequence[1] {
-            instr.advice = match cpu.unsigned_data(cpu.x[self.operands.rs2]) {
-                0 => cpu.unsigned_data(cpu.x[self.operands.rs1]),
+            instr.advice = match cpu.unsigned_data(cpu.x[self.operands.rs2 as usize]) {
+                0 => cpu.unsigned_data(cpu.x[self.operands.rs1 as usize]),
                 divisor => {
-                    let dividend = cpu.unsigned_data(cpu.x[self.operands.rs1]);
+                    let dividend = cpu.unsigned_data(cpu.x[self.operands.rs1 as usize]);
                     let quotient = dividend / divisor;
                     dividend - quotient * divisor
                 }
@@ -80,10 +80,10 @@ impl RISCVTrace for REMU {
 impl VirtualInstructionSequence for REMU {
     fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
-        let v_0 = virtual_register_index(0) as usize;
-        let v_q = virtual_register_index(1) as usize;
-        let v_r = virtual_register_index(2) as usize;
-        let v_qy = virtual_register_index(3) as usize;
+        let v_0 = virtual_register_index(0);
+        let v_q = virtual_register_index(1);
+        let v_r = virtual_register_index(2);
+        let v_qy = virtual_register_index(3);
 
         let mut sequence = vec![];
 
