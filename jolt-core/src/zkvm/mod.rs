@@ -4,31 +4,27 @@ use std::{
     path::Path,
 };
 
-use ark_bn254::Fr;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::jolt_device::MemoryLayout;
-use rayon::prelude::*;
-use tracer::{
-    instruction::{RV32IMCycle, RV32IMInstruction},
-    JoltDevice,
-};
-
+#[cfg(feature = "prover")]
+use crate::host::Program;
 #[cfg(test)]
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::{
     field::JoltField,
-    host::Program,
     poly::{
         commitment::commitment_scheme::CommitmentScheme, opening_proof::ProverOpeningAccumulator,
     },
     utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
     zkvm::{
         bytecode::BytecodePreprocessing,
-        dag::{jolt_dag::JoltDAG, proof_serialization::JoltProof, state_manager::StateManager},
+        dag::{jolt_dag::JoltDAG, proof_serialization::JoltProof},
         ram::RAMPreprocessing,
         witness::DTH_ROOT_OF_K,
     },
 };
+use ark_bn254::Fr;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use common::jolt_device::MemoryLayout;
+use tracer::{instruction::RV32IMInstruction, JoltDevice};
 
 pub mod bytecode;
 pub mod dag;
@@ -198,6 +194,7 @@ where
     }
 
     #[allow(clippy::type_complexity)]
+    #[cfg(feature = "prover")]
     fn prove(
         preprocessing: &JoltProverPreprocessing<F, PCS>,
         program: &mut Program,
@@ -207,6 +204,10 @@ where
         JoltDevice,
         Option<ProverDebugInfo<F, FS, PCS>>,
     ) {
+        use crate::zkvm::dag::state_manager::StateManager;
+        use rayon::prelude::*;
+        use tracer::instruction::RV32IMCycle;
+
         let (mut trace, final_memory_state, mut program_io) = program.trace(inputs);
         let num_riscv_cycles: usize = trace
             .par_iter()
