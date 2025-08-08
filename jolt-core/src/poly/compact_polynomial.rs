@@ -1,7 +1,7 @@
 use std::ops::Index;
 
 use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
-use crate::field::JoltField;
+use crate::field::{JoltField, OptimizedMul};
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -160,30 +160,16 @@ impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
         let eval: F = (0..eq_one.len())
             .into_par_iter()
             .map(|x1| {
-                if eq_one[x1].is_zero() {
-                    F::zero()
-                } else {
-                    let partial_sum = (0..eq_two.len())
-                        .into_par_iter()
-                        .map(|x2| {
-                            let idx = x1 * eq_two.len() + x2;
-                            if self.coeffs[idx].is_zero() {
-                                F::zero()
-                            } else if self.coeffs[idx].is_one() {
-                                eq_two[x2]
-                            } else {
-                                self.coeffs[idx].field_mul(eq_two[x2])
-                            }
-                        })
-                        .reduce(|| F::zero(), |acc, val| acc + val);
-                    if partial_sum.is_zero() {
-                        F::zero()
-                    } else if partial_sum.is_one() {
-                        eq_one[x1]
-                    } else {
-                        partial_sum * eq_one[x1]
-                    }
-                }
+                let partial_sum = (0..eq_two.len())
+                    .into_par_iter()
+                    .map(|x2| {
+                        let idx = x1 * eq_two.len() + x2;
+                        // field_mul now already checks for 0 and 1 optimisation
+                        // via Jolfield mul_64 method
+                        self.coeffs[idx].field_mul(eq_two[x2])
+                    })
+                    .reduce(|| F::zero(), |acc, val| acc + val);
+                OptimizedMul::mul_01_optimized(partial_sum, eq_one[x1])
             })
             .reduce(|| F::zero(), |acc, val| acc + val);
         eval
@@ -191,29 +177,13 @@ impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
     fn evaluate_split_eq_serial(&self, eq_one: &[F], eq_two: &[F]) -> F {
         let eval: F = (0..eq_one.len())
             .map(|x1| {
-                if eq_one[x1].is_zero() {
-                    F::zero()
-                } else {
-                    let partial_sum = (0..eq_two.len())
-                        .map(|x2| {
-                            let idx = x1 * eq_two.len() + x2;
-                            if self.coeffs[idx].is_zero() {
-                                F::zero()
-                            } else if self.coeffs[idx].is_one() {
-                                eq_two[x2]
-                            } else {
-                                self.coeffs[idx].field_mul(eq_two[x2])
-                            }
-                        })
-                        .fold(F::zero(), |acc, val| acc + val);
-                    if partial_sum.is_zero() {
-                        F::zero()
-                    } else if partial_sum.is_one() {
-                        eq_one[x1]
-                    } else {
-                        partial_sum * eq_one[x1]
-                    }
-                }
+                let partial_sum = (0..eq_two.len())
+                    .map(|x2| {
+                        let idx = x1 * eq_two.len() + x2;
+                        self.coeffs[idx].field_mul(eq_two[x2])
+                    })
+                    .fold(F::zero(), |acc, val| acc + val);
+                OptimizedMul::mul_01_optimized(partial_sum, eq_one[x1])
             })
             .fold(F::zero(), |acc, val| acc + val);
         eval

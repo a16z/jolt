@@ -262,18 +262,14 @@ impl<F: JoltField> DensePolynomial<F> {
         let eval: F = (0..eq_one.len())
             .into_par_iter()
             .map(|x1| {
-                if eq_one[x1].is_zero() {
-                    F::zero()
-                } else {
-                    let partial_sum = (0..eq_two.len())
-                        .into_par_iter()
-                        .map(|x2| {
-                            let idx = x1 * eq_two.len() + x2;
-                            OptimizedMul::mul_01_optimized(eq_two[x2], self.Z[idx])
-                        })
-                        .reduce(|| F::zero(), |acc, val| acc + val);
-                    OptimizedMul::mul_01_optimized(eq_one[x1], partial_sum)
-                }
+                let partial_sum = (0..eq_two.len())
+                    .into_par_iter()
+                    .map(|x2| {
+                        let idx = x1 * eq_two.len() + x2;
+                        OptimizedMul::mul_01_optimized(eq_two[x2], self.Z[idx])
+                    })
+                    .reduce(|| F::zero(), |acc, val| acc + val);
+                OptimizedMul::mul_01_optimized(eq_one[x1], partial_sum)
             })
             .reduce(|| F::zero(), |acc, val| acc + val);
         eval
@@ -282,17 +278,13 @@ impl<F: JoltField> DensePolynomial<F> {
     fn evaluate_split_eq_serial(&self, eq_one: &[F], eq_two: &[F]) -> F {
         let eval: F = (0..eq_one.len())
             .map(|x1| {
-                if eq_one[x1].is_zero() {
-                    F::zero()
-                } else {
-                    let partial_sum = (0..eq_two.len())
-                        .map(|x2| {
-                            let idx = x1 * eq_two.len() + x2;
-                            OptimizedMul::mul_01_optimized(eq_two[x2], self.Z[idx])
-                        })
-                        .fold(F::zero(), |acc, val| acc + val);
-                    OptimizedMul::mul_01_optimized(eq_one[x1], partial_sum)
-                }
+                let partial_sum = (0..eq_two.len())
+                    .map(|x2| {
+                        let idx = x1 * eq_two.len() + x2;
+                        OptimizedMul::mul_01_optimized(eq_two[x2], self.Z[idx])
+                    })
+                    .fold(F::zero(), |acc, val| acc + val);
+                OptimizedMul::mul_01_optimized(eq_one[x1], partial_sum)
             })
             .fold(F::zero(), |acc, val| acc + val);
         eval
