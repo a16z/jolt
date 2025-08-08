@@ -105,11 +105,6 @@ impl InstrAssembler {
         self.sequence.extend(inst.virtual_sequence(self.xlen));
     }
 
-    // #[inline]
-    // pub fn add_to_sequence(&mut self, inst: RV32IMInstruction + VirtualInstructionSequence) {
-    //     self.sequence.extend(inst.virtual_sequence(self.xlen));
-    // }
-
     /// Emit any R-type instruction (rd, rs1, rs2).
     #[track_caller]
     #[inline]
