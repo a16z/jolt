@@ -2,11 +2,13 @@ name: Architecture Tests
 
 on:
   push:
-    branches: [main]
+    branches:
+      - "**"
     paths:
       - "tracer/**"
   pull_request:
-    branches: ["**", main]
+    branches:
+      - "**"
     paths:
       - "tracer/**"
 
@@ -20,12 +22,21 @@ concurrency:
 jobs:
   arch-tests:
     runs-on: ubuntu-latest
-
+    container:
+      image: ubuntu:24.04
+      options: --user root
+    
     steps:
+      - name: Install Essential Tools
+        run: |
+          apt-get update && apt-get install -y --no-install-recommends ca-certificates curl make git nodejs
+
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
+      
+      - name: Mark Git repo as safe
+        run: |
+          git config --global --add safe.directory '*'
 
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1

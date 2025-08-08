@@ -1,7 +1,10 @@
 #!/bin/bash
+
 git submodule update --init --recursive
 
-apt-get update && apt-get install -y --no-install-recommends python3 python3-pip device-tree-compiler gcc-riscv64-unknown-elf binutils-riscv64-unknown-elf
+apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3 python3-pip build-essential device-tree-compiler gcc-riscv64-unknown-elf binutils-riscv64-unknown-elf
+
+mkdir -p ~/.config/pip && printf "[global]\nbreak-system-packages = true\n" > ~/.config/pip/pip.conf
 python3 -m pip install --force-reinstall --upgrade pip
 
 mkdir -p /opt/riscv/
@@ -10,4 +13,5 @@ curl -L "https://github.com/a16z/jolt/releases/download/spike-v1.1.1/spike-1.1.1
 pushd third-party/riscv-arch-test/riscv-ctg && pip3 install -e . && popd
 pushd third-party/riscv-arch-test/riscv-isac && pip3 install -e . && popd
 pip3 install git+https://github.com/riscv/riscof.git@dev
+
 riscof --version
