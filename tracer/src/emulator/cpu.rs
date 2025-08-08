@@ -1166,7 +1166,7 @@ mod test_cpu {
     #[test]
     fn tick() {
         let mut cpu = create_cpu();
-        cpu.get_mut_mmu().init_memory(16);
+        cpu.get_mut_mmu().init_memory(9);
         cpu.update_pc(DRAM_BASE);
 
         // Write non-compressed "addi x1, x1, 1" instruction
@@ -1376,7 +1376,7 @@ mod test_cpu {
     #[test]
     fn hardcoded_zero() {
         let mut cpu = create_cpu();
-        cpu.get_mut_mmu().init_memory(16);
+        cpu.get_mut_mmu().init_memory(9);
         cpu.update_pc(DRAM_BASE);
 
         // Write non-compressed "addi x0, x0, 1" instruction

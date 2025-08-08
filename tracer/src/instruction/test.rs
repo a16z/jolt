@@ -110,7 +110,7 @@ mod tests {
 
             let current = current_remaining.unwrap();
 
-            if (current + index + 1) != expected_remaining {
+            if (current as usize + index + 1) != expected_remaining {
                 return Err(format!(
                     "Invalid remaining at index {}: expected {}, got {}",
                     index,

@@ -11,9 +11,9 @@ use super::{
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatR {
-    pub rd: usize,
-    pub rs1: usize,
-    pub rs2: usize,
+    pub rd: u8,
+    pub rs1: u8,
+    pub rs2: u8,
 }
 
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
@@ -50,27 +50,27 @@ impl InstructionFormat for FormatR {
 
     fn parse(word: u32) -> Self {
         FormatR {
-            rd: ((word >> 7) & 0x1f) as usize,   // [11:7]
-            rs1: ((word >> 15) & 0x1f) as usize, // [19:15]
-            rs2: ((word >> 20) & 0x1f) as usize, // [24:20]
+            rd: ((word >> 7) & 0x1f) as u8,   // [11:7]
+            rs1: ((word >> 15) & 0x1f) as u8, // [19:15]
+            rs2: ((word >> 20) & 0x1f) as u8, // [24:20]
         }
     }
 
     fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
-        state.rs1 = normalize_register_value(cpu.x[self.rs1], &cpu.xlen);
-        state.rs2 = normalize_register_value(cpu.x[self.rs2], &cpu.xlen);
-        state.rd.0 = normalize_register_value(cpu.x[self.rd], &cpu.xlen);
+        state.rs1 = normalize_register_value(cpu.x[self.rs1 as usize], &cpu.xlen);
+        state.rs2 = normalize_register_value(cpu.x[self.rs2 as usize], &cpu.xlen);
+        state.rd.0 = normalize_register_value(cpu.x[self.rd as usize], &cpu.xlen);
     }
 
     fn capture_post_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
-        state.rd.1 = normalize_register_value(cpu.x[self.rd], &cpu.xlen);
+        state.rd.1 = normalize_register_value(cpu.x[self.rd as usize], &cpu.xlen);
     }
 
     fn random(rng: &mut StdRng) -> Self {
         Self {
-            rd: (rng.next_u64() % REGISTER_COUNT) as usize,
-            rs1: (rng.next_u64() % REGISTER_COUNT) as usize,
-            rs2: (rng.next_u64() % REGISTER_COUNT) as usize,
+            rd: (rng.next_u64() as u8 % REGISTER_COUNT),
+            rs1: (rng.next_u64() as u8 % REGISTER_COUNT),
+            rs2: (rng.next_u64() as u8 % REGISTER_COUNT),
         }
     }
     fn from_normalized(operands: NormalizedOperands) -> Self {

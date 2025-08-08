@@ -36,9 +36,9 @@ impl DIVW {
         // DIVW and DIVUW are RV64 instructions that divide the lower 32 bits of rs1 by the lower
         // 32 bits of rs2, treating them as signed and unsigned integers, placing the 32-bit
         // quotient in rd, sign-extended to 64 bits.
-        let dividend = cpu.x[self.operands.rs1] as i32;
-        let divisor = cpu.x[self.operands.rs2] as i32;
-        cpu.x[self.operands.rd] = (if divisor == 0 {
+        let dividend = cpu.x[self.operands.rs1 as usize] as i32;
+        let divisor = cpu.x[self.operands.rs2 as usize] as i32;
+        cpu.x[self.operands.rd as usize] = (if divisor == 0 {
             -1i32
         } else if dividend == i32::MIN && divisor == -1 {
             dividend
@@ -51,8 +51,8 @@ impl DIVW {
 impl RISCVTrace for DIVW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
         // DIVW operands
-        let x = cpu.x[self.operands.rs1] as i32;
-        let y = cpu.x[self.operands.rs2] as i32;
+        let x = cpu.x[self.operands.rs1 as usize] as i32;
+        let y = cpu.x[self.operands.rs2 as usize] as i32;
 
         let (quotient, remainder) = match cpu.xlen {
             Xlen::Bit32 => {
@@ -94,12 +94,12 @@ impl RISCVTrace for DIVW {
 impl VirtualInstructionSequence for DIVW {
     fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
-        let v_0 = virtual_register_index(0) as usize;
-        let v_q = virtual_register_index(1) as usize;
-        let v_r = virtual_register_index(2) as usize;
-        let v_qy = virtual_register_index(3) as usize;
-        let v_rs1 = virtual_register_index(4) as usize;
-        let v_rs2 = virtual_register_index(5) as usize;
+        let v_0 = virtual_register_index(0);
+        let v_q = virtual_register_index(1);
+        let v_r = virtual_register_index(2);
+        let v_qy = virtual_register_index(3);
+        let v_rs1 = virtual_register_index(4);
+        let v_rs2 = virtual_register_index(5);
 
         let mut sequence = vec![];
 

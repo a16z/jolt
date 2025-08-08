@@ -30,13 +30,13 @@ pub fn amo_pre64(
     sequence: &mut Vec<RV32IMInstruction>,
     address: u64,
     is_compressed: bool,
-    rs1: usize,
-    v_rd: usize,
-    v_dword_address: usize,
-    v_dword: usize,
-    v_shift: usize,
-    mut remaining: usize,
-) -> usize {
+    rs1: u8,
+    v_rd: u8,
+    v_dword_address: u8,
+    v_dword: u8,
+    v_shift: u8,
+    mut remaining: u16,
+) -> u16 {
     let assert_alignment = VirtualAssertWordAlignment {
         address,
         operands: HalfwordAlignFormat { rs1, imm: 0 },
@@ -85,7 +85,7 @@ pub fn amo_pre64(
     let slli_sequence = slli.virtual_sequence(Xlen::Bit64);
     let slli_sequence_len = slli_sequence.len();
     sequence.extend(slli_sequence);
-    remaining -= slli_sequence_len;
+    remaining -= slli_sequence_len as u16;
 
     let srl = SRL {
         address,
@@ -100,7 +100,7 @@ pub fn amo_pre64(
     let srl_sequence = srl.virtual_sequence(Xlen::Bit64);
     let srl_sequence_len = srl_sequence.len();
     sequence.extend(srl_sequence);
-    remaining -= srl_sequence_len;
+    remaining -= srl_sequence_len as u16;
 
     remaining
 }
@@ -110,15 +110,15 @@ pub fn amo_post64(
     sequence: &mut Vec<RV32IMInstruction>,
     address: u64,
     is_compressed: bool,
-    rs2: usize,
-    v_dword_address: usize,
-    v_dword: usize,
-    v_shift: usize,
-    v_mask: usize,
-    v_word: usize,
-    rd: usize,
-    v_rd: usize,
-    mut remaining: usize,
+    rs2: u8,
+    v_dword_address: u8,
+    v_dword: u8,
+    v_shift: u8,
+    v_mask: u8,
+    v_word: u8,
+    rd: u8,
+    v_rd: u8,
+    mut remaining: u16,
 ) {
     let ori = ORI {
         address,
@@ -159,7 +159,7 @@ pub fn amo_post64(
     let sll_mask_sequence = sll_mask.virtual_sequence(Xlen::Bit64);
     let sll_mask_sequence_len = sll_mask_sequence.len();
     sequence.extend(sll_mask_sequence);
-    remaining -= sll_mask_sequence_len;
+    remaining -= sll_mask_sequence_len as u16;
 
     let sll_value = SLL {
         address,
@@ -174,7 +174,7 @@ pub fn amo_post64(
     let sll_value_sequence = sll_value.virtual_sequence(Xlen::Bit64);
     let sll_value_sequence_len = sll_value_sequence.len();
     sequence.extend(sll_value_sequence);
-    remaining -= sll_value_sequence_len;
+    remaining -= sll_value_sequence_len as u16;
 
     let xor = XOR {
         address,
@@ -252,10 +252,10 @@ pub fn amo_pre32(
     sequence: &mut Vec<RV32IMInstruction>,
     address: u64,
     is_compressed: bool,
-    rs1: usize,
-    v_rd: usize,
-    mut remaining: usize,
-) -> usize {
+    rs1: u8,
+    v_rd: u8,
+    mut remaining: u16,
+) -> u16 {
     let assert_alignment = VirtualAssertWordAlignment {
         address,
         operands: HalfwordAlignFormat { rs1, imm: 0 },
@@ -286,11 +286,11 @@ pub fn amo_post32(
     sequence: &mut Vec<RV32IMInstruction>,
     address: u64,
     is_compressed: bool,
-    rs2: usize,
-    rs1: usize,
-    rd: usize,
-    v_rd: usize,
-    mut remaining: usize,
+    rs2: u8,
+    rs1: u8,
+    rd: u8,
+    v_rd: u8,
+    mut remaining: u16,
 ) {
     let sw = VirtualSW {
         address,

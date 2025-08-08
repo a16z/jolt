@@ -1,4 +1,5 @@
 #![allow(clippy::upper_case_acronyms)]
+
 use add::ADD;
 use addi::ADDI;
 use addiw::ADDIW;
@@ -271,16 +272,9 @@ pub struct RAMWrite {
     pub post_value: u64,
 }
 
-#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RAMAtomic {
-    pub read: RAMRead,
-    pub write: RAMWrite,
-}
-
 pub enum RAMAccess {
     Read(RAMRead),
     Write(RAMWrite),
-    Atomic(RAMAtomic),
     NoOp,
 }
 
@@ -290,7 +284,6 @@ impl RAMAccess {
             RAMAccess::Read(read) => read.address as usize,
             RAMAccess::Write(write) => write.address as usize,
             RAMAccess::NoOp => 0,
-            RAMAccess::Atomic(atomic) => atomic.read.address as usize,
         }
     }
 }
@@ -313,17 +306,11 @@ impl From<()> for RAMAccess {
     }
 }
 
-impl From<RAMAtomic> for RAMAccess {
-    fn from(atomic: RAMAtomic) -> Self {
-        Self::Atomic(atomic)
-    }
-}
-
 #[derive(Default)]
 pub struct NormalizedInstruction {
     pub address: usize,
     pub operands: NormalizedOperands,
-    pub virtual_sequence_remaining: Option<usize>,
+    pub virtual_sequence_remaining: Option<u16>,
 }
 
 pub trait RISCVInstruction: std::fmt::Debug + Sized + Copy + Into<RV32IMInstruction> {
@@ -403,7 +390,7 @@ macro_rules! define_rv32im_enums {
                 }
             }
 
-            pub fn rs1_read(&self) -> (usize, u64) {
+            pub fn rs1_read(&self) -> (u8, u64) {
                 match self {
                     RV32IMCycle::NoOp => (0, 0),
                     $(
@@ -415,7 +402,7 @@ macro_rules! define_rv32im_enums {
                 }
             }
 
-            pub fn rs2_read(&self) -> (usize, u64) {
+            pub fn rs2_read(&self) -> (u8, u64) {
                 match self {
                     RV32IMCycle::NoOp => (0, 0),
                     $(
@@ -427,7 +414,7 @@ macro_rules! define_rv32im_enums {
                 }
             }
 
-            pub fn rd_write(&self) -> (usize, u64, u64) {
+            pub fn rd_write(&self) -> (u8, u64, u64) {
                 match self {
                     RV32IMCycle::NoOp => (0, 0, 0),
                     $(
@@ -492,7 +479,7 @@ macro_rules! define_rv32im_enums {
                 }
             }
 
-            pub fn set_virtual_sequence_remaining(&mut self, remaining: Option<usize>) {
+            pub fn set_virtual_sequence_remaining(&mut self, remaining: Option<u16>) {
                 match self {
                     RV32IMInstruction::NoOp => (),
                     RV32IMInstruction::UNIMPL => (),
@@ -1438,5 +1425,21 @@ impl<T: RISCVInstruction> RISCVCycle<T> {
             ram_access: Default::default(),
             register_state,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    // Check that the size of RV32IMCycle is as expected.
+    fn rv32im_cycle_size() {
+        let size = size_of::<RV32IMCycle>();
+        let expected = 80;
+        assert_eq!(
+            size, expected,
+            "RV32IMCycle size should be {expected} bytes, but is {size} bytes"
+        );
     }
 }

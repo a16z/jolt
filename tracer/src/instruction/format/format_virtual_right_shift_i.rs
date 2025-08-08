@@ -11,8 +11,8 @@ use super::{
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatVirtualRightShiftI {
-    pub rd: usize,
-    pub rs1: usize,
+    pub rd: u8,
+    pub rs1: u8,
     pub imm: u64,
 }
 
@@ -47,12 +47,12 @@ impl InstructionFormat for FormatVirtualRightShiftI {
     }
 
     fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
-        state.rs1 = normalize_register_value(cpu.x[self.rs1], &cpu.xlen);
-        state.rd.0 = normalize_register_value(cpu.x[self.rd], &cpu.xlen);
+        state.rs1 = normalize_register_value(cpu.x[self.rs1 as usize], &cpu.xlen);
+        state.rd.0 = normalize_register_value(cpu.x[self.rd as usize], &cpu.xlen);
     }
 
     fn capture_post_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
-        state.rd.1 = normalize_register_value(cpu.x[self.rd], &cpu.xlen);
+        state.rd.1 = normalize_register_value(cpu.x[self.rd as usize], &cpu.xlen);
     }
 
     fn random(rng: &mut StdRng) -> Self {
@@ -61,8 +61,8 @@ impl InstructionFormat for FormatVirtualRightShiftI {
         let imm = ones.wrapping_shl(64 - shift);
         Self {
             imm,
-            rd: (rng.next_u64() % REGISTER_COUNT) as usize,
-            rs1: (rng.next_u64() % REGISTER_COUNT) as usize,
+            rd: (rng.next_u64() as u8 % REGISTER_COUNT),
+            rs1: (rng.next_u64() as u8 % REGISTER_COUNT),
         }
     }
 

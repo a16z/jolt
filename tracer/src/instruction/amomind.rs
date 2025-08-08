@@ -20,7 +20,7 @@ use common::constants::virtual_register_index;
 
 use super::{
     format::{format_r::FormatR, InstructionFormat},
-    RAMAtomic, RISCVInstruction, RISCVTrace, RV32IMCycle,
+    RISCVInstruction, RISCVTrace, RV32IMCycle,
 };
 
 declare_riscv_instr!(
@@ -28,22 +28,18 @@ declare_riscv_instr!(
     mask   = 0xf800707f,
     match  = 0x8000302f,
     format = FormatR,
-    ram    = RAMAtomic
+    ram    = ()
 );
 
 impl AMOMIND {
-    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <AMOMIND as RISCVInstruction>::RAMAccess) {
-        let address = cpu.x[self.operands.rs1] as u64;
-        let compare_value = cpu.x[self.operands.rs2];
+    fn exec(&self, cpu: &mut Cpu, _: &mut <AMOMIND as RISCVInstruction>::RAMAccess) {
+        let address = cpu.x[self.operands.rs1 as usize] as u64;
+        let compare_value = cpu.x[self.operands.rs2 as usize];
 
         // Load the original doubleword from memory
         let load_result = cpu.mmu.load_doubleword(address);
         let original_value = match load_result {
-            Ok((doubleword, memory_read)) => {
-                // Store the read access
-                ram_access.read = memory_read;
-                doubleword as i64
-            }
+            Ok((doubleword, _)) => doubleword as i64,
             Err(_) => panic!("MMU load error"),
         };
 
@@ -53,17 +49,12 @@ impl AMOMIND {
         } else {
             compare_value
         };
-        let store_result = cpu.mmu.store_doubleword(address, new_value as u64);
-        match store_result {
-            Ok(memory_write) => {
-                // Store the write access
-                ram_access.write = memory_write;
-            }
-            Err(_) => panic!("MMU store error"),
-        }
+        cpu.mmu
+            .store_doubleword(address, new_value as u64)
+            .expect("MMU store error");
 
         // Return the original value
-        cpu.x[self.operands.rd] = original_value;
+        cpu.x[self.operands.rd as usize] = original_value;
     }
 }
 
@@ -80,11 +71,11 @@ impl RISCVTrace for AMOMIND {
 
 impl VirtualInstructionSequence for AMOMIND {
     fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let v_rs2 = virtual_register_index(6) as usize;
-        let v_rd = virtual_register_index(7) as usize;
-        let v_sel_rs2 = virtual_register_index(8) as usize;
-        let v_sel_rd = virtual_register_index(9) as usize;
-        let v_tmp = virtual_register_index(10) as usize;
+        let v_rs2 = virtual_register_index(6);
+        let v_rd = virtual_register_index(7);
+        let v_sel_rs2 = virtual_register_index(8);
+        let v_sel_rd = virtual_register_index(9);
+        let v_tmp = virtual_register_index(10);
         let mut sequence = vec![];
 
         let ld = LD {

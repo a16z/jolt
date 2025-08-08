@@ -31,12 +31,13 @@ declare_riscv_instr!(
 
 impl DIVU {
     fn exec(&self, cpu: &mut Cpu, _: &mut <DIVU as RISCVInstruction>::RAMAccess) {
-        let dividend = cpu.unsigned_data(cpu.x[self.operands.rs1]);
-        let divisor = cpu.unsigned_data(cpu.x[self.operands.rs2]);
+        let dividend = cpu.unsigned_data(cpu.x[self.operands.rs1 as usize]);
+        let divisor = cpu.unsigned_data(cpu.x[self.operands.rs2 as usize]);
         if divisor == 0 {
-            cpu.x[self.operands.rd] = -1;
+            cpu.x[self.operands.rd as usize] = -1;
         } else {
-            cpu.x[self.operands.rd] = cpu.sign_extend(dividend.wrapping_div(divisor) as i64)
+            cpu.x[self.operands.rd as usize] =
+                cpu.sign_extend(dividend.wrapping_div(divisor) as i64)
         }
     }
 }
@@ -44,8 +45,8 @@ impl DIVU {
 impl RISCVTrace for DIVU {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
         // DIV operands
-        let x = cpu.x[self.operands.rs1] as u64;
-        let y = cpu.x[self.operands.rs2] as u64;
+        let x = cpu.x[self.operands.rs1 as usize] as u64;
+        let y = cpu.x[self.operands.rs2 as usize] as u64;
 
         let quotient = if y == 0 {
             match cpu.xlen {
@@ -83,10 +84,10 @@ impl RISCVTrace for DIVU {
 impl VirtualInstructionSequence for DIVU {
     fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
-        let v_0 = virtual_register_index(0) as usize;
-        let v_q = virtual_register_index(1) as usize;
-        let v_r = virtual_register_index(2) as usize;
-        let v_qy = virtual_register_index(3) as usize;
+        let v_0 = virtual_register_index(0);
+        let v_q = virtual_register_index(1);
+        let v_r = virtual_register_index(2);
+        let v_qy = virtual_register_index(3);
 
         let mut sequence = vec![];
         let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(7);

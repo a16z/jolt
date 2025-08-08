@@ -24,18 +24,17 @@ pub type KeccakTestCase = InstructionTestCase<Keccak256State, Keccak256State>;
 /// Wrapper around `CpuTestHarness` that offers convenient Keccak helpers.
 pub struct KeccakCpuHarness {
     pub harness: CpuTestHarness,
-    pub vr: [usize; NEEDED_REGISTERS],
+    pub vr: [u8; NEEDED_REGISTERS],
 }
 
 impl KeccakCpuHarness {
     /// Virtual register layout used by the Keccak virtual sequence.
     const BASE_ADDR: u64 = DRAM_BASE;
-    pub const RS1: usize = 10;
+    pub const RS1: u8 = 10;
 
     /// Create a new harness with initialized memory.
     pub fn new() -> Self {
-        let vr =
-            core::array::from_fn(|i| common::constants::virtual_register_index(i as u64) as usize);
+        let vr = core::array::from_fn(|i| common::constants::virtual_register_index(i as u8));
 
         Self {
             harness: CpuTestHarness::new(),
@@ -45,7 +44,7 @@ impl KeccakCpuHarness {
 
     /// Load a Keccak state into DRAM and set `x10 = BASE_ADDR`.
     pub fn load_state(&mut self, state: &Keccak256State) {
-        self.harness.cpu.x[Self::RS1] = Self::BASE_ADDR as i64;
+        self.harness.cpu.x[Self::RS1 as usize] = Self::BASE_ADDR as i64;
         self.harness.set_memory(Self::BASE_ADDR, state);
     }
 

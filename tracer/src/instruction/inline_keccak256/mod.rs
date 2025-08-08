@@ -81,7 +81,7 @@ pub const NEEDED_REGISTERS: usize = 96;
 struct Keccak256SequenceBuilder {
     asm: InstrAssembler,
     round: u32,
-    vr: [usize; NEEDED_REGISTERS],
+    vr: [u8; NEEDED_REGISTERS],
     operand_rs1: usize,
     _operand_rs2: usize,
 }
@@ -126,9 +126,9 @@ impl Keccak256SequenceBuilder {
     fn new(
         address: u64,
         is_compressed: bool,
-        vr: [usize; NEEDED_REGISTERS],
-        operand_rs1: usize,
-        operand_rs2: usize,
+        vr: [u8; NEEDED_REGISTERS],
+        operand_rs1: u8,
+        operand_rs2: u8,
     ) -> Self {
         Keccak256SequenceBuilder {
             asm: InstrAssembler::new(address, is_compressed),
@@ -212,7 +212,7 @@ impl Keccak256SequenceBuilder {
     }
 
     /// Get the register index for a given lane in the state matrix.
-    fn lane(&self, x: usize, y: usize) -> usize {
+    fn lane(&self, x: usize, y: usize) -> u8 {
         self.vr[5 * y + x]
     }
 
@@ -288,9 +288,9 @@ impl Keccak256SequenceBuilder {
             for x in 0..5 {
                 // Get the registers for the three input values
                 // A[x,y], A[x+1,y], A[x+2,y]
-                let current = NUM_LANES + self.lane(x, y);
-                let next = NUM_LANES + self.lane((x + 1) % 5, y);
-                let two_next = NUM_LANES + self.lane((x + 2) % 5, y);
+                let current = NUM_LANES as u8 + self.lane(x, y);
+                let next = NUM_LANES as u8 + self.lane((x + 1) % 5, y);
+                let two_next = NUM_LANES as u8 + self.lane((x + 2) % 5, y);
 
                 // Define scratch registers for intermediate results.
                 let not_next_and_two_next = self.vr[65]; // reuse scratch

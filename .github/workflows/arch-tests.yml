@@ -3,14 +3,10 @@ name: Architecture Tests
 on:
   push:
     branches:
-      - "**"
-    paths:
-      - "tracer/**"
+      - main
   pull_request:
     branches:
       - "**"
-    paths:
-      - "tracer/**"
 
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -25,7 +21,7 @@ jobs:
     container:
       image: ubuntu:24.04
       options: --user root
-    
+
     steps:
       - name: Install Essential Tools
         run: |
@@ -33,7 +29,7 @@ jobs:
 
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Mark Git repo as safe
         run: |
           git config --global --add safe.directory '*'

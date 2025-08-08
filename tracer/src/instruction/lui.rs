@@ -17,7 +17,7 @@ declare_riscv_instr!(
 
 impl LUI {
     fn exec(&self, cpu: &mut Cpu, _: &mut <LUI as RISCVInstruction>::RAMAccess) {
-        cpu.x[self.operands.rd] = normalize_imm(self.operands.imm, &cpu.xlen);
+        cpu.x[self.operands.rd as usize] = normalize_imm(self.operands.imm, &cpu.xlen);
     }
 }
 

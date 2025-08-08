@@ -39,7 +39,7 @@ pub const K: [u64; 64] = [
 /// - 8..23:  Message schedule W[0..15]
 /// - 24..27: Temporary registers (t1, t2, scratch space)
 /// - 28..31: Initial E-H values when using custom IV
-pub const NEEDED_REGISTERS: usize = 32;
+pub const NEEDED_REGISTERS: u8 = 32;
 
 /// Builds assembly sequence for SHA256 compression
 /// Expects input words to be in RAM at location rs1..rs1+16
@@ -50,11 +50,11 @@ struct Sha256SequenceBuilder {
     /// Round id
     round: i32,
     /// Virtual registers used by the sequence
-    vr: [usize; NEEDED_REGISTERS],
+    vr: [u8; NEEDED_REGISTERS as usize],
     /// Location input words to the hash function in 16 memory slots
-    operand_rs1: usize,
+    operand_rs1: u8,
     /// Location of previous hash values A..H (also where output is written)
-    operand_rs2: usize,
+    operand_rs2: u8,
     /// Whether this is the initial compression (use BLOCK constants)
     initial: bool,
 }
@@ -63,9 +63,9 @@ impl Sha256SequenceBuilder {
     fn new(
         address: u64,
         is_compressed: bool,
-        vr: [usize; NEEDED_REGISTERS],
-        operand_rs1: usize,
-        operand_rs2: usize,
+        vr: [u8; NEEDED_REGISTERS as usize],
+        operand_rs1: u8,
+        operand_rs2: u8,
         initial: bool,
     ) -> Self {
         Sha256SequenceBuilder {
@@ -207,7 +207,7 @@ impl Sha256SequenceBuilder {
     /// Maps working variable (A-H) to its current register location
     /// Variables rotate through registers 0-7 as rounds progress
     /// When not initial, E-H start in registers 28-31
-    fn vr(&self, shift: char) -> usize {
+    fn vr(&self, shift: char) -> u8 {
         assert!(('A'..='H').contains(&shift));
         let shift = shift as i32 - 'A' as i32;
 
@@ -227,13 +227,13 @@ impl Sha256SequenceBuilder {
     }
 
     /// Register number containing W_(rid+shift)
-    fn w(&self, shift: i32) -> usize {
+    fn w(&self, shift: i32) -> u8 {
         self.vr[((self.round + shift).rem_euclid(16) + 8) as usize]
     }
 
     /// Updates message schedule for rounds 16-63
     /// W[t] = σ₁(W[t-2]) + W[t-7] + σ₀(W[t-15]) + W[t-16]
-    fn update_w(&mut self, ss: [usize; 2]) {
+    fn update_w(&mut self, ss: [u8; 2]) {
         if self.round < 16 {
             return;
         }
@@ -251,7 +251,7 @@ impl Sha256SequenceBuilder {
 
     /// Computes sha256 Ch function
     /// Ch(E, F, G) = (E and F) xor ((not E) and G)
-    fn sha_ch(&mut self, rs1: Value, rs2: Value, rs3: Value, rd: usize, ss: usize) -> Value {
+    fn sha_ch(&mut self, rs1: Value, rs2: Value, rs3: Value, rd: u8, ss: u8) -> Value {
         let e_and_f = self.asm.and(rs1, rs2, ss);
         // Use ANDN to compute (not E) and G in one instruction
         // ANDN computes rs1 & !rs2, so andn(G, E) gives G & !E = !E & G
@@ -271,7 +271,7 @@ impl Sha256SequenceBuilder {
     }
 
     /// Computes sha256 Maj function: Maj(A, B, C) = (A and B) xor (A and C) xor (B and C)
-    fn sha_maj(&mut self, rs1: Value, rs2: Value, rs3: Value, rd: usize, ss: usize) -> Value {
+    fn sha_maj(&mut self, rs1: Value, rs2: Value, rs3: Value, rd: u8, ss: u8) -> Value {
         let b_and_c = self.asm.and(rs2, rs3, ss);
         let b_xor_c = self.asm.xor(rs2, rs3, rd);
         let a_and_b_xor_c = self.asm.and(rs1, b_xor_c, rd);
@@ -279,28 +279,28 @@ impl Sha256SequenceBuilder {
     }
 
     /// Sigma_0 function of SHA256 compression function: Σ₀(x) = ROTR²(x) ⊕ ROTR¹³(x) ⊕ ROTR²²(x)
-    fn sha_sigma_0(&mut self, rs1: Value, rd: usize, ss: usize) -> Value {
+    fn sha_sigma_0(&mut self, rs1: Value, rd: u8, ss: u8) -> Value {
         let rotri_xor = self.asm.rotri_xor_rotri32(rs1, 2, 13, rd, ss);
         let rotri_22 = self.asm.rotri32(rs1, 22, ss);
         self.asm.xor(rotri_xor, rotri_22, rd)
     }
 
     /// Sigma_1 function of SHA256 compression function: Σ₁(x) = ROTR⁶(x) ⊕ ROTR¹¹(x) ⊕ ROTR²⁵(x)
-    fn sha_sigma_1(&mut self, rs1: Value, rd: usize, ss: usize) -> Value {
+    fn sha_sigma_1(&mut self, rs1: Value, rd: u8, ss: u8) -> Value {
         let rotri_xor = self.asm.rotri_xor_rotri32(rs1, 6, 11, rd, ss);
         let rotri_25 = self.asm.rotri32(rs1, 25, ss);
         self.asm.xor(rotri_xor, rotri_25, rd)
     }
 
     /// sigma_0 for word computation: σ₀(x) = ROTR⁷(x) ⊕ ROTR¹⁸(x) ⊕ SHR³(x)
-    fn sha_word_sigma_0(&mut self, rs1: usize, rd: usize, ss: usize) {
+    fn sha_word_sigma_0(&mut self, rs1: u8, rd: u8, ss: u8) {
         self.asm.rotri_xor_rotri32(Reg(rs1), 7, 18, rd, ss);
         self.asm.srli(Reg(rs1), 3, ss);
         self.asm.xor(Reg(rd), Reg(ss), rd);
     }
 
     /// sigma_1 for word computation: σ₁(x) = ROTR¹⁷(x) ⊕ ROTR¹⁹(x) ⊕ SHR¹⁰(x)
-    fn sha_word_sigma_1(&mut self, rs1: usize, rd: usize, ss: usize) {
+    fn sha_word_sigma_1(&mut self, rs1: u8, rd: u8, ss: u8) {
         // We don't need to do Imm shenanigans here since words are always in registers
         self.asm.rotri_xor_rotri32(Reg(rs1), 17, 19, rd, ss);
         self.asm.srli(Reg(rs1), 10, ss);

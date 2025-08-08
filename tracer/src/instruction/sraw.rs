@@ -30,8 +30,9 @@ impl SRAW {
         // SLLW, SRLW, and SRAW are RV64I-only instructions that are analogously defined but operate
         // on 32-bit values and sign-extend their 32-bit results to 64 bits. The shift amount is
         // given by rs2[4:0].
-        let shamt = (cpu.x[self.operands.rs2] & 0x1f) as u32;
-        cpu.x[self.operands.rd] = ((cpu.x[self.operands.rs1] as i32) >> shamt) as i64;
+        let shamt = (cpu.x[self.operands.rs2 as usize] & 0x1f) as u32;
+        cpu.x[self.operands.rd as usize] =
+            ((cpu.x[self.operands.rs1 as usize] as i32) >> shamt) as i64;
     }
 }
 
@@ -48,8 +49,8 @@ impl RISCVTrace for SRAW {
 
 impl VirtualInstructionSequence for SRAW {
     fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let v_rs1 = virtual_register_index(5) as usize;
-        let v_bitmask = virtual_register_index(6) as usize;
+        let v_rs1 = virtual_register_index(5);
+        let v_bitmask = virtual_register_index(6);
 
         let mut sequence = vec![];
 

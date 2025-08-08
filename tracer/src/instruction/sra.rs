@@ -30,8 +30,9 @@ impl SRA {
             Xlen::Bit32 => 0x1f,
             Xlen::Bit64 => 0x3f,
         };
-        cpu.x[self.operands.rd] = cpu.sign_extend(
-            cpu.x[self.operands.rs1].wrapping_shr(cpu.x[self.operands.rs2] as u32 & mask),
+        cpu.x[self.operands.rd as usize] = cpu.sign_extend(
+            cpu.x[self.operands.rs1 as usize]
+                .wrapping_shr(cpu.x[self.operands.rs2 as usize] as u32 & mask),
         );
     }
 }
@@ -49,7 +50,7 @@ impl RISCVTrace for SRA {
 
 impl VirtualInstructionSequence for SRA {
     fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let v_bitmask = virtual_register_index(6) as usize;
+        let v_bitmask = virtual_register_index(6);
 
         let mut sequence = vec![];
         let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(1);
