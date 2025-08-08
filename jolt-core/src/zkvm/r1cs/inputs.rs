@@ -227,10 +227,7 @@ impl JoltR1CSInputs {
                 coeffs.into()
             }
             JoltR1CSInputs::Rd => {
-                let coeffs: Vec<u8> = trace
-                    .par_iter()
-                    .map(|cycle| cycle.rd_write().0 as u8)
-                    .collect();
+                let coeffs: Vec<u8> = trace.par_iter().map(|cycle| cycle.rd_write().0).collect();
                 coeffs.into()
             }
             JoltR1CSInputs::Imm => {
@@ -266,9 +263,6 @@ impl JoltR1CSInputs {
                         tracer::instruction::RAMAccess::Read(read) => read.value,
                         tracer::instruction::RAMAccess::Write(write) => write.pre_value,
                         tracer::instruction::RAMAccess::NoOp => 0,
-                        tracer::instruction::RAMAccess::Atomic(_) => {
-                            unimplemented!("Atomic instructions are mapped to virtual sequences")
-                        }
                     })
                     .collect();
                 coeffs.into()
@@ -280,9 +274,6 @@ impl JoltR1CSInputs {
                         tracer::instruction::RAMAccess::Read(read) => read.value,
                         tracer::instruction::RAMAccess::Write(write) => write.post_value,
                         tracer::instruction::RAMAccess::NoOp => 0,
-                        tracer::instruction::RAMAccess::Atomic(_) => {
-                            unimplemented!("Atomic instructions are mapped to virtual sequences")
-                        }
                     })
                     .collect();
                 coeffs.into()

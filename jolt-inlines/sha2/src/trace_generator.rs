@@ -40,12 +40,12 @@ pub const K: [u64; 64] = [
 /// - 8..23:  Message schedule W[0..15]
 /// - 24..27: Temporary registers (t1, t2, scratch space)
 /// - 28..31: Initial E-H values when using custom IV
-pub const NEEDED_REGISTERS: usize = 32;
+pub const NEEDED_REGISTERS: u8 = 32;
 
 #[derive(Clone, Copy)]
 enum Value {
     Imm(u64),
-    Reg(usize),
+    Reg(u8),
 }
 
 /// Builds assembly sequence for SHA256 compression
@@ -58,11 +58,11 @@ struct Sha256SequenceBuilder {
     /// Round id
     round: i32,
     /// Virtual registers used by the sequence
-    vr: [usize; NEEDED_REGISTERS],
+    vr: [u8; NEEDED_REGISTERS as usize],
     /// Location input words to the hash function in 16 memory slots
-    operand_rs1: usize,
+    operand_rs1: u8,
     /// Location of previous hash values A..H (also where output is written)
-    operand_rs2: usize,
+    operand_rs2: u8,
     /// Whether this is the initial compression (use BLOCK constants)
     initial: bool,
 }
@@ -70,9 +70,9 @@ struct Sha256SequenceBuilder {
 impl Sha256SequenceBuilder {
     fn new(
         address: u64,
-        vr: [usize; NEEDED_REGISTERS],
-        operand_rs1: usize,
-        operand_rs2: usize,
+        vr: [u8; NEEDED_REGISTERS as usize],
+        operand_rs1: u8,
+        operand_rs2: u8,
         initial: bool,
     ) -> Self {
         Sha256SequenceBuilder {
@@ -108,12 +108,16 @@ impl Sha256SequenceBuilder {
 
     /// Enumerates sequence in reverse order and sets virtual_sequence_remaining
     fn enumerate_sequence(&mut self) {
-        let len = self.sequence.len();
+        let len: u16 = self
+            .sequence
+            .len()
+            .try_into()
+            .expect("Sequence length cannot exceed 2^16");
         self.sequence
             .iter_mut()
             .enumerate()
             .for_each(|(i, instruction)| {
-                instruction.set_virtual_sequence_remaining(Some(len - i - 1));
+                instruction.set_virtual_sequence_remaining(Some(len - i as u16 - 1));
             });
     }
 
@@ -212,7 +216,7 @@ impl Sha256SequenceBuilder {
     /// Maps working variable (A-H) to its current register location
     /// Variables rotate through registers 0-7 as rounds progress
     /// When not initial, E-H start in registers 28-31
-    fn vr(&self, shift: char) -> usize {
+    fn vr(&self, shift: char) -> u8 {
         assert!(('A'..='H').contains(&shift));
         let shift = shift as i32 - 'A' as i32;
 
@@ -232,13 +236,13 @@ impl Sha256SequenceBuilder {
     }
 
     /// Register number containing W_(rid+shift)
-    fn w(&self, shift: i32) -> usize {
+    fn w(&self, shift: i32) -> u8 {
         self.vr[((self.round + shift).rem_euclid(16) + 8) as usize]
     }
 
     /// Updates message schedule for rounds 16-63
     /// W[t] = σ₁(W[t-2]) + W[t-7] + σ₀(W[t-15]) + W[t-16]
-    fn update_w(&mut self, ss: [usize; 2]) {
+    fn update_w(&mut self, ss: [u8; 2]) {
         if self.round < 16 {
             return;
         }
@@ -256,7 +260,7 @@ impl Sha256SequenceBuilder {
 
     /// Computes sha256 Ch function
     /// Ch(E, F, G) = (E and F) xor ((not E) and G)
-    fn sha_ch(&mut self, rs1: Value, rs2: Value, rs3: Value, rd: usize, ss: usize) -> Value {
+    fn sha_ch(&mut self, rs1: Value, rs2: Value, rs3: Value, rd: u8, ss: u8) -> Value {
         let e_and_f = self.and(rs1, rs2, ss);
         let neg_e = self.xor(rs1, Imm(u32::MAX as u64), rd);
         let neg_e_and_g = self.and(neg_e, rs3, rd);
@@ -264,7 +268,7 @@ impl Sha256SequenceBuilder {
     }
 
     /// Computes sha256 Maj function: Maj(A, B, C) = (A and B) xor (A and C) xor (B and C)
-    fn sha_maj(&mut self, rs1: Value, rs2: Value, rs3: Value, rd: usize, ss: usize) -> Value {
+    fn sha_maj(&mut self, rs1: Value, rs2: Value, rs3: Value, rd: u8, ss: u8) -> Value {
         let b_and_c = self.and(rs2, rs3, ss);
         let b_xor_c = self.xor(rs2, rs3, rd);
         let a_and_b_xor_c = self.and(rs1, b_xor_c, rd);
@@ -272,21 +276,21 @@ impl Sha256SequenceBuilder {
     }
 
     /// Sigma_0 function of SHA256 compression function: Σ₀(x) = ROTR²(x) ⊕ ROTR¹³(x) ⊕ ROTR²²(x)
-    fn sha_sigma_0(&mut self, rs1: Value, rd: usize, ss: usize) -> Value {
+    fn sha_sigma_0(&mut self, rs1: Value, rd: u8, ss: u8) -> Value {
         let rotri_xor = self.rotri_xor_rotri(rs1, 2, 13, rd, ss);
         let rotri_22 = self.rotri(rs1, 22, ss);
         self.xor(rotri_xor, rotri_22, rd)
     }
 
     /// Sigma_1 function of SHA256 compression function: Σ₁(x) = ROTR⁶(x) ⊕ ROTR¹¹(x) ⊕ ROTR²⁵(x)
-    fn sha_sigma_1(&mut self, rs1: Value, rd: usize, ss: usize) -> Value {
+    fn sha_sigma_1(&mut self, rs1: Value, rd: u8, ss: u8) -> Value {
         let rotri_xor = self.rotri_xor_rotri(rs1, 6, 11, rd, ss);
         let rotri_25 = self.rotri(rs1, 25, ss);
         self.xor(rotri_xor, rotri_25, rd)
     }
 
     /// sigma_0 for word computation: σ₀(x) = ROTR⁷(x) ⊕ ROTR¹⁸(x) ⊕ SHR³(x)
-    fn sha_word_sigma_0(&mut self, rs1: usize, rd: usize, ss: usize) {
+    fn sha_word_sigma_0(&mut self, rs1: u8, rd: u8, ss: u8) {
         self.rotri_xor_rotri(Reg(rs1), 7, 18, rd, ss);
         let srli = VirtualSRLI {
             address: self.address,
@@ -302,7 +306,7 @@ impl Sha256SequenceBuilder {
     }
 
     /// sigma_1 for word computation: σ₁(x) = ROTR¹⁷(x) ⊕ ROTR¹⁹(x) ⊕ SHR¹⁰(x)
-    fn sha_word_sigma_1(&mut self, rs1: usize, rd: usize, ss: usize) {
+    fn sha_word_sigma_1(&mut self, rs1: u8, rd: u8, ss: u8) {
         // We don't need to do Imm shenanigans here since words are always in registers
         self.rotri_xor_rotri(Reg(rs1), 17, 19, rd, ss);
         let srli = VirtualSRLI {
@@ -318,7 +322,7 @@ impl Sha256SequenceBuilder {
         self.xor(Reg(rd), Reg(ss), rd);
     }
 
-    fn lw(&mut self, rs1: usize, offset: i64, rd: usize) {
+    fn lw(&mut self, rs1: u8, offset: i64, rd: u8) {
         let lw = LW {
             address: self.address,
             operands: FormatLoad {
@@ -331,7 +335,7 @@ impl Sha256SequenceBuilder {
         self.sequence.push(lw.into());
     }
 
-    fn sw(&mut self, rs1: usize, rs2: usize, offset: i64) {
+    fn sw(&mut self, rs1: u8, rs2: u8, offset: i64) {
         let sw = SW {
             address: self.address,
             operands: FormatS {
@@ -345,7 +349,7 @@ impl Sha256SequenceBuilder {
     }
 
     /// Addition modulo 2^32
-    fn add(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
+    fn add(&mut self, rs1: Value, rs2: Value, rd: u8) -> Value {
         match (rs1, rs2) {
             (Reg(rs1), Reg(rs2)) => {
                 let add = ADD {
@@ -370,7 +374,7 @@ impl Sha256SequenceBuilder {
         }
     }
 
-    fn and(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
+    fn and(&mut self, rs1: Value, rs2: Value, rd: u8) -> Value {
         match (rs1, rs2) {
             (Reg(rs1), Reg(rs2)) => {
                 let add = AND {
@@ -395,7 +399,7 @@ impl Sha256SequenceBuilder {
         }
     }
 
-    fn xor(&mut self, rs1: Value, rs2: Value, rd: usize) -> Value {
+    fn xor(&mut self, rs1: Value, rs2: Value, rd: u8) -> Value {
         match (rs1, rs2) {
             (Reg(rs1), Reg(rs2)) => {
                 let xor = XOR {
@@ -421,7 +425,7 @@ impl Sha256SequenceBuilder {
     }
 
     /// ROTRI instruction - Rotate Right Immediate
-    fn rotri(&mut self, rs1: Value, imm: u64, rd: usize) -> Value {
+    fn rotri(&mut self, rs1: Value, imm: u64, rd: u8) -> Value {
         match rs1 {
             Reg(rs1) => {
                 // Construct bitmask: (32-imm) ones followed by imm zeros
@@ -439,7 +443,7 @@ impl Sha256SequenceBuilder {
         }
     }
 
-    fn rotri_xor_rotri(&mut self, rs1: Value, imm1: u32, imm2: u32, rd: usize, ss: usize) -> Value {
+    fn rotri_xor_rotri(&mut self, rs1: Value, imm1: u32, imm2: u32, rd: u8, ss: u8) -> Value {
         let rotri = self.rotri(rs1, imm1 as u64, ss);
         let rotri2 = self.rotri(rs1, imm2 as u64, rd);
         self.xor(rotri, rotri2, rd)
@@ -452,15 +456,11 @@ pub const fn virtual_register_index(index: u64) -> u64 {
 }
 
 // Virtual instructions builder for sha256 - returns empty sequence as XOR is atomic
-pub fn sha2_virtual_sequence_builder(
-    _address: u64,
-    _rs1: usize,
-    _rs2: usize,
-) -> Vec<RV32IMInstruction> {
+pub fn sha2_virtual_sequence_builder(_address: u64, _rs1: u8, _rs2: u8) -> Vec<RV32IMInstruction> {
     // Virtual registers used as a scratch space
-    let mut vr = [0; 32];
+    let mut vr = [0u8; 32];
     (0..32).for_each(|i| {
-        vr[i] = virtual_register_index(i as u64) as usize;
+        vr[i] = virtual_register_index(i as u64) as u8;
     });
     let builder = Sha256SequenceBuilder::new(
         _address, vr, _rs1, _rs2, false, // not initial - uses custom IV from rs2
@@ -471,13 +471,13 @@ pub fn sha2_virtual_sequence_builder(
 // Virtual instructions builder for sha256_init - returns empty sequence as XOR is atomic
 pub fn sha2_init_virtual_sequence_builder(
     _address: u64,
-    _rs1: usize,
-    _rs2: usize,
+    _rs1: u8,
+    _rs2: u8,
 ) -> Vec<RV32IMInstruction> {
     // Virtual registers used as a scratch space
-    let mut vr = [0; 32];
+    let mut vr = [0u8; 32];
     (0..32).for_each(|i| {
-        vr[i] = virtual_register_index(i as u64) as usize;
+        vr[i] = virtual_register_index(i as u64) as u8;
     });
     let builder = Sha256SequenceBuilder::new(
         _address, vr, _rs1, _rs2, true, // initial - uses BLOCK constants

@@ -22,8 +22,7 @@ use std::sync::RwLock;
 
 // Type alias for the exec and virtual_sequence functions signature
 pub type ExecFunction = Box<dyn Fn(&INLINE, &mut Cpu, &mut ()) + Send + Sync>;
-pub type VirtualSequenceFunction =
-    Box<dyn Fn(u64, usize, usize) -> Vec<RV32IMInstruction> + Send + Sync>;
+pub type VirtualSequenceFunction = Box<dyn Fn(u64, u8, u8) -> Vec<RV32IMInstruction> + Send + Sync>;
 
 // Key type for the registry: (opcode, funct3, funct7)
 type InlineKey = (u32, u32, u32);
@@ -132,7 +131,7 @@ pub struct INLINE {
     /// R-format operands (rd, rs1, rs2)
     pub operands: FormatR,
     /// Tracks remaining virtual instructions (used by tracer)
-    pub virtual_sequence_remaining: Option<usize>,
+    pub virtual_sequence_remaining: Option<u16>,
 }
 
 impl RISCVInstruction for INLINE {

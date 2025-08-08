@@ -82,7 +82,7 @@ pub fn sha2_exec(
     for (i, word) in input.iter_mut().enumerate() {
         *word = cpu
             .mmu
-            .load_word(cpu.x[instr.operands.rs1].wrapping_add((i * 4) as i64) as u64)
+            .load_word(cpu.x[instr.operands.rs1 as usize].wrapping_add((i * 4) as i64) as u64)
             .expect("SHA256: Failed to load input word")
             .0;
     }
@@ -92,7 +92,7 @@ pub fn sha2_exec(
     for (i, word) in iv.iter_mut().enumerate() {
         *word = cpu
             .mmu
-            .load_word(cpu.x[instr.operands.rs2].wrapping_add((i * 4) as i64) as u64)
+            .load_word(cpu.x[instr.operands.rs2 as usize].wrapping_add((i * 4) as i64) as u64)
             .expect("SHA256: Failed to load initial state")
             .0;
     }
@@ -102,7 +102,7 @@ pub fn sha2_exec(
     for (i, &word) in result.iter().enumerate() {
         cpu.mmu
             .store_word(
-                cpu.x[instr.operands.rs2].wrapping_add((i * 4) as i64) as u64,
+                cpu.x[instr.operands.rs2 as usize].wrapping_add((i * 4) as i64) as u64,
                 word,
             )
             .expect("SHA256: Failed to store result");
@@ -119,7 +119,7 @@ pub fn sha2_init_exec(
     for (i, word) in input.iter_mut().enumerate() {
         *word = cpu
             .mmu
-            .load_word(cpu.x[instr.operands.rs1].wrapping_add((i * 4) as i64) as u64)
+            .load_word(cpu.x[instr.operands.rs1 as usize].wrapping_add((i * 4) as i64) as u64)
             .expect("SHA256INIT: Failed to load input word")
             .0;
     }
@@ -129,7 +129,7 @@ pub fn sha2_init_exec(
     for (i, &word) in result.iter().enumerate() {
         cpu.mmu
             .store_word(
-                cpu.x[instr.operands.rs2].wrapping_add((i * 4) as i64) as u64,
+                cpu.x[instr.operands.rs2 as usize].wrapping_add((i * 4) as i64) as u64,
                 word,
             )
             .expect("SHA256INIT: Failed to store result");

@@ -13,7 +13,7 @@ macro_rules! declare_riscv_instr {
         pub struct $name {
             pub address: u64,
             pub operands: $format,
-            pub virtual_sequence_remaining: Option<usize>,
+            pub virtual_sequence_remaining: Option<u16>,
         }
 
         impl $crate::instruction::RISCVInstruction for $name {
