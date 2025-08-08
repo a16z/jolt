@@ -1,6 +1,5 @@
 use crate::field::JoltField;
 use crate::host;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::subprotocols::optimization::{
     compute_initial_eval_claim, KaratsubaSumCheckProof, LargeDSumCheckProof, NaiveSumCheckProof,
