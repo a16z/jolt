@@ -28,3 +28,6 @@ temp_file
 .vscode
 
 *.patch
+
+# Spike tarballs
+/prebuilt-files/
