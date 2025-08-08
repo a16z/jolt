@@ -45,14 +45,14 @@ fn karatsuba_branch<F: JoltField, const D: usize>(left: &[F; D], right: &[F; D])
 
 fn benchmark_naive<F: JoltField, const D: usize>(c: &mut Criterion) {
     let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0);
-    let polys: Vec<Vec<Fr>> = (0..D)
-        .map(|_| vec![Fr::rand(&mut rng), Fr::rand(&mut rng)])
-        .collect();
-
     c.bench_function(&format!("naive_{}", D), |b| {
         b.iter_with_setup(
-            || (polys.clone(), polys.clone()),
-            |(left, right)| {
+            || {
+                (0..D)
+                    .map(|_| vec![Fr::rand(&mut rng), Fr::rand(&mut rng)])
+                    .collect::<Vec<_>>()
+            },
+            |polys| {
                 criterion::black_box(coeff_naive(&polys));
             },
         );
@@ -61,25 +61,26 @@ fn benchmark_naive<F: JoltField, const D: usize>(c: &mut Criterion) {
 
 fn benchmark_karatsuba<F: JoltField, const D: usize>(c: &mut Criterion) {
     let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0);
-    let polys: Vec<Vec<Fr>> = (0..D)
-        .map(|_| vec![Fr::rand(&mut rng), Fr::rand(&mut rng)])
-        .collect();
-    let left: [Fr; D] = polys[..D / 2]
-        .iter()
-        .flat_map(|p| [p[0], p[1]])
-        .collect::<Vec<_>>()
-        .try_into()
-        .unwrap();
-    let right: [Fr; D] = polys[D / 2..]
-        .iter()
-        .flat_map(|p| [p[0], p[1]])
-        .collect::<Vec<_>>()
-        .try_into()
-        .unwrap();
-
     c.bench_function(&format!("karatsuba_{}", D), |b| {
         b.iter_with_setup(
-            || (left.clone(), right.clone()),
+            || {
+                let polys: Vec<Vec<Fr>> = (0..D)
+                    .map(|_| vec![Fr::rand(&mut rng), Fr::rand(&mut rng)])
+                    .collect();
+                let left: [Fr; D] = polys[..D / 2]
+                    .iter()
+                    .flat_map(|p| [p[0], p[1]])
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .unwrap();
+                let right: [Fr; D] = polys[D / 2..]
+                    .iter()
+                    .flat_map(|p| [p[0], p[1]])
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .unwrap();
+                (left, right)
+            },
             |(left, right)| {
                 criterion::black_box(karatsuba_branch::<Fr, D>(&left, &right));
             },
@@ -89,11 +90,14 @@ fn benchmark_karatsuba<F: JoltField, const D: usize>(c: &mut Criterion) {
 
 fn quang_optimization<F: JoltField, const D: usize>(c: &mut Criterion) {
     let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0);
-    let polys: [(Fr, Fr); D] = core::array::from_fn(|_| (Fr::rand(&mut rng), Fr::rand(&mut rng)));
 
     c.bench_function(&format!("quang_optimization_{}", D), |b| {
         b.iter_with_setup(
-            || polys.clone(),
+            || {
+                let polys: [(Fr, Fr); D] =
+                    core::array::from_fn(|_| (Fr::rand(&mut rng), Fr::rand(&mut rng)));
+                polys
+            },
             |polys| {
                 criterion::black_box(quang_optimization_branch::<Fr, D>(&polys));
             },
@@ -108,13 +112,11 @@ fn main() {
 
     benchmark_naive::<Fr, 8>(&mut criterion);
     benchmark_karatsuba::<Fr, 8>(&mut criterion);
+    quang_optimization::<Fr, 8>(&mut criterion);
 
     benchmark_naive::<Fr, 16>(&mut criterion);
     benchmark_karatsuba::<Fr, 16>(&mut criterion);
 
     benchmark_naive::<Fr, 32>(&mut criterion);
     benchmark_karatsuba::<Fr, 32>(&mut criterion);
-
-    benchmark_karatsuba::<Fr, 8>(&mut criterion);
-    quang_optimization::<Fr, 8>(&mut criterion);
 }
