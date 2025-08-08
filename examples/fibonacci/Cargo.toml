@@ -7,5 +7,3 @@ edition = "2021"
 jolt-sdk = { path = "../../jolt-sdk", features = ["host"] }
 guest = { package = "fibonacci-guest", path = "./guest" }
 
-[features]
-icicle = ["jolt-sdk/icicle"]

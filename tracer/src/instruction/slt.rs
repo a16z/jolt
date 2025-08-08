@@ -17,10 +17,11 @@ declare_riscv_instr!(
 
 impl SLT {
     fn exec(&self, cpu: &mut Cpu, _: &mut <SLT as RISCVInstruction>::RAMAccess) {
-        cpu.x[self.operands.rd] = match cpu.x[self.operands.rs1] < cpu.x[self.operands.rs2] {
-            true => 1,
-            false => 0,
-        };
+        cpu.x[self.operands.rd as usize] =
+            match cpu.x[self.operands.rs1 as usize] < cpu.x[self.operands.rs2 as usize] {
+                true => 1,
+                false => 0,
+            };
     }
 }
 

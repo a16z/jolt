@@ -27,13 +27,13 @@ impl VirtualAssertValidUnsignedRemainder {
     ) {
         match cpu.xlen {
             Xlen::Bit32 => {
-                let remainder = cpu.x[self.operands.rs1] as i32 as u32;
-                let divisor = cpu.x[self.operands.rs2] as i32 as u32;
+                let remainder = cpu.x[self.operands.rs1 as usize] as i32 as u32;
+                let divisor = cpu.x[self.operands.rs2 as usize] as i32 as u32;
                 assert!(divisor == 0 || remainder < divisor);
             }
             Xlen::Bit64 => {
-                let remainder = cpu.x[self.operands.rs1] as u64;
-                let divisor = cpu.x[self.operands.rs2] as u64;
+                let remainder = cpu.x[self.operands.rs1 as usize] as u64;
+                let divisor = cpu.x[self.operands.rs2 as usize] as u64;
                 assert!(divisor == 0 || remainder < divisor);
             }
         }

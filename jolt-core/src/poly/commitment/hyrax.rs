@@ -8,6 +8,7 @@
 //! of a Jolt proof (i.e. SNARK composition).
 use super::pedersen::{PedersenCommitment, PedersenGenerators};
 use crate::field::JoltField;
+use crate::msm::VariableBaseMSM;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
@@ -20,8 +21,6 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use num_integer::Roots;
 use rayon::prelude::*;
 use tracing::trace_span;
-
-use crate::msm::{Icicle, VariableBaseMSM};
 
 /// Hyrax commits to a multilinear polynomial by interpreting its coefficients as a
 /// matrix. Given the number of variables in the polynomial, and the desired "aspect
@@ -56,9 +55,7 @@ pub struct HyraxCommitment<const RATIO: usize, G: CurveGroup> {
     pub row_commitments: Vec<G>,
 }
 
-impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
-    HyraxCommitment<RATIO, G>
-{
+impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxCommitment<RATIO, G> {
     #[tracing::instrument(skip_all, name = "HyraxCommitment::commit")]
     pub fn commit(
         poly: &DensePolynomial<G::ScalarField>,
@@ -124,9 +121,7 @@ pub struct HyraxOpeningProof<const RATIO: usize, G: CurveGroup> {
 }
 
 /// See Section 14.3 of Thaler's Proofs, Arguments, and Zero-Knowledge
-impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
-    HyraxOpeningProof<RATIO, G>
-{
+impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxOpeningProof<RATIO, G> {
     #[tracing::instrument(skip_all, name = "HyraxOpeningProof::prove")]
     pub fn prove(
         poly: &DensePolynomial<G::ScalarField>,
@@ -163,18 +158,14 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
         // Verifier-derived commitment to u * a = \prod Com(u_j)^{a_j}
         let homomorphically_derived_commitment: G = VariableBaseMSM::msm(
             &G::normalize_batch(&commitment.row_commitments),
-            None,
             &MultilinearPolynomial::from(L),
-            None,
         )
         .unwrap();
 
         let product_commitment = VariableBaseMSM::msm_field_elements(
             &G::normalize_batch(&pedersen_generators.generators[..R_size]),
-            None,
             &self.vector_matrix_product,
             None,
-            false,
         )
         .unwrap();
 
@@ -220,7 +211,7 @@ pub struct BatchedHyraxOpeningProof<const RATIO: usize, G: CurveGroup> {
 }
 
 /// See Section 16.1 of Thaler's Proofs, Arguments, and Zero-Knowledge
-impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
+impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>>
     BatchedHyraxOpeningProof<RATIO, G>
 {
     #[tracing::instrument(skip_all, name = "BatchedHyraxOpeningProof::prove")]
@@ -348,9 +339,7 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
 }
 
 // A non-impl of StreamingCommitmentScheme
-impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
-    HyraxCommitment<RATIO, G>
-{
+impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxCommitment<RATIO, G> {
     // type State<'a> = HyraxCommitmentState<G>;
 
     pub fn initialize(n: usize, generators: &PedersenGenerators<G>) -> HyraxCommitmentState<G> {

@@ -47,7 +47,7 @@ impl<F: JoltField> RLCPolynomial<F> {
         bases: &[G::Affine],
     ) -> Vec<JoltGroupWrapper<G>> {
         let num_rows = DoryGlobals::get_max_num_rows();
-        println!("# rows = {num_rows}");
+        println!("Committing to RLC polynomial with {num_rows} rows");
         let row_len = DoryGlobals::get_num_columns();
 
         let mut row_commitments = vec![JoltGroupWrapper(G::zero()); num_rows];
@@ -58,7 +58,7 @@ impl<F: JoltField> RLCPolynomial<F> {
             .zip(row_commitments.par_iter_mut())
             .for_each(|(dense_row, commitment)| {
                 let msm_result: G =
-                    VariableBaseMSM::msm_field_elements(bases, None, dense_row, None, false)
+                    VariableBaseMSM::msm_field_elements(&bases[..dense_row.len()], dense_row, None)
                         .unwrap();
                 *commitment = JoltGroupWrapper(commitment.0 + msm_result)
             });
@@ -133,17 +133,12 @@ impl<F: JoltField> RLCPolynomial<F> {
                 )
             })
             .collect();
+        let result_slice: &mut [F] =
+            unsafe { std::slice::from_raw_parts_mut(result.as_mut_ptr() as *mut F, result.len()) };
 
         // Compute the vector-matrix product for one-hot polynomials
         for (coeff, poly) in self.one_hot_rlc.iter() {
-            // TODO(moodlezoup): Pass result by mutable reference to
-            // poly.vector_matrix_product
-            result
-                .par_iter_mut()
-                .zip(poly.vector_matrix_product(left_vec).into_par_iter())
-                .for_each(|(result, new)| {
-                    result.0 += new * coeff;
-                });
+            poly.vector_matrix_product(left_vec, *coeff, result_slice);
         }
 
         result

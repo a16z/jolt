@@ -1,9 +1,10 @@
 /// DRAM base address. Offset from this base address
 /// is the address in main memory.
-pub const DRAM_BASE: u64 = 0x80000000;
+pub const DRAM_BASE: u64 = RAM_START_ADDRESS;
 
 use crate::instruction::{RAMRead, RAMWrite};
-use common::jolt_device::{JoltDevice, MemoryConfig};
+use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
+use common::jolt_device::JoltDevice;
 
 use super::cpu::{get_privilege_mode, PrivilegeMode, Trap, TrapType, Xlen};
 use super::memory::Memory;
@@ -23,7 +24,7 @@ pub struct Mmu {
     privilege_mode: PrivilegeMode,
     pub memory: MemoryWrapper,
 
-    pub jolt_device: JoltDevice,
+    pub jolt_device: Option<JoltDevice>,
 
     /// Address translation can be affected `mstatus` (MPRV, MPP in machine mode)
     /// then `Mmu` has copy of it.
@@ -68,7 +69,7 @@ impl Mmu {
             addressing_mode: AddressingMode::None,
             privilege_mode: PrivilegeMode::Machine,
             memory: MemoryWrapper::new(),
-            jolt_device: JoltDevice::new(&MemoryConfig::default()),
+            jolt_device: None,
             mstatus: 0,
         }
     }
@@ -151,7 +152,12 @@ impl Mmu {
     /// * `effective_address` Effective memory address to validate
     #[inline]
     fn assert_effective_address(&self, ea: u64, is_write: bool) {
-        let layout = &self.jolt_device.memory_layout;
+        if self.jolt_device.is_none() {
+            return;
+        }
+
+        let jolt_device = self.jolt_device.as_ref().unwrap();
+        let layout = &jolt_device.memory_layout;
         // helper strings
         let (action, verb) = if is_write {
             ("Store", "write to")
@@ -160,29 +166,29 @@ impl Mmu {
         };
 
         if ea < DRAM_BASE {
-            // below DRAM_BASE => stack or I/O
-            // bounds‐check against the termination (top) of the stack or I/O region
+            // below DRAM_BASE => I/O
+            // bounds‐check against the termination (top) of the I/O region
             assert!(
-                ea < layout.io_end,
-                "Stack underflow: Attempted to {verb} 0x{ea:X}. Out of bounds.\n{layout:#?}",
+                ea <= layout.io_end,
+                "I/O overflow: Attempted to {verb} 0x{ea:X}. Out of bounds.\n{layout:#?}",
             );
-            // bounds-check against the bottom of the stack
             assert!(
-                ea >= layout.stack_end,
-                "Stack overflow: Attempted to {verb} 0x{ea:X}. Stack too small.\n{layout:#?}",
+                ea >= layout.input_start,
+                "I/O underflow: Attempted to {verb} 0x{ea:X}. Out of bounds.\n{layout:#?}",
             );
+
             // then check for device I/O pages
             let ok = if is_write {
                 // stores only to output/panic/termination
-                self.jolt_device.is_output(ea)
-                    || self.jolt_device.is_panic(ea)
-                    || self.jolt_device.is_termination(ea)
+                jolt_device.is_output(ea)
+                    || jolt_device.is_panic(ea)
+                    || jolt_device.is_termination(ea)
             } else {
                 // loads also from input
-                self.jolt_device.is_input(ea)
-                    || self.jolt_device.is_output(ea)
-                    || self.jolt_device.is_panic(ea)
-                    || self.jolt_device.is_termination(ea)
+                jolt_device.is_input(ea)
+                    || jolt_device.is_output(ea)
+                    || jolt_device.is_panic(ea)
+                    || jolt_device.is_termination(ea)
             };
             assert!(
                 ok,
@@ -190,11 +196,25 @@ impl Mmu {
                 action.to_lowercase(),
             );
         } else {
-            // above DRAM_BASE ⇒ heap
-            assert!(
-                self.memory.validate_address(ea),
-                "Heap overflow: Attempted to {verb} 0x{ea:X}",
-            );
+            // check within RAM
+            if is_write {
+                // These errors aren't necessarily correct as there's no way to distinguish between an
+                // attempt to write to the stack vs heap, but they're trying their best
+                assert!(
+                    ea <= layout.stack_end || ea > layout.stack_end + STACK_CANARY_SIZE,
+                    "Stack overflow: Triggered Stack Canary. Attempted to {verb} 0x{ea:X}.\n{layout:#?}",
+                );
+                assert!(
+                    ea < layout.memory_end,
+                    "Heap overflow: Attempted to {verb} 0x{ea:X}. Heap too small.\n{layout:#?}",
+                );
+            } else {
+                // allow reads across the whole designated memory region as long as the address is valid
+                assert!(
+                    ea < layout.memory_end,
+                    "Illegal Memory Access: Attempted to {verb} 0x{ea:X}.\n{layout:#?}",
+                );
+            }
         }
     }
 
@@ -480,15 +500,16 @@ impl Mmu {
                 0x10000000..=0x100000ff => panic!("load_raw:UART is unsupported."),
                 0x10001000..=0x10001FFF => panic!("load_raw:disk is unsupported."),
                 _ => {
-                    if self.jolt_device.is_input(effective_address)
-                        || self.jolt_device.is_output(effective_address)
-                        || self.jolt_device.is_panic(effective_address)
-                        || self.jolt_device.is_termination(effective_address)
-                    {
-                        self.jolt_device.load(effective_address)
-                    } else {
-                        panic!("Load Failed: Unknown memory mapping {effective_address:X}.");
+                    if let Some(jolt_device) = self.jolt_device.as_ref() {
+                        if jolt_device.is_input(effective_address)
+                            || jolt_device.is_output(effective_address)
+                            || jolt_device.is_panic(effective_address)
+                            || jolt_device.is_termination(effective_address)
+                        {
+                            return jolt_device.load(effective_address);
+                        }
                     }
+                    panic!("Load Failed: Unknown memory mapping {effective_address:X}.");
                 }
             },
         }
@@ -505,7 +526,11 @@ impl Mmu {
         if word_address < DRAM_BASE {
             let mut value_bytes = [0u8; 8];
             for i in 0..bytes {
-                value_bytes[i as usize] = self.jolt_device.load(word_address + i);
+                value_bytes[i as usize] = self
+                    .jolt_device
+                    .as_ref()
+                    .expect("JoltDevice not set")
+                    .load(word_address + i);
             }
             RAMRead {
                 address: word_address,
@@ -537,7 +562,11 @@ impl Mmu {
         let pre_value = if effective_address < DRAM_BASE {
             let mut pre_value_bytes = [0u8; 8];
             for i in 0..bytes {
-                pre_value_bytes[i as usize] = self.jolt_device.load(word_address + i);
+                pre_value_bytes[i as usize] = self
+                    .jolt_device
+                    .as_ref()
+                    .expect("JoltDevice not set")
+                    .load(word_address + i);
             }
             u64::from_le_bytes(pre_value_bytes)
         } else {
@@ -578,7 +607,11 @@ impl Mmu {
         let pre_value = if effective_address < DRAM_BASE {
             let mut pre_value_bytes = [0u8; 8];
             for i in 0..bytes {
-                pre_value_bytes[i as usize] = self.jolt_device.load(word_address + i);
+                pre_value_bytes[i as usize] = self
+                    .jolt_device
+                    .as_ref()
+                    .expect("JoltDevice not set")
+                    .load(word_address + i);
             }
             u64::from_le_bytes(pre_value_bytes)
         } else {
@@ -618,7 +651,11 @@ impl Mmu {
         if effective_address < DRAM_BASE {
             let mut pre_value_bytes = [0u8; 8];
             for i in 0..bytes {
-                pre_value_bytes[i as usize] = self.jolt_device.load(effective_address + i);
+                pre_value_bytes[i as usize] = self
+                    .jolt_device
+                    .as_ref()
+                    .expect("JoltDevice not set")
+                    .load(effective_address + i);
             }
             let pre_value = u64::from_le_bytes(pre_value_bytes);
             RAMWrite {
@@ -736,10 +773,32 @@ impl Mmu {
                 0x10001000..=0x10001FFF => panic!("store_raw:disk is unsupported."),
                 _ => {
                     self.assert_effective_store_address(effective_address);
-                    self.jolt_device.store(effective_address, value);
+                    if let Some(jolt_device) = self.jolt_device.as_mut() {
+                        return jolt_device.store(effective_address, value);
+                    };
+
+                    panic!("Store Failed: Unknown memory mapping {effective_address:X}.");
                 }
             },
         };
+    }
+
+    pub fn setup_bytecode(&mut self, p_address: u64, value: u8) {
+        let effective_address = self.get_effective_address(p_address);
+
+        assert!(
+            effective_address >= DRAM_BASE,
+            "setup_bytecode: Effective address must be >= DRAM_BASE, got {effective_address:X}."
+        );
+
+        if let Some(jolt_device) = self.jolt_device.as_ref() {
+            assert!(
+                effective_address <= jolt_device.memory_layout.stack_end,
+                "setup_bytecode: Effective address must be < stack_end, got {effective_address:X}."
+            );
+        }
+
+        self.memory.write_byte(effective_address, value)
     }
 
     /// Stores two bytes to main memory or peripheral devices depending on
@@ -1037,7 +1096,7 @@ pub struct MemoryWrapper {
 impl MemoryWrapper {
     fn new() -> Self {
         MemoryWrapper {
-            memory: Memory::new(),
+            memory: Memory::default(),
         }
     }
 
@@ -1126,14 +1185,18 @@ impl MemoryWrapper {
 mod test_mmu {
     use super::*;
     use crate::emulator::terminal::DummyTerminal;
+    use common::constants::DEFAULT_MEMORY_SIZE;
+    use common::jolt_device::MemoryConfig;
 
-    const MEM_CAPACITY: u64 = 1024 * 1024;
-
-    fn setup_mmu(capacity: u64) -> Mmu {
-        let terminal = Box::new(DummyTerminal::new());
+    fn setup_mmu() -> Mmu {
+        let terminal = Box::new(DummyTerminal::default());
         let mut mmu = Mmu::new(Xlen::Bit64, terminal);
-
-        mmu.init_memory(capacity);
+        let memory_config = MemoryConfig {
+            program_size: Some(1024),
+            ..Default::default()
+        };
+        mmu.jolt_device = Some(JoltDevice::new(&memory_config));
+        mmu.init_memory(DEFAULT_MEMORY_SIZE);
 
         mmu
     }
@@ -1141,50 +1204,37 @@ mod test_mmu {
     #[test]
     #[should_panic(expected = "Heap overflow")]
     fn test_heap_overflow() {
-        let mut mmu = setup_mmu(MEM_CAPACITY);
+        let mut mmu = setup_mmu();
 
         // Try to write beyond the allocated memory
-        let overflow_address = DRAM_BASE + MEM_CAPACITY + 1;
+        let overflow_address = mmu.jolt_device.as_ref().unwrap().memory_layout.memory_end + 1;
         mmu.trace_store(overflow_address, 0xc50513);
     }
 
     #[test]
-    #[should_panic(expected = "Stack underflow")]
-    fn test_stack_underflow() {
-        let mut mmu = setup_mmu(MEM_CAPACITY);
-
-        // Try to write to an address below DRAM_BASE
-        let invalid_address = DRAM_BASE - 1;
-        mmu.trace_store(invalid_address, 0xc50513);
-    }
-
-    #[test]
-    #[should_panic(expected = "Stack overflow")]
+    #[should_panic(expected = "Stack Canary")]
     fn test_stack_overflow() {
-        let mut mmu = setup_mmu(MEM_CAPACITY);
+        let mut mmu = setup_mmu();
 
-        let invalid_address = 1234;
+        let invalid_address = mmu.jolt_device.as_ref().unwrap().memory_layout.stack_end + 1;
         mmu.trace_store(invalid_address, 0xc50513);
     }
 
     #[test]
-    #[should_panic(expected = "Heap overflow: Attempted to write to")]
-    fn test_out_of_bounds_write_not_caught() {
-        let mut mmu = setup_mmu(MEM_CAPACITY);
-        let heap_capacity = 1024 * 1024;
-        mmu.init_memory(heap_capacity);
-
-        let aligned_invalid_address = DRAM_BASE + heap_capacity + 8;
-        mmu.store_bytes(aligned_invalid_address, 0xdeadbeef, 2)
-            .unwrap();
+    #[should_panic(expected = "I/O underflow")]
+    fn test_io_underflow() {
+        let mut mmu = setup_mmu();
+        let invalid_addr = mmu.jolt_device.as_ref().unwrap().memory_layout.input_start - 1;
+        // illegal write to inputs
+        mmu.store_bytes(invalid_addr, 0xc50513, 2).unwrap();
     }
 
     #[test]
-    #[should_panic(expected = "Unknown memory mapping")]
-    fn test_unknown_memory_mapping() {
-        let mut mmu = setup_mmu(MEM_CAPACITY);
-        let over_stack_addr = mmu.jolt_device.memory_layout.input_start + 5;
+    #[should_panic(expected = "I/O overflow")]
+    fn test_io_overflow() {
+        let mut mmu = setup_mmu();
+        let invalid_addr = mmu.jolt_device.as_ref().unwrap().memory_layout.io_end + 1;
         // illegal write to inputs
-        mmu.store_bytes(over_stack_addr, 0xc50513, 2).unwrap();
+        mmu.store_bytes(invalid_addr, 0xc50513, 2).unwrap();
     }
 }

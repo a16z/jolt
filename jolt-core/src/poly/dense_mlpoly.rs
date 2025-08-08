@@ -3,7 +3,7 @@
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::utils::thread::unsafe_allocate_zero_vec;
-use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized};
+use crate::utils::{compute_dotproduct, compute_dotproduct_low_optimized};
 
 use crate::field::JoltField;
 use crate::utils::math::Math;
@@ -25,7 +25,7 @@ pub struct DensePolynomial<F: JoltField> {
 impl<F: JoltField> DensePolynomial<F> {
     pub fn new(Z: Vec<F>) -> Self {
         assert!(
-            utils::is_power_of_two(Z.len()),
+            Z.len().is_power_of_two(),
             "Dense multi-linear polynomials must be made from a power of 2 (not {})",
             Z.len()
         );
@@ -41,7 +41,7 @@ impl<F: JoltField> DensePolynomial<F> {
     pub fn new_padded(evals: Vec<F>) -> Self {
         // Pad non-power-2 evaluations to fill out the dense multilinear polynomial
         let mut poly_evals = evals;
-        while !(utils::is_power_of_two(poly_evals.len())) {
+        while !(poly_evals.len().is_power_of_two()) {
             poly_evals.push(F::zero());
         }
 

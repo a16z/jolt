@@ -3,8 +3,8 @@ use tracer::JoltDevice;
 
 use crate::{
     field::JoltField,
-    jolt::vm::ram::remap_address,
     poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
+    zkvm::ram::remap_address,
 };
 
 pub struct ProgramIOPolynomial<F: JoltField> {
@@ -13,7 +13,7 @@ pub struct ProgramIOPolynomial<F: JoltField> {
 
 impl<F: JoltField> ProgramIOPolynomial<F> {
     pub fn new(program_io: &JoltDevice) -> Self {
-        let range_end = remap_address(RAM_START_ADDRESS, &program_io.memory_layout);
+        let range_end = remap_address(RAM_START_ADDRESS, &program_io.memory_layout).unwrap();
 
         // TODO(moodlezoup) avoid next_power_of_two
         let mut coeffs: Vec<u32> = vec![0; range_end.next_power_of_two() as usize];
@@ -21,7 +21,8 @@ impl<F: JoltField> ProgramIOPolynomial<F> {
         let mut input_index = remap_address(
             program_io.memory_layout.input_start,
             &program_io.memory_layout,
-        ) as usize;
+        )
+        .unwrap() as usize;
         // Convert input bytes into words and populate `coeffs`
         for chunk in program_io.inputs.chunks(4) {
             let mut word = [0u8; 4];
@@ -36,7 +37,8 @@ impl<F: JoltField> ProgramIOPolynomial<F> {
         let mut output_index = remap_address(
             program_io.memory_layout.output_start,
             &program_io.memory_layout,
-        ) as usize;
+        )
+        .unwrap() as usize;
         // Convert output bytes into words and populate `coeffs`
         for chunk in program_io.outputs.chunks(4) {
             let mut word = [0u8; 4];
@@ -49,8 +51,8 @@ impl<F: JoltField> ProgramIOPolynomial<F> {
         }
 
         // Copy panic bit
-        let panic_index =
-            remap_address(program_io.memory_layout.panic, &program_io.memory_layout) as usize;
+        let panic_index = remap_address(program_io.memory_layout.panic, &program_io.memory_layout)
+            .unwrap() as usize;
         coeffs[panic_index] = program_io.panic as u32;
 
         if !program_io.panic {
@@ -58,7 +60,8 @@ impl<F: JoltField> ProgramIOPolynomial<F> {
             let termination_index = remap_address(
                 program_io.memory_layout.termination,
                 &program_io.memory_layout,
-            ) as usize;
+            )
+            .unwrap() as usize;
             coeffs[termination_index] = 1;
         }
 

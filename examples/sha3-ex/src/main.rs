@@ -13,9 +13,9 @@ pub fn main() {
 
     let input: &[u8] = &[5u8; 32];
     let now = Instant::now();
-    let (output, proof) = prove_sha3(input);
+    let (output, proof, program_io) = prove_sha3(input);
     println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verify_sha3(input, output, proof);
+    let is_valid = verify_sha3(input, output, program_io.panic, proof);
 
     println!("output: {}", hex::encode(output));
     println!("valid: {is_valid}");

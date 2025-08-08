@@ -19,9 +19,9 @@ declare_riscv_instr!(
 
 impl LW {
     fn exec(&self, cpu: &mut Cpu, ram_access: &mut <LW as RISCVInstruction>::RAMAccess) {
-        cpu.x[self.operands.rd] = match cpu
+        cpu.x[self.operands.rd as usize] = match cpu
             .mmu
-            .load_word(cpu.x[self.operands.rs1].wrapping_add(self.operands.imm) as u64)
+            .load_word(cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64)
         {
             Ok((word, memory_read)) => {
                 *ram_access = memory_read;

@@ -7,6 +7,10 @@ pub enum ProofVerifyError {
     InvalidInputLength(usize, usize),
     #[error("Input too large")]
     InputTooLarge,
+    #[error("Output too large")]
+    OutputTooLarge,
+    #[error("Memory layout mismatch")]
+    MemoryLayoutMismatch,
     #[error("Proof verification failed")]
     #[default]
     InternalError,
@@ -22,6 +26,6 @@ pub enum ProofVerifyError {
     InvalidOpeningProof,
     #[error("Dory proof verification failed: {0}")]
     DoryError(String),
-    #[error("Batched sumcheck verification failed")]
-    BatchedSumcheckError,
+    #[error("Sumcheck verification failed")]
+    SumcheckVerificationError,
 }

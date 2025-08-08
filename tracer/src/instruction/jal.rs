@@ -18,7 +18,7 @@ declare_riscv_instr!(
 impl JAL {
     fn exec(&self, cpu: &mut Cpu, _: &mut <JAL as RISCVInstruction>::RAMAccess) {
         if self.operands.rd != 0 {
-            cpu.x[self.operands.rd] = cpu.sign_extend(cpu.pc as i64);
+            cpu.x[self.operands.rd as usize] = cpu.sign_extend(cpu.pc as i64);
         }
         cpu.pc = (self.address as i64 + normalize_imm(self.operands.imm)) as u64;
     }

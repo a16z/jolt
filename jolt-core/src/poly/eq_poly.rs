@@ -1,4 +1,5 @@
 use crate::field::JoltField;
+use crate::poly::opening_proof::{Endianness, OpeningPoint};
 use crate::utils::{math::Math, thread::unsafe_allocate_zero_vec};
 use rayon::prelude::*;
 use std::marker::PhantomData;
@@ -14,6 +15,25 @@ impl<F: JoltField> EqPolynomial<F> {
             .zip(y.par_iter())
             .map(|(x_i, y_i)| *x_i * y_i + (F::one() - x_i) * (F::one() - y_i))
             .product()
+    }
+
+    /// Computes the MLE evaluation EQ(x, y)
+    pub fn mle_endian<const E1: Endianness, const E2: Endianness>(
+        x: &OpeningPoint<E1, F>,
+        y: &OpeningPoint<E2, F>,
+    ) -> F {
+        assert_eq!(x.len(), y.len());
+        if E1 == E2 {
+            x.r.par_iter()
+                .zip(y.r.par_iter())
+                .map(|(x_i, y_i)| *x_i * y_i + (F::one() - x_i) * (F::one() - y_i))
+                .product()
+        } else {
+            x.r.par_iter()
+                .zip(y.r.par_iter().rev())
+                .map(|(x_i, y_i)| *x_i * y_i + (F::one() - x_i) * (F::one() - y_i))
+                .product()
+        }
     }
 
     #[tracing::instrument(skip_all, name = "EqPolynomial::evals")]
@@ -33,6 +53,11 @@ impl<F: JoltField> EqPolynomial<F> {
     pub fn evals_cached(r: &[F]) -> Vec<Vec<F>> {
         // TODO: implement parallel version & determine switchover point
         Self::evals_serial_cached(r, None)
+    }
+
+    /// Same as evals_cached but for high-to-low (reverse) binding order
+    pub fn evals_cached_rev(r: &[F]) -> Vec<Vec<F>> {
+        Self::evals_serial_cached_rev(r, None)
     }
 
     /// Computes the table of coefficients:
@@ -75,15 +100,7 @@ impl<F: JoltField> EqPolynomial<F> {
         }
         evals
     }
-
-    /// Computes the table of coefficients like `evals_serial`, but also caches the intermediate
-    /// results. This binds `r` in the reverse order compared to `evals_serial_cached`.
-    ///
-    /// Concretely, this returns a vector of vectors, where the `(n -j)`th vector contains the
-    /// coefficients for the polynomial `eq(r[j..], x)` for all `x in {0, 1}^{n - j}`.
-    ///
-    /// Performance seems at most 10% worse than `evals_serial`
-    #[allow(dead_code)]
+    /// evals_serial_cached but for "high to low" ordering, used specifically in the Gruen x Dao Thaler optimization.
     fn evals_serial_cached_rev(r: &[F], scaling_factor: Option<F>) -> Vec<Vec<F>> {
         let rev_r = r.iter().rev().collect::<Vec<_>>();
         let mut evals: Vec<Vec<F>> = (0..r.len() + 1)
@@ -94,7 +111,7 @@ impl<F: JoltField> EqPolynomial<F> {
             for i in 0..size {
                 let scalar = evals[j][i];
                 let multiple = 1 << j;
-                evals[j + 1][i + multiple] = scalar * rev_r[j];
+                evals[j + 1][i + multiple] = scalar * *rev_r[j];
                 evals[j + 1][i] = scalar - evals[j + 1][i + multiple];
             }
             size *= 2;
@@ -104,7 +121,7 @@ impl<F: JoltField> EqPolynomial<F> {
 
     /// Computes the table of coefficients:
     ///
-    ///     `scaling_factor * eq(r, x) for all x in {0, 1}^n`,
+    /// scaling_factor * eq(r, x) for all x in {0, 1}^n
     ///
     /// computing biggest layers of the dynamic programming tree in parallel.
     #[tracing::instrument(skip_all, "EqPolynomial::evals_parallel")]

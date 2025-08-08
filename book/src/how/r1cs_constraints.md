@@ -30,7 +30,7 @@ The inputs required for the constraint system for a single CPU step are:
 
 ### Circuit and instruction flags:
 * There are twelve circuit flags (`opflags` in the Jolt paper) used in Jolt's R1CS constraints.
-They are enumatered in `CircuitFlags` and computed in `to_circuit_flags` (see [`rv_trace.rs`](https://github.com/a16z/jolt/blob/main/common/src/rv_trace.rs))
+They are enumerated in `CircuitFlags` and computed in `to_circuit_flags` (see [`rv_trace.rs`](https://github.com/a16z/jolt/blob/main/common/src/rv_trace.rs))
 Circuit flags depend only on the instruction as it appears in the bytecode, so they are computed as part of
 the preprocessed bytecode in Jolt.
     1. `LeftOperandIsPC`: 1 if the first lookup operand is the program counter; 0 otherwise (first lookup operand is RS1 value).
