@@ -279,9 +279,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
 
             let g = mem::take(&mut polynomial.G);
             drop_in_background_thread(g);
-            drop(shared_eq);
-            let mut eq_state = self.eq_state.write().unwrap();
-            let d_coeffs = mem::take(&mut eq_state.D_coeffs_for_G);
+            let d_coeffs = mem::take(&mut shared_eq.D_coeffs_for_G);
             drop_in_background_thread(d_coeffs);
         } else if round > polynomial.K.log_2() {
             // Bind H for subsequent T rounds
