@@ -476,12 +476,12 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
 
                             evals[0] += eq_r_prime_eval
                                 * (rd_inner_sum_evals[0]
-                                + self.gamma * rs1_inner_sum_evals[0]
-                                + self.gamma_sqr * rs2_inner_sum_evals[0]);
+                                    + self.gamma * rs1_inner_sum_evals[0]
+                                    + self.gamma_sqr * rs2_inner_sum_evals[0]);
                             evals[1] += eq_r_prime_eval
                                 * (rd_inner_sum_evals[1]
-                                + self.gamma * rs1_inner_sum_evals[1]
-                                + self.gamma_sqr * rs2_inner_sum_evals[1]);
+                                    + self.gamma * rs1_inner_sum_evals[1]
+                                    + self.gamma_sqr * rs2_inner_sum_evals[1]);
                         });
 
                     evals
@@ -671,12 +671,12 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
 
                             evals_for_current_E_out[0] += E_in_eval
                                 * (rd_inner_sum_evals[0]
-                                + self.gamma * rs1_inner_sum_evals[0]
-                                + self.gamma_sqr * rs2_inner_sum_evals[0]);
+                                    + self.gamma * rs1_inner_sum_evals[0]
+                                    + self.gamma_sqr * rs2_inner_sum_evals[0]);
                             evals_for_current_E_out[1] += E_in_eval
                                 * (rd_inner_sum_evals[1]
-                                + self.gamma * rs1_inner_sum_evals[1]
-                                + self.gamma_sqr * rs2_inner_sum_evals[1]);
+                                    + self.gamma * rs1_inner_sum_evals[1]
+                                    + self.gamma_sqr * rs2_inner_sum_evals[1]);
                         });
 
                     // Multiply the final running sum by the final value of E_out_eval and add the
@@ -1139,8 +1139,8 @@ impl<F: JoltField> SumcheckInstance<F> for RegistersReadWriteChecking<F> {
 
         eq_eval_cycle
             * (rd_wa_claim * (inc_claim + val_claim)
-            + self.gamma * rs1_ra_claim * val_claim
-            + self.gamma_sqr * rs2_ra_claim * val_claim)
+                + self.gamma * rs1_ra_claim * val_claim
+                + self.gamma_sqr * rs2_ra_claim * val_claim)
     }
 
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {

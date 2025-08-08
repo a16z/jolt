@@ -227,10 +227,7 @@ impl JoltR1CSInputs {
                 coeffs.into()
             }
             JoltR1CSInputs::Rd => {
-                let coeffs: Vec<u8> = trace
-                    .par_iter()
-                    .map(|cycle| cycle.rd_write().0)
-                    .collect();
+                let coeffs: Vec<u8> = trace.par_iter().map(|cycle| cycle.rd_write().0).collect();
                 coeffs.into()
             }
             JoltR1CSInputs::Imm => {
