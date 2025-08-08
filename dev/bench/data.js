@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754679087154,
+  "lastUpdate": 1754679891025,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -11050,6 +11050,150 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 594396,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "aribiswas3@gmail.com",
+            "name": "Ari",
+            "username": "abiswas3"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1a98afecb28e491f856d33327f7b3bac38b5df0c",
+          "message": "Optimisations/polynomial evaluations (#843)\n\n* feat: ability to track large scalar multiplications\n\n* feat: ability to track large scalar multiplications\n\nChanging the batch polynomial interface before implementing speedups\n\n* feat: ability to track large scalar multiplications\n\nChanging the batch polynomial interface before implementing speedups.\nSplitEq implementation brought in -- adding in examples for counting\nmultiplications, and benches to measure time next.\n\n* feat: ability to track large scalar multiplications\n\nChanging the batch polynomial interface before implementing speedups.\nSplitEq implementation brought in -- adding in examples for counting\nmultiplications, and benches to measure time next.\n\nFor single polynomial evals -- and very sparse, split-eq definitely\nmakes sense. For big batch sizses, it makes no sense.\n\n* feat: ability to track large scalar multiplications\n\nChanging the batch polynomial interface before implementing speedups.\nSplitEq implementation brought in -- adding in examples for counting\nmultiplications, and benches to measure time next.\n\nFor single polynomial evals -- and very sparse, split-eq definitely\nmakes sense. For big batch sizses, it makes no sense.\n\n* feat: ability to track large scalar multiplications\n\nChanging the batch polynomial interface before implementing speedups.\nSplitEq implementation brought in -- adding in examples for counting\nmultiplications, and benches to measure time next.\n\nFor single polynomial evals -- and very sparse, split-eq definitely\nmakes sense. For big batch sizses, it makes no sense.\n\n* feat: ability to track large scalar multiplications\n\nHad the sums flattened which defeats the purpose of the optimisations\n\n* feat: ability to track large scalar multiplications\n\nHad the sums flattened which defeats the purpose of the optimisations.\nMore parallelism concerns -- e2 needs to be parallel.\n\n* feat: ability to track large scalar multiplications\n\nEverything works; except have not changed names\n\n* feat: ability to track large scalar multiplications\n\nEverything works;speedups are done\n\n* feat: ability to track large scalar multiplications\n\nEverything works;speedups are done\n\n* Update jolt-core/src/poly/multilinear_polynomial.rs\r\n\r\nAdding in One hot support\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\n\n* mv from examples to benches\n\nMoved polynomial evaluation to benches as per Michaels suggestion\n\n* tests for tracked mult\n\n* michaels recommendations based on verbosity\n\n* moving inside out evaluate into benches only\n\nWe're using split_eq\n\n* moving unused functions to benches\n\n* fixed the filed mul in ark.rs\n\n* fix doc strings\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>",
+          "timestamp": "2025-08-08T14:32:44-04:00",
+          "tree_id": "3f5b050d003e00550bd7d21e4694e3a23f9b1f04",
+          "url": "https://github.com/a16z/jolt/commit/1a98afecb28e491f856d33327f7b3bac38b5df0c"
+        },
+        "date": 1754679890205,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 3.0612,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 452332,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 3529860,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 2.7923,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 468328,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 2.1232,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 470640,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 2.0791,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 461048,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 1.9294,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 625932,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 111.3158,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 9326644,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 3.5948,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 482336,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 9.4606,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 493336,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 4.3092,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 599584,
             "unit": "KB",
             "extra": ""
           }
