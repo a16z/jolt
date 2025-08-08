@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754666780285,
+  "lastUpdate": 1754679087154,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -10906,6 +10906,150 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 585272,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "42227752+omibo@users.noreply.github.com",
+            "name": "Omid Bodaghi",
+            "username": "omibo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c65a8000e18e072af9eb5126da9e3c0b976ca0e8",
+          "message": "Omid/inlines dispatch (#828)\n\n* Implement Precompile instruction and registry to store precompiles\n\n* Add trace generator in VirtualInstructionSequence to the registry, and make it precompile specific\n\n* Test exec() and trace() correct execution from the external crate\n\n* Add sha256 inline as an extended instruction\n\n* Clean up the code\n\n* Rename precompile to inline\n\n* Add sha256_init to inline instruction\n\n* Fix tests in precompile-example\n\n* Implement inlines in an external crate out of the Jolt's workspace\n\n* Set cpu xlen to Xlen::Bit32 in test cases\n\n* Add inlines crate to the project and remove sha256 instruction\n\n* Restructure inlines dir to support separate crates for each inline\n\n* Import sha2_inline crate in sha2_e2d_dory() test\n\n* Merge main into omid/dispatch\n\n* Change variable names and types\n\n---------\n\nCo-authored-by: Omid Bodaghi <omid.bodaghi@Omids-MacBook-Pro.local>",
+          "timestamp": "2025-08-08T14:18:56-04:00",
+          "tree_id": "3053f2ab55ef19edb45fccbd13514350664cfffc",
+          "url": "https://github.com/a16z/jolt/commit/c65a8000e18e072af9eb5126da9e3c0b976ca0e8"
+        },
+        "date": 1754679085978,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 3.6353,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 467860,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 3544660,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 3.4079,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 475780,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 2.7304,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 471484,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 2.6867,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 467848,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 1.6914,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 646028,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 111.1575,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 9363304,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 3.5862,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 477700,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 9.487,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 494628,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 4.259,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 594396,
             "unit": "KB",
             "extra": ""
           }
