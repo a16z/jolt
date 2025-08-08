@@ -55,15 +55,14 @@ pub fn register_inline(
 ) -> Result<(), String> {
     if opcode != 0x0B && opcode != 0x2B {
         return Err(format!(
-            "opcode value {:#04x} is invalid. Only 0x0B (custom-0) and 0x2B (custom-1) are allowed for inline in",
-            opcode
+            "opcode value {opcode:#04x} is invalid. Only 0x0B (custom-0) and 0x2B (custom-1) are allowed for inline in"
         ));
     }
     if funct3 > 7 {
-        return Err(format!("funct3 value {} exceeds maximum of 7", funct3));
+        return Err(format!("funct3 value {funct3} exceeds maximum of 7"));
     }
     if funct7 > 127 {
-        return Err(format!("funct7 value {} exceeds maximum of 127", funct7));
+        return Err(format!("funct7 value {funct7} exceeds maximum of 127"));
     }
 
     let mut registry = INLINE_REGISTRY
@@ -73,14 +72,11 @@ pub fn register_inline(
     let key = (opcode, funct3, funct7);
     if registry.contains_key(&key) {
         return Err(format!(
-            "Inline '{}' with opcode={:#x}, funct3={}, funct7={} is already registered",
+            "Inline '{}' with opcode={opcode:#x}, funct3={funct3}, funct7={funct7} is already registered",
             registry
                 .get(&key)
                 .map(|(name, _, _)| name.as_str())
-                .unwrap_or("unknown"),
-            opcode,
-            funct3,
-            funct7
+                .unwrap_or("unknown")
         ));
     }
 

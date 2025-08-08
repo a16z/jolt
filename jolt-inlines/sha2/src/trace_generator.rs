@@ -1,6 +1,5 @@
 use self::Value::{Imm, Reg};
 use tracer::instruction::{
-    RV32IMInstruction,
     add::ADD,
     addi::ADDI,
     and::AND,
@@ -15,6 +14,7 @@ use tracer::instruction::{
     virtual_srli::VirtualSRLI,
     xor::XOR,
     xori::XORI,
+    RV32IMInstruction,
 };
 
 /// SHA-256 initial hash values

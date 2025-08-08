@@ -354,7 +354,6 @@ macro_rules! define_rv32im_enums {
                 $instr($instr),
             )*
             /// Inline instruction from external crates
-            #[serde(skip)]
             INLINE(INLINE),
         }
 
