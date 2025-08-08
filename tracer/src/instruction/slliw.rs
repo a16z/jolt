@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::virtual_sign_extend::VirtualSignExtend;
 use super::{
     format::{format_i::FormatI, InstructionFormat},
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
+    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -32,19 +32,17 @@ impl SLLIW {
 
 impl RISCVTrace for SLLIW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(cpu.xlen);
         let mut trace = trace;
-        for instr in virtual_sequence {
+        for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for SLLIW {
-    fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         let mut sequence = vec![];
-        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(1);
+        let mut inline_sequence_remaining = self.inline_sequence_remaining.unwrap_or(1);
 
         let mask = match xlen {
             Xlen::Bit32 => panic!("SLLIW is invalid in 32b mode"),
@@ -58,11 +56,11 @@ impl VirtualInstructionSequence for SLLIW {
                 rs1: self.operands.rs1,
                 imm: 1 << shift,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         let signext = VirtualSignExtend {
             address: self.address,
@@ -71,7 +69,7 @@ impl VirtualInstructionSequence for SLLIW {
                 rs1: self.operands.rd,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(signext.into());

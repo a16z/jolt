@@ -1,4 +1,3 @@
-#[cfg(test)]
 // Test utilities for Keccak256 instruction tests
 //
 // This module contains Keccak-specific setup code, utilities, and helper functions
@@ -29,7 +28,7 @@ pub struct KeccakCpuHarness {
 }
 
 impl KeccakCpuHarness {
-    /// Virtual register layout used by the Keccak virtual sequence.
+    /// Virtual register layout used by the Keccak inline sequence.
     const BASE_ADDR: u64 = DRAM_BASE;
     pub const RS1: u8 = 10;
 
@@ -79,7 +78,7 @@ impl KeccakCpuHarness {
                 rs2: 0,
                 rd: 0,
             },
-            virtual_sequence_remaining: None,
+            inline_sequence_remaining: None,
             is_compressed: false,
         }
     }
@@ -96,8 +95,8 @@ impl KeccakCpuHarness {
         trace
     }
 
-    pub fn execute_virtual_sequence(&mut self, sequence: &[RV32IMInstruction]) {
-        self.harness.execute_virtual_sequence(sequence);
+    pub fn execute_inline_sequence(&mut self, sequence: &[RV32IMInstruction]) {
+        self.harness.execute_inline_sequence(sequence);
     }
 }
 
@@ -209,8 +208,8 @@ pub mod kverify {
             for i in 0..25 {
                 if expected[i] != actual[i] {
                     println!(
-                        "  Lane {}: expected 0x{:016x}, got 0x{:016x}",
-                        i, expected[i], actual[i]
+                        "  Lane {i}: expected 0x{:016x}, got 0x{:016x}",
+                        expected[i], actual[i]
                     );
                     mismatch_count += 1;
                     if mismatch_count >= 5 {

@@ -8,9 +8,7 @@ use crate::instruction::format::InstructionFormat;
 use crate::instruction::inline_sha256::{
     execute_sha256_compression, Sha256SequenceBuilder, NEEDED_REGISTERS,
 };
-use crate::instruction::{
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
-};
+use crate::instruction::{RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction};
 
 declare_riscv_instr!(
     name   = SHA256,
@@ -57,17 +55,15 @@ impl SHA256 {
 
 impl RISCVTrace for SHA256 {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(cpu.xlen);
 
         let mut trace = trace;
-        for instr in virtual_sequence {
+        for instr in inline_sequence {
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for SHA256 {
-    fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used as a scratch space
         let mut vr = [0; NEEDED_REGISTERS as usize];
         (0..NEEDED_REGISTERS).for_each(|i| {
@@ -76,11 +72,61 @@ impl VirtualInstructionSequence for SHA256 {
         let builder = Sha256SequenceBuilder::new(
             self.address,
             self.is_compressed,
+            xlen,
             vr,
             self.operands.rs1,
             self.operands.rs2,
             false, // not initial - uses custom IV from rs2
         );
         builder.build()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::instruction::inline_sha256::test_utils::{sverify, Sha256CpuHarness, TestVectors};
+    use crate::instruction::RISCVInstruction;
+
+    #[test]
+    fn test_sha256_direct_execution() {
+        // Test against multiple canonical NIST test vectors
+        for (desc, block, initial_state, expected) in TestVectors::get_standard_test_vectors() {
+            let mut harness = Sha256CpuHarness::new();
+            harness.load_block(&block);
+            harness.load_state(&initial_state);
+            Sha256CpuHarness::instruction_sha256().execute(&mut harness.harness.cpu, &mut ());
+            let result = harness.read_state();
+
+            sverify::assert_states_equal(
+                &expected,
+                &result,
+                &format!("SHA256 direct execution: {desc}"),
+            );
+        }
+    }
+
+    #[test]
+    fn test_sha256_exec_trace_equal() {
+        // Test exec vs trace equivalence with canonical test vectors
+        for (desc, block, initial_state, _expected) in TestVectors::get_standard_test_vectors() {
+            sverify::assert_exec_trace_equiv_custom(
+                &block,
+                &initial_state,
+                &format!("SHA256 exec vs trace: {desc}"),
+            );
+        }
+    }
+
+    #[test]
+    fn measure_sha256_length() {
+        use crate::instruction::RISCVTrace;
+        let instr = Sha256CpuHarness::instruction_sha256();
+        let sequence = instr.inline_sequence(crate::emulator::cpu::Xlen::Bit32);
+        let bytecode_len = sequence.len();
+        println!(
+            "SHA256 compression: bytecode length {}, {:.2} instructions per byte",
+            bytecode_len,
+            bytecode_len as f64 / 64.0,
+        );
     }
 }

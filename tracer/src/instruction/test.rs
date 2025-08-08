@@ -3,11 +3,11 @@
 // /// 1. Sets the registers to given values for rs1 and rs2.
 // /// 2. Constructs an RVTraceRow with the provided instruction and register values.
 // /// 3. Generates the virtual instruction sequence using the RISCVTrace trait.
-// /// 4. Iterates over each row in the virtual sequence and validates the state changes.
+// /// 4. Iterates over each row in the inline sequence and validates the state changes.
 // /// 5. Verifies that rs1 and rs2 have not been clobbered.
 // /// 6. Ensures that the result is correctly written to the rd register.
 // /// 7. Checks that no unintended modifications have been made to other registers.
-// pub fn virtual_sequence_trace_test<I: RISCVInstruction + VirtualInstructionSequence + Copy>() {
+// pub fn inline_sequence_trace_test<I: RISCVInstruction + RISCVTrace + Copy>() {
 //     let mut rng = StdRng::seed_from_u64(12345);
 
 //     for _ in 0..1000 {
@@ -87,12 +87,12 @@ mod tests {
     use crate::{
         emulator::cpu::Xlen,
         instruction::{
-            RISCVInstruction, RV32IMInstruction, VirtualInstructionSequence, ADDIW, ADDW, AMOADDD,
-            AMOADDW, AMOANDD, AMOANDW, AMOMAXD, AMOMAXUD, AMOMAXUW, AMOMAXW, AMOMIND, AMOMINUD,
-            AMOMINUW, AMOMINW, AMOORD, AMOORW, AMOSWAPD, AMOSWAPW, AMOXORD, AMOXORW, DIV, DIVU,
-            DIVUW, DIVW, LB, LBU, LH, LHU, LW, LWU, MULH, MULHSU, MULW, REM, REMU, REMUW, REMW, SB,
-            SH, SHA256, SHA256INIT, SLL, SLLI, SLLIW, SLLW, SRA, SRAI, SRAIW, SRAW, SRL, SRLI,
-            SRLIW, SRLW, SUBW, SW,
+            RISCVCycle, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, ADDIW, ADDW,
+            AMOADDD, AMOADDW, AMOANDD, AMOANDW, AMOMAXD, AMOMAXUD, AMOMAXUW, AMOMAXW, AMOMIND,
+            AMOMINUD, AMOMINUW, AMOMINW, AMOORD, AMOORW, AMOSWAPD, AMOSWAPW, AMOXORD, AMOXORW, DIV,
+            DIVU, DIVUW, DIVW, LB, LBU, LH, LHU, LW, LWU, MULH, MULHSU, MULW, REM, REMU, REMUW,
+            REMW, SB, SH, SHA256, SHA256INIT, SLL, SLLI, SLLIW, SLLW, SRA, SRAI, SRAIW, SRAW, SRL,
+            SRLI, SRLIW, SRLW, SUBW, SW,
         },
     };
     use std::any::type_name;
@@ -102,7 +102,7 @@ mod tests {
 
         for (index, instr) in sequence.iter().enumerate() {
             let normalized = instr.normalize();
-            let current_remaining = normalized.virtual_sequence_remaining;
+            let current_remaining = normalized.inline_sequence_remaining;
 
             if current_remaining.is_none() {
                 return Err(format!("Instruction {index} has no remaining"));
@@ -129,16 +129,17 @@ mod tests {
     }
 
     trait VirtualInstructionSequenceWrapper {
-        fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction>;
+        fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction>;
         fn get_type_name(&self) -> &'static str;
     }
 
     impl<T> VirtualInstructionSequenceWrapper for T
     where
-        T: VirtualInstructionSequence + RISCVInstruction,
+        T: RISCVTrace + RISCVInstruction,
+        RISCVCycle<T>: Into<RV32IMCycle>,
     {
-        fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-            self.virtual_sequence(xlen)
+        fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+            self.inline_sequence(xlen)
         }
 
         fn get_type_name(&self) -> &'static str {
@@ -233,7 +234,7 @@ mod tests {
 
         let mut failures_32 = Vec::new();
         for instruction in instruction_pairs_32 {
-            let sequence = instruction.virtual_sequence(xlen_32);
+            let sequence = instruction.inline_sequence(xlen_32);
             if sequence.is_empty() {
                 continue;
             }
@@ -249,7 +250,7 @@ mod tests {
 
         let mut failures_64 = Vec::new();
         for instruction in instruction_sequence_pairs_64 {
-            let sequence = instruction.virtual_sequence(xlen_64);
+            let sequence = instruction.inline_sequence(xlen_64);
             if sequence.is_empty() {
                 continue;
             }
@@ -267,7 +268,7 @@ mod tests {
         let total_failures = failures_32.len() + failures_64.len();
         assert!(
             total_failures == 0,
-            "Found {} virtual sequence validation failures:\n{}{}",
+            "Found {} inline sequence validation failures:\n{}{}",
             total_failures,
             if !failures_32.is_empty() {
                 format!(

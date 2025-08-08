@@ -18,7 +18,7 @@ use super::{
     virtual_assert_valid_signed_remainder::VirtualAssertValidSignedRemainder,
     virtual_change_divisor::VirtualChangeDivisor,
     virtual_move::VirtualMove,
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
+    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -77,28 +77,26 @@ impl RISCVTrace for REM {
             }
         };
 
-        let mut virtual_sequence = self.virtual_sequence(cpu.xlen);
-        if let RV32IMInstruction::VirtualAdvice(instr) = &mut virtual_sequence[0] {
+        let mut inline_sequence = self.inline_sequence(cpu.xlen);
+        if let RV32IMInstruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
             instr.advice = quotient;
         } else {
             panic!("Expected Advice instruction");
         }
-        if let RV32IMInstruction::VirtualAdvice(instr) = &mut virtual_sequence[1] {
+        if let RV32IMInstruction::VirtualAdvice(instr) = &mut inline_sequence[1] {
             instr.advice = remainder;
         } else {
             panic!("Expected Advice instruction");
         }
 
         let mut trace = trace;
-        for instr in virtual_sequence {
+        for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for REM {
-    fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_0 = virtual_register_index(0);
         let v_q = virtual_register_index(1);
@@ -111,7 +109,7 @@ impl VirtualInstructionSequence for REM {
         let advice = VirtualAdvice {
             address: self.address,
             operands: FormatJ { rd: v_q, imm: 0 },
-            virtual_sequence_remaining: Some(7),
+            inline_sequence_remaining: Some(7),
             advice: 0,
             is_compressed: self.is_compressed,
         };
@@ -120,7 +118,7 @@ impl VirtualInstructionSequence for REM {
         let advice = VirtualAdvice {
             address: self.address,
             operands: FormatJ { rd: v_r, imm: 0 },
-            virtual_sequence_remaining: Some(6),
+            inline_sequence_remaining: Some(6),
             advice: 0,
             is_compressed: self.is_compressed,
         };
@@ -133,7 +131,7 @@ impl VirtualInstructionSequence for REM {
                 rs1: self.operands.rs1,
                 rs2: self.operands.rs2,
             },
-            virtual_sequence_remaining: Some(5),
+            inline_sequence_remaining: Some(5),
             is_compressed: self.is_compressed,
         };
         sequence.push(change_divisor.into());
@@ -145,7 +143,7 @@ impl VirtualInstructionSequence for REM {
                 rs2: self.operands.rs2,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(4),
+            inline_sequence_remaining: Some(4),
             is_compressed: self.is_compressed,
         };
         sequence.push(is_valid.into());
@@ -157,7 +155,7 @@ impl VirtualInstructionSequence for REM {
                 rs1: v_q,
                 rs2: v_rs2,
             },
-            virtual_sequence_remaining: Some(3),
+            inline_sequence_remaining: Some(3),
             is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
@@ -169,7 +167,7 @@ impl VirtualInstructionSequence for REM {
                 rs1: v_qy,
                 rs2: v_r,
             },
-            virtual_sequence_remaining: Some(2),
+            inline_sequence_remaining: Some(2),
             is_compressed: self.is_compressed,
         };
         sequence.push(add.into());
@@ -181,7 +179,7 @@ impl VirtualInstructionSequence for REM {
                 rs2: self.operands.rs1,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(1),
+            inline_sequence_remaining: Some(1),
             is_compressed: self.is_compressed,
         };
         sequence.push(assert_eq.into());
@@ -193,7 +191,7 @@ impl VirtualInstructionSequence for REM {
                 rs1: v_r,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(0),
+            inline_sequence_remaining: Some(0),
             is_compressed: self.is_compressed,
         };
         sequence.push(virtual_move.into());

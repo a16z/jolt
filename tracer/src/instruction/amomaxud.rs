@@ -10,7 +10,6 @@ use super::sltu::SLTU;
 use super::virtual_move::VirtualMove;
 use super::xori::XORI;
 use super::RV32IMInstruction;
-use super::VirtualInstructionSequence;
 use crate::instruction::format::format_load::FormatLoad;
 use crate::{
     declare_riscv_instr,
@@ -60,17 +59,15 @@ impl AMOMAXUD {
 
 impl RISCVTrace for AMOMAXUD {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(cpu.xlen);
         let mut trace = trace;
-        for instr in virtual_sequence {
+        for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for AMOMAXUD {
-    fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         let v_rs2 = virtual_register_index(6);
         let v_rd = virtual_register_index(7);
         let v_sel_rs2 = virtual_register_index(8);
@@ -85,7 +82,7 @@ impl VirtualInstructionSequence for AMOMAXUD {
                 rs1: self.operands.rs1,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(7),
+            inline_sequence_remaining: Some(7),
             is_compressed: self.is_compressed,
         };
         sequence.push(ld.into());
@@ -97,7 +94,7 @@ impl VirtualInstructionSequence for AMOMAXUD {
                 rs1: v_rd,
                 rs2: self.operands.rs2,
             },
-            virtual_sequence_remaining: Some(6),
+            inline_sequence_remaining: Some(6),
             is_compressed: self.is_compressed,
         };
         sequence.push(sltu.into());
@@ -109,7 +106,7 @@ impl VirtualInstructionSequence for AMOMAXUD {
                 rs1: v_sel_rs2,
                 imm: 1,
             },
-            virtual_sequence_remaining: Some(5),
+            inline_sequence_remaining: Some(5),
             is_compressed: self.is_compressed,
         };
         sequence.push(xori.into());
@@ -121,7 +118,7 @@ impl VirtualInstructionSequence for AMOMAXUD {
                 rs1: v_sel_rs2,
                 rs2: self.operands.rs2,
             },
-            virtual_sequence_remaining: Some(4),
+            inline_sequence_remaining: Some(4),
             is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
@@ -133,7 +130,7 @@ impl VirtualInstructionSequence for AMOMAXUD {
                 rs1: v_sel_rd,
                 rs2: v_rd,
             },
-            virtual_sequence_remaining: Some(3),
+            inline_sequence_remaining: Some(3),
             is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
@@ -145,7 +142,7 @@ impl VirtualInstructionSequence for AMOMAXUD {
                 rs1: v_tmp,
                 rs2: v_rs2,
             },
-            virtual_sequence_remaining: Some(2),
+            inline_sequence_remaining: Some(2),
             is_compressed: self.is_compressed,
         };
         sequence.push(add.into());
@@ -157,7 +154,7 @@ impl VirtualInstructionSequence for AMOMAXUD {
                 rs2: v_rs2,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(1),
+            inline_sequence_remaining: Some(1),
             is_compressed: self.is_compressed,
         };
         sequence.push(sd.into());
@@ -169,7 +166,7 @@ impl VirtualInstructionSequence for AMOMAXUD {
                 rs1: v_rd,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(0),
+            inline_sequence_remaining: Some(0),
             is_compressed: self.is_compressed,
         };
         sequence.push(vmove.into());

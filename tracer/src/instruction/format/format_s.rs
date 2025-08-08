@@ -16,6 +16,16 @@ pub struct FormatS {
     pub imm: i64,
 }
 
+impl From<NormalizedOperands> for FormatS {
+    fn from(operands: NormalizedOperands) -> Self {
+        Self {
+            rs1: operands.rs1,
+            rs2: operands.rs2,
+            imm: operands.imm as i64,
+        }
+    }
+}
+
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RegisterStateFormatS {
     pub rs1: u64,

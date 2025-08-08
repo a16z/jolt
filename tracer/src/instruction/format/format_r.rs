@@ -16,6 +16,16 @@ pub struct FormatR {
     pub rs2: u8,
 }
 
+impl From<NormalizedOperands> for FormatR {
+    fn from(operands: NormalizedOperands) -> Self {
+        Self {
+            rd: operands.rd,
+            rs1: operands.rs1,
+            rs2: operands.rs2,
+        }
+    }
+}
+
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RegisterStateFormatR {
     pub rd: (u64, u64), // (old_value, new_value)

@@ -21,7 +21,6 @@ use super::virtual_sw::VirtualSW;
 use super::xor::XOR;
 use super::RAMWrite;
 use super::RV32IMInstruction;
-use super::VirtualInstructionSequence;
 use common::constants::virtual_register_index;
 
 use super::{
@@ -52,26 +51,24 @@ impl SW {
 
 impl RISCVTrace for SW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(cpu.xlen);
         let mut trace = trace;
-        for instr in virtual_sequence {
+        for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for SW {
-    fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         match xlen {
-            Xlen::Bit32 => self.virtual_sequence_32(),
-            Xlen::Bit64 => self.virtual_sequence_64(),
+            Xlen::Bit32 => self.inline_sequence_32(),
+            Xlen::Bit64 => self.inline_sequence_64(),
         }
     }
 }
 
 impl SW {
-    fn virtual_sequence_32(&self) -> Vec<RV32IMInstruction> {
+    fn inline_sequence_32(&self) -> Vec<RV32IMInstruction> {
         let mut sequence = vec![];
         let sw = VirtualSW {
             address: self.address,
@@ -80,7 +77,7 @@ impl SW {
                 rs2: self.operands.rs2,
                 imm: self.operands.imm,
             },
-            virtual_sequence_remaining: Some(0),
+            inline_sequence_remaining: Some(0),
             is_compressed: self.is_compressed,
         };
         sequence.push(sw.into());
@@ -88,7 +85,7 @@ impl SW {
         sequence
     }
 
-    fn virtual_sequence_64(&self) -> Vec<RV32IMInstruction> {
+    fn inline_sequence_64(&self) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_address = virtual_register_index(6);
         let v_dword_address = virtual_register_index(7);
@@ -98,7 +95,7 @@ impl SW {
         let v_word = virtual_register_index(11);
 
         let mut sequence = vec![];
-        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(14);
+        let mut inline_sequence_remaining = self.inline_sequence_remaining.unwrap_or(14);
 
         let align_check = VirtualAssertWordAlignment {
             address: self.address,
@@ -106,11 +103,11 @@ impl SW {
                 rs1: self.operands.rs1,
                 imm: self.operands.imm,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(align_check.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         let add = ADDI {
             address: self.address,
@@ -119,11 +116,11 @@ impl SW {
                 rs1: self.operands.rs1,
                 imm: self.operands.imm as u64,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(add.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         let andi = ANDI {
             address: self.address,
@@ -132,11 +129,11 @@ impl SW {
                 rs1: v_address,
                 imm: -8i64 as u64,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(andi.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         let ld = LD {
             address: self.address,
@@ -145,11 +142,11 @@ impl SW {
                 rs1: v_dword_address,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(ld.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         let slli = SLLI {
             address: self.address,
@@ -158,13 +155,13 @@ impl SW {
                 rs1: v_address,
                 imm: 3,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
-        let slli_sequence = slli.virtual_sequence(Xlen::Bit64);
+        let slli_sequence = slli.inline_sequence(Xlen::Bit64);
         let slli_sequence_len = slli_sequence.len();
         sequence.extend(slli_sequence);
-        virtual_sequence_remaining -= slli_sequence_len as u16;
+        inline_sequence_remaining -= slli_sequence_len as u16;
 
         let ori = ORI {
             address: self.address,
@@ -173,11 +170,11 @@ impl SW {
                 rs1: 0,
                 imm: -1i64 as u64,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(ori.into()); // v_mask gets 0xFFFFFFFF_FFFFFFFF
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         let srli = SRLI {
             address: self.address,
@@ -186,11 +183,11 @@ impl SW {
                 rs1: v_mask,
                 imm: 32, // Logical right shift by 32 bits
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
-        sequence.extend(srli.virtual_sequence(Xlen::Bit64)); // v_mask gets 0x00000000_FFFFFFFF
-        virtual_sequence_remaining -= 1;
+        sequence.extend(srli.inline_sequence(Xlen::Bit64)); // v_mask gets 0x00000000_FFFFFFFF
+        inline_sequence_remaining -= 1;
 
         let sll_mask = SLL {
             address: self.address,
@@ -199,13 +196,13 @@ impl SW {
                 rs1: v_mask,
                 rs2: v_shift,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
-        let sll_mask_sequence = sll_mask.virtual_sequence(Xlen::Bit64);
+        let sll_mask_sequence = sll_mask.inline_sequence(Xlen::Bit64);
         let sll_mask_sequence_len = sll_mask_sequence.len();
         sequence.extend(sll_mask_sequence);
-        virtual_sequence_remaining -= sll_mask_sequence_len as u16;
+        inline_sequence_remaining -= sll_mask_sequence_len as u16;
 
         let sll_value = SLL {
             address: self.address,
@@ -214,13 +211,13 @@ impl SW {
                 rs1: self.operands.rs2,
                 rs2: v_shift,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
-        let sll_value_sequence = sll_value.virtual_sequence(Xlen::Bit64);
+        let sll_value_sequence = sll_value.inline_sequence(Xlen::Bit64);
         let sll_value_sequence_len = sll_value_sequence.len();
         sequence.extend(sll_value_sequence);
-        virtual_sequence_remaining -= sll_value_sequence_len as u16;
+        inline_sequence_remaining -= sll_value_sequence_len as u16;
 
         let xor = XOR {
             address: self.address,
@@ -229,11 +226,11 @@ impl SW {
                 rs1: v_dword,
                 rs2: v_word,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(xor.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         let and = AND {
             address: self.address,
@@ -242,11 +239,11 @@ impl SW {
                 rs1: v_word,
                 rs2: v_mask,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(and.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         let xor_final = XOR {
             address: self.address,
@@ -255,11 +252,11 @@ impl SW {
                 rs1: v_dword,
                 rs2: v_word,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(xor_final.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         let sd = SD {
             address: self.address,
@@ -268,7 +265,7 @@ impl SW {
                 rs2: v_dword,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(sd.into());

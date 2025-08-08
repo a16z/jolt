@@ -15,9 +15,9 @@ impl InstructionFlags for LD {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
         flags[CircuitFlags::Load as usize] = true;
         flags[CircuitFlags::InlineSequenceInstruction as usize] =
-            self.virtual_sequence_remaining.is_some();
+            self.inline_sequence_remaining.is_some();
         flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
-            self.virtual_sequence_remaining.unwrap_or(0) != 0;
+            self.inline_sequence_remaining.unwrap_or(0) != 0;
         flags[CircuitFlags::IsCompressed as usize] = self.is_compressed;
         flags
     }

@@ -15,9 +15,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::str::FromStr;
 use std::{fs, io};
-use tracer::emulator::cpu::Xlen;
 use tracer::emulator::memory::Memory;
-use tracer::instruction::VirtualInstructionSequence;
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
 
 impl Program {
@@ -141,96 +139,11 @@ impl Program {
         let (mut instructions, raw_bytes, program_end, xlen) = tracer::decode(&elf_contents);
         let bytecode_size = program_end - RAM_START_ADDRESS;
 
-        // Expand virtual sequences
-        if xlen == Xlen::Bit32 {
-            instructions = instructions
-                .into_par_iter()
-                .flat_map_iter(|instr| match instr {
-                    RV32IMInstruction::DIV(div) => div.virtual_sequence(xlen),
-                    RV32IMInstruction::DIVU(divu) => divu.virtual_sequence(xlen),
-                    RV32IMInstruction::LB(lb) => lb.virtual_sequence(xlen),
-                    RV32IMInstruction::LBU(lbu) => lbu.virtual_sequence(xlen),
-                    RV32IMInstruction::LH(lh) => lh.virtual_sequence(xlen),
-                    RV32IMInstruction::LHU(lhu) => lhu.virtual_sequence(xlen),
-                    RV32IMInstruction::MULH(mulh) => mulh.virtual_sequence(xlen),
-                    RV32IMInstruction::MULHSU(mulhsu) => mulhsu.virtual_sequence(xlen),
-                    RV32IMInstruction::REM(rem) => rem.virtual_sequence(xlen),
-                    RV32IMInstruction::REMU(remu) => remu.virtual_sequence(xlen),
-                    RV32IMInstruction::SB(sb) => sb.virtual_sequence(xlen),
-                    RV32IMInstruction::SH(sh) => sh.virtual_sequence(xlen),
-                    RV32IMInstruction::SLL(sll) => sll.virtual_sequence(xlen),
-                    RV32IMInstruction::SLLI(slli) => slli.virtual_sequence(xlen),
-                    RV32IMInstruction::SRA(sra) => sra.virtual_sequence(xlen),
-                    RV32IMInstruction::SRAI(srai) => srai.virtual_sequence(xlen),
-                    RV32IMInstruction::SRL(srl) => srl.virtual_sequence(xlen),
-                    RV32IMInstruction::SRLI(srli) => srli.virtual_sequence(xlen),
-                    RV32IMInstruction::SHA256(sha256) => sha256.virtual_sequence(xlen),
-                    RV32IMInstruction::SHA256INIT(sha256init) => sha256init.virtual_sequence(xlen),
-                    _ => vec![instr],
-                })
-                .collect();
-        } else {
-            instructions = instructions
-                .into_par_iter()
-                .flat_map_iter(|instr| match instr {
-                    RV32IMInstruction::ADDIW(addiw) => addiw.virtual_sequence(xlen),
-                    RV32IMInstruction::ADDW(addw) => addw.virtual_sequence(xlen),
-                    RV32IMInstruction::AMOADDD(amoaddd) => amoaddd.virtual_sequence(xlen),
-                    RV32IMInstruction::AMOADDW(amoaddw) => amoaddw.virtual_sequence(xlen),
-                    RV32IMInstruction::AMOANDD(amoandd) => amoandd.virtual_sequence(xlen),
-                    RV32IMInstruction::AMOANDW(amoandw) => amoandw.virtual_sequence(xlen),
-                    RV32IMInstruction::AMOMAXD(amomaxd) => amomaxd.virtual_sequence(xlen),
-                    RV32IMInstruction::AMOMAXUD(amomaxud) => amomaxud.virtual_sequence(xlen),
-                    RV32IMInstruction::AMOMAXUW(amomaxuw) => amomaxuw.virtual_sequence(xlen),
-                    RV32IMInstruction::AMOMAXW(amomaxw) => amomaxw.virtual_sequence(xlen),
-                    RV32IMInstruction::AMOMIND(amomind) => amomind.virtual_sequence(xlen),
-                    RV32IMInstruction::AMOMINUD(amominud) => amominud.virtual_sequence(xlen),
-                    RV32IMInstruction::AMOMINUW(amominuw) => amominuw.virtual_sequence(xlen),
-                    RV32IMInstruction::AMOMINW(amominw) => amominw.virtual_sequence(xlen),
-                    RV32IMInstruction::AMOORD(amoord) => amoord.virtual_sequence(xlen),
-                    RV32IMInstruction::AMOORW(amoorw) => amoorw.virtual_sequence(xlen),
-                    RV32IMInstruction::AMOSWAPD(amoswapd) => amoswapd.virtual_sequence(xlen),
-                    RV32IMInstruction::AMOSWAPW(amoswapw) => amoswapw.virtual_sequence(xlen),
-                    RV32IMInstruction::AMOXORD(amoxord) => amoxord.virtual_sequence(xlen),
-                    RV32IMInstruction::AMOXORW(amoxorw) => amoxorw.virtual_sequence(xlen),
-                    RV32IMInstruction::DIV(div) => div.virtual_sequence(xlen),
-                    RV32IMInstruction::DIVU(divu) => divu.virtual_sequence(xlen),
-                    RV32IMInstruction::DIVUW(divuw) => divuw.virtual_sequence(xlen),
-                    RV32IMInstruction::DIVW(divw) => divw.virtual_sequence(xlen),
-                    RV32IMInstruction::KECCAK256(keccak256) => keccak256.virtual_sequence(xlen),
-                    RV32IMInstruction::LB(lb) => lb.virtual_sequence(xlen),
-                    RV32IMInstruction::LBU(lbu) => lbu.virtual_sequence(xlen),
-                    RV32IMInstruction::LH(lh) => lh.virtual_sequence(xlen),
-                    RV32IMInstruction::LHU(lhu) => lhu.virtual_sequence(xlen),
-                    RV32IMInstruction::LW(lw) => lw.virtual_sequence(xlen),
-                    RV32IMInstruction::LWU(lwu) => lwu.virtual_sequence(xlen),
-                    RV32IMInstruction::MULH(mulh) => mulh.virtual_sequence(xlen),
-                    RV32IMInstruction::MULHSU(mulhsu) => mulhsu.virtual_sequence(xlen),
-                    RV32IMInstruction::MULW(mulw) => mulw.virtual_sequence(xlen),
-                    RV32IMInstruction::REM(rem) => rem.virtual_sequence(xlen),
-                    RV32IMInstruction::REMU(remu) => remu.virtual_sequence(xlen),
-                    RV32IMInstruction::REMUW(remuw) => remuw.virtual_sequence(xlen),
-                    RV32IMInstruction::REMW(remw) => remw.virtual_sequence(xlen),
-                    RV32IMInstruction::SB(sb) => sb.virtual_sequence(xlen),
-                    RV32IMInstruction::SH(sh) => sh.virtual_sequence(xlen),
-                    RV32IMInstruction::SLLI(slli) => slli.virtual_sequence(xlen),
-                    RV32IMInstruction::SLLIW(slliw) => slliw.virtual_sequence(xlen),
-                    RV32IMInstruction::SLL(sll) => sll.virtual_sequence(xlen),
-                    RV32IMInstruction::SLLW(sllw) => sllw.virtual_sequence(xlen),
-                    RV32IMInstruction::SRAI(srai) => srai.virtual_sequence(xlen),
-                    RV32IMInstruction::SRAIW(sraiw) => sraiw.virtual_sequence(xlen),
-                    RV32IMInstruction::SRA(sra) => sra.virtual_sequence(xlen),
-                    RV32IMInstruction::SRAW(sraw) => sraw.virtual_sequence(xlen),
-                    RV32IMInstruction::SRLI(srli) => srli.virtual_sequence(xlen),
-                    RV32IMInstruction::SRLIW(srliw) => srliw.virtual_sequence(xlen),
-                    RV32IMInstruction::SRL(srl) => srl.virtual_sequence(xlen),
-                    RV32IMInstruction::SRLW(srlw) => srlw.virtual_sequence(xlen),
-                    RV32IMInstruction::SUBW(subw) => subw.virtual_sequence(xlen),
-                    RV32IMInstruction::SW(sw) => sw.virtual_sequence(xlen),
-                    _ => vec![instr],
-                })
-                .collect();
-        }
+        // Expand inline sequences
+        instructions = instructions
+            .into_par_iter()
+            .flat_map_iter(|instr| instr.inline_sequence(xlen))
+            .collect();
 
         (instructions, raw_bytes, bytecode_size)
     }

@@ -8,7 +8,6 @@ use super::virtual_move::VirtualMove;
 use super::virtual_sign_extend::VirtualSignExtend;
 use super::xori::XORI;
 use super::RV32IMInstruction;
-use super::VirtualInstructionSequence;
 use crate::instruction::format::format_i::FormatI;
 use crate::{
     declare_riscv_instr,
@@ -58,26 +57,24 @@ impl AMOMAXW {
 
 impl RISCVTrace for AMOMAXW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(cpu.xlen);
         let mut trace = trace;
-        for instr in virtual_sequence {
+        for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for AMOMAXW {
-    fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         match xlen {
-            Xlen::Bit32 => self.virtual_sequence_32(xlen),
-            Xlen::Bit64 => self.virtual_sequence_64(xlen),
+            Xlen::Bit32 => self.inline_sequence_32(xlen),
+            Xlen::Bit64 => self.inline_sequence_64(xlen),
         }
     }
 }
 
 impl AMOMAXW {
-    fn virtual_sequence_32(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence_32(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         let v_rd = virtual_register_index(7);
         let v_rs2 = virtual_register_index(8);
         let v_sel_rs2 = virtual_register_index(9);
@@ -102,7 +99,7 @@ impl AMOMAXW {
                 rs1: self.operands.rs2,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(remaining),
+            inline_sequence_remaining: Some(remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(mov.into());
@@ -115,7 +112,7 @@ impl AMOMAXW {
                 rs1: v_rd,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(remaining),
+            inline_sequence_remaining: Some(remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(mov.into());
@@ -128,7 +125,7 @@ impl AMOMAXW {
                 rs1: v_tmp,
                 rs2: v_rs2,
             },
-            virtual_sequence_remaining: Some(remaining),
+            inline_sequence_remaining: Some(remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(slt.into());
@@ -141,7 +138,7 @@ impl AMOMAXW {
                 rs1: v_sel_rs2,
                 imm: 1,
             },
-            virtual_sequence_remaining: Some(remaining),
+            inline_sequence_remaining: Some(remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(xori.into());
@@ -154,7 +151,7 @@ impl AMOMAXW {
                 rs1: v_sel_rs2,
                 rs2: self.operands.rs2,
             },
-            virtual_sequence_remaining: Some(remaining),
+            inline_sequence_remaining: Some(remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
@@ -167,7 +164,7 @@ impl AMOMAXW {
                 rs1: v_sel_rd,
                 rs2: v_rd,
             },
-            virtual_sequence_remaining: Some(remaining),
+            inline_sequence_remaining: Some(remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
@@ -180,7 +177,7 @@ impl AMOMAXW {
                 rs1: v_tmp,
                 rs2: v_rs2,
             },
-            virtual_sequence_remaining: Some(remaining),
+            inline_sequence_remaining: Some(remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(add.into());
@@ -200,7 +197,7 @@ impl AMOMAXW {
         sequence
     }
 
-    fn virtual_sequence_64(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence_64(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_mask = virtual_register_index(10);
         let v_dword_address = virtual_register_index(11);
@@ -234,7 +231,7 @@ impl AMOMAXW {
                 rs1: self.operands.rs2,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(remaining),
+            inline_sequence_remaining: Some(remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(signext.into());
@@ -247,7 +244,7 @@ impl AMOMAXW {
                 rs1: v_rd,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(remaining),
+            inline_sequence_remaining: Some(remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(signext.into());
@@ -260,7 +257,7 @@ impl AMOMAXW {
                 rs1: v_tmp,
                 rs2: v_rs2,
             },
-            virtual_sequence_remaining: Some(remaining),
+            inline_sequence_remaining: Some(remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(slt.into());
@@ -273,7 +270,7 @@ impl AMOMAXW {
                 rs1: v_sel_rs2,
                 imm: 1,
             },
-            virtual_sequence_remaining: Some(remaining),
+            inline_sequence_remaining: Some(remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(xori.into());
@@ -286,7 +283,7 @@ impl AMOMAXW {
                 rs1: v_sel_rs2,
                 rs2: self.operands.rs2,
             },
-            virtual_sequence_remaining: Some(remaining),
+            inline_sequence_remaining: Some(remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
@@ -299,7 +296,7 @@ impl AMOMAXW {
                 rs1: v_sel_rd,
                 rs2: v_rd,
             },
-            virtual_sequence_remaining: Some(remaining),
+            inline_sequence_remaining: Some(remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
@@ -312,7 +309,7 @@ impl AMOMAXW {
                 rs1: v_tmp,
                 rs2: v_rs2,
             },
-            virtual_sequence_remaining: Some(remaining),
+            inline_sequence_remaining: Some(remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(add.into());

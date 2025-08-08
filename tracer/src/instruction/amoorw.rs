@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 use super::amo::{amo_post32, amo_post64, amo_pre32, amo_pre64};
 use super::or::OR;
 use super::RV32IMInstruction;
-use super::VirtualInstructionSequence;
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
@@ -48,39 +47,37 @@ impl AMOORW {
 
 impl RISCVTrace for AMOORW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(cpu.xlen);
         let mut trace = trace;
-        for instr in virtual_sequence {
+        for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for AMOORW {
-    fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         match xlen {
-            Xlen::Bit32 => self.virtual_sequence_32(xlen),
-            Xlen::Bit64 => self.virtual_sequence_64(xlen),
+            Xlen::Bit32 => self.inline_sequence_32(xlen),
+            Xlen::Bit64 => self.inline_sequence_64(xlen),
         }
     }
 }
 
 impl AMOORW {
-    fn virtual_sequence_32(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence_32(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         let v_rd = virtual_register_index(7);
         let v_rs2 = virtual_register_index(8);
 
         let mut sequence = vec![];
-        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(4);
+        let mut inline_sequence_remaining = self.inline_sequence_remaining.unwrap_or(4);
 
-        virtual_sequence_remaining = amo_pre32(
+        inline_sequence_remaining = amo_pre32(
             &mut sequence,
             self.address,
             self.is_compressed,
             self.operands.rs1,
             v_rd,
-            virtual_sequence_remaining,
+            inline_sequence_remaining,
         );
 
         let or = OR {
@@ -90,11 +87,11 @@ impl AMOORW {
                 rs1: v_rd,
                 rs2: self.operands.rs2,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(or.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         amo_post32(
             &mut sequence,
@@ -104,13 +101,13 @@ impl AMOORW {
             self.operands.rs1,
             self.operands.rd,
             v_rd,
-            virtual_sequence_remaining,
+            inline_sequence_remaining,
         );
 
         sequence
     }
 
-    fn virtual_sequence_64(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence_64(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_mask = virtual_register_index(10);
         let v_dword_address = virtual_register_index(11);
@@ -140,7 +137,7 @@ impl AMOORW {
                 rs1: v_rd,
                 rs2: self.operands.rs2,
             },
-            virtual_sequence_remaining: Some(remaining),
+            inline_sequence_remaining: Some(remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(or.into());

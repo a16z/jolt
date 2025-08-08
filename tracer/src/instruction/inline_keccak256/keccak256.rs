@@ -9,9 +9,7 @@ use crate::instruction::format::InstructionFormat;
 use crate::instruction::inline_keccak256::{
     execute_keccak_f, Keccak256SequenceBuilder, NEEDED_REGISTERS,
 };
-use crate::instruction::{
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
-};
+use crate::instruction::{RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction};
 
 declare_riscv_instr!(
     name   = KECCAK256,
@@ -51,17 +49,15 @@ impl KECCAK256 {
 
 impl RISCVTrace for KECCAK256 {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(cpu.xlen);
 
         let mut trace = trace;
-        for instr in virtual_sequence {
+        for instr in inline_sequence {
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for KECCAK256 {
-    fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used as a scratch space
         let mut vr = [0; NEEDED_REGISTERS];
         (0..NEEDED_REGISTERS).for_each(|i| {
@@ -70,6 +66,7 @@ impl VirtualInstructionSequence for KECCAK256 {
         let builder = Keccak256SequenceBuilder::new(
             self.address,
             self.is_compressed,
+            xlen,
             vr,
             self.operands.rs1,
             self.operands.rs2,
@@ -80,10 +77,11 @@ impl VirtualInstructionSequence for KECCAK256 {
 
 #[cfg(test)]
 mod tests {
+    use crate::emulator::cpu::Xlen;
     use crate::instruction::inline_keccak256::test_constants::*;
     use crate::instruction::inline_keccak256::test_utils::*;
 
-    // Test that the virtual sequence and direct execution paths produce the same end result
+    // Test that the inline sequence and direct execution paths produce the same end result
     #[test]
     fn test_keccak_exec_trace_equal() {
         for (desc, state) in TestVectors::get_standard_test_vectors() {
@@ -95,7 +93,7 @@ mod tests {
     #[test]
     fn test_keccak256_direct_execution() {
         // Test that the direct execution (exec method) works correctly against known test vectors
-        // This validates the instruction logic before testing virtual sequences
+        // This validates the instruction logic before testing inline sequences
         for (i, test_case) in keccak_test_vectors().iter().enumerate() {
             let mut setup_exec = KeccakCpuHarness::new();
             setup_exec.load_state(&test_case.input);
@@ -112,7 +110,7 @@ mod tests {
         }
     }
 
-    // Identifies exact point at which direct execution and virtual sequence diverge
+    // Identifies exact point at which direct execution and inline sequence diverge
     // by that virtual registers match (in contrast to test_keccak_state_equivalence which only tests the final state).
     // This test is SUPER useful and has caught the most bugs and regressions.
     #[test]
@@ -128,11 +126,17 @@ mod tests {
                     let mut setup = KeccakCpuHarness::new();
                     setup.load_state(&initial_state);
 
-                    // 2. Generate and execute the virtual sequence up to the current step.
-                    let builder =
-                        super::Keccak256SequenceBuilder::new(0x1000, false, setup.vr, 10, 11);
+                    // 2. Generate and execute the inline sequence up to the current step.
+                    let builder = super::Keccak256SequenceBuilder::new(
+                        0x1000,
+                        false,
+                        Xlen::Bit64,
+                        setup.vr,
+                        10,
+                        11,
+                    );
                     let sequence = builder.build_up_to_step(round, step);
-                    setup.execute_virtual_sequence(&sequence);
+                    setup.execute_inline_sequence(&sequence);
                     let vr_state = if *step == "rho_and_pi" {
                         // This is needed because there is an optimization where the instructions in chi read
                         // directly from the rho_and_pi scratch regisers to avoid a copy back.

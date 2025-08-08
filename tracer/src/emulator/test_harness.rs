@@ -35,7 +35,7 @@ impl CpuTestHarness {
         h
     }
 
-    /// Sets a region of the harness's memory with the provided data.
+    /// Writes 64-bit dwords to memory.
     pub fn set_memory(&mut self, base_addr: u64, data: &[u64]) {
         for (i, &word) in data.iter().enumerate() {
             self.cpu
@@ -45,6 +45,7 @@ impl CpuTestHarness {
         }
     }
 
+    /// Reads 64-bit dwords from memory into the provided slice.
     pub fn read_memory(&mut self, base_addr: u64, data: &mut [u64]) {
         for (i, lane) in data.iter_mut().enumerate() {
             *lane = self
@@ -52,6 +53,28 @@ impl CpuTestHarness {
                 .mmu
                 .load_doubleword(base_addr + (i * 8) as u64)
                 .expect("Failed to load word from memory")
+                .0;
+        }
+    }
+
+    /// Sets a region of the harness's memory with 32-bit word data.
+    pub fn set_memory32(&mut self, base_addr: u64, data: &[u32]) {
+        for (i, &word) in data.iter().enumerate() {
+            self.cpu
+                .mmu
+                .store_word(base_addr + (i * 4) as u64, word)
+                .expect("Failed to store 32-bit word to memory");
+        }
+    }
+
+    /// Reads 32-bit words from memory into the provided slice.
+    pub fn read_memory32(&mut self, base_addr: u64, data: &mut [u32]) {
+        for (i, word) in data.iter_mut().enumerate() {
+            *word = self
+                .cpu
+                .mmu
+                .load_word(base_addr + (i * 4) as u64)
+                .expect("Failed to load 32-bit word from memory")
                 .0;
         }
     }
@@ -71,7 +94,7 @@ impl CpuTestHarness {
         }
     }
 
-    pub fn execute_virtual_sequence(&mut self, sequence: &[RV32IMInstruction]) {
+    pub fn execute_inline_sequence(&mut self, sequence: &[RV32IMInstruction]) {
         for instr in sequence {
             instr.execute(&mut self.cpu);
         }

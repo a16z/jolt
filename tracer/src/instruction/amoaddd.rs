@@ -7,7 +7,6 @@ use super::ld::LD;
 use super::sd::SD;
 use super::virtual_move::VirtualMove;
 use super::RV32IMInstruction;
-use super::VirtualInstructionSequence;
 use common::constants::virtual_register_index;
 
 use crate::instruction::format::format_load::FormatLoad;
@@ -54,17 +53,15 @@ impl AMOADDD {
 
 impl RISCVTrace for AMOADDD {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(cpu.xlen);
         let mut trace = trace;
-        for instr in virtual_sequence {
+        for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for AMOADDD {
-    fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         let v_rs2 = virtual_register_index(6);
         let v_rd = virtual_register_index(7);
         let mut sequence = vec![];
@@ -76,7 +73,7 @@ impl VirtualInstructionSequence for AMOADDD {
                 rs1: self.operands.rs1,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(3),
+            inline_sequence_remaining: Some(3),
             is_compressed: self.is_compressed,
         };
         sequence.push(ld.into());
@@ -88,7 +85,7 @@ impl VirtualInstructionSequence for AMOADDD {
                 rs1: v_rd,
                 rs2: self.operands.rs2,
             },
-            virtual_sequence_remaining: Some(2),
+            inline_sequence_remaining: Some(2),
             is_compressed: self.is_compressed,
         };
         sequence.push(add.into());
@@ -100,7 +97,7 @@ impl VirtualInstructionSequence for AMOADDD {
                 rs2: v_rs2,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(1),
+            inline_sequence_remaining: Some(1),
             is_compressed: self.is_compressed,
         };
         sequence.push(sd.into());
@@ -112,7 +109,7 @@ impl VirtualInstructionSequence for AMOADDD {
                 rs1: v_rd,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(0),
+            inline_sequence_remaining: Some(0),
             is_compressed: self.is_compressed,
         };
         sequence.push(vmove.into());

@@ -10,7 +10,6 @@ use super::sltu::SLTU;
 use super::virtual_move::VirtualMove;
 use super::xori::XORI;
 use super::RV32IMInstruction;
-use super::VirtualInstructionSequence;
 use crate::instruction::format::format_load::FormatLoad;
 use crate::{
     declare_riscv_instr,
@@ -60,17 +59,15 @@ impl AMOMINUD {
 
 impl RISCVTrace for AMOMINUD {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(cpu.xlen);
         let mut trace = trace;
-        for instr in virtual_sequence {
+        for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for AMOMINUD {
-    fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         let v_rs2 = virtual_register_index(6);
         let v_rd = virtual_register_index(7);
         let v_sel_rs2 = virtual_register_index(8);
@@ -78,7 +75,7 @@ impl VirtualInstructionSequence for AMOMINUD {
         let v_tmp = virtual_register_index(10);
 
         let mut sequence = vec![];
-        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(7);
+        let mut inline_sequence_remaining = self.inline_sequence_remaining.unwrap_or(7);
 
         let ld = LD {
             address: self.address,
@@ -87,11 +84,11 @@ impl VirtualInstructionSequence for AMOMINUD {
                 rs1: self.operands.rs1,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(ld.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         let sltu = SLTU {
             address: self.address,
@@ -100,11 +97,11 @@ impl VirtualInstructionSequence for AMOMINUD {
                 rs1: self.operands.rs2,
                 rs2: v_rd,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(sltu.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         let xori = XORI {
             address: self.address,
@@ -113,11 +110,11 @@ impl VirtualInstructionSequence for AMOMINUD {
                 rs1: v_sel_rs2,
                 imm: 1,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(xori.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         let mul = MUL {
             address: self.address,
@@ -126,11 +123,11 @@ impl VirtualInstructionSequence for AMOMINUD {
                 rs1: v_sel_rs2,
                 rs2: self.operands.rs2,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         let mul = MUL {
             address: self.address,
@@ -139,11 +136,11 @@ impl VirtualInstructionSequence for AMOMINUD {
                 rs1: v_sel_rd,
                 rs2: v_rd,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         let add = ADD {
             address: self.address,
@@ -152,11 +149,11 @@ impl VirtualInstructionSequence for AMOMINUD {
                 rs1: v_tmp,
                 rs2: v_rs2,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(add.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         let sd = SD {
             address: self.address,
@@ -165,11 +162,11 @@ impl VirtualInstructionSequence for AMOMINUD {
                 rs2: v_rs2,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(sd.into());
-        virtual_sequence_remaining -= 1;
+        inline_sequence_remaining -= 1;
 
         let vmove = VirtualMove {
             address: self.address,
@@ -178,7 +175,7 @@ impl VirtualInstructionSequence for AMOMINUD {
                 rs1: v_rd,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(vmove.into());

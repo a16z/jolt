@@ -16,8 +16,8 @@ use super::srl::SRL;
 use super::virtual_assert_word_alignment::VirtualAssertWordAlignment;
 use super::virtual_lw::VirtualLW;
 use super::virtual_sign_extend::VirtualSignExtend;
+use super::RAMRead;
 use super::{addi::ADDI, RV32IMInstruction};
-use super::{RAMRead, VirtualInstructionSequence};
 use common::constants::virtual_register_index;
 
 use super::{format::InstructionFormat, RISCVInstruction, RISCVTrace, RV32IMCycle};
@@ -47,26 +47,24 @@ impl LW {
 
 impl RISCVTrace for LW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(cpu.xlen);
         let mut trace = trace;
-        for instr in virtual_sequence {
+        for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for LW {
-    fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         match xlen {
-            Xlen::Bit32 => self.virtual_sequence_32(),
-            Xlen::Bit64 => self.virtual_sequence_64(),
+            Xlen::Bit32 => self.inline_sequence_32(),
+            Xlen::Bit64 => self.inline_sequence_64(),
         }
     }
 }
 
 impl LW {
-    fn virtual_sequence_32(&self) -> Vec<RV32IMInstruction> {
+    fn inline_sequence_32(&self) -> Vec<RV32IMInstruction> {
         let mut sequence = vec![];
         let lw = VirtualLW {
             address: self.address,
@@ -75,7 +73,7 @@ impl LW {
                 rs1: self.operands.rs1,
                 imm: self.operands.imm as u64,
             },
-            virtual_sequence_remaining: Some(0),
+            inline_sequence_remaining: Some(0),
             is_compressed: self.is_compressed,
         };
         sequence.push(lw.into());
@@ -83,7 +81,7 @@ impl LW {
         sequence
     }
 
-    fn virtual_sequence_64(&self) -> Vec<RV32IMInstruction> {
+    fn inline_sequence_64(&self) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_address = virtual_register_index(6);
         let v_dword_address = virtual_register_index(7);
@@ -98,7 +96,7 @@ impl LW {
                 rs1: self.operands.rs1,
                 imm: self.operands.imm,
             },
-            virtual_sequence_remaining: Some(7),
+            inline_sequence_remaining: Some(7),
             is_compressed: self.is_compressed,
         };
         sequence.push(assert_alignment.into());
@@ -110,7 +108,7 @@ impl LW {
                 rs1: self.operands.rs1,
                 imm: self.operands.imm as u64,
             },
-            virtual_sequence_remaining: Some(6),
+            inline_sequence_remaining: Some(6),
             is_compressed: self.is_compressed,
         };
         sequence.push(add.into());
@@ -122,7 +120,7 @@ impl LW {
                 rs1: v_address,
                 imm: -8i64 as u64,
             },
-            virtual_sequence_remaining: Some(5),
+            inline_sequence_remaining: Some(5),
             is_compressed: self.is_compressed,
         };
         sequence.push(andi.into());
@@ -134,7 +132,7 @@ impl LW {
                 rs1: v_dword_address,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(4),
+            inline_sequence_remaining: Some(4),
             is_compressed: self.is_compressed,
         };
         sequence.push(ld.into());
@@ -146,10 +144,10 @@ impl LW {
                 rs1: v_address,
                 imm: 3,
             },
-            virtual_sequence_remaining: Some(3),
+            inline_sequence_remaining: Some(3),
             is_compressed: self.is_compressed,
         };
-        sequence.extend(slli.virtual_sequence(Xlen::Bit64));
+        sequence.extend(slli.inline_sequence(Xlen::Bit64));
 
         let srl = SRL {
             address: self.address,
@@ -158,10 +156,10 @@ impl LW {
                 rs1: v_dword,
                 rs2: v_shift,
             },
-            virtual_sequence_remaining: Some(2),
+            inline_sequence_remaining: Some(2),
             is_compressed: self.is_compressed,
         };
-        sequence.extend(srl.virtual_sequence(Xlen::Bit64));
+        sequence.extend(srl.inline_sequence(Xlen::Bit64));
 
         let signext = VirtualSignExtend {
             address: self.address,
@@ -170,7 +168,7 @@ impl LW {
                 rs1: self.operands.rd,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(0),
+            inline_sequence_remaining: Some(0),
             is_compressed: self.is_compressed,
         };
         sequence.push(signext.into());

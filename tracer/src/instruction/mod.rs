@@ -310,7 +310,7 @@ impl From<()> for RAMAccess {
 pub struct NormalizedInstruction {
     pub address: usize,
     pub operands: NormalizedOperands,
-    pub virtual_sequence_remaining: Option<u16>,
+    pub inline_sequence_remaining: Option<u16>,
 }
 
 pub trait RISCVInstruction: std::fmt::Debug + Sized + Copy + Into<RV32IMInstruction> {
@@ -322,6 +322,7 @@ pub trait RISCVInstruction: std::fmt::Debug + Sized + Copy + Into<RV32IMInstruct
 
     fn operands(&self) -> &Self::Format;
     fn new(word: u32, address: u64, validate: bool, compressed: bool) -> Self;
+    fn from_normalized(operands: NormalizedOperands, address: u64, compressed: bool) -> Self;
     fn random(rng: &mut StdRng) -> Self {
         Self::new(rng.next_u32(), rng.next_u64(), false, false)
     }
@@ -348,10 +349,14 @@ where
             trace_vec.push(cycle.into());
         }
     }
-}
-
-pub trait VirtualInstructionSequence: RISCVInstruction {
-    fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction>;
+    // Default implementation. Instructions with inline sequences will override this.
+    // This allows other modules (e.g. inline_helpers) to call this method on all instructions.
+    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction>
+// where
+    //     Self: Into<RV32IMInstruction>,
+    {
+        vec![(*self).into()]
+    }
 }
 
 macro_rules! define_rv32im_enums {
@@ -472,18 +477,28 @@ macro_rules! define_rv32im_enums {
                         RV32IMInstruction::$instr(instr) => NormalizedInstruction {
                             address: instr.address as usize,
                             operands: instr.operands.normalize(),
-                            virtual_sequence_remaining: instr.virtual_sequence_remaining,
+                            inline_sequence_remaining: instr.inline_sequence_remaining,
                         },
                     )*
                 }
             }
 
-            pub fn set_virtual_sequence_remaining(&mut self, remaining: Option<u16>) {
+            pub fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+                match self {
+                    RV32IMInstruction::NoOp => vec![],
+                    RV32IMInstruction::UNIMPL => vec![],
+                    $(
+                        RV32IMInstruction::$instr(instr) => instr.inline_sequence(xlen),
+                    )*
+                }
+            }
+
+            pub fn set_inline_sequence_remaining(&mut self, remaining: Option<u16>) {
                 match self {
                     RV32IMInstruction::NoOp => (),
                     RV32IMInstruction::UNIMPL => (),
                     $(
-                        RV32IMInstruction::$instr(instr) => {instr.virtual_sequence_remaining = remaining;}
+                        RV32IMInstruction::$instr(instr) => {instr.inline_sequence_remaining = remaining;}
                     )*
                 }
             }
@@ -571,9 +586,9 @@ impl RV32IMInstruction {
             return false;
         }
 
-        match self.normalize().virtual_sequence_remaining {
+        match self.normalize().inline_sequence_remaining {
             None => true,     // ordinary instruction
-            Some(0) => true,  // "anchor" of a virtual sequence
+            Some(0) => true,  // "anchor" of a inline sequence
             Some(_) => false, // helper within the sequence
         }
     }

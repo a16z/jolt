@@ -11,7 +11,7 @@ use super::{
     format::{format_i::FormatI, format_r::FormatR, InstructionFormat},
     mul::MUL,
     virtual_pow2_w::VirtualPow2W,
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
+    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -35,17 +35,15 @@ impl SLLW {
 
 impl RISCVTrace for SLLW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(cpu.xlen);
         let mut trace = trace;
-        for instr in virtual_sequence {
+        for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for SLLW {
-    fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_pow2 = virtual_register_index(6);
 
@@ -58,7 +56,7 @@ impl VirtualInstructionSequence for SLLW {
                 rs1: self.operands.rs2,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(2),
+            inline_sequence_remaining: Some(2),
             is_compressed: self.is_compressed,
         };
         sequence.push(pow2w.into());
@@ -70,7 +68,7 @@ impl VirtualInstructionSequence for SLLW {
                 rs1: self.operands.rs1,
                 rs2: v_pow2,
             },
-            virtual_sequence_remaining: Some(1),
+            inline_sequence_remaining: Some(1),
             is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
@@ -82,7 +80,7 @@ impl VirtualInstructionSequence for SLLW {
                 rs1: self.operands.rd,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(0),
+            inline_sequence_remaining: Some(0),
             is_compressed: self.is_compressed,
         };
         sequence.push(signext.into());

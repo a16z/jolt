@@ -14,7 +14,7 @@ use super::{
     },
     virtual_shift_right_bitmask::VirtualShiftRightBitmask,
     virtual_sra::VirtualSRA,
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
+    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -38,17 +38,15 @@ impl SRAW {
 
 impl RISCVTrace for SRAW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(cpu.xlen);
         let mut trace = trace;
-        for instr in virtual_sequence {
+        for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for SRAW {
-    fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         let v_rs1 = virtual_register_index(5);
         let v_bitmask = virtual_register_index(6);
 
@@ -61,7 +59,7 @@ impl VirtualInstructionSequence for SRAW {
                 rs1: self.operands.rs1,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(3),
+            inline_sequence_remaining: Some(3),
             is_compressed: self.is_compressed,
         };
         sequence.push(signext.into());
@@ -73,7 +71,7 @@ impl VirtualInstructionSequence for SRAW {
                 rs1: self.operands.rs2,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(2),
+            inline_sequence_remaining: Some(2),
             is_compressed: self.is_compressed,
         };
         sequence.push(bitmask.into());
@@ -85,7 +83,7 @@ impl VirtualInstructionSequence for SRAW {
                 rs1: v_rs1,
                 rs2: v_bitmask,
             },
-            virtual_sequence_remaining: Some(1),
+            inline_sequence_remaining: Some(1),
             is_compressed: self.is_compressed,
         };
         sequence.push(sra.into());
@@ -97,7 +95,7 @@ impl VirtualInstructionSequence for SRAW {
                 rs1: self.operands.rd,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(0),
+            inline_sequence_remaining: Some(0),
             is_compressed: self.is_compressed,
         };
         sequence.push(signext.into());

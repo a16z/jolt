@@ -1,8 +1,7 @@
-#[cfg(test)]
 /// Common test vectors used across multiple tests
 pub struct TestVectors;
 
-pub type Keccak256State = [u64; 25];
+use super::Keccak256State;
 
 impl TestVectors {
     /// Get standard test vectors for state testing

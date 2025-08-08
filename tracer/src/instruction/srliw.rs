@@ -12,7 +12,7 @@ use super::slli::SLLI;
 use super::virtual_sign_extend::VirtualSignExtend;
 use super::{
     format::{format_i::FormatI, InstructionFormat},
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
+    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 use common::constants::virtual_register_index;
 
@@ -37,17 +37,15 @@ impl SRLIW {
 
 impl RISCVTrace for SRLIW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(cpu.xlen);
         let mut trace = trace;
-        for instr in virtual_sequence {
+        for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for SRLIW {
-    fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         let v_rs1 = virtual_register_index(0);
         let mut sequence = vec![];
 
@@ -58,10 +56,10 @@ impl VirtualInstructionSequence for SRLIW {
                 rs1: self.operands.rs1,
                 imm: 32,
             },
-            virtual_sequence_remaining: Some(2),
+            inline_sequence_remaining: Some(2),
             is_compressed: self.is_compressed,
         };
-        sequence.extend(slli.virtual_sequence(xlen));
+        sequence.extend(slli.inline_sequence(xlen));
 
         let (shift, len) = match xlen {
             Xlen::Bit32 => panic!("SRLIW is invalid in 32b mode"),
@@ -77,7 +75,7 @@ impl VirtualInstructionSequence for SRLIW {
                 rs1: v_rs1,
                 imm: bitmask,
             },
-            virtual_sequence_remaining: Some(1),
+            inline_sequence_remaining: Some(1),
             is_compressed: self.is_compressed,
         };
         sequence.push(srl.into());
@@ -89,7 +87,7 @@ impl VirtualInstructionSequence for SRLIW {
                 rs1: self.operands.rd,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(0),
+            inline_sequence_remaining: Some(0),
             is_compressed: self.is_compressed,
         };
         sequence.push(signext.into());

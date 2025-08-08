@@ -18,6 +18,16 @@ pub struct FormatLoad {
     pub imm: i64,
 }
 
+impl From<NormalizedOperands> for FormatLoad {
+    fn from(operands: NormalizedOperands) -> Self {
+        Self {
+            rd: operands.rd,
+            rs1: operands.rs1,
+            imm: operands.imm as i64,
+        }
+    }
+}
+
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RegisterStateFormatLoad {
     pub rd: (u64, u64), // (old_value, new_value)
@@ -75,6 +85,7 @@ impl InstructionFormat for FormatLoad {
             rs1: (rng.next_u64() as u8 % REGISTER_COUNT),
         }
     }
+
     fn normalize(&self) -> NormalizedOperands {
         NormalizedOperands {
             rs1: self.rs1,

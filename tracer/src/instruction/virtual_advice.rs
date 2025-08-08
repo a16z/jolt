@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::emulator::cpu::Cpu;
 
 use super::{
-    format::{format_j::FormatJ, InstructionFormat},
+    format::{format_j::FormatJ, InstructionFormat, NormalizedOperands},
     RISCVInstruction, RISCVTrace,
 };
 
@@ -13,12 +13,12 @@ use super::{
 pub struct VirtualAdvice {
     pub address: u64,
     pub operands: FormatJ,
-    /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
+    /// If this instruction is part of a "inline sequence" (see Section 6.2 of the
     /// Jolt paper), then this contains the number of virtual instructions after this
     /// one in the sequence. I.e. if this is the last instruction in the sequence,
-    /// `virtual_sequence_remaining` will be Some(0); if this is the penultimate instruction
-    /// in the sequence, `virtual_sequence_remaining` will be Some(1); etc.
-    pub virtual_sequence_remaining: Option<u16>,
+    /// `inline_sequence_remaining` will be Some(0); if this is the penultimate instruction
+    /// in the sequence, `inline_sequence_remaining` will be Some(1); etc.
+    pub inline_sequence_remaining: Option<u16>,
     pub advice: u64,
     pub is_compressed: bool,
 }
@@ -38,12 +38,22 @@ impl RISCVInstruction for VirtualAdvice {
         panic!("virtual instruction `VirtualAdvice` cannot be built from a machine word");
     }
 
+    fn from_normalized(operands: NormalizedOperands, address: u64, is_compressed: bool) -> Self {
+        Self {
+            address,
+            operands: operands.into(),
+            advice: 0,
+            inline_sequence_remaining: None,
+            is_compressed,
+        }
+    }
+
     fn random(rng: &mut StdRng) -> Self {
         Self {
             address: rng.next_u64(),
             operands: FormatJ::random(rng),
             advice: rng.next_u64(),
-            virtual_sequence_remaining: None,
+            inline_sequence_remaining: None,
             is_compressed: false,
         }
     }
