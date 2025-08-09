@@ -37,7 +37,7 @@ impl ONNXCycle {
             instr: ONNXInstr::dummy(opcode),
             memory_state: MemoryState::random(rng),
             advice_value: Some(Tensor::from(
-                (0..MAX_TENSOR_SIZE).map(|_| rng.next_u64() as i128),
+                (0..MAX_TENSOR_SIZE).map(|_| rng.next_u64() as u32 as i32 as i128),
             )),
         }
     }
@@ -69,10 +69,18 @@ pub struct MemoryState {
 impl MemoryState {
     pub fn random(rng: &mut StdRng) -> Self {
         MemoryState {
-            ts1_val: Some(Tensor::new(Some(&[rng.next_u64() as i128]), &[1]).unwrap()),
-            ts2_val: Some(Tensor::new(Some(&[rng.next_u64() as i128]), &[1]).unwrap()),
-            td_pre_val: Some(Tensor::new(Some(&[rng.next_u64() as i128]), &[1]).unwrap()),
-            td_post_val: Some(Tensor::new(Some(&[rng.next_u64() as i128]), &[1]).unwrap()),
+            ts1_val: Some(
+                Tensor::new(Some(&[rng.next_u64() as u32 as i32 as i128]), &[1]).unwrap(),
+            ),
+            ts2_val: Some(
+                Tensor::new(Some(&[rng.next_u64() as u32 as i32 as i128]), &[1]).unwrap(),
+            ),
+            td_pre_val: Some(
+                Tensor::new(Some(&[rng.next_u64() as u32 as i32 as i128]), &[1]).unwrap(),
+            ),
+            td_post_val: Some(
+                Tensor::new(Some(&[rng.next_u64() as u32 as i32 as i128]), &[1]).unwrap(),
+            ),
         }
     }
 }

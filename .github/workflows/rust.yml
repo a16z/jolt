@@ -52,14 +52,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - uses: actions-rust-lang/setup-rust-toolchain@v1
-      - name: Cache Jolt RISC-V Rust toolchain
-        uses: actions/cache@v4
-        with:
-          key: jolt-rust-toolchain-${{hashFiles('guest-toolchain-tag')}}
-          path: ~/.jolt
-      - name: Install Jolt RISC-V Rust toolchain
-        run: cargo run install-toolchain
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      - name: Run jolt-core tests
-        run: cargo nextest run --release -p jolt-core
+      - name: Run zkml-jolt-core tests
+        run: cargo nextest run --release -p zkml-jolt-core
