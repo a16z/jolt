@@ -20,7 +20,9 @@ use thiserror::Error;
 use tracing::{Level, span};
 
 use crate::jolt::JoltProverPreprocessing;
-use crate::jolt::execution_trace::{ALL_R1CS_INPUTS, JoltONNXCycle, WitnessGenerator};
+use crate::jolt::execution_trace::{
+    ALL_R1CS_INPUTS, JoltONNXCycle, JoltONNXR1CSInputs, WitnessGenerator,
+};
 use crate::jolt::r1cs::builder::CombinedUniformBuilder;
 use crate::jolt::r1cs::key::UniformSpartanKey;
 #[cfg(test)]
@@ -91,6 +93,8 @@ pub struct UniformSpartanProof<F: JoltField, ProofTranscript: Transcript> {
     pub(crate) outer_sumcheck_claims: (F, F, F),
     pub(crate) inner_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub(crate) claimed_witness_evals: Vec<F>,
+    pub(crate) shift_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
+    pub(crate) shift_sumcheck_witness_eval: Vec<F>,
     _marker: PhantomData<ProofTranscript>,
 }
 
@@ -204,19 +208,61 @@ where
         let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
         let (claimed_witness_evals, _chis) =
             MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
-        let (_, _eq_plus_one_r_cycle) = EqPlusOnePolynomial::evals(r_cycle, None);
+
+        let (_, eq_plus_one_r_cycle) = EqPlusOnePolynomial::evals(r_cycle, None);
+
+        /*  Sumcheck 3: sumcheck for NextPC verification
+            Proves: NextPC(r_cycle) =
+                    \sum_t  PC(t)) * eq_plus_one(r_cycle, t)
+
+            1. NextPC(r_cycle) = \sum_t PC(t) * eq_plus_one(r_cycle, t)
+        */
+        let (shift_sumcheck_proof, shift_sumcheck_witness_eval) = Self::prove_pc_sumcheck(
+            &input_polys,
+            &claimed_witness_evals,
+            eq_plus_one_r_cycle,
+            transcript,
+        );
+
         let outer_sumcheck_claims = (
             outer_sumcheck_claims[0],
             outer_sumcheck_claims[1],
             outer_sumcheck_claims[2],
         );
+
         Ok(UniformSpartanProof {
             outer_sumcheck_proof,
             outer_sumcheck_claims,
             inner_sumcheck_proof,
             claimed_witness_evals,
+            shift_sumcheck_proof,
+            shift_sumcheck_witness_eval,
             _marker: PhantomData,
         })
+    }
+
+    fn prove_pc_sumcheck(
+        input_polys: &[MultilinearPolynomial<F>],
+        claimed_witness_evals: &[F],
+        eq_plus_one_r_cycle: Vec<F>,
+        transcript: &mut ProofTranscript,
+    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>) {
+        let span = span!(Level::INFO, "shift_sumcheck_pc");
+        let _guard = span.enter();
+
+        let mut pc_sumcheck =
+            PCSumcheck::new_prover(input_polys, claimed_witness_evals, eq_plus_one_r_cycle);
+
+        let (shift_sumcheck_proof, _r) = pc_sumcheck.prove_single(transcript);
+
+        let cached_claims = pc_sumcheck.cached_claims.expect("Claims not cached");
+        let pc_eval_at_shift_r = cached_claims;
+        let shift_sumcheck_witness_eval = vec![pc_eval_at_shift_r];
+
+        drop(_guard);
+        drop(span);
+
+        (shift_sumcheck_proof, shift_sumcheck_witness_eval)
     }
 
     #[tracing::instrument(skip_all)]
@@ -287,7 +333,7 @@ where
             + inner_sumcheck_RLC.square() * self.outer_sumcheck_claims.2;
 
         let num_cycles_bits = key.num_steps.log_2();
-        let (_r_cycle, rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
+        let (r_cycle, rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
         let inner_sumcheck = InnerSumcheck::<F>::new_verifier(
             claim_inner_joint,
@@ -301,6 +347,27 @@ where
         let _inner_sumcheck_r = inner_sumcheck
             .verify_single(&self.inner_sumcheck_proof, transcript)
             .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
+
+        /* Sumcheck 3: Batched sumcheck NextPC verification
+           Verifies the batched constraint for NextPC
+        */
+
+        let next_pc_index = JoltONNXR1CSInputs::NextPC.to_index();
+
+        // The batched claim equals NextPC(r_cycle)
+        let shift_sumcheck_claim = self.claimed_witness_evals[next_pc_index];
+
+        let pc_eval_at_shift_r = self.shift_sumcheck_witness_eval[0];
+
+        let pc_sumcheck = PCSumcheck::<F>::new_verifier(
+            shift_sumcheck_claim,
+            r_cycle.to_vec(),
+            pc_eval_at_shift_r,
+        );
+
+        let _shift_sumcheck_r = pc_sumcheck
+            .verify_single(&self.shift_sumcheck_proof, transcript)
+            .map_err(|_| SpartanError::InvalidShiftSumcheckProof)?;
         Ok(())
     }
 }
@@ -522,5 +589,165 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         );
 
         left_expected * eval_z
+    }
+}
+
+struct PCSumcheckProverState<F: JoltField> {
+    pc_poly: MultilinearPolynomial<F>,
+    eq_plus_one_poly: MultilinearPolynomial<F>,
+}
+
+struct PCSumcheckVerifierState<F: JoltField> {
+    r_cycle: Vec<F>,
+    pc_eval_at_shift_r: F,
+}
+
+pub struct PCSumcheck<F: JoltField> {
+    input_claim: F,
+    prover_state: Option<PCSumcheckProverState<F>>,
+    verifier_state: Option<PCSumcheckVerifierState<F>>,
+    cached_claims: Option<F>, // (pc_eval)
+}
+
+impl<F: JoltField> PCSumcheck<F> {
+    pub fn new_prover(
+        input_polys: &[MultilinearPolynomial<F>],
+        claimed_witness_evals: &[F],
+        eq_plus_one_r_cycle: Vec<F>,
+    ) -> Self {
+        let pc_index = JoltONNXR1CSInputs::PC.to_index();
+        let next_pc_index = JoltONNXR1CSInputs::NextPC.to_index();
+
+        // The claim equals NextPC(r_cycle)
+        let input_claim = claimed_witness_evals[next_pc_index];
+
+        Self {
+            input_claim,
+            prover_state: Some(PCSumcheckProverState {
+                pc_poly: input_polys[pc_index].clone(),
+                eq_plus_one_poly: MultilinearPolynomial::from(eq_plus_one_r_cycle),
+            }),
+            verifier_state: None,
+            cached_claims: None,
+        }
+    }
+
+    pub fn new_verifier(input_claim: F, r_cycle: Vec<F>, pc_eval_at_shift_r: F) -> Self {
+        Self {
+            input_claim,
+            prover_state: None,
+            verifier_state: Some(PCSumcheckVerifierState {
+                r_cycle,
+                pc_eval_at_shift_r,
+            }),
+            cached_claims: None,
+        }
+    }
+}
+
+impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, ProofTranscript>
+    for PCSumcheck<F>
+{
+    fn degree(&self) -> usize {
+        2
+    }
+
+    fn num_rounds(&self) -> usize {
+        if let Some(prover_state) = &self.prover_state {
+            prover_state.pc_poly.get_num_vars()
+        } else if let Some(verifier_state) = &self.verifier_state {
+            verifier_state.r_cycle.len()
+        } else {
+            panic!("Neither prover state nor verifier state is initialized");
+        }
+    }
+
+    fn input_claim(&self) -> F {
+        self.input_claim
+    }
+
+    fn compute_prover_message(&mut self, _round: usize) -> Vec<F> {
+        let prover_state = self
+            .prover_state
+            .as_ref()
+            .expect("Prover state not initialized");
+        let degree = <Self as BatchableSumcheckInstance<F, ProofTranscript>>::degree(self);
+
+        let univariate_poly_evals: Vec<F> = (0..prover_state.pc_poly.len() / 2)
+            .into_par_iter()
+            .map(|i| {
+                let pc_evals =
+                    prover_state
+                        .pc_poly
+                        .sumcheck_evals(i, degree, BindingOrder::HighToLow);
+                let eq_evals = prover_state.eq_plus_one_poly.sumcheck_evals(
+                    i,
+                    degree,
+                    BindingOrder::HighToLow,
+                );
+
+                vec![
+                    (pc_evals[0]) * eq_evals[0], // eval at 0
+                    (pc_evals[1]) * eq_evals[1], // eval at 2
+                ]
+            })
+            .reduce(
+                || vec![F::zero(); degree],
+                |mut running, new| {
+                    for i in 0..degree {
+                        running[i] += new[i];
+                    }
+                    running
+                },
+            );
+
+        univariate_poly_evals
+    }
+
+    fn bind(&mut self, r_j: F, _round: usize) {
+        let prover_state = self
+            .prover_state
+            .as_mut()
+            .expect("Prover state not initialized");
+
+        rayon::join(
+            || {
+                prover_state
+                    .pc_poly
+                    .bind_parallel(r_j, BindingOrder::HighToLow)
+            },
+            || {
+                prover_state
+                    .eq_plus_one_poly
+                    .bind_parallel(r_j, BindingOrder::HighToLow)
+            },
+        );
+    }
+
+    fn cache_openings(&mut self) {
+        let prover_state = self
+            .prover_state
+            .as_ref()
+            .expect("Prover state not initialized");
+
+        let pc_eval = prover_state.pc_poly.final_sumcheck_claim();
+
+        self.cached_claims = Some(pc_eval);
+    }
+
+    fn expected_output_claim(&self, r: &[F]) -> F {
+        let verifier_state = self
+            .verifier_state
+            .as_ref()
+            .expect("Verifier state not initialized");
+
+        // Compute the expected claim:
+        // batched_eval_at_shift_r * eq_plus_one_shift_sumcheck
+        let batched_eval_at_shift_r = verifier_state.pc_eval_at_shift_r;
+
+        let eq_plus_one_shift_sumcheck =
+            EqPlusOnePolynomial::new(verifier_state.r_cycle.clone()).evaluate(r);
+
+        batched_eval_at_shift_r * eq_plus_one_shift_sumcheck
     }
 }
