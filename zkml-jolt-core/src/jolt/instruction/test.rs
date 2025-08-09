@@ -76,7 +76,7 @@ pub fn jolt_virtual_sequence_test<I: VirtualInstructionSequence>(opcode: ONNXOpc
                 ts1: Some(t_x as usize),
                 ts2: Some(t_y as usize),
                 td: Some(td as usize),
-                imm: None,
+                imm: Some(Tensor::from(u64_vec_to_i128_iter(&y))),
                 virtual_sequence_remaining: None,
             },
             memory_state: MemoryState {
@@ -93,20 +93,24 @@ pub fn jolt_virtual_sequence_test<I: VirtualInstructionSequence>(opcode: ONNXOpc
 
         for cycle in virtual_sequence {
             if let Some(ts1_addr) = cycle.instr.ts1 {
-                assert_eq!(tensor_registers[ts1_addr], cycle.ts1_vals(), "{cycle:?}");
+                assert_eq!(tensor_registers[ts1_addr], cycle.ts1_vals(), "{cycle:#?}");
             }
 
             if let Some(ts2_addr) = cycle.instr.ts2 {
-                assert_eq!(tensor_registers[ts2_addr], cycle.ts2_vals(), "{cycle:?}");
+                assert_eq!(tensor_registers[ts2_addr], cycle.ts2_vals(), "{cycle:#?}");
             }
 
             let output =
                 ONNXLookupQuery::<WORD_SIZE>::to_lookup_output(&JoltONNXCycle::from(cycle.clone()));
             if let Some(td_addr) = cycle.instr.td {
                 tensor_registers[td_addr] = output;
-                assert_eq!(tensor_registers[td_addr], cycle.td_post_vals(), "{cycle:?}");
+                assert_eq!(
+                    tensor_registers[td_addr],
+                    cycle.td_post_vals(),
+                    "{cycle:#?}"
+                );
             } else {
-                assert!(output == vec![1; MAX_TENSOR_SIZE], "{cycle:?}");
+                assert!(output == vec![1; MAX_TENSOR_SIZE], "{cycle:#?}");
             }
         }
 

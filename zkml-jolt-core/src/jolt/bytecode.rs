@@ -21,7 +21,7 @@ use jolt_core::{
         transcript::{AppendToTranscript, Transcript},
     },
 };
-use onnx_tracer::trace_types::ONNXInstr;
+use onnx_tracer::{constants::MAX_TENSOR_SIZE, trace_types::ONNXInstr};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -104,7 +104,13 @@ where
         let mut F = vec![F::zero(); K];
         // Iterate through bytecode trace.
         for (j, cycle) in trace.iter().enumerate() {
-            let k = cycle.instr.address;
+            let k = *preprocessing
+                .virtual_address_map
+                .get(&(
+                    cycle.instr.address,
+                    cycle.instr.virtual_sequence_remaining.unwrap_or(0),
+                ))
+                .unwrap();
             F[k] += E[j]
         }
         let gamma: F = transcript.challenge_scalar();
@@ -153,7 +159,7 @@ where
             SumcheckInstanceProof::new(sumcheck_proof);
         // --- Booleanity check ---
         let (booleanity_sumcheck_proof, _r_address_prime, _r_cycle_prime, ra_claim_prime) =
-            prove_booleanity(trace, &r_address, E, F, transcript);
+            prove_booleanity(preprocessing, trace, &r_address, E, F, transcript);
 
         // --- raf evaluation ---
         BytecodeProof {
@@ -167,8 +173,9 @@ where
 
     /// Reed-solomon fingerprint each instr in the program bytecode
     fn bytecode_to_val(program_bytecode: &[ONNXInstr], gamma: &F) -> Vec<F> {
-        let mut gamma_pows = [F::one(); 4];
-        for i in 1..4 {
+        const DEGREE: usize = 5 + MAX_TENSOR_SIZE;
+        let mut gamma_pows = [F::one(); DEGREE];
+        for i in 1..DEGREE {
             gamma_pows[i] *= *gamma * gamma_pows[i - 1];
         }
         program_bytecode
@@ -181,7 +188,11 @@ where
                     (instr.ts1.unwrap_or_default() as u64).field_mul(gamma_pows[2]);
                 linear_combination +=
                     (instr.ts2.unwrap_or_default() as u64).field_mul(gamma_pows[3]);
-                // TODO: Add td
+                linear_combination +=
+                    (instr.td.unwrap_or_default() as u64).field_mul(gamma_pows[4]);
+                (0..MAX_TENSOR_SIZE)
+                    .map(|i| instr.imm()[i].field_mul(gamma_pows[5 + i]))
+                    .fold(linear_combination, |acc, x| acc + x);
                 linear_combination
             })
             .collect()
@@ -194,6 +205,7 @@ where
 /// - `Vec<F>`: r_cycle_prime.
 /// - `F`: ra_claim_prime.
 pub fn prove_booleanity<F, ProofTranscript>(
+    preprocessing: &BytecodePreprocessing,
     trace: &[JoltONNXCycle],
     r: &[F],
     D: Vec<F>,
@@ -312,7 +324,19 @@ where
 
     // Last log(T) rounds of sumcheck
     let eq_r_r = B.final_sumcheck_claim();
-    let H: Vec<F> = trace.iter().map(|cycle| F[cycle.instr.address]).collect();
+    let H: Vec<F> = trace
+        .iter()
+        .map(|cycle| {
+            let k = *preprocessing
+                .virtual_address_map
+                .get(&(
+                    cycle.instr.address,
+                    cycle.instr.virtual_sequence_remaining.unwrap_or(0),
+                ))
+                .unwrap();
+            F[k]
+        })
+        .collect();
     let mut H = MultilinearPolynomial::from(H);
     let mut D = MultilinearPolynomial::from(D);
     let mut r_cycle_prime: Vec<F> = Vec::with_capacity(T.log_2());

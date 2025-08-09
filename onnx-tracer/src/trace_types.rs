@@ -117,7 +117,7 @@ pub struct ONNXInstr {
     /// This is analogous to the `rd` register specifier in RISC-V, indicating
     /// where the result of the operation should be written.
     pub td: Option<usize>,
-    pub imm: Option<i128>,
+    pub imm: Option<Tensor<i128>>, // Immediate value, if applicable
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
     /// Jolt paper), then this contains the number of virtual instructions after this
     /// one in the sequence. I.e. if this is the last instruction in the sequence,
@@ -212,7 +212,7 @@ impl ONNXCycle {
     ///
     /// Currently always zeros; may change for const opcodes.
     pub fn td_pre_vals(&self) -> Vec<u64> {
-        vec![0u64; MAX_TENSOR_SIZE] // TODO: It is not guaranteed that td_pre_val is always 0. For example const opcodes.
+        self.build_vals(self.memory_state.td_pre_val.as_ref(), "td_pre_val")
     }
 
     /// Helper to build normalized and padded u64 values from an optional TensorValue.
@@ -268,6 +268,10 @@ impl ONNXCycle {
             vals
         })
     }
+
+    pub fn imm(&self) -> Vec<u64> {
+        self.instr.imm()
+    }
 }
 
 /// Converts a tensor index to a vector of addresses.
@@ -281,7 +285,16 @@ pub fn get_tensor_addresses(t: usize) -> Vec<usize> {
 }
 
 // HACK(Forpee): This is a temporary function to normalize i128 values to u64 for the jolt execution trace.
+/// Normalizes an i128 value to u64 by casting it through i32 and u32.
+/// # Panics
+/// Panics if the value's absolute value exceeds `i128::from(u32::MAX)`.
+/// This is to ensure that the immediate value can be safely normalized to u32 and then store in 64 bits.
 fn normalize(value: &i128) -> u64 {
+    // TODO: Temp assert. We will remove this when we migrate runtime to 32-bit quant strat.
+    assert!(
+        value.abs() <= i128::from(u32::MAX),
+        "Value out of bounds for normalization"
+    );
     *value as i32 as u32 as u64
 }
 
@@ -311,6 +324,8 @@ pub enum CircuitFlags {
     // DoNotUpdateUnexpandedPC,
     /// Is (virtual) advice instruction
     Advice,
+    /// Is constant instruction
+    Const,
 }
 
 pub const NUM_CIRCUIT_FLAGS: usize = CircuitFlags::COUNT;
@@ -358,11 +373,17 @@ impl ONNXInstr {
             | ONNXOpcode::Mul
             | ONNXOpcode::VirtualAdvice
             | ONNXOpcode::VirtualMove
+            | ONNXOpcode::VirtualConst
         );
 
         flags[CircuitFlags::Advice as usize] = matches!(
             self.opcode,
             ONNXOpcode::VirtualAdvice
+        );
+
+        flags[CircuitFlags::Const as usize] = matches!(
+            self.opcode,
+            ONNXOpcode::VirtualConst
         );
 
         flags
@@ -379,6 +400,7 @@ impl InterleavedBitsMarker for [bool; NUM_CIRCUIT_FLAGS] {
             && !self[CircuitFlags::SubtractOperands]
             && !self[CircuitFlags::MultiplyOperands]
             && !self[CircuitFlags::Advice]
+            && !self[CircuitFlags::Const]
     }
 }
 
@@ -419,6 +441,21 @@ impl ONNXInstr {
             virtual_sequence_remaining: None,
         }
     }
+
+    pub fn imm(&self) -> Vec<u64> {
+        match self.imm.clone() {
+            Some(imm) => {
+                assert!(
+                    imm.inner.len() <= MAX_TENSOR_SIZE,
+                    "imm length exceeds MAX_TENSOR_SIZE"
+                );
+                let mut vals: Vec<u64> = imm.inner.iter().map(normalize).collect();
+                vals.resize(MAX_TENSOR_SIZE, 0);
+                vals
+            }
+            None => vec![0u64; MAX_TENSOR_SIZE],
+        }
+    }
 }
 
 // TODO: Expand the instruction set architecture (ISA):
@@ -456,9 +493,13 @@ pub enum ONNXOpcode {
     VirtualAssertValidDiv0,
     VirtualMove,
     VirtualAssertEq,
+    VirtualConst,
 }
 
 impl ONNXOpcode {
+    // TODO: Refactor bitflag generation to be more extensible.
+    // Currently uses manual bit shifting due to RebaseScale variant containing
+    // a Box<ONNXOpcode>, which prevents simple discriminant-based conversion.
     pub fn into_bitflag(self) -> u64 {
         match self {
             ONNXOpcode::Noop => 1u64 << 0,
@@ -478,7 +519,15 @@ impl ONNXOpcode {
             ONNXOpcode::MeanOfSquares => 1u64 << 14,
             ONNXOpcode::Sigmoid => 1u64 << 15,
             ONNXOpcode::Softmax => 1u64 << 16,
-            _ => panic!("ONNXOpcode not implemented in into_bitflag"),
+
+            // Virtual instructions
+            ONNXOpcode::VirtualAdvice => 1u64 << 17,
+            ONNXOpcode::VirtualAssertValidSignedRemainder => 1u64 << 18,
+            ONNXOpcode::VirtualAssertValidDiv0 => 1u64 << 19,
+            ONNXOpcode::VirtualMove => 1u64 << 20,
+            ONNXOpcode::VirtualAssertEq => 1u64 << 21,
+            ONNXOpcode::VirtualConst => 1u64 << 22,
+            _ => panic!("ONNXOpcode {self:#?} not implemented in into_bitflag"),
         }
     }
 }

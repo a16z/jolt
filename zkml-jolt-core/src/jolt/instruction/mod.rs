@@ -4,6 +4,7 @@ pub mod add;
 pub mod beq;
 pub mod mul;
 pub mod sub;
+pub mod virtual_const;
 
 // TODO(WIP: Forpee) Rebase Scale Virtual Instr ICME-Lab/zkml-jolt#60
 //

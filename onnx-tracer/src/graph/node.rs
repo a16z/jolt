@@ -36,6 +36,7 @@
 //!
 //! By abstracting the details of node construction, scale management, and operation decoding, this module enables robust and efficient handling of ONNX models in privacy-preserving and quantized computation settings.
 
+use crate::constants::MAX_TENSOR_SIZE;
 use crate::graph::{model::NodeType, vars::VarScales};
 use crate::trace_types::{ONNXInstr, ONNXOpcode};
 use crate::{
@@ -458,8 +459,18 @@ impl Node {
             ts2: self.inputs.get(1).map(node_idx),
             // The output tensor is always the current node's index.
             td: Some(self.idx),
-            imm: None,
+            imm: self.imm(),
             virtual_sequence_remaining: None,
+        }
+    }
+
+    fn imm(&self) -> Option<Tensor<i128>> {
+        match &self.opkind {
+            SupportedOp::Constant(constant) => Some(constant.quantized_values.clone()),
+            SupportedOp::Nonlinear(LookupOp::Div { denom }) => {
+                Some(Tensor::from((0..MAX_TENSOR_SIZE).map(|_| denom.0 as i128)))
+            }
+            _ => None,
         }
     }
 }

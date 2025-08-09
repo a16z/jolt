@@ -1,5 +1,9 @@
 use crate::jolt::JoltProverPreprocessing;
+use crate::jolt::instruction::VirtualInstructionSequence;
+use crate::jolt::instruction::div::DIVInstruction;
 use crate::jolt::instruction::virtual_advice::ADVICEInstruction;
+use crate::jolt::instruction::virtual_const::ConstInstruction;
+use crate::utils::u64_vec_to_i128_iter;
 use itertools::Itertools;
 use jolt_core::jolt::instruction::LookupQuery;
 use jolt_core::poly::one_hot_polynomial::OneHotPolynomial;
@@ -11,7 +15,10 @@ use jolt_core::{
     },
     utils::transcript::Transcript,
 };
-use onnx_tracer::constants::MAX_TENSOR_SIZE;
+use onnx_tracer::constants::{
+    MAX_TENSOR_SIZE, TEST_TENSOR_REGISTER_COUNT, VIRTUAL_TENSOR_REGISTER_COUNT, ZERO_ADDR_PREPEND,
+};
+use onnx_tracer::tensor::Tensor;
 use onnx_tracer::trace_types::ONNXOpcode;
 use onnx_tracer::trace_types::{CircuitFlags, ONNXCycle};
 use onnx_tracer::trace_types::{NUM_CIRCUIT_FLAGS, ONNXInstr};
@@ -109,7 +116,46 @@ impl From<ONNXCycle> for JoltONNXCycle {
 }
 
 pub fn jolt_execution_trace(raw_trace: Vec<ONNXCycle>) -> ExecutionTrace {
-    raw_trace.into_iter().map(JoltONNXCycle::from).collect()
+    let mut expanded_trace: Vec<ONNXCycle> = raw_trace
+        .into_iter()
+        .flat_map(|cycle| match cycle.instr.opcode {
+            ONNXOpcode::Div => DIVInstruction::<32>::virtual_trace(cycle),
+            _ => vec![cycle],
+        })
+        .collect();
+    // Populate the pre-state of virtual tensor registers
+    populate_virtual_prestate(&mut expanded_trace);
+    // println!("Expanded trace: {expanded_trace:#?}");
+    expanded_trace
+        .into_iter()
+        .map(JoltONNXCycle::from)
+        .collect()
+}
+
+pub fn populate_virtual_prestate(raw_trace: &mut [ONNXCycle]) {
+    let mut virtual_tensor_registers =
+        vec![vec![0u64; MAX_TENSOR_SIZE]; VIRTUAL_TENSOR_REGISTER_COUNT as usize];
+    for cycle in raw_trace.iter_mut() {
+        let is_virtual = cycle.instr.virtual_sequence_remaining.is_some();
+        let not_last_virtual_instr = cycle.instr.virtual_sequence_remaining.unwrap_or(0) != 0;
+        if is_virtual && not_last_virtual_instr {
+            if let Some(td) = cycle.instr.td {
+                // store pre-state
+                cycle.memory_state.td_pre_val = Some(Tensor::from(u64_vec_to_i128_iter(
+                    &virtual_tensor_registers[td - TEST_TENSOR_REGISTER_COUNT as usize],
+                )));
+
+                assert_eq!(
+                    cycle.td_pre_vals(),
+                    virtual_tensor_registers[td - TEST_TENSOR_REGISTER_COUNT as usize],
+                    "cycle: {cycle:#?}"
+                );
+                // write to virtual tensor register
+                virtual_tensor_registers[td - TEST_TENSOR_REGISTER_COUNT as usize] =
+                    cycle.td_post_vals();
+            }
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -660,6 +706,7 @@ define_lookup_enum!(
     VirtualAssertValidDiv0: AssertValidDiv0Instruction<WORD_SIZE>,
     VirtualAssertEq: BEQInstruction<WORD_SIZE>,
     VirtualMove: MOVEInstruction<WORD_SIZE>,
+    VirtualConst: ConstInstruction<WORD_SIZE>,
 );
 
 impl InstructionLookup<WORD_SIZE> for ElementWiseLookup {
@@ -673,6 +720,7 @@ impl InstructionLookup<WORD_SIZE> for ElementWiseLookup {
             ElementWiseLookup::VirtualAssertValidDiv0(assert) => assert.lookup_table(),
             ElementWiseLookup::VirtualAssertEq(beq) => beq.lookup_table(),
             ElementWiseLookup::VirtualMove(move_instr) => move_instr.lookup_table(),
+            ElementWiseLookup::VirtualConst(const_instr) => const_instr.lookup_table(),
         }
     }
 }
@@ -684,6 +732,7 @@ impl JoltONNXCycle {
     pub fn to_instruction_lookups(&self) -> Option<ONNXLookup> {
         let (_, ts1) = self.ts1_read();
         let (_, ts2) = self.ts2_read();
+        let imm = self.instr.imm();
         match self.instr().opcode {
             ONNXOpcode::Add => Some(
                 (0..MAX_TENSOR_SIZE)
@@ -735,11 +784,12 @@ impl JoltONNXCycle {
                     .map(|i| ElementWiseLookup::VirtualMove(MOVEInstruction(ts1[i])))
                     .collect(),
             ),
-            // _ => None,
-            _ => panic!(
-                "Unsupported opcode for instruction lookups: {:?}",
-                self.instr().opcode
+            ONNXOpcode::VirtualConst => Some(
+                (0..MAX_TENSOR_SIZE)
+                    .map(|i| ElementWiseLookup::VirtualConst(ConstInstruction(imm[i])))
+                    .collect(),
             ),
+            _ => None,
         }
     }
 }

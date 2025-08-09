@@ -241,20 +241,21 @@ mod tests {
     use jolt_core::{
         poly::commitment::dory::DoryCommitmentScheme, utils::transcript::KeccakTranscript,
     };
-    use log::info;
-    use onnx_tracer::{
-        custom_addsubmul_model, logger::init_logger, model, scalar_addsubmul_model, tensor::Tensor,
-    };
+    use log::{debug, info};
+    use onnx_tracer::{builder, logger::init_logger, model, tensor::Tensor};
     use serde_json::Value;
     use std::{collections::HashMap, fs::File, io::Read};
 
     type PCS = DoryCommitmentScheme<KeccakTranscript>;
 
+    // TODO: Refactor duplicate code in tests
+
     #[test]
-    fn test_custom_addsubmul() {
+    fn test_addsubmuldivdiv() {
         // --- Preprocessing ---
-        let custom_addsubmul_model = custom_addsubmul_model();
+        let custom_addsubmul_model = builder::custom_addsubmuldivdiv_model();
         let program_bytecode = onnx_tracer::decode_model(custom_addsubmul_model.clone());
+        debug!("Program code: {program_bytecode:#?}");
         let pp: JoltProverPreprocessing<Fr, PCS, KeccakTranscript> =
             JoltSNARK::prover_preprocess(program_bytecode);
 
@@ -262,6 +263,50 @@ mod tests {
         // Get execution trace
         let input = Tensor::new(Some(&[10, 20, 30, 40]), &[1, 4]).unwrap();
         let raw_trace = onnx_tracer::execution_trace(custom_addsubmul_model, &input);
+        let execution_trace = jolt_execution_trace(raw_trace);
+        let snark: JoltSNARK<Fr, PCS, KeccakTranscript> =
+            JoltSNARK::prove(pp.clone(), execution_trace);
+
+        // --- Verification ---
+        snark.verify((&pp).into()).unwrap();
+    }
+
+    #[test]
+    fn test_addsubmuldiv() {
+        // --- Preprocessing ---
+        let custom_addsubmul_model = builder::custom_addsubmuldiv_model();
+        let program_bytecode = onnx_tracer::decode_model(custom_addsubmul_model.clone());
+        // debug!("Program code: {program_bytecode:#?}");
+        let pp: JoltProverPreprocessing<Fr, PCS, KeccakTranscript> =
+            JoltSNARK::prover_preprocess(program_bytecode);
+
+        // --- Proving ---
+        // Get execution trace
+        let input = Tensor::new(Some(&[10, 20, 30, 40]), &[1, 4]).unwrap();
+        let raw_trace = onnx_tracer::execution_trace(custom_addsubmul_model, &input);
+        // debug!("raw trace: {raw_trace:#?}");
+        let execution_trace = jolt_execution_trace(raw_trace);
+        let snark: JoltSNARK<Fr, PCS, KeccakTranscript> =
+            JoltSNARK::prove(pp.clone(), execution_trace);
+
+        // --- Verification ---
+        snark.verify((&pp).into()).unwrap();
+    }
+
+    #[test]
+    fn test_custom_addsubmulconst() {
+        // --- Preprocessing ---
+        let custom_addsubmul_model = builder::custom_addsubmulconst_model();
+        let program_bytecode = onnx_tracer::decode_model(custom_addsubmul_model.clone());
+        // debug!("Program code: {program_bytecode:#?}");
+        let pp: JoltProverPreprocessing<Fr, PCS, KeccakTranscript> =
+            JoltSNARK::prover_preprocess(program_bytecode);
+
+        // --- Proving ---
+        // Get execution trace
+        let input = Tensor::new(Some(&[10, 20, 30, 40]), &[1, 4]).unwrap();
+        let raw_trace = onnx_tracer::execution_trace(custom_addsubmul_model, &input);
+        // debug!("raw trace: {raw_trace:#?}");
         let execution_trace = jolt_execution_trace(raw_trace);
         println!("Execution trace: {execution_trace:#?}");
         let snark: JoltSNARK<Fr, PCS, KeccakTranscript> =
@@ -272,18 +317,40 @@ mod tests {
     }
 
     #[test]
+    fn test_custom_addsubmul() {
+        // --- Preprocessing ---
+        let custom_addsubmul_model = builder::custom_addsubmul_model();
+        let program_bytecode = onnx_tracer::decode_model(custom_addsubmul_model.clone());
+        debug!("Program code: {program_bytecode:#?}");
+        let pp: JoltProverPreprocessing<Fr, PCS, KeccakTranscript> =
+            JoltSNARK::prover_preprocess(program_bytecode);
+
+        // --- Proving ---
+        // Get execution trace
+        let input = Tensor::new(Some(&[10, 20, 30, 40]), &[1, 4]).unwrap();
+        let raw_trace = onnx_tracer::execution_trace(custom_addsubmul_model, &input);
+        debug!("raw trace: {raw_trace:#?}");
+        let execution_trace = jolt_execution_trace(raw_trace);
+        let snark: JoltSNARK<Fr, PCS, KeccakTranscript> =
+            JoltSNARK::prove(pp.clone(), execution_trace);
+
+        // --- Verification ---
+        snark.verify((&pp).into()).unwrap();
+    }
+
+    #[test]
     fn test_scalar_addsubmul() {
         // --- Preprocessing ---
-        let scalar_addsubmul_model = scalar_addsubmul_model();
+        let scalar_addsubmul_model = builder::scalar_addsubmul_model();
         let program_bytecode = onnx_tracer::decode_model(scalar_addsubmul_model.clone());
-        println!("Program code: {program_bytecode:#?}");
+        debug!("Program code: {program_bytecode:#?}");
         let pp: JoltProverPreprocessing<Fr, PCS, KeccakTranscript> =
             JoltSNARK::prover_preprocess(program_bytecode);
 
         // --- Proving ---
         let input = Tensor::new(Some(&[60]), &[1]).unwrap();
         let raw_trace = onnx_tracer::execution_trace(scalar_addsubmul_model, &input);
-        println!("Execution trace: {raw_trace:#?}");
+        debug!("Execution trace: {raw_trace:#?}");
         let execution_trace = jolt_execution_trace(raw_trace);
 
         let snark: JoltSNARK<Fr, PCS, KeccakTranscript> =
@@ -371,7 +438,7 @@ mod tests {
 
             // Decode to program bytecode (for EZKL use)
             let program_bytecode = text_classification.decode();
-            println!("Program code: {program_bytecode:#?}");
+            debug!("Program code: {program_bytecode:#?}");
 
             // Load model
             let model = model(&text_classification.model_path);
@@ -412,7 +479,7 @@ mod tests {
             inputs: Tensor::new(Some(&input_vector), &[1, 100]).unwrap(), // Example input
         };
         let program_bytecode = text_classification.decode();
-        println!("Program code: {program_bytecode:#?}",);
+        debug!("Program code: {program_bytecode:#?}",);
         text_classification.trace();
     }
 
@@ -427,7 +494,7 @@ mod tests {
             inputs: Tensor::new(Some(&input_vector), &[1, 100]).unwrap(), // Example input
         };
         let program_bytecode = text_classification.decode();
-        println!("Program code: {program_bytecode:#?}",);
+        debug!("Program code: {program_bytecode:#?}",);
         let model = model(&text_classification.model_path);
 
         let result = model
@@ -446,8 +513,8 @@ mod tests {
         };
         let program_bytecode = subgraph_program.decode();
 
-        println!("Program decoded");
-        println!("Program code: {program_bytecode:#?}",);
+        debug!("Program decoded");
+        debug!("Program code: {program_bytecode:#?}",);
 
         // Test that the addresses of a subgraph are monotonically increasing
         let mut i = 0;

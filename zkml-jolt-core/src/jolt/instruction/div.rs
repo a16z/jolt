@@ -19,24 +19,23 @@ use crate::{
 pub struct DIVInstruction<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_SIZE> {
-    const SEQUENCE_LENGTH: usize = 8;
+    const SEQUENCE_LENGTH: usize = 9;
 
     fn virtual_trace(cycle: ONNXCycle) -> Vec<ONNXCycle> {
         assert_eq!(cycle.instr.opcode, ONNXOpcode::Div);
         // DIV source registers
         let r_x = cycle.instr.ts1;
-        let r_y = cycle.instr.ts2;
 
         // Virtual registers used in sequence
         let v_0 = Some(virtual_tensor_index(0));
         let v_q = Some(virtual_tensor_index(1));
         let v_r = Some(virtual_tensor_index(2));
         let v_qy = Some(virtual_tensor_index(3));
+        let v_c = Some(virtual_tensor_index(4));
 
         // DIV operands
         let x = cycle.ts1_vals();
-        let y = cycle.ts2_vals();
-
+        let y = cycle.imm();
         let mut virtual_trace = vec![];
 
         let (quotient, remainder) = {
@@ -83,6 +82,26 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
             }
             (quotient_tensor, remainder_tensor)
         };
+
+        // const
+        virtual_trace.push(ONNXCycle {
+            instr: ONNXInstr {
+                address: cycle.instr.address,
+                opcode: ONNXOpcode::VirtualConst,
+                ts1: None,
+                ts2: None,
+                td: v_c,
+                imm: cycle.instr.imm.clone(),
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+            },
+            memory_state: MemoryState {
+                ts1_val: None,
+                ts2_val: None,
+                td_pre_val: None,
+                td_post_val: cycle.instr.imm,
+            },
+            advice_value: None,
+        });
 
         let q = (0..MAX_TENSOR_SIZE)
             .map(|i| ADVICEInstruction::<WORD_SIZE>(quotient[i]).to_lookup_output())
@@ -141,7 +160,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
                 address: cycle.instr.address,
                 opcode: ONNXOpcode::VirtualAssertValidSignedRemainder,
                 ts1: v_r,
-                ts2: r_y,
+                ts2: v_c,
                 td: None,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
@@ -165,7 +184,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
             instr: ONNXInstr {
                 address: cycle.instr.address,
                 opcode: ONNXOpcode::VirtualAssertValidDiv0,
-                ts1: r_y,
+                ts1: v_c,
                 ts2: v_q,
                 td: None,
                 imm: None,
@@ -188,7 +207,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
                 address: cycle.instr.address,
                 opcode: ONNXOpcode::Mul,
                 ts1: v_q,
-                ts2: r_y,
+                ts2: v_c,
                 td: v_qy,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
@@ -259,7 +278,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
             memory_state: MemoryState {
                 ts1_val: Some(Tensor::from(u64_vec_to_i128_iter(&q))),
                 ts2_val: None,
-                td_pre_val: None,
+                td_pre_val: cycle.memory_state.td_pre_val.clone(),
                 td_post_val: Some(Tensor::from(u64_vec_to_i128_iter(&q))),
             },
             advice_value: None,
