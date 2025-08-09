@@ -133,8 +133,21 @@ where
         println!("Trace length: {trace_length}");
         F::initialize_lookup_tables(std::mem::take(&mut preprocessing.field));
         // pad trace to the next power of two
-        trace.resize(trace.len().next_power_of_two(), JoltONNXCycle::no_op());
-        let padded_trace_length = trace.len();
+        let padded_trace_length = trace_length.next_power_of_two();
+        let padding = padded_trace_length - trace_length;
+        let last_address = trace.last().unwrap().instr().address;
+        if padding != 0 {
+            // Pad with NoOps (with sequential addresses)
+            trace.extend((0..padding - 1).map(|i| {
+                let mut no_op = JoltONNXCycle::no_op();
+                no_op.instr.address = last_address + i + 1;
+                no_op
+            }));
+            // // Final JALR sets NextUnexpandedPC = 0
+            // trace.push(RV32IMCycle::last_jalr(last_address + 4 * (padding - 1)));
+            trace.push(JoltONNXCycle::no_op());
+        };
+
         let tensor_heap_addresses: Vec<usize> = trace
             .iter()
             .map(|cycle| cycle.td_write().0.last().unwrap() + 1)

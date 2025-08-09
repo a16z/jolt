@@ -315,6 +315,8 @@ pub enum CircuitFlags {
     LeftOperandIsTs1Value,
     /// 1 if the first instruction operand is TS2 value; 0 otherwise.
     RightOperandIsTs2Value,
+    /// 1 if the second instruction operand is `imm`; 0 otherwise.
+    RightOperandIsImm,
     /// 1 if the first lookup operand is the sum of the two instruction operands.
     AddOperands,
     /// 1 if the first lookup operand is the difference between the two instruction operands.
@@ -323,13 +325,12 @@ pub enum CircuitFlags {
     MultiplyOperands,
     /// 1 if the lookup output is to be stored in `td` at the end of the step.
     WriteLookupOutputToTD,
-    // TODO(Forpee): Virtual Instructions (#20 https://github.com/ICME-Lab/zkml-jolt/issues/20)
-    // /// 1 if the instruction is "inline", as defined in Section 6.1 of the Jolt paper.
-    // InlineSequenceInstruction,
-    // /// 1 if the instruction is an assert, as defined in Section 6.1.1 of the Jolt paper.
-    // Assert,
-    // /// Used in virtual sequences; the program counter should be the same for the full sequence.
-    // DoNotUpdateUnexpandedPC,
+    /// 1 if the instruction is "inline", as defined in Section 6.1 of the Jolt paper.
+    InlineSequenceInstruction,
+    /// 1 if the instruction is an assert, as defined in Section 6.1.1 of the Jolt paper.
+    Assert,
+    /// Used in virtual sequences; the program counter should be the same for the full sequence.
+    DoNotUpdateUnexpandedPC,
     /// Is (virtual) advice instruction
     Advice,
     /// Is constant instruction
@@ -349,6 +350,9 @@ impl ONNXInstr {
             | ONNXOpcode::Sub
             | ONNXOpcode::Mul
             | ONNXOpcode::VirtualMove
+            | ONNXOpcode::VirtualAssertValidSignedRemainder
+            | ONNXOpcode::VirtualAssertValidDiv0
+            | ONNXOpcode::VirtualAssertEq
         );
 
         flags[CircuitFlags::RightOperandIsTs2Value as usize] = matches!(
@@ -356,6 +360,14 @@ impl ONNXInstr {
             ONNXOpcode::Add
             | ONNXOpcode::Sub
             | ONNXOpcode::Mul
+            | ONNXOpcode::VirtualAssertValidSignedRemainder
+            | ONNXOpcode::VirtualAssertValidDiv0
+            | ONNXOpcode::VirtualAssertEq
+        );
+
+        flags[CircuitFlags::RightOperandIsImm as usize] = matches!(
+            self.opcode,
+            | ONNXOpcode::VirtualMove
         );
 
         flags[CircuitFlags::AddOperands as usize] = matches!(
@@ -393,6 +405,18 @@ impl ONNXInstr {
             self.opcode,
             ONNXOpcode::VirtualConst
         );
+
+        flags[CircuitFlags::Assert as usize] = matches!(
+            self.opcode,
+            ONNXOpcode::VirtualAssertValidSignedRemainder
+            | ONNXOpcode::VirtualAssertValidDiv0
+            | ONNXOpcode::VirtualAssertEq
+        );
+
+        flags[CircuitFlags::InlineSequenceInstruction as usize] =
+            self.virtual_sequence_remaining.is_some();
+        flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
+            self.virtual_sequence_remaining.unwrap_or(0) != 0;
 
         flags
     }

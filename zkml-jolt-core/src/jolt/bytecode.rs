@@ -30,7 +30,7 @@ use crate::jolt::execution_trace::JoltONNXCycle;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BytecodePreprocessing {
     pub code_size: usize,
-    bytecode: Vec<ONNXInstr>,
+    pub bytecode: Vec<ONNXInstr>,
     /// Maps the memory address of each instruction in the bytecode to its "virtual" address.
     /// See Section 6.1 of the Jolt paper, "Reflecting the program counter". The virtual address
     /// is the one used to keep track of the next (potentially virtual) instruction to execute.
@@ -56,17 +56,48 @@ impl BytecodePreprocessing {
             );
             virtual_address += 1;
         }
+
         // Bytecode: Prepend a single no-op instruction
         bytecode.insert(0, ONNXInstr::no_op());
+        assert_eq!(virtual_address_map.insert((0, 0), 0), None);
 
         // Bytecode: Pad to nearest power of 2
-        let code_size = bytecode.len().next_power_of_two();
-        bytecode.resize(code_size, ONNXInstr::no_op());
+        let code_size = bytecode.len();
+        let padded_code_size = bytecode.len().next_power_of_two();
+        let last_address = bytecode.last().unwrap().address;
+        let padding = padded_code_size - bytecode.len();
+        bytecode.extend((0..padding).map(|i| {
+            let mut no_op = ONNXInstr::no_op();
+            no_op.address = last_address + i + 1;
+            assert_eq!(
+                virtual_address_map.insert((no_op.address, 0), code_size + i),
+                None
+            );
+            no_op
+        }));
+
         Self {
-            code_size,
+            code_size: padded_code_size,
             bytecode,
             virtual_address_map,
         }
+    }
+
+    pub fn get_pc(&self, cycle: &JoltONNXCycle) -> usize {
+        *self
+            .virtual_address_map
+            .get(&(
+                cycle.instr.address,
+                cycle.instr.virtual_sequence_remaining.unwrap_or(0),
+            ))
+            .unwrap_or_else(|| panic!("Cannot get pc for cycle {cycle:#?}"))
+    }
+
+    pub fn map_trace_to_pc<'a, 'b>(
+        &'b self,
+        trace: &'a [JoltONNXCycle],
+    ) -> impl rayon::iter::ParallelIterator<Item = u64> + use<'a, 'b> {
+        trace.par_iter().map(|cycle| self.get_pc(cycle) as u64)
     }
 }
 

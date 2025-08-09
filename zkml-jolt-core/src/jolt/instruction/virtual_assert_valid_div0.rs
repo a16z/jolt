@@ -1,6 +1,4 @@
-use jolt_core::jolt::instruction::{
-    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS,
-};
+use jolt_core::jolt::instruction::{InstructionLookup, LookupQuery};
 use jolt_core::jolt::lookup_table::LookupTables;
 use jolt_core::jolt::lookup_table::valid_div0::ValidDiv0Table;
 use serde::{Deserialize, Serialize};
@@ -14,20 +12,6 @@ impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE>
 {
     fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
         Some(ValidDiv0Table.into())
-    }
-}
-
-impl<const WORD_SIZE: usize> InstructionFlags for AssertValidDiv0Instruction<WORD_SIZE> {
-    fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
-        let mut flags = [false; NUM_CIRCUIT_FLAGS];
-        flags[CircuitFlags::Assert as usize] = true;
-        flags[CircuitFlags::LeftOperandIsRs1Value as usize] = true;
-        flags[CircuitFlags::RightOperandIsRs2Value as usize] = true;
-        // flags[CircuitFlags::InlineSequenceInstruction as usize] =
-        //     self.virtual_sequence_remaining.is_some();
-        // flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
-        //     self.virtual_sequence_remaining.unwrap_or(0) != 0;
-        flags
     }
 }
 
@@ -55,16 +39,3 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for AssertValidDiv0Instructi
         }
     }
 }
-
-// #[cfg(test)]
-// mod test {
-//     use crate::jolt::instruction::test::materialize_entry_test;
-
-//     use super::*;
-//     use ark_bn254::Fr;
-
-//     #[test]
-//     fn materialize_entry() {
-//         materialize_entry_test::<Fr, VirtualAssertValidDiv0>();
-//     }
-// }

@@ -468,12 +468,16 @@ pub enum JoltONNXR1CSInputs {
     LookupOutput(usize),         // Virtual (instruction rv)
     WriteLookupOutputToTD(usize),
     OpFlags(CircuitFlags),
+    PC,               // Virtual (bytecode raf)
+    UnexpandedPC,     // Virtual (bytecode rv)
+    NextUnexpandedPC, // Virtual (spartan shift sumcheck)
+    NextPC,           // Virtual (spartan shift sumcheck)
 }
 
 /// This const serves to define a canonical ordering over inputs (and thus indices
 /// for each input). This is needed for sumcheck.
-pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs; 9 * MAX_TENSOR_SIZE + 4] = {
-    let mut arr = [JoltONNXR1CSInputs::Td(0); 9 * MAX_TENSOR_SIZE + 4];
+pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs; 9 * MAX_TENSOR_SIZE + 11] = {
+    let mut arr = [JoltONNXR1CSInputs::Td(0); 9 * MAX_TENSOR_SIZE + 11];
     let mut idx = 0;
     while idx < MAX_TENSOR_SIZE {
         arr[idx] = JoltONNXR1CSInputs::Td(idx);
@@ -534,6 +538,20 @@ pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs; 9 * MAX_TENSOR_SIZE + 4] = {
     arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands);
     idx += 1;
     arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToTD);
+    idx += 1;
+    arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::Assert);
+    idx += 1;
+    arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC);
+    idx += 1;
+    arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::InlineSequenceInstruction);
+    idx += 1;
+    arr[idx] = JoltONNXR1CSInputs::PC;
+    idx += 1;
+    arr[idx] = JoltONNXR1CSInputs::UnexpandedPC;
+    idx += 1;
+    arr[idx] = JoltONNXR1CSInputs::NextUnexpandedPC;
+    idx += 1;
+    arr[idx] = JoltONNXR1CSInputs::NextPC;
     arr
 };
 
@@ -577,6 +595,45 @@ impl WitnessGenerator for JoltONNXR1CSInputs {
         ProofTranscript: Transcript,
     {
         match self {
+            JoltONNXR1CSInputs::PC => {
+                let coeffs: Vec<u64> = preprocessing
+                    .shared
+                    .bytecode
+                    .map_trace_to_pc(trace)
+                    .collect();
+                coeffs.into()
+            }
+            JoltONNXR1CSInputs::NextPC => {
+                let coeffs: Vec<u64> = preprocessing
+                    .shared
+                    .bytecode
+                    .map_trace_to_pc(&trace[1..])
+                    .chain(rayon::iter::once(0))
+                    .collect();
+                coeffs.into()
+            }
+            JoltONNXR1CSInputs::UnexpandedPC => {
+                let coeffs: Vec<u64> = trace
+                    .par_iter()
+                    .map(|cycle| cycle.instr().address as u64)
+                    .collect();
+                coeffs.into()
+            }
+            JoltONNXR1CSInputs::NextUnexpandedPC => {
+                let coeffs: Vec<u64> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        let do_not_update_pc =
+                            cycle.circuit_flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize];
+                        if do_not_update_pc {
+                            cycle.instr().address as u64
+                        } else {
+                            cycle.instr().address as u64 + 1
+                        }
+                    })
+                    .collect();
+                coeffs.into()
+            }
             JoltONNXR1CSInputs::Td(i) => {
                 let coeffs: Vec<u8> = trace
                     .par_iter()
