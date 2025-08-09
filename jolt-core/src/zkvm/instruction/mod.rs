@@ -214,6 +214,7 @@ define_rv32im_trait_impls! {
         VirtualChangeDivisor, VirtualChangeDivisorW,
         VirtualExtend, VirtualSignExtend, VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I,
         VirtualPow2W, VirtualPow2IW, VirtualShiftRightBitmask, VirtualShiftRightBitmaskI, VirtualROTRI,
+        VirtualROTRIW,
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI
     ]
 }
@@ -265,6 +266,7 @@ pub mod virtual_pow2i;
 pub mod virtual_pow2iw;
 pub mod virtual_pow2w;
 pub mod virtual_rotri;
+pub mod virtual_rotriw;
 pub mod virtual_shift_right_bitmask;
 pub mod virtual_shift_right_bitmaski;
 pub mod virtual_sign_extend;

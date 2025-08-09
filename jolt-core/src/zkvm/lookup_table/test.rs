@@ -7,6 +7,7 @@ use crate::{
         PrefixSuffixDecomposition,
     },
 };
+use common::constants::XLEN;
 use num::Integer;
 use rand::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
@@ -20,7 +21,7 @@ pub fn lookup_table_mle_random_test<F: JoltField, T: JoltLookupTable + Default>(
         let index = rng.gen();
         assert_eq!(
             F::from_u64(T::default().materialize_entry(index)),
-            T::default().evaluate_mle(&index_to_field_bitvector(index, 128)),
+            T::default().evaluate_mle(&index_to_field_bitvector(index, XLEN * 2)),
             "MLE did not match materialized table at index {index}",
         );
     }
@@ -40,7 +41,16 @@ pub fn lookup_table_mle_full_hypercube_test<F: JoltField, T: JoltLookupTable + D
 /// Generates a lookup index where right operand is 111..000
 pub fn gen_bitmask_lookup_index(rng: &mut rand::rngs::StdRng) -> u128 {
     let x = rng.next_u64();
-    let zeros = rng.gen_range(0, 65);
+    let zeros = rng.gen_range(0, XLEN + 1);
+    let y = (!0u64).wrapping_shl(zeros as u32);
+    interleave_bits(x, y)
+}
+
+/// Generates a lookup index where right operand is 111..000
+/// And number of zeros is at most XLEN / 2
+pub fn gen_bitmask_lookup_index_half(rng: &mut rand::rngs::StdRng) -> u128 {
+    let x = rng.next_u64();
+    let zeros = rng.gen_range(0, XLEN / 2 + 1);
     let y = (!0u64).wrapping_shl(zeros as u32);
     interleave_bits(x, y)
 }

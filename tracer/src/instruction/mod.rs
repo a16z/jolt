@@ -114,6 +114,7 @@ use virtual_pow2_w::VirtualPow2W;
 use virtual_pow2i::VirtualPow2I;
 use virtual_pow2i_w::VirtualPow2IW;
 use virtual_rotri::VirtualROTRI;
+use virtual_rotriw::VirtualROTRIW;
 use virtual_shift_right_bitmask::VirtualShiftRightBitmask;
 use virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI;
 use virtual_sign_extend::VirtualSignExtend;
@@ -241,6 +242,7 @@ pub mod virtual_pow2_w;
 pub mod virtual_pow2i;
 pub mod virtual_pow2i_w;
 pub mod virtual_rotri;
+pub mod virtual_rotriw;
 pub mod virtual_shift_right_bitmask;
 pub mod virtual_shift_right_bitmaski;
 pub mod virtual_sign_extend;
@@ -571,6 +573,7 @@ define_rv32im_enums! {
         VirtualChangeDivisor, VirtualChangeDivisorW, VirtualLW,VirtualSW,VirtualExtend,
         VirtualSignExtend,VirtualPow2W, VirtualPow2IW,
         VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I, VirtualROTRI,
+        VirtualROTRIW,
         VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
     ]

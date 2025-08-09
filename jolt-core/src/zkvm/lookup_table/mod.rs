@@ -94,6 +94,7 @@ pub mod valid_unsigned_remainder;
 pub mod virtual_change_divisor;
 pub mod virtual_change_divisor_w;
 pub mod virtual_rotr;
+pub mod virtual_rotrw;
 pub mod virtual_sra;
 pub mod virtual_srl;
 pub mod word_alignment;
