@@ -77,13 +77,13 @@ impl<F: JoltField> R1CSConstraints<F> for JoltONNXConstraints {
             //     assert!(RdWriteValue == LookupOutput)
             // }
             cs.constrain_prod(
-                JoltONNXR1CSInputs::Rd(i),
+                JoltONNXR1CSInputs::Td(i),
                 JoltONNXR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToTD),
                 JoltONNXR1CSInputs::WriteLookupOutputToTD(i),
             );
             cs.constrain_eq_conditional(
                 JoltONNXR1CSInputs::WriteLookupOutputToTD(i),
-                JoltONNXR1CSInputs::RdWriteValue(i),
+                JoltONNXR1CSInputs::TdWriteValue(i),
                 JoltONNXR1CSInputs::LookupOutput(i),
             );
         }

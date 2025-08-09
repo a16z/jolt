@@ -458,8 +458,8 @@ impl WitnessGenerator for CommittedPolynomials {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum JoltONNXR1CSInputs {
-    Rd(usize), // Virtual (bytecode rv)
-    RdWriteValue(usize),
+    Td(usize), // Virtual (bytecode rv)
+    TdWriteValue(usize),
     LeftInstructionInput(usize), // to_lookup_query -> to_instruction_operands
     RightInstructionInput(usize), // to_lookup_query -> to_instruction_operands
     LeftLookupOperand(usize),    // Virtual (instruction raf)
@@ -473,15 +473,15 @@ pub enum JoltONNXR1CSInputs {
 /// This const serves to define a canonical ordering over inputs (and thus indices
 /// for each input). This is needed for sumcheck.
 pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs; 9 * MAX_TENSOR_SIZE + 4] = {
-    let mut arr = [JoltONNXR1CSInputs::Rd(0); 9 * MAX_TENSOR_SIZE + 4];
+    let mut arr = [JoltONNXR1CSInputs::Td(0); 9 * MAX_TENSOR_SIZE + 4];
     let mut idx = 0;
     while idx < MAX_TENSOR_SIZE {
-        arr[idx] = JoltONNXR1CSInputs::Rd(idx);
+        arr[idx] = JoltONNXR1CSInputs::Td(idx);
         idx += 1;
     }
     let mut h = 0;
     while h < MAX_TENSOR_SIZE {
-        arr[idx] = JoltONNXR1CSInputs::RdWriteValue(h);
+        arr[idx] = JoltONNXR1CSInputs::TdWriteValue(h);
         idx += 1;
         h += 1;
     }
@@ -577,14 +577,14 @@ impl WitnessGenerator for JoltONNXR1CSInputs {
         ProofTranscript: Transcript,
     {
         match self {
-            JoltONNXR1CSInputs::Rd(i) => {
+            JoltONNXR1CSInputs::Td(i) => {
                 let coeffs: Vec<u8> = trace
                     .par_iter()
                     .map(|cycle| cycle.td_write().0.get(*i).cloned().unwrap() as u8)
                     .collect();
                 coeffs.into()
             }
-            JoltONNXR1CSInputs::RdWriteValue(i) => {
+            JoltONNXR1CSInputs::TdWriteValue(i) => {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
                     .map(|cycle| cycle.td_write().2.get(*i).cloned().unwrap())
