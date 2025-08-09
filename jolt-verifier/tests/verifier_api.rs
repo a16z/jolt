@@ -13,5 +13,9 @@ fn verify_proof() {
     let verifier = JoltRV32IM::verify(&preprocessing, proof, device, None);
     let duration = start.elapsed();
     println!("Verification took: {} ms", duration.as_millis());
-    assert!(verifier.is_ok(), "Verifier failed: {:?}", verifier.err());
+    assert!(
+        verifier.is_ok(),
+        "Verifier failed: {:?}. (If the prover/verifier implementation changed, you may need to update the test fixtures by running `./update_test_fixtures.sh`.)",
+        verifier.err()
+    );
 }

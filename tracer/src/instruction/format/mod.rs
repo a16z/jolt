@@ -19,17 +19,18 @@ pub struct NormalizedOperands {
     pub rs1: u8,
     pub rs2: u8,
     pub rd: u8,
-    pub imm: i64,
+    pub imm: i128,
 }
 
-pub trait InstructionFormat: Default + Debug {
+pub trait InstructionFormat:
+    Default + Debug + From<NormalizedOperands> + Into<NormalizedOperands>
+{
     type RegisterState: InstructionRegisterState + PartialEq;
 
     fn parse(word: u32) -> Self;
     fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu);
     fn capture_post_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu);
     fn random(rng: &mut StdRng) -> Self;
-    fn normalize(&self) -> NormalizedOperands;
 }
 
 pub trait InstructionRegisterState:
@@ -54,6 +55,9 @@ pub fn normalize_register_value(value: i64, xlen: &Xlen) -> u64 {
     }
 }
 
-pub fn normalize_imm(imm: u64) -> i64 {
-    imm as i32 as i64
+pub fn normalize_imm(imm: u64, xlen: &Xlen) -> i64 {
+    match xlen {
+        Xlen::Bit32 => imm as i32 as i64,
+        Xlen::Bit64 => imm as i64,
+    }
 }

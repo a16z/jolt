@@ -20,6 +20,7 @@ host = [
     "dep:ark-ec",
     "dep:ark-bn254",
     "postcard/use-std",
+    "dep:sha3",
 ]
 guest-std = [
     "postcard/use-std",
@@ -30,8 +31,14 @@ guest-std = [
 postcard = { version = "1.0.8", default-features = false }
 ark-ec = { version = "0.5.0", default-features = false, optional = true }
 ark-bn254 = { version = "0.5.0", default-features = false, optional = true }
+sha3 = { version = "0.10.8", optional = true }
 
 jolt-sdk-macros = { path = "./macros" }
+
+# Host-only dependencies
+common = { path = "../common", optional = true }
 jolt-core = { path = "../jolt-core", optional = true }
 tracer = { path = "../tracer", optional = true }
-common = { path = "../common", optional = true }
+
+[dev-dependencies]
+hex-literal = "0.4.1"

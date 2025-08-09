@@ -1,10 +1,17 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+};
+
+use super::addi::ADDI;
+use super::virtual_sign_extend::VirtualSignExtend;
+use super::RV32IMInstruction;
 
 use super::{
     format::{format_i::FormatI, normalize_imm, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
+    RISCVInstruction, RISCVTrace, RV32IMCycle,
 };
 
 declare_riscv_instr!(
@@ -23,9 +30,50 @@ impl ADDIW {
         // ADDIW rd, rs1, 0 writes the sign extension of the lower 32 bits of register rs1 into
         // register rd (assembler pseudoinstruction SEXT.W).
         cpu.x[self.operands.rd as usize] = cpu.x[self.operands.rs1 as usize]
-            .wrapping_add(normalize_imm(self.operands.imm))
+            .wrapping_add(normalize_imm(self.operands.imm, &cpu.xlen))
             as i32 as i64;
     }
 }
 
-impl RISCVTrace for ADDIW {}
+impl RISCVTrace for ADDIW {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+        let inline_sequence = self.inline_sequence(cpu.xlen);
+        let mut trace = trace;
+        for instr in inline_sequence {
+            // In each iteration, create a new Option containing a re-borrowed reference
+            instr.trace(cpu, trace.as_deref_mut());
+        }
+    }
+
+    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+        let mut sequence = vec![];
+        let mut inline_sequence_remaining = self.inline_sequence_remaining.unwrap_or(1);
+
+        let addi = ADDI {
+            address: self.address,
+            operands: FormatI {
+                rd: self.operands.rd,
+                rs1: self.operands.rs1,
+                imm: self.operands.imm,
+            },
+            inline_sequence_remaining: Some(inline_sequence_remaining),
+            is_compressed: self.is_compressed,
+        };
+        sequence.push(addi.into());
+        inline_sequence_remaining -= 1;
+
+        let signext = VirtualSignExtend {
+            address: self.address,
+            operands: FormatI {
+                rd: self.operands.rd,
+                rs1: self.operands.rd,
+                imm: 0,
+            },
+            inline_sequence_remaining: Some(inline_sequence_remaining),
+            is_compressed: self.is_compressed,
+        };
+        sequence.push(signext.into());
+
+        sequence
+    }
+}

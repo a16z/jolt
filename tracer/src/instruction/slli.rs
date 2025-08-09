@@ -8,7 +8,7 @@ use crate::{
 
 use super::{
     format::{format_i::FormatI, InstructionFormat},
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
+    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -33,29 +33,34 @@ impl SLLI {
 
 impl RISCVTrace for SLLI {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence();
+        let inline_sequence = self.inline_sequence(cpu.xlen);
         let mut trace = trace;
-        for instr in virtual_sequence {
+        for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for SLLI {
-    fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
-        let virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(0);
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         let mut sequence = vec![];
+        let inline_sequence_remaining = self.inline_sequence_remaining.unwrap_or(0);
 
+        // Determine word size based on immediate value and instruction encoding
+        // For SLLI: RV32 uses 5-bit immediates (0-31), RV64 uses 6-bit immediates (0-63)
+        let mask = match xlen {
+            Xlen::Bit32 => 0x1f, //low 5bits
+            Xlen::Bit64 => 0x3f, //low 6bits
+        };
+        let shift = self.operands.imm & mask;
         let mul = RV32IMInstruction::VirtualMULI(VirtualMULI {
             address: self.address,
             operands: FormatI {
                 rd: self.operands.rd,
                 rs1: self.operands.rs1,
-                // TODO: this only works for Xlen = 32
-                imm: (1 << (self.operands.imm % 32)),
+                imm: 1 << shift,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
+            is_compressed: self.is_compressed,
         });
         sequence.push(mul);
 

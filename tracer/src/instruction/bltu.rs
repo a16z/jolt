@@ -20,7 +20,7 @@ impl BLTU {
         if cpu.unsigned_data(cpu.x[self.operands.rs1 as usize])
             < cpu.unsigned_data(cpu.x[self.operands.rs2 as usize])
         {
-            cpu.pc = (self.address as i64 + self.operands.imm) as u64;
+            cpu.pc = (self.address as i64 + self.operands.imm as i64) as u64;
         }
     }
 }

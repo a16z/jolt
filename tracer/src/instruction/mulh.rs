@@ -12,7 +12,7 @@ use super::{
     mul::MUL,
     mulhu::MULHU,
     virtual_movsign::VirtualMovsign,
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
+    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -40,17 +40,15 @@ impl MULH {
 
 impl RISCVTrace for MULH {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence();
+        let inline_sequence = self.inline_sequence(cpu.xlen);
         let mut trace = trace;
-        for instr in virtual_sequence {
+        for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for MULH {
-    fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_sx = virtual_register_index(0);
         let v_sy = virtual_register_index(1);
@@ -68,7 +66,8 @@ impl VirtualInstructionSequence for MULH {
                 rs1: self.operands.rs1,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(6),
+            inline_sequence_remaining: Some(6),
+            is_compressed: self.is_compressed,
         };
         sequence.push(movsign_x.into());
 
@@ -79,7 +78,8 @@ impl VirtualInstructionSequence for MULH {
                 rs1: self.operands.rs2,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(5),
+            inline_sequence_remaining: Some(5),
+            is_compressed: self.is_compressed,
         };
         sequence.push(movsign_y.into());
 
@@ -90,7 +90,8 @@ impl VirtualInstructionSequence for MULH {
                 rs1: self.operands.rs1,
                 rs2: self.operands.rs2,
             },
-            virtual_sequence_remaining: Some(4),
+            inline_sequence_remaining: Some(4),
+            is_compressed: self.is_compressed,
         };
         sequence.push(mulhu.into());
 
@@ -101,7 +102,8 @@ impl VirtualInstructionSequence for MULH {
                 rs1: v_sx,
                 rs2: self.operands.rs2,
             },
-            virtual_sequence_remaining: Some(3),
+            inline_sequence_remaining: Some(3),
+            is_compressed: self.is_compressed,
         };
         sequence.push(mulu_sx_y.into());
 
@@ -112,7 +114,8 @@ impl VirtualInstructionSequence for MULH {
                 rs1: v_sy,
                 rs2: self.operands.rs1,
             },
-            virtual_sequence_remaining: Some(2),
+            inline_sequence_remaining: Some(2),
+            is_compressed: self.is_compressed,
         };
         sequence.push(mulu_sy_x.into());
 
@@ -123,7 +126,8 @@ impl VirtualInstructionSequence for MULH {
                 rs1: v_0,
                 rs2: v_1,
             },
-            virtual_sequence_remaining: Some(1),
+            inline_sequence_remaining: Some(1),
+            is_compressed: self.is_compressed,
         };
         sequence.push(add_1.into());
 
@@ -134,7 +138,8 @@ impl VirtualInstructionSequence for MULH {
                 rs1: v_3,
                 rs2: v_2,
             },
-            virtual_sequence_remaining: Some(0),
+            inline_sequence_remaining: Some(0),
+            is_compressed: self.is_compressed,
         };
         sequence.push(add_2.into());
 

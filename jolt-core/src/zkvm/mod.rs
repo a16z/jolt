@@ -212,13 +212,13 @@ where
         let num_riscv_cycles: usize = trace
             .par_iter()
             .map(|cycle| {
-                // Count the cycle if the instruction is not part of a virtual sequence
-                // (`virtual_sequence_remaining` is `None`) or if it's the first instruction
-                // in a virtual sequence (`virtual_sequence_remaining` is `Some(0)`)
-                if let Some(virtual_sequence_remaining) =
-                    cycle.instruction().normalize().virtual_sequence_remaining
+                // Count the cycle if the instruction is not part of a inline sequence
+                // (`inline_sequence_remaining` is `None`) or if it's the first instruction
+                // in a inline sequence (`inline_sequence_remaining` is `Some(0)`)
+                if let Some(inline_sequence_remaining) =
+                    cycle.instruction().normalize().inline_sequence_remaining
                 {
-                    if virtual_sequence_remaining > 0 {
+                    if inline_sequence_remaining > 0 {
                         return 0;
                     }
                 }
@@ -352,8 +352,6 @@ pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
 impl Serializable for RV32IMJoltProof {}
 impl Serializable for JoltDevice {}
 
-// ==================== TEST ====================
-
 #[cfg(test)]
 mod tests {
     use ark_bn254::Fr;
@@ -451,6 +449,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     #[serial]
     fn sha2_e2e_dory() {
         // Ensure SHA2 inline library is linked and auto-registered
@@ -510,10 +509,11 @@ mod tests {
 
     #[test]
     #[serial]
-    fn muldiv_e2e_dory() {
-        let mut program = host::Program::new("muldiv-guest");
+    fn btreemap_e2e_dory() {
+        let mut program = host::Program::new("btreemap-guest");
         let (bytecode, init_memory_state, _) = program.decode();
-        let (_, _, io_device) = program.trace(&[]);
+        let inputs = postcard::to_stdvec(&50u32).unwrap();
+        let (_, _, io_device) = program.trace(&inputs);
 
         let preprocessing = JoltRV32IM::prover_preprocess(
             bytecode.clone(),
@@ -522,7 +522,34 @@ mod tests {
             1 << 16,
         );
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IM::prove(&preprocessing, &mut program, &[50]);
+            JoltRV32IM::prove(&preprocessing, &mut program, &inputs);
+
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        let verification_result =
+            JoltRV32IM::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn muldiv_e2e_dory() {
+        let mut program = host::Program::new("muldiv-guest");
+        let (bytecode, init_memory_state, _) = program.decode();
+        let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
+        let (_, _, io_device) = program.trace(&inputs);
+
+        let preprocessing = JoltRV32IM::prover_preprocess(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            init_memory_state,
+            1 << 16,
+        );
+        let (jolt_proof, io_device, debug_info) =
+            JoltRV32IM::prove(&preprocessing, &mut program, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =

@@ -1,0 +1,67 @@
+ARG OS_VERSION="noble"
+
+# Builder stage
+FROM ubuntu:${OS_VERSION} AS builder
+
+RUN <<-'EOF' bash
+    set -eu -o pipefail
+    apt-get update
+    apt-get install -y --no-install-recommends ca-certificates git
+EOF
+
+# Install Spike(the official RISC-V ISA simulator)
+RUN <<-'EOF' bash
+    set -eu -o pipefail
+    apt-get update
+    apt-get install -y --no-install-recommends build-essential device-tree-compiler
+    git clone --depth=1 https://github.com/riscv-software-src/riscv-isa-sim.git /tmp/riscv-isa-sim
+    cd /tmp/riscv-isa-sim
+    mkdir build
+    cd build
+    ../configure --prefix=/opt/riscv LDFLAGS="-s"
+    make -j$(nproc)
+    make install
+EOF
+
+# Install RISC-V Proxy Kernel
+RUN <<-'EOF' bash
+    set -eu -o pipefail
+    apt-get update
+    apt-get install -y --no-install-recommends binutils-riscv64-unknown-elf gcc-riscv64-unknown-elf picolibc-riscv64-unknown-elf
+    git clone --depth=1 -b gx/support-musl https://github.com/LayerResearch/riscv-pk.git /tmp/riscv-pk
+    cd /tmp/riscv-pk
+    mkdir build
+    cd build
+    
+    CC="riscv64-unknown-elf-gcc -specs=/usr/lib/picolibc/riscv64-unknown-elf/picolibc.specs" \
+    ../configure --prefix=/opt/riscv --host=riscv64-unknown-elf --with-arch=rv32gc --with-abi=ilp32
+    make clean
+    make -j$(nproc)
+    make install
+
+    CC="riscv64-unknown-elf-gcc -specs=/usr/lib/picolibc/riscv64-unknown-elf/picolibc.specs" \
+    ../configure --prefix=/opt/riscv --host=riscv64-unknown-elf --with-arch=rv64gc --with-abi=lp64
+    make clean
+    make -j$(nproc)
+    make install
+EOF
+
+# Spike stage
+FROM ubuntu:${OS_VERSION} AS spike
+COPY --from=builder /opt/riscv/ /opt/riscv/
+ENV PATH="/opt/riscv/bin/:$PATH"
+
+# Prepare prebuilt files stage
+FROM ubuntu:${OS_VERSION} AS prebuilt-stage0
+
+COPY --from=builder /opt/riscv/ /opt/riscv/
+
+ENV PATH="/opt/riscv/bin/:$PATH"
+RUN <<-'EOF' bash
+    set -eu -o pipefail
+    tar zcvf /srv/spike-$(spike --help 2>&1 | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p')-$(uname -s)-$(uname -m).tar.gz -C /opt/riscv/ .
+EOF
+
+# Prebuilt stage
+FROM scratch AS prebuilt
+COPY --from=prebuilt-stage0 /srv/ /

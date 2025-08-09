@@ -12,12 +12,13 @@ use crate::{field::JoltField, utils::uninterleave_bits, zkvm::lookup_table::suff
 pub struct UnsignedGreaterThanEqualTable<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for UnsignedGreaterThanEqualTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+    fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
         match WORD_SIZE {
             #[cfg(test)]
             8 => (x >= y).into(),
             32 => (x >= y).into(),
+            64 => (x >= y).into(),
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }
@@ -49,6 +50,7 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
+    use common::constants::XLEN;
 
     use super::UnsignedGreaterThanEqualTable;
 
@@ -59,11 +61,11 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, UnsignedGreaterThanEqualTable<32>>();
+        lookup_table_mle_random_test::<Fr, UnsignedGreaterThanEqualTable<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, UnsignedGreaterThanEqualTable<32>>();
+        prefix_suffix_test::<XLEN, Fr, UnsignedGreaterThanEqualTable<XLEN>>();
     }
 }

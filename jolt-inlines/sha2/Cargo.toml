@@ -11,3 +11,7 @@ host = ["dep:ctor", "dep:tracer"]
 [dependencies]
 ctor = { version = "0.2", optional = true }
 tracer = { path = "../../tracer", optional = true }
+
+[dev-dependencies]
+hex-literal = "0.4.1"
+

@@ -16,7 +16,6 @@ use std::process::Command;
 use std::str::FromStr;
 use std::{fs, io};
 use tracer::emulator::memory::Memory;
-use tracer::instruction::VirtualInstructionSequence;
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
 
 impl Program {
@@ -81,9 +80,9 @@ impl Program {
             ];
 
             let toolchain = if self.std {
-                "riscv32im-jolt-zkvm-elf"
+                "riscv64imac-jolt-zkvm-elf"
             } else {
-                "riscv32im-unknown-none-elf"
+                "riscv64imac-unknown-none-elf"
             };
 
             let mut envs = vec![("CARGO_ENCODED_RUSTFLAGS", rust_flags.join("\x1f"))];
@@ -137,37 +136,16 @@ impl Program {
             File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
-        let (mut instructions, raw_bytes, program_end) = tracer::decode(&elf_contents);
-        let program_size = program_end - RAM_START_ADDRESS;
+        let (mut instructions, raw_bytes, program_end, xlen) = tracer::decode(&elf_contents);
+        let bytecode_size = program_end - RAM_START_ADDRESS;
 
-        // Expand virtual sequences
+        // Expand inline sequences
         instructions = instructions
             .into_par_iter()
-            .flat_map_iter(|instr| match instr {
-                RV32IMInstruction::DIV(div) => div.virtual_sequence(),
-                RV32IMInstruction::DIVU(divu) => divu.virtual_sequence(),
-                RV32IMInstruction::LB(lb) => lb.virtual_sequence(),
-                RV32IMInstruction::LBU(lbu) => lbu.virtual_sequence(),
-                RV32IMInstruction::LH(lh) => lh.virtual_sequence(),
-                RV32IMInstruction::LHU(lhu) => lhu.virtual_sequence(),
-                RV32IMInstruction::MULH(mulh) => mulh.virtual_sequence(),
-                RV32IMInstruction::MULHSU(mulhsu) => mulhsu.virtual_sequence(),
-                RV32IMInstruction::REM(rem) => rem.virtual_sequence(),
-                RV32IMInstruction::REMU(remu) => remu.virtual_sequence(),
-                RV32IMInstruction::SB(sb) => sb.virtual_sequence(),
-                RV32IMInstruction::SH(sh) => sh.virtual_sequence(),
-                RV32IMInstruction::SLL(sll) => sll.virtual_sequence(),
-                RV32IMInstruction::SLLI(slli) => slli.virtual_sequence(),
-                RV32IMInstruction::SRA(sra) => sra.virtual_sequence(),
-                RV32IMInstruction::SRAI(srai) => srai.virtual_sequence(),
-                RV32IMInstruction::SRL(srl) => srl.virtual_sequence(),
-                RV32IMInstruction::SRLI(srli) => srli.virtual_sequence(),
-                RV32IMInstruction::INLINE(inline) => inline.virtual_sequence(),
-                _ => vec![instr],
-            })
+            .flat_map_iter(|instr| instr.inline_sequence(xlen))
             .collect();
 
-        (instructions, raw_bytes, program_size)
+        (instructions, raw_bytes, bytecode_size)
     }
 
     // TODO(moodlezoup): Make this generic over InstructionSet
@@ -179,7 +157,7 @@ impl Program {
             File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
-        let (_, _, program_end) = tracer::decode(&elf_contents);
+        let (_, _, program_end, _) = tracer::decode(&elf_contents);
         let program_size = program_end - RAM_START_ADDRESS;
 
         let memory_config = MemoryConfig {
@@ -200,7 +178,7 @@ impl Program {
             File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
-        let (_, _, program_end) = tracer::decode(&elf_contents);
+        let (_, _, program_end, _) = tracer::decode(&elf_contents);
         let program_size = program_end - RAM_START_ADDRESS;
         let memory_config = MemoryConfig {
             memory_size: self.memory_size,

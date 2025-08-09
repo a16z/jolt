@@ -1,29 +1,30 @@
-use tracer::instruction::{lw::LW, RISCVCycle};
+use tracer::instruction::{sd::SD, RISCVCycle};
 
 use crate::zkvm::lookup_table::LookupTables;
 
 use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
-impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for LW {
+impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for SD {
     fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
         None
     }
 }
 
-impl InstructionFlags for LW {
+impl InstructionFlags for SD {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
-        flags[CircuitFlags::Load as usize] = true;
+        flags[CircuitFlags::Store as usize] = true;
         flags[CircuitFlags::InlineSequenceInstruction as usize] =
-            self.virtual_sequence_remaining.is_some();
+            self.inline_sequence_remaining.is_some();
         flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
-            self.virtual_sequence_remaining.unwrap_or(0) != 0;
+            self.inline_sequence_remaining.unwrap_or(0) != 0;
+        flags[CircuitFlags::IsCompressed as usize] = self.is_compressed;
         flags
     }
 }
 
-impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<LW> {
-    fn to_instruction_inputs(&self) -> (u64, i64) {
+impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<SD> {
+    fn to_instruction_inputs(&self) -> (u64, i128) {
         (0, 0)
     }
 

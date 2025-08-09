@@ -13,7 +13,9 @@ macro_rules! declare_riscv_instr {
         pub struct $name {
             pub address: u64,
             pub operands: $format,
-            pub virtual_sequence_remaining: Option<u16>,
+            pub inline_sequence_remaining: Option<u16>,
+            /// Set if instruction is C-Type
+            pub is_compressed: bool,
         }
 
         impl $crate::instruction::RISCVInstruction for $name {
@@ -27,7 +29,7 @@ macro_rules! declare_riscv_instr {
                 &self.operands
             }
 
-            fn new(word: u32, address: u64, validate: bool) -> Self {
+            fn new(word: u32, address: u64, validate: bool, compressed: bool) -> Self {
               if declare_riscv_instr!(@is_virtual $( $virt )?) {
                     panic!(
                         "virtual instruction `{}` cannot be built from a machine word",
@@ -40,7 +42,8 @@ macro_rules! declare_riscv_instr {
                 Self {
                     address,
                     operands: <$format>::parse(word),
-                    virtual_sequence_remaining: None,
+                    inline_sequence_remaining: None,
+                    is_compressed: compressed,
                 }
             }
 
@@ -48,12 +51,35 @@ macro_rules! declare_riscv_instr {
                 Self {
                     address: rand::RngCore::next_u64(rng),
                     operands: <$format>::random(rng),
-                    virtual_sequence_remaining: None,
+                    inline_sequence_remaining: None,
+                    is_compressed: false,
                 }
             }
 
             fn execute(&self, cpu: &mut Cpu, ram: &mut Self::RAMAccess) {
                 self.exec(cpu, ram)
+            }
+        }
+
+        impl From<$crate::instruction::NormalizedInstruction> for $name {
+            fn from(ni: $crate::instruction::NormalizedInstruction) -> Self {
+                Self {
+                    address: ni.address as u64,
+                    operands: ni.operands.into(),
+                    inline_sequence_remaining: None,
+                    is_compressed: ni.is_compressed,
+                }
+            }
+        }
+
+        impl From<$name> for $crate::instruction::NormalizedInstruction {
+            fn from(instr: $name) -> $crate::instruction::NormalizedInstruction {
+                $crate::instruction::NormalizedInstruction {
+                    address: instr.address as usize,
+                    operands: instr.operands.into(),
+                    is_compressed: instr.is_compressed,
+                    inline_sequence_remaining: instr.inline_sequence_remaining,
+                }
             }
         }
     };

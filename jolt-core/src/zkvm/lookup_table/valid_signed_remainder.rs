@@ -11,7 +11,7 @@ use crate::{field::JoltField, utils::uninterleave_bits};
 pub struct ValidSignedRemainderTable<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for ValidSignedRemainderTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+    fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
         match WORD_SIZE {
             8 => {
@@ -31,6 +31,21 @@ impl<const WORD_SIZE: usize> JoltLookupTable for ValidSignedRemainderTable<WORD_
             }
             32 => {
                 let (remainder, divisor) = (x as i32, y as i32);
+                let is_remainder_zero = remainder == 0;
+                let is_divisor_zero = divisor == 0;
+
+                if is_remainder_zero || is_divisor_zero {
+                    1
+                } else {
+                    let remainder_sign = remainder >> (WORD_SIZE - 1);
+                    let divisor_sign = divisor >> (WORD_SIZE - 1);
+                    (remainder.unsigned_abs() < divisor.unsigned_abs()
+                        && remainder_sign == divisor_sign)
+                        .into()
+                }
+            }
+            64 => {
+                let (remainder, divisor) = (x as i64, y as i64);
                 let is_remainder_zero = remainder == 0;
                 let is_divisor_zero = divisor == 0;
 
@@ -118,6 +133,7 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
+    use common::constants::XLEN;
 
     use super::ValidSignedRemainderTable;
 
@@ -128,11 +144,11 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, ValidSignedRemainderTable<32>>();
+        lookup_table_mle_random_test::<Fr, ValidSignedRemainderTable<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, ValidSignedRemainderTable<32>>();
+        prefix_suffix_test::<XLEN, Fr, ValidSignedRemainderTable<XLEN>>();
     }
 }

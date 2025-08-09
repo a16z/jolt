@@ -17,8 +17,9 @@ use super::{
     virtual_assert_eq::VirtualAssertEQ,
     virtual_assert_valid_div0::VirtualAssertValidDiv0,
     virtual_assert_valid_signed_remainder::VirtualAssertValidSignedRemainder,
+    virtual_change_divisor::VirtualChangeDivisor,
     virtual_move::VirtualMove,
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
+    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -75,51 +76,68 @@ impl RISCVTrace for DIV {
             }
         };
 
-        let mut virtual_sequence = self.virtual_sequence();
-        if let RV32IMInstruction::VirtualAdvice(instr) = &mut virtual_sequence[0] {
+        let mut inline_sequence = self.inline_sequence(cpu.xlen);
+        if let RV32IMInstruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
             instr.advice = quotient;
         } else {
             panic!("Expected Advice instruction");
         }
-        if let RV32IMInstruction::VirtualAdvice(instr) = &mut virtual_sequence[1] {
+        if let RV32IMInstruction::VirtualAdvice(instr) = &mut inline_sequence[1] {
             instr.advice = remainder;
         } else {
             panic!("Expected Advice instruction");
         }
 
         let mut trace = trace;
-        for instr in virtual_sequence {
+        for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for DIV {
-    fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
         let v_0 = virtual_register_index(0);
         let v_q = virtual_register_index(1);
         let v_r = virtual_register_index(2);
         let v_qy = virtual_register_index(3);
+        let v_rs2 = virtual_register_index(4);
 
         let mut sequence = vec![];
+        let mut inline_sequence_remaining = self.inline_sequence_remaining.unwrap_or(8);
 
         let advice = VirtualAdvice {
             address: self.address,
             operands: FormatJ { rd: v_q, imm: 0 },
-            virtual_sequence_remaining: Some(7),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             advice: 0,
+            is_compressed: self.is_compressed,
         };
         sequence.push(advice.into());
+        inline_sequence_remaining -= 1;
 
         let advice = VirtualAdvice {
             address: self.address,
             operands: FormatJ { rd: v_r, imm: 0 },
-            virtual_sequence_remaining: Some(6),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             advice: 0,
+            is_compressed: self.is_compressed,
         };
         sequence.push(advice.into());
+        inline_sequence_remaining -= 1;
+
+        let change_divisor = VirtualChangeDivisor {
+            address: self.address,
+            operands: FormatR {
+                rd: v_rs2,
+                rs1: self.operands.rs1,
+                rs2: self.operands.rs2,
+            },
+            inline_sequence_remaining: Some(inline_sequence_remaining),
+            is_compressed: self.is_compressed,
+        };
+        sequence.push(change_divisor.into());
+        inline_sequence_remaining -= 1;
 
         let is_valid = VirtualAssertValidSignedRemainder {
             address: self.address,
@@ -128,9 +146,11 @@ impl VirtualInstructionSequence for DIV {
                 rs2: self.operands.rs2,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(5),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(is_valid.into());
+        inline_sequence_remaining -= 1;
 
         let is_valid = VirtualAssertValidDiv0 {
             address: self.address,
@@ -139,20 +159,24 @@ impl VirtualInstructionSequence for DIV {
                 rs2: v_q,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(4),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(is_valid.into());
+        inline_sequence_remaining -= 1;
 
         let mul = MUL {
             address: self.address,
             operands: FormatR {
                 rd: v_qy,
                 rs1: v_q,
-                rs2: self.operands.rs2,
+                rs2: v_rs2,
             },
-            virtual_sequence_remaining: Some(3),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
+        inline_sequence_remaining -= 1;
 
         let add = ADD {
             address: self.address,
@@ -161,9 +185,11 @@ impl VirtualInstructionSequence for DIV {
                 rs1: v_qy,
                 rs2: v_r,
             },
-            virtual_sequence_remaining: Some(2),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(add.into());
+        inline_sequence_remaining -= 1;
 
         let assert_eq = VirtualAssertEQ {
             address: self.address,
@@ -172,9 +198,11 @@ impl VirtualInstructionSequence for DIV {
                 rs2: self.operands.rs1,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(1),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(assert_eq.into());
+        inline_sequence_remaining -= 1;
 
         let virtual_move = VirtualMove {
             address: self.address,
@@ -183,7 +211,8 @@ impl VirtualInstructionSequence for DIV {
                 rs1: v_q,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(0),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
+            is_compressed: self.is_compressed,
         };
         sequence.push(virtual_move.into());
 

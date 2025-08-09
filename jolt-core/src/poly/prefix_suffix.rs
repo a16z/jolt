@@ -172,7 +172,7 @@ pub trait PrefixPolynomial<F: JoltField> {
 }
 
 pub trait SuffixPolynomial<F: JoltField> {
-    fn suffix_mle(&self, index: u64, suffix_len: usize) -> u64;
+    fn suffix_mle(&self, b: LookupBits) -> u128;
 }
 
 pub trait PrefixSuffixPolynomial<F: JoltField, const ORDER: usize> {
@@ -266,10 +266,10 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
             .for_each(|(poly, suffix)| {
                 for (j, k) in indices.clone() {
                     let (prefix_bits, suffix_bits) = k.split(suffix_len);
-                    let t = suffix.suffix_mle(suffix_bits.into(), suffix_len);
+                    let t = suffix.suffix_mle(suffix_bits);
                     if t != 0 {
                         if let Some(u) = u_evals.get(*j) {
-                            poly.Z[prefix_bits % self.chunk_len.pow2()] += (*u).mul_u64(t);
+                            poly.Z[prefix_bits % self.chunk_len.pow2()] += (*u).mul_u128(t);
                         }
                     }
                 }
@@ -329,15 +329,15 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
             .par_iter()
             .zip(self.poly.suffixes().par_iter())
             .map(|(p, suffix)| {
-                let suff = suffix.suffix_mle(0, 0);
+                let suff = suffix.suffix_mle(LookupBits::new(0, 0));
                 if suff == 0 {
                     return F::zero();
                 }
                 if let Some(p) = p {
                     let p = p.read().unwrap();
-                    p.final_sumcheck_claim().mul_u64(suff)
+                    p.final_sumcheck_claim().mul_u128(suff)
                 } else {
-                    F::from_u64(suff)
+                    F::from_u128(suff)
                 }
             })
             .sum()

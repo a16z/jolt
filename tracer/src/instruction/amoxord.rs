@@ -1,10 +1,22 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
+use super::format::format_i::FormatI;
+use super::format::format_s::FormatS;
+use super::ld::LD;
+use super::sd::SD;
+use super::virtual_move::VirtualMove;
+use super::xor::XOR;
+use super::RV32IMInstruction;
+use crate::instruction::format::format_load::FormatLoad;
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+};
+use common::constants::virtual_register_index;
 
 use super::{
     format::{format_r::FormatR, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
+    RISCVInstruction, RISCVTrace, RV32IMCycle,
 };
 
 declare_riscv_instr!(
@@ -38,4 +50,69 @@ impl AMOXORD {
     }
 }
 
-impl RISCVTrace for AMOXORD {}
+impl RISCVTrace for AMOXORD {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+        let inline_sequence = self.inline_sequence(cpu.xlen);
+        let mut trace = trace;
+        for instr in inline_sequence {
+            // In each iteration, create a new Option containing a re-borrowed reference
+            instr.trace(cpu, trace.as_deref_mut());
+        }
+    }
+
+    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+        let v_rs2 = virtual_register_index(6);
+        let v_rd = virtual_register_index(7);
+        let mut sequence = vec![];
+
+        let ld = LD {
+            address: self.address,
+            operands: FormatLoad {
+                rd: v_rd,
+                rs1: self.operands.rs1,
+                imm: 0,
+            },
+            inline_sequence_remaining: Some(3),
+            is_compressed: self.is_compressed,
+        };
+        sequence.push(ld.into());
+
+        let xor = XOR {
+            address: self.address,
+            operands: FormatR {
+                rd: v_rs2,
+                rs1: v_rd,
+                rs2: self.operands.rs2,
+            },
+            inline_sequence_remaining: Some(2),
+            is_compressed: self.is_compressed,
+        };
+        sequence.push(xor.into());
+
+        let sd = SD {
+            address: self.address,
+            operands: FormatS {
+                rs1: self.operands.rs1,
+                rs2: v_rs2,
+                imm: 0,
+            },
+            inline_sequence_remaining: Some(1),
+            is_compressed: self.is_compressed,
+        };
+        sequence.push(sd.into());
+
+        let vmove = VirtualMove {
+            address: self.address,
+            operands: FormatI {
+                rd: self.operands.rd,
+                rs1: v_rd,
+                imm: 0,
+            },
+            inline_sequence_remaining: Some(0),
+            is_compressed: self.is_compressed,
+        };
+        sequence.push(vmove.into());
+
+        sequence
+    }
+}
