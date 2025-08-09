@@ -101,7 +101,7 @@ pub fn jolt_virtual_sequence_test<I: VirtualInstructionSequence>(opcode: ONNXOpc
             }
 
             let output =
-                ONNXLookupQuery::<WORD_SIZE>::to_lookup_output(&JoltONNXCycle::from(cycle.clone()));
+                ONNXLookupQuery::<WORD_SIZE>::to_lookup_output(&JoltONNXCycle::from(&cycle));
             if let Some(td_addr) = cycle.instr.td {
                 tensor_registers[td_addr] = output;
                 assert_eq!(

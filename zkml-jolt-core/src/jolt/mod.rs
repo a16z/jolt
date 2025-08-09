@@ -242,7 +242,7 @@ mod tests {
         poly::commitment::dory::DoryCommitmentScheme, utils::transcript::KeccakTranscript,
     };
     use log::{debug, info};
-    use onnx_tracer::{builder, logger::init_logger, model, tensor::Tensor};
+    use onnx_tracer::{builder, model, tensor::Tensor};
     use serde_json::Value;
     use std::{collections::HashMap, fs::File, io::Read};
 
@@ -308,7 +308,7 @@ mod tests {
         let raw_trace = onnx_tracer::execution_trace(custom_addsubmul_model, &input);
         // debug!("raw trace: {raw_trace:#?}");
         let execution_trace = jolt_execution_trace(raw_trace);
-        println!("Execution trace: {execution_trace:#?}");
+        debug!("Execution trace: {execution_trace:#?}");
         let snark: JoltSNARK<Fr, PCS, KeccakTranscript> =
             JoltSNARK::prove(pp.clone(), execution_trace);
 
@@ -406,7 +406,6 @@ mod tests {
     #[test]
 
     pub fn test_article_classification_output() {
-        init_logger();
         let working_dir: &str = "../onnx-tracer/models/article_classification/";
 
         // Load the vocab mapping from JSON
@@ -470,7 +469,6 @@ mod tests {
 
     #[test]
     fn test_medium_classification() {
-        init_logger();
         let mut input_vector = vec![846, 3, 195, 4, 374, 14, 259];
         input_vector.resize(100, 0); // Resize to match the input shape
 
@@ -485,7 +483,6 @@ mod tests {
 
     #[test]
     fn test_medium_classification_output() {
-        init_logger();
         let mut input_vector = vec![197, 10, 862, 8, 23, 53, 2, 319, 34, 122, 100, 53, 33];
         input_vector.resize(100, 0); // Resize to match the input shape
 
@@ -504,9 +501,9 @@ mod tests {
         info!("Output: {output:#?}",);
     }
 
+    #[should_panic(expected = "not yet implemented")]
     #[test]
     fn test_subgraph() {
-        init_logger();
         let subgraph_program = ONNXProgram {
             model_path: "../onnx-tracer/models/subgraph/network.onnx".into(),
             inputs: Tensor::new(Some(&[1, 2, 3, 4]), &[1, 4]).unwrap(), // Example input

@@ -16,7 +16,7 @@ use jolt_core::{
     utils::transcript::Transcript,
 };
 use onnx_tracer::constants::{
-    MAX_TENSOR_SIZE, TEST_TENSOR_REGISTER_COUNT, VIRTUAL_TENSOR_REGISTER_COUNT, ZERO_ADDR_PREPEND,
+    MAX_TENSOR_SIZE, TEST_TENSOR_REGISTER_COUNT, VIRTUAL_TENSOR_REGISTER_COUNT,
 };
 use onnx_tracer::tensor::Tensor;
 use onnx_tracer::trace_types::ONNXOpcode;
@@ -87,75 +87,86 @@ impl JoltONNXCycle {
     }
 }
 
-impl From<ONNXCycle> for JoltONNXCycle {
-    fn from(raw_cycle: ONNXCycle) -> Self {
-        let mut cycle = JoltONNXCycle::no_op();
-        // 1. Set memory ops
-        let (ts1_read, ts2_read, td_write) = raw_cycle.to_memory_ops();
-        cycle.memory_ops = MemoryOps {
-            ts1_read,
-            ts2_read,
-            td_write,
+impl JoltONNXCycle {
+    // One public entry: builds a fully-initialized, valid cycle.
+    pub fn from_raw(raw: &ONNXCycle) -> Self {
+        // populate memory ops & advice first (needed by lookups)
+        let (ts1_read, ts2_read, td_write) = raw.to_memory_ops();
+        let mut cycle = JoltONNXCycle {
+            memory_ops: MemoryOps {
+                ts1_read,
+                ts2_read,
+                td_write,
+            },
+            circuit_flags: raw.instr.to_circuit_flags(),
+            instr: raw.instr.clone(),
+            advice_value: raw.advice_value(),
+            ..JoltONNXCycle::no_op()
         };
 
-        // 2. Set circuit flags
-        cycle.circuit_flags = raw_cycle.instr.to_circuit_flags();
-
-        // 3. Set bytecode line
-        cycle.instr = raw_cycle.instr.clone();
-
-        // 4. Set advice value
-        cycle.advice_value = raw_cycle.advice_value();
-
-        // 5. Populate instruction lookups
-        // TODO(Forpee): Refactor this footgun (we should prevent a user from calling this method before memory_ops and advice is set).
-        //               Builder pattern might be a good idea.
-        cycle.populate_instruction_lookups();
+        // now safely populate lookups
+        cycle.populate_instruction_lookups_internal();
         cycle
     }
+
+    fn populate_instruction_lookups_internal(&mut self) {
+        self.instruction_lookups = self.to_instruction_lookups();
+    }
 }
 
+impl From<&ONNXCycle> for JoltONNXCycle {
+    fn from(raw: &ONNXCycle) -> Self {
+        JoltONNXCycle::from_raw(raw)
+    }
+}
+
+// ---- trace build: expand + prestate + convert ----
+
+// Helper: resolve a virtual tensor register index (readability, fewer magic offsets).
+#[inline]
+fn vtr_index(td: usize) -> usize {
+    td - TEST_TENSOR_REGISTER_COUNT as usize
+}
+
+// Expand Virtual instructions, maintain virtual prestate as we go, then convert to Jolt cycles.
 pub fn jolt_execution_trace(raw_trace: Vec<ONNXCycle>) -> ExecutionTrace {
-    let mut expanded_trace: Vec<ONNXCycle> = raw_trace
-        .into_iter()
-        .flat_map(|cycle| match cycle.instr.opcode {
-            ONNXOpcode::Div => DIVInstruction::<32>::virtual_trace(cycle),
-            _ => vec![cycle],
-        })
-        .collect();
-    // Populate the pre-state of virtual tensor registers
-    populate_virtual_prestate(&mut expanded_trace);
-    // println!("Expanded trace: {expanded_trace:#?}");
-    expanded_trace
-        .into_iter()
-        .map(JoltONNXCycle::from)
-        .collect()
-}
+    // State for virtual tensor registers
+    let mut vtr = vec![vec![0u64; MAX_TENSOR_SIZE]; VIRTUAL_TENSOR_REGISTER_COUNT as usize];
 
-pub fn populate_virtual_prestate(raw_trace: &mut [ONNXCycle]) {
-    let mut virtual_tensor_registers =
-        vec![vec![0u64; MAX_TENSOR_SIZE]; VIRTUAL_TENSOR_REGISTER_COUNT as usize];
-    for cycle in raw_trace.iter_mut() {
-        let is_virtual = cycle.instr.virtual_sequence_remaining.is_some();
-        let not_last_virtual_instr = cycle.instr.virtual_sequence_remaining.unwrap_or(0) != 0;
-        if is_virtual && not_last_virtual_instr {
-            if let Some(td) = cycle.instr.td {
-                // store pre-state
-                cycle.memory_state.td_pre_val = Some(Tensor::from(u64_vec_to_i128_iter(
-                    &virtual_tensor_registers[td - TEST_TENSOR_REGISTER_COUNT as usize],
-                )));
+    let mut out = Vec::with_capacity(raw_trace.len());
 
-                assert_eq!(
-                    cycle.td_pre_vals(),
-                    virtual_tensor_registers[td - TEST_TENSOR_REGISTER_COUNT as usize],
-                    "cycle: {cycle:#?}"
-                );
-                // write to virtual tensor register
-                virtual_tensor_registers[td - TEST_TENSOR_REGISTER_COUNT as usize] =
-                    cycle.td_post_vals();
+    for raw in raw_trace {
+        // Expand (virtualize) if needed
+        let expanded: Vec<ONNXCycle> = match raw.instr.opcode {
+            ONNXOpcode::Div => DIVInstruction::<32>::virtual_trace(raw),
+            _ => vec![raw],
+        };
+
+        for mut cycle in expanded {
+            if let (true, Some(rem)) = (
+                cycle.instr.virtual_sequence_remaining.is_some(),
+                cycle.instr.virtual_sequence_remaining,
+            ) {
+                if rem != 0 {
+                    if let Some(td) = cycle.instr.td {
+                        let idx = vtr_index(td);
+                        // store pre-state
+                        cycle.memory_state.td_pre_val =
+                            Some(Tensor::from(u64_vec_to_i128_iter(&vtr[idx])));
+                        // sanity check
+                        assert_eq!(cycle.td_pre_vals(), vtr[idx], "cycle: {cycle:#?}");
+                        // update post-state
+                        vtr[idx] = cycle.td_post_vals();
+                    }
+                }
             }
+
+            // Convert now that the cycle is fully prepared
+            out.push(JoltONNXCycle::from(&cycle));
         }
     }
+
+    out
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -726,10 +737,7 @@ impl InstructionLookup<WORD_SIZE> for ElementWiseLookup {
 }
 
 impl JoltONNXCycle {
-    pub fn populate_instruction_lookups(&mut self) {
-        self.instruction_lookups = self.to_instruction_lookups();
-    }
-    pub fn to_instruction_lookups(&self) -> Option<ONNXLookup> {
+    fn to_instruction_lookups(&self) -> Option<ONNXLookup> {
         let (_, ts1) = self.ts1_read();
         let (_, ts2) = self.ts2_read();
         let imm = self.instr.imm();
