@@ -316,7 +316,7 @@ impl Sha256SequenceBuilder {
 // Virtual instructions builder for sha256
 pub fn sha2_virtual_sequence_builder(
     address: u64,
-    is_compresed: bool,
+    is_compressed: bool,
     xlen: Xlen,
     rs1: u8,
     rs2: u8,
@@ -328,7 +328,7 @@ pub fn sha2_virtual_sequence_builder(
     });
     let builder = Sha256SequenceBuilder::new(
         address,
-        is_compresed,
+        is_compressed,
         xlen,
         vr,
         rs1,
@@ -341,7 +341,7 @@ pub fn sha2_virtual_sequence_builder(
 // Virtual instructions builder for sha256_init
 pub fn sha2_init_virtual_sequence_builder(
     address: u64,
-    is_compresed: bool,
+    is_compressed: bool,
     xlen: Xlen,
     rs1: u8,
     rs2: u8,
@@ -353,7 +353,7 @@ pub fn sha2_init_virtual_sequence_builder(
     });
     let builder = Sha256SequenceBuilder::new(
         address,
-        is_compresed,
+        is_compressed,
         xlen,
         vr,
         rs1,
