@@ -5759,6 +5759,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "serial_test",
  "sha3 0.10.8",
  "strum",
  "strum_macros",

@@ -25,7 +25,7 @@ ark-serialize = { version = "0.5.0", default-features = false, features = [
 ark-serialize-derive = { version = "0.5.0", default-features = false }
 rand_core = { version = "0.6.4", default-features = false }
 ark-std = { version = "0.5.0" }
-
+serial_test = "3.2.0"
 
 [dev-dependencies]
 log = "0.4"

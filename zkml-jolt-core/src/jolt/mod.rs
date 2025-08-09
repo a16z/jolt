@@ -244,12 +244,14 @@ mod tests {
     use log::{debug, info};
     use onnx_tracer::{builder, model, tensor::Tensor};
     use serde_json::Value;
+    use serial_test::serial;
     use std::{collections::HashMap, fs::File, io::Read};
 
     type PCS = DoryCommitmentScheme<KeccakTranscript>;
 
     // TODO: Refactor duplicate code in tests
 
+    #[serial]
     #[test]
     fn test_addsubmuldivdiv() {
         // --- Preprocessing ---
@@ -271,6 +273,7 @@ mod tests {
         snark.verify((&pp).into()).unwrap();
     }
 
+    #[serial]
     #[test]
     fn test_addsubmuldiv() {
         // --- Preprocessing ---
@@ -293,6 +296,7 @@ mod tests {
         snark.verify((&pp).into()).unwrap();
     }
 
+    #[serial]
     #[test]
     fn test_custom_addsubmulconst() {
         // --- Preprocessing ---
@@ -316,6 +320,7 @@ mod tests {
         snark.verify((&pp).into()).unwrap();
     }
 
+    #[serial]
     #[test]
     fn test_custom_addsubmul() {
         // --- Preprocessing ---
@@ -338,6 +343,7 @@ mod tests {
         snark.verify((&pp).into()).unwrap();
     }
 
+    #[serial]
     #[test]
     fn test_scalar_addsubmul() {
         // --- Preprocessing ---
