@@ -1,0 +1,17 @@
+[package]
+name = "jolt-inlines-sha2"
+version = "0.1.0"
+edition = "2021"
+description = "SHA2 inline implementations for Jolt VM"
+
+[features]
+default = []
+host = ["dep:ctor", "dep:tracer"]
+
+[dependencies]
+ctor = { version = "0.2", optional = true }
+tracer = { path = "../../tracer", optional = true }
+
+[dev-dependencies]
+hex-literal = "0.4.1"
+

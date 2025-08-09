@@ -1,3 +1,4 @@
+#![allow(dead_code)] // temporary while we have this file as module binary
 //! InstrAssembler
 //!
 //! Builds and owns a vector of virtual RISC-V instructions (`RV32IMInstruction`).
@@ -52,6 +53,9 @@ use crate::instruction::RISCVInstruction;
 use crate::instruction::RISCVTrace;
 use crate::instruction::RV32IMCycle;
 use crate::instruction::RV32IMInstruction;
+
+#[allow(unused_imports)]
+pub use common::constants::virtual_register_index;
 
 /// Operand that can be either an immediate or a register.
 #[derive(Clone, Copy, Debug)]
@@ -207,7 +211,6 @@ impl InstrAssembler {
     /// Emit any B-type instruction (rs1, rs2, imm) - branch instructions.
     #[track_caller]
     #[inline]
-    #[allow(dead_code)]
     pub fn emit_b<Op: RISCVInstruction<Format = FormatB> + RISCVTrace>(
         &mut self,
         rs1: u8,
@@ -232,7 +235,6 @@ impl InstrAssembler {
     /// Emit any J-type instruction (rd, imm) - jump instructions.
     #[track_caller]
     #[inline]
-    #[allow(dead_code)]
     pub fn emit_j<Op: RISCVInstruction<Format = FormatJ> + RISCVTrace>(&mut self, rd: u8, imm: u64)
     where
         RISCVCycle<Op>: Into<RV32IMCycle>,
@@ -253,7 +255,6 @@ impl InstrAssembler {
     /// Emit any U-type instruction (rd, imm) - upper immediate instructions.
     #[track_caller]
     #[inline]
-    #[allow(dead_code)]
     pub fn emit_u<Op: RISCVInstruction<Format = FormatU> + RISCVTrace>(&mut self, rd: u8, imm: u64)
     where
         RISCVCycle<Op>: Into<RV32IMCycle>,
@@ -274,7 +275,6 @@ impl InstrAssembler {
     /// Emit any virtual right shift I-type instruction (rd, rs1, imm).
     #[track_caller]
     #[inline]
-    #[allow(dead_code)]
     pub fn emit_vshift_i<Op: RISCVInstruction<Format = FormatVirtualRightShiftI> + RISCVTrace>(
         &mut self,
         rd: u8,
@@ -299,7 +299,6 @@ impl InstrAssembler {
     /// Emit any virtual right shift R-type instruction (rd, rs1, rs2).
     #[track_caller]
     #[inline]
-    #[allow(dead_code)]
     pub fn emit_vshift_r<Op: RISCVInstruction<Format = FormatVirtualRightShiftR> + RISCVTrace>(
         &mut self,
         rd: u8,
@@ -324,7 +323,6 @@ impl InstrAssembler {
     /// Emit any halfword alignment instruction (rs1, imm).
     #[track_caller]
     #[inline]
-    #[allow(dead_code)]
     pub fn emit_halign<Op: RISCVInstruction<Format = HalfwordAlignFormat> + RISCVTrace>(
         &mut self,
         rs1: u8,

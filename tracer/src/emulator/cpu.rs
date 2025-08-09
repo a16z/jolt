@@ -93,7 +93,7 @@ pub struct Cpu {
     f: [f64; 32],
     pub(crate) pc: u64,
     csr: [u64; CSR_CAPACITY],
-    pub(crate) mmu: Mmu,
+    pub mmu: Mmu,
     reservation: u64, // @TODO: Should support multiple address reservations
     is_reservation_set: bool,
     _dump_flag: bool,

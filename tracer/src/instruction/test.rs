@@ -91,8 +91,8 @@ mod tests {
             AMOADDD, AMOADDW, AMOANDD, AMOANDW, AMOMAXD, AMOMAXUD, AMOMAXUW, AMOMAXW, AMOMIND,
             AMOMINUD, AMOMINUW, AMOMINW, AMOORD, AMOORW, AMOSWAPD, AMOSWAPW, AMOXORD, AMOXORW, DIV,
             DIVU, DIVUW, DIVW, LB, LBU, LH, LHU, LW, LWU, MULH, MULHSU, MULW, REM, REMU, REMUW,
-            REMW, SB, SH, SHA256, SHA256INIT, SLL, SLLI, SLLIW, SLLW, SRA, SRAI, SRAIW, SRAW, SRL,
-            SRLI, SRLIW, SRLW, SUBW, SW,
+            REMW, SB, SH, SLL, SLLI, SLLIW, SLLW, SRA, SRAI, SRAIW, SRAW, SRL, SRLI, SRLIW, SRLW,
+            SUBW, SW,
         },
     };
     use std::any::type_name;
@@ -171,8 +171,6 @@ mod tests {
             Box::new(SRAI::new(0, 0, false, false)),
             Box::new(SRL::new(0, 0, false, false)),
             Box::new(SRLI::new(0, 0, false, false)),
-            Box::new(SHA256::new(0, 0, false, false)),
-            Box::new(SHA256INIT::new(0, 0, false, false)),
         ];
 
         let xlen_64 = Xlen::Bit64;

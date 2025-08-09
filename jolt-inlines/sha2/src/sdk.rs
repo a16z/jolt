@@ -335,7 +335,7 @@ impl Default for Sha256 {
 #[cfg(not(feature = "host"))]
 pub unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
     core::arch::asm!(
-        ".insn r 0x0B, 0x0, 0x00, x0, {}, {}",
+        ".insn r 0x0B, 0x0, 0x00, x0, {}, {}",     // PRECOMPILE SHA256 Instruction
         in(reg) input,
         in(reg) state,
         options(nostack)
@@ -354,10 +354,11 @@ pub unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
 /// - The memory regions must not overlap
 #[cfg(feature = "host")]
 pub unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
+    use crate::exec;
+
     let input_array = *(input as *const [u32; 16]);
     let state_array = *(state as *const [u32; 8]);
-    let result =
-        tracer::instruction::inline_sha256::execute_sha256_compression(state_array, input_array);
+    let result = exec::execute_sha256_compression(state_array, input_array);
     std::ptr::copy_nonoverlapping(result.as_ptr(), state, 8)
 }
 
@@ -377,7 +378,7 @@ pub unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
 #[cfg(not(feature = "host"))]
 pub unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
     core::arch::asm!(
-        ".insn r 0x0B, 0x1, 0x00, x0, {}, {}",
+        ".insn r 0x0B, 0x1, 0x00, x0, {}, {}",     // PRECOMPILE SHA256 Instruction
         in(reg) input,
         in(reg) state,
         options(nostack)
@@ -399,8 +400,10 @@ pub unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
 /// - The memory regions must not overlap
 #[cfg(feature = "host")]
 pub unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
+    use crate::exec;
+
     let input = *(input as *const [u32; 16]);
-    let result = tracer::instruction::inline_sha256::execute_sha256_compression_initial(input);
+    let result = exec::execute_sha256_compression_initial(input);
     std::ptr::copy_nonoverlapping(result.as_ptr(), state, 8)
 }
 
