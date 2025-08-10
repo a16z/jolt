@@ -1,0 +1,33 @@
+Jolt as a dag, so I think one useful top-down way to view jolt is as a directed as graph or dag. 
+So you may ask, how can a ZKVM be seen as a dag? 
+And to understand that, what's first introduced the concept of virtual polynomials, virtual polomials are described in the twist and shout paper, but they are introduced by the Binius paper in 2023 and the definition of a virtual pynomial as opposed to a committed palomial is a virtual pynomial is part of the witness, but it's never actually committed, but rather any claimed evaluations about a virtual polynomial are proven using some subsequent sumcheck.
+And so this becomes sort of the basis of the nodes in our directed acyclic graph. We can view each sumcheck in jolt as a node. 
+You can write this the expression being sumchecked as the left hand side is some input claim, which is purportedly equal to the right hand side, which is a sum over the Boolean hypercube of some multivariate polynomial. 
+And the sumcheck protocol basically reduces this claim into individual claims about the ponomials appearing in the summand of the right hand side. 
+So those are the sort of output claims of the sumcheck. 
+And so we have input claims and output claims, and those are basically our in-edges and out-edges of that node. 
+Right, so jolt comprises of many such sumchecks.
+The output claims of the various sum checks and jolt are often routed into other sumchecks as input claims, forming a directed asyclic graph. 
+This is represented in code using the state manager and also the Openings map. 
+The state manager sort of attracts the stages of some checks that are proven over the course of jolt. 
+So the standard technique is to batch different sumchecks together or "run them in parallel", basically by taking a random linear combination of the different sumcheck expressions. 
+But the fact that we have this sort of DAG structure means that not all sumchecks can be batched together. 
+In particular, if, let's say we have one sumcheck A, which has an outgoing edge to sumcheck B. 
+We can't batch those together because we need to have the output claims for sumcheck A in hand before we start proving sumcheck B. 
+So, yeah, so the DAG structure basically imposes some constraints on how we can batch all the sumchecks together. 
+And we find that in total, five is the minimal number of batches that we can have for all the sumchecks in jolt.
+This I have a diagram for, which I will include in the documentation here, but in code, this is represented using the state manager. 
+The state manager makes the stages, the five stages of subject proving more explicit. 
+So conceptually, jolt comprises of a few different components, namely R1CS, RAM, instruction execution, registers, bytecode, and opening proof. 
+That's six conceptual components of Jolt, but within each component, there are sumchecks that may fall in different batches. 
+This, again, will be shown in depicted in the diagram. 
+But basically, the way that the stat manager is implemented each of these components tells the state manager which of its sumchecks are going to go into which stage. 
+And then the state manager effectively collates everything together and then runs the batched sumcheck for each stage. 
+The other thing that the state manager is in charge of is the claims being passed around between these different sumchecks. 
+So these are contained in a map, basically a map from some opening ID to the claimed opening. 
+And as the sumchecls in the five stages are proven or verified, the opening's map is incrementally populated with the claims. 
+And then in the subsequent stages, if a sumcheck consumes one of those openings as an input, then it can grab it from the map. 
+The opening map contains both claims about virtual polynomials, as well as claims about committed polomials. 
+So the virtual polomials are added to the map so that they can be retrieved by subsequent sumchecks. 
+We still do need to keep track of the claims about committed poms, because at the very end, we're going to be doing a batch opening proof, specifically a Dory batch opening proof for all of those claims about the about the committed polomials. 
+And yeah, I think that's pretty much all I wanted to say about Jolt as a DAG.

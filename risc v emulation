@@ -1,0 +1,38 @@
+All right, RISC-V emulation
+Our RISC-V emulator is contained in the tracer crate, which contains an implementation of a RISC-V emulator originally forked from the riscv-rust project
+The bulk of the emulator code is the implementation of the individual RISC-V instructions.
+This is under the instruction subdirectory inside tracer.
+The main traits to be aware of are RISCVInstruction, RISCVTrace, RISCVCycle.
+The RISCVInstruction trait defines the core functionality of each instruction relevant to the tracer.
+So it has associated consts MASK and MATCh, which are used to decode the instruction from raw bytes.
+There is also the associated type `Format`, which specifies the RISCV instruction format for that instruction, for example is it an R type or I type instruction.
+There is also an associated type `RAMAccess`.
+RAMAccess specifies whether this instruction reads from or writes to memory.
+And this will inform the tracer whether or not to capture the memory state before and after the execution of this instruction.
+The most important method in this trait is `execute`, which takes the instruction, a mutable CPU object and a mutable RAMAccess object and basically emulates the execution of that instruction, um, modifying the CPU state and populating the RAM access struct with the pre- and post- state of memory accessed by that instruction as necessary.
+The RISCVTrace trait, which extends the RISCVInstruction trait, introduces an additional `trace` method.
+`trace` invokes `execute`. The difference is that `trace` also captures the pre-execution and post-execution state for that instruction.
+So it basically captures any registers or memory that changed as a result of executing that instruction.
+And also the trace method constructs a RISCVCycle struct for that instruction and potentially pushes it to the `trace`, which is just the vector of these cycle structs.
+The RISCVCycle struct just contains the instruction executed at that cycle, the captured register state (if the instruction modified registers), and RAM access (if the instruction modified memory).
+RV32IMInstruction and RV32IMCycle are basically enums that comprise all the 32IM instructions and are sort of wrapper eums for the RISCVInstruction and RISCVCycle respectively, where each variant corresponds to one instruction in the instruction set.
+And another important concept to know about in the tracer is that of virtual instructions and virtual sequences.
+This is a concept introduced in section six of the jolt paper
+So virtual instructions are instructions that do not exist in the official RISC 5 ISA, but rather exist only for the purpose of proving execution, using jolt.
+So there are a couple of reasons why you might want a virtual instruction.
+So first is if a given RISC 5 instruction cannot be represented using a single lookup table in jolt.
+An example of this of such an instruction is division.
+So as it turns out, the division instruction does not satisfy the requisite structure to be represented using a single lookup table in jolt.
+So instead, we have to basically replace each instance of the division instruction with a sequence, a virtual sequence that effectively emulates that division using one or more instructions, some of which may be quote unquote, virtual.
+So the virtual sequence for division is described in section 6.3 of the jolt paper.
+But at a high level, the way that it works is that we have these virtual untrusted advice instructions, which will store basically the computed quotient and remainder for that division into virtual registers.
+So actually, that's another concept, virtual registers are effectively the same as regular RISC-V registers, except they're just like additional registers that are only used in the context of virtual sequences.
+So, yeah, the vision instruction will place the quotient and remainder in those virtual registers and basically the remaining parts of the virtual sequence just checks the correctness of that quotient and remainder, before finally storing the quotient in the destination register specified by the original div instruction.
+So all of the virtual instructions used in jolts are in the instructions subdirectory, along with all of the quote unquote real instructions
+For those instructions like Div, which make use of virtual sequences, they implement the VirtualInstructionSequence trait, which basically defines the virtual sequence used to emulate that particular instruction.
+So, for example, for DIV, we have a length eight virtual sequence consisting of virtual advice, virtual advice, and then some asserts and other other things.
+And for these instructions that use virtual sequences, typically the way that it works is while the execute method will simply basically emulate the instruction as a standalone individual instruction, the trace method, on the other hand, will execute the virtual sequence because we need the trace for the virtual sequence when we prove the execution trace using jolt.
+So we do need to execute each instruction in that virtual sequence individually and in sequence.
+So basically, the trace method for a virtual sequence will just look like, you know, it will basically just iterate over each instruction in the virtual sequence and call trace on that instruction.
+I guess one last thing to note about virtual sequences is that, as you might expect, instructions that use virtual sequences or are implemented as virtual sequences are going to be more expensive to perve. than their like non-virtual counterparts, I guess. So in particular, like in a virtual sequence of eight instructions is going to be roughly eight times more expensive to prove than just a single instruction.
+The other reason you may want to employ virtual sequences is for "inlines", which will be convered in a subsequent section.

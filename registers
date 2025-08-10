@@ -1,0 +1,34 @@
+Registers in Jolts
+Registers are proven using the Twist memory checking argument, specifically the "local" algorithm for the prover with a couple of minor deviations.
+First of all, you will notice that in the Twist and Shout paper, the Twist algorithm is described in terms of having one register read and one register written per cycle.
+But in RISC-V (RV32IM, there are up to two registers read per cycle and one register written to per cycle. And these are typically denoted as RS1, RS2, and RD.
+This entails a minor modification to the Twist algorithm as specified in the paper.
+Another deviation from the Twist algorithm described in the paper is the formulation of the write checking sumcheck.
+Oh, I guess I should also mention that in our implementation, the read checking and write checking sumchecks are batched together in order to optimize the prover cost.
+For reference, these are steps three and four of figure 9 in the Twist and Shout paper, the read checking and write checking sum checks.
+Another deviation is in the formulation of the write checking sum check.
+The formulation in the paper is basically an an evaluation of the Inc polynomial is proven using sumcheck, where the right hand side of the summand is effectively wa * (wv - Val).
+We modified this in a couple of ways.
+First of all, we changed the Inc polynomial so that it's only a pawnomial in the cycle variables instead of being a polynomial in both the cycle and address variables.
+This also allows us to reformulate the write checking sum check to be closer to the read checking sumcheck.
+So note that the read checking sumcheck proves a claimed evaluation of rv.
+We can have an analogous write checking sumcheck, that proves a claimed evaluation of wv: wv can be expressed as wa * (Inc + Val).
+Yes, so this is the "wv virtualization" optimization not described in the paper.
+This allows us to avoid committing to wv, and also makes Inc more efficient to commit to, given that it's now a polynomial in log T variables instead of log K + log T.
+Another deviation from the paper's description of the local Twist algorithm is in the data structure called I in both the paper and code.
+We found a bug in the description of I in the paper, so we ended up implementing a slight variation of that.
+But the overall structure of the algorithm remains roughly the same.
+In addition to the read and write- checking sum checks for Twist, there's also the Val evaluation sumcheck, which you will also find in the registers subdirectory.
+Oh, I forgot to mention earlier that in the registers instance of twist, the K parameter, as called in the paper, is basically just the number of registers, or in our case, it's the number of "real" RISC-V registers (i.e. those specified in the spec) plus the number of virtual registers.
+For an explanation of virtual registers refer to the RISC-V Emulation section.
+So currently K equals 64 registers in this Twist instance.
+This is small enough that we can use a parameter d equals 1, so we don't need to tensor decompose the address space for registers.
+Okay, so finally, just to go over the structure of the registers subdirectory, we have the read/write checking sumcheck in read_write_checking.rs and then also the Val evaluation sumcheck, which is pretty much just the straightforward implementation of the algorithm described in the paper.
+And you'll notice that in contrast to the other Twist and Shout instances in jolt, the registers Twist instance does not include the Booleanity and Hamming weight sumchecks for its ra and wa polynomials.
+We don't need to prove the one-hot encoding of ra and wa, because in the context of registers, ra and wa simply represent the registers, RS1, RS2, and RD, which are encoded in the bytecode itself.
+In our context, the bytecode is considered a trusted source of information known by both the prover and verifier.
+So the ra and wa polynomials for registers can be virtualized as values read from the bytecode.
+So they will become input claims to the bytecode read checking sumcheck.
+One last thing I forgot to mention is that I said earlier that each RISC-V instruction can have up to two read registers and up to one write register.
+But of course, not all instructions are going to use two register reads and one register write.
+But for our purposes, any instruction that uses fewer than two reads or doesn't write to a register, those operations will be represented as no-op reads or writes, basically reading from the zero register or writing a zero to the zero register.
