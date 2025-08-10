@@ -144,9 +144,11 @@ where
                 no_op
             }));
 
+            // HACK(Forpee): Not sure if this is correct. RV pushes a jump instr:
+            // ```
             // // Final JALR sets NextUnexpandedPC = 0
             // trace.push(RV32IMCycle::last_jalr(last_address + 4 * (padding - 1)));
-            // HACK(Forpee): Not sure if this is correct. RV pushes a jump instr.
+            // ```
             trace.push(JoltONNXCycle::no_op());
         };
 
