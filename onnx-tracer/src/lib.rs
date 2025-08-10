@@ -48,18 +48,18 @@ use crate::{
 use clap::Args;
 use serde::{Deserialize, Serialize};
 use std::{fs::File, path::PathBuf};
+pub mod builder;
 /// Methods for configuring tensor operations and assigning values to them in a Halo2
 /// circuit.
 pub mod circuit;
+pub mod constants;
 /// Utilities for converting from Halo2 Field types to integers (and vice-versa).
 pub mod fieldutils;
 /// Methods for loading onnx format models and automatically laying them out in
 /// a Halo2 circuit.
 pub mod graph;
-// /// An implementation of multi-dimensional tensors.
-pub mod builder;
-pub mod constants;
 pub mod logger;
+/// An implementation of multi-dimensional tensors.
 pub mod tensor;
 pub mod trace_types;
 
