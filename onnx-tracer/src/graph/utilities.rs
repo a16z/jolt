@@ -11,7 +11,7 @@ use crate::{
     },
     tensor::{Tensor, TensorError},
 };
-use log::{debug, warn};
+use log::debug;
 use std::{error::Error, sync::Arc};
 use tract_onnx::tract_core::ops::{
     array::{Gather, GatherElements, MultiBroadcastTo, OneHot, ScatterElements, Slice, Topk},
@@ -1362,9 +1362,16 @@ dimensions"
             let new_dims: Vec<usize> = vec![inputs[0].out_dims()[0].iter().product::<usize>()];
             SupportedOp::Linear(PolyOp::Flatten(new_dims))
         }
+        ">=" => {
+            // Extract the slope layer hyperparams
+            if inputs.len() == 2 {
+                SupportedOp::Hybrid(HybridOp::GreaterEqual)
+            } else {
+                panic!("Expected 2 inputs for >=, got {}", inputs.len())
+            }
+        }
         c => {
-            warn!("Unknown op: {c}");
-            SupportedOp::Unknown(crate::circuit::ops::Unknown)
+            panic!("Unknown op: {c}");
         }
     };
 

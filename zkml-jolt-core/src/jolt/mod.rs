@@ -259,7 +259,7 @@ mod tests {
         poly::commitment::dory::DoryCommitmentScheme, utils::transcript::KeccakTranscript,
     };
     use log::{debug, info};
-    use onnx_tracer::{builder, model, tensor::Tensor};
+    use onnx_tracer::{builder, logger::init_logger, model, tensor::Tensor};
     use serde_json::Value;
     use serial_test::serial;
     use std::{collections::HashMap, fs::File, io::Read};
@@ -267,6 +267,90 @@ mod tests {
     type PCS = DoryCommitmentScheme<KeccakTranscript>;
 
     // TODO: Refactor duplicate code in tests
+
+    /*
+        vocab.json:
+        {
+            "i": 1,
+            "love": 2,
+            "this": 3,
+            "is": 4,
+            "great": 5,
+            "happy": 6,
+            "with": 7,
+            "the": 8,
+            "result": 9,
+            "hate": 10,
+            "bad": 11,
+            "not": 12,
+            "satisfied": 13
+        }
+    */
+
+    /// const: [I, love, this, 0, 0]
+    const I_LOVE_THIS: [i128; 5] = [1, 2, 3, 0, 0];
+
+    /// const: [I, hate, this, 0, 0]
+    const I_HATE_THIS: [i128; 5] = [1, 2, 10, 0, 0];
+
+    /// const: [This, is, great, 0, 0]
+    const THIS_IS_GREAT: [i128; 5] = [3, 4, 5, 0, 0];
+
+    /// const: [This, is, bad, 0, 0]
+    const THIS_IS_BAD: [i128; 5] = [3, 4, 11, 0, 0];
+
+    #[test]
+    fn test_sentiment_sum() {
+        init_logger();
+        let input_vector = THIS_IS_BAD;
+
+        let text_classification = ONNXProgram {
+            model_path: "../onnx-tracer/models/sentiment_sum/network.onnx".into(),
+            inputs: Tensor::new(Some(&input_vector), &[1, 5]).unwrap(), // Example input
+        };
+        let program_bytecode = text_classification.decode();
+        debug!("Program code: {program_bytecode:#?}",);
+
+        // Load model
+        let model = model(&text_classification.model_path);
+
+        // Run inference
+        let result = model
+            .forward(&[text_classification.inputs.clone()])
+            .unwrap();
+        let output = result.outputs[0].clone();
+        println!("Output: {output:#?}",);
+
+        let raw_trace = text_classification.trace();
+        debug!("Raw trace: {raw_trace:#?}",);
+    }
+
+    #[test]
+    fn test_sentiment_simple() {
+        init_logger();
+        let mut input_vector = vec![3, 4, 5, 0, 0];
+        input_vector.resize(5, 0); // Resize to match the input shape
+
+        let text_classification = ONNXProgram {
+            model_path: "../onnx-tracer/models/sentiment_simple/network.onnx".into(),
+            inputs: Tensor::new(Some(&input_vector), &[1, 5]).unwrap(), // Example input
+        };
+        let program_bytecode = text_classification.decode();
+        debug!("Program code: {program_bytecode:#?}",);
+
+        // Load model
+        let model = model(&text_classification.model_path);
+
+        // Run inference
+        let result = model
+            .forward(&[text_classification.inputs.clone()])
+            .unwrap();
+        let output = result.outputs[0].clone();
+        println!("Output: {output:#?}",);
+
+        let raw_trace = text_classification.trace();
+        debug!("Raw trace: {raw_trace:#?}",);
+    }
 
     #[serial]
     #[test]

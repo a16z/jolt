@@ -1151,8 +1151,8 @@ pub fn downsample<T: TensorType + Send + Sync>(
 /// * `index` - Tensor of indices to gather
 /// # Examples
 /// ```
-/// use ezkl::tensor::Tensor;
-/// use ezkl::tensor::ops::gather;
+/// use onnx_tracer::tensor::Tensor;
+/// use onnx_tracer::tensor::ops::gather;
 /// let x = Tensor::<i128>::new(
 ///    Some(&[1, 2, 3, 4, 5, 6]),
 ///   &[2, 3],
@@ -1172,6 +1172,7 @@ pub fn gather<T: TensorType + Send + Sync>(
 ) -> Result<Tensor<T>, TensorError> {
     let mut index_clone = index.clone();
     index_clone.flatten();
+    // TODO: not sure what this prevents from erorring
     if index_clone.is_singleton() {
         index_clone.reshape(&[1])?;
     }
@@ -1191,6 +1192,16 @@ pub fn gather<T: TensorType + Send + Sync>(
     output = output.par_enum_map(|i, _: T| {
         let coord = cartesian_coord[i].clone();
         let index_val = index_clone.get(&[coord[dim]]);
+
+        // Add bounds checking here
+        if index_val >= input.dims()[dim] {
+            panic!(
+                "Index {} is out of bounds for dimension {} with size {}",
+                index_val,
+                dim,
+                input.dims()[dim]
+            );
+        }
         let new_coord = coord
             .iter()
             .enumerate()
@@ -1280,8 +1291,8 @@ pub fn scatter<T: TensorType + Send + Sync>(
 /// * `index` - Tensor of indices to gather
 /// # Examples
 /// ```
-/// use ezkl::tensor::Tensor;
-/// use ezkl::tensor::ops::gather_elements;
+/// use onnx_tracer::tensor::Tensor;
+/// use onnx_tracer::tensor::ops::gather_elements;
 /// let x = Tensor::<i128>::new(
 ///    Some(&[1, 2, 3, 4]),
 ///   &[2, 2],

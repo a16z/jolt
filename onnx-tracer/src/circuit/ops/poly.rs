@@ -92,6 +92,7 @@ impl<F: TensorType + PartialOrd> From<&PolyOp<F>> for ONNXOpcode {
             PolyOp::Einsum { .. } => ONNXOpcode::MatMult,
             PolyOp::Sum { .. } => ONNXOpcode::Sum,
             PolyOp::MeanOfSquares { .. } => ONNXOpcode::MeanOfSquares,
+            PolyOp::Reshape(..) => ONNXOpcode::Reshape,
             _ => {
                 panic!("PolyOp {value:?} cannot be converted to ONNXOpcode",);
             }

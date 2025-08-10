@@ -77,6 +77,7 @@ impl From<&HybridOp> for ONNXOpcode {
         match value {
             HybridOp::Softmax { .. } => ONNXOpcode::Softmax,
             HybridOp::Gather { .. } => ONNXOpcode::Gather,
+            HybridOp::GreaterEqual => ONNXOpcode::Gte,
             _ => {
                 panic!("HybridOp {value:?} cannot be converted to ONNXOpcode",);
             }

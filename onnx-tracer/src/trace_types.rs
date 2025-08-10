@@ -518,6 +518,8 @@ pub enum ONNXOpcode {
     Sigmoid,
     Softmax,
     RebaseScale(Box<ONNXOpcode>),
+    Gte,
+    Reshape,
 
     // Virtual instructions
     VirtualAdvice,
@@ -559,6 +561,9 @@ impl ONNXOpcode {
             ONNXOpcode::VirtualMove => 1u64 << 20,
             ONNXOpcode::VirtualAssertEq => 1u64 << 21,
             ONNXOpcode::VirtualConst => 1u64 << 22,
+
+            ONNXOpcode::Gte => 1u64 << 23,
+            ONNXOpcode::Reshape => 1u64 << 24,
             _ => panic!("ONNXOpcode {self:#?} not implemented in into_bitflag"),
         }
     }
