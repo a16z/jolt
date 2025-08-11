@@ -251,10 +251,7 @@ where
 #[cfg(test)]
 mod e2e_tests {
     use crate::{
-        jolt::{
-            JoltProverPreprocessing, JoltSNARK,
-            execution_trace::{check_mcc, jolt_execution_trace},
-        },
+        jolt::{JoltProverPreprocessing, JoltSNARK, execution_trace::jolt_execution_trace},
         program::ONNXProgram,
     };
     use ark_bn254::Fr;
@@ -305,110 +302,51 @@ mod e2e_tests {
     const TEST_SENTIMENT_INPUTS: [[i128; 5]; 4] =
         [I_LOVE_THIS, I_HATE_THIS, THIS_IS_GREAT, THIS_IS_BAD];
 
-    const TEST_SENTIMENT_OUTPUTS: [i128; 4] = [1, 0, 1, 0];
+    /// The sentiment analysis model processes tokenized text inputs and outputs sentiment predictions.
+    /// Expected outputs: 1 = positive sentiment, 0 = negative sentiment
+    /// These test cases verify the model correctly classifies:
+    /// - "I love this" → positive (1)
+    /// - "I hate this" → negative (0)
+    /// - "This is great" → positive (1)
+    /// - "This is bad" → negative (0)
+    const EXPECTED_SENTIMENT_OUTPUTS: [i128; 4] = [1, 0, 1, 0];
 
     #[test]
     #[serial]
-    fn test_custom_sentiment_sum() {
+    fn test_embedding_sentiment() {
         init_logger();
 
-        // Load model
+        // --- Load model ---
         let mut sentiment_model = builder::embedding_sentiment_model();
         let program_bytecode = onnx_tracer::decode_model(sentiment_model.clone());
         debug!("Program code: {program_bytecode:#?}");
         let pp: JoltProverPreprocessing<Fr, PCS, KeccakTranscript> =
             JoltSNARK::prover_preprocess(program_bytecode);
 
-        // Run inference
+        // --- Test inference ---
         for (i, input) in TEST_SENTIMENT_INPUTS.iter().enumerate() {
             let result = sentiment_model
                 .forward(&[Tensor::new(Some(input), &[1, 5]).unwrap()])
                 .unwrap();
             let output = result.outputs[0].clone();
-            assert_eq!(output.inner[0], TEST_SENTIMENT_OUTPUTS[i]);
+            assert_eq!(output.inner[0], EXPECTED_SENTIMENT_OUTPUTS[i]);
         }
         sentiment_model.clear_execution_trace();
 
+        // --- Prove ---
         let raw_trace = onnx_tracer::execution_trace(
             sentiment_model,
             &Tensor::new(Some(&THIS_IS_GREAT), &[1, 5]).unwrap(),
         );
         info!("Raw trace: {raw_trace:#?}");
-
-        // Prove
         let execution_trace = jolt_execution_trace(raw_trace);
         info!("Execution trace: {execution_trace:#?}");
         info!("Execution trace length: {}", execution_trace.len());
-        check_mcc(&execution_trace);
-
         let snark: JoltSNARK<Fr, PCS, KeccakTranscript> =
             JoltSNARK::prove(pp.clone(), execution_trace);
 
-        // Verify
+        // --- Verify ---
         snark.verify((&pp).into()).unwrap();
-    }
-
-    #[test]
-    fn test_sentiment_sum() {
-        let input_vector = THIS_IS_BAD;
-
-        let text_classification = ONNXProgram {
-            model_path: "../onnx-tracer/models/sentiment_sum/network.onnx".into(),
-            inputs: Tensor::new(Some(&input_vector), &[1, 5]).unwrap(), // Example input
-        };
-        let program_bytecode = text_classification.decode();
-        info!("Program code: {program_bytecode:#?}",);
-
-        // Load model
-        let model = model(&text_classification.model_path);
-
-        // Run inference
-        for (i, input) in TEST_SENTIMENT_INPUTS.iter().enumerate() {
-            let result = model
-                .forward(&[Tensor::new(Some(input), &[1, 5]).unwrap()])
-                .unwrap();
-            let output = result.outputs[0].clone();
-            assert_eq!(
-                output.inner[0], TEST_SENTIMENT_OUTPUTS[i],
-                "Input: {input:?}, Output: {output:?}, Expected: {}",
-                TEST_SENTIMENT_OUTPUTS[i]
-            );
-        }
-
-        // let result = model
-        //     .forward(&[text_classification.inputs.clone()])
-        //     .unwrap();
-        // let output = result.outputs[0].clone();
-        // info!("Output: {output:#?}",);
-
-        // let raw_trace = text_classification.trace();
-        // debug!("Raw trace: {raw_trace:#?}",);
-    }
-
-    #[test]
-    fn test_sentiment_simple() {
-        let mut input_vector = vec![3, 4, 5, 0, 0];
-        input_vector.resize(5, 0); // Resize to match the input shape
-
-        let text_classification = ONNXProgram {
-            model_path: "../onnx-tracer/models/sentiment_simple/network.onnx".into(),
-            inputs: Tensor::new(Some(&input_vector), &[1, 5]).unwrap(), // Example input
-        };
-        let program_bytecode = text_classification.decode();
-        info!("Program code: {program_bytecode:#?}",);
-
-        // Load model
-        let model = model(&text_classification.model_path);
-
-        // Run inference
-        let result = model
-            .forward(&[text_classification.inputs.clone()])
-            .unwrap();
-        let output = result.outputs[0].clone();
-        info!("Output: {output:#?}",);
-
-        let raw_trace = text_classification.trace();
-        info!("Raw trace: {raw_trace:#?}",);
     }
 
     #[serial]

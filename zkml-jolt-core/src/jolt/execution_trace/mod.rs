@@ -40,37 +40,6 @@ pub type ExecutionTrace = Vec<JoltONNXCycle>;
 pub type ONNXLookup = Vec<ElementWiseLookup>;
 
 #[derive(Clone, Serialize, Deserialize)]
-pub enum Precompile {
-    ReduceSum(ReduceSumInstruction<WORD_SIZE>),
-}
-
-impl ONNXLookupQuery<WORD_SIZE> for Precompile {
-    fn to_instruction_inputs(&self) -> (Vec<u64>, Vec<i64>) {
-        match self {
-            Precompile::ReduceSum(instr) => instr.to_instruction_inputs(),
-        }
-    }
-
-    fn to_lookup_operands(&self) -> (Vec<u64>, Vec<u64>) {
-        match self {
-            Precompile::ReduceSum(instr) => instr.to_lookup_operands(),
-        }
-    }
-
-    fn to_lookup_index(&self) -> Vec<u64> {
-        match self {
-            Precompile::ReduceSum(instr) => instr.to_lookup_index(),
-        }
-    }
-
-    fn to_lookup_output(&self) -> Vec<u64> {
-        match self {
-            Precompile::ReduceSum(instr) => instr.to_lookup_output(),
-        }
-    }
-}
-
-#[derive(Clone, Serialize, Deserialize)]
 pub struct JoltONNXCycle {
     pub instruction_lookups: Option<ONNXLookup>,
     pub circuit_flags: [bool; NUM_CIRCUIT_FLAGS],
@@ -239,6 +208,37 @@ impl MemoryOps {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+pub enum Precompile {
+    ReduceSum(ReduceSumInstruction<WORD_SIZE>),
+}
+
+impl ONNXLookupQuery<WORD_SIZE> for Precompile {
+    fn to_instruction_inputs(&self) -> (Vec<u64>, Vec<i64>) {
+        match self {
+            Precompile::ReduceSum(instr) => instr.to_instruction_inputs(),
+        }
+    }
+
+    fn to_lookup_operands(&self) -> (Vec<u64>, Vec<u64>) {
+        match self {
+            Precompile::ReduceSum(instr) => instr.to_lookup_operands(),
+        }
+    }
+
+    fn to_lookup_index(&self) -> Vec<u64> {
+        match self {
+            Precompile::ReduceSum(instr) => instr.to_lookup_index(),
+        }
+    }
+
+    fn to_lookup_output(&self) -> Vec<u64> {
+        match self {
+            Precompile::ReduceSum(instr) => instr.to_lookup_output(),
+        }
+    }
+}
+
 pub trait WitnessGenerator {
     fn generate_witness<F, PCS, ProofTranscript>(
         &self,
@@ -389,13 +389,11 @@ macro_rules! fill_array_committed {
 pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 5 * MAX_TENSOR_SIZE + 4] = {
     let mut arr = [CommittedPolynomials::LeftInstructionInput(0); 5 * MAX_TENSOR_SIZE + 4];
     let mut idx = 0;
-
     fill_array_committed!(arr, idx, LeftInstructionInput);
     fill_array_committed!(arr, idx, RightInstructionInput);
     fill_array_committed!(arr, idx, Product);
     fill_array_committed!(arr, idx, TdProdFlag);
     fill_array_committed!(arr, idx, WriteLookupOutputToTD);
-
     arr[idx] = CommittedPolynomials::InstructionRa(0);
     arr[idx + 1] = CommittedPolynomials::InstructionRa(1);
     arr[idx + 2] = CommittedPolynomials::InstructionRa(2);
@@ -565,7 +563,6 @@ macro_rules! fill_array_r1cs_inputs {
 pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs; 11 * MAX_TENSOR_SIZE + 12] = {
     let mut arr = [JoltONNXR1CSInputs::Td(0); 11 * MAX_TENSOR_SIZE + 12];
     let mut idx = 0;
-
     fill_array_r1cs_inputs!(arr, idx, Td);
     fill_array_r1cs_inputs!(arr, idx, TdWriteValue);
     fill_array_r1cs_inputs!(arr, idx, LeftInstructionInput);
@@ -577,7 +574,6 @@ pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs; 11 * MAX_TENSOR_SIZE + 12] = {
     fill_array_r1cs_inputs!(arr, idx, WriteLookupOutputToTD);
     fill_array_r1cs_inputs!(arr, idx, ActiveOutput);
     fill_array_r1cs_inputs!(arr, idx, TdProdFlag);
-
     arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::AddOperands);
     idx += 1;
     arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::SubtractOperands);

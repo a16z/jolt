@@ -1,11 +1,10 @@
+use crate::jolt::execution_trace::ONNXLookupQuery;
 use jolt_core::jolt::{
     instruction::InstructionLookup,
     lookup_table::{LookupTables, range_check::RangeCheckTable},
 };
 use onnx_tracer::constants::MAX_TENSOR_SIZE;
 use serde::{Deserialize, Serialize};
-
-use crate::jolt::execution_trace::ONNXLookupQuery;
 
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ReduceSumInstruction<const WORD_SIZE: usize>(pub Vec<u64>);
