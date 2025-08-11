@@ -301,6 +301,8 @@ pub enum CommittedPolynomials {
     RightInstructionInput(usize),
     /// Product of `LeftInstructionInput` and `RightInstructionInput`
     Product(usize),
+    /// Td * CircuitFlag::WriteLookupOutputToTD
+    TdProdFlag(usize),
     // /// Whether the current instruction should write the lookup output to
     // /// the destination register
     WriteLookupOutputToTD(usize),
@@ -311,8 +313,8 @@ pub enum CommittedPolynomials {
     InstructionRa(usize),
 }
 
-pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 4 * MAX_TENSOR_SIZE + 4] = {
-    let mut arr = [CommittedPolynomials::LeftInstructionInput(0); 4 * MAX_TENSOR_SIZE + 4];
+pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 5 * MAX_TENSOR_SIZE + 4] = {
+    let mut arr = [CommittedPolynomials::LeftInstructionInput(0); 5 * MAX_TENSOR_SIZE + 4];
     let mut idx = 0;
     while idx < MAX_TENSOR_SIZE {
         arr[idx] = CommittedPolynomials::LeftInstructionInput(idx);
@@ -335,6 +337,12 @@ pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 4 * MAX_TENSOR_SIZE 
         arr[idx] = CommittedPolynomials::WriteLookupOutputToTD(n);
         idx += 1;
         n += 1;
+    }
+    let mut m = 0;
+    while m < MAX_TENSOR_SIZE {
+        arr[idx] = CommittedPolynomials::TdProdFlag(m);
+        idx += 1;
+        m += 1;
     }
     arr[idx] = CommittedPolynomials::InstructionRa(0);
     arr[idx + 1] = CommittedPolynomials::InstructionRa(1);
@@ -392,13 +400,26 @@ impl WitnessGenerator for CommittedPolynomials {
                     .collect();
                 coeffs.into()
             }
-            CommittedPolynomials::WriteLookupOutputToTD(i) => {
+            CommittedPolynomials::TdProdFlag(i) => {
                 let coeffs: Vec<u32> = trace
                     .par_iter()
                     .map(|cycle| {
                         let flag = cycle.instr.to_circuit_flags()
                             [CircuitFlags::WriteLookupOutputToTD as usize];
                         (cycle.td_write().0[*i] as u32) * (flag as u8 as u32)
+                    })
+                    .collect();
+                coeffs.into()
+            }
+            CommittedPolynomials::WriteLookupOutputToTD(i) => {
+                let coeffs: Vec<u32> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        let flag = cycle.instr.to_circuit_flags()
+                            [CircuitFlags::WriteLookupOutputToTD as usize];
+                        (cycle.td_write().0[*i] as u32)
+                            * (flag as u8 as u32)
+                            * ((*i < cycle.instr.active_output_elements) as u8 as u32)
                     })
                     .collect();
                 coeffs.into()
@@ -472,12 +493,14 @@ pub enum JoltONNXR1CSInputs {
     UnexpandedPC,     // Virtual (bytecode rv)
     NextUnexpandedPC, // Virtual (spartan shift sumcheck)
     NextPC,           // Virtual (spartan shift sumcheck)
+    ActiveOutput(usize),
+    TdProdFlag(usize), // Td * CircuitFlag::WriteLookupOutputToTD
 }
 
 /// This const serves to define a canonical ordering over inputs (and thus indices
 /// for each input). This is needed for sumcheck.
-pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs; 9 * MAX_TENSOR_SIZE + 11] = {
-    let mut arr = [JoltONNXR1CSInputs::Td(0); 9 * MAX_TENSOR_SIZE + 11];
+pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs; 11 * MAX_TENSOR_SIZE + 11] = {
+    let mut arr = [JoltONNXR1CSInputs::Td(0); 11 * MAX_TENSOR_SIZE + 11];
     let mut idx = 0;
     while idx < MAX_TENSOR_SIZE {
         arr[idx] = JoltONNXR1CSInputs::Td(idx);
@@ -530,6 +553,18 @@ pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs; 9 * MAX_TENSOR_SIZE + 11] = {
         arr[idx] = JoltONNXR1CSInputs::WriteLookupOutputToTD(o);
         idx += 1;
         o += 1;
+    }
+    let mut p = 0;
+    while p < MAX_TENSOR_SIZE {
+        arr[idx] = JoltONNXR1CSInputs::ActiveOutput(p);
+        idx += 1;
+        p += 1;
+    }
+    let mut q = 0;
+    while q < MAX_TENSOR_SIZE {
+        arr[idx] = JoltONNXR1CSInputs::TdProdFlag(q);
+        idx += 1;
+        q += 1;
     }
     arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::AddOperands);
     idx += 1;
@@ -705,6 +740,16 @@ impl WitnessGenerator for JoltONNXR1CSInputs {
                 let coeffs: Vec<u8> = trace
                     .par_iter()
                     .map(|cycle| cycle.instr.to_circuit_flags()[*flag as usize] as u8)
+                    .collect();
+                coeffs.into()
+            }
+            JoltONNXR1CSInputs::TdProdFlag(i) => {
+                CommittedPolynomials::TdProdFlag(*i).generate_witness(trace, preprocessing)
+            }
+            JoltONNXR1CSInputs::ActiveOutput(i) => {
+                let coeffs: Vec<u8> = trace
+                    .par_iter()
+                    .map(|cycle| (*i < cycle.instr.active_output_elements) as u8)
                     .collect();
                 coeffs.into()
             }

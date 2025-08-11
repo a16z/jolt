@@ -88,6 +88,11 @@ impl<F: JoltField> R1CSConstraints<F> for JoltONNXConstraints {
             cs.constrain_prod(
                 JoltONNXR1CSInputs::Td(i),
                 JoltONNXR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToTD),
+                JoltONNXR1CSInputs::TdProdFlag(i),
+            );
+            cs.constrain_prod(
+                JoltONNXR1CSInputs::TdProdFlag(i),
+                JoltONNXR1CSInputs::ActiveOutput(i),
                 JoltONNXR1CSInputs::WriteLookupOutputToTD(i),
             );
             cs.constrain_eq_conditional(
