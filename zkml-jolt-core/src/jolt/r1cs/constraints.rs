@@ -45,6 +45,24 @@ impl<F: JoltField> R1CSConstraints<F> for JoltONNXConstraints {
                 JoltONNXR1CSInputs::Ts2Value(i),
             );
 
+            // if RightOperandIsImm { assert!(RightInstructionInput == Imm) }
+            cs.constrain_eq_conditional(
+                JoltONNXR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm),
+                JoltONNXR1CSInputs::RightInstructionInput(i),
+                JoltONNXR1CSInputs::Imm(i),
+            );
+
+            // if !(RightOperandIsTs2Value || RightOperandIsImm)  {
+            //     assert!(RightInstructionInput == 0)
+            // }
+            // Note that RightOperandIsTs2Value and RightOperandIsImm are mutually exclusive flags
+            cs.constrain_eq_conditional(
+                1 - JoltONNXR1CSInputs::OpFlags(CircuitFlags::RightOperandIsTs2Value)
+                    - JoltONNXR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm),
+                JoltONNXR1CSInputs::RightInstructionInput(i),
+                0,
+            );
+
             // if AddOperands || SubtractOperands || MultiplyOperands || SumOperands {
             //     // Lookup query is just RightLookupOperand
             //     assert!(LeftLookupOperand == 0)

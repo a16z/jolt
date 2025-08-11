@@ -405,6 +405,7 @@ impl ONNXInstr {
             | ONNXOpcode::VirtualMove
             | ONNXOpcode::VirtualConst
             | ONNXOpcode::Gte
+            | ONNXOpcode::Sum,
         );
 
         flags[CircuitFlags::Advice as usize] = matches!(

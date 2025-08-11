@@ -547,6 +547,7 @@ pub enum JoltONNXR1CSInputs {
     TdProdFlag(usize), // Td * CircuitFlag::WriteLookupOutputToTD
     Ts1Value(usize),   // Virtual (tensor registers rv)
     Ts2Value(usize),   // Virtual (tensor registers rv)
+    Imm(usize),        // Virtual (bytecode rv)
 }
 
 macro_rules! fill_array_r1cs_inputs {
@@ -560,8 +561,8 @@ macro_rules! fill_array_r1cs_inputs {
     }};
 }
 
-const NUM_TENSOR_INPUTS: usize = 14;
-const NUM_SINGLE_INPUTS: usize = 14;
+const NUM_TENSOR_INPUTS: usize = 15;
+const NUM_SINGLE_INPUTS: usize = 15;
 /// This const serves to define a canonical ordering over inputs (and thus indices
 /// for each input). This is needed for sumcheck.
 pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs;
@@ -582,6 +583,7 @@ pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs;
     fill_array_r1cs_inputs!(arr, idx, TdProdFlag);
     fill_array_r1cs_inputs!(arr, idx, Ts1Value);
     fill_array_r1cs_inputs!(arr, idx, Ts2Value);
+    fill_array_r1cs_inputs!(arr, idx, Imm);
     arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::AddOperands);
     idx += 1;
     arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::SubtractOperands);
@@ -601,6 +603,8 @@ pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs;
     arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsTs1Value);
     idx += 1;
     arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::RightOperandIsTs2Value);
+    idx += 1;
+    arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm);
     idx += 1;
     arr[idx] = JoltONNXR1CSInputs::PC;
     idx += 1;
@@ -717,6 +721,13 @@ impl WitnessGenerator for JoltONNXR1CSInputs {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
                     .map(|cycle| cycle.ts2_read().1.get(*i).cloned().unwrap())
+                    .collect();
+                coeffs.into()
+            }
+            JoltONNXR1CSInputs::Imm(i) => {
+                let coeffs: Vec<u64> = trace
+                    .par_iter()
+                    .map(|cycle| cycle.instr.imm().get(*i).cloned().unwrap())
                     .collect();
                 coeffs.into()
             }

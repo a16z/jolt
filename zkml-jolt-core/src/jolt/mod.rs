@@ -316,7 +316,7 @@ mod e2e_tests {
     fn test_embedding_sentiment() {
         init_logger();
 
-        // --- Load model ---
+        // --- Preprocessing ---
         let mut sentiment_model = builder::embedding_sentiment_model();
         let program_bytecode = onnx_tracer::decode_model(sentiment_model.clone());
         debug!("Program code: {program_bytecode:#?}");
