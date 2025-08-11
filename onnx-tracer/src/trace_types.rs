@@ -428,6 +428,11 @@ impl ONNXInstr {
         flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
             self.virtual_sequence_remaining.unwrap_or(0) != 0;
 
+        flags[CircuitFlags::SumOperands as usize] = matches!(
+            self.opcode,
+            ONNXOpcode::Sum
+        );
+
         flags
     }
 }
@@ -443,6 +448,7 @@ impl InterleavedBitsMarker for [bool; NUM_CIRCUIT_FLAGS] {
             && !self[CircuitFlags::MultiplyOperands]
             && !self[CircuitFlags::Advice]
             && !self[CircuitFlags::Const]
+            && !self[CircuitFlags::SumOperands]
     }
 }
 

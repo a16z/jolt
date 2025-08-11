@@ -22,7 +22,7 @@ pub struct JoltONNXConstraints;
 impl<F: JoltField> R1CSConstraints<F> for JoltONNXConstraints {
     fn uniform_constraints(cs: &mut R1CSBuilder) {
         for i in 0..MAX_TENSOR_SIZE {
-            // if AddOperands || SubtractOperands || MultiplyOperands {
+            // if AddOperands || SubtractOperands || MultiplyOperands || SumOperands {
             //     // Lookup query is just RightLookupOperand
             //     assert!(LeftLookupOperand == 0)
             // } else {
@@ -31,7 +31,8 @@ impl<F: JoltField> R1CSConstraints<F> for JoltONNXConstraints {
             cs.constrain_if_else(
                 JoltONNXR1CSInputs::OpFlags(CircuitFlags::AddOperands)
                     + JoltONNXR1CSInputs::OpFlags(CircuitFlags::SubtractOperands)
-                    + JoltONNXR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands),
+                    + JoltONNXR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands)
+                    + JoltONNXR1CSInputs::OpFlags(CircuitFlags::SumOperands),
                 0,
                 JoltONNXR1CSInputs::LeftInstructionInput(i),
                 JoltONNXR1CSInputs::LeftLookupOperand(i),
@@ -103,7 +104,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltONNXConstraints {
         }
 
         // If SumOperands {
-        //     assert!(RightLookupOperand(0) == LeftInstructionInput + RightInstructionInput)
+        //     assert!(RightLookupOperand(0) == \sum_i LeftInstructionInput(i) + RightInstructionInput(i))
         // }
         cs.constrain_eq_conditional(
             JoltONNXR1CSInputs::OpFlags(CircuitFlags::SumOperands),
