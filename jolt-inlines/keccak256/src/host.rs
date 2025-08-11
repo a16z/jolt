@@ -4,14 +4,6 @@ pub use crate::trace_generator;
 
 use tracer::register_inline;
 
-// declare_riscv_instr!(
-//     name   = KECCAK256,
-//     mask   = 0xfe00707f,  // Mask for funct7 + funct3 + opcode
-//     match  = 0x0200000b,  // funct7=0x01, funct3=0x0, opcode=0x0B (custom-0)
-//     format = FormatR,
-//     ram    = ()
-// );
-
 pub fn init_inlines() -> Result<(), String> {
     register_inline(
         0x0B,

@@ -862,6 +862,7 @@ impl RV32IMInstruction {
             // while funct3 should hold all necessary instructions for that operation.
             // funct7:
             // - 0x00: SHA256
+            // - 0x01: Keccak256
             0b0001011 => Ok(INLINE::new(instr, address, false, compressed).into()),
             // 0x2B is reserved for external inlines
             0b0101011 => Ok(INLINE::new(instr, address, false, compressed).into()),

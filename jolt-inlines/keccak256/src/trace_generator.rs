@@ -320,8 +320,7 @@ pub(crate) fn keccak256_build_up_to_step(
 }
 
 // Host-side Keccak-256 implementation for reference and testing.
-#[allow(dead_code)]
-pub fn execute_keccak256(msg: &[u8]) -> [u8; 32] {
+pub(crate) fn execute_keccak256(msg: &[u8]) -> [u8; 32] {
     // Keccak-256 parameters.
     const RATE_IN_BYTES: usize = 136; // 1088-bit rate
 
