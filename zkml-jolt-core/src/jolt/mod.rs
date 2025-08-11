@@ -251,7 +251,10 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{
-        jolt::{JoltProverPreprocessing, JoltSNARK, execution_trace::jolt_execution_trace},
+        jolt::{
+            JoltProverPreprocessing, JoltSNARK,
+            execution_trace::{check_mcc, jolt_execution_trace},
+        },
         program::ONNXProgram,
     };
     use ark_bn254::Fr;
@@ -300,7 +303,7 @@ mod tests {
     const THIS_IS_BAD: [i128; 5] = [3, 4, 11, 0, 0];
 
     #[test]
-    fn test_sentiment_sum() {
+    fn test_custom_sentiment_sum() {
         init_logger();
         let input_vector = THIS_IS_BAD;
 
@@ -309,7 +312,10 @@ mod tests {
             inputs: Tensor::new(Some(&input_vector), &[1, 5]).unwrap(), // Example input
         };
         let program_bytecode = text_classification.decode();
-        debug!("Program code: {program_bytecode:#?}",);
+        let pp = JoltSNARK::<Fr, PCS, KeccakTranscript>::prover_preprocess(
+            program_bytecode[0..8].to_vec(),
+        );
+        // println!("Program code: {:#?}", program_bytecode[7]);
 
         // Load model
         let model = model(&text_classification.model_path);
@@ -319,7 +325,43 @@ mod tests {
             .forward(&[text_classification.inputs.clone()])
             .unwrap();
         let output = result.outputs[0].clone();
-        println!("Output: {output:#?}",);
+        info!("Output: {output:#?}",);
+
+        let raw_trace = text_classification.trace();
+        info!("Raw trace: {raw_trace:#?}");
+
+        // Prove
+        let execution_trace = jolt_execution_trace(raw_trace[0..8].to_vec());
+        info!("Execution trace: {execution_trace:#?}");
+        check_mcc(&execution_trace);
+
+        // let snark: JoltSNARK<Fr, PCS, KeccakTranscript> =
+        //     JoltSNARK::prove(pp.clone(), execution_trace);
+
+        // // Verify
+        // snark.verify((&pp).into()).unwrap();
+    }
+
+    #[test]
+    fn test_sentiment_sum() {
+        let input_vector = THIS_IS_BAD;
+
+        let text_classification = ONNXProgram {
+            model_path: "../onnx-tracer/models/sentiment_sum/network.onnx".into(),
+            inputs: Tensor::new(Some(&input_vector), &[1, 5]).unwrap(), // Example input
+        };
+        let program_bytecode = text_classification.decode();
+        info!("Program code: {program_bytecode:#?}",);
+
+        // Load model
+        let model = model(&text_classification.model_path);
+
+        // Run inference
+        let result = model
+            .forward(&[text_classification.inputs.clone()])
+            .unwrap();
+        let output = result.outputs[0].clone();
+        info!("Output: {output:#?}",);
 
         let raw_trace = text_classification.trace();
         debug!("Raw trace: {raw_trace:#?}",);
@@ -327,7 +369,6 @@ mod tests {
 
     #[test]
     fn test_sentiment_simple() {
-        init_logger();
         let mut input_vector = vec![3, 4, 5, 0, 0];
         input_vector.resize(5, 0); // Resize to match the input shape
 
@@ -336,7 +377,7 @@ mod tests {
             inputs: Tensor::new(Some(&input_vector), &[1, 5]).unwrap(), // Example input
         };
         let program_bytecode = text_classification.decode();
-        debug!("Program code: {program_bytecode:#?}",);
+        info!("Program code: {program_bytecode:#?}",);
 
         // Load model
         let model = model(&text_classification.model_path);
@@ -346,10 +387,10 @@ mod tests {
             .forward(&[text_classification.inputs.clone()])
             .unwrap();
         let output = result.outputs[0].clone();
-        println!("Output: {output:#?}",);
+        info!("Output: {output:#?}",);
 
         let raw_trace = text_classification.trace();
-        debug!("Raw trace: {raw_trace:#?}",);
+        info!("Raw trace: {raw_trace:#?}",);
     }
 
     #[serial]

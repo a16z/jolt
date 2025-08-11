@@ -40,16 +40,3 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for BEQInstruction<WORD_SIZE
         (x == y as u64).into()
     }
 }
-
-// #[cfg(test)]
-// mod test {
-//     use crate::jolt::instruction::test::materialize_entry_test;
-
-//     use super::*;
-//     use ark_bn254::Fr;
-
-//     #[test]
-//     fn materialize_entry() {
-//         materialize_entry_test::<Fr, BEQ>();
-//     }
-// }

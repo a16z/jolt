@@ -237,7 +237,10 @@ impl ONNXCycle {
             Some(t) => {
                 assert!(
                     t.inner.len() <= MAX_TENSOR_SIZE,
-                    "{name} length exceeds MAX_TENSOR_SIZE",
+                    "{} length exceeds MAX_TENSOR_SIZE; actual length = {}, MAX_TENSOR_SIZE = {}",
+                    name,
+                    t.inner.len(),
+                    MAX_TENSOR_SIZE
                 );
                 let mut vals: Vec<u64> = t.inner.iter().map(normalize).collect();
                 vals.resize(MAX_TENSOR_SIZE, 0);
@@ -353,6 +356,7 @@ impl ONNXInstr {
             | ONNXOpcode::VirtualAssertValidSignedRemainder
             | ONNXOpcode::VirtualAssertValidDiv0
             | ONNXOpcode::VirtualAssertEq
+            | ONNXOpcode::Gte
         );
 
         flags[CircuitFlags::RightOperandIsTs2Value as usize] = matches!(
@@ -363,6 +367,7 @@ impl ONNXInstr {
             | ONNXOpcode::VirtualAssertValidSignedRemainder
             | ONNXOpcode::VirtualAssertValidDiv0
             | ONNXOpcode::VirtualAssertEq
+            | ONNXOpcode::Gte
         );
 
         flags[CircuitFlags::RightOperandIsImm as usize] = matches!(

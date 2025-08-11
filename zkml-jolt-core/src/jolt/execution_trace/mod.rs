@@ -26,7 +26,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::jolt::instruction::{
-    add::ADD, beq::BEQInstruction, mul::MUL, sub::SUB,
+    add::ADD, beq::BEQInstruction, ge::GEInstruction, mul::MUL, sub::SUB,
     virtual_assert_valid_div0::AssertValidDiv0Instruction,
     virtual_assert_valid_signed_remainder::AssertValidSignedRemainderInstruction,
     virtual_move::MOVEInstruction,
@@ -38,7 +38,7 @@ pub const WORD_SIZE: usize = 32;
 pub type ExecutionTrace = Vec<JoltONNXCycle>;
 pub type ONNXLookup = Vec<ElementWiseLookup>;
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct JoltONNXCycle {
     pub instruction_lookups: Option<ONNXLookup>,
     pub circuit_flags: [bool; NUM_CIRCUIT_FLAGS],
@@ -759,6 +759,16 @@ macro_rules! define_lookup_enum {
                 }
             }
         }
+
+        impl InstructionLookup<$word_size> for $enum_name {
+            fn lookup_table(&self) -> Option<LookupTables<$word_size>> {
+                match self {
+                    $(
+                        $enum_name::$variant(inner) => inner.lookup_table(),
+                    )+
+                }
+            }
+        }
     };
 }
 
@@ -769,6 +779,7 @@ define_lookup_enum!(
     Add: ADD<WORD_SIZE>,
     Sub: SUB<WORD_SIZE>,
     Mul: MUL<WORD_SIZE>,
+    Ge: GEInstruction<WORD_SIZE>,
     Advice: ADVICEInstruction<WORD_SIZE>,
     VirtualAssertValidSignedRemainder: AssertValidSignedRemainderInstruction<WORD_SIZE>,
     VirtualAssertValidDiv0: AssertValidDiv0Instruction<WORD_SIZE>,
@@ -776,22 +787,6 @@ define_lookup_enum!(
     VirtualMove: MOVEInstruction<WORD_SIZE>,
     VirtualConst: ConstInstruction<WORD_SIZE>,
 );
-
-impl InstructionLookup<WORD_SIZE> for ElementWiseLookup {
-    fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
-        match self {
-            ElementWiseLookup::Add(add) => add.lookup_table(),
-            ElementWiseLookup::Sub(sub) => sub.lookup_table(),
-            ElementWiseLookup::Mul(mul) => mul.lookup_table(),
-            ElementWiseLookup::Advice(advice) => advice.lookup_table(),
-            ElementWiseLookup::VirtualAssertValidSignedRemainder(assert) => assert.lookup_table(),
-            ElementWiseLookup::VirtualAssertValidDiv0(assert) => assert.lookup_table(),
-            ElementWiseLookup::VirtualAssertEq(beq) => beq.lookup_table(),
-            ElementWiseLookup::VirtualMove(move_instr) => move_instr.lookup_table(),
-            ElementWiseLookup::VirtualConst(const_instr) => const_instr.lookup_table(),
-        }
-    }
-}
 
 impl JoltONNXCycle {
     fn to_instruction_lookups(&self) -> Option<ONNXLookup> {
@@ -854,7 +849,196 @@ impl JoltONNXCycle {
                     .map(|i| ElementWiseLookup::VirtualConst(ConstInstruction(imm[i])))
                     .collect(),
             ),
+            ONNXOpcode::Gte => Some(
+                (0..MAX_TENSOR_SIZE)
+                    .map(|i| ElementWiseLookup::Ge(GEInstruction(ts1[i], ts2[i])))
+                    .collect(),
+            ),
             _ => None,
+        }
+    }
+}
+
+impl std::fmt::Debug for JoltONNXCycle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let lookup_summary = match self.lookup_kind() {
+            Some(name) => format!("Some({name})"),
+            None => "None".to_string(),
+        };
+
+        f.debug_struct("JoltONNXCycle")
+            .field("address", &self.instr.address)
+            .field("opcode", &self.instr.opcode)
+            .field("instruction", &self.instr)
+            .field("active_flags", &self.active_circuit_flags())
+            .field("lookup", &lookup_summary)
+            .field("ts1_read", &format_memory_op_ranges(&self.ts1_read()))
+            .field("ts2_read", &format_memory_op_ranges(&self.ts2_read()))
+            .field("td_write", &format_write_op_ranges(&self.td_write()))
+            .field("advice", &self.advice_value)
+            .finish()
+    }
+}
+
+impl JoltONNXCycle {
+    // Helper method to get only the active circuit flags
+    fn active_circuit_flags(&self) -> Vec<String> {
+        use onnx_tracer::trace_types::CircuitFlags;
+        let mut active = Vec::new();
+
+        if self.circuit_flags[CircuitFlags::LeftOperandIsTs1Value as usize] {
+            active.push("LeftOperandIsTs1Value".to_string());
+        }
+        if self.circuit_flags[CircuitFlags::RightOperandIsTs2Value as usize] {
+            active.push("RightOperandIsTs2Value".to_string());
+        }
+        if self.circuit_flags[CircuitFlags::RightOperandIsImm as usize] {
+            active.push("RightOperandIsImm".to_string());
+        }
+        if self.circuit_flags[CircuitFlags::AddOperands as usize] {
+            active.push("AddOperands".to_string());
+        }
+        if self.circuit_flags[CircuitFlags::SubtractOperands as usize] {
+            active.push("SubtractOperands".to_string());
+        }
+        if self.circuit_flags[CircuitFlags::MultiplyOperands as usize] {
+            active.push("MultiplyOperands".to_string());
+        }
+        if self.circuit_flags[CircuitFlags::WriteLookupOutputToTD as usize] {
+            active.push("WriteLookupOutputToTD".to_string());
+        }
+        if self.circuit_flags[CircuitFlags::InlineSequenceInstruction as usize] {
+            active.push("InlineSequenceInstruction".to_string());
+        }
+        if self.circuit_flags[CircuitFlags::Assert as usize] {
+            active.push("Assert".to_string());
+        }
+        if self.circuit_flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] {
+            active.push("DoNotUpdateUnexpandedPC".to_string());
+        }
+        if self.circuit_flags[CircuitFlags::Advice as usize] {
+            active.push("Advice".to_string());
+        }
+        if self.circuit_flags[CircuitFlags::Const as usize] {
+            active.push("Const".to_string());
+        }
+
+        // Compile-time check that we've handled all flags
+        const _: () = {
+            let _ = [(); (NUM_CIRCUIT_FLAGS == 12) as usize - 1];
+        };
+
+        if active.is_empty() {
+            active.push("None".to_string());
+        }
+
+        active
+    }
+
+    // Show None or Some(ElementWiseLookupVariant)
+    fn lookup_kind(&self) -> Option<&'static str> {
+        self.instruction_lookups
+            .as_ref()
+            .and_then(|v| v.first())
+            .map(|e| match e {
+                ElementWiseLookup::Add(_) => "Add",
+                ElementWiseLookup::Sub(_) => "Sub",
+                ElementWiseLookup::Mul(_) => "Mul",
+                ElementWiseLookup::Ge(_) => "Ge",
+                ElementWiseLookup::Advice(_) => "Advice",
+                ElementWiseLookup::VirtualAssertValidSignedRemainder(_) => {
+                    "VirtualAssertValidSignedRemainder"
+                }
+                ElementWiseLookup::VirtualAssertValidDiv0(_) => "VirtualAssertValidDiv0",
+                ElementWiseLookup::VirtualAssertEq(_) => "VirtualAssertEq",
+                ElementWiseLookup::VirtualMove(_) => "VirtualMove",
+                ElementWiseLookup::VirtualConst(_) => "VirtualConst",
+            })
+    }
+}
+
+// Helper: format tensor memory operations, knowing addresses are always contiguous ranges
+fn format_memory_op_ranges((addresses, values): &(Vec<usize>, Vec<u64>)) -> String {
+    if addresses.is_empty() {
+        return "[]".to_string();
+    }
+    let start_addr = addresses[0];
+    let end_addr = start_addr + values.len();
+
+    format!(
+        "[{}..{}: [{}]]",
+        start_addr,
+        end_addr,
+        values.iter().map(|v| v.to_string()).join(", ")
+    )
+}
+
+fn format_write_op_ranges(
+    (addresses, pre_vals, post_vals): &(Vec<usize>, Vec<u64>, Vec<u64>),
+) -> String {
+    if addresses.is_empty() {
+        return "[]".to_string();
+    }
+    let start_addr = addresses[0];
+    let end_addr = start_addr + pre_vals.len();
+
+    format!(
+        "[{}..{}: pre=[{}], post=[{}]]",
+        start_addr,
+        end_addr,
+        pre_vals.iter().map(|v| v.to_string()).join(", "),
+        post_vals.iter().map(|v| v.to_string()).join(", ")
+    )
+}
+
+#[cfg(test)]
+pub fn check_mcc(execution_trace: &ExecutionTrace) {
+    let tensor_heap_addresses: Vec<usize> = execution_trace
+        .iter()
+        .map(|cycle| cycle.td_write().0.last().unwrap() + 1)
+        .collect();
+    let tensor_heap_K = tensor_heap_addresses
+        .iter()
+        .max()
+        .unwrap()
+        .next_power_of_two();
+    let mut tensor_heap = vec![0u64; tensor_heap_K];
+    for cycle in execution_trace {
+        // check reads
+
+        // ts1 read
+        let (ts1_read_addresses, ts1_read_values) = cycle.ts1_read();
+        for (addr, value) in itertools::izip!(ts1_read_addresses.iter(), ts1_read_values.iter()) {
+            assert_eq!(
+                tensor_heap[*addr], *value,
+                "TS1 READ error at cycle: {cycle:#?}; Expected: {}, got: {} at address {addr} ",
+                tensor_heap[*addr], *value
+            );
+        }
+
+        // ts2 read
+        let (ts2_read_addresses, ts2_read_values) = cycle.ts2_read();
+        for (addr, value) in itertools::izip!(ts2_read_addresses.iter(), ts2_read_values.iter()) {
+            assert_eq!(
+                tensor_heap[*addr], *value,
+                "TS2 READ error at cycle: {cycle:#?}; Expected: {}, got: {} at address {addr} ",
+                tensor_heap[*addr], *value
+            );
+        }
+
+        // check writes
+        let (td_write_addresses, td_pre_values, td_write_values) = cycle.td_write();
+        for (addr, pre_val, post_val) in itertools::izip!(
+            td_write_addresses.iter(),
+            td_pre_values.iter(),
+            td_write_values.iter()
+        ) {
+            assert_eq!(
+                tensor_heap[*addr], *pre_val,
+                "TD WRITE error at cycle: {cycle:#?}; Expected pre-state: {pre_val}, got: {} at address {addr} ",
+                tensor_heap[*addr]
+            );
+            tensor_heap[*addr] = *post_val;
         }
     }
 }

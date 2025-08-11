@@ -82,6 +82,10 @@ impl ModelBuilder {
 
 /* ********************** Testing Model's ********************** */
 
+pub fn custom_sentiment_model() -> Model {
+    todo!()
+}
+
 /// [(0, input, []), (1, add, [0, 0]), (2, sub, [1, 0]), (3, mul, [1, 2]), (4, add, [2, 3]), (5, output, [4])]
 pub fn custom_addsubmul_model() -> Model {
     const SCALE: i32 = 7;
