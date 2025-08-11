@@ -1262,6 +1262,8 @@ pub struct StreamingDoryCommitment<'a, E: DoryPairing> {
     setup: &'a ProverSetup<E>,
     // Pending row commitments.
     row_commitments: Vec<E::G1>,
+    // K (if a OneHot polynomial).
+    K: Option<usize>,
 }
 
 impl<'a> StreamingProcessChunk<StreamingDenseWitness<Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
@@ -1295,54 +1297,86 @@ impl<'a> StreamingProcessChunk<StreamingCompactWitness<i64, Fr>> for StreamingDo
     }
 }
 impl<'a> StreamingProcessChunk<StreamingOneHotWitness<Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
-    fn process_chunk(self, chunk: &[StreamingOneHotWitness<Fr>]) -> Self {
-        todo!()
+    fn process_chunk(mut self, chunk: &[StreamingOneHotWitness<Fr>]) -> Self {
+        let Some(K) = self.K else {
+            panic!("K must be provided for OneHot polynomials.");
+        };
+
+        // let mut row_commitments = vec![JoltGroupWrapper(G1Projective::zero()); K];
+        let mut row_commitments = vec![JoltGroupWrapper(<Bn254 as ArkPairing>::G1::zero()); K];
+
+        for (col_index, k) in chunk.iter().enumerate() {
+            // All the nonzero coefficients are 1, so we simply add
+            // the associated base to the result.
+            if let Some(k) = k.value {
+                row_commitments[k].0 += self.setup.g1_vec()[col_index].0;
+            }
+        }
+
+        self.row_commitments.extend(row_commitments);
+        self
     }
 }
-
-// impl StreamingDoryCommitment {
-//     // pub fn generate_streaming_witness<'a, F, PCS>(
-//     //     &self,
-//     //     preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-//     //     cycle: &RV32IMCycle,
-//     //     next_cycle: &RV32IMCycle,
-//     // ) -> StreamingWitness<F>
-//     // where
-//     //     F: JoltField,
-//     //     PCS: CommitmentScheme<Field = F>,
-//     // {
-//     //     self.polynomial.generate_streaming_witness(preprocessing, cycle, next_cycle)
-//     // }
-// 
-//     pub fn commit_row<F: JoltField>(
-//         self,
-//         row: &[StreamingWitness<F>]
-//     ) -> Self {
-//         todo!()
-//     }
-// 
-//     pub fn finalize_commitment(&self) -> DoryCommitment {
-//         todo!()
-//     }
-// }
 
 
 impl StreamingCommitmentScheme for DoryCommitmentScheme {
     type State<'a> = StreamingDory<'a, JoltBn254>;
 
-    fn initialize<'a>(_size: usize, setup: &'a Self::ProverSetup) -> Self::State<'a> {
+    fn initialize<'a>(ty: Multilinear, _size: usize, setup: &'a Self::ProverSetup) -> Self::State<'a> {
         let sigma = DoryGlobals::get_num_columns().log_2();
-        StreamingDory::initialize(sigma, setup)
+        match ty {
+            Multilinear::OneHot => {
+                let K = todo!("Pass this in somehow..");
+                let num_rows = (1 << sigma) * K;
+                let row_commitments = Vec::with_capacity(num_rows);
+                StreamingDoryCommitment {
+                    setup,
+                    row_commitments,
+                    K: Some(K),
+                }
+            }
+            _ => {
+                let num_rows = 1 << sigma;
+                let row_commitments = Vec::with_capacity(num_rows);
+                StreamingDoryCommitment {
+                    setup,
+                    row_commitments,
+                    K: None,
+                }
+            }
+        }
     }
 
-    fn process<'a>(state: Self::State<'a>, eval: Self::Field) -> Self::State<'a> {
-        state.process::<JoltMsmG1>(JoltFieldWrapper(eval))
+    fn process<'a>(ty: Multilinear, state: Self::State<'a>, eval: Self::Field) -> Self::State<'a> {
+        // state.process::<JoltMsmG1>(JoltFieldWrapper(eval))
+        todo!("Processing individual elements is not supported for Dory.")
+    }
+
+    fn process_chunk<'a, T>(state: Self::State<'a>, chunk: &[T]) -> Self::State<'a>
+    where
+        Self::State<'a>: StreamingProcessChunk<T>,
+    {
+        // We require that a chunk is a full row.
+        debug_assert_eq!(chunk.len(), DoryGlobals::get_num_columns());
+
+        state.process_chunk(chunk)
     }
 
     fn finalize<'a>(state: Self::State<'a>) -> (Self::Commitment, Self::OpeningProofHint) {
-        let (commitment, hint) = state.finalize::<JoltMsmG1>();
-        (DoryCommitment(commitment), hint)
-        // DoryCommitment(state.finalize::<JoltMsmG1>())
+        if let Some(K) = state.K {
+            // Reshuffle OneHot polynomial's row commitments
+            // TODO: Parallelize
+            let row_commitments: Vec<_> = (0..state.row_commitments.len()).map(|i| {
+                let j = (i % K) * K + i / K;
+                state.row_commitments[j]
+            }).collect();
+
+            let commitment = JoltBn254::multi_pair(&row_commitments, &state.setup.g2_vec()[..row_commitments.len()]);
+            (DoryCommitment(commitment), row_commitments)
+        } else {
+            let commitment = JoltBn254::multi_pair(&state.row_commitments, &state.setup.g2_vec()[..state.row_commitments.len()]);
+            (DoryCommitment(commitment), state.row_commitments)
+        }
     }
 }
 
