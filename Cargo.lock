@@ -3565,6 +3565,7 @@ name = "sha3-chain"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "jolt-inlines-keccak256",
  "jolt-sdk",
  "sha3-chain-guest",
 ]
@@ -3582,6 +3583,7 @@ name = "sha3-ex"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "jolt-inlines-keccak256",
  "jolt-sdk",
  "sha3-guest",
 ]
