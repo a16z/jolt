@@ -46,7 +46,10 @@ impl RISCVTrace for SRLIW {
     }
 
     fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let v_rs1 = virtual_register_index(0);
+        // Use a high-numbered virtual register for scratch to avoid clobbering
+        // low-index VRs that inline builders frequently use (e.g., 0..31).
+        // TODO: Review this with others, but it looks right.
+        let v_rs1 = virtual_register_index(95);
         let mut sequence = vec![];
 
         let slli = SLLI {

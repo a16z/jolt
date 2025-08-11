@@ -42,9 +42,9 @@ impl Sha256CpuHarness {
         let vr = std::array::from_fn(|i| tracer::inline_helpers::virtual_register_index(i as u8));
         Self {
             // RV32.
-            harness: CpuTestHarness::new_32(),
+            // harness: CpuTestHarness::new_32(),
             // TODO: Fix RV64 failure (below)
-            // harness: CpuTestHarness::new(),
+            harness: CpuTestHarness::new(),
             vr,
         }
     }

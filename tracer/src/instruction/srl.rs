@@ -48,8 +48,8 @@ impl RISCVTrace for SRL {
     }
 
     fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
-        // Virtual registers used in sequence
-        let v_bitmask = virtual_register_index(6);
+        // Virtual registers used in sequence (use a high index to avoid clobbering low VRs)
+        let v_bitmask = virtual_register_index(90);
 
         let mut sequence = vec![];
         let mut inline_sequence_remaining = self.inline_sequence_remaining.unwrap_or(1);

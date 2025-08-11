@@ -94,10 +94,12 @@ impl Sha256SequenceBuilder {
         (0..64).for_each(|_| self.round());
         self.final_add_iv();
         // Store output values to rs2 location
-        (0..8).for_each(|i| {
-            self.asm
-                .emit_s::<SW>(self.operand_rs2, self.vr[i as usize], i * 4)
-        });
+        // Store output A..H in-order using the current VR mapping after all rotations
+        let outs = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+        for (i, ch) in outs.iter().enumerate() {
+            let src = self.vr(*ch);
+            self.asm.emit_s::<SW>(self.operand_rs2, src, (i as i64) * 4);
+        }
         self.asm.finalize()
     }
 
@@ -112,14 +114,24 @@ impl Sha256SequenceBuilder {
                 self.asm
                     .emit_ld::<LW>(self.vr[24 + i as usize], self.operand_rs2, i * 4)
             });
-            self.asm.add(self.vri('A'), Reg(self.vr[24]), self.vr('A'));
-            self.asm.add(self.vri('B'), Reg(self.vr[25]), self.vr('B'));
-            self.asm.add(self.vri('C'), Reg(self.vr[26]), self.vr('C'));
-            self.asm.add(self.vri('D'), Reg(self.vr[27]), self.vr('D'));
-            self.asm.add(self.vri('E'), Reg(self.vr[28]), self.vr('E'));
-            self.asm.add(self.vri('F'), Reg(self.vr[29]), self.vr('F'));
-            self.asm.add(self.vri('G'), Reg(self.vr[30]), self.vr('G'));
-            self.asm.add(self.vri('H'), Reg(self.vr[31]), self.vr('H'));
+            // Resolve concrete VRs for A..H at the end and add IV words directly.
+            let a = self.vr('A');
+            let b = self.vr('B');
+            let c = self.vr('C');
+            let d = self.vr('D');
+            let e = self.vr('E');
+            let f = self.vr('F');
+            let g = self.vr('G');
+            let h = self.vr('H');
+            // Perform G first to avoid any subtle overlap issues
+            self.asm.add(Reg(g), Reg(self.vr[30]), g);
+            self.asm.add(Reg(a), Reg(self.vr[24]), a);
+            self.asm.add(Reg(b), Reg(self.vr[25]), b);
+            self.asm.add(Reg(c), Reg(self.vr[26]), c);
+            self.asm.add(Reg(d), Reg(self.vr[27]), d);
+            self.asm.add(Reg(e), Reg(self.vr[28]), e);
+            self.asm.add(Reg(f), Reg(self.vr[29]), f);
+            self.asm.add(Reg(h), Reg(self.vr[31]), h);
         } else {
             // We are using constants for final addition round
             self.asm.add(self.vri('A'), Imm(BLOCK[0]), self.vr('A'));
@@ -142,10 +154,18 @@ impl Sha256SequenceBuilder {
         // scratch space
         let ss = self.vr[26];
         let ss2 = self.vr[27];
-        // Put T_1 into register t1
+        let t1_val = self.compute_t1(t1, ss, ss2);
+        let t2_val = self.compute_t2(t2, ss, ss2);
+        let old_d = self.vri('D');
+        self.apply_round_update(t1_val, t2_val, old_d);
+    }
+
+    /// Compute T1 into the provided `t1` register and return it as a Value.
+    fn compute_t1(&mut self, t1: u8, ss: u8, ss2: u8) -> Value {
         // Put H + K
         // We do this first because H is going to be Imm the longest of all inputs
         let h_add_k = self.asm.add(Imm(K[self.round as usize]), self.vri('H'), t1);
+        // Put Sigma_1(E_0) into register t1
         let sigma_1 = self.sha_sigma_1(self.vri('E'), ss, ss2);
         let add_sigma_1 = self.asm.add(h_add_k, sigma_1, t1);
         // Put Ch(E_0, F_0, G_0) into register t2
@@ -154,18 +174,22 @@ impl Sha256SequenceBuilder {
         self.update_w([ss, ss2]);
         // Add W_(rid)
         let t1 = self.asm.add(add_ch, Reg(self.w(0)), t1);
-        // Done with T_1
+        t1
+    }
 
-        // Put T_2 into register t2
+    /// Compute T2 into the provided `t2` register and return it as a Value.
+    fn compute_t2(&mut self, t2: u8, ss: u8, ss2: u8) -> Value {
         // Put Sigma_0(A_0) into register t2
         let sigma_0 = self.sha_sigma_0(self.vri('A'), t2, ss);
         // Put Maj(A_0, B_0, C_0) into register ss
         let maj = self.sha_maj(self.vri('A'), self.vri('B'), self.vri('C'), ss, ss2);
         // Add Maj to t2
         let t2 = self.asm.add(sigma_0, maj, t2);
-        // Done with T_2
+        t2
+    }
 
-        let old_d = self.vri('D');
+    /// Apply A/E updates for the current round using computed T1/T2 and then advance the round.
+    fn apply_round_update(&mut self, t1: Value, t2: Value, old_d: Value) {
         self.round += 1;
         // Overwrite new A with T_1 + T_2
         self.asm.add(t1, t2, self.vr('A'));
@@ -348,4 +372,96 @@ pub fn sha2_init_inline_sequence_builder(
         true, // initial - uses BLOCK constants
     );
     builder.build()
+}
+
+/// Build the SHA-256 inline sequence up to a specific step within a target round (non-initial).
+/// This is test-only helper intended to mirror parts of `round()` without completing the full round.
+///
+/// Steps supported:
+/// - "t1_t2": compute T1 and T2 into vr[24] and vr[25] respectively for the current `round`,
+///             but do not write the updated A/E.
+/// - "after_round": perform a full `round()` at the target round (equivalent to calling round())
+///                  after executing previous rounds.
+pub fn sha2_build_up_to_step(
+    address: u64,
+    is_compressed: bool,
+    xlen: Xlen,
+    vr: [u8; NEEDED_REGISTERS as usize],
+    rs1: u8,
+    rs2: u8,
+    target_round: usize,
+    step: &str,
+) -> Vec<RV32IMInstruction> {
+    let mut b = Sha256SequenceBuilder::new(address, is_compressed, xlen, vr, rs1, rs2, false);
+    // Load initial state and message words (same as build())
+    (0..4).for_each(|i| b.asm.emit_ld::<LW>(b.vr[i as usize], b.operand_rs2, i * 4));
+    (0..4).for_each(|i| {
+        b.asm
+            .emit_ld::<LW>(b.vr[(i + 28) as usize], b.operand_rs2, (i + 4) * 4)
+    });
+    (0..16).for_each(|i| {
+        b.asm
+            .emit_ld::<LW>(b.vr[(i + 8) as usize], b.operand_rs1, i * 4)
+    });
+
+    // Execute full prior rounds
+    for _ in 0..target_round {
+        b.round();
+    }
+
+    match step {
+        "after_round" => {
+            b.round();
+            b.asm.finalize()
+        }
+        "final_state" => {
+            // Run all 64 rounds and compute final_add_iv, but do not store to memory.
+            for _ in b.round..64 {
+                b.round();
+            }
+            b.final_add_iv();
+            b.asm.finalize()
+        }
+        "t1_terms" => {
+            // Materialize T1 components separately into vr[24..27]:
+            // vr[24]=h+K, vr[25]=Sigma1(e), vr[26]=Ch(e,f,g), vr[27]=W[t]
+            assert!(b.round < 64);
+            let v_hk = b.vr[24];
+            let v_s1 = b.vr[25];
+            let v_ch = b.vr[26];
+            let v_wt = b.vr[27];
+            let scratch = b.vr[26];
+            let scratch2 = b.vr[27];
+
+            // h + K
+            let _ = b.asm.add(Imm(K[b.round as usize]), b.vri('H'), v_hk);
+            // Sigma1(e)
+            let _ = b.sha_sigma_1(b.vri('E'), v_s1, scratch);
+            // Ch(e,f,g)
+            let _ = b.sha_ch(b.vri('E'), b.vri('F'), b.vri('G'), v_ch, scratch2);
+            // W[t]
+            // For rounds < 16 no update; just copy current W[t] into v_wt
+            if b.round < 16 {
+                let _ = b.asm.add(Reg(b.w(0)), Imm(0), v_wt);
+            } else {
+                // Ensure schedule is updated before reading
+                b.update_w([scratch, scratch2]);
+                let _ = b.asm.add(Reg(b.w(0)), Imm(0), v_wt);
+            }
+            b.asm.finalize()
+        }
+        "t1_t2" => {
+            // Replicate the core of `round()` up to computing T1 and T2, leaving them in vr[24], vr[25]
+            assert!(b.round < 64);
+            let t1 = b.vr[24];
+            let t2 = b.vr[25];
+            let ss = b.vr[26];
+            let ss2 = b.vr[27];
+            let _ = b.compute_t1(t1, ss, ss2);
+            let _ = b.compute_t2(t2, ss, ss2);
+
+            b.asm.finalize()
+        }
+        _ => panic!("Unsupported step: {step}"),
+    }
 }

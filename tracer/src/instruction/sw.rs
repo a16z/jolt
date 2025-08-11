@@ -87,12 +87,14 @@ impl SW {
 
     fn inline_sequence_64(&self) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
-        let v_address = virtual_register_index(6);
-        let v_dword_address = virtual_register_index(7);
-        let v_dword = virtual_register_index(8);
-        let v_shift = virtual_register_index(9);
-        let v_mask = virtual_register_index(10);
-        let v_word = virtual_register_index(11);
+        // Use high-numbered virtual registers as scratch to avoid clobbering
+        // low indices that inline builders frequently use for program values.
+        let v_address = virtual_register_index(90);
+        let v_dword_address = virtual_register_index(91);
+        let v_dword = virtual_register_index(92);
+        let v_shift = virtual_register_index(93);
+        let v_mask = virtual_register_index(94);
+        let v_word = virtual_register_index(95);
 
         let mut sequence = vec![];
         let mut inline_sequence_remaining = self.inline_sequence_remaining.unwrap_or(14);
