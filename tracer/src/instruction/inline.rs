@@ -39,6 +39,9 @@ lazy_static! {
 
 /// Registers a new inline instruction handler.
 ///
+/// Each new type of operation should be placed under different funct7,
+/// while funct3 should hold all necessary instructions for that operation.
+///
 /// # Arguments
 ///
 /// * `opcode` - The 7-bit opcode (0-127)
