@@ -304,6 +304,7 @@ impl Keccak256SequenceBuilder {
 }
 
 #[cfg(all(test, feature = "host"))]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn keccak256_build_up_to_step(
     address: u64,
     is_compressed: bool,
