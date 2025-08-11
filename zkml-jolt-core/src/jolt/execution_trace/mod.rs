@@ -1014,7 +1014,10 @@ fn format_memory_op_ranges((addresses, values): &(Vec<usize>, Vec<u64>)) -> Stri
         "[{}..{}: [{}]]",
         start_addr,
         end_addr,
-        values.iter().map(|v| v.to_string()).join(", ")
+        values
+            .iter()
+            .map(|&v| (v as u32 as i32).to_string())
+            .join(", ")
     )
 }
 
@@ -1031,8 +1034,14 @@ fn format_write_op_ranges(
         "[{}..{}: pre=[{}], post=[{}]]",
         start_addr,
         end_addr,
-        pre_vals.iter().map(|v| v.to_string()).join(", "),
-        post_vals.iter().map(|v| v.to_string()).join(", ")
+        pre_vals
+            .iter()
+            .map(|&v| (v as u32 as i32).to_string())
+            .join(", "),
+        post_vals
+            .iter()
+            .map(|&v| (v as u32 as i32).to_string())
+            .join(", ")
     )
 }
 
