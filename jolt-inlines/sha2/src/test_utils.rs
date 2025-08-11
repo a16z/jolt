@@ -24,6 +24,12 @@ pub struct Sha256CpuHarness {
     pub vr: [u8; NEEDED_REGISTERS as usize],
 }
 
+impl Default for Sha256CpuHarness {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Sha256CpuHarness {
     /// Memory layout for tests.
     const BLOCK_ADDR: u64 = DRAM_BASE;

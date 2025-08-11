@@ -477,3 +477,28 @@ impl InstrAssembler {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rotl64_immediate_paths() {
+        let mut asm = InstrAssembler::new(0, false, Xlen::Bit64);
+        let dest = 0;
+        let vectors: &[(u64, u32, u64)] = &[
+            (0x0000000000000001, 1, 0x0000000000000002),
+            (0x8000000000000000, 1, 0x0000000000000001),
+            (0x0123456789ABCDEF, 4, 0x123456789ABCDEF0),
+            (0x0123456789ABCDEF, 32, 0x89ABCDEF01234567),
+            (0x0123456789ABCDEF, 36, 0x9ABCDEF012345678),
+        ];
+        for (val, amount, expected) in vectors {
+            let out = match asm.rotl64(Imm(*val), *amount, dest) {
+                Imm(v) => v,
+                _ => panic!("rotl64 immediate path should constant-fold"),
+            };
+            assert_eq!(out, *expected, "rotl64({val:#018x}, {amount})");
+        }
+    }
+}

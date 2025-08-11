@@ -150,7 +150,7 @@ pub unsafe fn keccak_f(state: *mut u64) {
 pub unsafe fn keccak_f(state: *mut u64) {
     // On the host, we call our own reference implementation from the tracer crate.
     let state_slice = core::slice::from_raw_parts_mut(state, 25);
-    tracer::instruction::inline_keccak256::execute_keccak_f(
+    crate::trace_generator::execute_keccak_f(
         state_slice
             .try_into()
             .expect("State slice was not 25 words"),

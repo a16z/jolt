@@ -2084,6 +2084,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-inlines-keccak256"
+version = "0.1.0"
+dependencies = [
+ "ctor",
+ "hex-literal",
+ "tracer",
+]
+
+[[package]]
 name = "jolt-inlines-sha2"
 version = "0.1.0"
 dependencies = [

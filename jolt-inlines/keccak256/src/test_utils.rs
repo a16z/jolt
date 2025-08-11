@@ -3,20 +3,18 @@
 // This module contains Keccak-specific setup code, utilities, and helper functions
 // to reduce code duplication in the test suite. It relies on the generic
 // `CpuTestHarness` for the underlying emulator setup.
-use super::*;
-use crate::emulator::mmu::DRAM_BASE;
-use crate::emulator::test_harness::{CpuTestHarness, InstructionTestCase};
-use crate::instruction::format::format_r::FormatR;
-use crate::instruction::inline_keccak256::keccak256::KECCAK256;
-use crate::instruction::inline_keccak256::test_constants::{self, TestVectors};
-use crate::instruction::inline_keccak256::NEEDED_REGISTERS;
-use crate::instruction::inline_keccak256::{
-    execute_chi, execute_iota, execute_keccak_f, execute_rho_and_pi, execute_theta, ROUND_CONSTANTS,
+use crate::test_constants::{self, TestVectors};
+use crate::trace_generator::{
+    execute_chi, execute_iota, execute_keccak_f, execute_rho_and_pi, execute_theta,
+    NEEDED_REGISTERS, ROUND_CONSTANTS,
 };
-use crate::instruction::{RISCVInstruction, RISCVTrace};
-
-/// Canonical type alias for a 25-lane Keccak state.
-pub type Keccak256State = [u64; 25];
+use crate::Keccak256State;
+use tracer::emulator::mmu::DRAM_BASE;
+use tracer::emulator::test_harness::{CpuTestHarness, InstructionTestCase};
+use tracer::instruction::format::format_r::FormatR;
+use tracer::instruction::{
+    inline::INLINE, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
+};
 
 pub type KeccakTestCase = InstructionTestCase<Keccak256State, Keccak256State>;
 
@@ -34,7 +32,7 @@ impl KeccakCpuHarness {
 
     /// Create a new harness with initialized memory.
     pub fn new() -> Self {
-        let vr = core::array::from_fn(|i| common::constants::virtual_register_index(i as u8));
+        let vr = core::array::from_fn(|i| tracer::inline_helpers::virtual_register_index(i as u8));
 
         Self {
             harness: CpuTestHarness::new(),
@@ -70,14 +68,18 @@ impl KeccakCpuHarness {
     }
 
     /// Construct a canonical KECCAK256 instruction.
-    pub fn instruction() -> KECCAK256 {
-        KECCAK256 {
+    pub fn instruction() -> INLINE {
+        INLINE {
             address: 0,
             operands: FormatR {
                 rs1: Self::RS1,
                 rs2: 0,
                 rd: 0,
             },
+            // KECCAK256 has opcode 0x0B, funct3 0x00, funct7 0x01
+            opcode: 0x0B,
+            funct3: 0x00,
+            funct7: 0x01,
             inline_sequence_remaining: None,
             is_compressed: false,
         }
@@ -88,7 +90,7 @@ impl KeccakCpuHarness {
         instruction.execute(&mut self.harness.cpu, &mut ());
     }
 
-    pub fn trace_keccak_instruction(&mut self) -> Vec<crate::instruction::RV32IMCycle> {
+    pub fn trace_keccak_instruction(&mut self) -> Vec<RV32IMCycle> {
         let instruction = Self::instruction();
         let mut trace = Vec::new();
         instruction.trace(&mut self.harness.cpu, Some(&mut trace));
