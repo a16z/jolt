@@ -393,12 +393,12 @@ impl WitnessGenerator for CommittedPolynomials {
                 coeffs.into()
             }
             CommittedPolynomials::WriteLookupOutputToTD(i) => {
-                let coeffs: Vec<u8> = trace
+                let coeffs: Vec<u32> = trace
                     .par_iter()
                     .map(|cycle| {
                         let flag = cycle.instr.to_circuit_flags()
                             [CircuitFlags::WriteLookupOutputToTD as usize];
-                        (cycle.td_write().0[*i] as u8) * (flag as u8)
+                        (cycle.td_write().0[*i] as u32) * (flag as u8 as u32)
                     })
                     .collect();
                 coeffs.into()
@@ -1003,7 +1003,7 @@ pub fn check_mcc(execution_trace: &ExecutionTrace) {
         .unwrap()
         .next_power_of_two();
     let mut tensor_heap = vec![0u64; tensor_heap_K];
-    for cycle in execution_trace {
+    for (i, cycle) in execution_trace.iter().enumerate() {
         // check reads
 
         // ts1 read
@@ -1011,7 +1011,7 @@ pub fn check_mcc(execution_trace: &ExecutionTrace) {
         for (addr, value) in itertools::izip!(ts1_read_addresses.iter(), ts1_read_values.iter()) {
             assert_eq!(
                 tensor_heap[*addr], *value,
-                "TS1 READ error at cycle: {cycle:#?}; Expected: {}, got: {} at address {addr} ",
+                "TS1 READ error at cycle_{i}: {cycle:#?}; Expected: {}, got: {} at address {addr} ",
                 tensor_heap[*addr], *value
             );
         }
@@ -1021,7 +1021,7 @@ pub fn check_mcc(execution_trace: &ExecutionTrace) {
         for (addr, value) in itertools::izip!(ts2_read_addresses.iter(), ts2_read_values.iter()) {
             assert_eq!(
                 tensor_heap[*addr], *value,
-                "TS2 READ error at cycle: {cycle:#?}; Expected: {}, got: {} at address {addr} ",
+                "TS2 READ error at cycle_{i}: {cycle:#?}; Expected: {}, got: {} at address {addr} ",
                 tensor_heap[*addr], *value
             );
         }
@@ -1035,7 +1035,7 @@ pub fn check_mcc(execution_trace: &ExecutionTrace) {
         ) {
             assert_eq!(
                 tensor_heap[*addr], *pre_val,
-                "TD WRITE error at cycle: {cycle:#?}; Expected pre-state: {pre_val}, got: {} at address {addr} ",
+                "TD WRITE error at cycle_{i}: {cycle:#?}; Expected pre-state: {pre_val}, got: {} at address {addr} ",
                 tensor_heap[*addr]
             );
             tensor_heap[*addr] = *post_val;

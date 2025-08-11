@@ -96,4 +96,10 @@ impl Tracer {
             row.memory_state.td_post_val = Some(output.clone())
         };
     }
+
+    /// Clears the execution trace, resetting it to an empty state.
+    /// This method is useful for reinitializing the tracer before a new execution run.
+    pub fn clear(&self) {
+        self.execution_trace.borrow_mut().clear();
+    }
 }

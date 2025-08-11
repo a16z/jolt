@@ -833,6 +833,10 @@ impl Model {
     pub fn set_outputs(&mut self, outputs: Vec<Outlet>) {
         self.graph.outputs = outputs;
     }
+
+    pub fn clear_execution_trace(&mut self) {
+        self.tracer.clear();
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]

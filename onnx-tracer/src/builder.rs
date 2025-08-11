@@ -55,7 +55,7 @@ impl ModelBuilder {
         fanout_hint: usize,
     ) -> Wire {
         let id = self.alloc();
-        let raw = Tensor::new(Some(&[] as &[f32]), &[0]).unwrap(); // same as your code
+        let raw = Tensor::new(Some(&[] as &[f32]), &[0]).unwrap();
         let n = create_const_node(tensor, raw, self.scale, out_dims, id, fanout_hint);
         self.model.insert_node(n);
         (id, O)

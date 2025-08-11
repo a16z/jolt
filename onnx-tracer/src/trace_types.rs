@@ -399,6 +399,7 @@ impl ONNXInstr {
             | ONNXOpcode::VirtualAdvice
             | ONNXOpcode::VirtualMove
             | ONNXOpcode::VirtualConst
+            | ONNXOpcode::Gte
         );
 
         flags[CircuitFlags::Advice as usize] = matches!(

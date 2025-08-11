@@ -294,7 +294,7 @@ mod tests {
     const I_LOVE_THIS: [i128; 5] = [1, 2, 3, 0, 0];
 
     /// const: [I, hate, this, 0, 0]
-    const I_HATE_THIS: [i128; 5] = [1, 2, 10, 0, 0];
+    const I_HATE_THIS: [i128; 5] = [1, 10, 3, 0, 0];
 
     /// const: [This, is, great, 0, 0]
     const THIS_IS_GREAT: [i128; 5] = [3, 4, 5, 0, 0];
@@ -302,41 +302,46 @@ mod tests {
     /// const: [This, is, bad, 0, 0]
     const THIS_IS_BAD: [i128; 5] = [3, 4, 11, 0, 0];
 
+    const TEST_SENTIMENT_INPUTS: [[i128; 5]; 4] =
+        [I_LOVE_THIS, I_HATE_THIS, THIS_IS_GREAT, THIS_IS_BAD];
+
+    const TEST_SENTIMENT_OUTPUTS: [i128; 4] = [1, 0, 1, 0];
+
     #[test]
     fn test_custom_sentiment_sum() {
         init_logger();
-        let input_vector = THIS_IS_BAD;
-
-        let text_classification = ONNXProgram {
-            model_path: "../onnx-tracer/models/sentiment_sum/network.onnx".into(),
-            inputs: Tensor::new(Some(&input_vector), &[1, 5]).unwrap(), // Example input
-        };
-        let program_bytecode = text_classification.decode();
-        let pp = JoltSNARK::<Fr, PCS, KeccakTranscript>::prover_preprocess(
-            program_bytecode[0..8].to_vec(),
-        );
-        // println!("Program code: {:#?}", program_bytecode[7]);
 
         // Load model
-        let model = model(&text_classification.model_path);
+        let mut sentiment_model = builder::embedding_sentiment_model();
+        let program_bytecode = onnx_tracer::decode_model(sentiment_model.clone());
+        debug!("Program code: {program_bytecode:#?}");
+        let pp: JoltProverPreprocessing<Fr, PCS, KeccakTranscript> =
+            JoltSNARK::prover_preprocess(program_bytecode);
 
         // Run inference
-        let result = model
-            .forward(&[text_classification.inputs.clone()])
-            .unwrap();
-        let output = result.outputs[0].clone();
-        info!("Output: {output:#?}",);
+        for (i, input) in TEST_SENTIMENT_INPUTS.iter().enumerate() {
+            let result = sentiment_model
+                .forward(&[Tensor::new(Some(input), &[1, 5]).unwrap()])
+                .unwrap();
+            let output = result.outputs[0].clone();
+            assert_eq!(output.inner[0], TEST_SENTIMENT_OUTPUTS[i]);
+        }
+        sentiment_model.clear_execution_trace();
 
-        let raw_trace = text_classification.trace();
+        let raw_trace = onnx_tracer::execution_trace(
+            sentiment_model,
+            &Tensor::new(Some(&THIS_IS_GREAT), &[1, 5]).unwrap(),
+        );
         info!("Raw trace: {raw_trace:#?}");
 
         // Prove
-        let execution_trace = jolt_execution_trace(raw_trace[0..8].to_vec());
+        let execution_trace = jolt_execution_trace(raw_trace);
         info!("Execution trace: {execution_trace:#?}");
+        info!("Execution trace length: {}", execution_trace.len());
         check_mcc(&execution_trace);
 
-        // let snark: JoltSNARK<Fr, PCS, KeccakTranscript> =
-        //     JoltSNARK::prove(pp.clone(), execution_trace);
+        let snark: JoltSNARK<Fr, PCS, KeccakTranscript> =
+            JoltSNARK::prove(pp.clone(), execution_trace);
 
         // // Verify
         // snark.verify((&pp).into()).unwrap();
@@ -357,14 +362,26 @@ mod tests {
         let model = model(&text_classification.model_path);
 
         // Run inference
-        let result = model
-            .forward(&[text_classification.inputs.clone()])
-            .unwrap();
-        let output = result.outputs[0].clone();
-        info!("Output: {output:#?}",);
+        for (i, input) in TEST_SENTIMENT_INPUTS.iter().enumerate() {
+            let result = model
+                .forward(&[Tensor::new(Some(input), &[1, 5]).unwrap()])
+                .unwrap();
+            let output = result.outputs[0].clone();
+            assert_eq!(
+                output.inner[0], TEST_SENTIMENT_OUTPUTS[i],
+                "Input: {input:?}, Output: {output:?}, Expected: {}",
+                TEST_SENTIMENT_OUTPUTS[i]
+            );
+        }
 
-        let raw_trace = text_classification.trace();
-        debug!("Raw trace: {raw_trace:#?}",);
+        // let result = model
+        //     .forward(&[text_classification.inputs.clone()])
+        //     .unwrap();
+        // let output = result.outputs[0].clone();
+        // info!("Output: {output:#?}",);
+
+        // let raw_trace = text_classification.trace();
+        // debug!("Raw trace: {raw_trace:#?}",);
     }
 
     #[test]
