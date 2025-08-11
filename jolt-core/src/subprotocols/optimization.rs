@@ -17,6 +17,7 @@ use crate::{
     subprotocols::{
         karatsuba::{coeff_kara_16, coeff_kara_32, coeff_kara_4, coeff_kara_8},
         sumcheck::SumcheckInstanceProof,
+        toom::{eval_toom16, eval_toom4, eval_toom8, FieldMulSmall},
     },
     utils::{
         errors::ProofVerifyError,
@@ -25,8 +26,31 @@ use crate::{
     },
 };
 
-#[inline]
-fn compute_mle_product_evals_generic<F: JoltField, const D: usize, const D_PLUS_ONE: usize>(
+fn compute_mle_product_coeffs<F: FieldMulSmall, const D: usize, const D_PLUS_ONE: usize>(
+    mle_vec: &[&mut MultilinearPolynomial<F>],
+    round: usize,
+    log_T: usize,
+    factor: &F,
+    E_table: &[Vec<F>],
+) -> Vec<F> {
+    match D {
+        32 => compute_mle_product_coeffs_katatsuba::<F, 32, 33>(
+            mle_vec, round, log_T, factor, E_table,
+        ),
+        16 => compute_mle_product_coeffs_katatsuba::<F, 16, 17>(
+            mle_vec, round, log_T, factor, E_table,
+        ),
+        8 => compute_mle_product_coeffs_toom::<F, 8, 9>(mle_vec, round, log_T, factor, E_table),
+        4 => compute_mle_product_coeffs_toom::<F, 4, 5>(mle_vec, round, log_T, factor, E_table),
+        _ => panic!(
+            "Unsupported number of polynomials, got {} and expected 32, 16, 8, or 4",
+            D
+        ),
+    }
+}
+
+#[inline(always)]
+fn compute_mle_product_coeffs_toom<F: FieldMulSmall, const D: usize, const D_PLUS_ONE: usize>(
     mle_vec: &[&mut MultilinearPolynomial<F>],
     round: usize,
     log_T: usize,
@@ -34,6 +58,83 @@ fn compute_mle_product_evals_generic<F: JoltField, const D: usize, const D_PLUS_
     E_table: &[Vec<F>],
 ) -> Vec<F> {
     let evals = (0..(log_T - round - 1).pow2())
+        .into_par_iter()
+        .map(|j| {
+            let j_factor = if round < log_T - 1 {
+                factor.mul_1_optimized(E_table[round][j])
+            } else {
+                *factor
+            };
+
+            // let span = tracing::span!(tracing::Level::INFO, "Initialize left and right arrays");
+            // let _guard = span.enter();
+            let polys = (0..D)
+                .map(|i| {
+                    if i == 0 {
+                        (
+                            j_factor.mul_1_optimized(mle_vec[i].get_bound_coeff(j)),
+                            j_factor.mul_1_optimized(
+                                mle_vec[i].get_bound_coeff(j + mle_vec[i].len() / 2),
+                            ),
+                        )
+                    } else {
+                        (
+                            mle_vec[i].get_bound_coeff(j),
+                            mle_vec[i].get_bound_coeff(j + mle_vec[i].len() / 2),
+                        )
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            // drop(_guard);
+            // drop(span);
+
+            // let span = tracing::span!(tracing::Level::INFO, "Karatsuba step");
+            // let _guard = span.enter();
+
+            let res: [F; D_PLUS_ONE] = match D {
+                16 => eval_toom16(polys[..16].try_into().unwrap())[..]
+                    .try_into()
+                    .unwrap(),
+                8 => eval_toom8(polys[..8].try_into().unwrap())[..]
+                    .try_into()
+                    .unwrap(),
+                4 => eval_toom4(polys[..4].try_into().unwrap())[..]
+                    .try_into()
+                    .unwrap(),
+                _ => panic!(
+                    "Unsupported number of polynomials, got {} and expected 16, 8, or 4",
+                    D
+                ),
+            };
+
+            // drop(_guard);
+            // drop(span);
+
+            res
+        })
+        .reduce(
+            || [F::zero(); D_PLUS_ONE],
+            |mut running, new| {
+                for i in 0..D_PLUS_ONE {
+                    running[i] += new[i];
+                }
+                running
+            },
+        );
+
+    let univariate_poly = UniPoly::from_evals(&evals);
+    univariate_poly.coeffs
+}
+
+fn compute_mle_product_coeffs_katatsuba<F: JoltField, const D: usize, const D_PLUS_ONE: usize>(
+    mle_vec: &[&mut MultilinearPolynomial<F>],
+    round: usize,
+    log_T: usize,
+    factor: &F,
+    E_table: &[Vec<F>],
+) -> Vec<F> {
+    let coeffs = (0..(log_T - round - 1).pow2())
         .into_par_iter()
         .map(|j| {
             let j_factor = if round < log_T - 1 {
@@ -125,7 +226,7 @@ fn compute_mle_product_evals_generic<F: JoltField, const D: usize, const D_PLUS_
             },
         );
 
-    Vec::from(evals)
+    Vec::from(coeffs)
 }
 
 #[inline]
@@ -186,16 +287,16 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDMulSumCheckProof<F, ProofT
             let _guard = inner_span.enter();
 
             let mle_product_evals = match mle_vec.len() {
-                32 => compute_mle_product_evals_generic::<F, 32, 33>(
+                32 => compute_mle_product_coeffs_katatsuba::<F, 32, 33>(
                     mle_vec, round, log_T, &factor, &E_table,
                 ),
-                16 => compute_mle_product_evals_generic::<F, 16, 17>(
+                16 => compute_mle_product_coeffs_katatsuba::<F, 16, 17>(
                     mle_vec, round, log_T, &factor, &E_table,
                 ),
-                8 => compute_mle_product_evals_generic::<F, 8, 9>(
+                8 => compute_mle_product_coeffs_katatsuba::<F, 8, 9>(
                     mle_vec, round, log_T, &factor, &E_table,
                 ),
-                4 => compute_mle_product_evals_generic::<F, 4, 5>(
+                4 => compute_mle_product_coeffs_katatsuba::<F, 4, 5>(
                     mle_vec, round, log_T, &factor, &E_table,
                 ),
                 _ => panic!(
@@ -719,7 +820,7 @@ mod test {
         field::JoltField,
         poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         subprotocols::optimization::{
-            compute_initial_eval_claim, LargeDMulSumCheckProof, AppendixCSumCheckProof,
+            compute_initial_eval_claim, AppendixCSumCheckProof, LargeDMulSumCheckProof,
             NaiveSumCheckProof,
         },
         utils::{

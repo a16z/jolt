@@ -6,6 +6,7 @@ use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign, Sub};
 use crate::utils::gaussian_elimination::gaussian_elimination;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 use ark_serialize::*;
+use num::{Integer, Signed};
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
 
@@ -38,9 +39,58 @@ impl<F: JoltField> UniPoly<F> {
         }
     }
 
+    fn toom_eval_xs(deg: usize) -> Vec<F> {
+        let mut xs = Vec::with_capacity(deg);
+        let mut cur_val = F::zero();
+
+        for i in 0..deg {
+            if i.is_odd() {
+                xs.push(cur_val);
+            } else {
+                xs.push(F::zero() - cur_val);
+            }
+
+            if i < deg - 1 && i.is_even() {
+                cur_val += F::one();
+            }
+        }
+
+        xs
+    }
+
+    pub fn from_evals_toom(evals: &[F]) -> Self {
+        let n = evals.len();
+        let xs = Self::toom_eval_xs(n - 1);
+
+        let mut interpol_mat: Vec<Vec<F>> = Vec::with_capacity(n);
+        for i in 0..n - 1 {
+            let mut row = Vec::with_capacity(n);
+            let x = xs[i];
+            row.push(F::one());
+            row.push(x);
+            for j in 2..n {
+                row.push(row[j - 1] * x);
+            }
+            row.push(evals[i]);
+            interpol_mat.push(row);
+        }
+
+        let mut row = Vec::with_capacity(n);
+        for _ in 0..n - 1 {
+            row.push(F::zero());
+        }
+        row.push(F::one());
+        row.push(evals[n - 1]);
+        interpol_mat.push(row);
+
+        UniPoly {
+            coeffs: gaussian_elimination(&mut interpol_mat),
+        }
+    }
+
     fn vandermonde_interpolation(evals: &[F]) -> Vec<F> {
         let n = evals.len();
-        let xs: Vec<F> = (0..n).map(|x| F::from_u64(x as u64)).collect();
+        let xs: Vec<F> = (0..evals.len()).map(|x| F::from_u64(x as u64)).collect();
 
         let mut vandermonde: Vec<Vec<F>> = Vec::with_capacity(n);
         for i in 0..n {
@@ -382,8 +432,34 @@ impl<F: JoltField> AppendToTranscript for CompressedUniPoly<F> {
 mod tests {
     use super::*;
     use ark_bn254::Fr;
+    use ark_std::test_rng;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
+
+    #[test]
+    fn test_from_evals_toom() {
+        test_from_evals_toom_helper::<Fr>(4);
+        test_from_evals_toom_helper::<Fr>(8);
+        test_from_evals_toom_helper::<Fr>(16);
+    }
+
+    fn test_from_evals_toom_helper<F: JoltField>(deg: usize) {
+        let mut rng = test_rng();
+        let coeffs = (0..=deg).map(|_| F::random(&mut rng)).collect::<Vec<_>>();
+        let univariate_poly = UniPoly {
+            coeffs: coeffs.clone(),
+        };
+
+        let xs = UniPoly::toom_eval_xs(deg);
+        let mut evals = xs
+            .iter()
+            .map(|x| univariate_poly.evaluate(x))
+            .collect::<Vec<_>>();
+        evals.push(*coeffs.last().unwrap());
+
+        let univariate_poly_from_evals_toom = UniPoly::from_evals_toom(&evals);
+        assert_eq!(univariate_poly, univariate_poly_from_evals_toom);
+    }
 
     #[test]
     fn test_from_evals_quad() {

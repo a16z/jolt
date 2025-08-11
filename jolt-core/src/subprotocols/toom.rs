@@ -15,6 +15,15 @@ fn double<F: JoltField>(a: &F) -> F {
     *a + *a
 }
 
+#[inline(always)]
+pub fn toom_eval_points<F: JoltField>(n: usize) -> Vec<F> {
+    let mut points = Vec::with_capacity(n);
+    for i in 0..n {
+        points.push(F::from_u64(i as u64));
+    }
+    points
+}
+
 /// Extension trait exposing small integer multiplication for field elements.
 /// Implement only for concrete field types that have an efficient intrinsic.
 /// Default (blanket) implementation deliberately omitted so that code that
@@ -317,7 +326,7 @@ pub fn eval_toom3<F: FieldMulSmall>(p: [(F, F); 3]) -> (F, F, F, F) {
 //  total: 3 * 2 + 5 = 11 mults
 // -----------------------------------------------------------------------------
 #[inline]
-pub fn eval_toom4<F: FieldMulSmall>(p: [(F, F); 4]) -> (F, F, F, F, F) {
+pub fn eval_toom4<F: FieldMulSmall>(p: [(F, F); 4]) -> [F; 5] {
     // ---- first level:  two independent quadratic products ----
     let (a0, a1, a_inf) = eval_toom2(p[0], p[1]); // A on {0,1,∞}
     let (b0, b1, b_inf) = eval_toom2(p[2], p[3]); // B on {0,1,∞}
@@ -347,7 +356,7 @@ pub fn eval_toom4<F: FieldMulSmall>(p: [(F, F); 4]) -> (F, F, F, F, F) {
     let r2 = a_2 * b_2;
     let r_inf = a_inf * b_inf;
 
-    (r0, r1, r_m1, r2, r_inf)
+    [r0, r1, r_m1, r2, r_inf]
 }
 
 // -----------------------------------------------------------------------------
@@ -483,8 +492,8 @@ pub fn eval_toom5<F: FieldMulSmall>(p: [(F, F); 5]) -> (F, F, F, F, F, F) {
 #[inline]
 pub fn eval_toom8<F: FieldMulSmall>(p: [(F, F); 8]) -> [F; 9] {
     // ---- first level: two quartic blocks ----------------------------------
-    let (c0, c1, c_m1, c2, c_inf) = eval_toom4(p[0..4].try_into().unwrap());
-    let (d0, d1, d_m1, d2, d_inf) = eval_toom4(p[4..8].try_into().unwrap());
+    let [c0, c1, c_m1, c2, c_inf] = eval_toom4(p[0..4].try_into().unwrap());
+    let [d0, d1, d_m1, d2, d_inf] = eval_toom4(p[4..8].try_into().unwrap());
 
     // ---- compute C(x) & D(x) on the four extra x values -------------------
     // Optimized: batch compute all 4 extra points for both C and D to avoid redundant computation
@@ -654,6 +663,8 @@ pub fn eval_toom16<F: FieldMulSmall>(p: [(F, F); 16]) -> [F; 17] {
 
 #[cfg(test)]
 mod tests {
+    use crate::{poly::unipoly::UniPoly, subprotocols::karatsuba::coeff_kara_16};
+
     use super::*;
     use ark_bn254::Fr;
     use ark_ff::{One, UniformRand, Zero};
@@ -806,16 +817,16 @@ mod tests {
         let r = eval_toom4(polys);
 
         let pts = [
-            (Fr::from(0u8), r.0),
-            (Fr::from(1u8), r.1),
-            (-Fr::one(), r.2),
-            (Fr::from(2u8), r.3),
+            (Fr::from(0u8), r[0]),
+            (Fr::from(1u8), r[1]),
+            (-Fr::one(), r[2]),
+            (Fr::from(2u8), r[3]),
         ];
         for (x, want) in pts {
             assert_eq!(want, eval_product(&polys, x));
         }
         // ∞
-        assert_eq!(r.4, polys.iter().map(|p| p.1 - p.0).product::<Fr>());
+        assert_eq!(r[4], polys.iter().map(|p| p.1 - p.0).product::<Fr>());
     }
 
     #[test]
@@ -893,5 +904,26 @@ mod tests {
         }
         // ∞
         assert_eq!(r[16], polys.iter().map(|p| p.1 - p.0).product::<Fr>());
+
+        // Compare the result with Karatsuba
+        let left: [Fr; 16] = core::array::from_fn(|i| {
+            if i % 2 == 0 {
+                polys[i / 2].0
+            } else {
+                polys[i / 2].1 - polys[i / 2].0
+            }
+        });
+
+        let right: [Fr; 16] = core::array::from_fn(|i| {
+            if i % 2 == 0 {
+                polys[i / 2 + 8].0
+            } else {
+                polys[i / 2 + 8].1 - polys[i / 2 + 8].0
+            }
+        });
+
+        let kara_res = coeff_kara_16(&left, &right);
+        let univariate_poly = UniPoly::from_evals_toom(&r);
+        assert_eq!(univariate_poly.coeffs, kara_res);
     }
 }
