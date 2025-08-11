@@ -320,12 +320,12 @@ impl<F: JoltField> StreamWitness<F> for RamRa {
         &self,
         preprocessing: &'a JoltProverPreprocessing<F, PCS>,
         cycle: &RV32IMCycle,
-        next_cycle: &RV32IMCycle,
+        _next_cycle: &RV32IMCycle,
     ) -> Self::WitnessType
     where PCS: CommitmentScheme<Field = F> {
         let i = self.0;
         // TODO: Compute this up front?
-        let d = self.ram_d();
+        let d = preprocessing.ram_d;
         debug_assert!(i < d, "Invalid index for ram ra: {i}");
         let v = {
             remap_address(
@@ -408,6 +408,18 @@ impl AllCommittedPolynomials {
                 .len()
         }
     }
+
+    pub fn ram_d() -> usize {
+        // this is kind of jank but fine for now ig
+        unsafe {
+            ALL_COMMITTED_POLYNOMIALS
+                .get()
+                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")
+                .iter()
+                .filter(|poly| matches!(poly, CommittedPolynomial::RamRa(_)))
+                .count()
+        }
+    }
 }
 
 impl Drop for AllCommittedPolynomials {
@@ -449,18 +461,6 @@ impl CommittedPolynomial {
                 .find_position(|poly| *poly == self)
                 .unwrap()
                 .0
-        }
-    }
-
-    fn ram_d(&self) -> usize {
-        // this is kind of jank but fine for now ig
-        unsafe {
-            ALL_COMMITTED_POLYNOMIALS
-                .get()
-                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")
-                .iter()
-                .filter(|poly| matches!(poly, CommittedPolynomial::RamRa(_)))
-                .count()
         }
     }
 
@@ -568,7 +568,7 @@ impl CommittedPolynomial {
                 MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(addresses, K_chunk))
             }
             CommittedPolynomial::RamRa(i) => {
-                let d = self.ram_d();
+                let d = preprocessing.ram_d;
                 debug_assert!(*i < d);
                 let addresses: Vec<_> = trace
                     .par_iter()

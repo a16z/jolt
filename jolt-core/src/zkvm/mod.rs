@@ -26,7 +26,7 @@ use crate::{
         bytecode::BytecodePreprocessing,
         dag::{jolt_dag::JoltDAG, proof_serialization::JoltProof, state_manager::StateManager},
         ram::RAMPreprocessing,
-        witness::DTH_ROOT_OF_K,
+        witness::{AllCommittedPolynomials, DTH_ROOT_OF_K},
     },
 };
 
@@ -96,6 +96,7 @@ where
     pub generators: PCS::ProverSetup,
     pub shared: JoltSharedPreprocessing,
     field: F::SmallValueLookupTables,
+    ram_d: usize,
 }
 
 impl<F, PCS> Serializable for JoltProverPreprocessing<F, PCS>
@@ -190,10 +191,13 @@ where
 
         let generators = PCS::setup_prover(DTH_ROOT_OF_K.log_2() + max_T.log_2());
 
+        let ram_d = AllCommittedPolynomials::ram_d();
+
         JoltProverPreprocessing {
             generators,
             shared,
             field: small_value_lookup_tables,
+            ram_d,
         }
     }
 
