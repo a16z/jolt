@@ -21,7 +21,8 @@ license-file = "LICENSE"
 keywords = ["SNARK", "cryptography", "proofs", "zkVM"]
 
 [features]
-default = ["host"]
+default = ["host", "allocative"]
+# default = ["host"]
 host = ["dep:reqwest", "dep:tokio", "prover"]
 prover = ["parallel"]
 parallel = [
@@ -31,6 +32,7 @@ parallel = [
     "ark-ff/asm",
     "rayon",
 ]
+allocative = []
 test_incremental = []
 
 [dependencies]
@@ -88,12 +90,15 @@ derive_more = { version = "2.0.1", features = ["from"] }
 paste = "1.0.15"
 dory = { git = "https://github.com/spaceandtimefdn/sxt-dory", branch = "feat/return_row_commitments" }
 lazy_static = "1.5.0"
+allocative = "0.3.4"
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
 iai-callgrind = "0.10.2"
 serial_test = "3.2.0"
-sha2_inline = { package = "jolt-inlines-sha2", path = "../jolt-inlines/sha2", features = ["host"] }
+sha2_inline = { package = "jolt-inlines-sha2", path = "../jolt-inlines/sha2", features = [
+    "host",
+] }
 
 [build-dependencies]
 common = { path = "../common" }

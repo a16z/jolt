@@ -1,5 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
+use crate::field::allocative_ark::MaybeAllocative;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 
 use crate::{
@@ -21,6 +22,7 @@ use crate::{
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
+use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 use tracer::instruction::RAMAccess;
@@ -28,6 +30,7 @@ use tracer::instruction::RAMAccess;
 /// A collection of vectors that are used in each of the first log(T / num_chunks)
 /// rounds of sumcheck. There is one `DataBuffers` struct per thread/chunk, reused
 /// across all log(T / num_chunks) rounds.
+#[derive(Allocative)]
 struct DataBuffers<F: JoltField> {
     /// Contains
     ///     Val(k, j', 0, ..., 0)
@@ -48,6 +51,7 @@ struct DataBuffers<F: JoltField> {
     dirty_indices: Vec<usize>,
 }
 
+#[derive(Allocative)]
 struct ReadWriteCheckingProverState<F: JoltField> {
     ram_addresses: Vec<Option<u64>>,
     chunk_size: usize,
@@ -64,7 +68,7 @@ struct ReadWriteCheckingProverState<F: JoltField> {
     val: Option<MultilinearPolynomial<F>>,
 }
 
-impl<F: JoltField> ReadWriteCheckingProverState<F> {
+impl<F: JoltField + MaybeAllocative> ReadWriteCheckingProverState<F> {
     #[tracing::instrument(skip_all, name = "RamReadWriteCheckingProverState::initialize")]
     fn initialize<PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript>(
         initial_memory_state: &[u32],
@@ -301,6 +305,7 @@ pub struct ReadWriteSumcheckClaims<F: JoltField> {
     inc_claim: F,
 }
 
+#[derive(Allocative)]
 pub struct RamReadWriteChecking<F: JoltField> {
     K: usize,
     T: usize,
@@ -319,7 +324,7 @@ pub struct RamReadWriteCheckingProof<F: JoltField, ProofTranscript: Transcript> 
     pub claims: ReadWriteSumcheckClaims<F>,
 }
 
-impl<F: JoltField> RamReadWriteChecking<F> {
+impl<F: JoltField + MaybeAllocative> RamReadWriteChecking<F> {
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         K: usize,
         T: usize,
@@ -962,7 +967,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for RamReadWriteChecking<F> {
+impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for RamReadWriteChecking<F> {
     fn degree(&self) -> usize {
         3
     }

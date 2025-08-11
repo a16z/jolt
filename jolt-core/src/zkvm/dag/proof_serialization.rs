@@ -11,7 +11,7 @@ use ark_serialize::{
 use num::FromPrimitive;
 use tracer::JoltDevice;
 
-use crate::zkvm::witness::AllCommittedPolynomials;
+use crate::{field::allocative_ark::MaybeAllocative, zkvm::witness::AllCommittedPolynomials};
 use crate::{
     field::JoltField,
     poly::{
@@ -126,7 +126,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F, PCS, FS> {
+impl<F: JoltField + MaybeAllocative, PCS: CommitmentScheme<Field = F>, FS: Transcript>
+    JoltProof<F, PCS, FS>
+{
     pub fn from_prover_state_manager(mut state_manager: StateManager<'_, F, FS, PCS>) -> Self {
         let prover_state = state_manager.prover_state.as_mut().unwrap();
         let openings = std::mem::take(&mut prover_state.accumulator.borrow_mut().openings);

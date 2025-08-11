@@ -52,10 +52,6 @@ pub trait JoltField:
     fn compute_lookup_tables() -> Self::SmallValueLookupTables {
         unimplemented!("Small-value lookup tables are unimplemented")
     }
-    /// Initializes the static lookup tables using the provided values.
-    fn initialize_lookup_tables(_init: Self::SmallValueLookupTables) {
-        unimplemented!("Small-value lookup tables are unimplemented")
-    }
     /// Conversion from primitive integers to field elements in Montgomery form.
     fn from_u8(n: u8) -> Self;
     fn from_u16(n: u16) -> Self;
@@ -176,5 +172,6 @@ where
     }
 }
 
+pub mod allocative_ark;
 pub mod ark;
 pub mod tracked_ark;

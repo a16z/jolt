@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::field::allocative_ark::MaybeAllocative;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
@@ -13,21 +14,24 @@ use crate::utils::math::Math;
 use crate::utils::transcript::Transcript;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::witness::VirtualPolynomial;
+use allocative::Allocative;
 use rayon::prelude::*;
 
 const DEGREE: usize = 3;
 
+#[derive(Allocative)]
 struct HammingBooleanityProverState<F: JoltField> {
     eq_r_cycle: MultilinearPolynomial<F>,
     H: MultilinearPolynomial<F>,
 }
 
+#[derive(Allocative)]
 pub struct HammingBooleanitySumcheck<F: JoltField> {
     prover_state: Option<HammingBooleanityProverState<F>>,
     log_T: usize,
 }
 
-impl<F: JoltField> HammingBooleanitySumcheck<F> {
+impl<F: JoltField + MaybeAllocative> HammingBooleanitySumcheck<F> {
     pub fn new_prover(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
@@ -73,7 +77,7 @@ impl<F: JoltField> HammingBooleanitySumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for HammingBooleanitySumcheck<F> {
+impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for HammingBooleanitySumcheck<F> {
     fn degree(&self) -> usize {
         DEGREE
     }

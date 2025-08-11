@@ -1,3 +1,5 @@
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
 #[cfg(not(target_arch = "wasm32"))]
 use memory_stats::memory_stats;
 use std::{
@@ -56,15 +58,29 @@ pub fn print_current_memory_usage(label: &str) {
     if let Some(usage) = memory_stats() {
         let memory_usage_gb = usage.physical_mem as f64 / 1_000_000_000.0;
         if memory_usage_gb >= 1.0 {
-            println!("\"{label}\" current memory usage: {memory_usage_gb} GB");
+            println!("\"{label}\" current memory usage: {memory_usage_gb:.2} GB");
         } else {
             println!(
-                "\"{}\" current memory usage: {} MB",
+                "\"{}\" current memory usage: {:.2} MB",
                 label,
                 memory_usage_gb * 1000.0
             );
         }
     } else {
         println!("Failed to get current memory usage (\"{label}\")");
+    }
+}
+
+#[cfg(feature = "allocative")]
+pub fn print_data_structure_heap_usage<T: Allocative>(label: &str, data: &T) {
+    let memory_usage_gb = allocative::size_of_unique_allocated_data(data) as f64 / 1_000_000_000.0;
+    if memory_usage_gb >= 1.0 {
+        println!("\"{label}\" memory usage: {memory_usage_gb:.2} GB");
+    } else {
+        println!(
+            "\"{}\" memory usage: {:.2} MB",
+            label,
+            memory_usage_gb * 1000.0
+        );
     }
 }

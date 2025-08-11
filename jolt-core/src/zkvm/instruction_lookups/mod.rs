@@ -1,16 +1,18 @@
 use rayon::prelude::*;
 use tracer::instruction::RV32IMCycle;
 
+#[cfg(feature = "allocative")]
+use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
-    field::JoltField,
+    field::{allocative_ark::MaybeAllocative, JoltField},
     poly::{
         commitment::commitment_scheme::CommitmentScheme, eq_poly::EqPolynomial,
         opening_proof::SumcheckId,
     },
     subprotocols::sumcheck::SumcheckInstance,
     utils::{thread::unsafe_allocate_zero_vec, transcript::Transcript},
-    zkvm::dag::{stage::SumcheckStages, state_manager::StateManager},
     zkvm::{
+        dag::{stage::SumcheckStages, state_manager::StateManager},
         instruction::LookupQuery,
         instruction_lookups::{
             booleanity::BooleanitySumcheck, hamming_weight::HammingWeightSumcheck,
@@ -37,8 +39,8 @@ const RA_PER_LOG_M: usize = LOG_M / LOG_K_CHUNK;
 #[derive(Default)]
 pub struct LookupsDag {}
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStages<F, T, PCS>
-    for LookupsDag
+impl<F: JoltField + MaybeAllocative, PCS: CommitmentScheme<Field = F>, T: Transcript>
+    SumcheckStages<F, T, PCS> for LookupsDag
 {
     fn stage3_prover_instances(
         &mut self,
@@ -59,6 +61,19 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         let read_raf = ReadRafSumcheck::new_prover(sm, eq_r_cycle.clone());
         let booleanity = BooleanitySumcheck::new_prover(sm, F.clone());
         let hamming_weight = HammingWeightSumcheck::new_prover(sm, F);
+
+        #[cfg(feature = "allocative")]
+        {
+            print_data_structure_heap_usage("Instruction execution ReadRafSumcheck", &read_raf);
+            print_data_structure_heap_usage(
+                "Instruction execution BooleanitySumcheck",
+                &booleanity,
+            );
+            print_data_structure_heap_usage(
+                "Instruction execution HammingWeightSumcheck",
+                &hamming_weight,
+            );
+        }
 
         vec![
             Box::new(read_raf),

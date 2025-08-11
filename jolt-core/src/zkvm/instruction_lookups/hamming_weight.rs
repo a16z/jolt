@@ -1,11 +1,12 @@
 use std::{cell::RefCell, rc::Rc};
 
+use allocative::Allocative;
 use rayon::prelude::*;
 
 use super::{D, LOG_K_CHUNK};
 
 use crate::{
-    field::JoltField,
+    field::{allocative_ark::MaybeAllocative, JoltField},
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
@@ -16,24 +17,28 @@ use crate::{
     },
     subprotocols::sumcheck::SumcheckInstance,
     utils::transcript::Transcript,
-    zkvm::dag::state_manager::StateManager,
-    zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
+    zkvm::{
+        dag::state_manager::StateManager,
+        witness::{CommittedPolynomial, VirtualPolynomial},
+    },
 };
 
 const DEGREE: usize = 1;
 
+#[derive(Allocative)]
 struct HammingProverState<F: JoltField> {
     /// ra_i polynomials
     ra: [MultilinearPolynomial<F>; D],
 }
 
+#[derive(Allocative)]
 pub struct HammingWeightSumcheck<F: JoltField> {
     gamma: [F; D],
     prover_state: Option<HammingProverState<F>>,
     r_cycle: Vec<F>,
 }
 
-impl<F: JoltField> HammingWeightSumcheck<F> {
+impl<F: JoltField + MaybeAllocative> HammingWeightSumcheck<F> {
     #[tracing::instrument(skip_all, name = "InstructionHammingWeightSumcheck::new_prover")]
     pub fn new_prover(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
@@ -87,7 +92,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
+impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for HammingWeightSumcheck<F> {
     fn degree(&self) -> usize {
         DEGREE
     }

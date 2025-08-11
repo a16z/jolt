@@ -1,9 +1,13 @@
 use std::collections::HashMap;
 
+use crate::field::allocative_ark::MaybeAllocative;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance};
+use crate::utils::profiling::print_current_memory_usage;
+#[cfg(feature = "allocative")]
+use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::Transcript;
 use crate::zkvm::bytecode::BytecodeDag;
@@ -27,7 +31,7 @@ impl JoltDAG {
     #[allow(clippy::type_complexity)]
     pub fn prove<
         'a,
-        F: JoltField,
+        F: JoltField + MaybeAllocative,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
@@ -67,6 +71,7 @@ impl JoltDAG {
         drop(commitments);
 
         // Stage 1:
+        print_current_memory_usage("Stage 1 baseline");
         let span = tracing::span!(tracing::Level::INFO, "Stage 1 sumchecks");
         let _guard = span.enter();
 
@@ -85,6 +90,7 @@ impl JoltDAG {
         drop(span);
 
         // Stage 2:
+        print_current_memory_usage("Stage 2 baseline");
         let span = tracing::span!(tracing::Level::INFO, "Stage 2 sumchecks");
         let _guard = span.enter();
 
@@ -117,6 +123,7 @@ impl JoltDAG {
         drop(span);
 
         // Stage 3:
+        print_current_memory_usage("Stage 3 baseline");
         let span = tracing::span!(tracing::Level::INFO, "Stage 3 sumchecks");
         let _guard = span.enter();
 
@@ -148,6 +155,7 @@ impl JoltDAG {
         drop(span);
 
         // Stage 4:
+        print_current_memory_usage("Stage 4 baseline");
         let span = tracing::span!(tracing::Level::INFO, "Stage 4 sumchecks");
         let _guard = span.enter();
 
@@ -185,6 +193,10 @@ impl JoltDAG {
                 polynomial.generate_witness(preprocessing, trace),
             );
         }
+        #[cfg(feature = "allocative")]
+        print_data_structure_heap_usage("Committed polynomials map", &polynomials_map);
+
+        print_current_memory_usage("Stage 5 baseline");
         let opening_proof = accumulator.borrow_mut().reduce_and_prove(
             polynomials_map,
             opening_proof_hints,
@@ -233,31 +245,13 @@ impl JoltDAG {
 
     pub fn verify<
         'a,
-        F: JoltField,
+        F: JoltField + MaybeAllocative,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
         mut state_manager: StateManager<'a, F, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {
         state_manager.fiat_shamir_preamble();
-        // #[cfg(test)]
-        // {
-        //     let prover_transcript = prover_state_manager.get_transcript().take();
-        //     state_manager
-        //         .transcript
-        //         .borrow_mut()
-        //         .compare_to(prover_transcript);
-
-        //     let prover_opening_accumulator = self
-        //         .prover_state_manager
-        //         .get_prover_accumulator()
-        //         .borrow()
-        //         .clone();
-        //     state_manager
-        //         .get_verifier_accumulator()
-        //         .borrow_mut()
-        //         .compare_to(prover_opening_accumulator);
-        // }
 
         let ram_K = state_manager.ram_K;
         let bytecode_d = state_manager.get_verifier_data().0.shared.bytecode.d;
@@ -269,9 +263,6 @@ impl JoltDAG {
         for commitment in commitments.borrow().iter() {
             transcript.borrow_mut().append_serializable(commitment);
         }
-
-        // // Receive opening claims from prover's accumulator
-        // self.receive_claims().context("Receive claims")?;
 
         // Stage 1:
         let (preprocessing, _, trace_length) = state_manager.get_verifier_data();
@@ -409,7 +400,7 @@ impl JoltDAG {
     #[tracing::instrument(skip_all)]
     fn generate_and_commit_polynomials<
         'a,
-        F: JoltField,
+        F: JoltField + MaybeAllocative,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(

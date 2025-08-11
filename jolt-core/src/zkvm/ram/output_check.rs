@@ -1,7 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
-    field::JoltField,
+    field::{allocative_ark::MaybeAllocative, JoltField},
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
@@ -17,17 +17,19 @@ use crate::{
     },
     subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
     utils::{expanding_table::ExpandingTable, math::Math, transcript::Transcript},
-    zkvm::dag::state_manager::StateManager,
     zkvm::{
+        dag::state_manager::StateManager,
         ram::remap_address,
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
+use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::RAM_START_ADDRESS;
 use rayon::prelude::*;
 use tracer::JoltDevice;
 
+#[derive(Allocative)]
 struct OutputSumcheckProverState<F: JoltField> {
     /// Val(k, 0)
     val_init: MultilinearPolynomial<F>,
@@ -120,13 +122,15 @@ pub struct OutputProof<F: JoltField, ProofTranscript: Transcript> {
 /// In plain English: the final memory state (Val_final) should be consistent with
 /// the expected program outputs (Val_io) at the indices where the program
 /// inputs/outputs are stored (io_range).
+#[derive(Allocative)]
 pub struct OutputSumcheck<F: JoltField> {
     K: usize,
+    #[allocative(skip)]
     verifier_state: Option<OutputSumcheckVerifierState<F>>,
     prover_state: Option<OutputSumcheckProverState<F>>,
 }
 
-impl<F: JoltField> OutputSumcheck<F> {
+impl<F: JoltField + MaybeAllocative> OutputSumcheck<F> {
     #[tracing::instrument(skip_all, name = "OutputSumcheck")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         initial_ram_state: Vec<u32>,
@@ -179,7 +183,7 @@ impl<F: JoltField> OutputSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for OutputSumcheck<F> {
+impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for OutputSumcheck<F> {
     fn degree(&self) -> usize {
         3
     }
@@ -342,6 +346,7 @@ impl<F: JoltField> SumcheckInstance<F> for OutputSumcheck<F> {
     }
 }
 
+#[derive(Allocative)]
 struct ValFinalSumcheckProverState<F: JoltField> {
     inc: MultilinearPolynomial<F>,
     wa: MultilinearPolynomial<F>,
@@ -355,6 +360,7 @@ struct ValFinalSumcheckProverState<F: JoltField> {
 /// into this sumcheck, which reduces it to claims about `Inc` and `wa`.
 /// Note that the verifier is assumed to be able to evaluate Val_init
 /// on its own.
+#[derive(Allocative)]
 pub struct ValFinalSumcheck<F: JoltField> {
     T: usize,
     prover_state: Option<ValFinalSumcheckProverState<F>>,
@@ -362,7 +368,7 @@ pub struct ValFinalSumcheck<F: JoltField> {
     val_final_claim: F,
 }
 
-impl<F: JoltField> ValFinalSumcheck<F> {
+impl<F: JoltField + MaybeAllocative> ValFinalSumcheck<F> {
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
@@ -477,7 +483,7 @@ impl<F: JoltField> ValFinalSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for ValFinalSumcheck<F> {
+impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for ValFinalSumcheck<F> {
     fn degree(&self) -> usize {
         2
     }

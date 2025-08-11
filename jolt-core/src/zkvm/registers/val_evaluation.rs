@@ -1,7 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
-    field::JoltField,
+    field::{allocative_ark::MaybeAllocative, JoltField},
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
@@ -13,18 +13,23 @@ use crate::{
     },
     subprotocols::sumcheck::SumcheckInstance,
     utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
-    zkvm::dag::state_manager::StateManager,
-    zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
+    zkvm::{
+        dag::state_manager::StateManager,
+        witness::{CommittedPolynomial, VirtualPolynomial},
+    },
 };
+use allocative::Allocative;
 use common::constants::REGISTER_COUNT;
 use rayon::prelude::*;
 
+#[derive(Allocative)]
 pub struct ValEvaluationProverState<F: JoltField> {
     pub inc: MultilinearPolynomial<F>,
     pub wa: MultilinearPolynomial<F>,
     pub lt: MultilinearPolynomial<F>,
 }
 
+#[derive(Allocative)]
 pub(crate) struct ValEvaluationSumcheck<F: JoltField> {
     pub r_address: Vec<F>,
     pub input_claim: F,
@@ -33,7 +38,7 @@ pub(crate) struct ValEvaluationSumcheck<F: JoltField> {
     pub prover_state: Option<ValEvaluationProverState<F>>,
 }
 
-impl<F: JoltField> ValEvaluationSumcheck<F> {
+impl<F: JoltField + MaybeAllocative> ValEvaluationSumcheck<F> {
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
@@ -116,7 +121,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
+impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
     fn degree(&self) -> usize {
         3
     }

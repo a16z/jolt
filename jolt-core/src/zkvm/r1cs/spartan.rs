@@ -1,9 +1,11 @@
+use allocative::Allocative;
 use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::rc::Rc;
 use std::sync::Arc;
 use tracing::{span, Level};
 
+use crate::field::allocative_ark::MaybeAllocative;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
@@ -13,6 +15,8 @@ use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
 use crate::utils::math::Math;
+#[cfg(feature = "allocative")]
+use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::zkvm::dag::stage::SumcheckStages;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::zkvm::instruction::CircuitFlags;
@@ -85,9 +89,8 @@ pub struct UniformSpartanProof<F: JoltField, ProofTranscript: Transcript> {
     _marker: PhantomData<ProofTranscript>,
 }
 
-impl<F, ProofTranscript> UniformSpartanProof<F, ProofTranscript>
+impl<F: JoltField + MaybeAllocative, ProofTranscript> UniformSpartanProof<F, ProofTranscript>
 where
-    F: JoltField,
     ProofTranscript: Transcript,
 {
     #[tracing::instrument(skip_all, name = "Spartan::setup")]
@@ -122,6 +125,7 @@ where
     }
 }
 
+#[derive(Allocative)]
 struct InnerSumcheckProverState<F: JoltField> {
     poly_abc_small: MultilinearPolynomial<F>,
     poly_z: MultilinearPolynomial<F>,
@@ -134,13 +138,15 @@ struct InnerSumcheckVerifierState<F: JoltField> {
     inner_sumcheck_RLC: F,
 }
 
+#[derive(Allocative)]
 pub struct InnerSumcheck<F: JoltField> {
     input_claim: F,
     prover_state: Option<InnerSumcheckProverState<F>>,
+    #[allocative(skip)]
     verifier_state: Option<InnerSumcheckVerifierState<F>>,
 }
 
-impl<F: JoltField> InnerSumcheck<F> {
+impl<F: JoltField + MaybeAllocative> InnerSumcheck<F> {
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         key: Arc<UniformSpartanKey<F>>,
@@ -352,6 +358,7 @@ impl<F: JoltField> SumcheckInstance<F> for InnerSumcheck<F> {
     }
 }
 
+#[derive(Allocative)]
 struct PCSumcheckProverState<F: JoltField> {
     unexpanded_pc_poly: MultilinearPolynomial<F>,
     pc_poly: MultilinearPolynomial<F>,
@@ -366,12 +373,14 @@ struct PCSumcheckVerifierState<F: JoltField> {
     is_noop_eval_at_shift_r: F,
 }
 
+#[derive(Allocative)]
 pub struct PCSumcheck<F: JoltField> {
     input_claim: F,
     gamma: F,
     gamma_squared: F,
     log_T: usize,
     prover_state: Option<PCSumcheckProverState<F>>,
+    #[allocative(skip)]
     verifier_state: Option<PCSumcheckVerifierState<F>>,
 }
 
@@ -435,7 +444,7 @@ impl<F: JoltField> PCSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for PCSumcheck<F> {
+impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for PCSumcheck<F> {
     fn degree(&self) -> usize {
         2
     }
@@ -613,7 +622,7 @@ pub struct SpartanDag<F: JoltField> {
     key: Arc<UniformSpartanKey<F>>,
 }
 
-impl<F: JoltField> SpartanDag<F> {
+impl<F: JoltField + MaybeAllocative> SpartanDag<F> {
     pub fn new<ProofTranscript: Transcript>(padded_trace_length: usize) -> Self {
         let constraint_builder = JoltRV32IMConstraints::construct_constraints(padded_trace_length);
         let key = Arc::new(UniformSpartanProof::<F, ProofTranscript>::setup(
@@ -624,8 +633,11 @@ impl<F: JoltField> SpartanDag<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
-    SumcheckStages<F, ProofTranscript, PCS> for SpartanDag<F>
+impl<
+        F: JoltField + MaybeAllocative,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
+    > SumcheckStages<F, ProofTranscript, PCS> for SpartanDag<F>
 {
     fn stage1_prove(
         &mut self,
@@ -648,6 +660,8 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             .par_iter()
             .map(|var| var.generate_witness(trace, preprocessing))
             .collect();
+        #[cfg(feature = "allocative")]
+        print_data_structure_heap_usage("Spartan input_polys", &input_polys);
 
         let num_rounds_x = key.num_rows_bits();
 
@@ -914,6 +928,8 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 
         let inner_sumcheck =
             InnerSumcheck::new_prover(state_manager, key, &claims, &params, inner_sumcheck_RLC);
+        #[cfg(feature = "allocative")]
+        print_data_structure_heap_usage("Spartan InnerSumcheck", &inner_sumcheck);
 
         vec![Box::new(inner_sumcheck)]
     }
@@ -1034,6 +1050,9 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             gamma_squared,
             verifier_state: None,
         };
+
+        #[cfg(feature = "allocative")]
+        print_data_structure_heap_usage("Spartan PCSumcheck", &pc_sumcheck);
 
         vec![Box::new(pc_sumcheck)]
     }

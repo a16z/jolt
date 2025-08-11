@@ -1,10 +1,11 @@
 use std::{cell::RefCell, rc::Rc};
 
+use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 
 use crate::{
-    field::JoltField,
+    field::{allocative_ark::MaybeAllocative, JoltField},
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
@@ -19,8 +20,7 @@ use crate::{
     },
     subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
     utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
-    zkvm::dag::state_manager::StateManager,
-    zkvm::{ram::remap_address, witness::VirtualPolynomial},
+    zkvm::{dag::state_manager::StateManager, ram::remap_address, witness::VirtualPolynomial},
 };
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
@@ -30,6 +30,7 @@ pub struct RafEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
     raf_claim: F,
 }
 
+#[derive(Allocative)]
 pub struct RafEvaluationProverState<F: JoltField> {
     /// The ra polynomial
     ra: MultilinearPolynomial<F>,
@@ -37,6 +38,7 @@ pub struct RafEvaluationProverState<F: JoltField> {
     unmap: UnmapRamAddressPolynomial<F>,
 }
 
+#[derive(Allocative)]
 pub struct RafEvaluationSumcheck<F: JoltField> {
     /// The initial claim (raf_claim)
     input_claim: F,
@@ -49,7 +51,7 @@ pub struct RafEvaluationSumcheck<F: JoltField> {
     cached_claim: Option<F>,
 }
 
-impl<F: JoltField> RafEvaluationSumcheck<F> {
+impl<F: JoltField + MaybeAllocative> RafEvaluationSumcheck<F> {
     #[tracing::instrument(skip_all, name = "RamRafEvaluationSumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         K: usize,
@@ -130,7 +132,7 @@ impl<F: JoltField> RafEvaluationSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for RafEvaluationSumcheck<F> {
+impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for RafEvaluationSumcheck<F> {
     fn degree(&self) -> usize {
         2
     }

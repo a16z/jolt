@@ -8,8 +8,10 @@ use std::{
 use crate::host::Program;
 #[cfg(test)]
 use crate::poly::commitment::dory::DoryGlobals;
+#[cfg(feature = "allocative")]
+use crate::{field::allocative_ark::AllocativeField, poly::commitment::mock::MockCommitScheme};
 use crate::{
-    field::JoltField,
+    field::{allocative_ark::MaybeAllocative, JoltField},
     poly::{
         commitment::commitment_scheme::CommitmentScheme, opening_proof::ProverOpeningAccumulator,
     },
@@ -21,6 +23,8 @@ use crate::{
         witness::DTH_ROOT_OF_K,
     },
 };
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use ark_bn254::Fr;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
@@ -91,7 +95,6 @@ where
 {
     pub generators: PCS::ProverSetup,
     pub shared: JoltSharedPreprocessing,
-    field: F::SmallValueLookupTables,
 }
 
 impl<F, PCS> Serializable for JoltProverPreprocessing<F, PCS>
@@ -150,9 +153,8 @@ where
     pub(crate) prover_setup: PCS::ProverSetup,
 }
 
-pub trait Jolt<F, PCS, FS: Transcript>
+pub trait Jolt<F: JoltField + MaybeAllocative, PCS, FS: Transcript>
 where
-    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     fn shared_preprocess(
@@ -177,20 +179,13 @@ where
         memory_init: Vec<(u64, u8)>,
         max_trace_length: usize,
     ) -> JoltProverPreprocessing<F, PCS> {
-        let small_value_lookup_tables = F::compute_lookup_tables();
-        F::initialize_lookup_tables(small_value_lookup_tables.clone());
-
         let shared = Self::shared_preprocess(bytecode, memory_layout, memory_init);
 
         let max_T: usize = max_trace_length.next_power_of_two();
 
         let generators = PCS::setup_prover(DTH_ROOT_OF_K.log_2() + max_T.log_2());
 
-        JoltProverPreprocessing {
-            generators,
-            shared,
-            field: small_value_lookup_tables,
-        }
+        JoltProverPreprocessing { generators, shared }
     }
 
     #[allow(clippy::type_complexity)]
@@ -207,6 +202,9 @@ where
         use crate::zkvm::dag::state_manager::StateManager;
         use rayon::prelude::*;
         use tracer::instruction::RV32IMCycle;
+
+        #[cfg(feature = "allocative")]
+        let mut flamegraph = FlameGraphBuilder::default();
 
         let (mut trace, final_memory_state, mut program_io) = program.trace(inputs);
         let num_riscv_cycles: usize = trace
@@ -305,7 +303,15 @@ where
 }
 
 pub struct JoltRV32IM;
+
+#[cfg(not(feature = "allocative"))]
 impl Jolt<Fr, DoryCommitmentScheme, KeccakTranscript> for JoltRV32IM {}
+#[cfg(feature = "allocative")]
+impl Jolt<AllocativeField<Fr>, MockCommitScheme<AllocativeField<Fr>>, KeccakTranscript>
+    for JoltRV32IM
+{
+}
+
 pub type RV32IMJoltProof = JoltProof<Fr, DoryCommitmentScheme, KeccakTranscript>;
 
 use crate::poly::commitment::dory::DoryCommitmentScheme;
@@ -355,6 +361,7 @@ impl Serializable for JoltDevice {}
 // ==================== TEST ====================
 
 #[cfg(test)]
+#[cfg(not(feature = "allocative"))]
 mod tests {
     use ark_bn254::Fr;
 

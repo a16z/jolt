@@ -7,5 +7,4 @@ pub mod pedersen;
 pub mod zeromorph;
 
 pub mod bmmtv;
-#[cfg(test)]
 pub mod mock;

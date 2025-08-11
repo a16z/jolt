@@ -1,5 +1,7 @@
+#[cfg(feature = "allocative")]
+use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
-    field::JoltField,
+    field::{allocative_ark::MaybeAllocative, JoltField},
     poly::commitment::commitment_scheme::CommitmentScheme,
     subprotocols::sumcheck::SumcheckInstance,
     utils::transcript::Transcript,
@@ -15,14 +17,22 @@ pub mod val_evaluation;
 #[derive(Default)]
 pub struct RegistersDag {}
 
-impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
-    SumcheckStages<F, ProofTranscript, PCS> for RegistersDag
+impl<
+        F: JoltField + MaybeAllocative,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
+    > SumcheckStages<F, ProofTranscript, PCS> for RegistersDag
 {
     fn stage2_prover_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let read_write_checking = RegistersReadWriteChecking::new_prover(state_manager);
+        #[cfg(feature = "allocative")]
+        print_data_structure_heap_usage(
+            "registers RegistersReadWriteChecking",
+            &read_write_checking,
+        );
         vec![Box::new(read_write_checking)]
     }
 
@@ -39,6 +49,8 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let val_evaluation = ValEvaluationSumcheck::new_prover(state_manager);
+        #[cfg(feature = "allocative")]
+        print_data_structure_heap_usage("registers ValEvaluationSumcheck", &val_evaluation);
         vec![Box::new(val_evaluation)]
     }
 

@@ -275,10 +275,6 @@ impl JoltField for TrackedFr {
         <ark_bn254::Fr as JoltField>::compute_lookup_tables()
     }
 
-    fn initialize_lookup_tables(init: Self::SmallValueLookupTables) {
-        <ark_bn254::Fr as JoltField>::initialize_lookup_tables(init)
-    }
-
     fn from_u8(n: u8) -> Self {
         TrackedFr(<ark_bn254::Fr as JoltField>::from_u8(n))
     }

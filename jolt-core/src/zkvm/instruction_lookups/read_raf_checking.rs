@@ -1,3 +1,4 @@
+use allocative::Allocative;
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
 use strum::{EnumCount, IntoEnumIterator};
@@ -6,7 +7,7 @@ use tracer::instruction::RV32IMCycle;
 use super::{D, K_CHUNK, LOG_K, LOG_K_CHUNK, LOG_M, M, PHASES, RA_PER_LOG_M, WORD_SIZE};
 
 use crate::{
-    field::JoltField,
+    field::{allocative_ark::MaybeAllocative, JoltField},
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         dense_mlpoly::DensePolynomial,
@@ -29,8 +30,8 @@ use crate::{
         thread::{unsafe_allocate_zero_vec, unsafe_zero_slice},
         transcript::Transcript,
     },
-    zkvm::dag::state_manager::StateManager,
     zkvm::{
+        dag::state_manager::StateManager,
         instruction::{InstructionFlags, InstructionLookup, InterleavedBitsMarker, LookupQuery},
         lookup_table::{
             prefixes::{PrefixCheckpoint, PrefixEval, Prefixes},
@@ -52,6 +53,7 @@ pub fn current_suffix_len(log_K: usize, j: usize) -> usize {
     log_K - (j / phase_length + 1) * phase_length
 }
 
+#[derive(Allocative)]
 struct ReadRafProverState<F: JoltField> {
     ra: Vec<MultilinearPolynomial<F>>,
     r: Vec<F>,
@@ -61,6 +63,7 @@ struct ReadRafProverState<F: JoltField> {
     lookup_indices_uninterleave: Vec<(usize, LookupBits)>,
     lookup_indices_identity: Vec<(usize, LookupBits)>,
     is_interleaved_operands: Vec<bool>,
+    #[allocative(skip)]
     lookup_tables: Vec<Option<LookupTables<WORD_SIZE>>>,
 
     prefix_checkpoints: Vec<PrefixCheckpoint<F>>,
@@ -77,6 +80,7 @@ struct ReadRafProverState<F: JoltField> {
     combined_val_polynomial: Option<MultilinearPolynomial<F>>,
 }
 
+#[derive(Allocative)]
 pub struct ReadRafSumcheck<F: JoltField> {
     gamma: F,
     gamma_squared: F,
@@ -88,7 +92,7 @@ pub struct ReadRafSumcheck<F: JoltField> {
     log_T: usize,
 }
 
-impl<'a, F: JoltField> ReadRafSumcheck<F> {
+impl<'a, F: JoltField + MaybeAllocative> ReadRafSumcheck<F> {
     #[tracing::instrument(skip_all, name = "InstructionReadRafSumcheck::new_prover")]
     pub fn new_prover(
         sm: &'a mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
@@ -266,7 +270,7 @@ impl<'a, F: JoltField> ReadRafProverState<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
+impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for ReadRafSumcheck<F> {
     fn degree(&self) -> usize {
         DEGREE
     }
@@ -759,6 +763,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
 }
 
 #[cfg(test)]
+#[cfg(not(feature = "allocative"))]
 mod tests {
     use super::*;
     use crate::subprotocols::sumcheck::BatchedSumcheck;
@@ -862,7 +867,6 @@ mod tests {
             JoltProverPreprocessing {
                 generators: (),
                 shared: shared_preprocessing.clone(),
-                field: Default::default(),
             };
 
         let verifier_preprocessing: JoltVerifierPreprocessing<Fr, MockCommitScheme<Fr>> =

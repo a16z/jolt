@@ -1,8 +1,9 @@
+use allocative::Allocative;
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
-    field::JoltField,
+    field::{allocative_ark::MaybeAllocative, JoltField},
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
@@ -26,6 +27,7 @@ use crate::{
     },
 };
 
+#[derive(Allocative)]
 struct BooleanityProverState<F: JoltField> {
     /// B polynomial (GruenSplitEqPolynomial)
     B: GruenSplitEqPolynomial<F>,
@@ -41,6 +43,7 @@ struct BooleanityProverState<F: JoltField> {
     eq_r_r: F,
 }
 
+#[derive(Allocative)]
 pub struct BooleanitySumcheck<F: JoltField> {
     T: usize,
     d: usize,
@@ -52,7 +55,7 @@ pub struct BooleanitySumcheck<F: JoltField> {
     addresses: Vec<Option<u64>>,
 }
 
-impl<F: JoltField> BooleanitySumcheck<F> {
+impl<F: JoltField + MaybeAllocative> BooleanitySumcheck<F> {
     #[tracing::instrument(skip_all, name = "RamBooleanitySumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         K: usize,
@@ -199,7 +202,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
+impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for BooleanitySumcheck<F> {
     fn degree(&self) -> usize {
         3
     }

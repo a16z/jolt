@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
+use crate::field::allocative_ark::MaybeAllocative;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::opening_proof::{
@@ -71,8 +72,12 @@ pub struct StateManager<
     pub verifier_state: Option<VerifierState<'a, F, PCS>>,
 }
 
-impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
-    StateManager<'a, F, ProofTranscript, PCS>
+impl<
+        'a,
+        F: JoltField + MaybeAllocative,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
+    > StateManager<'a, F, ProofTranscript, PCS>
 {
     pub fn new_prover(
         preprocessing: &'a JoltProverPreprocessing<F, PCS>,

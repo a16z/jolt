@@ -1,3 +1,4 @@
+use crate::field::allocative_ark::MaybeAllocative;
 use crate::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN};
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::zkvm::dag::state_manager::StateManager;
@@ -14,6 +15,7 @@ use crate::{
     utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
     zkvm::{witness::CommittedPolynomial, JoltProverPreprocessing},
 };
+use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::REGISTER_COUNT;
 use fixedbitset::FixedBitSet;
@@ -26,6 +28,7 @@ const K: usize = REGISTER_COUNT as usize;
 /// A collection of vectors that are used in each of the first log(T / num_chunks)
 /// rounds of sumcheck. There is one `DataBuffers` struct per thread/chunk, reused
 /// across all log(T / num_chunks) rounds.
+#[derive(Allocative)]
 struct DataBuffers<F: JoltField> {
     /// Contains
     ///     Val(k, j', 0, ..., 0)
@@ -51,9 +54,11 @@ struct DataBuffers<F: JoltField> {
     /// as we iterate over rows j' \in {0, 1}^(log(T) - i),
     /// where j'' are the higher (log(T) - i - 1) bits of j'
     rd_wa: [[F; K]; 2],
+    #[allocative(skip)]
     dirty_indices: FixedBitSet,
 }
 
+#[derive(Allocative)]
 struct ReadWriteCheckingProverState<F: JoltField> {
     addresses: Vec<(u8, u8, u8)>,
     chunk_size: usize,
@@ -226,6 +231,7 @@ pub struct ReadWriteValueClaims<F: JoltField> {
     pub rd_wv_claim: F,
 }
 
+#[derive(Allocative)]
 pub struct RegistersReadWriteChecking<F: JoltField> {
     T: usize,
     gamma: F,
@@ -241,7 +247,7 @@ pub struct RegistersReadWriteCheckingProof<F: JoltField, ProofTranscript: Transc
     sumcheck_switch_index: usize,
 }
 
-impl<F: JoltField> RegistersReadWriteChecking<F> {
+impl<F: JoltField + MaybeAllocative> RegistersReadWriteChecking<F> {
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
@@ -1059,7 +1065,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for RegistersReadWriteChecking<F> {
+impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for RegistersReadWriteChecking<F> {
     fn degree(&self) -> usize {
         3
     }

@@ -1,7 +1,10 @@
 use std::collections::BTreeMap;
 
+use crate::field::allocative_ark::MaybeAllocative;
 use crate::poly::opening_proof::SumcheckId;
 use crate::utils::math::Math;
+#[cfg(feature = "allocative")]
+use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::zkvm::bytecode::booleanity::BooleanitySumcheck;
 use crate::zkvm::bytecode::hamming_weight::HammingWeightSumcheck;
 use crate::zkvm::bytecode::read_raf_checking::ReadRafSumcheck;
@@ -96,8 +99,8 @@ impl BytecodePreprocessing {
 #[derive(Default)]
 pub struct BytecodeDag {}
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStages<F, T, PCS>
-    for BytecodeDag
+impl<F: JoltField + MaybeAllocative, PCS: CommitmentScheme<Field = F>, T: Transcript>
+    SumcheckStages<F, T, PCS> for BytecodeDag
 {
     fn stage4_prover_instances(
         &mut self,
@@ -120,6 +123,13 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         let read_raf = ReadRafSumcheck::new_prover(sm);
         let booleanity = BooleanitySumcheck::new_prover(sm, E_1, F_1.clone());
         let hamming_weight = HammingWeightSumcheck::new_prover(sm, F_1);
+
+        #[cfg(feature = "allocative")]
+        {
+            print_data_structure_heap_usage("Bytecode ReadRafSumcheck", &read_raf);
+            print_data_structure_heap_usage("Bytecode BooleanitySumcheck", &booleanity);
+            print_data_structure_heap_usage("Bytecode HammingWeightSumcheck", &hamming_weight);
+        }
 
         vec![
             Box::new(read_raf),

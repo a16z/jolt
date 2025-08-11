@@ -1,9 +1,10 @@
 use std::{cell::RefCell, rc::Rc};
 
+use allocative::Allocative;
 use rayon::prelude::*;
 
 use crate::{
-    field::JoltField,
+    field::{allocative_ark::MaybeAllocative, JoltField},
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
@@ -22,10 +23,12 @@ use crate::{
     },
 };
 
+#[derive(Allocative)]
 pub struct HammingWeightProverState<F: JoltField> {
     ra: Vec<MultilinearPolynomial<F>>,
 }
 
+#[derive(Allocative)]
 pub struct HammingWeightSumcheck<F: JoltField> {
     input_claim: F,
     d: usize,
@@ -33,7 +36,7 @@ pub struct HammingWeightSumcheck<F: JoltField> {
     prover_state: Option<HammingWeightProverState<F>>,
 }
 
-impl<F: JoltField> HammingWeightSumcheck<F> {
+impl<F: JoltField + MaybeAllocative> HammingWeightSumcheck<F> {
     #[tracing::instrument(skip_all, name = "RamHammingWeightSumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         K: usize,
@@ -142,7 +145,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
+impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for HammingWeightSumcheck<F> {
     fn degree(&self) -> usize {
         1
     }

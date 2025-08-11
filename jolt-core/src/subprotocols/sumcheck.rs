@@ -1,6 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
+use crate::field::allocative_ark::MaybeAllocative;
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial};
@@ -12,6 +13,9 @@ use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::mul_0_optimized;
+use crate::utils::profiling::print_current_memory_usage;
+#[cfg(feature = "allocative")]
+use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::utils::small_value::svo_helpers::process_svo_sumcheck_rounds;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
@@ -194,6 +198,9 @@ impl BatchedSumcheck {
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(max_num_rounds);
 
         for round in 0..max_num_rounds {
+            let label = format!("Sumcheck round {round}");
+            print_current_memory_usage(label.as_str());
+
             let remaining_rounds = max_num_rounds - round;
 
             let univariate_polys: Vec<UniPoly<F>> = sumcheck_instances
@@ -372,7 +379,9 @@ impl BatchedSumcheck {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTranscript> {
+impl<F: JoltField + MaybeAllocative, ProofTranscript: Transcript>
+    SumcheckInstanceProof<F, ProofTranscript>
+{
     #[tracing::instrument(skip_all, name = "Spartan::prove_spartan_small_value")]
     pub fn prove_spartan_small_value<const NUM_SVO_ROUNDS: usize>(
         num_rounds: usize,
@@ -394,6 +403,8 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                 flattened_polys,
                 tau,
             );
+        #[cfg(feature = "allocative")]
+        print_data_structure_heap_usage("SpartanInterleavedPolynomial", &az_bz_cz_poly);
 
         let mut eq_poly = GruenSplitEqPolynomial::new(tau, BindingOrder::LowToHigh);
 

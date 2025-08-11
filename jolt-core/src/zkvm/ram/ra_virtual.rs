@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::field::allocative_ark::MaybeAllocative;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::{
@@ -20,6 +21,7 @@ use crate::{
     subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
     utils::{math::Math, transcript::Transcript},
 };
+use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 
@@ -29,6 +31,7 @@ pub struct RAProof<F: JoltField, ProofTranscript: Transcript> {
     pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
 }
 
+#[derive(Allocative)]
 pub struct RAProverState<F: JoltField> {
     /// `ra` polys to be constructed based addresses
     ra_i_polys: Vec<MultilinearPolynomial<F>>,
@@ -36,6 +39,7 @@ pub struct RAProverState<F: JoltField> {
     eq_poly: MultilinearPolynomial<F>,
 }
 
+#[derive(Allocative)]
 pub struct RASumcheck<F: JoltField> {
     rlc_coeffs: [F; 3],
     /// Random challenge r_cycle
@@ -50,7 +54,7 @@ pub struct RASumcheck<F: JoltField> {
     prover_state: Option<RAProverState<F>>,
 }
 
-impl<F: JoltField> RASumcheck<F> {
+impl<F: JoltField + MaybeAllocative> RASumcheck<F> {
     #[tracing::instrument(skip_all, name = "RaVirtualization::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         K: usize,
@@ -259,7 +263,7 @@ impl<F: JoltField> RASumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for RASumcheck<F> {
+impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for RASumcheck<F> {
     fn degree(&self) -> usize {
         self.d + 1
     }

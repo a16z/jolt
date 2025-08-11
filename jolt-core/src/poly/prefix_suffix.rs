@@ -1,6 +1,7 @@
 use std::ops::{Index, IndexMut};
 use std::sync::{Arc, RwLock};
 
+use allocative::Allocative;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
@@ -23,9 +24,10 @@ pub enum Prefix {
 
 pub type PrefixCheckpoints<F> = [Option<F>; Prefix::COUNT];
 
-#[derive(Default)]
+#[derive(Default, Allocative)]
 pub struct PrefixRegistry<F: JoltField> {
     pub checkpoints: PrefixCheckpoints<F>,
+    #[allocative(skip)]
     pub polys: [Option<Arc<RwLock<CachedPolynomial<F>>>>; Prefix::COUNT],
 }
 
@@ -185,8 +187,11 @@ pub trait PrefixSuffixPolynomial<F: JoltField, const ORDER: usize> {
     fn suffixes(&self) -> [Box<dyn SuffixPolynomial<F> + Sync>; ORDER];
 }
 
+#[derive(Allocative)]
 pub struct PrefixSuffixDecomposition<F: JoltField, const ORDER: usize> {
+    #[allocative(skip)]
     poly: Box<dyn PrefixSuffixPolynomial<F, ORDER> + Send + Sync>,
+    #[allocative(skip)]
     P: [Option<Arc<RwLock<CachedPolynomial<F>>>>; ORDER],
     Q: [DensePolynomial<F>; ORDER],
     chunk_len: usize,
