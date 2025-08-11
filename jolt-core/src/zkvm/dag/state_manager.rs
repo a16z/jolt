@@ -142,7 +142,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
     ) -> Self {
         let opening_accumulator = VerifierOpeningAccumulator::new();
         let opening_accumulator = Rc::new(RefCell::new(opening_accumulator));
-        let transcript = Rc::new(RefCell::new(Prooftranscripts::new(b"Jolt")));
+        let transcript = Rc::new(RefCell::new(ProofTranscript::new(b"Jolt")));
         let proofs = Rc::new(RefCell::new(BTreeMap::new()));
         let commitments = Rc::new(RefCell::new(vec![]));
 

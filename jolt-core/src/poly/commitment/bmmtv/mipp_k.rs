@@ -278,11 +278,11 @@ mod tests {
         let com_a = BnAfghoG1::commit(&ck_a, &m_a).unwrap();
         let com_t = MultiexponentiationInnerProduct::inner_product(&m_a, &m_b).unwrap();
 
-        let mut transcript = Keccaktranscripts::new(b"TipaTest");
+        let mut transcript = KeccakTranscript::new(b"TipaTest");
 
         let proof = MultiExpTipa::prove(&p_srs, (m_a, m_b), &mut transcript).unwrap();
 
-        let mut transcript = Keccaktranscripts::new(b"TipaTest");
+        let mut transcript = KeccakTranscript::new(b"TipaTest");
 
         assert!(MultiExpTipa::verify(&v_srs, (com_a, com_t), b, &proof, &mut transcript,).unwrap());
     }

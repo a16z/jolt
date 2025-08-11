@@ -1158,7 +1158,7 @@ mod tests {
             registers[write_address] = write_value;
         }
 
-        let mut prover_transcript = Keccaktranscripts::new(b"test_transcript");
+        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
         let r: Vec<Fr> = prover_transcript.challenge_vector(K.log_2());
         let r_prime: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
 
@@ -1174,7 +1174,7 @@ mod tests {
             TwistAlgorithm::Local,
         );
 
-        let mut verifier_transcript = Keccaktranscripts::new(b"test_transcript");
+        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
         verifier_transcript.compare_to(prover_transcript);
         let r: Vec<Fr> = verifier_transcript.challenge_vector(K.log_2());
         let r_prime: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
@@ -1213,7 +1213,7 @@ mod tests {
         }
         let val = MultilinearPolynomial::from(val);
 
-        let mut prover_transcript = Keccaktranscripts::new(b"test_transcript");
+        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
         let r_address: Vec<Fr> = prover_transcript.challenge_vector(K.log_2());
         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
 
@@ -1227,7 +1227,7 @@ mod tests {
             &mut prover_transcript,
         );
 
-        let mut verifier_transcript = Keccaktranscripts::new(b"test_transcript");
+        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
         verifier_transcript.compare_to(prover_transcript);
         let _r_address: Vec<Fr> = verifier_transcript.challenge_vector(K.log_2());
         let _r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
@@ -1275,7 +1275,7 @@ mod tests {
             registers[write_address] = write_value;
         }
 
-        let mut prover_transcript = Keccaktranscripts::new(b"test_transcript");
+        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
         let r: Vec<Fr> = prover_transcript.challenge_vector(K.log_2());
         let r_prime: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
 
@@ -1290,7 +1290,7 @@ mod tests {
             &mut prover_transcript,
         );
 
-        let mut verifier_transcript = Keccaktranscripts::new(b"test_transcript");
+        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
         verifier_transcript.compare_to(prover_transcript);
         let _r: Vec<Fr> = verifier_transcript.challenge_vector(K.log_2());
         let _r_prime: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());

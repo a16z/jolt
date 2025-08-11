@@ -775,14 +775,14 @@ mod test {
             let (pk, vk) = srs.trim(1 << num_vars);
             let commitment = Zeromorph::<Bn254>::commit(&pk, &poly).unwrap();
 
-            let mut prover_transcript = Keccaktranscripts::new(b"TestEval");
+            let mut prover_transcript = KeccakTranscript::new(b"TestEval");
             let proof = Zeromorph::<Bn254>::open(&pk, &poly, &point, &eval, &mut prover_transcript)
                 .unwrap();
             let p_transcript_squeeze: <Bn254 as Pairing>::ScalarField =
                 prover_transcript.challenge_scalar();
 
             // Verify proof.
-            let mut verifier_transcript = Keccaktranscripts::new(b"TestEval");
+            let mut verifier_transcript = KeccakTranscript::new(b"TestEval");
             Zeromorph::<Bn254>::verify(
                 &vk,
                 &commitment,
@@ -803,7 +803,7 @@ mod test {
                 .map(|s| *s + <Bn254 as Pairing>::ScalarField::one())
                 .collect::<Vec<_>>();
             let altered_verifier_eval = poly.evaluate(&altered_verifier_point);
-            let mut verifier_transcript = Keccaktranscripts::new(b"TestEval");
+            let mut verifier_transcript = KeccakTranscript::new(b"TestEval");
             assert!(Zeromorph::<Bn254>::verify(
                 &vk,
                 &commitment,

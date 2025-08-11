@@ -280,7 +280,7 @@ impl<F: JoltField> SumcheckInstance<F> for RafEvaluationSumcheck<F> {
 //             trace.push(RV32IMCycle::NoOp(i));
 //         }
 
-//         let mut prover_transcript = Keccaktranscripts::new(b"test_no_ops");
+//         let mut prover_transcript = KeccakTranscript::new(b"test_no_ops");
 //         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
 
 //         // Prove
@@ -288,7 +288,7 @@ impl<F: JoltField> SumcheckInstance<F> for RafEvaluationSumcheck<F> {
 //             RafEvaluationProof::prove(&trace, &memory_layout, r_cycle, K, &mut prover_transcript);
 
 //         // Verify
-//         let mut verifier_transcript = Keccaktranscripts::new(b"test_no_ops");
+//         let mut verifier_transcript = KeccakTranscript::new(b"test_no_ops");
 //         let _r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
 
 //         let r_address_result = proof.verify(K, &mut verifier_transcript, &memory_layout);

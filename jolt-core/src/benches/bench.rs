@@ -79,7 +79,7 @@ where
         registers[write_address] = write_value;
     }
 
-    let mut prover_transcript = ProofTranscript::new(b"test_transcript");
+    let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
     let r: Vec<F> = prover_transcript.challenge_vector(K.log_2());
     let r_prime: Vec<F> = prover_transcript.challenge_vector(T.log_2());
 

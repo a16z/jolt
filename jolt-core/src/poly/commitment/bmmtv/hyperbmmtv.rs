@@ -351,11 +351,11 @@ mod tests {
             .map(|_| <Bn254 as Pairing>::ScalarField::rand(&mut rng))
             .collect::<Vec<_>>();
 
-        let mut prover_transcript = Keccaktranscripts::new(b"TestEval");
+        let mut prover_transcript = KeccakTranscript::new(b"TestEval");
 
         let proof = HyperTest::prove(&setup, &poly, &point, (), &mut prover_transcript);
 
-        let mut verifier_transcript = Keccaktranscripts::new(b"TestEval");
+        let mut verifier_transcript = KeccakTranscript::new(b"TestEval");
         verifier_transcript.compare_to(prover_transcript);
 
         let opening = poly.evaluate(&point);

@@ -447,10 +447,10 @@ impl<F: JoltField> SumcheckInstance<F> for RASumcheck<F> {
 //             d,
 //         );
 
-//         let mut prover_transcript = Keccaktranscripts::new(b"test_one_cycle");
+//         let mut prover_transcript = KeccakTranscript::new(b"test_one_cycle");
 //         let (proof, r_cycle_bound) = prover_sumcheck.prove(&mut prover_transcript);
 
-//         let mut verifier_transcript = Keccaktranscripts::new(b"test_one_cycle");
+//         let mut verifier_transcript = KeccakTranscript::new(b"test_one_cycle");
 
 //         let verify_result = RASumcheck::<Fr>::verify(
 //             ra_claim,
@@ -513,10 +513,10 @@ impl<F: JoltField> SumcheckInstance<F> for RASumcheck<F> {
 //             d,
 //         );
 
-//         let mut prover_transcript = Keccaktranscripts::new(b"test_t_large");
+//         let mut prover_transcript = KeccakTranscript::new(b"test_t_large");
 //         let (proof, r_cycle_bound) = prover_sumcheck.prove(&mut prover_transcript);
 
-//         let mut verifier_transcript = Keccaktranscripts::new(b"test_t_large");
+//         let mut verifier_transcript = KeccakTranscript::new(b"test_t_large");
 //         verifier_transcript.compare_to(prover_transcript);
 
 //         let verify_result = RASumcheck::<Fr>::verify(

@@ -301,11 +301,11 @@ mod tests {
         let l_commit = AfghoBn245::commit(&params, &m_a).unwrap();
         let ip_commit = MultiexponentiationInnerProduct::inner_product(&m_a, &m_b).unwrap();
 
-        let mut transcript = Keccaktranscripts::new(b"test");
+        let mut transcript = KeccakTranscript::new(b"test");
 
         let proof = MultiExpGIPA::prove(m_a, params.clone(), m_b, &mut transcript).unwrap();
 
-        let mut transcript = Keccaktranscripts::new(b"test");
+        let mut transcript = KeccakTranscript::new(b"test");
 
         // Calculate base commitment and transcript
         let (base_com, transcript) = MultiExpGIPA::verify(
