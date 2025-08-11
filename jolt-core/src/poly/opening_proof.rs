@@ -757,7 +757,6 @@ where
             self.sumchecks.len()
         );
 
-        // Count total number of challenges needed
         let total_challenges_needed: usize = self
             .sumchecks
             .iter()
@@ -770,7 +769,6 @@ where
             })
             .sum();
 
-        // Extract all gamma values deterministically to prepare sumchecks in parallel
         let all_gammas: Vec<F> = transcript.challenge_vector(total_challenges_needed);
 
         let prepare_span = tracing::span!(
@@ -780,7 +778,6 @@ where
         );
         let _enter = prepare_span.enter();
 
-        // Calculate offsets for each sumcheck
         let mut gamma_offsets = vec![0];
         for sumcheck in self.sumchecks.iter() {
             let num_gammas = if sumcheck.polynomials.len() > 1 {
@@ -791,7 +788,6 @@ where
             gamma_offsets.push(gamma_offsets.last().unwrap() + num_gammas);
         }
 
-        // Distribute gammas to each sumcheck in parallel
         self.sumchecks
             .par_iter_mut()
             .zip(gamma_offsets.par_iter())
@@ -1120,7 +1116,6 @@ where
             assert_eq!(prover_openings.len(), self.len());
         }
 
-        // Count total number of challenges needed
         let total_challenges_needed: usize = self
             .sumchecks
             .iter()
@@ -1133,10 +1128,8 @@ where
             })
             .sum();
 
-        // Extract all gamma values deterministically
         let all_gammas: Vec<F> = transcript.challenge_vector(total_challenges_needed);
 
-        // Calculate offsets for each sumcheck
         let mut gamma_offsets = vec![0];
         for sumcheck in self.sumchecks.iter() {
             let num_gammas = if sumcheck.polynomials.len() > 1 {
@@ -1147,7 +1140,6 @@ where
             gamma_offsets.push(gamma_offsets.last().unwrap() + num_gammas);
         }
 
-        // Distribute gammas to each sumcheck in parallel
         self.sumchecks
             .par_iter_mut()
             .zip(gamma_offsets.par_iter())
