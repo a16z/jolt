@@ -30,24 +30,23 @@ fn karatsuba_branch<F: JoltField, const D: usize>(left: &[F; D], right: &[F; D])
             left[..4].try_into().unwrap(),
             right[..4].try_into().unwrap(),
         );
-    }
-    if D == 8 {
+    } else if D == 8 {
         coeff_kara_8(
             left[..8].try_into().unwrap(),
             right[..8].try_into().unwrap(),
         );
-    }
-    if D == 16 {
+    } else if D == 16 {
         coeff_kara_16(
             left[..16].try_into().unwrap(),
             right[..16].try_into().unwrap(),
         );
-    }
-    if D == 32 {
+    } else if D == 32 {
         coeff_kara_32(
             left[..32].try_into().unwrap(),
             right[..32].try_into().unwrap(),
         );
+    } else {
+        panic!("D must be 4, 8, 16, or 32");
     }
 }
 
