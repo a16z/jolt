@@ -1013,3 +1013,127 @@ fn test_lw_rv64_no_clobber_g_iv_reg_30() {
         "vr30 was clobbered by LW inline"
     );
 }
+
+#[test]
+fn test_sha256_exec_trace_intermediate_vr_equal_rv64() {
+    use crate::trace_generator::sha2_build_up_to_step;
+    let vectors = TestVectors::get_standard_test_vectors();
+    for (desc, block, initial_state, _expected_final) in vectors {
+        for t in 0..4usize {
+            let mut h = CpuTestHarness::new();
+            let block_addr = tracer::emulator::mmu::DRAM_BASE;
+            let state_addr = block_addr + 64;
+            let rs1 = 10u8;
+            let rs2 = 11u8;
+            h.cpu.x[rs1 as usize] = block_addr as i64;
+            h.cpu.x[rs2 as usize] = state_addr as i64;
+            h.set_memory32(block_addr, &block);
+            h.set_memory32(state_addr, &initial_state);
+
+            let vr: [u8; 32] = core::array::from_fn(|i| virtual_register_index(i as u8));
+            let seq = sha2_build_up_to_step(0, false, Xlen::Bit64, vr, rs1, rs2, t, "after_round");
+            h.execute_inline_sequence(&seq);
+
+            // Read A..H via mapping
+            fn vr_idx_for(vr: &[u8; 32], rounds: usize, letter: char) -> u8 {
+                let shift = (letter as i32 - 'A' as i32) as i32;
+                vr[(-(rounds as i32) + shift).rem_euclid(8) as usize]
+            }
+            let idxs: [u8; 8] = [
+                vr_idx_for(&vr, t + 1, 'A'),
+                vr_idx_for(&vr, t + 1, 'B'),
+                vr_idx_for(&vr, t + 1, 'C'),
+                vr_idx_for(&vr, t + 1, 'D'),
+                vr_idx_for(&vr, t + 1, 'E'),
+                vr_idx_for(&vr, t + 1, 'F'),
+                vr_idx_for(&vr, t + 1, 'G'),
+                vr_idx_for(&vr, t + 1, 'H'),
+            ];
+            let mut regs64 = [0u64; 8];
+            h.read_registers(&idxs, &mut regs64);
+            let got: [u32; 8] = regs64.map(|x| x as u32);
+
+            // Compute reference after t+1 rounds
+            let mut a = initial_state[0];
+            let mut b = initial_state[1];
+            let mut c = initial_state[2];
+            let mut d = initial_state[3];
+            let mut e = initial_state[4];
+            let mut f = initial_state[5];
+            let mut g = initial_state[6];
+            let mut hh = initial_state[7];
+            let mut w = [0u32; 64];
+            w[..16].copy_from_slice(&block);
+            for i in 16..64 {
+                let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+                let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+                w[i] = w[i - 16]
+                    .wrapping_add(s0)
+                    .wrapping_add(w[i - 7])
+                    .wrapping_add(s1);
+            }
+            for i in 0..=t {
+                let ch = (e & f) ^ ((!e) & g);
+                let maj = (a & b) ^ (a & c) ^ (b & c);
+                let t1 = hh
+                    .wrapping_add(s1_big(e))
+                    .wrapping_add(ch)
+                    .wrapping_add(crate::trace_generator::K[i] as u32)
+                    .wrapping_add(w[i]);
+                let t2 = s0_big(a).wrapping_add(maj);
+                hh = g;
+                g = f;
+                f = e;
+                e = d.wrapping_add(t1);
+                d = c;
+                c = b;
+                b = a;
+                a = t1.wrapping_add(t2);
+            }
+            let exp = [a, b, c, d, e, f, g, hh];
+            assert_eq!(got, exp, "Intermediate VR mismatch: {desc}, round {t}");
+        }
+    }
+}
+
+#[test]
+fn test_sha256_store_from_final_state_memory_rv64() {
+    use crate::trace_generator::sha2_build_up_to_step;
+    use tracer::emulator::mmu::DRAM_BASE;
+    let (desc, block, initial_state, expected) =
+        TestVectors::get_standard_test_vectors()[0].clone();
+
+    let mut h = CpuTestHarness::new();
+    let block_addr = DRAM_BASE;
+    let state_addr = block_addr + 64;
+    let rs1 = 10u8;
+    let rs2 = 11u8;
+    h.cpu.x[rs1 as usize] = block_addr as i64;
+    h.cpu.x[rs2 as usize] = state_addr as i64;
+    h.set_memory32(block_addr, &block);
+    h.set_memory32(state_addr, &initial_state);
+
+    // Build final state (no stores) then store explicitly using VR mapping
+    let vr: [u8; 32] = core::array::from_fn(|i| virtual_register_index(i as u8));
+    let seq = sha2_build_up_to_step(0, false, Xlen::Bit64, vr, rs1, rs2, 63, "final_state");
+    h.execute_inline_sequence(&seq);
+
+    // Now emit SW stores for A..H using the same mapping used by builder
+    let outs = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+    let mut asm = InstrAssembler::new(0, false, Xlen::Bit64);
+    for (i, ch) in outs.iter().enumerate() {
+        // compute current VR index for letter with rounds=64
+        let idx = vr[(-64i32 + (*ch as i32 - 'A' as i32)).rem_euclid(8) as usize];
+        asm.emit_s::<tracer::instruction::sw::SW>(rs2, idx, (i as i64) * 4);
+    }
+    let seq_store = asm.finalize();
+    h.execute_inline_sequence(&seq_store);
+
+    // Read state from memory and compare to expected
+    let mut got_mem = [0u32; 8];
+    h.read_memory32(state_addr, &mut got_mem);
+    assert_eq!(
+        got_mem, expected,
+        "Final memory mismatch when storing from VRs ({desc})"
+    );
+}
