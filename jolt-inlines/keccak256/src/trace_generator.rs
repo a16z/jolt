@@ -435,7 +435,7 @@ pub(crate) fn execute_iota(state: &mut Keccak256State, round_constant: u64) {
     state[0] ^= round_constant; // Inject round constant.
 }
 
-pub fn keccak256_virtual_sequence_builder(
+pub fn keccak256_inline_sequence_builder(
     address: u64,
     is_compressed: bool,
     xlen: Xlen,

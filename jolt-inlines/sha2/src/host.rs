@@ -11,7 +11,7 @@ pub fn init_inlines() -> Result<(), String> {
         0x00,
         "SHA256_INLINE",
         std::boxed::Box::new(exec::sha2_exec),
-        std::boxed::Box::new(trace_generator::sha2_virtual_sequence_builder),
+        std::boxed::Box::new(trace_generator::sha2_inline_sequence_builder),
     )?;
     register_inline(
         0x0B,
@@ -19,7 +19,7 @@ pub fn init_inlines() -> Result<(), String> {
         0x00,
         "SHA256_INIT_INLINE",
         std::boxed::Box::new(exec::sha2_init_exec),
-        std::boxed::Box::new(trace_generator::sha2_init_virtual_sequence_builder),
+        std::boxed::Box::new(trace_generator::sha2_init_inline_sequence_builder),
     )?;
     Ok(())
 }

@@ -11,7 +11,7 @@ pub fn init_inlines() -> Result<(), String> {
         0x01,
         "KECCAK256_INLINE",
         std::boxed::Box::new(exec::keccak256_exec),
-        std::boxed::Box::new(trace_generator::keccak256_virtual_sequence_builder),
+        std::boxed::Box::new(trace_generator::keccak256_inline_sequence_builder),
     )?;
     Ok(())
 }
