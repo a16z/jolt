@@ -255,6 +255,8 @@ pub fn scalar_addsubmul_model() -> Model {
 /// 2. Sums the embeddings and normalizes (divides by -0.46149117, which we round up to -0.5, which is multiplying by -2)
 /// 3. Adds a bias term (-54)
 /// 4. Returns positive sentiment if result >= 0
+///
+/// # Note all magic values here like -54, or the embedding tensors are from the pre-trained model in /models/sentiment_sum
 pub fn embedding_sentiment_model() -> Model {
     const SCALE: i32 = 7;
     let mut b = ModelBuilder::new(SCALE);
