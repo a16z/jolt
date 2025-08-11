@@ -3573,8 +3573,8 @@ dependencies = [
 name = "sha3-chain-guest"
 version = "0.1.0"
 dependencies = [
+ "jolt-inlines-keccak256",
  "jolt-sdk",
- "sha3",
 ]
 
 [[package]]
@@ -3590,6 +3590,7 @@ dependencies = [
 name = "sha3-guest"
 version = "0.1.0"
 dependencies = [
+ "jolt-inlines-keccak256",
  "jolt-sdk",
 ]
 
