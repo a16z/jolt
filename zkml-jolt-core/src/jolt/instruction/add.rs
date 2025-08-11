@@ -12,15 +12,6 @@ impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for ADD<WORD_SIZE> {
 }
 
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for ADD<WORD_SIZE> {
-    fn to_lookup_operands(&self) -> (u64, u64) {
-        let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
-        (0, x + y as u64)
-    }
-
-    fn to_lookup_index(&self) -> u64 {
-        LookupQuery::<WORD_SIZE>::to_lookup_operands(self).1
-    }
-
     fn to_instruction_inputs(&self) -> (u64, i64) {
         match WORD_SIZE {
             #[cfg(test)]
@@ -29,6 +20,15 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for ADD<WORD_SIZE> {
             64 => (self.0, self.1 as i64),
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
+    }
+
+    fn to_lookup_operands(&self) -> (u64, u64) {
+        let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
+        (0, x + y as u64)
+    }
+
+    fn to_lookup_index(&self) -> u64 {
+        LookupQuery::<WORD_SIZE>::to_lookup_operands(self).1
     }
 
     fn to_lookup_output(&self) -> u64 {

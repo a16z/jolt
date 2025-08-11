@@ -313,37 +313,27 @@ pub enum CommittedPolynomials {
     InstructionRa(usize),
 }
 
+macro_rules! fill_array_committed {
+    ($arr:ident, $idx:ident, $variant:ident) => {{
+        let mut i = 0;
+        while i < MAX_TENSOR_SIZE {
+            $arr[$idx] = CommittedPolynomials::$variant(i);
+            $idx += 1;
+            i += 1;
+        }
+    }};
+}
+
 pub const ALL_COMMITTED_POLYNOMIALS: [CommittedPolynomials; 5 * MAX_TENSOR_SIZE + 4] = {
     let mut arr = [CommittedPolynomials::LeftInstructionInput(0); 5 * MAX_TENSOR_SIZE + 4];
     let mut idx = 0;
-    while idx < MAX_TENSOR_SIZE {
-        arr[idx] = CommittedPolynomials::LeftInstructionInput(idx);
-        idx += 1;
-    }
-    let mut j = 0;
-    while j < MAX_TENSOR_SIZE {
-        arr[idx] = CommittedPolynomials::RightInstructionInput(j);
-        idx += 1;
-        j += 1;
-    }
-    let mut k = 0;
-    while k < MAX_TENSOR_SIZE {
-        arr[idx] = CommittedPolynomials::Product(k);
-        idx += 1;
-        k += 1;
-    }
-    let mut n = 0;
-    while n < MAX_TENSOR_SIZE {
-        arr[idx] = CommittedPolynomials::WriteLookupOutputToTD(n);
-        idx += 1;
-        n += 1;
-    }
-    let mut m = 0;
-    while m < MAX_TENSOR_SIZE {
-        arr[idx] = CommittedPolynomials::TdProdFlag(m);
-        idx += 1;
-        m += 1;
-    }
+
+    fill_array_committed!(arr, idx, LeftInstructionInput);
+    fill_array_committed!(arr, idx, RightInstructionInput);
+    fill_array_committed!(arr, idx, Product);
+    fill_array_committed!(arr, idx, TdProdFlag);
+    fill_array_committed!(arr, idx, WriteLookupOutputToTD);
+
     arr[idx] = CommittedPolynomials::InstructionRa(0);
     arr[idx + 1] = CommittedPolynomials::InstructionRa(1);
     arr[idx + 2] = CommittedPolynomials::InstructionRa(2);
@@ -497,75 +487,35 @@ pub enum JoltONNXR1CSInputs {
     TdProdFlag(usize), // Td * CircuitFlag::WriteLookupOutputToTD
 }
 
+macro_rules! fill_array_r1cs_inputs {
+    ($arr:ident, $idx:ident, $variant:ident) => {{
+        let mut i = 0;
+        while i < MAX_TENSOR_SIZE {
+            $arr[$idx] = JoltONNXR1CSInputs::$variant(i);
+            $idx += 1;
+            i += 1;
+        }
+    }};
+}
+
 /// This const serves to define a canonical ordering over inputs (and thus indices
 /// for each input). This is needed for sumcheck.
-pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs; 11 * MAX_TENSOR_SIZE + 11] = {
-    let mut arr = [JoltONNXR1CSInputs::Td(0); 11 * MAX_TENSOR_SIZE + 11];
+pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs; 11 * MAX_TENSOR_SIZE + 12] = {
+    let mut arr = [JoltONNXR1CSInputs::Td(0); 11 * MAX_TENSOR_SIZE + 12];
     let mut idx = 0;
-    while idx < MAX_TENSOR_SIZE {
-        arr[idx] = JoltONNXR1CSInputs::Td(idx);
-        idx += 1;
-    }
-    let mut h = 0;
-    while h < MAX_TENSOR_SIZE {
-        arr[idx] = JoltONNXR1CSInputs::TdWriteValue(h);
-        idx += 1;
-        h += 1;
-    }
-    let mut i = 0;
-    while i < MAX_TENSOR_SIZE {
-        arr[idx] = JoltONNXR1CSInputs::LeftInstructionInput(i);
-        idx += 1;
-        i += 1;
-    }
-    let mut j = 0;
-    while j < MAX_TENSOR_SIZE {
-        arr[idx] = JoltONNXR1CSInputs::RightInstructionInput(j);
-        idx += 1;
-        j += 1;
-    }
-    let mut k = 0;
-    while k < MAX_TENSOR_SIZE {
-        arr[idx] = JoltONNXR1CSInputs::Product(k);
-        idx += 1;
-        k += 1;
-    }
-    let mut l = 0;
-    while l < MAX_TENSOR_SIZE {
-        arr[idx] = JoltONNXR1CSInputs::LeftLookupOperand(l);
-        idx += 1;
-        l += 1;
-    }
-    let mut m = 0;
-    while m < MAX_TENSOR_SIZE {
-        arr[idx] = JoltONNXR1CSInputs::RightLookupOperand(m);
-        idx += 1;
-        m += 1;
-    }
-    let mut n = 0;
-    while n < MAX_TENSOR_SIZE {
-        arr[idx] = JoltONNXR1CSInputs::LookupOutput(n);
-        idx += 1;
-        n += 1;
-    }
-    let mut o = 0;
-    while o < MAX_TENSOR_SIZE {
-        arr[idx] = JoltONNXR1CSInputs::WriteLookupOutputToTD(o);
-        idx += 1;
-        o += 1;
-    }
-    let mut p = 0;
-    while p < MAX_TENSOR_SIZE {
-        arr[idx] = JoltONNXR1CSInputs::ActiveOutput(p);
-        idx += 1;
-        p += 1;
-    }
-    let mut q = 0;
-    while q < MAX_TENSOR_SIZE {
-        arr[idx] = JoltONNXR1CSInputs::TdProdFlag(q);
-        idx += 1;
-        q += 1;
-    }
+
+    fill_array_r1cs_inputs!(arr, idx, Td);
+    fill_array_r1cs_inputs!(arr, idx, TdWriteValue);
+    fill_array_r1cs_inputs!(arr, idx, LeftInstructionInput);
+    fill_array_r1cs_inputs!(arr, idx, RightInstructionInput);
+    fill_array_r1cs_inputs!(arr, idx, Product);
+    fill_array_r1cs_inputs!(arr, idx, LeftLookupOperand);
+    fill_array_r1cs_inputs!(arr, idx, RightLookupOperand);
+    fill_array_r1cs_inputs!(arr, idx, LookupOutput);
+    fill_array_r1cs_inputs!(arr, idx, WriteLookupOutputToTD);
+    fill_array_r1cs_inputs!(arr, idx, ActiveOutput);
+    fill_array_r1cs_inputs!(arr, idx, TdProdFlag);
+
     arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::AddOperands);
     idx += 1;
     arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::SubtractOperands);
@@ -580,6 +530,8 @@ pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs; 11 * MAX_TENSOR_SIZE + 11] = {
     idx += 1;
     arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::InlineSequenceInstruction);
     idx += 1;
+    arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::SumOperands);
+    idx += 1;
     arr[idx] = JoltONNXR1CSInputs::PC;
     idx += 1;
     arr[idx] = JoltONNXR1CSInputs::UnexpandedPC;
@@ -587,6 +539,7 @@ pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs; 11 * MAX_TENSOR_SIZE + 11] = {
     arr[idx] = JoltONNXR1CSInputs::NextUnexpandedPC;
     idx += 1;
     arr[idx] = JoltONNXR1CSInputs::NextPC;
+
     arr
 };
 
@@ -967,10 +920,14 @@ impl JoltONNXCycle {
         if self.circuit_flags[CircuitFlags::Const as usize] {
             active.push("Const".to_string());
         }
+        if self.circuit_flags[CircuitFlags::SumOperands as usize] {
+            active.push("SumOperands".to_string());
+        }
 
-        // Compile-time check that we've handled all flags
+        // Compile-time check that we've handled all flags.
+        // Will error if you add a new flag and forget to update this.
         const _: () = {
-            let _ = [(); (NUM_CIRCUIT_FLAGS == 12) as usize - 1];
+            let _ = [(); (NUM_CIRCUIT_FLAGS == 13) as usize - 1];
         };
 
         if active.is_empty() {

@@ -340,6 +340,8 @@ pub enum CircuitFlags {
     Advice,
     /// Is constant instruction
     Const,
+    /// Is this a sum operator
+    SumOperands,
 }
 
 pub const NUM_CIRCUIT_FLAGS: usize = CircuitFlags::COUNT;

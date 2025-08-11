@@ -1,6 +1,4 @@
-use jolt_core::jolt::instruction::{
-    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS,
-};
+use jolt_core::jolt::instruction::{InstructionLookup, LookupQuery};
 use jolt_core::jolt::lookup_table::{LookupTables, range_check::RangeCheckTable};
 use serde::{Deserialize, Serialize};
 
@@ -10,17 +8,6 @@ pub struct MOVEInstruction<const WORD_SIZE: usize>(pub u64);
 impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for MOVEInstruction<WORD_SIZE> {
     fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
         Some(RangeCheckTable.into())
-    }
-}
-
-impl<const WORD_SIZE: usize> InstructionFlags for MOVEInstruction<WORD_SIZE> {
-    fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
-        let mut flags = [false; NUM_CIRCUIT_FLAGS];
-        flags[CircuitFlags::LeftOperandIsRs1Value as usize] = true;
-        flags[CircuitFlags::RightOperandIsImm as usize] = true;
-        flags[CircuitFlags::AddOperands as usize] = true;
-        flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
-        flags
     }
 }
 

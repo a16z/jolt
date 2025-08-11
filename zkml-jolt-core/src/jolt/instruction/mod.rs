@@ -16,6 +16,8 @@ pub mod virtual_move;
 //
 // pub mod rebase_scale;
 
+pub mod precompile;
+
 #[cfg(test)]
 pub mod test;
 

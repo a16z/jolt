@@ -2,7 +2,7 @@ use crate::jolt::{
     execution_trace::JoltONNXR1CSInputs,
     r1cs::builder::{CombinedUniformBuilder, R1CSBuilder},
 };
-use jolt_core::field::JoltField;
+use jolt_core::{field::JoltField, r1cs::ops::LC};
 use onnx_tracer::{constants::MAX_TENSOR_SIZE, trace_types::CircuitFlags};
 
 pub trait R1CSConstraints<F: JoltField> {
@@ -101,6 +101,20 @@ impl<F: JoltField> R1CSConstraints<F> for JoltONNXConstraints {
                 JoltONNXR1CSInputs::LookupOutput(i),
             );
         }
+
+        // If SumOperands {
+        //     assert!(RightLookupOperand(0) == LeftInstructionInput + RightInstructionInput)
+        // }
+        cs.constrain_eq_conditional(
+            JoltONNXR1CSInputs::OpFlags(CircuitFlags::SumOperands),
+            JoltONNXR1CSInputs::RightLookupOperand(0),
+            (0..MAX_TENSOR_SIZE)
+                .map(|i| {
+                    JoltONNXR1CSInputs::LeftInstructionInput(i)
+                        + JoltONNXR1CSInputs::RightInstructionInput(i)
+                })
+                .fold(LC::zero(), |acc, x| acc + x),
+        );
 
         // if DoNotUpdatePC {
         //     assert!(NextUnexpandedPC == UnexpandedPC)
