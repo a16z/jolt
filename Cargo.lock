@@ -2051,6 +2051,7 @@ dependencies = [
  "iai-callgrind",
  "indicatif",
  "itertools 0.10.5",
+ "jolt-inlines-keccak256",
  "jolt-inlines-sha2",
  "jolt-optimizations",
  "lazy_static",

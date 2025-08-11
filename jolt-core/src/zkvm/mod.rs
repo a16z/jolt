@@ -424,6 +424,12 @@ mod tests {
     #[test]
     #[serial]
     fn sha3_e2e_dory() {
+        // Ensure SHA3 inline library is linked and auto-registered
+        #[cfg(feature = "host")]
+        extern crate sha3_inline;
+        // SHA3 inlines are automatically registered via #[ctor::ctor]
+        // when the sha3_inline crate is linked (see lib.rs)
+
         let mut program = host::Program::new("sha3-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
