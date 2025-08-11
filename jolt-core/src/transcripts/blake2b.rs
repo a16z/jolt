@@ -1,13 +1,17 @@
+use super::transcript::Transcript;
 use crate::field::JoltField;
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_serialize::CanonicalSerialize;
-use sha3::{Digest, Keccak256};
+use blake2::digest::consts::U32;
+use blake2::{Blake2b, Digest};
+
+type Blake2b256 = Blake2b<U32>;
 use std::borrow::Borrow;
 
-/// Represents the current state of the protocol's Fiat-Shamir transcript.
+/// Represents the current state of the protocol's Fiat-Shamir transcript using Blake2b.
 #[derive(Default, Clone)]
-pub struct KeccakTranscript {
-    /// Ethereum-compatible 256-bit running state
+pub struct Blake2bTranscript {
+    /// 256-bit running state
     pub state: [u8; 32],
     /// We append an ordinal to each invocation of the hash
     n_rounds: u32,
@@ -22,14 +26,13 @@ pub struct KeccakTranscript {
     expected_state_history: Option<Vec<[u8; 32]>>,
 }
 
-impl KeccakTranscript {
+impl Blake2bTranscript {
     /// Gives the hasher object with the running seed and index added
     /// To load hash you must call finalize, after appending u8 vectors
-    fn hasher(&self) -> Keccak256 {
+    fn hasher(&self) -> Blake2b256 {
         let mut packed = [0_u8; 28].to_vec();
         packed.append(&mut self.n_rounds.to_be_bytes().to_vec());
-        // Note we add the extra memory here to improve the ease of eth integrations
-        Keccak256::new()
+        Blake2b256::new()
             .chain_update(self.state)
             .chain_update(&packed)
     }
@@ -75,15 +78,15 @@ impl KeccakTranscript {
     }
 }
 
-impl Transcript for KeccakTranscript {
+impl Transcript for Blake2bTranscript {
     fn new(label: &'static [u8]) -> Self {
         // Hash in the label
         assert!(label.len() < 33);
         let hasher = if label.len() == 32 {
-            Keccak256::new().chain_update(label)
+            Blake2b256::new().chain_update(label)
         } else {
             let zeros = vec![0_u8; 32 - label.len()];
-            Keccak256::new().chain_update(label).chain_update(zeros)
+            Blake2b256::new().chain_update(label).chain_update(zeros)
         };
         let out = hasher.finalize();
 
@@ -192,13 +195,15 @@ impl Transcript for KeccakTranscript {
         self.append_message(b"end_append_vector");
     }
 
+    fn challenge_u128(&mut self) -> u128 {
+        let mut buf = vec![0u8; 16];
+        self.challenge_bytes(&mut buf);
+        buf = buf.into_iter().rev().collect();
+        u128::from_be_bytes(buf.try_into().unwrap())
+    }
+
     fn challenge_scalar<F: JoltField>(&mut self) -> F {
-        // let mut buf = vec![0u8; F::NUM_BYTES];
-        // self.challenge_bytes(&mut buf);
-        // // Because onchain we don't want to do the bit reversal to get the LE ordering
-        // // we reverse here so that the random is BE ordering.
-        // buf = buf.into_iter().rev().collect();
-        // F::from_bytes(&buf)
+        // Under the hood all Fr are 128 bits for performance
         self.challenge_scalar_128_bits()
     }
 
@@ -227,29 +232,6 @@ impl Transcript for KeccakTranscript {
     }
 }
 
-pub trait Transcript: Default + Clone + Sync + Send + 'static {
-    fn new(label: &'static [u8]) -> Self;
-    #[cfg(test)]
-    fn compare_to(&mut self, other: Self);
-    fn append_message(&mut self, msg: &'static [u8]);
-    fn append_bytes(&mut self, bytes: &[u8]);
-    fn append_u64(&mut self, x: u64);
-    fn append_scalar<F: JoltField>(&mut self, scalar: &F);
-    fn append_serializable<F: CanonicalSerialize>(&mut self, scalar: &F);
-    fn append_scalars<F: JoltField>(&mut self, scalars: &[impl Borrow<F>]);
-    fn append_point<G: CurveGroup>(&mut self, point: &G);
-    fn append_points<G: CurveGroup>(&mut self, points: &[G]);
-    fn challenge_scalar<F: JoltField>(&mut self) -> F;
-    fn challenge_scalar_128_bits<F: JoltField>(&mut self) -> F;
-    fn challenge_vector<F: JoltField>(&mut self, len: usize) -> Vec<F>;
-    // Compute powers of scalar q : (1, q, q^2, ..., q^(len-1))
-    fn challenge_scalar_powers<F: JoltField>(&mut self, len: usize) -> Vec<F>;
-}
-
-pub trait AppendToTranscript {
-    fn append_to_transcript<ProofTranscript: Transcript>(&self, transcript: &mut ProofTranscript);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,10 +240,10 @@ mod tests {
 
     #[test]
     fn test_challenge_scalar_128_bits() {
-        let mut transcript = KeccakTranscript::new(b"test_128_bit_scalar");
+        let mut transcript = Blake2bTranscript::new(b"test_128_bit_scalar");
         let mut scalars = HashSet::new();
 
-        for i in 0..1000 {
+        for i in 0..10000 {
             let scalar: Fr = transcript.challenge_scalar_128_bits();
 
             let num_bits = scalar.num_bits();

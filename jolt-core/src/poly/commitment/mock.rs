@@ -6,10 +6,8 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use crate::{
     field::JoltField,
     poly::multilinear_polynomial::MultilinearPolynomial,
-    utils::{
-        errors::ProofVerifyError,
-        transcript::{AppendToTranscript, Transcript},
-    },
+    transcript::{AppendToTranscript, Transcript},
+    utils::errors::ProofVerifyError,
 };
 
 use super::commitment_scheme::CommitmentScheme;

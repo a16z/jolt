@@ -14,7 +14,8 @@ use crate::{
         },
     },
     subprotocols::sumcheck::SumcheckInstance,
-    utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
+    transcript::Transcript,
+    utils::{math::Math, thread::unsafe_allocate_zero_vec},
     zkvm::{
         dag::state_manager::StateManager,
         ram::remap_address,

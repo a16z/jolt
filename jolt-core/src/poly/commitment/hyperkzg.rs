@@ -14,11 +14,11 @@ use super::{
 };
 use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
-use crate::utils::transcript::Transcript;
 use crate::{
     msm::VariableBaseMSM,
     poly::{commitment::kzg::SRS, dense_mlpoly::DensePolynomial, unipoly::UniPoly},
-    utils::{errors::ProofVerifyError, transcript::AppendToTranscript},
+    transcript::{AppendToTranscript, Transcript},
+    utils::errors::ProofVerifyError,
 };
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -553,7 +553,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::transcript::{KeccakTranscript, Transcript};
+    use crate::transcript::{KeccakTranscript, Transcript};
     use ark_bn254::{Bn254, Fr};
     use ark_std::UniformRand;
     use rand_core::SeedableRng;

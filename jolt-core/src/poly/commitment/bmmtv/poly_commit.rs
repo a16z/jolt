@@ -16,7 +16,7 @@ use super::{
 use crate::field::JoltField;
 use crate::poly::commitment::kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG, SRS};
 use crate::poly::unipoly::UniPoly as UnivariatePolynomial;
-use crate::utils::transcript::Transcript;
+use crate::transcript::Transcript;
 use ark_std::rand::Rng;
 use rand_core::CryptoRng;
 
@@ -267,7 +267,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::transcript::KeccakTranscript;
+    use crate::transcript::KeccakTranscript;
     use ark_bn254::Bn254;
     use ark_ff::UniformRand;
     use ark_std::rand::{rngs::StdRng, SeedableRng};

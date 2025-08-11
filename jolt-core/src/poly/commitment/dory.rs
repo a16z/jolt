@@ -1,16 +1,13 @@
 #![allow(static_mut_refs)]
 
 use super::commitment_scheme::CommitmentScheme;
+use crate::transcript::{AppendToTranscript, Transcript};
 use crate::{
     field::JoltField,
     msm::VariableBaseMSM,
     poly::compact_polynomial::SmallScalar,
     poly::multilinear_polynomial::MultilinearPolynomial,
-    utils::{
-        errors::ProofVerifyError,
-        math::Math,
-        transcript::{AppendToTranscript, Transcript},
-    },
+    utils::{errors::ProofVerifyError, math::Math},
 };
 use ark_bn254::{Bn254, Fr, G1Projective, G2Projective};
 use ark_ec::{
@@ -1245,7 +1242,7 @@ mod tests {
     use crate::poly::compact_polynomial::CompactPolynomial;
     use crate::poly::dense_mlpoly::DensePolynomial;
     use crate::poly::multilinear_polynomial::PolynomialEvaluation;
-    use crate::utils::transcript::KeccakTranscript;
+    use crate::transcript::KeccakTranscript;
     use ark_std::rand::thread_rng;
     use ark_std::UniformRand;
     use serial_test::serial;

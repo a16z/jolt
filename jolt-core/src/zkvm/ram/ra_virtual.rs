@@ -18,7 +18,8 @@ use crate::{
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
     },
     subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
-    utils::{math::Math, transcript::Transcript},
+    transcript::Transcript,
+    utils::math::Math,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
@@ -408,7 +409,7 @@ impl<F: JoltField> SumcheckInstance<F> for RASumcheck<F> {
 // #[cfg(test)]
 // mod tests {
 //     use super::*;
-//     use crate::utils::transcript::KeccakTranscript;
+//     use crate::transcript::KeccakTranscript;
 //     use ark_bn254::Fr;
 //     use ark_std::{One, Zero};
 //     use rand::thread_rng;

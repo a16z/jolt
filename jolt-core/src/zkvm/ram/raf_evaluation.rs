@@ -18,7 +18,8 @@ use crate::{
         },
     },
     subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
-    utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
+    transcript::Transcript,
+    utils::{math::Math, thread::unsafe_allocate_zero_vec},
     zkvm::dag::state_manager::StateManager,
     zkvm::{ram::remap_address, witness::VirtualPolynomial},
 };
@@ -249,7 +250,7 @@ impl<F: JoltField> SumcheckInstance<F> for RafEvaluationSumcheck<F> {
 // #[cfg(test)]
 // mod tests {
 //     use super::*;
-//     use crate::utils::transcript::KeccakTranscript;
+//     use crate::transcript::KeccakTranscript;
 //     use ark_bn254::Fr;
 
 //     #[test]

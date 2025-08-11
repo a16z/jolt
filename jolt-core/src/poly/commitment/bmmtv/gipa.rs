@@ -9,7 +9,7 @@ use crate::{
     poly::commitment::bmmtv::{
         afgho::AfghoCommitment, inner_products::MultiexponentiationInnerProduct,
     },
-    utils::transcript::Transcript,
+    transcript::Transcript,
 };
 use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -225,7 +225,7 @@ mod tests {
         *,
     };
     use crate::msm::VariableBaseMSM;
-    use crate::utils::transcript::KeccakTranscript;
+    use crate::transcript::KeccakTranscript;
     use ark_bn254::Bn254;
     use ark_ec::pairing::Pairing;
     use ark_ec::CurveGroup;

@@ -4,10 +4,8 @@
 use crate::msm::VariableBaseMSM;
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use crate::poly::{dense_mlpoly::DensePolynomial, unipoly::UniPoly};
-use crate::utils::{
-    errors::ProofVerifyError,
-    transcript::{AppendToTranscript, Transcript},
-};
+use crate::transcript::{AppendToTranscript, Transcript};
+use crate::utils::errors::ProofVerifyError;
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::batch_inversion;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -513,8 +511,8 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::transcript::{KeccakTranscript, Transcript};
     use crate::utils::math::Math;
-    use crate::utils::transcript::{KeccakTranscript, Transcript};
     use ark_bn254::{Bn254, Fr};
     use ark_ff::{BigInt, Field, Zero};
     use ark_std::{test_rng, UniformRand};

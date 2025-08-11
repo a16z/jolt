@@ -1,7 +1,7 @@
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::subprotocols::sumcheck::SumcheckInstance;
-use crate::utils::transcript::Transcript;
+use crate::transcript::Transcript;
 use crate::zkvm::dag::state_manager::StateManager;
 
 pub trait SumcheckStages<

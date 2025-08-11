@@ -4,8 +4,7 @@
 //! Univariate Polynomial Evaluations (UPE), that allows committing to multilinear polynomials
 //! using normal Bmmtv
 
-use std::{borrow::Borrow, marker::PhantomData, sync::Arc};
-
+use crate::transcript::{AppendToTranscript, Transcript};
 use crate::{
     field::JoltField,
     poly::{
@@ -17,10 +16,7 @@ use crate::{
         multilinear_polynomial::MultilinearPolynomial,
         unipoly::UniPoly,
     },
-    utils::{
-        errors::ProofVerifyError,
-        transcript::{AppendToTranscript, Transcript},
-    },
+    utils::errors::ProofVerifyError,
 };
 use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -28,6 +24,7 @@ use ark_std::{One, Zero};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 use rayon::prelude::*;
+use std::{borrow::Borrow, marker::PhantomData, sync::Arc};
 
 #[derive(Clone)]
 pub struct HyperBmmtv<P: Pairing> {
@@ -326,8 +323,8 @@ mod tests {
     };
     use crate::poly::multilinear_polynomial::MultilinearPolynomial;
     use crate::poly::multilinear_polynomial::PolynomialEvaluation;
-    use crate::utils::transcript::KeccakTranscript;
-    use crate::utils::transcript::Transcript;
+    use crate::transcript::KeccakTranscript;
+    use crate::transcript::Transcript;
     use ark_bn254::Bn254;
     use ark_ec::pairing::Pairing;
     use ark_std::UniformRand;

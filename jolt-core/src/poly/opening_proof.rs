@@ -27,7 +27,8 @@ use crate::{
         one_hot_polynomial::{OneHotPolynomialProverOpening, OneHotSumcheckState},
     },
     subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance, SumcheckInstanceProof},
-    utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
+    transcript::Transcript,
+    utils::{errors::ProofVerifyError, math::Math},
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
 
@@ -373,8 +374,13 @@ where
         }
 
         if self.polynomials.len() > 1 {
-            assert_eq!(gammas.len(), self.polynomials.len(), 
-                       "Expected {} gammas but got {}", self.polynomials.len(), gammas.len());
+            assert_eq!(
+                gammas.len(),
+                self.polynomials.len(),
+                "Expected {} gammas but got {}",
+                self.polynomials.len(),
+                gammas.len()
+            );
             self.rlc_coeffs = gammas.to_vec();
         } else {
             assert_eq!(gammas.len(), 1, "Expected 1 gamma but got {}", gammas.len());
@@ -752,7 +758,8 @@ where
         );
 
         // Count total number of challenges needed
-        let total_challenges_needed: usize = self.sumchecks
+        let total_challenges_needed: usize = self
+            .sumchecks
             .iter()
             .map(|sumcheck| {
                 if sumcheck.polynomials.len() > 1 {
@@ -1114,7 +1121,8 @@ where
         }
 
         // Count total number of challenges needed
-        let total_challenges_needed: usize = self.sumchecks
+        let total_challenges_needed: usize = self
+            .sumchecks
             .iter()
             .map(|sumcheck| {
                 if sumcheck.polynomials.len() > 1 {

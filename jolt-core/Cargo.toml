@@ -60,6 +60,7 @@ rand_core = { version = "0.6.4", default-features = false }
 rayon = { version = "^1.8.0", optional = true }
 serde = { version = "1.0.*", default-features = false }
 sha3 = "0.10.8"
+blake2 = "0.10"
 strum = "0.26.3"
 strum_macros = "0.26.4"
 thiserror = "1.0.58"

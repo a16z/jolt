@@ -22,7 +22,7 @@ use crate::{
         commitment::kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG, G2},
         unipoly::UniPoly,
     },
-    utils::transcript::Transcript,
+    transcript::Transcript,
 };
 
 /// Calculates KZG opening in G2
@@ -239,7 +239,7 @@ mod tests {
     };
     use crate::{
         poly::commitment::{bmmtv::mipp_k::Field, kzg::SRS},
-        utils::transcript::KeccakTranscript,
+        transcript::KeccakTranscript,
     };
 
     type BnAfghoG1 = AfghoCommitment<Bn254>;

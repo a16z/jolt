@@ -8,11 +8,11 @@ use crate::{
         },
         unipoly::{CompressedUniPoly, UniPoly},
     },
+    transcript::{AppendToTranscript, Transcript},
     utils::{
         errors::ProofVerifyError,
         math::Math,
         thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
-        transcript::{AppendToTranscript, Transcript},
     },
 };
 use rayon::prelude::*;
@@ -1121,7 +1121,7 @@ pub fn prove_val_evaluation<F: JoltField, ProofTranscript: Transcript>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::transcript::KeccakTranscript;
+    use crate::transcript::KeccakTranscript;
     use ark_bn254::Fr;
     use ark_std::test_rng;
     use rand_core::RngCore;

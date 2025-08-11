@@ -1081,7 +1081,7 @@
 // #[cfg(test)]
 // mod tests {
 //     use super::*;
-//     use crate::utils::transcript::KeccakTranscript;
+//     use crate::transcript::KeccakTranscript;
 //     use ark_bn254::Fr;
 //     use ark_ff::{One, Zero};
 //     use ark_std::test_rng;
