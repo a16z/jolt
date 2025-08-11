@@ -193,12 +193,13 @@ impl Transcript for KeccakTranscript {
     }
 
     fn challenge_scalar<F: JoltField>(&mut self) -> F {
-        let mut buf = vec![0u8; F::NUM_BYTES];
-        self.challenge_bytes(&mut buf);
-        // Because onchain we don't want to do the bit reversal to get the LE ordering
-        // we reverse here so that the random is BE ordering.
-        buf = buf.into_iter().rev().collect();
-        F::from_bytes(&buf)
+        // let mut buf = vec![0u8; F::NUM_BYTES];
+        // self.challenge_bytes(&mut buf);
+        // // Because onchain we don't want to do the bit reversal to get the LE ordering
+        // // we reverse here so that the random is BE ordering.
+        // buf = buf.into_iter().rev().collect();
+        // F::from_bytes(&buf)
+        self.challenge_scalar_128_bits()
     }
 
     fn challenge_scalar_128_bits<F: JoltField>(&mut self) -> F {
