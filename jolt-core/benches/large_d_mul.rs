@@ -133,3 +133,4 @@ fn main() {
     benchmark_naive::<Fr, 32>(&mut criterion);
     benchmark_karatsuba::<Fr, 32>(&mut criterion);
 }
+
