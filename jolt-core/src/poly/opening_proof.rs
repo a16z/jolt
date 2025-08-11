@@ -353,7 +353,7 @@ where
     fn prepare_sumcheck(
         &mut self,
         polynomials_map: Option<&HashMap<CommittedPolynomial, MultilinearPolynomial<F>>>,
-        gamma: F,
+        gammas: &[F],
     ) {
         #[cfg(test)]
         {
@@ -372,12 +372,16 @@ where
             }
         }
 
-        self.rlc_coeffs = vec![F::one()];
         if self.polynomials.len() > 1 {
-            for i in 1..self.polynomials.len() {
-                self.rlc_coeffs.push(self.rlc_coeffs[i - 1] * gamma);
-            }
+            assert_eq!(gammas.len(), self.polynomials.len(), 
+                       "Expected {} gammas but got {}", self.polynomials.len(), gammas.len());
+            self.rlc_coeffs = gammas.to_vec();
+        } else {
+            assert_eq!(gammas.len(), 1, "Expected 1 gamma but got {}", gammas.len());
+            self.rlc_coeffs = vec![F::one()];
+        }
 
+        if self.polynomials.len() > 1 {
             let reduced_claim = self
                 .rlc_coeffs
                 .par_iter()
@@ -747,8 +751,20 @@ where
             self.sumchecks.len()
         );
 
-        // We pre-extract gamma values deterministically to prepare sumchecks in parallel
-        let gammas: Vec<F> = transcript.challenge_vector(self.sumchecks.len());
+        // Count total number of challenges needed
+        let total_challenges_needed: usize = self.sumchecks
+            .iter()
+            .map(|sumcheck| {
+                if sumcheck.polynomials.len() > 1 {
+                    sumcheck.polynomials.len()
+                } else {
+                    1
+                }
+            })
+            .sum();
+
+        // Extract all gamma values deterministically to prepare sumchecks in parallel
+        let all_gammas: Vec<F> = transcript.challenge_vector(total_challenges_needed);
 
         let prepare_span = tracing::span!(
             tracing::Level::INFO,
@@ -757,10 +773,30 @@ where
         );
         let _enter = prepare_span.enter();
 
+        // Calculate offsets for each sumcheck
+        let mut gamma_offsets = vec![0];
+        for sumcheck in self.sumchecks.iter() {
+            let num_gammas = if sumcheck.polynomials.len() > 1 {
+                sumcheck.polynomials.len()
+            } else {
+                1
+            };
+            gamma_offsets.push(gamma_offsets.last().unwrap() + num_gammas);
+        }
+
+        // Distribute gammas to each sumcheck in parallel
         self.sumchecks
             .par_iter_mut()
-            .zip(gammas.par_iter())
-            .for_each(|(sumcheck, gamma)| sumcheck.prepare_sumcheck(Some(&polynomials), *gamma));
+            .zip(gamma_offsets.par_iter())
+            .for_each(|(sumcheck, &offset)| {
+                let num_gammas = if sumcheck.polynomials.len() > 1 {
+                    sumcheck.polynomials.len()
+                } else {
+                    1
+                };
+                let gammas_slice = &all_gammas[offset..offset + num_gammas];
+                sumcheck.prepare_sumcheck(Some(&polynomials), gammas_slice);
+            });
 
         drop(_enter);
 
@@ -1077,12 +1113,45 @@ where
             assert_eq!(prover_openings.len(), self.len());
         }
 
-        let gammas: Vec<F> = transcript.challenge_vector(self.sumchecks.len());
+        // Count total number of challenges needed
+        let total_challenges_needed: usize = self.sumchecks
+            .iter()
+            .map(|sumcheck| {
+                if sumcheck.polynomials.len() > 1 {
+                    sumcheck.polynomials.len()
+                } else {
+                    1
+                }
+            })
+            .sum();
 
+        // Extract all gamma values deterministically
+        let all_gammas: Vec<F> = transcript.challenge_vector(total_challenges_needed);
+
+        // Calculate offsets for each sumcheck
+        let mut gamma_offsets = vec![0];
+        for sumcheck in self.sumchecks.iter() {
+            let num_gammas = if sumcheck.polynomials.len() > 1 {
+                sumcheck.polynomials.len()
+            } else {
+                1
+            };
+            gamma_offsets.push(gamma_offsets.last().unwrap() + num_gammas);
+        }
+
+        // Distribute gammas to each sumcheck in parallel
         self.sumchecks
             .par_iter_mut()
-            .zip(gammas.par_iter())
-            .for_each(|(sumcheck, gamma)| sumcheck.prepare_sumcheck(None, *gamma));
+            .zip(gamma_offsets.par_iter())
+            .for_each(|(sumcheck, &offset)| {
+                let num_gammas = if sumcheck.polynomials.len() > 1 {
+                    sumcheck.polynomials.len()
+                } else {
+                    1
+                };
+                let gammas_slice = &all_gammas[offset..offset + num_gammas];
+                sumcheck.prepare_sumcheck(None, gammas_slice);
+            });
 
         let num_sumcheck_rounds = self
             .sumchecks
