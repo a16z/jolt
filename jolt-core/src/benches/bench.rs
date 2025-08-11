@@ -2,7 +2,7 @@ use crate::field::JoltField;
 use crate::host;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::subprotocols::optimization::{
-    compute_initial_eval_claim, KaratsubaSumCheckProof, LargeDSumCheckProof, NaiveSumCheckProof,
+    compute_initial_eval_claim, LargeDMulSumCheckProof, AppendixCSumCheckProof, NaiveSumCheckProof,
 };
 use crate::subprotocols::twist::{TwistAlgorithm, TwistProof};
 use crate::utils::math::Math;
@@ -232,7 +232,7 @@ where
         vec![previous_claim; NUM_COPIES],
     );
 
-    let _proof = LargeDSumCheckProof::<F, ProofTranscript>::prove::<D_MINUS_ONE>(
+    let _proof = AppendixCSumCheckProof::<F, ProofTranscript>::prove::<D_MINUS_ONE>(
         &mut ra[0].iter_mut().collect::<Vec<_>>(),
         &r_cycle,
         &mut previous_claim[0],
@@ -246,7 +246,7 @@ where
         &mut transcript[1],
     );
 
-    let _proof = KaratsubaSumCheckProof::<F, ProofTranscript>::prove(
+    let _proof = LargeDMulSumCheckProof::<F, ProofTranscript>::prove(
         &mut ra[2].iter_mut().collect::<Vec<_>>(),
         &r_cycle,
         &mut previous_claim[2],

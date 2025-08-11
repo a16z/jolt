@@ -146,31 +146,13 @@ pub fn compute_initial_eval_claim<F: JoltField>(
         .reduce(|| F::zero(), |running, new| running + new)
 }
 
-pub struct ToomCookSumCheckProof<F: JoltField, ProofTranscript: Transcript> {
+pub struct LargeDMulSumCheckProof<F: JoltField, ProofTranscript: Transcript> {
     sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     eq_claim: F,
     mle_claims: Vec<F>,
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> ToomCookSumCheckProof<F, ProofTranscript> {
-    #[tracing::instrument(skip_all, name = "ToomCookSumCheckProof::prove")]
-    pub fn prove(
-        mle_vec: &mut Vec<&mut MultilinearPolynomial<F>>,
-        r_cycle: &[F],
-        previous_claim: &mut F,
-        transcript: &mut ProofTranscript,
-    ) -> (Self, Vec<F>) {
-        todo!()
-    }
-}
-
-pub struct KaratsubaSumCheckProof<F: JoltField, ProofTranscript: Transcript> {
-    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    eq_claim: F,
-    mle_claims: Vec<F>,
-}
-
-impl<F: JoltField, ProofTranscript: Transcript> KaratsubaSumCheckProof<F, ProofTranscript> {
+impl<F: JoltField, ProofTranscript: Transcript> LargeDMulSumCheckProof<F, ProofTranscript> {
     #[tracing::instrument(skip_all, name = "KaratsubaSumCheckProof::prove")]
     pub fn prove(
         mle_vec: &mut Vec<&mut MultilinearPolynomial<F>>,
@@ -486,13 +468,13 @@ impl<F: JoltField, ProofTranscript: Transcript> NaiveSumCheckProof<F, ProofTrans
 /// where eq(j, j_1, ..., j_d) = 1 if j = j_1 = ... = j_d and 0 otherwise.
 ///
 /// See Appendix C of the Twist + Shout paper for an example with ra virtualization.
-pub struct LargeDSumCheckProof<F: JoltField, ProofTranscript: Transcript> {
+pub struct AppendixCSumCheckProof<F: JoltField, ProofTranscript: Transcript> {
     sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     eq_claim: F,
     mle_claims: Vec<F>,
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> LargeDSumCheckProof<F, ProofTranscript> {
+impl<F: JoltField, ProofTranscript: Transcript> AppendixCSumCheckProof<F, ProofTranscript> {
     // Compute the initial claim for the sumcheck
     // val = \sum_{j_1, ..., j_d \in \{0, 1\}^T} eq(j, j_1, ..., j_d) \prod_{i=1}^d func(j_i)
     //     = \sum_{j' \in \{0, 1\}^T} eq(j, j', ..., j') \prod_{i=1}^d func(j)
@@ -737,7 +719,7 @@ mod test {
         field::JoltField,
         poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         subprotocols::optimization::{
-            compute_initial_eval_claim, KaratsubaSumCheckProof, LargeDSumCheckProof,
+            compute_initial_eval_claim, LargeDMulSumCheckProof, AppendixCSumCheckProof,
             NaiveSumCheckProof,
         },
         utils::{
@@ -977,7 +959,7 @@ mod test {
         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
 
         let start_time = Instant::now();
-        let (proof, r_prime) = KaratsubaSumCheckProof::<Fr, KeccakTranscript>::prove(
+        let (proof, r_prime) = LargeDMulSumCheckProof::<Fr, KeccakTranscript>::prove(
             &mut ra_copy.iter_mut().collect::<Vec<_>>(),
             &r_cycle,
             &mut previous_claim_copy,
@@ -1023,7 +1005,7 @@ mod test {
         let claim_copy_2 = previous_claim_copy_2.clone();
 
         let start_time = Instant::now();
-        let (proof, r_prime) = LargeDSumCheckProof::<Fr, KeccakTranscript>::prove::<D1>(
+        let (proof, r_prime) = AppendixCSumCheckProof::<Fr, KeccakTranscript>::prove::<D1>(
             &mut ra.iter_mut().collect::<Vec<_>>(),
             &r_cycle,
             &mut previous_claim,
@@ -1067,7 +1049,7 @@ mod test {
         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
 
         let start_time = Instant::now();
-        let (proof, r_prime) = KaratsubaSumCheckProof::<Fr, KeccakTranscript>::prove(
+        let (proof, r_prime) = LargeDMulSumCheckProof::<Fr, KeccakTranscript>::prove(
             &mut ra_copy_2.iter_mut().collect::<Vec<_>>(),
             &r_cycle,
             &mut previous_claim_copy_2,
