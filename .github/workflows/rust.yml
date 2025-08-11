@@ -122,9 +122,6 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      # Discover every crate whose name starts with "jolt-inlines-" and expose as output.
-      # If the number of inline crates grows, consider turning `jolt-inlines/` into its own workspace
-      # and switching to `cargo nextest run --workspace --features host`.
       - name: Discover inline crates
         id: discover_inlines
         shell: bash
