@@ -26,29 +26,6 @@ use crate::{
     },
 };
 
-fn compute_mle_product_coeffs<F: FieldMulSmall, const D: usize, const D_PLUS_ONE: usize>(
-    mle_vec: &[&mut MultilinearPolynomial<F>],
-    round: usize,
-    log_T: usize,
-    factor: &F,
-    E_table: &[Vec<F>],
-) -> Vec<F> {
-    match D {
-        32 => compute_mle_product_coeffs_katatsuba::<F, 32, 33>(
-            mle_vec, round, log_T, factor, E_table,
-        ),
-        16 => compute_mle_product_coeffs_katatsuba::<F, 16, 17>(
-            mle_vec, round, log_T, factor, E_table,
-        ),
-        8 => compute_mle_product_coeffs_toom::<F, 8, 9>(mle_vec, round, log_T, factor, E_table),
-        4 => compute_mle_product_coeffs_toom::<F, 4, 5>(mle_vec, round, log_T, factor, E_table),
-        _ => panic!(
-            "Unsupported number of polynomials, got {} and expected 32, 16, 8, or 4",
-            D
-        ),
-    }
-}
-
 #[inline(always)]
 fn compute_mle_product_coeffs_toom<F: FieldMulSmall, const D: usize, const D_PLUS_ONE: usize>(
     mle_vec: &[&mut MultilinearPolynomial<F>],
@@ -123,7 +100,7 @@ fn compute_mle_product_coeffs_toom<F: FieldMulSmall, const D: usize, const D_PLU
             },
         );
 
-    let univariate_poly = UniPoly::from_evals(&evals);
+    let univariate_poly = UniPoly::from_evals_toom(&evals);
     univariate_poly.coeffs
 }
 
@@ -253,7 +230,7 @@ pub struct LargeDMulSumCheckProof<F: JoltField, ProofTranscript: Transcript> {
     mle_claims: Vec<F>,
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> LargeDMulSumCheckProof<F, ProofTranscript> {
+impl<F: FieldMulSmall, ProofTranscript: Transcript> LargeDMulSumCheckProof<F, ProofTranscript> {
     #[tracing::instrument(skip_all, name = "KaratsubaSumCheckProof::prove")]
     pub fn prove(
         mle_vec: &mut Vec<&mut MultilinearPolynomial<F>>,
@@ -286,17 +263,17 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDMulSumCheckProof<F, ProofT
             let inner_span = tracing::span!(tracing::Level::INFO, "Compute MLE product");
             let _guard = inner_span.enter();
 
-            let mle_product_evals = match mle_vec.len() {
+            let mle_product_coeffs = match mle_vec.len() {
                 32 => compute_mle_product_coeffs_katatsuba::<F, 32, 33>(
                     mle_vec, round, log_T, &factor, &E_table,
                 ),
                 16 => compute_mle_product_coeffs_katatsuba::<F, 16, 17>(
                     mle_vec, round, log_T, &factor, &E_table,
                 ),
-                8 => compute_mle_product_coeffs_katatsuba::<F, 8, 9>(
+                8 => compute_mle_product_coeffs_toom::<F, 8, 9>(
                     mle_vec, round, log_T, &factor, &E_table,
                 ),
-                4 => compute_mle_product_coeffs_katatsuba::<F, 4, 5>(
+                4 => compute_mle_product_coeffs_toom::<F, 4, 5>(
                     mle_vec, round, log_T, &factor, &E_table,
                 ),
                 _ => panic!(
@@ -305,7 +282,7 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDMulSumCheckProof<F, ProofT
                 ),
             };
 
-            assert_eq!(mle_product_evals.len(), mle_vec.len() + 1);
+            assert_eq!(mle_product_coeffs.len(), mle_vec.len() + 1);
 
             drop(_guard);
             drop(inner_span);
@@ -322,14 +299,14 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDMulSumCheckProof<F, ProofT
             ];
 
             // Constant term
-            univariate_evals.push(eq_coeffs[0] * mle_product_evals[0]);
+            univariate_evals.push(eq_coeffs[0] * mle_product_coeffs[0]);
 
             // Middle terms
-            let mul_by_evals_0 = mle_product_evals[1..]
+            let mul_by_evals_0 = mle_product_coeffs[1..]
                 .par_iter()
                 .map(|x| *x * eq_coeffs[0])
                 .collect::<Vec<_>>();
-            let mul_by_evals_1 = mle_product_evals[..mle_vec.len()]
+            let mul_by_evals_1 = mle_product_coeffs[..mle_vec.len()]
                 .par_iter()
                 .map(|x| *x * eq_coeffs[1])
                 .collect::<Vec<_>>();
@@ -342,7 +319,7 @@ impl<F: JoltField, ProofTranscript: Transcript> LargeDMulSumCheckProof<F, ProofT
             );
 
             // Last term
-            univariate_evals.push(mle_product_evals[mle_vec.len()] * eq_coeffs[1]);
+            univariate_evals.push(mle_product_coeffs[mle_vec.len()] * eq_coeffs[1]);
 
             assert_eq!(univariate_evals.len(), mle_vec.len() + 2);
 

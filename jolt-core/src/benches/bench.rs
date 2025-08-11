@@ -4,6 +4,7 @@ use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::subprotocols::optimization::{
     compute_initial_eval_claim, LargeDMulSumCheckProof, AppendixCSumCheckProof, NaiveSumCheckProof,
 };
+use crate::subprotocols::toom::FieldMulSmall;
 use crate::subprotocols::twist::{TwistAlgorithm, TwistProof};
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
@@ -176,7 +177,7 @@ fn prove_example(
 
 fn large_d_sumcheck<F, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
 where
-    F: JoltField,
+    F: FieldMulSmall,
     ProofTranscript: Transcript,
 {
     let mut tasks = Vec::new();
@@ -200,7 +201,7 @@ where
 
 fn benchmark_proof<F, ProofTranscript, const D_MINUS_ONE: usize>(D: usize, T: usize)
 where
-    F: JoltField,
+    F: FieldMulSmall,
     ProofTranscript: Transcript,
 {
     let NUM_COPIES: usize = 3;
