@@ -146,6 +146,24 @@ pub fn compute_initial_eval_claim<F: JoltField>(
         .reduce(|| F::zero(), |running, new| running + new)
 }
 
+pub struct ToomCookSumCheckProof<F: JoltField, ProofTranscript: Transcript> {
+    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
+    eq_claim: F,
+    mle_claims: Vec<F>,
+}
+
+impl<F: JoltField, ProofTranscript: Transcript> ToomCookSumCheckProof<F, ProofTranscript> {
+    #[tracing::instrument(skip_all, name = "ToomCookSumCheckProof::prove")]
+    pub fn prove(
+        mle_vec: &mut Vec<&mut MultilinearPolynomial<F>>,
+        r_cycle: &[F],
+        previous_claim: &mut F,
+        transcript: &mut ProofTranscript,
+    ) -> (Self, Vec<F>) {
+        todo!()
+    }
+}
+
 pub struct KaratsubaSumCheckProof<F: JoltField, ProofTranscript: Transcript> {
     sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     eq_claim: F,

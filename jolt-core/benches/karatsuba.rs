@@ -3,24 +3,11 @@ use ark_ff::UniformRand;
 use criterion::Criterion;
 use jolt_core::{
     field::JoltField,
-    subprotocols::{
-        karatsuba::{coeff_kara_16, coeff_kara_32, coeff_kara_4, coeff_kara_8, coeff_naive},
-        quang_optimization::{prod16, prod8, FieldMulSmall},
+    subprotocols::karatsuba::{
+        coeff_kara_16, coeff_kara_32, coeff_kara_4, coeff_kara_8, coeff_naive,
     },
 };
 use rand_core::SeedableRng;
-
-fn quang_optimization_branch<F: FieldMulSmall, const D: usize>(polys: &[(F, F); D]) {
-    match D {
-        16 => {
-            prod16(polys[..16].try_into().unwrap());
-        }
-        8 => {
-            prod8(polys[..8].try_into().unwrap());
-        }
-        _ => panic!("D must be 8 or 16"),
-    }
-}
 
 fn karatsuba_branch<F: JoltField, const D: usize>(left: &[F; D], right: &[F; D]) {
     if D == 4 {
@@ -94,34 +81,16 @@ fn benchmark_karatsuba<F: JoltField, const D: usize>(c: &mut Criterion) {
     });
 }
 
-fn quang_optimization<F: JoltField, const D: usize>(c: &mut Criterion) {
-    let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0);
-
-    c.bench_function(&format!("quang_optimization_{}", D), |b| {
-        b.iter_with_setup(
-            || {
-                let polys: [(Fr, Fr); D] =
-                    core::array::from_fn(|_| (Fr::rand(&mut rng), Fr::rand(&mut rng)));
-                polys
-            },
-            |polys| {
-                criterion::black_box(quang_optimization_branch::<Fr, D>(&polys));
-            },
-        );
-    });
-}
-
 fn main() {
     let mut criterion = Criterion::default()
         .configure_from_args()
         .warm_up_time(std::time::Duration::from_secs(10));
 
-    benchmark_naive::<Fr, 4>(&mut criterion);
-    benchmark_karatsuba::<Fr, 4>(&mut criterion);
+    // benchmark_naive::<Fr, 4>(&mut criterion);
+    // benchmark_karatsuba::<Fr, 4>(&mut criterion);
 
     benchmark_naive::<Fr, 8>(&mut criterion);
     benchmark_karatsuba::<Fr, 8>(&mut criterion);
-    quang_optimization::<Fr, 8>(&mut criterion);
 
     benchmark_naive::<Fr, 16>(&mut criterion);
     benchmark_karatsuba::<Fr, 16>(&mut criterion);
