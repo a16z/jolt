@@ -916,10 +916,13 @@ mod tests {
             ram: RAMPreprocessing::preprocess(vec![]),
             memory_layout: memory_layout.clone(),
         };
+        let ram_d = AllCommittedPolynomials::ram_d();
         let prover_preprocessing: JoltProverPreprocessing<Fr, MockCommitScheme<Fr>> =
             JoltProverPreprocessing {
                 generators: (),
                 shared: shared_preprocessing.clone(),
+                field: Default::default(),
+                ram_d,
             };
 
         let verifier_preprocessing: JoltVerifierPreprocessing<Fr, MockCommitScheme<Fr>> =
