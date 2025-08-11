@@ -2,5 +2,5 @@
 
 #[jolt::provable(memory_size = 10240, max_trace_length = 65536)]
 fn sha3(input: &[u8]) -> [u8; 32] {
-    inlines::Keccak256::digest(input)
+    jolt_inlines_keccak256::Keccak256::digest(input)
 }
