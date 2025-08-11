@@ -308,6 +308,7 @@ mod tests {
     const TEST_SENTIMENT_OUTPUTS: [i128; 4] = [1, 0, 1, 0];
 
     #[test]
+    #[serial]
     fn test_custom_sentiment_sum() {
         init_logger();
 

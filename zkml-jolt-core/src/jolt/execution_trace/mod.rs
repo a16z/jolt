@@ -635,9 +635,9 @@ impl WitnessGenerator for JoltONNXR1CSInputs {
                 coeffs.into()
             }
             JoltONNXR1CSInputs::Td(i) => {
-                let coeffs: Vec<u8> = trace
+                let coeffs: Vec<u32> = trace
                     .par_iter()
-                    .map(|cycle| cycle.td_write().0.get(*i).cloned().unwrap() as u8)
+                    .map(|cycle| cycle.td_write().0.get(*i).cloned().unwrap() as u32)
                     .collect();
                 coeffs.into()
             }
