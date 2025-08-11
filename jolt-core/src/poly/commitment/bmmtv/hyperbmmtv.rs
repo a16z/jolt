@@ -323,7 +323,7 @@ mod tests {
     };
     use crate::poly::multilinear_polynomial::MultilinearPolynomial;
     use crate::poly::multilinear_polynomial::PolynomialEvaluation;
-    use crate::transcripts::KeccakTranscript;
+    use crate::transcripts::Blake2bTranscript;
     use crate::transcripts::Transcript;
     use ark_bn254::Bn254;
     use ark_ec::pairing::Pairing;
@@ -351,11 +351,11 @@ mod tests {
             .map(|_| <Bn254 as Pairing>::ScalarField::rand(&mut rng))
             .collect::<Vec<_>>();
 
-        let mut prover_transcript = KeccakTranscript::new(b"TestEval");
+        let mut prover_transcript = Blake2bTranscript::new(b"TestEval");
 
         let proof = HyperTest::prove(&setup, &poly, &point, (), &mut prover_transcript);
 
-        let mut verifier_transcript = KeccakTranscript::new(b"TestEval");
+        let mut verifier_transcript = Blake2bTranscript::new(b"TestEval");
         verifier_transcript.compare_to(prover_transcript);
 
         let opening = poly.evaluate(&point);

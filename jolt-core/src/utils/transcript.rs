@@ -6,7 +6,7 @@ use std::borrow::Borrow;
 
 /// Represents the current state of the protocol's Fiat-Shamir transcript.
 #[derive(Default, Clone)]
-pub struct KeccakTranscript {
+pub struct Blake2bTranscript {
     /// Ethereum-compatible 256-bit running state
     pub state: [u8; 32],
     /// We append an ordinal to each invocation of the hash
@@ -22,7 +22,7 @@ pub struct KeccakTranscript {
     expected_state_history: Option<Vec<[u8; 32]>>,
 }
 
-impl KeccakTranscript {
+impl Blake2bTranscript {
     /// Gives the hasher object with the running seed and index added
     /// To load hash you must call finalize, after appending u8 vectors
     fn hasher(&self) -> Keccak256 {
@@ -75,7 +75,7 @@ impl KeccakTranscript {
     }
 }
 
-impl Transcript for KeccakTranscript {
+impl Transcript for Blake2bTranscript {
     fn new(label: &'static [u8]) -> Self {
         // Hash in the label
         assert!(label.len() < 33);
@@ -261,7 +261,7 @@ mod tests {
 
     #[test]
     fn test_challenge_scalar_128_bits() {
-        let mut transcript = KeccakTranscript::new(b"test_128_bit_scalar");
+        let mut transcript = Blake2bTranscript::new(b"test_128_bit_scalar");
         let mut scalars = HashSet::new();
 
         for i in 0..10000 {

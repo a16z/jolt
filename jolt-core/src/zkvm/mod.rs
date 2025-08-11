@@ -306,11 +306,11 @@ where
 }
 
 pub struct JoltRV32IM;
-impl Jolt<Fr, DoryCommitmentScheme, KeccakTranscript> for JoltRV32IM {}
-pub type RV32IMJoltProof = JoltProof<Fr, DoryCommitmentScheme, KeccakTranscript>;
+impl Jolt<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV32IM {}
+pub type RV32IMJoltProof = JoltProof<Fr, DoryCommitmentScheme, Blake2bTranscript>;
 
 use crate::poly::commitment::dory::DoryCommitmentScheme;
-use crate::transcripts::KeccakTranscript;
+use crate::transcripts::Blake2bTranscript;
 use eyre::Result;
 use std::io::Cursor;
 use std::path::PathBuf;
@@ -365,10 +365,10 @@ mod tests {
     use crate::zkvm::{Jolt, JoltRV32IM};
     use serial_test::serial;
 
-    use crate::transcripts::KeccakTranscript;
+    use crate::transcripts::Blake2bTranscript;
 
     pub struct JoltRV32IMMockPCS;
-    impl Jolt<Fr, MockCommitScheme<Fr>, KeccakTranscript> for JoltRV32IMMockPCS {}
+    impl Jolt<Fr, MockCommitScheme<Fr>, Blake2bTranscript> for JoltRV32IMMockPCS {}
 
     #[test]
     #[serial]

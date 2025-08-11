@@ -1,7 +1,7 @@
 use crate::field::JoltField;
 use crate::host;
 use crate::subprotocols::twist::{TwistAlgorithm, TwistProof};
-use crate::transcripts::{KeccakTranscript, Transcript};
+use crate::transcripts::{Blake2bTranscript, Transcript};
 use crate::utils::math::Math;
 use crate::zkvm::JoltVerifierPreprocessing;
 use crate::zkvm::{Jolt, JoltRV32IM};
@@ -29,7 +29,7 @@ pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()
         BenchType::Sha2Chain => sha2_chain(),
         BenchType::Fibonacci => fibonacci(),
         BenchType::Shout => shout(),
-        BenchType::Twist => twist::<Fr, KeccakTranscript>(),
+        BenchType::Twist => twist::<Fr, Blake2bTranscript>(),
     }
 }
 
@@ -79,7 +79,7 @@ where
         registers[write_address] = write_value;
     }
 
-    let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+    let mut prover_transcript = ProofTranscript::new(b"test_transcript");
     let r: Vec<F> = prover_transcript.challenge_vector(K.log_2());
     let r_prime: Vec<F> = prover_transcript.challenge_vector(T.log_2());
 
