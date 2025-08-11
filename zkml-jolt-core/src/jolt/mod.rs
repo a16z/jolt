@@ -258,7 +258,7 @@ mod e2e_tests {
     use jolt_core::{
         poly::commitment::dory::DoryCommitmentScheme, utils::transcript::KeccakTranscript,
     };
-    use log::{debug, info};
+    use log::debug;
     use onnx_tracer::{builder, logger::init_logger, model, tensor::Tensor};
     use serde_json::Value;
     use serial_test::serial;
@@ -338,10 +338,10 @@ mod e2e_tests {
             sentiment_model,
             &Tensor::new(Some(&THIS_IS_GREAT), &[1, 5]).unwrap(),
         );
-        info!("Raw trace: {raw_trace:#?}");
+        debug!("Raw trace: {raw_trace:#?}");
         let execution_trace = jolt_execution_trace(raw_trace);
-        info!("Execution trace: {execution_trace:#?}");
-        info!("Execution trace length: {}", execution_trace.len());
+        debug!("Execution trace: {execution_trace:#?}");
+        debug!("Execution trace length: {}", execution_trace.len());
         let snark: JoltSNARK<Fr, PCS, KeccakTranscript> =
             JoltSNARK::prove(pp.clone(), execution_trace);
 
@@ -560,8 +560,8 @@ mod e2e_tests {
                 .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
                 .unwrap();
 
-            info!("Output: {}", output.show());
-            info!("Predicted class: {}", classes[pred_idx]);
+            debug!("Output: {}", output.show());
+            debug!("Predicted class: {}", classes[pred_idx]);
 
             predicted_classes.push(classes[pred_idx]);
         }
@@ -602,7 +602,7 @@ mod e2e_tests {
             .forward(&[text_classification.inputs.clone()])
             .unwrap();
         let output = result.outputs[0].clone();
-        info!("Output: {output:#?}",);
+        debug!("Output: {output:#?}",);
     }
 
     #[should_panic(expected = "not yet implemented")]
