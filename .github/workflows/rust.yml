@@ -140,7 +140,6 @@ jobs:
         run: |
           set -euo pipefail
           for pkg in ${{ steps.discover_inlines.outputs.pkgs }}; do
-            echo "=== cargo nextest run -p $pkg (host) ==="
             cargo nextest run --no-fail-fast --features host -p "$pkg"
           done
 
