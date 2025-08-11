@@ -259,7 +259,7 @@ pub fn embedding_sentiment_model() -> Model {
     const SCALE: i32 = 7;
     let mut b = ModelBuilder::new(SCALE);
 
-    // Node 0: Create the embedding tensor (shape [14, 1])
+    // Node 0: Create the embedding tensor (shape [14, 1]) (embeddings taken from /models/sentiment_sum)
     let mut embedding = Tensor::new(
         Some(&[
             139i128, -200, -331, -42, -260, -290, -166, -171, -481, -294, 210, 291, 2, 328,
@@ -281,12 +281,12 @@ pub fn embedding_sentiment_model() -> Model {
 
     // Node 4: Sum the embeddings along axis 1
     let summed = b.sum(reshaped, vec![1], vec![1, 1], 1);
-
-    // // Node 6: Divide by constant with floating-point value
-    // let divided = b.div_f64(-0.46149117, summed, vec![1, 1], 1);
-
-    // Node 6: Multiply by constant (reciprocal of divisor)
-    // -1 / -0.46149117 ≈ -2.167
+    /*
+       Node 6: Divide by constant with floating-point value
+       Node 6: Multiply by constant (reciprocal of divisor)
+       let divided = b.div_f64(-0.46149117, summed, vec![1, 1], 1);
+       -1 / -0.46149117 ≈ -2.167
+    */
     let mul_const = Tensor::new(Some(&[-2i128]), &[1, 1]).unwrap();
     let mul_wire = b.const_tensor(mul_const, vec![1, 1], 1);
     // Multiplication instead of division
