@@ -1,8 +1,8 @@
 [package]
-name = "jolt-inlines-sha2"
+name = "jolt-inlines-keccak256"
 version = "0.1.0"
 edition = "2021"
-description = "SHA2 inline implementations for Jolt VM"
+description = "Keccak-256 inline implementations for Jolt VM"
 
 [features]
 default = []

@@ -7,5 +7,5 @@ edition = "2021"
 guest = []
 
 [dependencies]
-sha3 = { version = "0.10.8", default-features = false }
 jolt = { package = "jolt-sdk", path = "../../../jolt-sdk" }
+jolt-inlines-keccak256 = { package = "jolt-inlines-keccak256", path = "../../../jolt-inlines/keccak256" }

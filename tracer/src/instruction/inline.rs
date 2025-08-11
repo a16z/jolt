@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::RwLock;
 
-// Type alias for the exec and virtual_sequence functions signature
+// Type alias for the exec and inline_sequence functions signature
 pub type ExecFunction = Box<dyn Fn(&INLINE, &mut Cpu, &mut ()) + Send + Sync>;
 pub type InlineSequenceFunction =
     Box<dyn Fn(u64, bool, Xlen, u8, u8) -> Vec<RV32IMInstruction> + Send + Sync>;
@@ -39,6 +39,9 @@ lazy_static! {
 
 /// Registers a new inline instruction handler.
 ///
+/// Each new type of operation should be placed under different funct7,
+/// while funct3 should hold all necessary instructions for that operation.
+///
 /// # Arguments
 ///
 /// * `opcode` - The 7-bit opcode (0-127)
@@ -46,7 +49,7 @@ lazy_static! {
 /// * `funct7` - The 7-bit function code (0-127)
 /// * `name` - Human-readable name for the inline
 /// * `exec_fn` - Function to execute during CPU simulation
-/// * `virtual_sequence_fn` - Function to generate virtual instruction sequence
+/// * `inline_sequence_fn` - Function to generate virtual instruction sequence
 #[allow(dead_code)]
 pub fn register_inline(
     opcode: u32,
@@ -212,9 +215,9 @@ impl INLINE {
 
 impl RISCVTrace for INLINE {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.inline_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(cpu.xlen);
         let mut trace = trace;
-        for instr in virtual_sequence {
+        for instr in inline_sequence {
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
@@ -237,7 +240,7 @@ impl RISCVTrace for INLINE {
                     }
                     None => {
                         panic!(
-                            "No virtual sequence builder registered for inline \
+                            "No inline sequence builder registered for inline \
                             with opcode={:#04x}, funct3={:#03b}, funct7={:#09b}. \
                             Register a builder using register_inline().",
                             self.opcode, self.funct3, self.funct7

@@ -2051,6 +2051,7 @@ dependencies = [
  "iai-callgrind",
  "indicatif",
  "itertools 0.10.5",
+ "jolt-inlines-keccak256",
  "jolt-inlines-sha2",
  "jolt-optimizations",
  "lazy_static",
@@ -2081,6 +2082,15 @@ dependencies = [
  "tracing",
  "tracing-chrome",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "jolt-inlines-keccak256"
+version = "0.1.0"
+dependencies = [
+ "ctor",
+ "hex-literal",
+ "tracer",
 ]
 
 [[package]]
@@ -3556,6 +3566,7 @@ name = "sha3-chain"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "jolt-inlines-keccak256",
  "jolt-sdk",
  "sha3-chain-guest",
 ]
@@ -3564,8 +3575,8 @@ dependencies = [
 name = "sha3-chain-guest"
 version = "0.1.0"
 dependencies = [
+ "jolt-inlines-keccak256",
  "jolt-sdk",
- "sha3",
 ]
 
 [[package]]
@@ -3573,6 +3584,7 @@ name = "sha3-ex"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "jolt-inlines-keccak256",
  "jolt-sdk",
  "sha3-guest",
 ]
@@ -3581,6 +3593,7 @@ dependencies = [
 name = "sha3-guest"
 version = "0.1.0"
 dependencies = [
+ "jolt-inlines-keccak256",
  "jolt-sdk",
 ]
 

@@ -1,7 +1,7 @@
 /// Common test vectors used across multiple tests
 pub struct TestVectors;
 
-use super::Keccak256State;
+use crate::Keccak256State;
 
 impl TestVectors {
     /// Get standard test vectors for state testing

@@ -13,28 +13,22 @@
 //! Keccak256 refers to the specific variant where the rate is 1088 bits and the capacity is 512 bits.
 //! Keccak256 differs from SHA3-256 (not implemented here) in the padding scheme.
 
-use crate::emulator::cpu::Xlen;
-use crate::inline_helpers::InstrAssembler;
-use crate::inline_helpers::Value::{Imm, Reg};
-use crate::instruction::andn::ANDN;
-use crate::instruction::ld::LD;
-use crate::instruction::sd::SD;
-use crate::instruction::RV32IMInstruction;
+use tracer::emulator::cpu::Xlen;
+use tracer::inline_helpers::{
+    InstrAssembler,
+    Value::{Imm, Reg},
+};
+use tracer::instruction::andn::ANDN;
+use tracer::instruction::ld::LD;
+use tracer::instruction::sd::SD;
+use tracer::instruction::RV32IMInstruction;
 
-pub mod keccak256;
-
-#[cfg(test)]
-pub mod test_constants;
-#[cfg(test)]
-mod test_utils;
-
-pub const NUM_LANES: usize = 25;
-pub type Keccak256State = [u64; NUM_LANES];
+use crate::{Keccak256State, NUM_LANES};
 
 /// The 24 round constants for the Keccak-f[1600] permutation.
 /// These values are XORed into the state during the `iota` step of each round.
 #[rustfmt::skip]
-const ROUND_CONSTANTS: [u64; 24] = [
+pub(crate) const ROUND_CONSTANTS: [u64; 24] = [
     0x0000000000000001, 0x0000000000008082,
     0x800000000000808a, 0x8000000080008000,
     0x000000000000808b, 0x0000000080000001,
@@ -78,7 +72,7 @@ const ROTATION_OFFSETS: [[u32; 5]; 5] = [
 /// - `vr[60..64]`: A 5-lane temporary buffer for the current row in `chi`.
 /// - `vr[65..66]`: General-purpose scratch registers for intermediate values.
 /// - `vr[67..95]`: Unused, allocated for padding to meet the power-of-two requirement.
-pub const NEEDED_REGISTERS: usize = 96;
+pub(crate) const NEEDED_REGISTERS: usize = 96;
 struct Keccak256SequenceBuilder {
     asm: InstrAssembler,
     round: u32,
@@ -106,18 +100,6 @@ struct Keccak256SequenceBuilder {
 /// and operands, then call `.build()` to obtain the full instruction sequence for the
 /// Keccak-256 operation. This is used to inline the Keccak-256 hash logic into the
 /// RISC-V instruction stream for tracing or emulation purposes.
-///
-/// ```ignore
-/// let builder = Keccak256SequenceBuilder::new(
-///     address,
-///     is_compressed,
-///     vr,
-///     operand_rs1,
-///     operand_rs2,
-/// );
-/// let keccak_sequence = builder.build();
-/// // `keccak_sequence` now contains the instructions to perform Keccak-256.
-/// ```
 ///
 /// # Note
 /// The actual Keccak-256 logic is implemented in the `build` method, which generates
@@ -321,9 +303,26 @@ impl Keccak256SequenceBuilder {
     }
 }
 
+#[cfg(all(test, feature = "host"))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn keccak256_build_up_to_step(
+    address: u64,
+    is_compressed: bool,
+    xlen: Xlen,
+    vr: [u8; NEEDED_REGISTERS],
+    operand_rs1: u8,
+    operand_rs2: u8,
+    target_round: u32,
+    target_step: &str,
+) -> Vec<RV32IMInstruction> {
+    let builder =
+        Keccak256SequenceBuilder::new(address, is_compressed, xlen, vr, operand_rs1, operand_rs2);
+    builder.build_up_to_step(target_round, target_step)
+}
+
 // Host-side Keccak-256 implementation for reference and testing.
-#[allow(dead_code)]
-pub fn execute_keccak256(msg: &[u8]) -> [u8; 32] {
+#[cfg(all(test, feature = "host"))]
+pub(crate) fn execute_keccak256(msg: &[u8]) -> [u8; 32] {
     // Keccak-256 parameters.
     const RATE_IN_BYTES: usize = 136; // 1088-bit rate
 
@@ -371,7 +370,7 @@ pub fn execute_keccak256(msg: &[u8]) -> [u8; 32] {
 }
 
 /// Executes the 24-round Keccak-f[1600] permutation.
-pub fn execute_keccak_f(state: &mut Keccak256State) {
+pub(crate) fn execute_keccak_f(state: &mut Keccak256State) {
     for rc in ROUND_CONSTANTS {
         execute_theta(state);
         execute_rho_and_pi(state);
@@ -382,7 +381,7 @@ pub fn execute_keccak_f(state: &mut Keccak256State) {
 
 /// The `theta` step of the Keccak-f permutation mixes columns to provide diffusion.
 /// This step XORs each bit in the state with the parities of two columns in the state array.
-fn execute_theta(state: &mut Keccak256State) {
+pub(crate) fn execute_theta(state: &mut Keccak256State) {
     // 1. Compute the parity of each of the 5 columns (an array `C` of 5 lanes).
     let mut c = [0u64; 5];
     for x in 0..5 {
@@ -403,7 +402,7 @@ fn execute_theta(state: &mut Keccak256State) {
 
 /// The `rho` and `pi` steps of the Keccak-f permutation shuffles the state to provide diffusion.
 /// `rho` rotates each lane by a different fixed offset. `pi` permutes positions of the lanes.
-fn execute_rho_and_pi(state: &mut Keccak256State) {
+pub(crate) fn execute_rho_and_pi(state: &mut Keccak256State) {
     let mut b = [0u64; NUM_LANES];
     for x in 0..5 {
         for y in 0..5 {
@@ -417,7 +416,7 @@ fn execute_rho_and_pi(state: &mut Keccak256State) {
 }
 
 /// The `chi` step of the Keccak-f permutation introduces non-linearity (relationships between input and output).
-fn execute_chi(state: &mut Keccak256State) {
+pub(crate) fn execute_chi(state: &mut Keccak256State) {
     // For each row, it updates each lane as: lane[x] ^= (~lane[x+1] & lane[x+2])
     // This ensures output bit is a non-linear function of three input bits.
     for y in 0..5 {
@@ -432,181 +431,23 @@ fn execute_chi(state: &mut Keccak256State) {
 }
 
 /// The `iota` step of Keccak-f breaks the symmetry of the rounds by injecting a round constant into the first lane.
-fn execute_iota(state: &mut Keccak256State, round_constant: u64) {
+pub(crate) fn execute_iota(state: &mut Keccak256State, round_constant: u64) {
     state[0] ^= round_constant; // Inject round constant.
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::instruction::inline_keccak256::test_constants::xkcp_vectors;
-    use crate::instruction::inline_keccak256::test_constants::TestVectors;
-    use hex_literal::hex;
-
-    #[test]
-    fn test_execute_keccak256() {
-        // Test vectors for the end-to-end Keccak-256 hash function.
-        let e2e_vectors: &[(&[u8], [u8; 32])] = &[
-            (
-                b"",
-                hex!("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"),
-            ),
-            (
-                b"abc",
-                hex!("4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45"),
-            ),
-        ];
-
-        for (input, expected_hash) in e2e_vectors {
-            let hash = execute_keccak256(input);
-            assert_eq!(
-                &hash,
-                expected_hash,
-                "Failed on e2e test vector for input: {:?}",
-                std::str::from_utf8(input).unwrap_or("invalid utf-8")
-            );
-        }
-    }
-
-    #[test]
-    fn test_execute_keccak_f() {
-        // Test vectors for the Keccak-f[1600] permutation from XKCP.
-        // https://github.com/XKCP/XKCP/blob/master/tests/TestVectors/KeccakF-1600-IntermediateValues.txt
-        let mut state = [0u64; NUM_LANES]; // Initial state is all zeros.
-
-        // First permutation
-        execute_keccak_f(&mut state);
-        assert_eq!(
-            state,
-            xkcp_vectors::AFTER_ONE_PERMUTATION,
-            "Failed on first permutation of Keccak-f"
-        );
-
-        // Second permutation
-        execute_keccak_f(&mut state);
-        assert_eq!(
-            state,
-            xkcp_vectors::AFTER_TWO_PERMUTATIONS,
-            "Failed on second permutation of Keccak-f"
-        );
-    }
-
-    #[test]
-    fn test_execute_theta() {
-        // Test theta with a known pattern
-        let mut state = [0u64; NUM_LANES];
-        state[0] = 1;
-        state[5] = 2;
-        state[10] = 4;
-
-        let original_state = state;
-        execute_theta(&mut state);
-
-        // Verify theta creates the expected column parity effects
-        // This is a basic sanity check
-        assert_ne!(state, original_state, "Theta should modify the state");
-    }
-
-    #[test]
-    fn test_execute_rho_and_pi() {
-        // Test rho_and_pi - just verify it changes the state
-        let mut state = [0u64; NUM_LANES];
-        state[1] = 0xFF;
-        let original_state = state;
-        execute_rho_and_pi(&mut state);
-
-        // The function should move and rotate lanes, so state should change
-        assert_ne!(state, original_state, "Rho and pi should modify the state");
-        // Original position should be cleared (or changed)
-        assert_ne!(
-            state[1], 0xFF,
-            "Original position should be different after rho_and_pi"
-        );
-    }
-
-    #[test]
-    fn test_execute_chi() {
-        // Test chi
-        let mut state = [0u64; NUM_LANES];
-        state[0] = 0xFF;
-        state[1] = 0xAA;
-        state[2] = 0x55;
-
-        execute_chi(&mut state);
-
-        // Chi should apply the non-linear transformation
-        // Expected: state[0] ^= (~state[1] & state[2])
-        let expected_0 = 0xFF ^ ((!0xAA) & 0x55);
-        assert_eq!(state[0], expected_0, "Chi transformation failed");
-    }
-
-    #[test]
-    fn test_execute_iota() {
-        // Test iota
-        let mut state = [0u64; NUM_LANES];
-        state[0] = 0x1234;
-
-        execute_iota(&mut state, 0x5678);
-        assert_eq!(
-            state[0],
-            0x1234 ^ 0x5678,
-            "Iota should XOR round constant into first lane"
-        );
-
-        // Verify other lanes unchanged
-        state
-            .into_iter()
-            .skip(1)
-            .for_each(|s| assert_eq!(s, 0, "Iota should only affect first lane"));
-    }
-
-    #[test]
-    fn test_step_by_step_round_1() {
-        // Start with the state after round 0
-        let mut state = [0u64; NUM_LANES];
-        state[0] = 0x0000000000000001; // Result from round 0
-        let round = 1;
-        let expected_states = &xkcp_vectors::EXPECTED_AFTER_ROUND1;
-
-        type StepFn = fn(&mut [u64; NUM_LANES]);
-        let steps: &[(&str, StepFn, [u64; NUM_LANES])] = &[
-            ("theta", execute_theta, expected_states.theta),
-            ("rho and pi", execute_rho_and_pi, expected_states.rho_pi),
-            ("chi", execute_chi, expected_states.chi),
-        ];
-
-        for &(name, step_fn, expected) in steps {
-            step_fn(&mut state);
-            assert_eq!(state, expected, "Round {round}: Failed after {name}");
-        }
-
-        // Handle iota separately as it has a different signature
-        execute_iota(&mut state, ROUND_CONSTANTS[round]);
-        assert_eq!(
-            state, expected_states.iota,
-            "Round {round}: Failed after iota"
-        );
-    }
-
-    // Test builder.rotl64 against known rotation vectors
-    #[test]
-    fn test_rotl64() {
-        // Set up a minimal builder; VR contents are irrelevant for Imm path
-        let mut builder =
-            Keccak256SequenceBuilder::new(0x0, false, Xlen::Bit64, [0; NEEDED_REGISTERS], 0, 0);
-        let dest_reg = 0; // dummy register index
-        for (value, amount, expected) in TestVectors::get_rotation_test_vectors() {
-            if amount >= 64 {
-                // Our rotl64 expects amount < 64; vectors use 32,36 which are fine
-            }
-            let result_val = match builder.asm.rotl64(Imm(value), amount, dest_reg) {
-                Imm(v) => v,
-                _ => panic!("rotl64 with Imm should return Imm"),
-            };
-            assert_eq!(
-                result_val, expected,
-                "rotl64(0x{value:016x}, {amount}) produced 0x{result_val:016x}, expected 0x{expected:016x}"
-            );
-        }
-    }
+pub fn keccak256_inline_sequence_builder(
+    address: u64,
+    is_compressed: bool,
+    xlen: Xlen,
+    operand_rs1: u8,
+    operand_rs2: u8,
+) -> Vec<RV32IMInstruction> {
+    // Virtual registers used as a scratch space
+    let mut vr = [0; NEEDED_REGISTERS];
+    (0..NEEDED_REGISTERS).for_each(|i| {
+        vr[i] = tracer::inline_helpers::virtual_register_index(i as u8);
+    });
+    let builder =
+        Keccak256SequenceBuilder::new(address, is_compressed, xlen, vr, operand_rs1, operand_rs2);
+    builder.build()
 }

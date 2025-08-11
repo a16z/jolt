@@ -114,6 +114,32 @@ jobs:
         working-directory: ./sample_project
         run: cargo run --release
 
+  test-inlines:
+    name: Test inlines
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Discover inline crates
+        id: discover_inlines
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkgs=$(cargo metadata --format-version=1 --no-deps \
+                   | jq -r '.packages[].name' \
+                   | grep '^jolt-inlines-' | tr '\n' ' ')
+          echo "Found inline crates: $pkgs"
+          echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
+      - name: Test each inline crate (host)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for pkg in ${{ steps.discover_inlines.outputs.pkgs }}; do
+            cargo nextest run --no-fail-fast --features host -p "$pkg"
+          done
+
   test-verifier:
     name: Jolt Verifier Tests
     runs-on: ubuntu-latest
