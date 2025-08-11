@@ -26,12 +26,12 @@ use tracer::instruction::RV32IMCycle;
 use tracer::LazyTraceIterator;
 
 // #[derive(Clone, Debug, Default, PartialEq)]
-pub struct StreamingOneHotWitness<F> { // : JoltField> {
-    pub value: usize, // JP: ???
+pub struct StreamingOneHotWitness<F> {
+    pub value: Option<usize>,
     phantom: PhantomData<fn(F)>,
 }
 impl<F: JoltField> StreamingOneHotWitness<F> {
-    pub(crate) fn new(value: usize) -> Self {
+    pub(crate) fn new(value: Option<usize>) -> Self {
         Self {
             value,
             phantom: PhantomData,

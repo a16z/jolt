@@ -1257,6 +1257,76 @@ impl CommitmentScheme for DoryCommitmentScheme {
     }
 }
 
+pub struct StreamingDoryCommitment<'a, E: DoryPairing> {
+    // Setup
+    setup: &'a ProverSetup<E>,
+    // Pending row commitments.
+    row_commitments: Vec<E::G1>,
+}
+
+impl<'a> StreamingProcessChunk<StreamingDenseWitness<Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
+    fn process_chunk(self, chunk: &[StreamingDenseWitness<Fr>]) -> Self {
+        todo!()
+    }
+}
+impl<'a> StreamingProcessChunk<StreamingCompactWitness<u8, Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
+    fn process_chunk(self, chunk: &[StreamingCompactWitness<u8, Fr>]) -> Self {
+        todo!()
+    }
+}
+impl<'a> StreamingProcessChunk<StreamingCompactWitness<u16, Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
+    fn process_chunk(self, chunk: &[StreamingCompactWitness<u16, Fr>]) -> Self {
+        todo!()
+    }
+}
+impl<'a> StreamingProcessChunk<StreamingCompactWitness<u32, Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
+    fn process_chunk(self, chunk: &[StreamingCompactWitness<u32, Fr>]) -> Self {
+        todo!()
+    }
+}
+impl<'a> StreamingProcessChunk<StreamingCompactWitness<u64, Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
+    fn process_chunk(self, chunk: &[StreamingCompactWitness<u64, Fr>]) -> Self {
+        todo!()
+    }
+}
+impl<'a> StreamingProcessChunk<StreamingCompactWitness<i64, Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
+    fn process_chunk(self, chunk: &[StreamingCompactWitness<i64, Fr>]) -> Self {
+        todo!()
+    }
+}
+impl<'a> StreamingProcessChunk<StreamingOneHotWitness<Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
+    fn process_chunk(self, chunk: &[StreamingOneHotWitness<Fr>]) -> Self {
+        todo!()
+    }
+}
+
+// impl StreamingDoryCommitment {
+//     // pub fn generate_streaming_witness<'a, F, PCS>(
+//     //     &self,
+//     //     preprocessing: &'a JoltProverPreprocessing<F, PCS>,
+//     //     cycle: &RV32IMCycle,
+//     //     next_cycle: &RV32IMCycle,
+//     // ) -> StreamingWitness<F>
+//     // where
+//     //     F: JoltField,
+//     //     PCS: CommitmentScheme<Field = F>,
+//     // {
+//     //     self.polynomial.generate_streaming_witness(preprocessing, cycle, next_cycle)
+//     // }
+// 
+//     pub fn commit_row<F: JoltField>(
+//         self,
+//         row: &[StreamingWitness<F>]
+//     ) -> Self {
+//         todo!()
+//     }
+// 
+//     pub fn finalize_commitment(&self) -> DoryCommitment {
+//         todo!()
+//     }
+// }
+
+
 impl StreamingCommitmentScheme for DoryCommitmentScheme {
     type State<'a> = StreamingDory<'a, JoltBn254>;
 
