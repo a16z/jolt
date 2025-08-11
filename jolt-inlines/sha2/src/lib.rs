@@ -5,7 +5,6 @@
 pub mod sdk;
 pub use sdk::*;
 
-// These are needed by host.rs
 #[cfg(feature = "host")]
 pub mod exec;
 #[cfg(feature = "host")]
