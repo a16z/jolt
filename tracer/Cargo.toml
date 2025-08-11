@@ -22,6 +22,7 @@ path = "src/main.rs"
 [features]
 default = ["std"]
 std = ["common/std", "fnv/std", "object/std", "tracing/std", "postcard/use-std"]
+testing = ["std"]
 
 [dependencies]
 fnv = { version = "1.0.7", default-features = false }

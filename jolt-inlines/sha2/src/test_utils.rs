@@ -3,16 +3,12 @@
 // This module contains SHA256-specific setup code, utilities, and helper
 // functions to reduce code duplication in the test suite. It relies on the
 // generic `CpuTestHarness` for the underlying emulator setup.
-use super::*;
-use crate::emulator::mmu::DRAM_BASE;
-use crate::emulator::test_harness::CpuTestHarness;
-use crate::instruction::format::format_r::FormatR;
-use crate::instruction::inline_sha256::sha256::SHA256;
-use crate::instruction::inline_sha256::sha256init::SHA256INIT;
-use crate::instruction::{RISCVInstruction, RISCVTrace};
-
-// Re-export canonical test vectors from test_constants module
-pub use crate::instruction::inline_sha256::test_constants::TestVectors;
+use crate::trace_generator::NEEDED_REGISTERS;
+use tracer::emulator::mmu::DRAM_BASE;
+use tracer::emulator::test_harness::CpuTestHarness;
+use tracer::instruction::format::format_r::FormatR;
+use tracer::instruction::inline::INLINE;
+use tracer::instruction::{RISCVInstruction, RISCVTrace};
 
 /// Canonical type alias for a 16-word SHA-256 input block.
 pub type Sha256Block = [u32; 16];
@@ -37,7 +33,7 @@ impl Sha256CpuHarness {
 
     /// Create a new harness.
     pub fn new() -> Self {
-        let vr = std::array::from_fn(|i| common::constants::virtual_register_index(i as u8));
+        let vr = std::array::from_fn(|i| tracer::inline_helpers::virtual_register_index(i as u8));
         Self {
             // RV32.
             harness: CpuTestHarness::new_32(),
@@ -72,28 +68,36 @@ impl Sha256CpuHarness {
     }
 
     /// Construct a canonical SHA256 instruction.
-    pub fn instruction_sha256() -> SHA256 {
-        SHA256 {
+    pub fn instruction_sha256() -> INLINE {
+        INLINE {
             address: 0,
             operands: FormatR {
                 rs1: Self::RS1,
                 rs2: Self::RS2,
                 rd: 0,
             },
+            // SHA256 has opcode 0x0B, funct3 0x00, funct7 0x00
+            opcode: 0x0B,
+            funct3: 0x00,
+            funct7: 0x00,
             inline_sequence_remaining: None,
             is_compressed: false,
         }
     }
 
     /// Construct a canonical SHA256INIT instruction.
-    pub fn instruction_sha256init() -> SHA256INIT {
-        SHA256INIT {
+    pub fn instruction_sha256init() -> INLINE {
+        INLINE {
             address: 0,
             operands: FormatR {
                 rs1: Self::RS1,
                 rs2: Self::RS2,
                 rd: 0,
             },
+            // SHA256INIT has opcode 0x0B, funct3 0x01, funct7 0x00
+            opcode: 0x0B,
+            funct3: 0x01,
+            funct7: 0x00,
             inline_sequence_remaining: None,
             is_compressed: false,
         }

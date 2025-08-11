@@ -28,7 +28,7 @@ pub mod elf_analyzer;
 pub mod memory;
 pub mod mmu;
 pub mod terminal;
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 pub mod test_harness;
 
 use self::cpu::{Cpu, Xlen};

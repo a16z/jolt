@@ -4,20 +4,7 @@ use tracer::{
         virtual_register_index, InstrAssembler,
         Value::{self, Imm, Reg},
     },
-    instruction::{
-        // add::ADD,
-        // addi::ADDI,
-        // and::AND,
-        // andi::ANDI,
-        // format::{
-        //     format_i::FormatI, format_load::FormatLoad, format_r::FormatR, format_s::FormatS,
-        //     format_virtual_right_shift_i::FormatVirtualRightShiftI,
-        // },
-        andn::ANDN,
-        lw::LW,
-        sw::SW,
-        RV32IMInstruction,
-    },
+    instruction::{andn::ANDN, lw::LW, sw::SW, RV32IMInstruction},
 };
 
 /// SHA-256 initial hash values
