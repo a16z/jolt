@@ -201,6 +201,14 @@ impl Transcript for KeccakTranscript {
         F::from_bytes(&buf)
     }
 
+    fn challenge_scalar_128_bits<F: JoltField>(&mut self) -> F {
+        let mut buf = vec![0u8; 16];
+        self.challenge_bytes(&mut buf);
+
+        buf = buf.into_iter().rev().collect();
+        F::from_bytes_128_bits(&buf)
+    }
+
     fn challenge_vector<F: JoltField>(&mut self, len: usize) -> Vec<F> {
         (0..len)
             .map(|_i| self.challenge_scalar())
@@ -231,6 +239,7 @@ pub trait Transcript: Default + Clone + Sync + Send + 'static {
     fn append_point<G: CurveGroup>(&mut self, point: &G);
     fn append_points<G: CurveGroup>(&mut self, points: &[G]);
     fn challenge_scalar<F: JoltField>(&mut self) -> F;
+    fn challenge_scalar_128_bits<F: JoltField>(&mut self) -> F;
     fn challenge_vector<F: JoltField>(&mut self, len: usize) -> Vec<F>;
     // Compute powers of scalar q : (1, q, q^2, ..., q^(len-1))
     fn challenge_scalar_powers<F: JoltField>(&mut self, len: usize) -> Vec<F>;
@@ -238,4 +247,35 @@ pub trait Transcript: Default + Clone + Sync + Send + 'static {
 
 pub trait AppendToTranscript {
     fn append_to_transcript<ProofTranscript: Transcript>(&self, transcript: &mut ProofTranscript);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ark_bn254::Fr;
+    use std::collections::HashSet;
+
+    #[test]
+    fn test_challenge_scalar_128_bits() {
+        let mut transcript = KeccakTranscript::new(b"test_128_bit_scalar");
+        let mut scalars = HashSet::new();
+
+        for i in 0..1000 {
+            let scalar: Fr = transcript.challenge_scalar_128_bits();
+
+            let num_bits = scalar.num_bits();
+            assert!(
+                num_bits <= 128,
+                "Scalar at iteration {} has {} bits, expected <= 128",
+                i,
+                num_bits
+            );
+
+            assert!(
+                scalars.insert(scalar),
+                "Duplicate scalar found at iteration {}",
+                i
+            );
+        }
+    }
 }

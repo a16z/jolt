@@ -147,6 +147,11 @@ impl JoltField for ark_bn254::Fr {
         ark_bn254::Fr::from_le_bytes_mod_order(bytes)
     }
 
+    fn from_bytes_128_bits(bytes: &[u8]) -> Self {
+        assert_eq!(bytes.len(), 16);
+        ark_bn254::Fr::from_le_bytes_mod_order(bytes)
+    }
+
     fn num_bits(&self) -> u32 {
         self.into_bigint().num_bits()
     }

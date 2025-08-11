@@ -321,6 +321,10 @@ impl JoltField for TrackedFr {
         TrackedFr(<ark_bn254::Fr as JoltField>::from_bytes(bytes))
     }
 
+    fn from_bytes_128_bits(bytes: &[u8]) -> Self {
+        TrackedFr(<ark_bn254::Fr as JoltField>::from_bytes_128_bits(bytes))
+    }
+
     fn num_bits(&self) -> u32 {
         self.0.num_bits()
     }
