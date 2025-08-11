@@ -115,6 +115,15 @@ impl<F: JoltField> R1CSConstraints<F> for JoltONNXConstraints {
                 JoltONNXR1CSInputs::Product(i),
             );
 
+            // if CircuitFlag::Const {
+            //     assert!(TdWriteValue == Const)
+            // }
+            cs.constrain_eq_conditional(
+                JoltONNXR1CSInputs::OpFlags(CircuitFlags::Const),
+                JoltONNXR1CSInputs::Imm(i),
+                JoltONNXR1CSInputs::TdWriteValue(i),
+            );
+
             // if Assert {
             //     assert!(LookupOutput == 1)
             // }

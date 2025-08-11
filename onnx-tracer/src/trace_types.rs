@@ -342,6 +342,11 @@ pub enum CircuitFlags {
     Const,
     /// Is this a sum operator
     SumOperands,
+    /// HACK: This is a temporary dummy flag to prevent `ALL_R1CS_INPUTS.len()`
+    /// from being a power of two — otherwise, the runtime panics (due to `.next_power_of_two` padding semantics in r1cs builder).  
+    /// (Yes, it's silly, but it works. lol)  
+    /// Placeholder for future use.
+    PlaceHolder,
 }
 
 pub const NUM_CIRCUIT_FLAGS: usize = CircuitFlags::COUNT;
@@ -416,6 +421,7 @@ impl ONNXInstr {
         flags[CircuitFlags::Const as usize] = matches!(
             self.opcode,
             ONNXOpcode::VirtualConst
+            | ONNXOpcode::Constant
         );
 
         flags[CircuitFlags::Assert as usize] = matches!(

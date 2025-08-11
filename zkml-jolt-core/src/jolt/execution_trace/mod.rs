@@ -562,7 +562,7 @@ macro_rules! fill_array_r1cs_inputs {
 }
 
 const NUM_TENSOR_INPUTS: usize = 15;
-const NUM_SINGLE_INPUTS: usize = 15;
+const NUM_SINGLE_INPUTS: usize = 17;
 /// This const serves to define a canonical ordering over inputs (and thus indices
 /// for each input). This is needed for sumcheck.
 pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs;
@@ -605,6 +605,10 @@ pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs;
     arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::RightOperandIsTs2Value);
     idx += 1;
     arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm);
+    idx += 1;
+    arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::Const);
+    idx += 1;
+    arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::PlaceHolder);
     idx += 1;
     arr[idx] = JoltONNXR1CSInputs::PC;
     idx += 1;
@@ -879,6 +883,7 @@ define_lookup_enum!(
     VirtualAssertEq: BEQInstruction<WORD_SIZE>,
     VirtualMove: MOVEInstruction<WORD_SIZE>,
     VirtualConst: ConstInstruction<WORD_SIZE>,
+    Const: ConstInstruction<WORD_SIZE>,
 );
 
 impl JoltONNXCycle {
@@ -940,6 +945,11 @@ impl JoltONNXCycle {
             ONNXOpcode::VirtualConst => Some(
                 (0..MAX_TENSOR_SIZE)
                     .map(|i| ElementWiseLookup::VirtualConst(ConstInstruction(imm[i])))
+                    .collect(),
+            ),
+            ONNXOpcode::Constant => Some(
+                (0..MAX_TENSOR_SIZE)
+                    .map(|i| ElementWiseLookup::Const(ConstInstruction(imm[i])))
                     .collect(),
             ),
             ONNXOpcode::Gte => Some(
@@ -1018,11 +1028,14 @@ impl JoltONNXCycle {
         if self.circuit_flags[CircuitFlags::SumOperands as usize] {
             active.push("SumOperands".to_string());
         }
+        if self.circuit_flags[CircuitFlags::PlaceHolder as usize] {
+            active.push("PlaceHolder".to_string());
+        }
 
         // Compile-time check that we've handled all flags.
         // Will error if you add a new flag and forget to update this.
         const _: () = {
-            let _ = [(); (NUM_CIRCUIT_FLAGS == 13) as usize - 1];
+            let _ = [(); (NUM_CIRCUIT_FLAGS == 14) as usize - 1];
         };
 
         if active.is_empty() {
@@ -1050,6 +1063,7 @@ impl JoltONNXCycle {
                 ElementWiseLookup::VirtualAssertEq(_) => "VirtualAssertEq",
                 ElementWiseLookup::VirtualMove(_) => "VirtualMove",
                 ElementWiseLookup::VirtualConst(_) => "VirtualConst",
+                ElementWiseLookup::Const(_) => "Const",
             })
     }
 }
