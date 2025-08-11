@@ -23,12 +23,12 @@ use std::mem;
 use std::sync::{Arc, Mutex};
 
 // #[derive(Clone, Debug, Default, PartialEq)]
-pub struct StreamingOneHotWitness<F> { // : JoltField> {
-    pub value: usize, // JP: ???
+pub struct StreamingOneHotWitness<F> {
+    pub value: Option<usize>,
     phantom: PhantomData<fn(F)>,
 }
 impl<F: JoltField> StreamingOneHotWitness<F> {
-    pub(crate) fn new(value: usize) -> Self {
+    pub(crate) fn new(value: Option<usize>) -> Self {
         Self {
             value,
             phantom: PhantomData,

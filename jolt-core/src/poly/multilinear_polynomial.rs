@@ -92,6 +92,7 @@ pub enum StreamingWitness<F: JoltField> {
 }
 
 impl<F: JoltField> StreamingWitness<F> {
+    // TODO: Delete this
     pub fn to_field(self) -> F {
         match self {
             StreamingWitness::LargeScalars(streaming_dense_witness) => {
@@ -114,7 +115,7 @@ impl<F: JoltField> StreamingWitness<F> {
             }
             // StreamingWitness::RLC(streaming_rlcpolynomial) => todo!(),
             StreamingWitness::OneHot(streaming_one_hot_witness) => {
-                (streaming_one_hot_witness.value as u64).to_field()
+                (streaming_one_hot_witness.value.unwrap_or(0) as u64).to_field()
             } // JP: ???
         }
     }

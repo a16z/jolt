@@ -1231,10 +1231,6 @@ impl CommitmentScheme for DoryCommitmentScheme {
 }
 
 pub struct StreamingDoryCommitment<'a, E: DoryPairing> {
-    // // // The polynomial that this commitment corresponds to.
-    // // polynomial: CommittedPolynomial,
-    // // Pending row commitments.
-    // streaming_state: Vec<JoltG1Wrapper>,
     // Setup
     setup: &'a ProverSetup<E>,
     // Pending row commitments.
