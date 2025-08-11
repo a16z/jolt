@@ -22,6 +22,29 @@ pub struct JoltONNXConstraints;
 impl<F: JoltField> R1CSConstraints<F> for JoltONNXConstraints {
     fn uniform_constraints(cs: &mut R1CSBuilder) {
         for i in 0..MAX_TENSOR_SIZE {
+            // if LeftOperandIsTs1Value { assert!(LeftInstructionInput == Rs1Value) }
+            cs.constrain_eq_conditional(
+                JoltONNXR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsTs1Value),
+                JoltONNXR1CSInputs::LeftInstructionInput(i),
+                JoltONNXR1CSInputs::Ts1Value(i),
+            );
+
+            // if !(LeftOperandIsTs1Value)  {
+            //     assert!(LeftInstructionInput == 0)
+            // }
+            cs.constrain_eq_conditional(
+                1 - JoltONNXR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsTs1Value),
+                JoltONNXR1CSInputs::LeftInstructionInput(i),
+                0,
+            );
+
+            // if RightOperandIsTs2Value { assert!(RightInstructionInput == Ts2Value) }
+            cs.constrain_eq_conditional(
+                JoltONNXR1CSInputs::OpFlags(CircuitFlags::RightOperandIsTs2Value),
+                JoltONNXR1CSInputs::RightInstructionInput(i),
+                JoltONNXR1CSInputs::Ts2Value(i),
+            );
+
             // if AddOperands || SubtractOperands || MultiplyOperands || SumOperands {
             //     // Lookup query is just RightLookupOperand
             //     assert!(LeftLookupOperand == 0)

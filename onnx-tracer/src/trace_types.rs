@@ -361,6 +361,7 @@ impl ONNXInstr {
             | ONNXOpcode::VirtualAssertValidDiv0
             | ONNXOpcode::VirtualAssertEq
             | ONNXOpcode::Gte
+            | ONNXOpcode::Sum
         );
 
         flags[CircuitFlags::RightOperandIsTs2Value as usize] = matches!(

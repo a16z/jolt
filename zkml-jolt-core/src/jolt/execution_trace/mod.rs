@@ -545,6 +545,8 @@ pub enum JoltONNXR1CSInputs {
     NextPC,           // Virtual (spartan shift sumcheck)
     ActiveOutput(usize),
     TdProdFlag(usize), // Td * CircuitFlag::WriteLookupOutputToTD
+    Ts1Value(usize),   // Virtual (tensor registers rv)
+    Ts2Value(usize),   // Virtual (tensor registers rv)
 }
 
 macro_rules! fill_array_r1cs_inputs {
@@ -558,10 +560,14 @@ macro_rules! fill_array_r1cs_inputs {
     }};
 }
 
+const NUM_TENSOR_INPUTS: usize = 14;
+const NUM_SINGLE_INPUTS: usize = 14;
 /// This const serves to define a canonical ordering over inputs (and thus indices
 /// for each input). This is needed for sumcheck.
-pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs; 11 * MAX_TENSOR_SIZE + 12] = {
-    let mut arr = [JoltONNXR1CSInputs::Td(0); 11 * MAX_TENSOR_SIZE + 12];
+pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs;
+    NUM_TENSOR_INPUTS * MAX_TENSOR_SIZE + NUM_SINGLE_INPUTS] = {
+    let mut arr =
+        [JoltONNXR1CSInputs::Td(0); NUM_TENSOR_INPUTS * MAX_TENSOR_SIZE + NUM_SINGLE_INPUTS];
     let mut idx = 0;
     fill_array_r1cs_inputs!(arr, idx, Td);
     fill_array_r1cs_inputs!(arr, idx, TdWriteValue);
@@ -574,6 +580,8 @@ pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs; 11 * MAX_TENSOR_SIZE + 12] = {
     fill_array_r1cs_inputs!(arr, idx, WriteLookupOutputToTD);
     fill_array_r1cs_inputs!(arr, idx, ActiveOutput);
     fill_array_r1cs_inputs!(arr, idx, TdProdFlag);
+    fill_array_r1cs_inputs!(arr, idx, Ts1Value);
+    fill_array_r1cs_inputs!(arr, idx, Ts2Value);
     arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::AddOperands);
     idx += 1;
     arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::SubtractOperands);
@@ -589,6 +597,10 @@ pub const ALL_R1CS_INPUTS: [JoltONNXR1CSInputs; 11 * MAX_TENSOR_SIZE + 12] = {
     arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::InlineSequenceInstruction);
     idx += 1;
     arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::SumOperands);
+    idx += 1;
+    arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsTs1Value);
+    idx += 1;
+    arr[idx] = JoltONNXR1CSInputs::OpFlags(CircuitFlags::RightOperandIsTs2Value);
     idx += 1;
     arr[idx] = JoltONNXR1CSInputs::PC;
     idx += 1;
@@ -691,6 +703,20 @@ impl WitnessGenerator for JoltONNXR1CSInputs {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
                     .map(|cycle| cycle.td_write().2.get(*i).cloned().unwrap())
+                    .collect();
+                coeffs.into()
+            }
+            JoltONNXR1CSInputs::Ts1Value(i) => {
+                let coeffs: Vec<u64> = trace
+                    .par_iter()
+                    .map(|cycle| cycle.ts1_read().1.get(*i).cloned().unwrap())
+                    .collect();
+                coeffs.into()
+            }
+            JoltONNXR1CSInputs::Ts2Value(i) => {
+                let coeffs: Vec<u64> = trace
+                    .par_iter()
+                    .map(|cycle| cycle.ts2_read().1.get(*i).cloned().unwrap())
                     .collect();
                 coeffs.into()
             }
