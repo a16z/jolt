@@ -24,7 +24,7 @@ use crate::zkvm::r1cs::inputs::COMMITTED_R1CS_INPUTS;
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 
-use crate::transcript::Transcript;
+use crate::transcripts::Transcript;
 use crate::utils::small_value::NUM_SVO_ROUNDS;
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;

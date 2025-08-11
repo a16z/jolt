@@ -22,7 +22,7 @@ use crate::{
         prefix_suffix::{Prefix, PrefixRegistry, PrefixSuffixDecomposition},
     },
     subprotocols::sumcheck::SumcheckInstance,
-    transcript::Transcript,
+    transcripts::Transcript,
     utils::{
         expanding_table::ExpandingTable,
         lookup_bits::LookupBits,
@@ -762,7 +762,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
 mod tests {
     use super::*;
     use crate::subprotocols::sumcheck::BatchedSumcheck;
-    use crate::transcript::KeccakTranscript;
+    use crate::transcripts::KeccakTranscript;
     use crate::{
         poly::commitment::mock::MockCommitScheme,
         zkvm::{

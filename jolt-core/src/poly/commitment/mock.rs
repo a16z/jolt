@@ -6,7 +6,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use crate::{
     field::JoltField,
     poly::multilinear_polynomial::MultilinearPolynomial,
-    transcript::{AppendToTranscript, Transcript},
+    transcripts::{AppendToTranscript, Transcript},
     utils::errors::ProofVerifyError,
 };
 

@@ -14,7 +14,7 @@ use crate::{
         },
     },
     subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
-    transcript::Transcript,
+    transcripts::Transcript,
     utils::{math::Math, thread::unsafe_allocate_zero_vec},
     zkvm::dag::state_manager::StateManager,
     zkvm::{

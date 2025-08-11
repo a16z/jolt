@@ -7,7 +7,7 @@ use jolt_core::poly::commitment::hyperkzg::HyperKZG;
 use jolt_core::poly::commitment::zeromorph::Zeromorph;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::utils::math::Math;
-use jolt_core::utils::transcript::{KeccakTranscript, Transcript};
+use jolt_core::utils::transcripts::{KeccakTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 use rayon::iter::IntoParallelIterator;

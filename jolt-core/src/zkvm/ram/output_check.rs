@@ -16,7 +16,7 @@ use crate::{
         range_mask_polynomial::RangeMaskPolynomial,
     },
     subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
-    transcript::Transcript,
+    transcripts::Transcript,
     utils::{expanding_table::ExpandingTable, math::Math},
     zkvm::dag::state_manager::StateManager,
     zkvm::{

@@ -5,7 +5,7 @@ use super::{
 use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
 use crate::{
     field::{JoltField, OptimizedMul, OptimizedMulI128},
-    transcript::Transcript,
+    transcripts::Transcript,
     utils::{
         math::Math,
         small_value::{svo_helpers, NUM_SVO_ROUNDS},

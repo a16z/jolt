@@ -8,7 +8,7 @@ use crate::{
         opening_proof::SumcheckId,
     },
     subprotocols::sumcheck::SumcheckInstance,
-    transcript::Transcript,
+    transcripts::Transcript,
     utils::thread::unsafe_allocate_zero_vec,
     zkvm::dag::{stage::SumcheckStages, state_manager::StateManager},
     zkvm::{

@@ -2,7 +2,7 @@ use crate::{
     field::JoltField,
     poly::commitment::commitment_scheme::CommitmentScheme,
     subprotocols::sumcheck::SumcheckInstance,
-    transcript::Transcript,
+    transcripts::Transcript,
     zkvm::dag::{stage::SumcheckStages, state_manager::StateManager},
     zkvm::registers::{
         read_write_checking::RegistersReadWriteChecking, val_evaluation::ValEvaluationSumcheck,

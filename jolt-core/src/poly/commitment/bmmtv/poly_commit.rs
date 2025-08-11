@@ -16,7 +16,7 @@ use super::{
 use crate::field::JoltField;
 use crate::poly::commitment::kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG, SRS};
 use crate::poly::unipoly::UniPoly as UnivariatePolynomial;
-use crate::transcript::Transcript;
+use crate::transcripts::Transcript;
 use ark_std::rand::Rng;
 use rand_core::CryptoRng;
 
@@ -267,7 +267,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transcript::KeccakTranscript;
+    use crate::transcripts::KeccakTranscript;
     use ark_bn254::Bn254;
     use ark_ff::UniformRand;
     use ark_std::rand::{rngs::StdRng, SeedableRng};
@@ -304,7 +304,7 @@ mod tests {
         let (com, y_polynomial_comms) =
             TestBivariatePolyCommitment::commit(&p_srs, &bivariate_polynomial).unwrap();
 
-        let mut transcript = KeccakTranscript::new(b"test");
+        let mut transcript = Keccaktranscripts::new(b"test");
 
         // Evaluate at challenge point
         let point = (UniformRand::rand(&mut rng), UniformRand::rand(&mut rng));
@@ -318,7 +318,7 @@ mod tests {
         .unwrap();
         let eval = bivariate_polynomial.evaluate(&point);
 
-        let mut transcript = KeccakTranscript::new(b"test");
+        let mut transcript = Keccaktranscripts::new(b"test");
 
         // Verify proof
         assert!(TestBivariatePolyCommitment::verify(
@@ -349,7 +349,7 @@ mod tests {
         let (com, y_polynomial_comms) =
             TestUnivariatePolyCommitment::commit(&p_srs, &polynomial).unwrap();
 
-        let mut transcript = KeccakTranscript::new(b"test");
+        let mut transcript = Keccaktranscripts::new(b"test");
         // Evaluate at challenge point
         let point = UniformRand::rand(&mut rng);
         let eval_proof = TestUnivariatePolyCommitment::open(
@@ -361,7 +361,7 @@ mod tests {
         )
         .unwrap();
         let eval = polynomial.evaluate(&point);
-        let mut transcript = KeccakTranscript::new(b"test");
+        let mut transcript = Keccaktranscripts::new(b"test");
 
         // Verify proof
         assert!(TestUnivariatePolyCommitment::verify(

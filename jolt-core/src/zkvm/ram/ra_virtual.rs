@@ -18,7 +18,7 @@ use crate::{
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
     },
     subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
-    transcript::Transcript,
+    transcripts::Transcript,
     utils::math::Math,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -409,7 +409,7 @@ impl<F: JoltField> SumcheckInstance<F> for RASumcheck<F> {
 // #[cfg(test)]
 // mod tests {
 //     use super::*;
-//     use crate::transcript::KeccakTranscript;
+//     use crate::transcripts::KeccakTranscript;
 //     use ark_bn254::Fr;
 //     use ark_std::{One, Zero};
 //     use rand::thread_rng;
@@ -447,10 +447,10 @@ impl<F: JoltField> SumcheckInstance<F> for RASumcheck<F> {
 //             d,
 //         );
 
-//         let mut prover_transcript = KeccakTranscript::new(b"test_one_cycle");
+//         let mut prover_transcript = Keccaktranscripts::new(b"test_one_cycle");
 //         let (proof, r_cycle_bound) = prover_sumcheck.prove(&mut prover_transcript);
 
-//         let mut verifier_transcript = KeccakTranscript::new(b"test_one_cycle");
+//         let mut verifier_transcript = Keccaktranscripts::new(b"test_one_cycle");
 
 //         let verify_result = RASumcheck::<Fr>::verify(
 //             ra_claim,
@@ -513,10 +513,10 @@ impl<F: JoltField> SumcheckInstance<F> for RASumcheck<F> {
 //             d,
 //         );
 
-//         let mut prover_transcript = KeccakTranscript::new(b"test_t_large");
+//         let mut prover_transcript = Keccaktranscripts::new(b"test_t_large");
 //         let (proof, r_cycle_bound) = prover_sumcheck.prove(&mut prover_transcript);
 
-//         let mut verifier_transcript = KeccakTranscript::new(b"test_t_large");
+//         let mut verifier_transcript = Keccaktranscripts::new(b"test_t_large");
 //         verifier_transcript.compare_to(prover_transcript);
 
 //         let verify_result = RASumcheck::<Fr>::verify(

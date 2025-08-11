@@ -4,7 +4,7 @@
 //! Univariate Polynomial Evaluations (UPE), that allows committing to multilinear polynomials
 //! using normal Bmmtv
 
-use crate::transcript::{AppendToTranscript, Transcript};
+use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::{
     field::JoltField,
     poly::{
@@ -323,8 +323,8 @@ mod tests {
     };
     use crate::poly::multilinear_polynomial::MultilinearPolynomial;
     use crate::poly::multilinear_polynomial::PolynomialEvaluation;
-    use crate::transcript::KeccakTranscript;
-    use crate::transcript::Transcript;
+    use crate::transcripts::KeccakTranscript;
+    use crate::transcripts::Transcript;
     use ark_bn254::Bn254;
     use ark_ec::pairing::Pairing;
     use ark_std::UniformRand;
@@ -351,11 +351,11 @@ mod tests {
             .map(|_| <Bn254 as Pairing>::ScalarField::rand(&mut rng))
             .collect::<Vec<_>>();
 
-        let mut prover_transcript = KeccakTranscript::new(b"TestEval");
+        let mut prover_transcript = Keccaktranscripts::new(b"TestEval");
 
         let proof = HyperTest::prove(&setup, &poly, &point, (), &mut prover_transcript);
 
-        let mut verifier_transcript = KeccakTranscript::new(b"TestEval");
+        let mut verifier_transcript = Keccaktranscripts::new(b"TestEval");
         verifier_transcript.compare_to(prover_transcript);
 
         let opening = poly.evaluate(&point);

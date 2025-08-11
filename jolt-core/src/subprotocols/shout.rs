@@ -17,7 +17,7 @@
 //         errors::ProofVerifyError,
 //         math::Math,
 //         thread::unsafe_allocate_zero_vec,
-//         transcript::{AppendToTranscript, Transcript},
+//         transcripts::{AppendToTranscript, Transcript},
 //     },
 // };
 // use rayon::prelude::*;
@@ -1081,7 +1081,7 @@
 // #[cfg(test)]
 // mod tests {
 //     use super::*;
-//     use crate::transcript::KeccakTranscript;
+//     use crate::transcripts::KeccakTranscript;
 //     use ark_bn254::Fr;
 //     use ark_ff::{One, Zero};
 //     use ark_std::test_rng;
@@ -1099,7 +1099,7 @@
 //             .map(|_| rng.next_u32() as usize % TABLE_SIZE)
 //             .collect();
 
-//         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+//         let mut prover_transcript = Keccaktranscripts::new(b"test_transcript");
 //         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(NUM_LOOKUPS.log_2());
 //         let proof = ShoutProof::prove(
 //             lookup_table.clone(),
@@ -1108,7 +1108,7 @@
 //             &mut prover_transcript,
 //         );
 
-//         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+//         let mut verifier_transcript = Keccaktranscripts::new(b"test_transcript");
 //         verifier_transcript.compare_to(prover_transcript);
 //         let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(NUM_LOOKUPS.log_2());
 //         let verification_result = proof.verify(lookup_table, &r_cycle, &mut verifier_transcript);
@@ -1131,11 +1131,11 @@
 //             .map(|_| rng.next_u32() as usize % TABLE_SIZE)
 //             .collect();
 
-//         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+//         let mut prover_transcript = Keccaktranscripts::new(b"test_transcript");
 //         let (sumcheck_proof, _, sumcheck_claim, _) =
 //             prove_core_shout_piop(lookup_table, read_addresses, &mut prover_transcript);
 
-//         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+//         let mut verifier_transcript = Keccaktranscripts::new(b"test_transcript");
 //         verifier_transcript.compare_to(prover_transcript);
 
 //         let _r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(NUM_LOOKUPS.log_2());
@@ -1163,7 +1163,7 @@
 //             .map(|_| rng.next_u32() as usize % TABLE_SIZE)
 //             .collect();
 
-//         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+//         let mut prover_transcript = Keccaktranscripts::new(b"test_transcript");
 //         let r: Vec<Fr> = prover_transcript.challenge_vector(TABLE_SIZE.log_2());
 //         let r_prime: Vec<Fr> = prover_transcript.challenge_vector(NUM_LOOKUPS.log_2());
 //         let E: Vec<Fr> = EqPolynomial::evals(&r_prime);
@@ -1183,7 +1183,7 @@
 //         let (sumcheck_proof, _, _, _) =
 //             prove_booleanity(read_addresses, &r, E, F, &mut prover_transcript);
 
-//         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+//         let mut verifier_transcript = Keccaktranscripts::new(b"test_transcript");
 //         verifier_transcript.compare_to(prover_transcript);
 //         let _: Vec<Fr> = verifier_transcript.challenge_vector(TABLE_SIZE.log_2());
 //         let _: Vec<Fr> = verifier_transcript.challenge_vector(NUM_LOOKUPS.log_2());
@@ -1213,7 +1213,7 @@
 //             .map(|_| rng.next_u32() as usize % TABLE_SIZE)
 //             .collect();
 
-//         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+//         let mut prover_transcript = Keccaktranscripts::new(b"test_transcript");
 //         let r_cycle_prime: Vec<Fr> = prover_transcript.challenge_vector(NUM_LOOKUPS.log_2());
 //         let (sumcheck_proof, _, _) = prove_hamming_weight(
 //             lookup_table,
@@ -1222,7 +1222,7 @@
 //             &mut prover_transcript,
 //         );
 
-//         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+//         let mut verifier_transcript = Keccaktranscripts::new(b"test_transcript");
 //         verifier_transcript.compare_to(prover_transcript);
 //         let _: Vec<Fr> = verifier_transcript.challenge_vector(NUM_LOOKUPS.log_2());
 
@@ -1250,7 +1250,7 @@
 //             read_addresses.iter().map(|a| *a as u32).collect::<Vec<_>>(),
 //         );
 
-//         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+//         let mut prover_transcript = Keccaktranscripts::new(b"test_transcript");
 //         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(NUM_LOOKUPS.log_2());
 //         let raf_eval = raf.evaluate(&r_cycle);
 //         let (sumcheck_proof, _) = prove_raf_evaluation(
@@ -1261,7 +1261,7 @@
 //             &mut prover_transcript,
 //         );
 
-//         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+//         let mut verifier_transcript = Keccaktranscripts::new(b"test_transcript");
 //         verifier_transcript.compare_to(prover_transcript);
 //         let _: Vec<Fr> = verifier_transcript.challenge_vector(NUM_LOOKUPS.log_2());
 

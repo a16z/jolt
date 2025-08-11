@@ -9,7 +9,7 @@ use crate::poly::opening_proof::{
     VerifierOpeningAccumulator, BIG_ENDIAN,
 };
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
-use crate::transcript::Transcript;
+use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::zkvm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
@@ -142,7 +142,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
     ) -> Self {
         let opening_accumulator = VerifierOpeningAccumulator::new();
         let opening_accumulator = Rc::new(RefCell::new(opening_accumulator));
-        let transcript = Rc::new(RefCell::new(ProofTranscript::new(b"Jolt")));
+        let transcript = Rc::new(RefCell::new(Prooftranscripts::new(b"Jolt")));
         let proofs = Rc::new(RefCell::new(BTreeMap::new()));
         let commitments = Rc::new(RefCell::new(vec![]));
 

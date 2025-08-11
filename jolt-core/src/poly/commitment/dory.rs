@@ -1,7 +1,7 @@
 #![allow(static_mut_refs)]
 
 use super::commitment_scheme::CommitmentScheme;
-use crate::transcript::{AppendToTranscript, Transcript};
+use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::{
     field::JoltField,
     msm::VariableBaseMSM,
@@ -1242,7 +1242,7 @@ mod tests {
     use crate::poly::compact_polynomial::CompactPolynomial;
     use crate::poly::dense_mlpoly::DensePolynomial;
     use crate::poly::multilinear_polynomial::PolynomialEvaluation;
-    use crate::transcript::KeccakTranscript;
+    use crate::transcripts::KeccakTranscript;
     use ark_std::rand::thread_rng;
     use ark_std::UniformRand;
     use serial_test::serial;
@@ -1288,7 +1288,7 @@ mod tests {
             &opening_point,
         );
 
-        let mut prove_transcript = KeccakTranscript::new(b"dory_test");
+        let mut prove_transcript = Keccaktranscripts::new(b"dory_test");
         let prove_start = Instant::now();
         let proof = DoryCommitmentScheme::prove(
             prover_setup,
@@ -1301,7 +1301,7 @@ mod tests {
 
         println!(" Prove time: {prove_time:?}");
 
-        let mut verify_transcript = KeccakTranscript::new(b"dory_test");
+        let mut verify_transcript = Keccaktranscripts::new(b"dory_test");
         let verify_start = Instant::now();
         let verification_result = DoryCommitmentScheme::verify(
             &proof,
@@ -1452,7 +1452,7 @@ mod tests {
 
         let (commitment, row_commitments) = DoryCommitmentScheme::commit(&poly, &prover_setup);
 
-        let mut prove_transcript = KeccakTranscript::new(DoryCommitmentScheme::protocol_name());
+        let mut prove_transcript = Keccaktranscripts::new(DoryCommitmentScheme::protocol_name());
 
         // Compute the correct evaluation
         let correct_evaluation = poly.evaluate(&opening_point);
@@ -1470,7 +1470,7 @@ mod tests {
             let tampered_evaluation = Fr::rand(&mut rng);
 
             let mut verify_transcript =
-                KeccakTranscript::new(DoryCommitmentScheme::protocol_name());
+                Keccaktranscripts::new(DoryCommitmentScheme::protocol_name());
             let result = DoryCommitmentScheme::verify(
                 &proof,
                 &verifier_setup,
@@ -1493,7 +1493,7 @@ mod tests {
                 (0..num_vars).map(|_| Fr::rand(&mut rng)).collect();
 
             let mut verify_transcript =
-                KeccakTranscript::new(DoryCommitmentScheme::protocol_name());
+                Keccaktranscripts::new(DoryCommitmentScheme::protocol_name());
             let result = DoryCommitmentScheme::verify(
                 &proof,
                 &verifier_setup,
@@ -1519,7 +1519,7 @@ mod tests {
             let (wrong_commitment, _) = DoryCommitmentScheme::commit(&wrong_poly, &prover_setup);
 
             let mut verify_transcript =
-                KeccakTranscript::new(DoryCommitmentScheme::protocol_name());
+                Keccaktranscripts::new(DoryCommitmentScheme::protocol_name());
             let result = DoryCommitmentScheme::verify(
                 &proof,
                 &verifier_setup,
@@ -1538,7 +1538,7 @@ mod tests {
 
         // Test 4: Use wrong domain in transcript
         {
-            let mut verify_transcript = KeccakTranscript::new(b"wrong_domain");
+            let mut verify_transcript = Keccaktranscripts::new(b"wrong_domain");
             let result = DoryCommitmentScheme::verify(
                 &proof,
                 &verifier_setup,
@@ -1558,7 +1558,7 @@ mod tests {
         // Test 5: Verify that correct proof still passes
         {
             let mut verify_transcript =
-                KeccakTranscript::new(DoryCommitmentScheme::protocol_name());
+                Keccaktranscripts::new(DoryCommitmentScheme::protocol_name());
             let result = DoryCommitmentScheme::verify(
                 &proof,
                 &verifier_setup,

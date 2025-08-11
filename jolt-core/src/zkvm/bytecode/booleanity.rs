@@ -18,7 +18,7 @@ use crate::{
         opening_proof::ProverOpeningAccumulator,
     },
     subprotocols::sumcheck::SumcheckInstance,
-    transcript::Transcript,
+    transcripts::Transcript,
     utils::{
         math::Math,
         thread::{drop_in_background_thread, unsafe_allocate_zero_vec},

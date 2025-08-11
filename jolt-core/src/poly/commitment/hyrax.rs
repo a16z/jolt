@@ -12,7 +12,7 @@ use crate::msm::VariableBaseMSM;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-use crate::transcript::{AppendToTranscript, Transcript};
+use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 use crate::utils::{compute_dotproduct, mul_0_1_optimized};

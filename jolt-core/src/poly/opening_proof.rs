@@ -27,7 +27,7 @@ use crate::{
         one_hot_polynomial::{OneHotPolynomialProverOpening, OneHotSumcheckState},
     },
     subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance, SumcheckInstanceProof},
-    transcript::Transcript,
+    transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math},
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };

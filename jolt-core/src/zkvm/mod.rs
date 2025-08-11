@@ -13,7 +13,7 @@ use crate::{
     poly::{
         commitment::commitment_scheme::CommitmentScheme, opening_proof::ProverOpeningAccumulator,
     },
-    transcript::Transcript,
+    transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math},
     zkvm::{
         bytecode::BytecodePreprocessing,
@@ -310,7 +310,7 @@ impl Jolt<Fr, DoryCommitmentScheme, KeccakTranscript> for JoltRV32IM {}
 pub type RV32IMJoltProof = JoltProof<Fr, DoryCommitmentScheme, KeccakTranscript>;
 
 use crate::poly::commitment::dory::DoryCommitmentScheme;
-use crate::transcript::KeccakTranscript;
+use crate::transcripts::KeccakTranscript;
 use eyre::Result;
 use std::io::Cursor;
 use std::path::PathBuf;
@@ -365,7 +365,7 @@ mod tests {
     use crate::zkvm::{Jolt, JoltRV32IM};
     use serial_test::serial;
 
-    use crate::transcript::KeccakTranscript;
+    use crate::transcripts::KeccakTranscript;
 
     pub struct JoltRV32IMMockPCS;
     impl Jolt<Fr, MockCommitScheme<Fr>, KeccakTranscript> for JoltRV32IMMockPCS {}

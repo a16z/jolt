@@ -240,7 +240,7 @@ mod tests {
 
     #[test]
     fn test_challenge_scalar_128_bits() {
-        let mut transcript = Blake2bTranscript::new(b"test_128_bit_scalar");
+        let mut transcript = Blake2btranscripts::new(b"test_128_bit_scalar");
         let mut scalars = HashSet::new();
 
         for i in 0..10000 {

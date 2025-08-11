@@ -4,7 +4,7 @@ use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance};
-use crate::transcript::Transcript;
+use crate::transcripts::Transcript;
 use crate::utils::thread::drop_in_background_thread;
 use crate::zkvm::bytecode::BytecodeDag;
 use crate::zkvm::dag::proof_serialization::JoltProof;

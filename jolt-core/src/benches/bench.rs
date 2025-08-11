@@ -1,7 +1,7 @@
 use crate::field::JoltField;
 use crate::host;
 use crate::subprotocols::twist::{TwistAlgorithm, TwistProof};
-use crate::transcript::{KeccakTranscript, Transcript};
+use crate::transcripts::{KeccakTranscript, Transcript};
 use crate::utils::math::Math;
 use crate::zkvm::JoltVerifierPreprocessing;
 use crate::zkvm::{Jolt, JoltRV32IM};

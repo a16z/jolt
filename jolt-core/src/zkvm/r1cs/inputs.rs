@@ -8,7 +8,7 @@ use crate::impl_r1cs_input_lc_conversions;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{OpeningId, SumcheckId};
-use crate::transcript::Transcript;
+use crate::transcripts::Transcript;
 use crate::zkvm::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::zkvm::JoltProverPreprocessing;

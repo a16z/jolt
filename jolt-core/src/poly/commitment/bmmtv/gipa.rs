@@ -9,7 +9,7 @@ use crate::{
     poly::commitment::bmmtv::{
         afgho::AfghoCommitment, inner_products::MultiexponentiationInnerProduct,
     },
-    transcript::Transcript,
+    transcripts::Transcript,
 };
 use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -225,7 +225,7 @@ mod tests {
         *,
     };
     use crate::msm::VariableBaseMSM;
-    use crate::transcript::KeccakTranscript;
+    use crate::transcripts::KeccakTranscript;
     use ark_bn254::Bn254;
     use ark_ec::pairing::Pairing;
     use ark_ec::CurveGroup;
@@ -301,11 +301,11 @@ mod tests {
         let l_commit = AfghoBn245::commit(&params, &m_a).unwrap();
         let ip_commit = MultiexponentiationInnerProduct::inner_product(&m_a, &m_b).unwrap();
 
-        let mut transcript = KeccakTranscript::new(b"test");
+        let mut transcript = Keccaktranscripts::new(b"test");
 
         let proof = MultiExpGIPA::prove(m_a, params.clone(), m_b, &mut transcript).unwrap();
 
-        let mut transcript = KeccakTranscript::new(b"test");
+        let mut transcript = Keccaktranscripts::new(b"test");
 
         // Calculate base commitment and transcript
         let (base_com, transcript) = MultiExpGIPA::verify(
