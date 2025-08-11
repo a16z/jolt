@@ -314,7 +314,7 @@ impl Sha256SequenceBuilder {
 }
 
 // Virtual instructions builder for sha256
-pub fn sha2_virtual_sequence_builder(
+pub fn sha2_inline_sequence_builder(
     address: u64,
     is_compressed: bool,
     xlen: Xlen,
@@ -339,7 +339,7 @@ pub fn sha2_virtual_sequence_builder(
 }
 
 // Virtual instructions builder for sha256_init
-pub fn sha2_init_virtual_sequence_builder(
+pub fn sha2_init_inline_sequence_builder(
     address: u64,
     is_compressed: bool,
     xlen: Xlen,

@@ -24,7 +24,7 @@ pub fn init_inlines() -> Result<(), String> {
         0x00,
         "SHA256_INLINE",
         std::boxed::Box::new(exec::sha2_exec),
-        std::boxed::Box::new(trace_generator::sha2_virtual_sequence_builder),
+        std::boxed::Box::new(trace_generator::sha2_inline_sequence_builder),
     )?;
 
     // Register SHA256 with funct3=0x01 and funct7=0x00 (matching the SDK's assembly instruction)
@@ -34,7 +34,7 @@ pub fn init_inlines() -> Result<(), String> {
         0x00,
         "SHA256_INIT_INLINE",
         std::boxed::Box::new(exec::sha2_init_exec),
-        std::boxed::Box::new(trace_generator::sha2_init_virtual_sequence_builder),
+        std::boxed::Box::new(trace_generator::sha2_init_inline_sequence_builder),
     )?;
     Ok(())
 }

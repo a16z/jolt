@@ -25,7 +25,7 @@ use std::sync::RwLock;
 
 // Type alias for the exec and virtual_sequence functions signature
 pub type ExecFunction = Box<dyn Fn(&INLINE, &mut Cpu, &mut ()) + Send + Sync>;
-pub type VirtualSequenceFunction =
+pub type InlineSequenceFunction =
     Box<dyn Fn(u64, bool, Xlen, u8, u8) -> Vec<RV32IMInstruction> + Send + Sync>;
 
 // Key type for the registry: (opcode, funct3, funct7)
@@ -33,7 +33,7 @@ type InlineKey = (u32, u32, u32);
 
 // Global registry that maps (opcode, funct3, funct7) tuples to inline implementations
 lazy_static! {
-    static ref INLINE_REGISTRY: RwLock<HashMap<InlineKey, (String, ExecFunction, VirtualSequenceFunction)>> =
+    static ref INLINE_REGISTRY: RwLock<HashMap<InlineKey, (String, ExecFunction, InlineSequenceFunction)>> =
         RwLock::new(HashMap::new());
 }
 
@@ -54,7 +54,7 @@ pub fn register_inline(
     funct7: u32,
     name: &str,
     exec_fn: ExecFunction,
-    virtual_sequence_fn: VirtualSequenceFunction,
+    inline_sequence_fn: InlineSequenceFunction,
 ) -> Result<(), String> {
     if opcode != 0x0B && opcode != 0x2B {
         return Err(format!(
@@ -83,7 +83,7 @@ pub fn register_inline(
         ));
     }
 
-    registry.insert(key, (name.to_string(), exec_fn, virtual_sequence_fn));
+    registry.insert(key, (name.to_string(), exec_fn, inline_sequence_fn));
     Ok(())
 }
 
