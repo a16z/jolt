@@ -339,7 +339,6 @@ impl<F: JoltField> StreamWitness<F> for RamRa {
     ) -> Self::WitnessType
     where PCS: CommitmentScheme<Field = F> {
         let i = self.0;
-        // TODO: Compute this up front?
         let d = preprocessing.ram_d;
         debug_assert!(i < d, "Invalid index for ram ra: {i}");
         let v = {
@@ -917,9 +916,14 @@ impl CommittedPolynomial {
         }
     }
 
-    pub fn to_polynomial_type(
+    pub fn to_polynomial_type<F, PCS>(
         &self,
-    ) -> Multilinear {
+        preprocessing: &JoltProverPreprocessing<F, PCS>,
+    ) -> Multilinear
+    where
+        F: JoltField,
+        PCS: CommitmentScheme<Field = F>,
+    {
         match self {
             CommittedPolynomial::LeftInstructionInput => Multilinear::U64Scalars,
             CommittedPolynomial::RightInstructionInput => Multilinear::I64Scalars,
@@ -930,9 +934,16 @@ impl CommittedPolynomial {
             CommittedPolynomial::ShouldJump => Multilinear::U8Scalars,
             CommittedPolynomial::RdInc => Multilinear::I64Scalars,
             CommittedPolynomial::RamInc => Multilinear::I64Scalars,
-            CommittedPolynomial::InstructionRa(_) => Multilinear::OneHot,
-            CommittedPolynomial::BytecodeRa(_) => Multilinear::OneHot,
-            CommittedPolynomial::RamRa(_) => Multilinear::OneHot,
+            CommittedPolynomial::InstructionRa(_) => Multilinear::OneHot {K: instruction_lookups::K_CHUNK},
+            CommittedPolynomial::BytecodeRa(_) => {
+                // TODO: Compute this up front?
+                let d = preprocessing.shared.bytecode.d;
+                let log_K = preprocessing.shared.bytecode.code_size.log_2();
+                let log_K_chunk = log_K.div_ceil(d);
+                let K_chunk = 1 << log_K_chunk;
+                Multilinear::OneHot {K: K_chunk}
+            }
+            CommittedPolynomial::RamRa(_) => Multilinear::OneHot {K: DTH_ROOT_OF_K},
         }
     }
 

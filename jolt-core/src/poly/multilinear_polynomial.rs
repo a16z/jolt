@@ -24,7 +24,7 @@ pub enum Multilinear {
     U64Scalars,
     I64Scalars,
     RLC,
-    OneHot,
+    OneHot{K: usize},
 }
 
 /// Wrapper enum for the various multilinear polynomial types used in Jolt

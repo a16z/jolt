@@ -1302,7 +1302,7 @@ impl<'a> StreamingProcessChunk<StreamingOneHotWitness<Fr>> for StreamingDoryComm
             panic!("K must be provided for OneHot polynomials.");
         };
 
-        // let mut row_commitments = vec![JoltGroupWrapper(G1Projective::zero()); K];
+        // TODO: Parallelize and optimize.
         let mut row_commitments = vec![JoltGroupWrapper(<Bn254 as ArkPairing>::G1::zero()); K];
 
         for (col_index, k) in chunk.iter().enumerate() {
@@ -1325,8 +1325,7 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
     fn initialize<'a>(ty: Multilinear, _size: usize, setup: &'a Self::ProverSetup) -> Self::State<'a> {
         let sigma = DoryGlobals::get_num_columns().log_2();
         match ty {
-            Multilinear::OneHot => {
-                let K = todo!("Pass this in somehow..");
+            Multilinear::OneHot{K} => {
                 let num_rows = (1 << sigma) * K;
                 let row_commitments = Vec::with_capacity(num_rows);
                 StreamingDoryCommitment {
