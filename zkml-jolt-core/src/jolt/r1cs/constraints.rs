@@ -115,6 +115,21 @@ impl<F: JoltField> R1CSConstraints<F> for JoltONNXConstraints {
                 JoltONNXR1CSInputs::Product(i),
             );
 
+            // if !(AddOperands || SubtractOperands || MultiplyOperands || Advice || Const || SumOperands) {
+            //     assert!(RightLookupOperand == RightInstructionInput)
+            // }
+            cs.constrain_eq_conditional(
+                1 - JoltONNXR1CSInputs::OpFlags(CircuitFlags::AddOperands)
+                - JoltONNXR1CSInputs::OpFlags(CircuitFlags::SubtractOperands)
+                - JoltONNXR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands)
+                // Arbitrary untrusted advice goes in right lookup operand
+                - JoltONNXR1CSInputs::OpFlags(CircuitFlags::Advice)
+                - JoltONNXR1CSInputs::OpFlags(CircuitFlags::Const)
+                - JoltONNXR1CSInputs::OpFlags(CircuitFlags::SumOperands),
+                JoltONNXR1CSInputs::RightLookupOperand(i),
+                JoltONNXR1CSInputs::RightInstructionInput(i),
+            );
+
             // if CircuitFlag::Const {
             //     assert!(TdWriteValue == Const)
             // }
