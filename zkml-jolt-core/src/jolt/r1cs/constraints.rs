@@ -149,7 +149,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltONNXConstraints {
             );
 
             // if Rd != 0 && WriteLookupOutputToRD && ActiveOutput {
-            //     assert!(RdWriteValue == LookupOutput)
+            //     assert!(TdWriteValue == LookupOutput)
             // }
             cs.constrain_prod(
                 JoltONNXR1CSInputs::Td(i),
