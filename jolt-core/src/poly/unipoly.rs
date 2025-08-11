@@ -6,7 +6,7 @@ use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign, Sub};
 use crate::utils::gaussian_elimination::gaussian_elimination;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 use ark_serialize::*;
-use num::{Integer, Signed};
+use num::Integer;
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
 

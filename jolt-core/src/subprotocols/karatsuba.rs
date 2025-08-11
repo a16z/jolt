@@ -146,7 +146,7 @@ pub fn coeff_naive<F: JoltField>(polys: &[Vec<F>]) -> Vec<F> {
 // can be multiplied directly
 #[inline(always)]
 pub fn coeff_kara_2<F: JoltField>(left: &[F; 2], right: &[F; 2]) -> [F; 3] {
-    kara_2(&left, &right)
+    kara_2(left, right)
 }
 
 #[inline(always)]
@@ -504,12 +504,8 @@ pub fn kara_8<F: JoltField>(p: &[F; 8], q: &[F; 8]) -> [F; 15] {
         m[i] -= l[i] + u[i];
     }
     let mut res = [F::zero(); 15];
-    for i in 0..l.len() {
-        res[i] = l[i];
-    }
-    for i in 0..u.len() {
-        res[i + 8] = u[i];
-    }
+    res[..l.len()].copy_from_slice(&l);
+    res[8..].copy_from_slice(&u);
     for i in 0..m.len() {
         res[i + 4] += m[i];
     }
@@ -534,12 +530,9 @@ pub fn kara_9<F: JoltField>(p: &[F; 9], q: &[F; 9]) -> [F; 17] {
     }
     m[7] -= u[7];
     let mut res = [F::zero(); 17];
-    for i in 0..l.len() {
-        res[i] = l[i];
-    }
-    for i in 0..u.len() {
-        res[i + 8] = u[i];
-    }
+    res[..l.len()].copy_from_slice(&l);
+    res[8..].copy_from_slice(&u);
+
     for i in 0..m.len() {
         res[i + 4] += m[i];
     }
@@ -564,12 +557,9 @@ pub fn kara_9_w_top<F: JoltField>(p: &[F; 9], q: &[F; 9], uu: F) -> [F; 16] {
     }
     m[7] -= u[7];
     let mut res = [F::zero(); 16];
-    for i in 0..l.len() {
-        res[i] = l[i];
-    }
-    for i in 0..u.len() {
-        res[i + 8] = u[i];
-    }
+    res[..l.len()].copy_from_slice(&l);
+    res[8..].copy_from_slice(&u);
+
     for i in 0..m.len() {
         res[i + 4] += m[i];
     }
@@ -594,12 +584,9 @@ pub fn kara_17<F: JoltField>(p: &[F; 17], q: &[F; 17]) -> [F; 33] {
     }
     m[15] -= u[15];
     let mut res = [F::zero(); 33];
-    for i in 0..l.len() {
-        res[i] = l[i];
-    }
-    for i in 0..u.len() {
-        res[i + 16] = u[i];
-    }
+    res[..l.len()].copy_from_slice(&l);
+    res[16..].copy_from_slice(&u);
+
     for i in 0..m.len() {
         res[i + 8] += m[i];
     }

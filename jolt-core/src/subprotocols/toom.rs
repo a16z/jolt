@@ -175,7 +175,7 @@ pub fn eval_toom3_2<F: FieldMulSmall>(polys: [[F; 4]; 3]) -> [F; 16] {
     let by = p[2] - p[0];
     let bxy = p[3] - p[1] - p[2] + p[0];
     let xs = [Some(F::zero()), Some(F::one()), Some(-F::one()), None];
-    let ys = xs.clone();
+    let ys = xs;
     let mut b_grid = [[F::zero(); 4]; 4];
     for (iy, y_opt) in ys.iter().enumerate() {
         for (ix, x_opt) in xs.iter().enumerate() {

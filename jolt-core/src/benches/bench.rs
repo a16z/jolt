@@ -2,7 +2,7 @@ use crate::field::JoltField;
 use crate::host;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::subprotocols::optimization::{
-    compute_initial_eval_claim, LargeDMulSumCheckProof, AppendixCSumCheckProof, NaiveSumCheckProof,
+    compute_initial_eval_claim, AppendixCSumCheckProof, LargeDMulSumCheckProof, NaiveSumCheckProof,
 };
 use crate::subprotocols::toom::FieldMulSmall;
 use crate::subprotocols::twist::{TwistAlgorithm, TwistProof};

@@ -79,10 +79,7 @@ fn compute_mle_product_coeffs_toom<F: FieldMulSmall, const D: usize, const D_PLU
                 4 => eval_toom4(polys[..4].try_into().unwrap())[..]
                     .try_into()
                     .unwrap(),
-                _ => panic!(
-                    "Unsupported number of polynomials, got {} and expected 16, 8, or 4",
-                    D
-                ),
+                _ => panic!("Unsupported number of polynomials, got {D} and expected 16, 8, or 4"),
             };
 
             // drop(_guard);

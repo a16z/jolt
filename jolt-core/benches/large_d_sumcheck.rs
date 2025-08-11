@@ -5,7 +5,8 @@ use jolt_core::{
     field::JoltField,
     poly::multilinear_polynomial::MultilinearPolynomial,
     subprotocols::optimization::{
-        compute_initial_eval_claim, LargeDMulSumCheckProof, AppendixCSumCheckProof, NaiveSumCheckProof,
+        compute_initial_eval_claim, AppendixCSumCheckProof, LargeDMulSumCheckProof,
+        NaiveSumCheckProof,
     },
     utils::{
         math::Math,
@@ -52,12 +53,14 @@ fn benchmark_large_d_sumcheck<const D1: usize>(c: &mut Criterion, d: usize, t: u
             b.iter_with_setup(
                 || (ra.clone(), transcript.clone(), previous_claim.clone()),
                 |(mut ra, mut transcript, mut previous_claim)| {
-                    criterion::black_box(AppendixCSumCheckProof::<Fr, KeccakTranscript>::prove::<D1>(
-                        &mut ra.iter_mut().collect::<Vec<_>>(),
-                        &r_cycle,
-                        &mut previous_claim,
-                        &mut transcript,
-                    ));
+                    criterion::black_box(
+                        AppendixCSumCheckProof::<Fr, KeccakTranscript>::prove::<D1>(
+                            &mut ra.iter_mut().collect::<Vec<_>>(),
+                            &r_cycle,
+                            &mut previous_claim,
+                            &mut transcript,
+                        ),
+                    );
                 },
             );
         },
