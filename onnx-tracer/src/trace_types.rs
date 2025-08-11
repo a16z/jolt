@@ -132,6 +132,8 @@ pub struct ONNXInstr {
     /// `virtual_sequence_remaining` will be Some(0); if this is the penultimate instruction
     /// in the sequence, `virtual_sequence_remaining` will be Some(1); etc.
     pub virtual_sequence_remaining: Option<usize>,
+    /// Number of active elements in the output (useful since we pad the output to `MAX_TENSOR_SIZE`).
+    pub active_output_elements: usize,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
@@ -465,6 +467,7 @@ impl ONNXInstr {
             td: None,
             imm: None,
             virtual_sequence_remaining: None,
+            active_output_elements: 0,
         }
     }
 
@@ -477,6 +480,7 @@ impl ONNXInstr {
             td: None,
             imm: None,
             virtual_sequence_remaining: None,
+            active_output_elements: 0,
         }
     }
 

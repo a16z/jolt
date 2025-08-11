@@ -93,6 +93,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
                 td: v_c,
                 imm: cycle.instr.imm.clone(),
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+                active_output_elements: cycle.instr.active_output_elements,
             },
             memory_state: MemoryState {
                 ts1_val: None,
@@ -115,6 +116,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
                 td: v_q,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+                active_output_elements: cycle.instr.active_output_elements,
             },
             memory_state: MemoryState {
                 ts1_val: None,
@@ -137,6 +139,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
                 td: v_r,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+                active_output_elements: cycle.instr.active_output_elements,
             },
             memory_state: MemoryState {
                 ts1_val: None,
@@ -164,6 +167,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
                 td: None,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+                active_output_elements: cycle.instr.active_output_elements,
             },
             memory_state: MemoryState {
                 ts1_val: Some(Tensor::from(u64_vec_to_i128_iter(&r))),
@@ -189,6 +193,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
                 td: None,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+                active_output_elements: cycle.instr.active_output_elements,
             },
             memory_state: MemoryState {
                 ts1_val: Some(Tensor::from(u64_vec_to_i128_iter(&y))),
@@ -211,6 +216,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
                 td: v_qy,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+                active_output_elements: cycle.instr.active_output_elements,
             },
             memory_state: MemoryState {
                 ts1_val: Some(Tensor::from(u64_vec_to_i128_iter(&q))),
@@ -233,6 +239,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
                 td: v_0,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+                active_output_elements: cycle.instr.active_output_elements,
             },
             memory_state: MemoryState {
                 ts1_val: Some(Tensor::from(u64_vec_to_i128_iter(&q_y))),
@@ -255,6 +262,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
                 td: None,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+                active_output_elements: cycle.instr.active_output_elements,
             },
             memory_state: MemoryState {
                 ts1_val: Some(Tensor::from(u64_vec_to_i128_iter(&add_0))),
@@ -274,6 +282,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
                 td: cycle.instr.td,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+                active_output_elements: cycle.instr.active_output_elements,
             },
             memory_state: MemoryState {
                 ts1_val: Some(Tensor::from(u64_vec_to_i128_iter(&q))),

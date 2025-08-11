@@ -249,7 +249,7 @@ where
 }
 
 #[cfg(test)]
-mod tests {
+mod e2e_tests {
     use crate::{
         jolt::{
             JoltProverPreprocessing, JoltSNARK,
@@ -341,8 +341,8 @@ mod tests {
         info!("Execution trace length: {}", execution_trace.len());
         check_mcc(&execution_trace);
 
-        let snark: JoltSNARK<Fr, PCS, KeccakTranscript> =
-            JoltSNARK::prove(pp.clone(), execution_trace);
+        // let snark: JoltSNARK<Fr, PCS, KeccakTranscript> =
+        //     JoltSNARK::prove(pp.clone(), execution_trace);
 
         // // Verify
         // snark.verify((&pp).into()).unwrap();

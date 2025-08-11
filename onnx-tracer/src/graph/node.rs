@@ -461,6 +461,7 @@ impl Node {
             td: Some(self.idx),
             imm: self.imm(),
             virtual_sequence_remaining: None,
+            active_output_elements: self.out_dims.iter().product(),
         }
     }
 
