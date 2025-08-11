@@ -177,9 +177,9 @@ pub fn eval_toom3_2<F: FieldMulSmall>(polys: [[F; 4]; 3]) -> [F; 16] {
     let xs = [Some(F::zero()), Some(F::one()), Some(-F::one()), None];
     let ys = xs;
     let mut b_grid = [[F::zero(); 4]; 4];
-    for (iy, y_opt) in ys.iter().enumerate() {
-        for (ix, x_opt) in xs.iter().enumerate() {
-            b_grid[iy][ix] = match (x_opt, y_opt) {
+    for (i_y, y_opt) in ys.iter().enumerate() {
+        for (i_x, x_opt) in xs.iter().enumerate() {
+            b_grid[i_y][i_x] = match (x_opt, y_opt) {
                 (Some(xv), Some(yv)) => a0 + bx * (*xv) + by * (*yv) + bxy * (*xv) * (*yv),
                 (None, Some(yv)) => bx + bxy * (*yv),
                 (Some(xv), None) => by + bxy * (*xv),
