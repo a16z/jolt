@@ -129,7 +129,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             if polynomials.len() == 21 {
                 return Self::linear_combination_rlc_optimized(polynomials, coefficients);
             }
-            
+
             let mut result = RLCPolynomial::<F>::new();
             for (coeff, polynomial) in coefficients.iter().zip(polynomials.iter()) {
                 result = match polynomial {
@@ -325,7 +325,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
         let start_init = std::time::Instant::now();
         let mut result = RLCPolynomial::<F>::new();
         println!("  RLC::new() took: {:?}", start_init.elapsed());
-        
+
         // First, process all dense polynomials in parallel to build the dense_rlc
         let start_dense_filter = std::time::Instant::now();
         let dense_indices: Vec<usize> = polynomials
@@ -334,14 +334,21 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             .filter(|(_, p)| !matches!(p, MultilinearPolynomial::OneHot(_)))
             .map(|(i, _)| i)
             .collect();
-        println!("  Dense polynomial filtering took: {:?}", start_dense_filter.elapsed());
-        println!("  Found {} dense polynomials out of {}", dense_indices.len(), polynomials.len());
-        
+        println!(
+            "  Dense polynomial filtering took: {:?}",
+            start_dense_filter.elapsed()
+        );
+        println!(
+            "  Found {} dense polynomials out of {}",
+            dense_indices.len(),
+            polynomials.len()
+        );
+
         if !dense_indices.is_empty() {
             // Use same simple parallel strategy as 3 polynomial case
             let dense_len = result.dense_rlc.len();
             println!("  Dense RLC length: {}", dense_len);
-            
+
             let start_dense_compute = std::time::Instant::now();
             result.dense_rlc = (0..dense_len)
                 .into_par_iter()
@@ -350,7 +357,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                     for &poly_idx in &dense_indices {
                         let poly = polynomials[poly_idx];
                         let coeff = coefficients[poly_idx];
-                        
+
                         match poly {
                             MultilinearPolynomial::LargeScalars(p) => {
                                 if i < p.evals_ref().len() {
@@ -388,9 +395,12 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                     acc
                 })
                 .collect();
-            println!("  Dense polynomial computation took: {:?}", start_dense_compute.elapsed());
+            println!(
+                "  Dense polynomial computation took: {:?}",
+                start_dense_compute.elapsed()
+            );
         }
-        
+
         // Then handle OneHot polynomials
         let start_onehot = std::time::Instant::now();
         let mut onehot_count = 0;
@@ -400,10 +410,17 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                 onehot_count += 1;
             }
         }
-        println!("  OneHot polynomial processing ({} polynomials) took: {:?}", onehot_count, start_onehot.elapsed());
-        
+        println!(
+            "  OneHot polynomial processing ({} polynomials) took: {:?}",
+            onehot_count,
+            start_onehot.elapsed()
+        );
+
         let result = MultilinearPolynomial::RLC(result);
-        println!("linear_combination_rlc_optimized (21 polys) took: {:?}", start.elapsed());
+        println!(
+            "linear_combination_rlc_optimized (21 polys) took: {:?}",
+            start.elapsed()
+        );
         result
     }
 

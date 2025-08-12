@@ -19,7 +19,6 @@ use crate::zkvm::witness::{
 };
 use crate::zkvm::ProverDebugInfo;
 use anyhow::Context;
-use rayon::prelude::*;
 
 pub enum JoltDAG {}
 
@@ -178,13 +177,10 @@ impl JoltDAG {
 
         // Batch-prove all openings
         let (_, trace, _, _) = state_manager.get_prover_data();
-        let mut polynomials_map = HashMap::new();
-        for polynomial in AllCommittedPolynomials::iter() {
-            polynomials_map.insert(
-                *polynomial,
-                polynomial.generate_witness(preprocessing, trace),
-            );
-        }
+        let all_polys: Vec<CommittedPolynomial> =
+            AllCommittedPolynomials::iter().copied().collect();
+        let polynomials_map =
+            CommittedPolynomial::generate_witness_batch(&all_polys, preprocessing, trace);
         let opening_proof = accumulator.borrow_mut().reduce_and_prove(
             polynomials_map,
             opening_proof_hints,
@@ -418,8 +414,12 @@ impl JoltDAG {
         let (preprocessing, trace, _program_io, _final_memory_state) =
             prover_state_manager.get_prover_data();
 
-        let committed_polys: Vec<_> = AllCommittedPolynomials::par_iter()
-            .map(|poly| poly.generate_witness(preprocessing, trace))
+        let all_polys: Vec<CommittedPolynomial> =
+            AllCommittedPolynomials::iter().copied().collect();
+        let polynomials_map =
+            CommittedPolynomial::generate_witness_batch(&all_polys, preprocessing, trace);
+        let committed_polys: Vec<_> = AllCommittedPolynomials::iter()
+            .map(|poly| polynomials_map[poly].clone())
             .collect();
 
         let (commitments, hints): (Vec<PCS::Commitment>, Vec<PCS::OpeningProofHint>) =

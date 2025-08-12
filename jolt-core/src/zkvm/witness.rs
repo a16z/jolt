@@ -1,7 +1,7 @@
 #![allow(static_mut_refs)]
 
-use std::sync::LazyLock;
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
@@ -182,6 +182,210 @@ impl CommittedPolynomial {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "CommittedPolynomial::generate_witness_batch")]
+    pub fn generate_witness_batch<F, PCS>(
+        polynomials: &[CommittedPolynomial],
+        preprocessing: &JoltProverPreprocessing<F, PCS>,
+        trace: &[RV32IMCycle],
+    ) -> std::collections::HashMap<CommittedPolynomial, MultilinearPolynomial<F>>
+    where
+        F: JoltField,
+        PCS: CommitmentScheme<Field = F>,
+    {
+        use std::collections::HashMap;
+
+        let mut results = HashMap::with_capacity(polynomials.len());
+
+        // Pre-compute common values that multiple polynomials might need
+        let trace_len = trace.len();
+
+        // Group polynomials by type to handle similar ones together
+        let mut simple_polys = Vec::new();
+        let mut one_hot_polys = Vec::new();
+
+        for poly in polynomials {
+            match poly {
+                CommittedPolynomial::BytecodeRa(_)
+                | CommittedPolynomial::RamRa(_)
+                | CommittedPolynomial::InstructionRa(_) => one_hot_polys.push(*poly),
+                _ => simple_polys.push(*poly),
+            }
+        }
+
+        // Process simple polynomials in a single pass
+        if !simple_polys.is_empty() {
+            // Prepare storage for each polynomial type
+            let mut left_input_coeffs = Vec::with_capacity(trace_len);
+            let mut right_input_coeffs = Vec::with_capacity(trace_len);
+            let mut product_coeffs = Vec::with_capacity(trace_len);
+            let mut write_lookup_rd_coeffs = Vec::with_capacity(trace_len);
+            let mut write_pc_rd_coeffs = Vec::with_capacity(trace_len);
+            let mut should_branch_coeffs = Vec::with_capacity(trace_len);
+            let mut should_jump_coeffs = Vec::with_capacity(trace_len);
+            let mut rd_inc_coeffs = Vec::with_capacity(trace_len);
+            let mut ram_inc_coeffs = Vec::with_capacity(trace_len);
+
+            // Flags to track which polynomials we need to compute
+            let need_left_input = simple_polys.contains(&CommittedPolynomial::LeftInstructionInput);
+            let need_right_input =
+                simple_polys.contains(&CommittedPolynomial::RightInstructionInput);
+            let need_product = simple_polys.contains(&CommittedPolynomial::Product);
+            let need_write_lookup_rd =
+                simple_polys.contains(&CommittedPolynomial::WriteLookupOutputToRD);
+            let need_write_pc_rd = simple_polys.contains(&CommittedPolynomial::WritePCtoRD);
+            let need_should_branch = simple_polys.contains(&CommittedPolynomial::ShouldBranch);
+            let need_should_jump = simple_polys.contains(&CommittedPolynomial::ShouldJump);
+            let need_rd_inc = simple_polys.contains(&CommittedPolynomial::RdInc);
+            let need_ram_inc = simple_polys.contains(&CommittedPolynomial::RamInc);
+
+            // Single pass over trace
+            let trace_results: Vec<(u64, i64, u64, u8, u8, u8, u8, i64, i64)> = trace
+                .par_iter()
+                .zip(
+                    trace
+                        .par_iter()
+                        .skip(1)
+                        .chain(rayon::iter::once(&RV32IMCycle::NoOp)),
+                )
+                .map(|(cycle, next_cycle)| {
+                    let mut tuple = (0u64, 0i64, 0u64, 0u8, 0u8, 0u8, 0u8, 0i64, 0i64);
+
+                    // Compute instruction inputs if needed
+                    let (left_input, right_input) =
+                        if need_left_input || need_right_input || need_product {
+                            LookupQuery::<32>::to_instruction_inputs(cycle)
+                        } else {
+                            (0, 0)
+                        };
+
+                    if need_left_input {
+                        tuple.0 = left_input;
+                    }
+                    if need_right_input {
+                        tuple.1 = right_input;
+                    }
+                    if need_product {
+                        tuple.2 = left_input * right_input as u64;
+                    }
+
+                    if need_write_lookup_rd {
+                        let flag = cycle.instruction().circuit_flags()
+                            [CircuitFlags::WriteLookupOutputToRD as usize];
+                        tuple.3 = (cycle.rd_write().0) * (flag as u8);
+                    }
+
+                    if need_write_pc_rd {
+                        let flag = cycle.instruction().circuit_flags()[CircuitFlags::Jump as usize];
+                        tuple.4 = (cycle.rd_write().0) * (flag as u8);
+                    }
+
+                    if need_should_branch {
+                        let is_branch =
+                            cycle.instruction().circuit_flags()[CircuitFlags::Branch as usize];
+                        tuple.5 =
+                            (LookupQuery::<32>::to_lookup_output(cycle) as u8) * is_branch as u8;
+                    }
+
+                    if need_should_jump {
+                        let is_jump = cycle.instruction().circuit_flags()[CircuitFlags::Jump];
+                        let is_next_noop =
+                            next_cycle.instruction().circuit_flags()[CircuitFlags::IsNoop];
+                        tuple.6 = is_jump as u8 * (1 - is_next_noop as u8);
+                    }
+
+                    if need_rd_inc {
+                        let (_, pre_value, post_value) = cycle.rd_write();
+                        tuple.7 = post_value as i64 - pre_value as i64;
+                    }
+
+                    if need_ram_inc {
+                        let ram_op = cycle.ram_access();
+                        tuple.8 = match ram_op {
+                            tracer::instruction::RAMAccess::Write(write) => {
+                                write.post_value as i64 - write.pre_value as i64
+                            }
+                            _ => 0,
+                        };
+                    }
+
+                    tuple
+                })
+                .collect();
+
+            // Extract results into individual vectors
+            if need_left_input {
+                left_input_coeffs = trace_results.iter().map(|t| t.0).collect();
+            }
+            if need_right_input {
+                right_input_coeffs = trace_results.iter().map(|t| t.1).collect();
+            }
+            if need_product {
+                product_coeffs = trace_results.iter().map(|t| t.2).collect();
+            }
+            if need_write_lookup_rd {
+                write_lookup_rd_coeffs = trace_results.iter().map(|t| t.3).collect();
+            }
+            if need_write_pc_rd {
+                write_pc_rd_coeffs = trace_results.iter().map(|t| t.4).collect();
+            }
+            if need_should_branch {
+                should_branch_coeffs = trace_results.iter().map(|t| t.5).collect();
+            }
+            if need_should_jump {
+                should_jump_coeffs = trace_results.iter().map(|t| t.6).collect();
+            }
+            if need_rd_inc {
+                rd_inc_coeffs = trace_results.iter().map(|t| t.7).collect();
+            }
+            if need_ram_inc {
+                ram_inc_coeffs = trace_results.iter().map(|t| t.8).collect();
+            }
+
+            // Store results
+            for poly in simple_polys {
+                let multilinear = match poly {
+                    CommittedPolynomial::LeftInstructionInput => {
+                        MultilinearPolynomial::<F>::from(left_input_coeffs.clone())
+                    }
+                    CommittedPolynomial::RightInstructionInput => {
+                        MultilinearPolynomial::<F>::from(right_input_coeffs.clone())
+                    }
+                    CommittedPolynomial::Product => {
+                        MultilinearPolynomial::<F>::from(product_coeffs.clone())
+                    }
+                    CommittedPolynomial::WriteLookupOutputToRD => {
+                        MultilinearPolynomial::<F>::from(write_lookup_rd_coeffs.clone())
+                    }
+                    CommittedPolynomial::WritePCtoRD => {
+                        MultilinearPolynomial::<F>::from(write_pc_rd_coeffs.clone())
+                    }
+                    CommittedPolynomial::ShouldBranch => {
+                        MultilinearPolynomial::<F>::from(should_branch_coeffs.clone())
+                    }
+                    CommittedPolynomial::ShouldJump => {
+                        MultilinearPolynomial::<F>::from(should_jump_coeffs.clone())
+                    }
+                    CommittedPolynomial::RdInc => {
+                        MultilinearPolynomial::<F>::from(rd_inc_coeffs.clone())
+                    }
+                    CommittedPolynomial::RamInc => {
+                        MultilinearPolynomial::<F>::from(ram_inc_coeffs.clone())
+                    }
+                    _ => unreachable!(),
+                };
+                results.insert(poly, multilinear);
+            }
+        }
+
+        // Process one-hot polynomials (these require special handling)
+        for poly in one_hot_polys {
+            let multilinear = poly.generate_witness(preprocessing, trace);
+            results.insert(poly, multilinear);
+        }
+
+        results
+    }
+
     #[tracing::instrument(skip_all, name = "CommittedPolynomial::generate_witness")]
     pub fn generate_witness<F, PCS>(
         &self,
@@ -283,7 +487,9 @@ impl CommittedPolynomial {
                         Some((pc >> (log_K_chunk * (d - 1 - i))) % K_chunk)
                     })
                     .collect();
-                MultilinearPolynomial::OneHot(Arc::new(OneHotPolynomial::from_indices(addresses, K_chunk)))
+                MultilinearPolynomial::OneHot(Arc::new(OneHotPolynomial::from_indices(
+                    addresses, K_chunk,
+                )))
             }
             CommittedPolynomial::RamRa(i) => {
                 let d = self.ram_d();
