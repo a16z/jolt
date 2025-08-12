@@ -10,7 +10,6 @@
 
 # flamegraphs
 **/*.svg
-*.flamegraph
 
 # tracing-flame output
 **.folded

@@ -770,7 +770,6 @@ impl<F: JoltField> ReadRafSumcheck<F> {
 }
 
 #[cfg(test)]
-#[cfg(not(feature = "allocative"))]
 mod tests {
     use super::*;
     use crate::subprotocols::sumcheck::BatchedSumcheck;

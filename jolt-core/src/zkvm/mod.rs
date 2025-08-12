@@ -349,7 +349,6 @@ impl Serializable for JoltDevice {}
 // ==================== TEST ====================
 
 #[cfg(test)]
-#[cfg(not(feature = "allocative"))]
 mod tests {
     use ark_bn254::Fr;
 

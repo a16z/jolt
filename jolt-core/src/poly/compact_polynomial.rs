@@ -449,26 +449,3 @@ impl<T: SmallScalar, F: JoltField> Index<usize> for CompactPolynomial<T, F> {
         &(self.coeffs[_index])
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::field::allocative_ark::AllocativeField;
-    use ark_bn254::Fr;
-    use ark_std::test_rng;
-    use rand_core::RngCore;
-
-    #[test]
-    fn allocative_compact_polynomial() {
-        const NUM_VARS: usize = 10;
-        let mut rng = test_rng();
-        let coeffs: Vec<u8> = std::iter::repeat_with(|| rng.next_u32() as u8)
-            .take(1 << NUM_VARS)
-            .collect();
-        let poly: CompactPolynomial<u8, AllocativeField<Fr>> =
-            CompactPolynomial::from_coeffs(coeffs);
-
-        let memory_size = allocative::size_of_unique(&poly);
-        println!("memory_size: {memory_size} bytes");
-    }
-}

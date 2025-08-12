@@ -4,7 +4,6 @@ pub mod stage;
 pub mod state_manager;
 
 #[cfg(test)]
-#[cfg(not(feature = "allocative"))]
 mod tests {
     use crate::host;
     use crate::poly::commitment::dory::DoryCommitmentScheme;

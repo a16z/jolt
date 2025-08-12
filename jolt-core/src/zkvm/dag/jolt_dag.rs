@@ -4,6 +4,7 @@ use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::utils::profiling::print_current_memory_usage;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
@@ -74,6 +75,7 @@ impl JoltDAG {
         drop(commitments);
 
         // Stage 1:
+        #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 1 baseline");
         let span = tracing::span!(tracing::Level::INFO, "Stage 1 sumchecks");
         let _guard = span.enter();
@@ -93,6 +95,7 @@ impl JoltDAG {
         drop(span);
 
         // Stage 2:
+        #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 2 baseline");
         let span = tracing::span!(tracing::Level::INFO, "Stage 2 sumchecks");
         let _guard = span.enter();
@@ -145,6 +148,7 @@ impl JoltDAG {
         drop(span);
 
         // Stage 3:
+        #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 3 baseline");
         let span = tracing::span!(tracing::Level::INFO, "Stage 3 sumchecks");
         let _guard = span.enter();
@@ -196,6 +200,7 @@ impl JoltDAG {
         drop(span);
 
         // Stage 4:
+        #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 4 baseline");
         let span = tracing::span!(tracing::Level::INFO, "Stage 4 sumchecks");
         let _guard = span.enter();
@@ -257,6 +262,7 @@ impl JoltDAG {
         #[cfg(feature = "allocative")]
         print_data_structure_heap_usage("Committed polynomials map", &polynomials_map);
 
+        #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 5 baseline");
         let opening_proof = accumulator.borrow_mut().reduce_and_prove(
             polynomials_map,
