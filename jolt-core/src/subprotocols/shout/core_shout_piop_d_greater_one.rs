@@ -546,7 +546,7 @@ mod tests {
     #[test]
     fn test_core_shout_generic_d_greater_than_one_shout_sumcheck() {
         //------- PROBLEM SETUP----------------------
-        const POWER_OF_2: usize = 16;
+        const POWER_OF_2: usize = 22;
         const K: usize = 64; // 2**6
         const T: usize = 1 << POWER_OF_2; // 2**power
         const D: usize = 3;
