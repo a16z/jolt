@@ -8,7 +8,6 @@ use common::constants::{
     EMULATOR_MEMORY_CAPACITY, RAM_START_ADDRESS, STACK_CANARY_SIZE,
 };
 use common::jolt_device::{JoltDevice, MemoryConfig};
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -141,8 +140,8 @@ impl Program {
 
         // Expand inline sequences
         instructions = instructions
-            .into_par_iter()
-            .flat_map_iter(|instr| instr.inline_sequence(xlen))
+            .into_iter()
+            .flat_map(|instr| instr.inline_sequence(xlen))
             .collect();
 
         (instructions, raw_bytes, bytecode_size)
