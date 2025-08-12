@@ -347,6 +347,14 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         };
         DensePolynomial::new(evals)
     }
+
+    pub fn get_current_scalar(&self) -> F {
+        self.current_scalar
+    }
+
+    pub fn get_current_w(&self) -> F {
+        self.w[self.current_index - 1]
+    }
 }
 
 #[cfg(test)]
