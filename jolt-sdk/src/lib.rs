@@ -1,4 +1,4 @@
-#![cfg_attr(not(feature = "host"), no_std)]
+#![cfg_attr(not(any(feature = "host", feature = "guest-std")), no_std)]
 
 extern crate jolt_sdk_macros;
 
@@ -12,6 +12,14 @@ pub use host_utils::*;
 
 pub mod alloc;
 pub use alloc::*;
+#[cfg(any(feature = "host", feature = "guest-std"))]
+pub mod random;
+#[cfg(any(feature = "host", feature = "guest-std"))]
+pub use random::*;
+#[cfg(feature = "guest-std")]
+pub mod print;
+#[cfg(feature = "guest-std")]
+pub use print::*;
 
 pub mod cycle_tracking;
 pub use cycle_tracking::*;

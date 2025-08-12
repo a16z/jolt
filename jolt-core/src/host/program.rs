@@ -1,5 +1,6 @@
 use crate::field::JoltField;
 use crate::host::analyze::ProgramSummary;
+use crate::host::toolchain::TOOLCHAIN_VERSION;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host::toolchain::{install_no_std_toolchain, install_toolchain};
 use crate::host::{Program, DEFAULT_TARGET_DIR, LINKER_SCRIPT_TEMPLATE};
@@ -57,8 +58,12 @@ impl Program {
         self.max_output_size = size;
     }
 
-    #[tracing::instrument(skip_all, name = "Program::build")]
     pub fn build(&mut self, target_dir: &str) {
+        self.build_with_channel(target_dir, "stable");
+    }
+
+    #[tracing::instrument(skip_all, name = "Program::build")]
+    pub fn build_with_channel(&mut self, target_dir: &str, channel: &str) {
         if self.elf.is_none() {
             #[cfg(not(target_arch = "wasm32"))]
             install_toolchain().unwrap();
@@ -80,7 +85,7 @@ impl Program {
                 "opt-level=z",
             ];
 
-            let toolchain = if self.std {
+            let target_triple = if self.std {
                 "riscv32im-jolt-zkvm-elf"
             } else {
                 "riscv32im-unknown-none-elf"
@@ -89,7 +94,10 @@ impl Program {
             let mut envs = vec![("CARGO_ENCODED_RUSTFLAGS", rust_flags.join("\x1f"))];
 
             if self.std {
-                envs.push(("RUSTUP_TOOLCHAIN", toolchain.to_string()));
+                envs.push((
+                    "RUSTUP_TOOLCHAIN",
+                    format!("{channel}-jolt-{TOOLCHAIN_VERSION}"),
+                ));
             }
 
             if let Some(func) = &self.func {
@@ -115,7 +123,7 @@ impl Program {
                     "--target-dir",
                     &target,
                     "--target",
-                    toolchain,
+                    target_triple,
                 ])
                 .output()
                 .expect("failed to build guest");
@@ -125,7 +133,7 @@ impl Program {
                 panic!("failed to compile guest");
             }
 
-            let elf = format!("{}/{}/release/{}", target, toolchain, self.guest);
+            let elf = format!("{}/{}/release/{}", target, target_triple, self.guest);
             self.elf = Some(PathBuf::from_str(&elf).unwrap());
         }
     }

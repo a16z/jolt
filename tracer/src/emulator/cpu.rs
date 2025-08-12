@@ -71,6 +71,11 @@ const MIP_SSIP: u64 = 0x002;
 pub const JOLT_CYCLE_TRACK_ECALL_NUM: u32 = 0xC7C1E;
 pub const JOLT_CYCLE_MARKER_START: u32 = 1;
 pub const JOLT_CYCLE_MARKER_END: u32 = 2;
+pub const JOLT_PRINT_ECALL_NUM: u32 = 0x5052494E;
+
+pub const JOLT_PRINT_STRING: u32 = 1;
+pub const JOLT_PRINT_LINE: u32 = 2; // with newline
+
 #[derive(Clone)]
 struct ActiveMarker {
     label: String,
@@ -526,6 +531,19 @@ impl Cpu {
                 // string pointer) is swallowed here and will manifest as the
                 // usual access-fault on the *next* instruction fetch.
                 let _ = self.handle_jolt_cycle_marker(marker_ptr, marker_len, event_type);
+
+                return false; // we don't take the trap
+            } else if call_id == JOLT_PRINT_ECALL_NUM {
+                let string_ptr = self.x[11] as u32; // a0
+                let string_len = self.x[12] as u32; // a1
+                let event_type = self.x[13] as u32; // a2
+
+                // Read / update the per-label counters.
+                //
+                // Any fault raised while touching guest memory (e.g. a bad
+                // string pointer) is swallowed here and will manifest as the
+                // usual access-fault on the *next* instruction fetch.
+                let _ = self.handle_jolt_print(string_ptr, string_len, event_type as u8);
 
                 return false; // we don't take the trap
             }
@@ -1566,6 +1584,18 @@ impl Cpu {
             _ => {
                 panic!("Unexpected event: event must match either start or end marker.")
             }
+        }
+        Ok(())
+    }
+
+    fn handle_jolt_print(&mut self, ptr: u32, len: u32, event_type: u8) -> Result<(), Trap> {
+        let message = self.read_c_string(ptr, len)?;
+        if event_type == JOLT_PRINT_STRING as u8 {
+            print!("{message}");
+        } else if event_type == JOLT_PRINT_LINE as u8 {
+            println!("{message}");
+        } else {
+            panic!("Unexpected event type: {event_type}");
         }
         Ok(())
     }
