@@ -233,10 +233,6 @@ impl RamDag {
         let K = state_manager.ram_K;
 
         let mut initial_memory_state = vec![0; K];
-        println!(
-            "initial_memory_state length: {}",
-            initial_memory_state.len()
-        );
         // Copy bytecode
         let mut index = remap_address(
             ram_preprocessing.min_bytecode_address,
