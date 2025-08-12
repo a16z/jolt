@@ -186,6 +186,7 @@ where
 
     #[allow(clippy::type_complexity)]
     #[cfg(feature = "prover")]
+    #[tracing::instrument(skip_all, name = "Jolt::prove")]
     fn prove(
         preprocessing: &JoltProverPreprocessing<F, PCS>,
         program: &mut Program,
@@ -242,6 +243,7 @@ where
         (proof, program_io, debug_info)
     }
 
+    #[tracing::instrument(skip_all, name = "Jolt::verify")]
     fn verify(
         preprocessing: &JoltVerifierPreprocessing<F, PCS>,
         proof: JoltProof<F, PCS, FS>,

@@ -156,7 +156,7 @@ fn prove_example(
     };
 
     tasks.push((
-        tracing::info_span!("Example_E2E"),
+        tracing::info_span!("e2e benchmark"),
         Box::new(task) as Box<dyn FnOnce()>,
     ));
 
