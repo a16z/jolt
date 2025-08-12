@@ -170,6 +170,14 @@ mod exec_trace_equivalence {
 
                 fn vr_idx_for(vr: &[u8; 32], rounds: usize, letter: char) -> u8 {
                     let shift = (letter as i32 - 'A' as i32) as i32;
+                    // Match the implementation's special handling for custom IV
+                    if rounds == 0 && shift >= 4
+                        || rounds == 1 && shift >= 5
+                        || rounds == 2 && shift >= 6
+                        || rounds == 3 && shift >= 7
+                    {
+                        return vr[24 - rounds + shift as usize];
+                    }
                     vr[(-(rounds as i32) + shift).rem_euclid(8) as usize]
                 }
                 let idxs: [u8; 8] = [
