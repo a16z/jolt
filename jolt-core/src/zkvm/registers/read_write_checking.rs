@@ -16,6 +16,8 @@ use crate::{
     zkvm::{witness::CommittedPolynomial, JoltProverPreprocessing},
 };
 use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::REGISTER_COUNT;
 use fixedbitset::FixedBitSet;
@@ -1245,5 +1247,10 @@ impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for RegistersReadWriteC
             SumcheckId::RegistersReadWriteChecking,
             r_cycle.r,
         );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
     }
 }

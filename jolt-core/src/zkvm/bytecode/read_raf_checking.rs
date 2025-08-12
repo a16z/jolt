@@ -32,6 +32,8 @@ use crate::{
     },
 };
 use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use common::constants::REGISTER_COUNT;
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
@@ -785,6 +787,11 @@ impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for ReadRafSumcheck<F> 
                 [r_address, &r_cycle.r].concat(),
             );
         });
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
     }
 }
 

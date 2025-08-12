@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+#[cfg(feature = "allocative")]
+use crate::field::allocative_ark::write_svg;
 use crate::field::allocative_ark::MaybeAllocative;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
@@ -22,6 +24,8 @@ use crate::zkvm::witness::{
     compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K,
 };
 use crate::zkvm::ProverDebugInfo;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use anyhow::Context;
 use rayon::prelude::*;
 
@@ -99,6 +103,16 @@ impl JoltDAG {
             .chain(registers_dag.stage2_prover_instances(&mut state_manager))
             .chain(ram_dag.stage2_prover_instances(&mut state_manager))
             .collect();
+
+        #[cfg(feature = "allocative")]
+        {
+            let mut flamegraph = FlameGraphBuilder::default();
+            for sumcheck in stage2_instances.iter() {
+                sumcheck.update_flamegraph(&mut flamegraph);
+            }
+            write_svg(flamegraph, "stage2_start_flamechart.svg");
+        }
+
         let stage2_instances_mut: Vec<&mut dyn SumcheckInstance<F>> = stage2_instances
             .iter_mut()
             .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F>)
@@ -117,6 +131,15 @@ impl JoltDAG {
             ProofData::SumcheckProof(stage2_proof),
         );
 
+        #[cfg(feature = "allocative")]
+        {
+            let mut flamegraph = FlameGraphBuilder::default();
+            for sumcheck in stage2_instances.iter() {
+                sumcheck.update_flamegraph(&mut flamegraph);
+            }
+            write_svg(flamegraph, "stage2_end_flamechart.svg");
+        }
+
         drop_in_background_thread(stage2_instances);
 
         drop(_guard);
@@ -133,6 +156,16 @@ impl JoltDAG {
             .chain(lookups_dag.stage3_prover_instances(&mut state_manager))
             .chain(ram_dag.stage3_prover_instances(&mut state_manager))
             .collect();
+
+        #[cfg(feature = "allocative")]
+        {
+            let mut flamegraph = FlameGraphBuilder::default();
+            for sumcheck in stage3_instances.iter() {
+                sumcheck.update_flamegraph(&mut flamegraph);
+            }
+            write_svg(flamegraph, "stage3_start_flamechart.svg");
+        }
+
         let stage3_instances_mut: Vec<&mut dyn SumcheckInstance<F>> = stage3_instances
             .iter_mut()
             .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F>)
@@ -149,6 +182,15 @@ impl JoltDAG {
             ProofData::SumcheckProof(stage3_proof),
         );
 
+        #[cfg(feature = "allocative")]
+        {
+            let mut flamegraph = FlameGraphBuilder::default();
+            for sumcheck in stage3_instances.iter() {
+                sumcheck.update_flamegraph(&mut flamegraph);
+            }
+            write_svg(flamegraph, "stage3_end_flamechart.svg");
+        }
+
         drop_in_background_thread(stage3_instances);
 
         drop(_guard);
@@ -163,6 +205,16 @@ impl JoltDAG {
             .chain(ram_dag.stage4_prover_instances(&mut state_manager))
             .chain(bytecode_dag.stage4_prover_instances(&mut state_manager))
             .collect();
+
+        #[cfg(feature = "allocative")]
+        {
+            let mut flamegraph = FlameGraphBuilder::default();
+            for sumcheck in stage4_instances.iter() {
+                sumcheck.update_flamegraph(&mut flamegraph);
+            }
+            write_svg(flamegraph, "stage4_start_flamechart.svg");
+        }
+
         let stage4_instances_mut: Vec<&mut dyn SumcheckInstance<F>> = stage4_instances
             .iter_mut()
             .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F>)
@@ -179,6 +231,15 @@ impl JoltDAG {
             ProofData::SumcheckProof(stage4_proof),
         );
 
+        #[cfg(feature = "allocative")]
+        {
+            let mut flamegraph = FlameGraphBuilder::default();
+            for sumcheck in stage4_instances.iter() {
+                sumcheck.update_flamegraph(&mut flamegraph);
+            }
+            write_svg(flamegraph, "stage4_end_flamechart.svg");
+        }
+
         drop_in_background_thread(stage4_instances);
 
         drop(_guard);
@@ -193,6 +254,7 @@ impl JoltDAG {
                 polynomial.generate_witness(preprocessing, trace),
             );
         }
+
         #[cfg(feature = "allocative")]
         print_data_structure_heap_usage("Committed polynomials map", &polynomials_map);
 

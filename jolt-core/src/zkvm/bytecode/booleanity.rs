@@ -26,6 +26,8 @@ use crate::{
     },
 };
 use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
 use tracer::instruction::RV32IMCycle;
 
@@ -309,6 +311,11 @@ impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for BooleanitySumcheck<
             SumcheckId::BytecodeBooleanity,
             opening_point.r,
         );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
     }
 }
 

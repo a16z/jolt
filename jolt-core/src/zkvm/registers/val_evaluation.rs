@@ -19,6 +19,8 @@ use crate::{
     },
 };
 use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use common::constants::REGISTER_COUNT;
 use rayon::prelude::*;
 
@@ -270,5 +272,10 @@ impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for ValEvaluationSumche
             SumcheckId::RegistersValEvaluation,
             OpeningPoint::new(r),
         );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
     }
 }

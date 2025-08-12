@@ -20,6 +20,9 @@ use crate::utils::small_value::svo_helpers::process_svo_sumcheck_rounds;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 use crate::zkvm::r1cs::builder::Constraint;
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use ark_serialize::*;
 use rayon::prelude::*;
 use std::cell::RefCell;
@@ -30,7 +33,7 @@ use std::rc::Rc;
 ///
 /// This trait defines the interface needed to participate in the `BatchedSumcheck` protocol,
 /// which reduces verifier cost and proof size by batching multiple sumcheck protocols.
-pub trait SumcheckInstance<F: JoltField>: Send + Sync {
+pub trait SumcheckInstance<F: JoltField>: Send + Sync + MaybeAllocative {
     /// Returns the maximum degree of the sumcheck polynomial.
     fn degree(&self) -> usize;
 
@@ -73,6 +76,9 @@ pub trait SumcheckInstance<F: JoltField>: Send + Sync {
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     );
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder);
 }
 
 pub enum SingleSumcheck {}

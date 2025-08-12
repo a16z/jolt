@@ -1,4 +1,6 @@
 use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::rc::Rc;
@@ -222,7 +224,7 @@ impl<F: JoltField + MaybeAllocative> InnerSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for InnerSumcheck<F> {
+impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for InnerSumcheck<F> {
     fn degree(&self) -> usize {
         2
     }
@@ -355,6 +357,11 @@ impl<F: JoltField> SumcheckInstance<F> for InnerSumcheck<F> {
         _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         // Nothing to cache
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
     }
 }
 
@@ -615,6 +622,11 @@ impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for PCSumcheck<F> {
             opening_point,
         );
     }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
+    }
 }
 
 pub struct SpartanDag<F: JoltField> {
@@ -633,11 +645,11 @@ impl<F: JoltField + MaybeAllocative> SpartanDag<F> {
     }
 }
 
-impl<
-        F: JoltField + MaybeAllocative,
-        ProofTranscript: Transcript,
-        PCS: CommitmentScheme<Field = F>,
-    > SumcheckStages<F, ProofTranscript, PCS> for SpartanDag<F>
+impl<F, ProofTranscript, PCS> SumcheckStages<F, ProofTranscript, PCS> for SpartanDag<F>
+where
+    F: JoltField + MaybeAllocative,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
 {
     fn stage1_prove(
         &mut self,
@@ -660,8 +672,6 @@ impl<
             .par_iter()
             .map(|var| var.generate_witness(trace, preprocessing))
             .collect();
-        #[cfg(feature = "allocative")]
-        print_data_structure_heap_usage("Spartan input_polys", &input_polys);
 
         let num_rounds_x = key.num_rows_bits();
 

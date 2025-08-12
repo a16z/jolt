@@ -1,6 +1,8 @@
 use std::{cell::RefCell, rc::Rc};
 
 use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
 
 use super::{D, LOG_K_CHUNK};
@@ -195,5 +197,10 @@ impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for HammingWeightSumche
             SumcheckId::InstructionHammingWeight,
             r,
         );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
     }
 }

@@ -15,6 +15,8 @@ use crate::utils::transcript::Transcript;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::witness::VirtualPolynomial;
 use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
 
 const DEGREE: usize = 3;
@@ -193,5 +195,10 @@ impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for HammingBooleanitySu
             SumcheckId::RamHammingBooleanity,
             opening_point,
         );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
     }
 }

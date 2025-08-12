@@ -1,21 +1,40 @@
 use super::{FieldOps, JoltField};
-use allocative::Allocative;
+use allocative::{Allocative, FlameGraphBuilder};
 use ark_ff::{One, Zero};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+#[cfg(feature = "allocative")]
+use inferno::flamegraph::Options;
 use std::default::Default;
 use std::fmt;
+use std::fs::File;
+use std::io::Cursor;
 use std::iter::{Product, Sum};
 use std::ops::{Add, Deref, DerefMut, Div, Mul, Sub};
 use std::ops::{AddAssign, MulAssign, Neg, SubAssign};
+use std::path::Path;
 
 #[cfg(feature = "allocative")]
 pub trait MaybeAllocative: Allocative {}
 #[cfg(feature = "allocative")]
-impl<F: JoltField + Allocative> MaybeAllocative for F {}
+impl<T: Allocative> MaybeAllocative for T {}
 #[cfg(not(feature = "allocative"))]
 pub trait MaybeAllocative {}
 #[cfg(not(feature = "allocative"))]
-impl<F: JoltField> MaybeAllocative for F {}
+impl<T> MaybeAllocative for T {}
+
+#[cfg(feature = "allocative")]
+pub fn write_svg<P: AsRef<Path>>(flamegraph: FlameGraphBuilder, path: P) {
+    let mut opts = Options::default();
+    opts.color_diffusion = true;
+    opts.count_name = String::from("MB");
+    opts.factor = 0.000000001;
+    opts.flame_chart = true;
+
+    let flamegraph_src = flamegraph.finish_and_write_flame_graph();
+    let input = Cursor::new(flamegraph_src);
+    let output = File::create(path).unwrap();
+    inferno::flamegraph::from_reader(&mut opts, input, output).unwrap();
+}
 
 #[repr(transparent)]
 #[derive(

@@ -21,8 +21,7 @@ license-file = "LICENSE"
 keywords = ["SNARK", "cryptography", "proofs", "zkVM"]
 
 [features]
-default = ["host", "allocative"]
-# default = ["host"]
+default = ["host"]
 host = ["dep:reqwest", "dep:tokio", "prover"]
 prover = ["parallel"]
 parallel = [
@@ -32,7 +31,7 @@ parallel = [
     "ark-ff/asm",
     "rayon",
 ]
-allocative = []
+allocative = ["dep:inferno"]
 test_incremental = []
 
 [dependencies]
@@ -91,6 +90,7 @@ paste = "1.0.15"
 dory = { git = "https://github.com/spaceandtimefdn/sxt-dory", branch = "feat/return_row_commitments" }
 lazy_static = "1.5.0"
 allocative = "0.3.4"
+inferno = { version = "0.12.3", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }

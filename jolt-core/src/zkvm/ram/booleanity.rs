@@ -1,4 +1,6 @@
 use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
 
@@ -378,6 +380,11 @@ impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for BooleanitySumcheck<
             SumcheckId::RamBooleanity,
             opening_point.r,
         );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
     }
 }
 

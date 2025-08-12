@@ -275,11 +275,11 @@ impl RamDag {
     }
 }
 
-impl<
-        F: JoltField + MaybeAllocative,
-        ProofTranscript: Transcript,
-        PCS: CommitmentScheme<Field = F>,
-    > SumcheckStages<F, ProofTranscript, PCS> for RamDag
+impl<F, ProofTranscript, PCS> SumcheckStages<F, ProofTranscript, PCS> for RamDag
+where
+    F: JoltField + MaybeAllocative,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
 {
     fn stage2_prover_instances(
         &mut self,

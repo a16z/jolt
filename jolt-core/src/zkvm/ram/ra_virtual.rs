@@ -22,6 +22,8 @@ use crate::{
     utils::{math::Math, transcript::Transcript},
 };
 use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 
@@ -406,6 +408,11 @@ impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for RASumcheck<F> {
                 opening_point,
             );
         }
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
     }
 }
 

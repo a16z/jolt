@@ -23,8 +23,6 @@ use crate::{
         witness::DTH_ROOT_OF_K,
     },
 };
-#[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
 use ark_bn254::Fr;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
@@ -202,9 +200,6 @@ where
         use crate::zkvm::dag::state_manager::StateManager;
         use rayon::prelude::*;
         use tracer::instruction::RV32IMCycle;
-
-        #[cfg(feature = "allocative")]
-        let mut flamegraph = FlameGraphBuilder::default();
 
         let (mut trace, final_memory_state, mut program_io) = program.trace(inputs);
         let num_riscv_cycles: usize = trace

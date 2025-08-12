@@ -1,4 +1,6 @@
 use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
 use strum::{EnumCount, IntoEnumIterator};
@@ -525,6 +527,11 @@ impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for ReadRafSumcheck<F> 
             SumcheckId::InstructionReadRaf,
             r_cycle.clone(),
         );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
     }
 }
 

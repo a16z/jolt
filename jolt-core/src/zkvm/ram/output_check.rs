@@ -24,6 +24,8 @@ use crate::{
     },
 };
 use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::RAM_START_ADDRESS;
 use rayon::prelude::*;
@@ -344,6 +346,11 @@ impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for OutputSumcheck<F> {
             opening_point,
         );
     }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
+    }
 }
 
 #[derive(Allocative)]
@@ -608,5 +615,10 @@ impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for ValFinalSumcheck<F>
             SumcheckId::RamValFinalEvaluation,
             wa_opening_point,
         );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
     }
 }

@@ -72,12 +72,11 @@ pub struct StateManager<
     pub verifier_state: Option<VerifierState<'a, F, PCS>>,
 }
 
-impl<
-        'a,
-        F: JoltField + MaybeAllocative,
-        ProofTranscript: Transcript,
-        PCS: CommitmentScheme<Field = F>,
-    > StateManager<'a, F, ProofTranscript, PCS>
+impl<'a, F, ProofTranscript, PCS> StateManager<'a, F, ProofTranscript, PCS>
+where
+    F: JoltField + MaybeAllocative,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
 {
     pub fn new_prover(
         preprocessing: &'a JoltProverPreprocessing<F, PCS>,

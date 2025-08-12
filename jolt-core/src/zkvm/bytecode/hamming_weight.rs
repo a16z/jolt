@@ -18,6 +18,8 @@ use crate::{
     },
 };
 use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
 
 #[derive(Allocative)]
@@ -200,5 +202,10 @@ impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for HammingWeightSumche
             SumcheckId::BytecodeHammingWeight,
             r,
         );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
     }
 }

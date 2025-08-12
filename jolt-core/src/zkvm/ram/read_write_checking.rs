@@ -23,6 +23,8 @@ use crate::{
     },
 };
 use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 use tracer::instruction::RAMAccess;
@@ -1105,5 +1107,10 @@ impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for RamReadWriteCheckin
             SumcheckId::RamReadWriteChecking,
             r_cycle.r,
         );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
     }
 }
