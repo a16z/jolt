@@ -1,7 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
-    field::{allocative_ark::MaybeAllocative, JoltField},
+    field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
@@ -132,7 +132,7 @@ pub struct OutputSumcheck<F: JoltField> {
     prover_state: Option<OutputSumcheckProverState<F>>,
 }
 
-impl<F: JoltField + MaybeAllocative> OutputSumcheck<F> {
+impl<F: JoltField> OutputSumcheck<F> {
     #[tracing::instrument(skip_all, name = "OutputSumcheck")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         initial_ram_state: Vec<u32>,
@@ -185,7 +185,7 @@ impl<F: JoltField + MaybeAllocative> OutputSumcheck<F> {
     }
 }
 
-impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for OutputSumcheck<F> {
+impl<F: JoltField> SumcheckInstance<F> for OutputSumcheck<F> {
     fn degree(&self) -> usize {
         3
     }
@@ -375,7 +375,7 @@ pub struct ValFinalSumcheck<F: JoltField> {
     val_final_claim: F,
 }
 
-impl<F: JoltField + MaybeAllocative> ValFinalSumcheck<F> {
+impl<F: JoltField> ValFinalSumcheck<F> {
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
@@ -490,7 +490,7 @@ impl<F: JoltField + MaybeAllocative> ValFinalSumcheck<F> {
     }
 }
 
-impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for ValFinalSumcheck<F> {
+impl<F: JoltField> SumcheckInstance<F> for ValFinalSumcheck<F> {
     fn degree(&self) -> usize {
         2
     }

@@ -1,7 +1,7 @@
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
-    field::{allocative_ark::MaybeAllocative, JoltField},
+    field::JoltField,
     poly::commitment::commitment_scheme::CommitmentScheme,
     subprotocols::sumcheck::SumcheckInstance,
     utils::transcript::Transcript,
@@ -17,11 +17,8 @@ pub mod val_evaluation;
 #[derive(Default)]
 pub struct RegistersDag {}
 
-impl<
-        F: JoltField + MaybeAllocative,
-        ProofTranscript: Transcript,
-        PCS: CommitmentScheme<Field = F>,
-    > SumcheckStages<F, ProofTranscript, PCS> for RegistersDag
+impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
+    SumcheckStages<F, ProofTranscript, PCS> for RegistersDag
 {
     fn stage2_prover_instances(
         &mut self,

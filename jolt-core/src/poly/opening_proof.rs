@@ -6,7 +6,7 @@
 //! necessarily of the same size, each opened at a different point) into a single opening.
 
 #[cfg(feature = "allocative")]
-use crate::field::allocative_ark::write_svg;
+use crate::utils::profiling::write_flamegraph_svg;
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
@@ -28,7 +28,7 @@ use super::{
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
-    field::{allocative_ark::MaybeAllocative, JoltField},
+    field::JoltField,
     poly::{
         multilinear_polynomial::PolynomialEvaluation,
         one_hot_polynomial::{OneHotPolynomialProverOpening, OneHotSumcheckState},
@@ -466,7 +466,7 @@ where
 
 impl<F> SumcheckInstance<F> for OpeningProofReductionSumcheck<F>
 where
-    F: JoltField + MaybeAllocative,
+    F: JoltField,
 {
     fn degree(&self) -> usize {
         2
@@ -583,7 +583,7 @@ pub struct ReducedOpeningProof<
 
 impl<F> Default for ProverOpeningAccumulator<F>
 where
-    F: JoltField + MaybeAllocative,
+    F: JoltField,
 {
     fn default() -> Self {
         Self::new()
@@ -592,7 +592,7 @@ where
 
 impl<F> ProverOpeningAccumulator<F>
 where
-    F: JoltField + MaybeAllocative,
+    F: JoltField,
 {
     pub fn new() -> Self {
         Self {
@@ -875,7 +875,7 @@ where
             print_data_structure_heap_usage("Opening accumulator", &(*self));
             let mut flamegraph = FlameGraphBuilder::default();
             flamegraph.visit_root(&(*self));
-            write_svg(flamegraph, "stage5_start_flamechart.svg");
+            write_flamegraph_svg(flamegraph, "stage5_start_flamechart.svg");
         }
 
         let instances: Vec<&mut dyn SumcheckInstance<F>> = self
@@ -893,7 +893,7 @@ where
         {
             let mut flamegraph = FlameGraphBuilder::default();
             flamegraph.visit_root(&(*self));
-            write_svg(flamegraph, "stage5_end_flamechart.svg");
+            write_flamegraph_svg(flamegraph, "stage5_end_flamechart.svg");
         }
 
         let claims: Vec<_> = self
@@ -911,7 +911,7 @@ where
 
 impl<F> Default for VerifierOpeningAccumulator<F>
 where
-    F: JoltField + MaybeAllocative,
+    F: JoltField,
 {
     fn default() -> Self {
         Self::new()
@@ -920,7 +920,7 @@ where
 
 impl<F> VerifierOpeningAccumulator<F>
 where
-    F: JoltField + MaybeAllocative,
+    F: JoltField,
 {
     pub fn new() -> Self {
         Self {

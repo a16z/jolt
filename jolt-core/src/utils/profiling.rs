@@ -1,7 +1,9 @@
 #[cfg(feature = "allocative")]
-use allocative::Allocative;
+use allocative::{Allocative, FlameGraphBuilder};
 #[cfg(not(target_arch = "wasm32"))]
 use memory_stats::memory_stats;
+#[cfg(feature = "allocative")]
+use std::path::Path;
 use std::{
     collections::HashMap,
     sync::{LazyLock, Mutex},
@@ -83,4 +85,22 @@ pub fn print_data_structure_heap_usage<T: Allocative>(label: &str, data: &T) {
             memory_usage_gb * 1000.0
         );
     }
+}
+
+#[cfg(feature = "allocative")]
+pub fn write_flamegraph_svg<P: AsRef<Path>>(flamegraph: FlameGraphBuilder, path: P) {
+    use std::{fs::File, io::Cursor};
+
+    use inferno::flamegraph::Options;
+
+    let mut opts = Options::default();
+    opts.color_diffusion = true;
+    opts.count_name = String::from("MB");
+    opts.factor = 0.000000001;
+    opts.flame_chart = true;
+
+    let flamegraph_src = flamegraph.finish_and_write_flame_graph();
+    let input = Cursor::new(flamegraph_src);
+    let output = File::create(path).unwrap();
+    inferno::flamegraph::from_reader(&mut opts, input, output).unwrap();
 }

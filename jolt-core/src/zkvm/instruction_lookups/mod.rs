@@ -4,7 +4,7 @@ use tracer::instruction::RV32IMCycle;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
-    field::{allocative_ark::MaybeAllocative, JoltField},
+    field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme, eq_poly::EqPolynomial,
         opening_proof::SumcheckId,
@@ -39,8 +39,8 @@ const RA_PER_LOG_M: usize = LOG_M / LOG_K_CHUNK;
 #[derive(Default)]
 pub struct LookupsDag {}
 
-impl<F: JoltField + MaybeAllocative, PCS: CommitmentScheme<Field = F>, T: Transcript>
-    SumcheckStages<F, T, PCS> for LookupsDag
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStages<F, T, PCS>
+    for LookupsDag
 {
     fn stage3_prover_instances(
         &mut self,

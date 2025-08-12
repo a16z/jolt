@@ -1,7 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
-    field::{allocative_ark::MaybeAllocative, JoltField},
+    field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
@@ -35,7 +35,7 @@ pub struct HammingWeightSumcheck<F: JoltField> {
     prover_state: Option<HammingWeightProverState<F>>,
 }
 
-impl<F: JoltField + MaybeAllocative> HammingWeightSumcheck<F> {
+impl<F: JoltField> HammingWeightSumcheck<F> {
     #[tracing::instrument(skip_all, name = "BytecodeHammingWeightSumcheck::new_prover")]
     pub fn new_prover(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
@@ -81,7 +81,7 @@ impl<F: JoltField + MaybeAllocative> HammingWeightSumcheck<F> {
     }
 }
 
-impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for HammingWeightSumcheck<F> {
+impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
     fn degree(&self) -> usize {
         1
     }

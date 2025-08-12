@@ -8,10 +8,8 @@ use std::{
 use crate::host::Program;
 #[cfg(test)]
 use crate::poly::commitment::dory::DoryGlobals;
-#[cfg(feature = "allocative")]
-use crate::{field::allocative_ark::AllocativeField, poly::commitment::mock::MockCommitScheme};
 use crate::{
-    field::{allocative_ark::MaybeAllocative, JoltField},
+    field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme, opening_proof::ProverOpeningAccumulator,
     },
@@ -151,7 +149,7 @@ where
     pub(crate) prover_setup: PCS::ProverSetup,
 }
 
-pub trait Jolt<F: JoltField + MaybeAllocative, PCS, FS: Transcript>
+pub trait Jolt<F: JoltField, PCS, FS: Transcript>
 where
     PCS: CommitmentScheme<Field = F>,
 {
@@ -298,14 +296,7 @@ where
 }
 
 pub struct JoltRV32IM;
-
-#[cfg(not(feature = "allocative"))]
 impl Jolt<Fr, DoryCommitmentScheme, KeccakTranscript> for JoltRV32IM {}
-#[cfg(feature = "allocative")]
-impl Jolt<AllocativeField<Fr>, MockCommitScheme<AllocativeField<Fr>>, KeccakTranscript>
-    for JoltRV32IM
-{
-}
 
 pub type RV32IMJoltProof = JoltProof<Fr, DoryCommitmentScheme, KeccakTranscript>;
 

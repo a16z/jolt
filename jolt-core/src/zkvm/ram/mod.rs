@@ -5,7 +5,7 @@ use std::vec;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
-    field::{allocative_ark::MaybeAllocative, JoltField},
+    field::JoltField,
     poly::commitment::commitment_scheme::CommitmentScheme,
     subprotocols::sumcheck::SumcheckInstance,
     utils::transcript::Transcript,
@@ -105,7 +105,7 @@ pub struct RamDag {
 
 impl RamDag {
     pub fn new_prover<
-        F: JoltField + MaybeAllocative,
+        F: JoltField,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
@@ -226,7 +226,7 @@ impl RamDag {
     }
 
     pub fn new_verifier<
-        F: JoltField + MaybeAllocative,
+        F: JoltField,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
@@ -277,7 +277,7 @@ impl RamDag {
 
 impl<F, ProofTranscript, PCS> SumcheckStages<F, ProofTranscript, PCS> for RamDag
 where
-    F: JoltField + MaybeAllocative,
+    F: JoltField,
     ProofTranscript: Transcript,
     PCS: CommitmentScheme<Field = F>,
 {

@@ -1,7 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
-    field::{allocative_ark::MaybeAllocative, JoltField},
+    field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
@@ -47,7 +47,7 @@ pub struct ValEvaluationSumcheck<F: JoltField> {
     prover_state: Option<ValEvaluationProverState<F>>,
 }
 
-impl<F: JoltField + MaybeAllocative> ValEvaluationSumcheck<F> {
+impl<F: JoltField> ValEvaluationSumcheck<F> {
     #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         K: usize,
@@ -145,7 +145,7 @@ impl<F: JoltField + MaybeAllocative> ValEvaluationSumcheck<F> {
     }
 }
 
-impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
+impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
     fn degree(&self) -> usize {
         3
     }

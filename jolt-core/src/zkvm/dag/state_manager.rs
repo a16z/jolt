@@ -2,7 +2,6 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use crate::field::allocative_ark::MaybeAllocative;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::opening_proof::{
@@ -74,7 +73,7 @@ pub struct StateManager<
 
 impl<'a, F, ProofTranscript, PCS> StateManager<'a, F, ProofTranscript, PCS>
 where
-    F: JoltField + MaybeAllocative,
+    F: JoltField,
     ProofTranscript: Transcript,
     PCS: CommitmentScheme<Field = F>,
 {

@@ -9,7 +9,7 @@ use tracer::instruction::RV32IMCycle;
 use super::{D, K_CHUNK, LOG_K, LOG_K_CHUNK, LOG_M, M, PHASES, RA_PER_LOG_M, WORD_SIZE};
 
 use crate::{
-    field::{allocative_ark::MaybeAllocative, JoltField},
+    field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         dense_mlpoly::DensePolynomial,
@@ -94,7 +94,7 @@ pub struct ReadRafSumcheck<F: JoltField> {
     log_T: usize,
 }
 
-impl<'a, F: JoltField + MaybeAllocative> ReadRafSumcheck<F> {
+impl<'a, F: JoltField> ReadRafSumcheck<F> {
     #[tracing::instrument(skip_all, name = "InstructionReadRafSumcheck::new_prover")]
     pub fn new_prover(
         sm: &'a mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
@@ -272,7 +272,7 @@ impl<'a, F: JoltField> ReadRafProverState<F> {
     }
 }
 
-impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for ReadRafSumcheck<F> {
+impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
     fn degree(&self) -> usize {
         DEGREE
     }

@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 
-use crate::field::allocative_ark::MaybeAllocative;
 use crate::poly::opening_proof::SumcheckId;
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
@@ -99,8 +98,8 @@ impl BytecodePreprocessing {
 #[derive(Default)]
 pub struct BytecodeDag {}
 
-impl<F: JoltField + MaybeAllocative, PCS: CommitmentScheme<Field = F>, T: Transcript>
-    SumcheckStages<F, T, PCS> for BytecodeDag
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStages<F, T, PCS>
+    for BytecodeDag
 {
     fn stage4_prover_instances(
         &mut self,

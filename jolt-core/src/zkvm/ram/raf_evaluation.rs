@@ -7,7 +7,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 
 use crate::{
-    field::{allocative_ark::MaybeAllocative, JoltField},
+    field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
@@ -53,7 +53,7 @@ pub struct RafEvaluationSumcheck<F: JoltField> {
     cached_claim: Option<F>,
 }
 
-impl<F: JoltField + MaybeAllocative> RafEvaluationSumcheck<F> {
+impl<F: JoltField> RafEvaluationSumcheck<F> {
     #[tracing::instrument(skip_all, name = "RamRafEvaluationSumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         K: usize,
@@ -134,7 +134,7 @@ impl<F: JoltField + MaybeAllocative> RafEvaluationSumcheck<F> {
     }
 }
 
-impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for RafEvaluationSumcheck<F> {
+impl<F: JoltField> SumcheckInstance<F> for RafEvaluationSumcheck<F> {
     fn degree(&self) -> usize {
         2
     }

@@ -1,7 +1,7 @@
 use std::{cell::RefCell, iter::once, rc::Rc};
 
 use crate::{
-    field::{allocative_ark::MaybeAllocative, JoltField},
+    field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         compact_polynomial::SmallScalar,
@@ -79,7 +79,7 @@ enum ReadCheckingValType {
     Stage3,
 }
 
-impl<F: JoltField + MaybeAllocative> ReadRafSumcheck<F> {
+impl<F: JoltField> ReadRafSumcheck<F> {
     #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheck::new_prover")]
     pub fn new_prover(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
@@ -526,7 +526,7 @@ impl<F: JoltField + MaybeAllocative> ReadRafSumcheck<F> {
     }
 }
 
-impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for ReadRafSumcheck<F> {
+impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
     fn degree(&self) -> usize {
         self.d + 1
     }

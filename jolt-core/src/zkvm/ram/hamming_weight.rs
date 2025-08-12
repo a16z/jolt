@@ -6,7 +6,7 @@ use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
 
 use crate::{
-    field::{allocative_ark::MaybeAllocative, JoltField},
+    field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
@@ -38,7 +38,7 @@ pub struct HammingWeightSumcheck<F: JoltField> {
     prover_state: Option<HammingWeightProverState<F>>,
 }
 
-impl<F: JoltField + MaybeAllocative> HammingWeightSumcheck<F> {
+impl<F: JoltField> HammingWeightSumcheck<F> {
     #[tracing::instrument(skip_all, name = "RamHammingWeightSumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         K: usize,
@@ -147,7 +147,7 @@ impl<F: JoltField + MaybeAllocative> HammingWeightSumcheck<F> {
     }
 }
 
-impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for HammingWeightSumcheck<F> {
+impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
     fn degree(&self) -> usize {
         1
     }

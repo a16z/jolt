@@ -8,7 +8,7 @@ use rayon::prelude::*;
 use super::{D, LOG_K_CHUNK};
 
 use crate::{
-    field::{allocative_ark::MaybeAllocative, JoltField},
+    field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
@@ -40,7 +40,7 @@ pub struct HammingWeightSumcheck<F: JoltField> {
     r_cycle: Vec<F>,
 }
 
-impl<F: JoltField + MaybeAllocative> HammingWeightSumcheck<F> {
+impl<F: JoltField> HammingWeightSumcheck<F> {
     #[tracing::instrument(skip_all, name = "InstructionHammingWeightSumcheck::new_prover")]
     pub fn new_prover(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
@@ -94,7 +94,7 @@ impl<F: JoltField + MaybeAllocative> HammingWeightSumcheck<F> {
     }
 }
 
-impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for HammingWeightSumcheck<F> {
+impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
     fn degree(&self) -> usize {
         DEGREE
     }

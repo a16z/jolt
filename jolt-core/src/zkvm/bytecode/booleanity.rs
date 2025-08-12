@@ -1,7 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::field::allocative_ark::MaybeAllocative;
 use crate::poly::compact_polynomial::SmallScalar;
 use crate::poly::opening_proof::{
     OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
@@ -53,7 +52,7 @@ pub struct BooleanitySumcheck<F: JoltField> {
     r_cycle: Vec<F>,
 }
 
-impl<F: JoltField + MaybeAllocative> BooleanitySumcheck<F> {
+impl<F: JoltField> BooleanitySumcheck<F> {
     #[tracing::instrument(skip_all, name = "BytecodeBooleanitySumcheck::new_prover")]
     pub fn new_prover(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
@@ -166,7 +165,7 @@ impl<F: JoltField> BooleanityProverState<F> {
     }
 }
 
-impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for BooleanitySumcheck<F> {
+impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
     fn degree(&self) -> usize {
         3
     }

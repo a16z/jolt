@@ -7,7 +7,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 use tracing::{span, Level};
 
-use crate::field::allocative_ark::MaybeAllocative;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
@@ -91,7 +90,7 @@ pub struct UniformSpartanProof<F: JoltField, ProofTranscript: Transcript> {
     _marker: PhantomData<ProofTranscript>,
 }
 
-impl<F: JoltField + MaybeAllocative, ProofTranscript> UniformSpartanProof<F, ProofTranscript>
+impl<F: JoltField, ProofTranscript> UniformSpartanProof<F, ProofTranscript>
 where
     ProofTranscript: Transcript,
 {
@@ -148,7 +147,7 @@ pub struct InnerSumcheck<F: JoltField> {
     verifier_state: Option<InnerSumcheckVerifierState<F>>,
 }
 
-impl<F: JoltField + MaybeAllocative> InnerSumcheck<F> {
+impl<F: JoltField> InnerSumcheck<F> {
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         key: Arc<UniformSpartanKey<F>>,
@@ -224,7 +223,7 @@ impl<F: JoltField + MaybeAllocative> InnerSumcheck<F> {
     }
 }
 
-impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for InnerSumcheck<F> {
+impl<F: JoltField> SumcheckInstance<F> for InnerSumcheck<F> {
     fn degree(&self) -> usize {
         2
     }
@@ -451,7 +450,7 @@ impl<F: JoltField> PCSumcheck<F> {
     }
 }
 
-impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for PCSumcheck<F> {
+impl<F: JoltField> SumcheckInstance<F> for PCSumcheck<F> {
     fn degree(&self) -> usize {
         2
     }
@@ -634,7 +633,7 @@ pub struct SpartanDag<F: JoltField> {
     key: Arc<UniformSpartanKey<F>>,
 }
 
-impl<F: JoltField + MaybeAllocative> SpartanDag<F> {
+impl<F: JoltField> SpartanDag<F> {
     pub fn new<ProofTranscript: Transcript>(padded_trace_length: usize) -> Self {
         let constraint_builder = JoltRV32IMConstraints::construct_constraints(padded_trace_length);
         let key = Arc::new(UniformSpartanProof::<F, ProofTranscript>::setup(
@@ -647,7 +646,7 @@ impl<F: JoltField + MaybeAllocative> SpartanDag<F> {
 
 impl<F, ProofTranscript, PCS> SumcheckStages<F, ProofTranscript, PCS> for SpartanDag<F>
 where
-    F: JoltField + MaybeAllocative,
+    F: JoltField,
     ProofTranscript: Transcript,
     PCS: CommitmentScheme<Field = F>,
 {

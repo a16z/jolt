@@ -5,7 +5,7 @@ use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
-    field::{allocative_ark::MaybeAllocative, JoltField},
+    field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
@@ -57,7 +57,7 @@ pub struct BooleanitySumcheck<F: JoltField> {
     addresses: Vec<Option<u64>>,
 }
 
-impl<F: JoltField + MaybeAllocative> BooleanitySumcheck<F> {
+impl<F: JoltField> BooleanitySumcheck<F> {
     #[tracing::instrument(skip_all, name = "RamBooleanitySumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         K: usize,
@@ -204,7 +204,7 @@ impl<F: JoltField + MaybeAllocative> BooleanitySumcheck<F> {
     }
 }
 
-impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for BooleanitySumcheck<F> {
+impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
     fn degree(&self) -> usize {
         3
     }

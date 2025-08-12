@@ -1,8 +1,8 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
-use crate::field::allocative_ark::MaybeAllocative;
 use crate::field::JoltField;
+use crate::field::MaybeAllocative;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial};
 use crate::poly::opening_proof::{
@@ -20,7 +20,6 @@ use crate::utils::small_value::svo_helpers::process_svo_sumcheck_rounds;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 use crate::zkvm::r1cs::builder::Constraint;
-use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use ark_serialize::*;
@@ -385,9 +384,7 @@ impl BatchedSumcheck {
     }
 }
 
-impl<F: JoltField + MaybeAllocative, ProofTranscript: Transcript>
-    SumcheckInstanceProof<F, ProofTranscript>
-{
+impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTranscript> {
     #[tracing::instrument(skip_all, name = "Spartan::prove_spartan_small_value")]
     pub fn prove_spartan_small_value<const NUM_SVO_ROUNDS: usize>(
         num_rounds: usize,

@@ -1,7 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::field::allocative_ark::MaybeAllocative;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::{
@@ -56,7 +55,7 @@ pub struct RASumcheck<F: JoltField> {
     prover_state: Option<RAProverState<F>>,
 }
 
-impl<F: JoltField + MaybeAllocative> RASumcheck<F> {
+impl<F: JoltField> RASumcheck<F> {
     #[tracing::instrument(skip_all, name = "RaVirtualization::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         K: usize,
@@ -265,7 +264,7 @@ impl<F: JoltField + MaybeAllocative> RASumcheck<F> {
     }
 }
 
-impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for RASumcheck<F> {
+impl<F: JoltField> SumcheckInstance<F> for RASumcheck<F> {
     fn degree(&self) -> usize {
         self.d + 1
     }

@@ -1,4 +1,3 @@
-use crate::field::allocative_ark::MaybeAllocative;
 use crate::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN};
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::zkvm::dag::state_manager::StateManager;
@@ -249,7 +248,7 @@ pub struct RegistersReadWriteCheckingProof<F: JoltField, ProofTranscript: Transc
     sumcheck_switch_index: usize,
 }
 
-impl<F: JoltField + MaybeAllocative> RegistersReadWriteChecking<F> {
+impl<F: JoltField> RegistersReadWriteChecking<F> {
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
@@ -1067,7 +1066,7 @@ impl<F: JoltField + MaybeAllocative> RegistersReadWriteChecking<F> {
     }
 }
 
-impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for RegistersReadWriteChecking<F> {
+impl<F: JoltField> SumcheckInstance<F> for RegistersReadWriteChecking<F> {
     fn degree(&self) -> usize {
         3
     }

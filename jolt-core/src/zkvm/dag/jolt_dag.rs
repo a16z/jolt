@@ -1,8 +1,5 @@
 use std::collections::HashMap;
 
-#[cfg(feature = "allocative")]
-use crate::field::allocative_ark::write_svg;
-use crate::field::allocative_ark::MaybeAllocative;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::DoryGlobals;
@@ -10,6 +7,8 @@ use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance};
 use crate::utils::profiling::print_current_memory_usage;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
+#[cfg(feature = "allocative")]
+use crate::utils::profiling::write_flamegraph_svg;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::Transcript;
 use crate::zkvm::bytecode::BytecodeDag;
@@ -35,7 +34,7 @@ impl JoltDAG {
     #[allow(clippy::type_complexity)]
     pub fn prove<
         'a,
-        F: JoltField + MaybeAllocative,
+        F: JoltField,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
@@ -110,7 +109,7 @@ impl JoltDAG {
             for sumcheck in stage2_instances.iter() {
                 sumcheck.update_flamegraph(&mut flamegraph);
             }
-            write_svg(flamegraph, "stage2_start_flamechart.svg");
+            write_flamegraph_svg(flamegraph, "stage2_start_flamechart.svg");
         }
 
         let stage2_instances_mut: Vec<&mut dyn SumcheckInstance<F>> = stage2_instances
@@ -137,7 +136,7 @@ impl JoltDAG {
             for sumcheck in stage2_instances.iter() {
                 sumcheck.update_flamegraph(&mut flamegraph);
             }
-            write_svg(flamegraph, "stage2_end_flamechart.svg");
+            write_flamegraph_svg(flamegraph, "stage2_end_flamechart.svg");
         }
 
         drop_in_background_thread(stage2_instances);
@@ -163,7 +162,7 @@ impl JoltDAG {
             for sumcheck in stage3_instances.iter() {
                 sumcheck.update_flamegraph(&mut flamegraph);
             }
-            write_svg(flamegraph, "stage3_start_flamechart.svg");
+            write_flamegraph_svg(flamegraph, "stage3_start_flamechart.svg");
         }
 
         let stage3_instances_mut: Vec<&mut dyn SumcheckInstance<F>> = stage3_instances
@@ -188,7 +187,7 @@ impl JoltDAG {
             for sumcheck in stage3_instances.iter() {
                 sumcheck.update_flamegraph(&mut flamegraph);
             }
-            write_svg(flamegraph, "stage3_end_flamechart.svg");
+            write_flamegraph_svg(flamegraph, "stage3_end_flamechart.svg");
         }
 
         drop_in_background_thread(stage3_instances);
@@ -212,7 +211,7 @@ impl JoltDAG {
             for sumcheck in stage4_instances.iter() {
                 sumcheck.update_flamegraph(&mut flamegraph);
             }
-            write_svg(flamegraph, "stage4_start_flamechart.svg");
+            write_flamegraph_svg(flamegraph, "stage4_start_flamechart.svg");
         }
 
         let stage4_instances_mut: Vec<&mut dyn SumcheckInstance<F>> = stage4_instances
@@ -237,7 +236,7 @@ impl JoltDAG {
             for sumcheck in stage4_instances.iter() {
                 sumcheck.update_flamegraph(&mut flamegraph);
             }
-            write_svg(flamegraph, "stage4_end_flamechart.svg");
+            write_flamegraph_svg(flamegraph, "stage4_end_flamechart.svg");
         }
 
         drop_in_background_thread(stage4_instances);
@@ -307,7 +306,7 @@ impl JoltDAG {
 
     pub fn verify<
         'a,
-        F: JoltField + MaybeAllocative,
+        F: JoltField,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
@@ -462,7 +461,7 @@ impl JoltDAG {
     #[tracing::instrument(skip_all)]
     fn generate_and_commit_polynomials<
         'a,
-        F: JoltField + MaybeAllocative,
+        F: JoltField,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(

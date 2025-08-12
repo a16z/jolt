@@ -1,7 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::field::allocative_ark::MaybeAllocative;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
@@ -33,7 +32,7 @@ pub struct HammingBooleanitySumcheck<F: JoltField> {
     log_T: usize,
 }
 
-impl<F: JoltField + MaybeAllocative> HammingBooleanitySumcheck<F> {
+impl<F: JoltField> HammingBooleanitySumcheck<F> {
     pub fn new_prover(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
@@ -79,7 +78,7 @@ impl<F: JoltField + MaybeAllocative> HammingBooleanitySumcheck<F> {
     }
 }
 
-impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for HammingBooleanitySumcheck<F> {
+impl<F: JoltField> SumcheckInstance<F> for HammingBooleanitySumcheck<F> {
     fn degree(&self) -> usize {
         DEGREE
     }

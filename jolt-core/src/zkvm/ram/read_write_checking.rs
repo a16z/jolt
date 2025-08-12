@@ -1,6 +1,5 @@
 use std::{cell::RefCell, rc::Rc};
 
-use crate::field::allocative_ark::MaybeAllocative;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 
 use crate::{
@@ -70,7 +69,7 @@ struct ReadWriteCheckingProverState<F: JoltField> {
     val: Option<MultilinearPolynomial<F>>,
 }
 
-impl<F: JoltField + MaybeAllocative> ReadWriteCheckingProverState<F> {
+impl<F: JoltField> ReadWriteCheckingProverState<F> {
     #[tracing::instrument(skip_all, name = "RamReadWriteCheckingProverState::initialize")]
     fn initialize<PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript>(
         initial_memory_state: &[u32],
@@ -326,7 +325,7 @@ pub struct RamReadWriteCheckingProof<F: JoltField, ProofTranscript: Transcript> 
     pub claims: ReadWriteSumcheckClaims<F>,
 }
 
-impl<F: JoltField + MaybeAllocative> RamReadWriteChecking<F> {
+impl<F: JoltField> RamReadWriteChecking<F> {
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         K: usize,
         T: usize,
@@ -969,7 +968,7 @@ impl<F: JoltField + MaybeAllocative> RamReadWriteChecking<F> {
     }
 }
 
-impl<F: JoltField + MaybeAllocative> SumcheckInstance<F> for RamReadWriteChecking<F> {
+impl<F: JoltField> SumcheckInstance<F> for RamReadWriteChecking<F> {
     fn degree(&self) -> usize {
         3
     }

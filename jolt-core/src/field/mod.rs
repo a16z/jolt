@@ -2,6 +2,8 @@ use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, Zero};
 
@@ -38,6 +40,7 @@ pub trait JoltField:
     + CanonicalSerialize
     + CanonicalDeserialize
     + Hash
+    + MaybeAllocative
 {
     /// Number of bytes occupied by a single field element.
     const NUM_BYTES: usize;
@@ -92,6 +95,15 @@ pub trait JoltField:
         res.mul_u64(1 << pow)
     }
 }
+
+#[cfg(feature = "allocative")]
+pub trait MaybeAllocative: Allocative {}
+#[cfg(feature = "allocative")]
+impl<T: Allocative> MaybeAllocative for T {}
+#[cfg(not(feature = "allocative"))]
+pub trait MaybeAllocative {}
+#[cfg(not(feature = "allocative"))]
+impl<T> MaybeAllocative for T {}
 
 pub trait OptimizedMul<Rhs, Output>: Sized + Mul<Rhs, Output = Output> {
     fn mul_0_optimized(self, other: Rhs) -> Self::Output;
@@ -172,6 +184,5 @@ where
     }
 }
 
-pub mod allocative_ark;
 pub mod ark;
 pub mod tracked_ark;
