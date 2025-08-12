@@ -23,12 +23,13 @@ keywords = ["SNARK", "cryptography", "proofs"]
 [workspace]
 members = [
     "jolt-core",
-    "jolt-inlines/sha2",
     "tracer",
     "common",
     "jolt-sdk",
     "jolt-sdk/macros",
     "jolt-verifier",
+    "jolt-inlines/sha2",
+    "jolt-inlines/bigint",
     "examples/btreemap/host",
     "examples/btreemap/guest",
     "examples/collatz",
@@ -55,6 +56,8 @@ members = [
     "examples/overflow/guest",
     "examples/memory-ops",
     "examples/memory-ops/guest",
+    "examples/big-int",
+    "examples/big-int/guest",
 ]
 
 [features]

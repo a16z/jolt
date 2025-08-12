@@ -320,6 +320,7 @@ pub fn sha2_inline_sequence_builder(
     xlen: Xlen,
     rs1: u8,
     rs2: u8,
+    _rd: u8
 ) -> Vec<RV32IMInstruction> {
     // Virtual registers used as a scratch space
     let mut vr = [0u8; 32];
@@ -345,6 +346,7 @@ pub fn sha2_init_inline_sequence_builder(
     xlen: Xlen,
     rs1: u8,
     rs2: u8,
+    _rd: u8,
 ) -> Vec<RV32IMInstruction> {
     // Virtual registers used as a scratch space
     let mut vr = [0u8; 32];

@@ -1,0 +1,10 @@
+[package]
+name = "big-int"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+jolt-sdk = { path = "../../jolt-sdk", features = ["host"] }
+guest = { package = "big-int-guest", path = "./guest" }
+ark-bn254 = "0.5.0"
+
