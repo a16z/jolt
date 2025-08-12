@@ -25,11 +25,10 @@
 //!   operations; the exact policy is documented where they are defined.
 use crate::instruction::add::ADD;
 use crate::instruction::addi::ADDI;
-use crate::instruction::addiw::ADDIW;
-use crate::instruction::addw::ADDW;
 use crate::instruction::and::AND;
 use crate::instruction::andi::ANDI;
 use crate::instruction::srli::SRLI;
+use crate::instruction::srliw::SRLIW;
 
 use crate::instruction::format::format_b::FormatB;
 use crate::instruction::format::format_i::FormatI;
@@ -45,6 +44,7 @@ use crate::instruction::format::NormalizedOperands;
 
 use crate::emulator::cpu::Xlen;
 use crate::instruction::virtual_rotri::VirtualROTRI;
+use crate::instruction::virtual_rotriw::VirtualROTRIW;
 use crate::instruction::xor::XOR;
 use crate::instruction::xori::XORI;
 use crate::instruction::NormalizedInstruction;
@@ -371,22 +371,7 @@ impl InstrAssembler {
     }
 
     pub fn add(&mut self, rs1: Value, rs2: Value, rd: u8) -> Value {
-        match self.xlen {
-            Xlen::Bit64 => self.add64(rs1, rs2, rd),
-            Xlen::Bit32 => self.add32(rs1, rs2, rd),
-        }
-    }
-
-    pub fn add64(&mut self, rs1: Value, rs2: Value, rd: u8) -> Value {
-        self.bin::<ADDW, ADDIW>(rs1, rs2, rd, |x, y| {
-            ((x as u32).wrapping_add(y as u32)) as u64
-        })
-    }
-
-    pub fn add32(&mut self, rs1: Value, rs2: Value, rd: u8) -> Value {
-        self.bin::<ADD, ADDI>(rs1, rs2, rd, |x, y| {
-            ((x as u32).wrapping_add(y as u32)) as u64
-        })
+        self.bin::<ADD, ADDI>(rs1, rs2, rd, |x, y| ((x).wrapping_add(y)))
     }
 
     /// Logical right-shift immediate on a 32-bit word.
@@ -396,21 +381,33 @@ impl InstrAssembler {
         }
         match rs1 {
             Reg(rs1) => {
-                self.emit_i::<SRLI>(rd, rs1, shamt as u64);
+                match self.xlen {
+                    Xlen::Bit32 => self.emit_i::<SRLI>(rd, rs1, shamt as u64),
+                    Xlen::Bit64 => self.emit_i::<SRLIW>(rd, rs1, (shamt & 0x1f) as u64),
+                }
                 Reg(rd)
             }
             Imm(val) => Imm(((val as u32) >> shamt) as u64),
         }
     }
 
-    /// Rotate-right by amount on 32-bit word.
+    /// Rotate-right by amount on a 32-bit word.
     pub fn rotri32(&mut self, rs1: Value, shamt: u32, rd: u8) -> Value {
         if shamt == 0 {
             return self.xor(rs1, Imm(0), rd);
         }
         let ones = (1u64 << (32 - shamt)) - 1;
         let mask = ones << shamt;
-        self.rotri(rs1, mask, rd)
+        match rs1 {
+            Reg(rs1_reg) => {
+                match self.xlen {
+                    Xlen::Bit32 => self.emit_vshift_i::<VirtualROTRI>(rd, rs1_reg, mask),
+                    Xlen::Bit64 => self.emit_vshift_i::<VirtualROTRIW>(rd, rs1_reg, mask),
+                }
+                Reg(rd)
+            }
+            Imm(val) => Imm(((val as u32).rotate_right(shamt)) as u64),
+        }
     }
 
     /// Composite ROTRᵢ ⊕ ROTRⱼ used by SHA-256.
