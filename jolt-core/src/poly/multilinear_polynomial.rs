@@ -5,6 +5,7 @@ use crate::{
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
 use num_traits::MulAdd;
 use rayon::prelude::*;
+use std::sync::Arc;
 use strum_macros::EnumIter;
 
 use super::{
@@ -28,7 +29,7 @@ pub enum MultilinearPolynomial<F: JoltField> {
     U64Scalars(CompactPolynomial<u64, F>),
     I64Scalars(CompactPolynomial<i64, F>),
     RLC(RLCPolynomial<F>),
-    OneHot(OneHotPolynomial<F>),
+    OneHot(Arc<OneHotPolynomial<F>>),
 }
 
 impl<F: JoltField> Valid for MultilinearPolynomial<F> {
@@ -125,6 +126,10 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             .iter()
             .any(|poly| matches!(poly, MultilinearPolynomial::OneHot(_)))
         {
+            if polynomials.len() == 21 {
+                return Self::linear_combination_rlc_optimized(polynomials, coefficients);
+            }
+            
             let mut result = RLCPolynomial::<F>::new();
             for (coeff, polynomial) in coefficients.iter().zip(polynomials.iter()) {
                 result = match polynomial {
@@ -140,7 +145,110 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             }
             return MultilinearPolynomial::RLC(result);
         }
+        match polynomials.len() {
+            3 => Self::linear_combination_dense_3(polynomials, coefficients),
+            7 => Self::linear_combination_dense_7(polynomials, coefficients),
+            _ => Self::linear_combination_dense_general(polynomials, coefficients),
+        }
+    }
 
+    /// Optimized linear combination for exactly 3 dense polynomials
+    fn linear_combination_dense_3(polynomials: &[&Self], coefficients: &[F]) -> Self {
+        let start = std::time::Instant::now();
+        let max_length = polynomials
+            .iter()
+            .map(|poly| poly.original_len())
+            .max()
+            .unwrap();
+
+        let result: Vec<F> = (0..max_length)
+            .into_par_iter()
+            .map(|i| {
+                let mut acc = F::zero();
+                for (_j, (coeff, poly)) in coefficients.iter().zip(polynomials.iter()).enumerate() {
+                    if i < poly.original_len() {
+                        match poly {
+                            MultilinearPolynomial::LargeScalars(p) => {
+                                acc += p.evals_ref()[i].mul_01_optimized(*coeff);
+                            }
+                            MultilinearPolynomial::U8Scalars(p) => {
+                                acc += p.coeffs[i].field_mul(*coeff);
+                            }
+                            MultilinearPolynomial::U16Scalars(p) => {
+                                acc += p.coeffs[i].field_mul(*coeff);
+                            }
+                            MultilinearPolynomial::U32Scalars(p) => {
+                                acc += p.coeffs[i].field_mul(*coeff);
+                            }
+                            MultilinearPolynomial::U64Scalars(p) => {
+                                acc += p.coeffs[i].field_mul(*coeff);
+                            }
+                            MultilinearPolynomial::I64Scalars(p) => {
+                                acc += p.coeffs[i].field_mul(*coeff);
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+                acc
+            })
+            .collect();
+
+        let result = MultilinearPolynomial::from(result);
+        println!("linear_combination_dense_3 took: {:?}", start.elapsed());
+        result
+    }
+
+    /// Optimized linear combination for exactly 7 dense polynomials
+    fn linear_combination_dense_7(polynomials: &[&Self], coefficients: &[F]) -> Self {
+        let start = std::time::Instant::now();
+        let max_length = polynomials
+            .iter()
+            .map(|poly| poly.original_len())
+            .max()
+            .unwrap();
+
+        // Use same strategy as 3 polynomial case - simple parallel iteration
+        let result: Vec<F> = (0..max_length)
+            .into_par_iter()
+            .map(|i| {
+                let mut acc = F::zero();
+                for (coeff, poly) in coefficients.iter().zip(polynomials.iter()) {
+                    if i < poly.original_len() {
+                        match poly {
+                            MultilinearPolynomial::LargeScalars(p) => {
+                                acc += p.evals_ref()[i].mul_01_optimized(*coeff);
+                            }
+                            MultilinearPolynomial::U8Scalars(p) => {
+                                acc += p.coeffs[i].field_mul(*coeff);
+                            }
+                            MultilinearPolynomial::U16Scalars(p) => {
+                                acc += p.coeffs[i].field_mul(*coeff);
+                            }
+                            MultilinearPolynomial::U32Scalars(p) => {
+                                acc += p.coeffs[i].field_mul(*coeff);
+                            }
+                            MultilinearPolynomial::U64Scalars(p) => {
+                                acc += p.coeffs[i].field_mul(*coeff);
+                            }
+                            MultilinearPolynomial::I64Scalars(p) => {
+                                acc += p.coeffs[i].field_mul(*coeff);
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+                acc
+            })
+            .collect();
+
+        let result = MultilinearPolynomial::from(result);
+        println!("linear_combination_dense_7 took: {:?}", start.elapsed());
+        result
+    }
+
+    /// General dense linear combination (fallback for other cases)
+    fn linear_combination_dense_general(polynomials: &[&Self], coefficients: &[F]) -> Self {
         let max_length = polynomials
             .iter()
             .map(|poly| poly.original_len())
@@ -209,6 +317,94 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             .collect();
 
         MultilinearPolynomial::from(lc_coeffs)
+    }
+
+    /// Optimized RLC linear combination for 21 polynomials
+    fn linear_combination_rlc_optimized(polynomials: &[&Self], coefficients: &[F]) -> Self {
+        let start = std::time::Instant::now();
+        let start_init = std::time::Instant::now();
+        let mut result = RLCPolynomial::<F>::new();
+        println!("  RLC::new() took: {:?}", start_init.elapsed());
+        
+        // First, process all dense polynomials in parallel to build the dense_rlc
+        let start_dense_filter = std::time::Instant::now();
+        let dense_indices: Vec<usize> = polynomials
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| !matches!(p, MultilinearPolynomial::OneHot(_)))
+            .map(|(i, _)| i)
+            .collect();
+        println!("  Dense polynomial filtering took: {:?}", start_dense_filter.elapsed());
+        println!("  Found {} dense polynomials out of {}", dense_indices.len(), polynomials.len());
+        
+        if !dense_indices.is_empty() {
+            // Use same simple parallel strategy as 3 polynomial case
+            let dense_len = result.dense_rlc.len();
+            println!("  Dense RLC length: {}", dense_len);
+            
+            let start_dense_compute = std::time::Instant::now();
+            result.dense_rlc = (0..dense_len)
+                .into_par_iter()
+                .map(|i| {
+                    let mut acc = F::zero();
+                    for &poly_idx in &dense_indices {
+                        let poly = polynomials[poly_idx];
+                        let coeff = coefficients[poly_idx];
+                        
+                        match poly {
+                            MultilinearPolynomial::LargeScalars(p) => {
+                                if i < p.evals_ref().len() {
+                                    acc += p.evals_ref()[i].mul_01_optimized(coeff);
+                                }
+                            }
+                            MultilinearPolynomial::U8Scalars(p) => {
+                                if i < p.coeffs.len() {
+                                    acc += p.coeffs[i].field_mul(coeff);
+                                }
+                            }
+                            MultilinearPolynomial::U16Scalars(p) => {
+                                if i < p.coeffs.len() {
+                                    acc += p.coeffs[i].field_mul(coeff);
+                                }
+                            }
+                            MultilinearPolynomial::U32Scalars(p) => {
+                                if i < p.coeffs.len() {
+                                    acc += p.coeffs[i].field_mul(coeff);
+                                }
+                            }
+                            MultilinearPolynomial::U64Scalars(p) => {
+                                if i < p.coeffs.len() {
+                                    acc += p.coeffs[i].field_mul(coeff);
+                                }
+                            }
+                            MultilinearPolynomial::I64Scalars(p) => {
+                                if i < p.coeffs.len() {
+                                    acc += p.coeffs[i].field_mul(coeff);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    acc
+                })
+                .collect();
+            println!("  Dense polynomial computation took: {:?}", start_dense_compute.elapsed());
+        }
+        
+        // Then handle OneHot polynomials
+        let start_onehot = std::time::Instant::now();
+        let mut onehot_count = 0;
+        for (i, poly) in polynomials.iter().enumerate() {
+            if let MultilinearPolynomial::OneHot(one_hot) = poly {
+                result.one_hot_rlc.push((coefficients[i], one_hot.clone()));
+                onehot_count += 1;
+            }
+        }
+        println!("  OneHot polynomial processing ({} polynomials) took: {:?}", onehot_count, start_onehot.elapsed());
+        
+        let result = MultilinearPolynomial::RLC(result);
+        println!("linear_combination_rlc_optimized (21 polys) took: {:?}", start.elapsed());
+        result
     }
 
     /// Gets the polynomial coefficient at the given `index`

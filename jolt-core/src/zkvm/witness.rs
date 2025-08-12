@@ -1,6 +1,7 @@
 #![allow(static_mut_refs)]
 
 use std::sync::LazyLock;
+use std::sync::Arc;
 
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
@@ -282,7 +283,7 @@ impl CommittedPolynomial {
                         Some((pc >> (log_K_chunk * (d - 1 - i))) % K_chunk)
                     })
                     .collect();
-                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(addresses, K_chunk))
+                MultilinearPolynomial::OneHot(Arc::new(OneHotPolynomial::from_indices(addresses, K_chunk)))
             }
             CommittedPolynomial::RamRa(i) => {
                 let d = self.ram_d();
@@ -300,10 +301,10 @@ impl CommittedPolynomial {
                         })
                     })
                     .collect();
-                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
+                MultilinearPolynomial::OneHot(Arc::new(OneHotPolynomial::from_indices(
                     addresses,
                     DTH_ROOT_OF_K,
-                ))
+                )))
             }
             CommittedPolynomial::RdInc => {
                 let coeffs: Vec<i64> = trace
@@ -345,10 +346,10 @@ impl CommittedPolynomial {
                         Some(k as usize)
                     })
                     .collect();
-                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
+                MultilinearPolynomial::OneHot(Arc::new(OneHotPolynomial::from_indices(
                     addresses,
                     instruction_lookups::K_CHUNK,
-                ))
+                )))
             }
         }
     }

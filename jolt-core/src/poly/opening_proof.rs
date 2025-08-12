@@ -431,8 +431,8 @@ where
             match prover_state {
                 ProverOpening::Dense(opening) => opening.polynomial = Some(poly.clone()),
                 ProverOpening::OneHot(opening) => {
-                    if let MultilinearPolynomial::OneHot(poly) = poly {
-                        opening.initialize(poly.clone());
+                    if let MultilinearPolynomial::OneHot(poly_arc) = poly {
+                        opening.initialize(poly_arc.as_ref().clone());
                     } else {
                         panic!("Unexpected non-one-hot polynomial")
                     }
