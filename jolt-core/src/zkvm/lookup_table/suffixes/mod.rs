@@ -1,4 +1,9 @@
+use crate::zkvm::lookup_table::suffixes::change_divisor::ChangeDivisorSuffix;
+use crate::zkvm::lookup_table::suffixes::change_divisor_w::ChangeDivisorWSuffix;
 use crate::zkvm::lookup_table::suffixes::left_shift::LeftShiftSuffix;
+use crate::zkvm::lookup_table::suffixes::right_operand::RightOperandSuffix;
+use crate::zkvm::lookup_table::suffixes::right_operand_w::RightOperandWSuffix;
+use crate::zkvm::lookup_table::suffixes::sign_extension_right_operand::SignExtensionRightOperandSuffix;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 use div_by_zero::DivByZeroSuffix;
 use eq::EqSuffix;
@@ -21,12 +26,15 @@ use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 use and::AndSuffix;
 use lower_half_word::LowerHalfWordSuffix;
 use lower_word::LowerWordSuffix;
+use notand::NotAndSuffix;
 use one::OneSuffix;
 use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
 use xor::XorSuffix;
 
 pub mod and;
+pub mod change_divisor;
+pub mod change_divisor_w;
 pub mod div_by_zero;
 pub mod eq;
 pub mod gt;
@@ -36,15 +44,19 @@ pub mod lower_half_word;
 pub mod lower_word;
 pub mod lsb;
 pub mod lt;
+pub mod notand;
 pub mod one;
 pub mod or;
 pub mod pow2;
 pub mod pow2_w;
 pub mod right_is_zero;
+pub mod right_operand;
+pub mod right_operand_w;
 pub mod right_shift;
 pub mod right_shift_helper;
 pub mod right_shift_padding;
 pub mod sign_extension;
+pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
 pub mod two_lsb;
 pub mod upper_word;
@@ -62,8 +74,13 @@ pub trait SparseDenseSuffix: 'static + Sync {
 pub enum Suffixes {
     One,
     And,
+    NotAnd,
     Xor,
     Or,
+    RightOperand,
+    RightOperandW,
+    ChangeDivisor,
+    ChangeDivisorW,
     UpperWord,
     LowerWord,
     LowerHalfWord,
@@ -83,6 +100,7 @@ pub enum Suffixes {
     LeftShift,
     TwoLsb,
     SignExtensionUpperHalf,
+    SignExtensionRightOperand,
 }
 
 pub type SuffixEval<F: JoltField> = F;
@@ -94,8 +112,13 @@ impl Suffixes {
         match self {
             Suffixes::One => OneSuffix::suffix_mle(b),
             Suffixes::And => AndSuffix::suffix_mle(b),
+            Suffixes::NotAnd => NotAndSuffix::suffix_mle(b),
             Suffixes::Or => OrSuffix::suffix_mle(b),
             Suffixes::Xor => XorSuffix::suffix_mle(b),
+            Suffixes::RightOperand => RightOperandSuffix::suffix_mle(b),
+            Suffixes::RightOperandW => RightOperandWSuffix::suffix_mle(b),
+            Suffixes::ChangeDivisor => ChangeDivisorSuffix::suffix_mle(b),
+            Suffixes::ChangeDivisorW => ChangeDivisorWSuffix::<WORD_SIZE>::suffix_mle(b),
             Suffixes::UpperWord => UpperWordSuffix::<WORD_SIZE>::suffix_mle(b),
             Suffixes::LowerWord => LowerWordSuffix::<WORD_SIZE>::suffix_mle(b),
             Suffixes::LowerHalfWord => LowerHalfWordSuffix::<WORD_SIZE>::suffix_mle(b),
@@ -116,6 +139,9 @@ impl Suffixes {
             Suffixes::TwoLsb => TwoLsbSuffix::suffix_mle(b),
             Suffixes::SignExtensionUpperHalf => {
                 SignExtensionUpperHalfSuffix::<WORD_SIZE>::suffix_mle(b)
+            }
+            Suffixes::SignExtensionRightOperand => {
+                SignExtensionRightOperandSuffix::<WORD_SIZE>::suffix_mle(b)
             }
         }
     }

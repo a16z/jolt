@@ -88,7 +88,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for CachedPolynomial<F> {
         self.inner.evaluate(x)
     }
 
-    fn batch_evaluate(_polys: &[&Self], _r: &[F]) -> (Vec<F>, Vec<F>) {
+    fn batch_evaluate(_polys: &[&Self], _r: &[F]) -> Vec<F> {
         unimplemented!("Currently unused")
     }
 

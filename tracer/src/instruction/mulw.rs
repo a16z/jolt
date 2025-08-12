@@ -9,7 +9,7 @@ use super::{
     format::{format_i::FormatI, format_r::FormatR, InstructionFormat},
     mul::MUL,
     virtual_sign_extend::VirtualSignExtend,
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
+    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -25,26 +25,24 @@ impl MULW {
         // MULW is an RV64 instruction that multiplies the lower 32 bits of the source registers,
         // placing the sign extension of the lower 32 bits of the result into the destination
         // register.
-        let a = cpu.x[self.operands.rs1] as i32;
-        let b = cpu.x[self.operands.rs2] as i32;
-        cpu.x[self.operands.rd] = a.wrapping_mul(b) as i64;
+        let a = cpu.x[self.operands.rs1 as usize] as i32;
+        let b = cpu.x[self.operands.rs2 as usize] as i32;
+        cpu.x[self.operands.rd as usize] = a.wrapping_mul(b) as i64;
     }
 }
 
 impl RISCVTrace for MULW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(cpu.xlen);
 
         let mut trace = trace;
-        for instr in virtual_sequence {
+        for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for MULW {
-    fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         let mut sequence = vec![];
 
         let mul = MUL {
@@ -54,7 +52,7 @@ impl VirtualInstructionSequence for MULW {
                 rs1: self.operands.rs1,
                 rs2: self.operands.rs2,
             },
-            virtual_sequence_remaining: Some(1),
+            inline_sequence_remaining: Some(1),
             is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
@@ -66,7 +64,7 @@ impl VirtualInstructionSequence for MULW {
                 rs1: self.operands.rd,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(0),
+            inline_sequence_remaining: Some(0),
             is_compressed: self.is_compressed,
         };
         sequence.push(ext.into());

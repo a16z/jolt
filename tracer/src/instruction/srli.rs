@@ -10,7 +10,7 @@ use crate::{
 
 use super::{
     format::{format_i::FormatI, InstructionFormat},
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
+    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -27,8 +27,8 @@ impl SRLI {
             Xlen::Bit32 => 0x1f,
             Xlen::Bit64 => 0x3f,
         };
-        cpu.x[self.operands.rd] = cpu.sign_extend(
-            cpu.unsigned_data(cpu.x[self.operands.rs1])
+        cpu.x[self.operands.rd as usize] = cpu.sign_extend(
+            cpu.unsigned_data(cpu.x[self.operands.rs1 as usize])
                 .wrapping_shr(self.operands.imm as u32 & mask) as i64,
         );
     }
@@ -36,19 +36,17 @@ impl SRLI {
 
 impl RISCVTrace for SRLI {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(cpu.xlen);
         let mut trace = trace;
-        for instr in virtual_sequence {
+        for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for SRLI {
-    fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         let mut sequence = vec![];
-        let virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(0);
+        let inline_sequence_remaining = self.inline_sequence_remaining.unwrap_or(0);
 
         let (shift, len) = match xlen {
             Xlen::Bit32 => (self.operands.imm & 0x1f, 32),
@@ -64,7 +62,7 @@ impl VirtualInstructionSequence for SRLI {
                 rs1: self.operands.rs1,
                 imm: bitmask,
             },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+            inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
         };
         sequence.push(srl.into());

@@ -26,8 +26,6 @@ guest-std = [
     "postcard/use-std",
     "jolt-sdk-macros/guest-std",
 ]
-sha256 = []
-keccak256 = []
 
 [dependencies]
 postcard = { version = "1.0.8", default-features = false }

@@ -18,7 +18,7 @@ jobs:
   fmt:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: rustfmt
@@ -28,7 +28,7 @@ jobs:
   clippy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: clippy
@@ -46,7 +46,7 @@ jobs:
     name: Build Wasm
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
@@ -54,11 +54,11 @@ jobs:
         working-directory: ./jolt-core
         run: cargo build --release --target wasm32-unknown-unknown
 
-  test:
+  test-core:
     runs-on: ubuntu-latest
     name: Test jolt-core
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Cache Jolt RISC-V Rust toolchain
         uses: actions/cache@v4
@@ -72,11 +72,80 @@ jobs:
       - name: Run jolt-core tests
         run: cargo nextest run --release -p jolt-core --no-fail-fast
 
+  typos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: crate-ci/typos@v1.30.0
+        with:
+          files: .
+
+  test-sdk:
+    name: jolt binary check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Build the `jolt` binary
+        run: cargo build --release --bin jolt
+
+      - name: Use the `jolt` binary to generate code
+        run: ./target/release/jolt new sample_project
+
+      - name: Make sure the generated code runs
+        working-directory: ./sample_project
+        run: cargo run --release
+
+  test-inlines:
+    name: Test inlines
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Discover inline crates
+        id: discover_inlines
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkgs=$(cargo metadata --format-version=1 --no-deps \
+                   | jq -r '.packages[].name' \
+                   | grep '^jolt-inlines-' | tr '\n' ' ')
+          echo "Found inline crates: $pkgs"
+          echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
+      - name: Test each inline crate (host)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for pkg in ${{ steps.discover_inlines.outputs.pkgs }}; do
+            cargo nextest run --no-fail-fast --features host -p "$pkg"
+          done
+
+  test-verifier:
+    name: Jolt Verifier Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Cache Jolt RISC-V Rust toolchain
+        uses: actions/cache@v4
+        with:
+          key: jolt-rust-toolchain-${{hashFiles('guest-toolchain-tag')}}
+          path: ~/.jolt
+      - name: Install Jolt RISC-V Rust toolchain
+        run: cargo run install-toolchain
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Run verifier tests
+        run: cargo nextest run --release -p jolt-verifier --no-fail-fast
+
+
   test-tracer:
     runs-on: ubuntu-latest
     name: Test tracer
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Cache Jolt RISC-V Rust toolchain
         uses: actions/cache@v4
@@ -90,46 +159,11 @@ jobs:
       - name: Run tracer tests
         run: cargo nextest run --release -p tracer --no-fail-fast
 
-  typos:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: crate-ci/typos@v1.30.0
-        with:
-          files: .
-
-  test-sdk:
-    name: jolt binary check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-      - name: Build the `jolt` binary
-        run: cargo build --release --bin jolt
-
-      - name: Use the `jolt` binary to generate code
-        run: ./target/release/jolt new sample_project
-
-      - name: Make sure the generated code runs
-        working-directory: ./sample_project
-        run: cargo run --release
-
-  test-verifier:
-    name: Jolt Verifier Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-      - name: Install Jolt RISC-V Rust toolchain
-        run: cargo run install-toolchain
-      - name: Run verifier tests
-        run: cargo nextest run --release --p jolt-verifier --no-fail-fast
-
   # zklean-extractor-tests:
   #   name: ZkLean extractor tests
   #   runs-on: ubuntu-latest
   #   steps:
-  #     - uses: actions/checkout@v4
+  #     - uses: actions/checkout@v5
   #     - name: Run extractor tests
   #       working-directory: ./zklean-extractor
   #       run: cargo test
@@ -138,7 +172,7 @@ jobs:
   #   name: Compile extracted Lean
   #   runs-on: ubuntu-latest
   #   steps:
-  #     - uses: actions/checkout@v4
+  #     - uses: actions/checkout@v5
   #     - name: Extract Jolt ZkLean package
   #       working-directory: ./zklean-extractor
   #       run: cargo run --release -- -o -p jolt-zklean

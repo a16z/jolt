@@ -23,6 +23,8 @@ keywords = ["SNARK", "cryptography", "proofs"]
 [workspace]
 members = [
     "jolt-core",
+    "jolt-inlines/sha2",
+    "jolt-inlines/keccak256",
     "tracer",
     "common",
     "jolt-sdk",
@@ -109,4 +111,4 @@ ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/tw
 ignored = ["jolt-sdk"]
 
 [workspace.dependencies]
-spinners = { version= "4.1.1", default-features = false }
+spinners = { version = "4.1.1", default-features = false }

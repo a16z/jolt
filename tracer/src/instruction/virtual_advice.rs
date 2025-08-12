@@ -1,7 +1,7 @@
 use rand::{rngs::StdRng, RngCore};
 use serde::{Deserialize, Serialize};
 
-use crate::emulator::cpu::Cpu;
+use crate::{emulator::cpu::Cpu, instruction::NormalizedInstruction};
 
 use super::{
     format::{format_j::FormatJ, InstructionFormat},
@@ -13,12 +13,12 @@ use super::{
 pub struct VirtualAdvice {
     pub address: u64,
     pub operands: FormatJ,
-    /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
+    /// If this instruction is part of a "inline sequence" (see Section 6.2 of the
     /// Jolt paper), then this contains the number of virtual instructions after this
     /// one in the sequence. I.e. if this is the last instruction in the sequence,
-    /// `virtual_sequence_remaining` will be Some(0); if this is the penultimate instruction
-    /// in the sequence, `virtual_sequence_remaining` will be Some(1); etc.
-    pub virtual_sequence_remaining: Option<usize>,
+    /// `inline_sequence_remaining` will be Some(0); if this is the penultimate instruction
+    /// in the sequence, `inline_sequence_remaining` will be Some(1); etc.
+    pub inline_sequence_remaining: Option<u16>,
     pub advice: u64,
     pub is_compressed: bool,
 }
@@ -43,13 +43,36 @@ impl RISCVInstruction for VirtualAdvice {
             address: rng.next_u64(),
             operands: FormatJ::random(rng),
             advice: rng.next_u64(),
-            virtual_sequence_remaining: None,
+            inline_sequence_remaining: None,
             is_compressed: false,
         }
     }
 
     fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
-        cpu.x[self.operands.rd] = self.advice as i64;
+        cpu.x[self.operands.rd as usize] = self.advice as i64;
+    }
+}
+
+impl From<NormalizedInstruction> for VirtualAdvice {
+    fn from(ni: NormalizedInstruction) -> Self {
+        Self {
+            address: ni.address as u64,
+            operands: ni.operands.into(),
+            advice: 0,
+            inline_sequence_remaining: ni.inline_sequence_remaining,
+            is_compressed: ni.is_compressed,
+        }
+    }
+}
+
+impl From<VirtualAdvice> for NormalizedInstruction {
+    fn from(val: VirtualAdvice) -> Self {
+        NormalizedInstruction {
+            address: val.address as usize,
+            operands: val.operands.into(),
+            is_compressed: val.is_compressed,
+            inline_sequence_remaining: val.inline_sequence_remaining,
+        }
     }
 }
 

@@ -4,31 +4,27 @@ use std::{
     path::Path,
 };
 
-use ark_bn254::Fr;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::jolt_device::MemoryLayout;
-use rayon::prelude::*;
-use tracer::{
-    instruction::{RV32IMCycle, RV32IMInstruction},
-    JoltDevice,
-};
-
+#[cfg(feature = "prover")]
+use crate::host::Program;
 #[cfg(test)]
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::{
     field::JoltField,
-    host::Program,
     poly::{
         commitment::commitment_scheme::CommitmentScheme, opening_proof::ProverOpeningAccumulator,
     },
     utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
     zkvm::{
         bytecode::BytecodePreprocessing,
-        dag::{jolt_dag::JoltDAG, proof_serialization::JoltProof, state_manager::StateManager},
+        dag::{jolt_dag::JoltDAG, proof_serialization::JoltProof},
         ram::RAMPreprocessing,
         witness::DTH_ROOT_OF_K,
     },
 };
+use ark_bn254::Fr;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use common::jolt_device::MemoryLayout;
+use tracer::{instruction::RV32IMInstruction, JoltDevice};
 
 pub mod bytecode;
 pub mod dag;
@@ -198,6 +194,7 @@ where
     }
 
     #[allow(clippy::type_complexity)]
+    #[cfg(feature = "prover")]
     fn prove(
         preprocessing: &JoltProverPreprocessing<F, PCS>,
         program: &mut Program,
@@ -207,17 +204,21 @@ where
         JoltDevice,
         Option<ProverDebugInfo<F, FS, PCS>>,
     ) {
+        use crate::zkvm::dag::state_manager::StateManager;
+        use rayon::prelude::*;
+        use tracer::instruction::RV32IMCycle;
+
         let (mut trace, final_memory_state, mut program_io) = program.trace(inputs);
         let num_riscv_cycles: usize = trace
             .par_iter()
             .map(|cycle| {
-                // Count the cycle if the instruction is not part of a virtual sequence
-                // (`virtual_sequence_remaining` is `None`) or if it's the first instruction
-                // in a virtual sequence (`virtual_sequence_remaining` is `Some(0)`)
-                if let Some(virtual_sequence_remaining) =
-                    cycle.instruction().normalize().virtual_sequence_remaining
+                // Count the cycle if the instruction is not part of a inline sequence
+                // (`inline_sequence_remaining` is `None`) or if it's the first instruction
+                // in a inline sequence (`inline_sequence_remaining` is `Some(0)`)
+                if let Some(inline_sequence_remaining) =
+                    cycle.instruction().normalize().inline_sequence_remaining
                 {
-                    if virtual_sequence_remaining > 0 {
+                    if inline_sequence_remaining > 0 {
                         return 0;
                     }
                 }
@@ -262,6 +263,17 @@ where
         // in `VerifierOpeningAccumulator::append` inside of a `#[cfg(test)]` block
         #[cfg(test)]
         let _guard = DoryGlobals::initialize(DTH_ROOT_OF_K, T);
+
+        // Memory layout checks
+        if program_io.memory_layout != preprocessing.shared.memory_layout {
+            return Err(ProofVerifyError::MemoryLayoutMismatch);
+        }
+        if program_io.inputs.len() > preprocessing.shared.memory_layout.max_input_size as usize {
+            return Err(ProofVerifyError::InputTooLarge);
+        }
+        if program_io.outputs.len() > preprocessing.shared.memory_layout.max_output_size as usize {
+            return Err(ProofVerifyError::OutputTooLarge);
+        }
 
         // truncate trailing zeros on device outputs
         program_io.outputs.truncate(
@@ -412,6 +424,12 @@ mod tests {
     #[test]
     #[serial]
     fn sha3_e2e_dory() {
+        // Ensure SHA3 inline library is linked and auto-registered
+        #[cfg(feature = "host")]
+        extern crate sha3_inline;
+        // SHA3 inlines are automatically registered via #[ctor::ctor]
+        // when the sha3_inline crate is linked (see lib.rs)
+
         let mut program = host::Program::new("sha3-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
@@ -437,8 +455,14 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     #[serial]
     fn sha2_e2e_dory() {
+        // Ensure SHA2 inline library is linked and auto-registered
+        #[cfg(feature = "host")]
+        extern crate sha2_inline;
+        // SHA2 inlines are automatically registered via #[ctor::ctor]
+        // when the sha2_inline crate is linked (see lib.rs)
         let mut program = host::Program::new("sha2-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
@@ -478,6 +502,33 @@ mod tests {
         );
         let (jolt_proof, io_device, debug_info) =
             JoltRV32IM::prove(&preprocessing, &mut program, &[]);
+
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+        let verification_result =
+            JoltRV32IM::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn btreemap_e2e_dory() {
+        let mut program = host::Program::new("btreemap-guest");
+        let (bytecode, init_memory_state, _) = program.decode();
+        let inputs = postcard::to_stdvec(&50u32).unwrap();
+        let (_, _, io_device) = program.trace(&inputs);
+
+        let preprocessing = JoltRV32IM::prover_preprocess(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            init_memory_state,
+            1 << 16,
+        );
+        let (jolt_proof, io_device, debug_info) =
+            JoltRV32IM::prove(&preprocessing, &mut program, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =

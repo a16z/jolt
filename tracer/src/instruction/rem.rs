@@ -1,4 +1,4 @@
-use common::constants::virtual_register_index;
+use crate::utils::virtual_registers::allocate_virtual_register;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -18,7 +18,7 @@ use super::{
     virtual_assert_valid_signed_remainder::VirtualAssertValidSignedRemainder,
     virtual_change_divisor::VirtualChangeDivisor,
     virtual_move::VirtualMove,
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
+    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -31,15 +31,16 @@ declare_riscv_instr!(
 
 impl REM {
     fn exec(&self, cpu: &mut Cpu, _: &mut <REM as RISCVInstruction>::RAMAccess) {
-        let dividend = cpu.x[self.operands.rs1];
-        let divisor = cpu.x[self.operands.rs2];
+        let dividend = cpu.x[self.operands.rs1 as usize];
+        let divisor = cpu.x[self.operands.rs2 as usize];
         if divisor == 0 {
-            cpu.x[self.operands.rd] = dividend;
+            cpu.x[self.operands.rd as usize] = dividend;
         } else if dividend == cpu.most_negative() && divisor == -1 {
-            cpu.x[self.operands.rd] = 0;
+            cpu.x[self.operands.rd as usize] = 0;
         } else {
-            cpu.x[self.operands.rd] =
-                cpu.sign_extend(cpu.x[self.operands.rs1].wrapping_rem(cpu.x[self.operands.rs2]));
+            cpu.x[self.operands.rd as usize] = cpu.sign_extend(
+                cpu.x[self.operands.rs1 as usize].wrapping_rem(cpu.x[self.operands.rs2 as usize]),
+            );
         }
     }
 }
@@ -48,8 +49,8 @@ impl RISCVTrace for REM {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
         // RISCV spec: For REM, the sign of a nonzero result equals the sign of the dividend.
         // REM operands
-        let x = cpu.x[self.operands.rs1];
-        let y = cpu.x[self.operands.rs2];
+        let x = cpu.x[self.operands.rs1 as usize];
+        let y = cpu.x[self.operands.rs2 as usize];
 
         let (quotient, remainder) = match cpu.xlen {
             Xlen::Bit32 => {
@@ -76,41 +77,39 @@ impl RISCVTrace for REM {
             }
         };
 
-        let mut virtual_sequence = self.virtual_sequence(cpu.xlen);
-        if let RV32IMInstruction::VirtualAdvice(instr) = &mut virtual_sequence[0] {
+        let mut inline_sequence = self.inline_sequence(cpu.xlen);
+        if let RV32IMInstruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
             instr.advice = quotient;
         } else {
             panic!("Expected Advice instruction");
         }
-        if let RV32IMInstruction::VirtualAdvice(instr) = &mut virtual_sequence[1] {
+        if let RV32IMInstruction::VirtualAdvice(instr) = &mut inline_sequence[1] {
             instr.advice = remainder;
         } else {
             panic!("Expected Advice instruction");
         }
 
         let mut trace = trace;
-        for instr in virtual_sequence {
+        for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for REM {
-    fn virtual_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
-        let v_0 = virtual_register_index(0) as usize;
-        let v_q = virtual_register_index(1) as usize;
-        let v_r = virtual_register_index(2) as usize;
-        let v_qy = virtual_register_index(3) as usize;
-        let v_rs2 = virtual_register_index(4) as usize;
+        let v_0 = allocate_virtual_register();
+        let v_q = allocate_virtual_register();
+        let v_r = allocate_virtual_register();
+        let v_qy = allocate_virtual_register();
+        let v_rs2 = allocate_virtual_register();
 
         let mut sequence = vec![];
 
         let advice = VirtualAdvice {
             address: self.address,
-            operands: FormatJ { rd: v_q, imm: 0 },
-            virtual_sequence_remaining: Some(7),
+            operands: FormatJ { rd: *v_q, imm: 0 },
+            inline_sequence_remaining: Some(7),
             advice: 0,
             is_compressed: self.is_compressed,
         };
@@ -118,8 +117,8 @@ impl VirtualInstructionSequence for REM {
 
         let advice = VirtualAdvice {
             address: self.address,
-            operands: FormatJ { rd: v_r, imm: 0 },
-            virtual_sequence_remaining: Some(6),
+            operands: FormatJ { rd: *v_r, imm: 0 },
+            inline_sequence_remaining: Some(6),
             advice: 0,
             is_compressed: self.is_compressed,
         };
@@ -128,11 +127,11 @@ impl VirtualInstructionSequence for REM {
         let change_divisor = VirtualChangeDivisor {
             address: self.address,
             operands: FormatR {
-                rd: v_rs2,
+                rd: *v_rs2,
                 rs1: self.operands.rs1,
                 rs2: self.operands.rs2,
             },
-            virtual_sequence_remaining: Some(5),
+            inline_sequence_remaining: Some(5),
             is_compressed: self.is_compressed,
         };
         sequence.push(change_divisor.into());
@@ -140,11 +139,11 @@ impl VirtualInstructionSequence for REM {
         let is_valid = VirtualAssertValidSignedRemainder {
             address: self.address,
             operands: FormatB {
-                rs1: v_r,
+                rs1: *v_r,
                 rs2: self.operands.rs2,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(4),
+            inline_sequence_remaining: Some(4),
             is_compressed: self.is_compressed,
         };
         sequence.push(is_valid.into());
@@ -152,11 +151,11 @@ impl VirtualInstructionSequence for REM {
         let mul = MUL {
             address: self.address,
             operands: FormatR {
-                rd: v_qy,
-                rs1: v_q,
-                rs2: v_rs2,
+                rd: *v_qy,
+                rs1: *v_q,
+                rs2: *v_rs2,
             },
-            virtual_sequence_remaining: Some(3),
+            inline_sequence_remaining: Some(3),
             is_compressed: self.is_compressed,
         };
         sequence.push(mul.into());
@@ -164,11 +163,11 @@ impl VirtualInstructionSequence for REM {
         let add = ADD {
             address: self.address,
             operands: FormatR {
-                rd: v_0,
-                rs1: v_qy,
-                rs2: v_r,
+                rd: *v_0,
+                rs1: *v_qy,
+                rs2: *v_r,
             },
-            virtual_sequence_remaining: Some(2),
+            inline_sequence_remaining: Some(2),
             is_compressed: self.is_compressed,
         };
         sequence.push(add.into());
@@ -176,11 +175,11 @@ impl VirtualInstructionSequence for REM {
         let assert_eq = VirtualAssertEQ {
             address: self.address,
             operands: FormatB {
-                rs1: v_0,
+                rs1: *v_0,
                 rs2: self.operands.rs1,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(1),
+            inline_sequence_remaining: Some(1),
             is_compressed: self.is_compressed,
         };
         sequence.push(assert_eq.into());
@@ -189,10 +188,10 @@ impl VirtualInstructionSequence for REM {
             address: self.address,
             operands: FormatI {
                 rd: self.operands.rd,
-                rs1: v_r,
+                rs1: *v_r,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(0),
+            inline_sequence_remaining: Some(0),
             is_compressed: self.is_compressed,
         };
         sequence.push(virtual_move.into());

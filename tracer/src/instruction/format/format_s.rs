@@ -11,8 +11,8 @@ use super::{
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatS {
-    pub rs1: usize,
-    pub rs2: usize,
+    pub rs1: u8,
+    pub rs2: u8,
     pub imm: i64,
 }
 
@@ -44,8 +44,8 @@ impl InstructionFormat for FormatS {
 
     fn parse(word: u32) -> Self {
         FormatS {
-            rs1: ((word >> 15) & 0x1f) as usize, // [19:15]
-            rs2: ((word >> 20) & 0x1f) as usize, // [24:20]
+            rs1: ((word >> 15) & 0x1f) as u8, // [19:15]
+            rs2: ((word >> 20) & 0x1f) as u8, // [24:20]
             imm: (
                 match word & 0x80000000 {
 				0x80000000 => 0xfffff000,
@@ -59,8 +59,8 @@ impl InstructionFormat for FormatS {
     }
 
     fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
-        state.rs1 = normalize_register_value(cpu.x[self.rs1], &cpu.xlen);
-        state.rs2 = normalize_register_value(cpu.x[self.rs2], &cpu.xlen);
+        state.rs1 = normalize_register_value(cpu.x[self.rs1 as usize], &cpu.xlen);
+        state.rs2 = normalize_register_value(cpu.x[self.rs2 as usize], &cpu.xlen);
     }
 
     fn capture_post_execution_state(&self, _: &mut Self::RegisterState, _: &mut Cpu) {
@@ -69,18 +69,30 @@ impl InstructionFormat for FormatS {
 
     fn random(rng: &mut StdRng) -> Self {
         Self {
-            rs1: (rng.next_u64() % REGISTER_COUNT) as usize,
-            rs2: (rng.next_u64() % REGISTER_COUNT) as usize,
+            rs1: (rng.next_u64() as u8 % REGISTER_COUNT),
+            rs2: (rng.next_u64() as u8 % REGISTER_COUNT),
             imm: rng.next_u64() as i64,
         }
     }
+}
 
-    fn normalize(&self) -> NormalizedOperands {
-        NormalizedOperands {
-            rs1: self.rs1,
-            rs2: self.rs2,
+impl From<NormalizedOperands> for FormatS {
+    fn from(operands: NormalizedOperands) -> Self {
+        Self {
+            rs1: operands.rs1,
+            rs2: operands.rs2,
+            imm: operands.imm as i64,
+        }
+    }
+}
+
+impl From<FormatS> for NormalizedOperands {
+    fn from(format: FormatS) -> Self {
+        Self {
+            rs1: format.rs1,
+            rs2: format.rs2,
+            imm: format.imm as i128,
             rd: 0,
-            imm: self.imm as i128,
         }
     }
 }

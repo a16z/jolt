@@ -1,4 +1,5 @@
 #![allow(clippy::upper_case_acronyms)]
+
 use add::ADD;
 use addi::ADDI;
 use addiw::ADDIW;
@@ -93,10 +94,6 @@ use sw::SW;
 use xor::XOR;
 use xori::XORI;
 
-use inline_keccak256::keccak256::KECCAK256;
-use inline_sha256::sha256::SHA256;
-use inline_sha256::sha256init::SHA256INIT;
-
 use virtual_advice::VirtualAdvice;
 use virtual_assert_eq::VirtualAssertEQ;
 use virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment;
@@ -117,6 +114,7 @@ use virtual_pow2_w::VirtualPow2W;
 use virtual_pow2i::VirtualPow2I;
 use virtual_pow2i_w::VirtualPow2IW;
 use virtual_rotri::VirtualROTRI;
+use virtual_rotriw::VirtualROTRIW;
 use virtual_shift_right_bitmask::VirtualShiftRightBitmask;
 use virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI;
 use virtual_sign_extend::VirtualSignExtend;
@@ -126,13 +124,15 @@ use virtual_srl::VirtualSRL;
 use virtual_srli::VirtualSRLI;
 use virtual_sw::VirtualSW;
 
+use self::inline::INLINE;
+
 use crate::emulator::cpu::{Cpu, Xlen};
 use derive_more::From;
 use format::{InstructionFormat, InstructionRegisterState, NormalizedOperands};
 
 pub mod format;
 
-pub mod instruction_macros;
+pub use crate::utils::instruction_macros;
 
 pub(super) mod amo;
 
@@ -170,10 +170,11 @@ pub mod bltu;
 pub mod bne;
 pub mod div;
 pub mod divu;
+pub mod divuw;
+pub mod divw;
 pub mod ecall;
 pub mod fence;
-pub mod inline_keccak256;
-pub mod inline_sha256;
+pub mod inline;
 pub mod jal;
 pub mod jalr;
 pub mod lb;
@@ -190,10 +191,13 @@ pub mod mul;
 pub mod mulh;
 pub mod mulhsu;
 pub mod mulhu;
+pub mod mulw;
 pub mod or;
 pub mod ori;
 pub mod rem;
 pub mod remu;
+pub mod remuw;
+pub mod remw;
 pub mod sb;
 pub mod scd;
 pub mod scw;
@@ -238,6 +242,7 @@ pub mod virtual_pow2_w;
 pub mod virtual_pow2i;
 pub mod virtual_pow2i_w;
 pub mod virtual_rotri;
+pub mod virtual_rotriw;
 pub mod virtual_shift_right_bitmask;
 pub mod virtual_shift_right_bitmaski;
 pub mod virtual_sign_extend;
@@ -248,12 +253,6 @@ pub mod virtual_srli;
 pub mod virtual_sw;
 pub mod xor;
 pub mod xori;
-
-pub mod divuw;
-pub mod divw;
-pub mod mulw;
-pub mod remuw;
-pub mod remw;
 
 #[cfg(test)]
 pub mod test;
@@ -271,16 +270,9 @@ pub struct RAMWrite {
     pub post_value: u64,
 }
 
-#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RAMAtomic {
-    pub read: RAMRead,
-    pub write: RAMWrite,
-}
-
 pub enum RAMAccess {
     Read(RAMRead),
     Write(RAMWrite),
-    Atomic(RAMAtomic),
     NoOp,
 }
 
@@ -290,7 +282,6 @@ impl RAMAccess {
             RAMAccess::Read(read) => read.address as usize,
             RAMAccess::Write(write) => write.address as usize,
             RAMAccess::NoOp => 0,
-            RAMAccess::Atomic(atomic) => atomic.read.address as usize,
         }
     }
 }
@@ -313,20 +304,22 @@ impl From<()> for RAMAccess {
     }
 }
 
-impl From<RAMAtomic> for RAMAccess {
-    fn from(atomic: RAMAtomic) -> Self {
-        Self::Atomic(atomic)
-    }
-}
-
 #[derive(Default)]
 pub struct NormalizedInstruction {
     pub address: usize,
     pub operands: NormalizedOperands,
-    pub virtual_sequence_remaining: Option<usize>,
+    pub inline_sequence_remaining: Option<u16>,
+    pub is_compressed: bool,
 }
 
-pub trait RISCVInstruction: std::fmt::Debug + Sized + Copy + Into<RV32IMInstruction> {
+pub trait RISCVInstruction:
+    std::fmt::Debug
+    + Sized
+    + Copy
+    + Into<RV32IMInstruction>
+    + From<NormalizedInstruction>
+    + Into<NormalizedInstruction>
+{
     const MASK: u32;
     const MATCH: u32;
 
@@ -361,10 +354,14 @@ where
             trace_vec.push(cycle.into());
         }
     }
-}
-
-pub trait VirtualInstructionSequence: RISCVInstruction {
-    fn virtual_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction>;
+    // Default implementation. Instructions with inline sequences will override this.
+    // This allows other modules (e.g. inline_helpers) to call this method on all instructions.
+    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction>
+// where
+    //     Self: Into<RV32IMInstruction>,
+    {
+        vec![(*self).into()]
+    }
 }
 
 macro_rules! define_rv32im_enums {
@@ -379,6 +376,8 @@ macro_rules! define_rv32im_enums {
             $(
                 $instr($instr),
             )*
+            /// Inline instruction from external crates
+            INLINE(INLINE),
         }
 
         #[derive(
@@ -390,6 +389,7 @@ macro_rules! define_rv32im_enums {
             $(
                 $instr(RISCVCycle<$instr>),
             )*
+            INLINE(RISCVCycle<INLINE>),
         }
 
         impl RV32IMCycle {
@@ -399,43 +399,57 @@ macro_rules! define_rv32im_enums {
                     $(
                         RV32IMCycle::$instr(cycle) => cycle.ram_access.into(),
                     )*
+                    RV32IMCycle::INLINE(cycle) => cycle.ram_access.into(),
                 }
             }
 
-            pub fn rs1_read(&self) -> (usize, u64) {
+            pub fn rs1_read(&self) -> (u8, u64) {
                 match self {
                     RV32IMCycle::NoOp => (0, 0),
                     $(
                         RV32IMCycle::$instr(cycle) => (
-                            cycle.instruction.operands.normalize().rs1,
+                            NormalizedOperands::from(cycle.instruction.operands).rs1,
                             cycle.register_state.rs1_value(),
                         ),
                     )*
+                    RV32IMCycle::INLINE(cycle) => (
+                        cycle.instruction.operands.rs1,
+                        cycle.register_state.rs1_value(),
+                    ),
                 }
             }
 
-            pub fn rs2_read(&self) -> (usize, u64) {
+            pub fn rs2_read(&self) -> (u8, u64) {
                 match self {
                     RV32IMCycle::NoOp => (0, 0),
                     $(
                         RV32IMCycle::$instr(cycle) => (
-                            cycle.instruction.operands.normalize().rs2,
+                            NormalizedOperands::from(cycle.instruction.operands).rs2,
                             cycle.register_state.rs2_value(),
                         ),
                     )*
+                    RV32IMCycle::INLINE(cycle) => (
+                        cycle.instruction.operands.rs2,
+                        cycle.register_state.rs2_value(),
+                    ),
                 }
             }
 
-            pub fn rd_write(&self) -> (usize, u64, u64) {
+            pub fn rd_write(&self) -> (u8, u64, u64) {
                 match self {
                     RV32IMCycle::NoOp => (0, 0, 0),
                     $(
                         RV32IMCycle::$instr(cycle) => (
-                            cycle.instruction.operands.normalize().rd,
+                            NormalizedOperands::from(cycle.instruction.operands).rd,
                             cycle.register_state.rd_values().0,
                             cycle.register_state.rd_values().1,
                         ),
                     )*
+                    RV32IMCycle::INLINE(cycle) => (
+                        cycle.instruction.operands.rd,
+                        cycle.register_state.rd_values().0,
+                        cycle.register_state.rd_values().1,
+                    ),
                 }
             }
 
@@ -445,6 +459,7 @@ macro_rules! define_rv32im_enums {
                     $(
                         RV32IMCycle::$instr(cycle) => cycle.instruction.into(),
                     )*
+                    RV32IMCycle::INLINE(cycle) => cycle.instruction.into(),
                 }
             }
         }
@@ -457,6 +472,7 @@ macro_rules! define_rv32im_enums {
                     $(
                         RV32IMInstruction::$instr(instr) => instr.trace(cpu, trace),
                     )*
+                    RV32IMInstruction::INLINE(instr) => instr.trace(cpu, trace),
                 }
             }
 
@@ -474,30 +490,63 @@ macro_rules! define_rv32im_enums {
                             instr.execute(cpu, &mut cycle.ram_access);
                         }
                     )*
+                    RV32IMInstruction::INLINE(instr) => {
+                        let mut cycle: RISCVCycle<INLINE> = RISCVCycle {
+                            instruction: *instr,
+                            register_state: Default::default(),
+                            ram_access: Default::default(),
+                        };
+                        instr.execute(cpu, &mut cycle.ram_access);
+                    }
                 }
             }
 
             pub fn normalize(&self) -> NormalizedInstruction {
+                self.into()
+            }
+
+            pub fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
                 match self {
+                    RV32IMInstruction::NoOp => vec![],
+                    RV32IMInstruction::UNIMPL => vec![],
+                    $(
+                        RV32IMInstruction::$instr(instr) => instr.inline_sequence(xlen),
+                    )*
+                    RV32IMInstruction::INLINE(instr) => instr.inline_sequence(xlen),
+                }
+            }
+
+            pub fn set_inline_sequence_remaining(&mut self, remaining: Option<u16>) {
+                match self {
+                    RV32IMInstruction::NoOp => (),
+                    RV32IMInstruction::UNIMPL => (),
+                    $(
+                        RV32IMInstruction::$instr(instr) => {instr.inline_sequence_remaining = remaining;}
+                    )*
+                    RV32IMInstruction::INLINE(instr) => {instr.inline_sequence_remaining = remaining;}
+                }
+            }
+        }
+
+        impl From<&RV32IMInstruction> for NormalizedInstruction {
+            fn from(instr: &RV32IMInstruction) -> Self {
+                match instr {
                     RV32IMInstruction::NoOp => Default::default(),
                     RV32IMInstruction::UNIMPL => Default::default(),
                     $(
                         RV32IMInstruction::$instr(instr) => NormalizedInstruction {
                             address: instr.address as usize,
-                            operands: instr.operands.normalize(),
-                            virtual_sequence_remaining: instr.virtual_sequence_remaining,
+                            operands: instr.operands.into(),
+                            inline_sequence_remaining: instr.inline_sequence_remaining,
+                            is_compressed: instr.is_compressed,
                         },
                     )*
-                }
-            }
-
-            pub fn set_virtual_sequence_remaining(&mut self, remaining: Option<usize>) {
-                match self {
-                    RV32IMInstruction::NoOp => (),
-                    RV32IMInstruction::UNIMPL => (),
-                    $(
-                        RV32IMInstruction::$instr(instr) => {instr.virtual_sequence_remaining = remaining;}
-                    )*
+                    RV32IMInstruction::INLINE(instr) => NormalizedInstruction {
+                        address: instr.address as usize,
+                        operands: instr.operands.into(),
+                        inline_sequence_remaining: instr.inline_sequence_remaining,
+                        is_compressed: instr.is_compressed,
+                    },
                 }
             }
         }
@@ -524,11 +573,9 @@ define_rv32im_enums! {
         VirtualChangeDivisor, VirtualChangeDivisorW, VirtualLW,VirtualSW,VirtualExtend,
         VirtualSignExtend,VirtualPow2W, VirtualPow2IW,
         VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I, VirtualROTRI,
+        VirtualROTRIW,
         VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
-        // Extension
-        SHA256, SHA256INIT,
-        KECCAK256,
     ]
 }
 
@@ -584,9 +631,9 @@ impl RV32IMInstruction {
             return false;
         }
 
-        match self.normalize().virtual_sequence_remaining {
+        match self.normalize().inline_sequence_remaining {
             None => true,     // ordinary instruction
-            Some(0) => true,  // "anchor" of a virtual sequence
+            Some(0) => true,  // "anchor" of a inline sequence
             Some(_) => false, // helper within the sequence
         }
     }
@@ -809,36 +856,16 @@ impl RV32IMInstruction {
                     Err("Unsupported SYSTEM instruction")
                 }
             }
-            // 0x0B is reserved for RISC-V extension
+            // 0x0B is reserved for inlines supported by Jolt in jolt-inlines crate.
             // In attempt to standardize this space for precompiles and inlines,
             // each new type of operation should be placed under different funct7,
             // while funct3 should hold all necessary instructions for that operation.
             // funct7:
             // - 0x00: SHA256
-            // - 0x01: Keccak
-            0b0001011 => {
-                // Custom-0 opcode: SHA256 compression instructions
-                let funct3 = (instr >> 12) & 0x7;
-                let funct7 = (instr >> 25) & 0x7f;
-                match funct7 {
-                    0x00 => {
-                        // SHA256
-                        match funct3 {
-                            0x0 => Ok(SHA256::new(instr, address, true, compressed).into()),
-                            0x1 => Ok(SHA256INIT::new(instr, address, true, compressed).into()),
-                            _ => Err("Unknown funct3 for custom SHA256 instruction"),
-                        }
-                    }
-                    0x01 => {
-                        // Keccak
-                        match funct3 {
-                            0x0 => Ok(KECCAK256::new(instr, address, true, compressed).into()),
-                            _ => Err("Unknown funct3 for custom Keccak instruction"),
-                        }
-                    }
-                    _ => Err("Unknown funct7 for custom-0 opcode"),
-                }
-            }
+            // - 0x01: Keccak256
+            0b0001011 => Ok(INLINE::new(instr, address, false, compressed).into()),
+            // 0x2B is reserved for external inlines
+            0b0101011 => Ok(INLINE::new(instr, address, false, compressed).into()),
             _ => Err("Unknown opcode"),
         }
     }
@@ -1437,5 +1464,21 @@ impl<T: RISCVInstruction> RISCVCycle<T> {
             ram_access: Default::default(),
             register_state,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    // Check that the size of RV32IMCycle is as expected.
+    fn rv32im_cycle_size() {
+        let size = size_of::<RV32IMCycle>();
+        let expected = 80;
+        assert_eq!(
+            size, expected,
+            "RV32IMCycle size should be {expected} bytes, but is {size} bytes"
+        );
     }
 }
