@@ -70,7 +70,7 @@ jobs:
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Run jolt-core tests
-        run: cargo nextest run --release -p jolt-core --no-fail-fast
+        run: cargo nextest run --release -p jolt-core
 
   typos:
     runs-on: ubuntu-latest
@@ -119,7 +119,7 @@ jobs:
         run: |
           set -euo pipefail
           for pkg in ${{ steps.discover_inlines.outputs.pkgs }}; do
-            cargo nextest run --no-fail-fast --features host -p "$pkg"
+            cargo nextest run --features host -p "$pkg"
           done
 
   test-verifier:
@@ -138,7 +138,7 @@ jobs:
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Run verifier tests
-        run: cargo nextest run --release -p jolt-verifier --no-fail-fast
+        run: cargo nextest run --release -p jolt-verifier
 
 
   test-tracer:
@@ -157,7 +157,7 @@ jobs:
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Run tracer tests
-        run: cargo nextest run --release -p tracer --no-fail-fast
+        run: cargo nextest run --release -p tracer
 
   # zklean-extractor-tests:
   #   name: ZkLean extractor tests
