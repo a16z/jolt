@@ -132,7 +132,7 @@ use format::{InstructionFormat, InstructionRegisterState, NormalizedOperands};
 
 pub mod format;
 
-pub mod instruction_macros;
+pub use crate::utils::instruction_macros;
 
 pub(super) mod amo;
 
