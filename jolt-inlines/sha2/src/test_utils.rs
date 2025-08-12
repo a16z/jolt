@@ -107,6 +107,11 @@ impl Sha256CpuHarness {
             is_compressed: false,
         }
     }
+
+    /// Execute an inline sequence of instructions.
+    pub fn execute_inline_sequence(&mut self, sequence: &[tracer::instruction::RV32IMInstruction]) {
+        self.harness.execute_inline_sequence(sequence);
+    }
 }
 
 /// SHA-256-specific helpers for assertions.
