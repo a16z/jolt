@@ -102,11 +102,11 @@ mod exec_trace_equivalence {
     use crate::test_utils::{sverify, Sha256CpuHarness};
     use tracer::emulator::cpu::Xlen;
     use tracer::emulator::test_harness::CpuTestHarness;
-    use tracer::inline_helpers::virtual_register_index;
-    use tracer::inline_helpers::{
+    use tracer::utils::inline_helpers::{
         InstrAssembler,
         Value::{Imm, Reg},
     };
+    use tracer::utils::virtual_registers::{allocate_virtual_register, VirtualRegisterGuard};
 
     #[test]
     fn test_sha256_exec_trace_equal() {
@@ -161,7 +161,9 @@ mod exec_trace_equivalence {
                 h.set_memory32(block_addr, &block);
                 h.set_memory32(state_addr, &initial_state);
 
-                let vr: [u8; 32] = core::array::from_fn(|i| virtual_register_index(i as u8));
+                let guards: [VirtualRegisterGuard; 32] =
+                    core::array::from_fn(|_| allocate_virtual_register());
+                let vr: [u8; 32] = core::array::from_fn(|i| *guards[i]);
                 let seq =
                     sha2_build_up_to_step(0, false, Xlen::Bit64, vr, rs1, rs2, t, "after_round");
                 h.execute_inline_sequence(&seq);
@@ -233,19 +235,19 @@ mod exec_unit {
     use super::helpers::*;
     use tracer::emulator::cpu::Xlen;
     use tracer::emulator::test_harness::CpuTestHarness;
-    use tracer::inline_helpers::virtual_register_index;
-    use tracer::inline_helpers::{
+    use tracer::utils::inline_helpers::{
         InstrAssembler,
         Value::{Imm, Reg},
     };
+    use tracer::utils::virtual_registers::allocate_virtual_register;
 
     #[test]
     fn test_sha256_sigma_word_functions_rv64() {
         let mut harness = CpuTestHarness::new();
         let rs1 = 5u8;
-        let out = virtual_register_index(0);
-        let scratch1 = virtual_register_index(1);
-        let scratch2 = virtual_register_index(2);
+        let out = allocate_virtual_register();
+        let scratch1 = allocate_virtual_register();
+        let scratch2 = allocate_virtual_register();
 
         for seed in [
             0u32,
@@ -259,42 +261,42 @@ mod exec_unit {
             harness.cpu.x[rs1 as usize] = seed as i32 as i64;
 
             let mut asm = InstrAssembler::new(0, false, Xlen::Bit64);
-            let _ = asm.rotri32(Reg(rs1), 7, out);
+            let _ = asm.rotri32(Reg(rs1), 7, *out);
             let seq = asm.finalize();
             harness.execute_inline_sequence(&seq);
-            let rotr7 = harness.cpu.x[out as usize] as u32;
+            let rotr7 = harness.cpu.x[*out as usize] as u32;
             assert_eq!(rotr7, seed.rotate_right(7), "rotr7 for {seed:#010x}");
 
             let mut asm = InstrAssembler::new(0, false, Xlen::Bit64);
-            let _ = asm.rotri32(Reg(rs1), 18, out);
+            let _ = asm.rotri32(Reg(rs1), 18, *out);
             let seq = asm.finalize();
             harness.execute_inline_sequence(&seq);
-            let rotr18 = harness.cpu.x[out as usize] as u32;
+            let rotr18 = harness.cpu.x[*out as usize] as u32;
             assert_eq!(rotr18, seed.rotate_right(18), "rotr18 for {seed:#010x}");
 
             let mut asm = InstrAssembler::new(0, false, Xlen::Bit64);
-            let _ = asm.srli(Reg(rs1), 3, out);
+            let _ = asm.srli(Reg(rs1), 3, *out);
             let seq = asm.finalize();
             harness.execute_inline_sequence(&seq);
-            let shr3 = harness.cpu.x[out as usize] as u32;
+            let shr3 = harness.cpu.x[*out as usize] as u32;
             assert_eq!(shr3, seed >> 3, "shr3 for {seed:#010x}");
 
             let mut asm = InstrAssembler::new(0, false, Xlen::Bit64);
-            let r = asm.rotri_xor_rotri32(Reg(rs1), 7, 18, out, scratch1);
-            let s = asm.srli(Reg(rs1), 3, scratch2);
-            let _o = asm.xor(r, s, out);
+            let r = asm.rotri_xor_rotri32(Reg(rs1), 7, 18, *out, *scratch1);
+            let s = asm.srli(Reg(rs1), 3, *scratch2);
+            let _o = asm.xor(r, s, *out);
             let seq = asm.finalize();
             harness.execute_inline_sequence(&seq);
-            let got = harness.cpu.x[out as usize] as u32;
+            let got = harness.cpu.x[*out as usize] as u32;
             assert_eq!(got, s0_word(seed), "σ0 mismatch for {seed:#010x}");
 
             let mut asm = InstrAssembler::new(0, false, Xlen::Bit64);
-            let r = asm.rotri_xor_rotri32(Reg(rs1), 17, 19, out, scratch1);
-            let s = asm.srli(Reg(rs1), 10, scratch2);
-            let _o = asm.xor(r, s, out);
+            let r = asm.rotri_xor_rotri32(Reg(rs1), 17, 19, *out, *scratch1);
+            let s = asm.srli(Reg(rs1), 10, *scratch2);
+            let _o = asm.xor(r, s, *out);
             let seq = asm.finalize();
             harness.execute_inline_sequence(&seq);
-            let got = harness.cpu.x[out as usize] as u32;
+            let got = harness.cpu.x[*out as usize] as u32;
             assert_eq!(got, s1_word(seed), "σ1 mismatch for {seed:#010x}");
         }
     }
@@ -303,29 +305,29 @@ mod exec_unit {
     fn test_sha256_sigma_compression_functions_rv64() {
         let mut harness = CpuTestHarness::new();
         let rs1 = 6u8;
-        let out = virtual_register_index(3);
-        let scratch1 = virtual_register_index(4);
-        let scratch2 = virtual_register_index(5);
+        let out = allocate_virtual_register();
+        let scratch1 = allocate_virtual_register();
+        let scratch2 = allocate_virtual_register();
 
         for seed in [0u32, 1, 0xDEAD_BEEF, 0x0123_4567, 0x89AB_CDEF, 0x8000_0001] {
             harness.cpu.x[rs1 as usize] = seed as i32 as i64;
 
             let mut asm = InstrAssembler::new(0, false, Xlen::Bit64);
-            let _r = asm.rotri_xor_rotri32(Reg(rs1), 2, 13, out, scratch1);
-            let _s = asm.rotri32(Reg(rs1), 22, scratch2);
-            let _o = asm.xor(Reg(out), Reg(scratch2), out);
+            let _r = asm.rotri_xor_rotri32(Reg(rs1), 2, 13, *out, *scratch1);
+            let _s = asm.rotri32(Reg(rs1), 22, *scratch2);
+            let _o = asm.xor(Reg(*out), Reg(*scratch2), *out);
             let seq = asm.finalize();
             harness.execute_inline_sequence(&seq);
-            let got = harness.cpu.x[out as usize] as u32;
+            let got = harness.cpu.x[*out as usize] as u32;
             assert_eq!(got, s0_big(seed), "Σ0 mismatch for {seed:#010x}");
 
             let mut asm = InstrAssembler::new(0, false, Xlen::Bit64);
-            let _r = asm.rotri_xor_rotri32(Reg(rs1), 6, 11, out, scratch1);
-            let _s = asm.rotri32(Reg(rs1), 25, scratch2);
-            let _o = asm.xor(Reg(out), Reg(scratch2), out);
+            let _r = asm.rotri_xor_rotri32(Reg(rs1), 6, 11, *out, *scratch1);
+            let _s = asm.rotri32(Reg(rs1), 25, *scratch2);
+            let _o = asm.xor(Reg(*out), Reg(*scratch2), *out);
             let seq = asm.finalize();
             harness.execute_inline_sequence(&seq);
-            let got = harness.cpu.x[out as usize] as u32;
+            let got = harness.cpu.x[*out as usize] as u32;
             assert_eq!(got, s1_big(seed), "Σ1 mismatch for {seed:#010x}");
         }
     }
@@ -376,44 +378,44 @@ mod exec_unit {
                 harness.cpu.x[reg as usize] = val as i32 as i64;
             }
 
-            let v_t1 = virtual_register_index(20);
-            let v_t2 = virtual_register_index(21);
-            let v_ss1 = virtual_register_index(22);
-            let v_ss2 = virtual_register_index(23);
+            let v_t1 = allocate_virtual_register();
+            let v_t2 = allocate_virtual_register();
+            let v_ss1 = allocate_virtual_register();
+            let v_ss2 = allocate_virtual_register();
 
             let mut asm = InstrAssembler::new(0, false, Xlen::Bit64);
             let s1e = {
-                let r = asm.rotri_xor_rotri32(Reg(re), 6, 11, v_ss1, v_ss2);
-                let s = asm.rotri32(Reg(re), 25, v_ss2);
-                asm.xor(r, s, v_ss1)
+                let r = asm.rotri_xor_rotri32(Reg(re), 6, 11, *v_ss1, *v_ss2);
+                let s = asm.rotri32(Reg(re), 25, *v_ss2);
+                asm.xor(r, s, *v_ss1)
             };
             let chefg = {
-                let e_and_f = asm.and(Reg(re), Reg(rf), v_ss2);
-                asm.emit_r::<tracer::instruction::andn::ANDN>(v_ss1, rg, re);
-                let neg_e_and_g = Reg(v_ss1);
-                asm.xor(e_and_f, neg_e_and_g, v_ss1)
+                let e_and_f = asm.and(Reg(re), Reg(rf), *v_ss2);
+                asm.emit_r::<tracer::instruction::andn::ANDN>(*v_ss1, rg, re);
+                let neg_e_and_g = Reg(*v_ss1);
+                asm.xor(e_and_f, neg_e_and_g, *v_ss1)
             };
-            let hk = asm.add(Imm(K[t] as u64), Reg(rh), v_t1);
-            let t1a = asm.add(hk, s1e, v_t1);
-            let t1b = asm.add(t1a, chefg, v_t1);
-            let _t1 = asm.add(t1b, Reg(rw), v_t1);
+            let hk = asm.add(Imm(K[t] as u64), Reg(rh), *v_t1);
+            let t1a = asm.add(hk, s1e, *v_t1);
+            let t1b = asm.add(t1a, chefg, *v_t1);
+            let _t1 = asm.add(t1b, Reg(rw), *v_t1);
             let s0a = {
-                let r = asm.rotri_xor_rotri32(Reg(ra), 2, 13, v_ss1, v_ss2);
-                let s = asm.rotri32(Reg(ra), 22, v_ss2);
-                asm.xor(r, s, v_ss1)
+                let r = asm.rotri_xor_rotri32(Reg(ra), 2, 13, *v_ss1, *v_ss2);
+                let s = asm.rotri32(Reg(ra), 22, *v_ss2);
+                asm.xor(r, s, *v_ss1)
             };
             let majabc = {
-                let b_and_c = asm.and(Reg(rb), Reg(rc), v_ss2);
-                let b_xor_c = asm.xor(Reg(rb), Reg(rc), v_ss1);
-                let a_and_bxor_c = asm.and(Reg(ra), b_xor_c, v_ss1);
-                asm.xor(b_and_c, a_and_bxor_c, v_ss1)
+                let b_and_c = asm.and(Reg(rb), Reg(rc), *v_ss2);
+                let b_xor_c = asm.xor(Reg(rb), Reg(rc), *v_ss1);
+                let a_and_bxor_c = asm.and(Reg(ra), b_xor_c, *v_ss1);
+                asm.xor(b_and_c, a_and_bxor_c, *v_ss1)
             };
-            let _t2 = asm.add(s0a, majabc, v_t2);
+            let _t2 = asm.add(s0a, majabc, *v_t2);
 
             let seq = asm.finalize();
             harness.execute_inline_sequence(&seq);
-            let got_t1 = harness.cpu.x[v_t1 as usize] as u32;
-            let got_t2 = harness.cpu.x[v_t2 as usize] as u32;
+            let got_t1 = harness.cpu.x[*v_t1 as usize] as u32;
+            let got_t2 = harness.cpu.x[*v_t2 as usize] as u32;
 
             let ch = |e: u32, f: u32, g: u32| (e & f) ^ ((!e) & g);
             let maj = |a: u32, b: u32, c: u32| (a & b) ^ (a & c) ^ (b & c);
@@ -434,23 +436,23 @@ mod debugging_tests {
     use crate::test_constants::TestVectors;
     use tracer::emulator::cpu::Xlen;
     use tracer::emulator::test_harness::CpuTestHarness;
-    use tracer::inline_helpers::virtual_register_index;
-    use tracer::inline_helpers::{
+    use tracer::utils::inline_helpers::{
         InstrAssembler,
         Value::{Imm, Reg},
     };
+    use tracer::utils::virtual_registers::allocate_virtual_register;
 
     #[test]
     fn test_rotri32_rv64_basic() {
         let mut h = CpuTestHarness::new();
         let rs1 = 7u8;
-        let out = virtual_register_index(30);
+        let out = allocate_virtual_register();
         let mut asm = InstrAssembler::new(0, false, Xlen::Bit64);
         h.cpu.x[rs1 as usize] = 1;
-        let _r = asm.rotri32(Reg(rs1), 7, out);
+        let _r = asm.rotri32(Reg(rs1), 7, *out);
         let seq = asm.finalize();
         h.execute_inline_sequence(&seq);
-        let got = h.cpu.x[out as usize] as u32;
+        let got = h.cpu.x[*out as usize] as u32;
         assert_eq!(got, 1u32.rotate_right(7));
     }
 
@@ -458,14 +460,14 @@ mod debugging_tests {
     fn test_rotri_xor_rotri32_rv64() {
         let mut h = CpuTestHarness::new();
         let rs1 = 8u8;
-        let out = virtual_register_index(10);
-        let scratch = virtual_register_index(11);
+        let out = allocate_virtual_register();
+        let scratch = allocate_virtual_register();
         h.cpu.x[rs1 as usize] = 1;
         let mut asm = InstrAssembler::new(0, false, Xlen::Bit64);
-        let _v = asm.rotri_xor_rotri32(Reg(rs1), 7, 18, out, scratch);
+        let _v = asm.rotri_xor_rotri32(Reg(rs1), 7, 18, *out, *scratch);
         let seq = asm.finalize();
         h.execute_inline_sequence(&seq);
-        let got = h.cpu.x[out as usize] as u32;
+        let got = h.cpu.x[*out as usize] as u32;
         let expected = 1u32.rotate_right(7) ^ 1u32.rotate_right(18);
         assert_eq!(got, expected, "rotri_xor_rotri32 mismatch");
     }
@@ -473,6 +475,7 @@ mod debugging_tests {
     #[test]
     fn test_sha256_build_up_to_step_t1_t2_rv64() {
         use crate::trace_generator::{sha2_build_up_to_step, K};
+        use tracer::utils::virtual_registers::{allocate_virtual_register, VirtualRegisterGuard};
         let mut h = CpuTestHarness::new();
         let block_addr = tracer::emulator::mmu::DRAM_BASE;
         let state_addr = block_addr + 64;
@@ -485,11 +488,13 @@ mod debugging_tests {
         h.set_memory32(block_addr, &block);
         h.set_memory32(state_addr, &iv);
         for t in 0..3usize {
-            let vr = core::array::from_fn(|i| virtual_register_index(i as u8));
+            let guards: [VirtualRegisterGuard; 32] =
+                core::array::from_fn(|_| allocate_virtual_register());
+            let vr: [u8; 32] = core::array::from_fn(|i| *guards[i]);
             let seq = sha2_build_up_to_step(0, false, Xlen::Bit64, vr, rs1, rs2, t, "t1_t2");
             h.execute_inline_sequence(&seq);
-            let t1 = h.cpu.x[virtual_register_index(24) as usize] as u32;
-            let t2 = h.cpu.x[virtual_register_index(25) as usize] as u32;
+            let t1 = h.cpu.x[vr[24] as usize] as u32;
+            let t2 = h.cpu.x[vr[25] as usize] as u32;
             let mut a = iv[0];
             let mut b = iv[1];
             let mut c = iv[2];
@@ -536,6 +541,7 @@ mod debugging_tests {
     #[test]
     fn test_sha256_build_up_to_step_after_round_rv64() {
         use crate::trace_generator::sha2_build_up_to_step;
+        use tracer::utils::virtual_registers::{allocate_virtual_register, VirtualRegisterGuard};
         let mut h_exec = CpuTestHarness::new();
         let mut h_trace = CpuTestHarness::new();
         let block_addr = tracer::emulator::mmu::DRAM_BASE;
@@ -565,7 +571,9 @@ mod debugging_tests {
         }
 
         for t in 0..2usize {
-            let vr = core::array::from_fn(|i| virtual_register_index(i as u8));
+            let guards: [VirtualRegisterGuard; 32] =
+                core::array::from_fn(|_| allocate_virtual_register());
+            let vr: [u8; 32] = core::array::from_fn(|i| *guards[i]);
             let seq = sha2_build_up_to_step(0, false, Xlen::Bit64, vr, rs1, rs2, t, "after_round");
             h_trace.execute_inline_sequence(&seq);
 
@@ -620,6 +628,7 @@ mod debugging_tests {
     #[test]
     fn test_sha256_t1_components_round0_rv64() {
         use crate::trace_generator::K;
+        use tracer::utils::virtual_registers::{allocate_virtual_register, VirtualRegisterGuard};
         let mut h = CpuTestHarness::new();
         let ra = 10u8;
         let rb = 11u8;
@@ -629,9 +638,12 @@ mod debugging_tests {
         let rf = 15u8;
         let rg = 16u8;
         let rh = 17u8;
-        let v_out = virtual_register_index(20);
-        let v_s1 = virtual_register_index(21);
-        let v_tmp = virtual_register_index(22);
+        let v_out_guard = allocate_virtual_register();
+        let v_s1_guard = allocate_virtual_register();
+        let v_tmp_guard = allocate_virtual_register();
+        let v_out = *v_out_guard;
+        let v_s1 = *v_s1_guard;
+        let v_tmp = *v_tmp_guard;
         let iv = crate::trace_generator::BLOCK.map(|x| x as u32);
         let (a, b, c, d, e, f, g, hh) = (iv[0], iv[1], iv[2], iv[3], iv[4], iv[5], iv[6], iv[7]);
         for (reg, val) in [
@@ -678,6 +690,7 @@ mod debugging_tests {
     #[test]
     fn test_sha256_t1_components_round1_rv64() {
         use crate::trace_generator::{sha2_build_up_to_step, K};
+        use tracer::utils::virtual_registers::{allocate_virtual_register, VirtualRegisterGuard};
         let mut h = CpuTestHarness::new();
         let block_addr = tracer::emulator::mmu::DRAM_BASE;
         let state_addr = block_addr + 64;
@@ -690,7 +703,9 @@ mod debugging_tests {
         h.set_memory32(block_addr, &block);
         h.set_memory32(state_addr, &iv);
 
-        let vr = core::array::from_fn(|i| virtual_register_index(i as u8));
+        let guards: [VirtualRegisterGuard; 32] =
+            core::array::from_fn(|_| allocate_virtual_register());
+        let vr: [u8; 32] = core::array::from_fn(|i| *guards[i]);
         let seq = sha2_build_up_to_step(0, false, Xlen::Bit64, vr, rs1, rs2, 0, "after_round");
         h.execute_inline_sequence(&seq);
 
@@ -720,9 +735,12 @@ mod debugging_tests {
             regs[3] as u32,
         );
 
-        let v_out = virtual_register_index(60);
-        let v_tmp = virtual_register_index(61);
-        let v_tmp2 = virtual_register_index(62);
+        let v_out_guard = allocate_virtual_register();
+        let v_tmp_guard = allocate_virtual_register();
+        let v_tmp2_guard = allocate_virtual_register();
+        let v_out = *v_out_guard;
+        let v_tmp = *v_tmp_guard;
+        let v_tmp2 = *v_tmp2_guard;
 
         let mut asm = InstrAssembler::new(0, false, Xlen::Bit64);
         let r = asm.rotri_xor_rotri32(Reg(idx_e), 6, 11, v_tmp, v_tmp2);
@@ -758,6 +776,7 @@ mod debugging_tests {
     #[test]
     fn test_sha256_t1_terms_round1_rv64() {
         use crate::trace_generator::{sha2_build_up_to_step, K};
+        use tracer::utils::virtual_registers::{allocate_virtual_register, VirtualRegisterGuard};
         let mut h = CpuTestHarness::new();
         let block_addr = tracer::emulator::mmu::DRAM_BASE;
         let state_addr = block_addr + 64;
@@ -770,22 +789,16 @@ mod debugging_tests {
         h.set_memory32(block_addr, &block);
         h.set_memory32(state_addr, &iv);
 
-        let vr = core::array::from_fn(|i| virtual_register_index(i as u8));
+        let guards: [VirtualRegisterGuard; 32] =
+            core::array::from_fn(|_| allocate_virtual_register());
+        let vr: [u8; 32] = core::array::from_fn(|i| *guards[i]);
         let seq = sha2_build_up_to_step(0, false, Xlen::Bit64, vr, rs1, rs2, 0, "after_round");
         h.execute_inline_sequence(&seq);
         let seq = sha2_build_up_to_step(0, false, Xlen::Bit64, vr, rs1, rs2, 1, "t1_terms");
         h.execute_inline_sequence(&seq);
 
         let mut out = [0u64; 4];
-        h.read_registers(
-            &[
-                virtual_register_index(24),
-                virtual_register_index(25),
-                virtual_register_index(26),
-                virtual_register_index(27),
-            ],
-            &mut out,
-        );
+        h.read_registers(&[vr[24], vr[25], vr[26], vr[27]], &mut out);
         let (hk, s1e, chefg, wt) = (out[0] as u32, out[1] as u32, out[2] as u32, out[3] as u32);
 
         let mut a = iv[0];
@@ -827,6 +840,7 @@ mod debugging_tests {
     #[test]
     fn test_sha256_full_final_state_vr_vs_reference_rv64() {
         use crate::trace_generator::sha2_build_up_to_step;
+        use tracer::utils::virtual_registers::{allocate_virtual_register, VirtualRegisterGuard};
         let mut h = CpuTestHarness::new();
         let block_addr = tracer::emulator::mmu::DRAM_BASE;
         let state_addr = block_addr + 64;
@@ -839,7 +853,9 @@ mod debugging_tests {
         h.set_memory32(block_addr, &block);
         h.set_memory32(state_addr, &iv);
 
-        let vr = core::array::from_fn(|i| virtual_register_index(i as u8));
+        let guards: [VirtualRegisterGuard; 32] =
+            core::array::from_fn(|_| allocate_virtual_register());
+        let vr: [u8; 32] = core::array::from_fn(|i| *guards[i]);
         let seq = sha2_build_up_to_step(0, false, Xlen::Bit64, vr, rs1, rs2, 63, "final_state");
         h.execute_inline_sequence(&seq);
 
@@ -871,6 +887,7 @@ mod debugging_tests {
     #[test]
     fn test_sha256_pre_final_state_vr_vs_reference_rv64() {
         use crate::trace_generator::sha2_build_up_to_step;
+        use tracer::utils::virtual_registers::{allocate_virtual_register, VirtualRegisterGuard};
         let mut h = CpuTestHarness::new();
         let block_addr = tracer::emulator::mmu::DRAM_BASE;
         let state_addr = block_addr + 64;
@@ -883,7 +900,9 @@ mod debugging_tests {
         h.set_memory32(block_addr, &block);
         h.set_memory32(state_addr, &iv);
 
-        let vr = core::array::from_fn(|i| virtual_register_index(i as u8));
+        let guards: [VirtualRegisterGuard; 32] =
+            core::array::from_fn(|_| allocate_virtual_register());
+        let vr: [u8; 32] = core::array::from_fn(|i| *guards[i]);
         let seq = sha2_build_up_to_step(0, false, Xlen::Bit64, vr, rs1, rs2, 63, "after_round");
         h.execute_inline_sequence(&seq);
 
@@ -948,8 +967,11 @@ mod debugging_tests {
 
     #[test]
     fn test_sha256_final_add_iv_g_isolated_rv64() {
+        use tracer::utils::virtual_registers::{allocate_virtual_register, VirtualRegisterGuard};
         let mut h = CpuTestHarness::new();
-        let vr: [u8; 32] = core::array::from_fn(|i| virtual_register_index(i as u8));
+        let guards: [VirtualRegisterGuard; 32] =
+            core::array::from_fn(|_| allocate_virtual_register());
+        let vr: [u8; 32] = core::array::from_fn(|i| *guards[i]);
         let iv = crate::trace_generator::BLOCK.map(|x| x as u32);
         let block = [0u32; 16];
         let pre_final_state = compute_pre_final_state(iv, block);
@@ -972,21 +994,33 @@ mod debugging_tests {
     #[test]
     fn test_lw_rv64_no_clobber_saved_iv_regs() {
         use tracer::emulator::mmu::DRAM_BASE;
+        use tracer::utils::virtual_registers::{allocate_virtual_register, VirtualRegisterGuard};
         let mut h = CpuTestHarness::new();
         let base = DRAM_BASE;
         let words: [u32; 4] = [0x1111_1111, 0x2222_2222, 0x3333_3333, 0x4444_4444];
         h.set_memory32(base, &words);
         let rs1 = 5u8;
         h.cpu.x[rs1 as usize] = base as i64;
-        let vr28 = virtual_register_index(28);
-        let vr29 = virtual_register_index(29);
-        let vr30 = virtual_register_index(30);
-        let vr31 = virtual_register_index(31);
+        let vr28_guard = allocate_virtual_register();
+        let vr29_guard = allocate_virtual_register();
+        let vr30_guard = allocate_virtual_register();
+        let vr31_guard = allocate_virtual_register();
+        let vr28 = *vr28_guard;
+        let vr29 = *vr29_guard;
+        let vr30 = *vr30_guard;
+        let vr31 = *vr31_guard;
         h.cpu.x[vr28 as usize] = 0xA5A5_A5A5u32 as i32 as i64;
         h.cpu.x[vr29 as usize] = 0x5A5A_5A5Au32 as i32 as i64;
         h.cpu.x[vr30 as usize] = 0xDEAD_BEEFu32 as i32 as i64;
         h.cpu.x[vr31 as usize] = 0xFEED_FACEu32 as i32 as i64;
-        let rd_vrs = [24, 25, 26, 27].map(virtual_register_index);
+        let rd_vr_guards: [VirtualRegisterGuard; 4] =
+            core::array::from_fn(|_| allocate_virtual_register());
+        let rd_vrs = [
+            *rd_vr_guards[0],
+            *rd_vr_guards[1],
+            *rd_vr_guards[2],
+            *rd_vr_guards[3],
+        ];
         let mut asm = InstrAssembler::new(0, false, Xlen::Bit64);
         for (i, rd) in rd_vrs.iter().enumerate() {
             asm.emit_ld::<tracer::instruction::lw::LW>(*rd, rs1, (i as i64) * 4);
@@ -1002,17 +1036,21 @@ mod debugging_tests {
     #[test]
     fn test_lw_rv64_no_clobber_g_iv_reg_30() {
         use tracer::emulator::mmu::DRAM_BASE;
+        use tracer::utils::virtual_registers::{allocate_virtual_register, VirtualRegisterGuard};
         let mut h = CpuTestHarness::new();
         let base = DRAM_BASE + 0x100;
         let words: [u32; 2] = [0xABCDEF01, 0x10203040];
         h.set_memory32(base, &words);
         let rs1 = 6u8;
         h.cpu.x[rs1 as usize] = base as i64;
-        let vr30 = virtual_register_index(30);
+        let vr30_guard = allocate_virtual_register();
+        let vr30 = *vr30_guard;
         h.cpu.x[vr30 as usize] = 0xCAFEBABEu32 as i32 as i64;
+        let vr20_guard = allocate_virtual_register();
+        let vr21_guard = allocate_virtual_register();
         let mut asm = InstrAssembler::new(0, false, Xlen::Bit64);
-        asm.emit_ld::<tracer::instruction::lw::LW>(virtual_register_index(20), rs1, 0);
-        asm.emit_ld::<tracer::instruction::lw::LW>(virtual_register_index(21), rs1, 4);
+        asm.emit_ld::<tracer::instruction::lw::LW>(*vr20_guard, rs1, 0);
+        asm.emit_ld::<tracer::instruction::lw::LW>(*vr21_guard, rs1, 4);
         let seq = asm.finalize();
         h.execute_inline_sequence(&seq);
         assert_eq!(
@@ -1025,6 +1063,7 @@ mod debugging_tests {
     fn test_sha256_store_from_final_state_memory_rv64() {
         use crate::trace_generator::sha2_build_up_to_step;
         use tracer::emulator::mmu::DRAM_BASE;
+        use tracer::utils::virtual_registers::{allocate_virtual_register, VirtualRegisterGuard};
         let (desc, block, initial_state, expected) =
             TestVectors::get_standard_test_vectors()[0].clone();
         let mut h = CpuTestHarness::new();
@@ -1036,7 +1075,9 @@ mod debugging_tests {
         h.cpu.x[rs2 as usize] = state_addr as i64;
         h.set_memory32(block_addr, &block);
         h.set_memory32(state_addr, &initial_state);
-        let vr: [u8; 32] = core::array::from_fn(|i| virtual_register_index(i as u8));
+        let guards: [VirtualRegisterGuard; 32] =
+            core::array::from_fn(|_| allocate_virtual_register());
+        let vr: [u8; 32] = core::array::from_fn(|i| *guards[i]);
         let seq = sha2_build_up_to_step(0, false, Xlen::Bit64, vr, rs1, rs2, 63, "final_state");
         h.execute_inline_sequence(&seq);
         let outs = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
