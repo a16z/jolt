@@ -2042,6 +2042,7 @@ dependencies = [
  "itertools 0.10.5",
  "jolt-inlines-sha2",
  "jolt-optimizations",
+ "jolt-platform",
  "lazy_static",
  "memory-stats",
  "num",
@@ -2062,7 +2063,6 @@ dependencies = [
  "sha3",
  "strum 0.26.3",
  "strum_macros 0.26.4",
- "sys-info",
  "target-lexicon",
  "thiserror 1.0.69",
  "tokio",
@@ -2098,17 +2098,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-platform"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.2.16",
+ "rand 0.8.5",
+]
+
+[[package]]
 name = "jolt-sdk"
 version = "0.1.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
  "common",
- "getrandom 0.2.16",
  "jolt-core",
+ "jolt-platform",
  "jolt-sdk-macros",
  "postcard",
- "rand 0.8.5",
  "tracer",
 ]
 
@@ -2207,6 +2214,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9fbbcab51052fe104eb5e5d351cf728d30a5be1fe14d9be8a3b097481fb97de"
 
 [[package]]
+name = "libmimalloc-sys"
+version = "0.1.43"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf88cd67e9de251c1781dbe2f641a1a3ad66eaae831b8a2c38fbdc5ddae16d4d"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
 name = "libredox"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2287,6 +2304,15 @@ checksum = "c73f5c649995a115e1a0220b35e4df0a1294500477f97a91d0660fb5abeb574a"
 dependencies = [
  "libc",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "mimalloc"
+version = "0.1.47"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1791cbe101e95af5764f06f20f6760521f7158f69dbf9d6baf941ee1bf6bc40"
+dependencies = [
+ "libmimalloc-sys",
 ]
 
 [[package]]
@@ -3735,16 +3761,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sys-info"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b3a0d0aba8bf96a0e1ddfdc352fc53b3df7f39318c71854910c3c4b024ae52c"
-dependencies = [
- "cc",
- "libc",
-]
-
-[[package]]
 name = "sysinfo"
 version = "0.30.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4012,6 +4028,7 @@ dependencies = [
  "derive_more 2.0.1",
  "fnv",
  "itertools 0.10.5",
+ "jolt-platform",
  "lazy_static",
  "object",
  "paste",
@@ -4187,6 +4204,24 @@ name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
+
+[[package]]
+name = "verifier"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
+ "mimalloc",
+ "verifier-guest",
+]
+
+[[package]]
+name = "verifier-guest"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "jolt-sdk",
+ "jolt-verifier",
+]
 
 [[package]]
 name = "version_check"

@@ -6,9 +6,9 @@
 //! `black_box()` in particular can be used to prevent the compiler from moving your code.
 
 // Constants to signal the emulator
-pub const JOLT_CYCLE_TRACK_ECALL_NUM: i32 = 0xC7C1E; // "C Y C L E"
-pub const JOLT_CYCLE_MARKER_START: i32 = 1;
-pub const JOLT_CYCLE_MARKER_END: i32 = 2;
+pub const JOLT_CYCLE_TRACK_ECALL_NUM: u32 = 0xC7C1E; // "C Y C L E"
+pub const JOLT_CYCLE_MARKER_START: u32 = 1;
+pub const JOLT_CYCLE_MARKER_END: u32 = 2;
 
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 mod riscv_specific {
@@ -18,8 +18,8 @@ mod riscv_specific {
         let marker_id_ptr = marker_id_str.as_ptr() as usize;
         let marker_len = marker_id_str.len();
         emit_jolt_cycle_marker_ecall(
-            marker_id_ptr as i32,
-            marker_len as i32,
+            marker_id_ptr as u32,
+            marker_len as u32,
             JOLT_CYCLE_MARKER_START,
         );
     }
@@ -28,15 +28,15 @@ mod riscv_specific {
         let marker_id_ptr = marker_id_str.as_ptr() as usize;
         let marker_len = marker_id_str.len();
         emit_jolt_cycle_marker_ecall(
-            marker_id_ptr as i32,
-            marker_len as i32,
+            marker_id_ptr as u32,
+            marker_len as u32,
             JOLT_CYCLE_MARKER_END,
         );
     }
 
     // inserts an ECALL directly into the compiled code
     #[inline(always)]
-    fn emit_jolt_cycle_marker_ecall(marker_id: i32, marker_len: i32, event_type: i32) {
+    fn emit_jolt_cycle_marker_ecall(marker_id: u32, marker_len: u32, event_type: u32) {
         #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
         unsafe {
             core::arch::asm!(
