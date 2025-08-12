@@ -22,6 +22,7 @@ use crate::{
 
 pub mod booleanity;
 pub mod hamming_weight;
+pub mod ra_virtual;
 pub mod read_raf_checking;
 
 pub const WORD_SIZE: usize = 32;

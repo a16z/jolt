@@ -26,9 +26,54 @@ use crate::{
     },
 };
 
+pub fn compute_eq_mle_product_univariate<F: JoltField>(
+    mle_product_coeffs: Vec<F>,
+    round: usize,
+    r_cycle: &[F],
+) -> UniPoly<F> {
+    let mut univariate_evals: Vec<F> = Vec::with_capacity(mle_product_coeffs.len() + 2);
+
+    // Recall that the eq polynomial is rc + (1 - r)(1 - c), which has constant term 1 - r and slope (2r - 1)
+    let eq_coeffs = [
+        F::one() - r_cycle[round],
+        r_cycle[round] + r_cycle[round] - F::one(),
+    ];
+
+    // Constant term
+    univariate_evals.push(eq_coeffs[0] * mle_product_coeffs[0]);
+
+    // Middle terms
+    let mul_by_evals_0 = mle_product_coeffs[1..]
+        .par_iter()
+        .map(|x| *x * eq_coeffs[0])
+        .collect::<Vec<_>>();
+    let mul_by_evals_1 = mle_product_coeffs[..mle_product_coeffs.len()]
+        .par_iter()
+        .map(|x| *x * eq_coeffs[1])
+        .collect::<Vec<_>>();
+
+    univariate_evals.extend(
+        (0..mle_product_coeffs.len())
+            .into_par_iter()
+            .map(|i| mul_by_evals_0[i] + mul_by_evals_1[i])
+            .collect::<Vec<_>>(),
+    );
+
+    // Last term
+    univariate_evals.push(*mle_product_coeffs.last().unwrap() * eq_coeffs[1]);
+
+    UniPoly {
+        coeffs: univariate_evals,
+    }
+}
+
 #[inline(always)]
-fn compute_mle_product_coeffs_toom<F: FieldMulSmall, const D: usize, const D_PLUS_ONE: usize>(
-    mle_vec: &[&mut MultilinearPolynomial<F>],
+pub fn compute_mle_product_coeffs_toom<
+    F: FieldMulSmall,
+    const D: usize,
+    const D_PLUS_ONE: usize,
+>(
+    mle_vec: &[MultilinearPolynomial<F>],
     round: usize,
     log_T: usize,
     factor: &F,
@@ -101,8 +146,12 @@ fn compute_mle_product_coeffs_toom<F: FieldMulSmall, const D: usize, const D_PLU
     univariate_poly.coeffs
 }
 
-fn compute_mle_product_coeffs_katatsuba<F: JoltField, const D: usize, const D_PLUS_ONE: usize>(
-    mle_vec: &[&mut MultilinearPolynomial<F>],
+pub fn compute_mle_product_coeffs_katatsuba<
+    F: JoltField,
+    const D: usize,
+    const D_PLUS_ONE: usize,
+>(
+    mle_vec: &[MultilinearPolynomial<F>],
     round: usize,
     log_T: usize,
     factor: &F,
@@ -230,7 +279,7 @@ pub struct LargeDMulSumCheckProof<F: JoltField, ProofTranscript: Transcript> {
 impl<F: FieldMulSmall, ProofTranscript: Transcript> LargeDMulSumCheckProof<F, ProofTranscript> {
     #[tracing::instrument(skip_all, name = "KaratsubaSumCheckProof::prove")]
     pub fn prove(
-        mle_vec: &mut Vec<&mut MultilinearPolynomial<F>>,
+        mle_vec: &mut Vec<MultilinearPolynomial<F>>,
         r_cycle: &[F],
         previous_claim: &mut F,
         transcript: &mut ProofTranscript,
@@ -287,48 +336,8 @@ impl<F: FieldMulSmall, ProofTranscript: Transcript> LargeDMulSumCheckProof<F, Pr
             let inner_span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
             let _guard = inner_span.enter();
 
-            let mut univariate_evals: Vec<F> = Vec::with_capacity(mle_vec.len() + 2);
-
-            // Recall that the eq polynomial is rc + (1 - r)(1 - c), which has constant term 1 - r and slope (2r - 1)
-            let eq_coeffs = [
-                F::one() - r_cycle[round],
-                r_cycle[round] + r_cycle[round] - F::one(),
-            ];
-
-            // Constant term
-            univariate_evals.push(eq_coeffs[0] * mle_product_coeffs[0]);
-
-            // Middle terms
-            let mul_by_evals_0 = mle_product_coeffs[1..]
-                .par_iter()
-                .map(|x| *x * eq_coeffs[0])
-                .collect::<Vec<_>>();
-            let mul_by_evals_1 = mle_product_coeffs[..mle_vec.len()]
-                .par_iter()
-                .map(|x| *x * eq_coeffs[1])
-                .collect::<Vec<_>>();
-
-            univariate_evals.extend(
-                (0..mle_vec.len())
-                    .into_par_iter()
-                    .map(|i| mul_by_evals_0[i] + mul_by_evals_1[i])
-                    .collect::<Vec<_>>(),
-            );
-
-            // Last term
-            univariate_evals.push(mle_product_coeffs[mle_vec.len()] * eq_coeffs[1]);
-
-            assert_eq!(univariate_evals.len(), mle_vec.len() + 2);
-
-            drop(_guard);
-            drop(inner_span);
-
-            let inner_span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
-            let _guard = inner_span.enter();
-
-            let univariate_poly = UniPoly {
-                coeffs: univariate_evals,
-            };
+            let univariate_poly =
+                compute_eq_mle_product_univariate(mle_product_coeffs, round, r_cycle);
             let compressed_poly = univariate_poly.compress();
             compressed_poly.append_to_transcript(transcript);
             compressed_polys.push(compressed_poly);
@@ -1035,7 +1044,7 @@ mod test {
 
         let start_time = Instant::now();
         let (proof, r_prime) = LargeDMulSumCheckProof::<Fr, KeccakTranscript>::prove(
-            &mut ra_copy.iter_mut().collect::<Vec<_>>(),
+            &mut ra_copy.iter().cloned().collect::<Vec<_>>(),
             &r_cycle,
             &mut previous_claim_copy,
             &mut prover_transcript,
@@ -1125,7 +1134,7 @@ mod test {
 
         let start_time = Instant::now();
         let (proof, r_prime) = LargeDMulSumCheckProof::<Fr, KeccakTranscript>::prove(
-            &mut ra_copy_2.iter_mut().collect::<Vec<_>>(),
+            &mut ra_copy_2.iter().cloned().collect::<Vec<_>>(),
             &r_cycle,
             &mut previous_claim_copy_2,
             &mut prover_transcript,

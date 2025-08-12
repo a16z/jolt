@@ -248,7 +248,7 @@ where
     );
 
     let _proof = LargeDMulSumCheckProof::<F, ProofTranscript>::prove(
-        &mut ra[2].iter_mut().collect::<Vec<_>>(),
+        &mut ra[2].iter().cloned().collect::<Vec<_>>(),
         &r_cycle,
         &mut previous_claim[2],
         &mut transcript[2],
