@@ -14,8 +14,8 @@ use crate::{
         },
         unipoly::{CompressedUniPoly, UniPoly},
     },
+    transcripts::{AppendToTranscript, Transcript},
     //subprotocols::sumcheck::CacheSumcheckOpenings,
-    transcript::{AppendToTranscript, Transcript},
     utils::{errors::ProofVerifyError, math::Math, thread::unsafe_allocate_zero_vec},
 };
 use rayon::prelude::*;
@@ -1119,7 +1119,7 @@ pub fn prove_raf_evaluation<F: JoltField, ProofTranscript: Transcript>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::transcript::KeccakTranscript;
+    use crate::transcripts::KeccakTranscript;
     use ark_bn254::Fr;
     use ark_ff::{One, Zero};
     use ark_std::test_rng;

@@ -16,12 +16,8 @@ use crate::{
         split_eq_poly::GruenSplitEqPolynomial,
         unipoly::{CompressedUniPoly, UniPoly},
     },
-    utils::{
-        errors::ProofVerifyError,
-        math::Math,
-        thread::unsafe_allocate_zero_vec,
-        transcript::{AppendToTranscript, Transcript},
-    },
+    transcripts::{AppendToTranscript, Transcript},
+    utils::{errors::ProofVerifyError, math::Math, thread::unsafe_allocate_zero_vec},
 };
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
@@ -393,7 +389,7 @@ pub fn prove_generic_core_shout_piop_d_is_one_w_gruen<F: JoltField, ProofTranscr
 mod tests {
 
     use super::*;
-    use crate::utils::transcript::KeccakTranscript;
+    use crate::transcripts::KeccakTranscript;
     //use ark_bn254::Fr;
     use crate::field::tracked_ark::TrackedFr as Fr;
     use ark_ff::UniformRand;

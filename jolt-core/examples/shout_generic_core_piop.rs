@@ -5,8 +5,8 @@ use jolt_core::subprotocols::shout::core_shout_piop_d_greater_one::{
     prove_generic_core_shout_pip_d_greater_than_one,
     prove_generic_core_shout_pip_d_greater_than_one_with_gruen,
 };
-use jolt_core::utils::transcript::KeccakTranscript;
-use jolt_core::utils::transcript::Transcript;
+use jolt_core::transcripts::KeccakTranscript;
+use jolt_core::transcripts::Transcript;
 use rand_core::RngCore;
 use std::time::Instant;
 
