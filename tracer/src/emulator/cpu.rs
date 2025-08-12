@@ -538,14 +538,12 @@ impl Cpu {
                 let string_len = self.x[12] as u32; // a1
                 let event_type = self.x[13] as u32; // a2
 
-                // Read / update the per-label counters.
-                //
                 // Any fault raised while touching guest memory (e.g. a bad
                 // string pointer) is swallowed here and will manifest as the
                 // usual access-fault on the *next* instruction fetch.
                 let _ = self.handle_jolt_print(string_ptr, string_len, event_type as u8);
 
-                return false; // we don't take the trap
+                return false;
             }
         }
 
