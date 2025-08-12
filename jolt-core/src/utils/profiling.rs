@@ -98,7 +98,7 @@ pub fn write_flamegraph_svg<P: AsRef<Path>>(flamegraph: FlameGraphBuilder, path:
     let mut opts = Options::default();
     opts.color_diffusion = true;
     opts.count_name = String::from("MB");
-    opts.factor = 0.000000001;
+    opts.factor = 0.000001;
     opts.flame_chart = true;
 
     let flamegraph_src = flamegraph.finish_and_write_flame_graph();
