@@ -39,7 +39,10 @@ impl Sha256CpuHarness {
 
     /// Create a new harness.
     pub fn new() -> Self {
-        let vr = std::array::from_fn(|i| tracer::inline_helpers::virtual_register_index(i as u8));
+        let guards: Vec<_> = (0..32)
+            .map(|_| tracer::utils::virtual_registers::allocate_virtual_register())
+            .collect();
+        let vr: [u8; 32] = std::array::from_fn(|i| *guards[i]);
         Self {
             // RV32.
             // harness: CpuTestHarness::new_32(),

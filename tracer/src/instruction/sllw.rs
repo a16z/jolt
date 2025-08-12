@@ -1,4 +1,4 @@
-use common::constants::virtual_register_index;
+use crate::utils::virtual_registers::allocate_virtual_register;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -45,14 +45,14 @@ impl RISCVTrace for SLLW {
 
     fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
-        let v_pow2 = virtual_register_index(6);
+        let v_pow2 = allocate_virtual_register();
 
         let mut sequence = vec![];
 
         let pow2w = VirtualPow2W {
             address: self.address,
             operands: FormatI {
-                rd: v_pow2,
+                rd: *v_pow2,
                 rs1: self.operands.rs2,
                 imm: 0,
             },
@@ -66,7 +66,7 @@ impl RISCVTrace for SLLW {
             operands: FormatR {
                 rd: self.operands.rd,
                 rs1: self.operands.rs1,
-                rs2: v_pow2,
+                rs2: *v_pow2,
             },
             inline_sequence_remaining: Some(1),
             is_compressed: self.is_compressed,

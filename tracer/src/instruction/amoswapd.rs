@@ -6,7 +6,7 @@ use super::ld::LD;
 use super::sd::SD;
 use super::virtual_move::VirtualMove;
 use super::RV32IMInstruction;
-use common::constants::virtual_register_index;
+use crate::utils::virtual_registers::allocate_virtual_register;
 
 use crate::instruction::format::format_load::FormatLoad;
 use crate::{
@@ -61,12 +61,12 @@ impl RISCVTrace for AMOSWAPD {
 
     fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         let mut sequence = vec![];
-        let v_rd = virtual_register_index(6);
+        let v_rd = allocate_virtual_register();
 
         let ld = LD {
             address: self.address,
             operands: FormatLoad {
-                rd: v_rd,
+                rd: *v_rd,
                 rs1: self.operands.rs1,
                 imm: 0,
             },
@@ -91,7 +91,7 @@ impl RISCVTrace for AMOSWAPD {
             address: self.address,
             operands: FormatI {
                 rd: self.operands.rd,
-                rs1: v_rd,
+                rs1: *v_rd,
                 imm: 0,
             },
             inline_sequence_remaining: Some(0),

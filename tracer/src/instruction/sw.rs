@@ -21,7 +21,7 @@ use super::virtual_sw::VirtualSW;
 use super::xor::XOR;
 use super::RAMWrite;
 use super::RV32IMInstruction;
-use common::constants::virtual_register_index;
+use crate::utils::virtual_registers::allocate_virtual_register;
 
 use super::{
     format::{format_s::FormatS, InstructionFormat},
@@ -87,14 +87,12 @@ impl SW {
 
     fn inline_sequence_64(&self) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
-        // Use high-numbered virtual registers as scratch to avoid clobbering
-        // low indices that inline builders frequently use for program values.
-        let v_address = virtual_register_index(90);
-        let v_dword_address = virtual_register_index(91);
-        let v_dword = virtual_register_index(92);
-        let v_shift = virtual_register_index(93);
-        let v_mask = virtual_register_index(94);
-        let v_word = virtual_register_index(95);
+        let v_address = allocate_virtual_register();
+        let v_dword_address = allocate_virtual_register();
+        let v_dword = allocate_virtual_register();
+        let v_shift = allocate_virtual_register();
+        let v_mask = allocate_virtual_register();
+        let v_word = allocate_virtual_register();
 
         let mut sequence = vec![];
         let mut inline_sequence_remaining = self.inline_sequence_remaining.unwrap_or(14);
@@ -114,7 +112,7 @@ impl SW {
         let add = ADDI {
             address: self.address,
             operands: FormatI {
-                rd: v_address,
+                rd: *v_address,
                 rs1: self.operands.rs1,
                 imm: self.operands.imm as u64,
             },
@@ -127,8 +125,8 @@ impl SW {
         let andi = ANDI {
             address: self.address,
             operands: FormatI {
-                rd: v_dword_address,
-                rs1: v_address,
+                rd: *v_dword_address,
+                rs1: *v_address,
                 imm: -8i64 as u64,
             },
             inline_sequence_remaining: Some(inline_sequence_remaining),
@@ -140,8 +138,8 @@ impl SW {
         let ld = LD {
             address: self.address,
             operands: FormatLoad {
-                rd: v_dword,
-                rs1: v_dword_address,
+                rd: *v_dword,
+                rs1: *v_dword_address,
                 imm: 0,
             },
             inline_sequence_remaining: Some(inline_sequence_remaining),
@@ -153,8 +151,8 @@ impl SW {
         let slli = SLLI {
             address: self.address,
             operands: FormatI {
-                rd: v_shift,
-                rs1: v_address,
+                rd: *v_shift,
+                rs1: *v_address,
                 imm: 3,
             },
             inline_sequence_remaining: Some(inline_sequence_remaining),
@@ -168,7 +166,7 @@ impl SW {
         let ori = ORI {
             address: self.address,
             operands: FormatI {
-                rd: v_mask,
+                rd: *v_mask,
                 rs1: 0,
                 imm: -1i64 as u64,
             },
@@ -181,8 +179,8 @@ impl SW {
         let srli = SRLI {
             address: self.address,
             operands: FormatI {
-                rd: v_mask,
-                rs1: v_mask,
+                rd: *v_mask,
+                rs1: *v_mask,
                 imm: 32, // Logical right shift by 32 bits
             },
             inline_sequence_remaining: Some(inline_sequence_remaining),
@@ -194,9 +192,9 @@ impl SW {
         let sll_mask = SLL {
             address: self.address,
             operands: FormatR {
-                rd: v_mask,
-                rs1: v_mask,
-                rs2: v_shift,
+                rd: *v_mask,
+                rs1: *v_mask,
+                rs2: *v_shift,
             },
             inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
@@ -209,9 +207,9 @@ impl SW {
         let sll_value = SLL {
             address: self.address,
             operands: FormatR {
-                rd: v_word,
+                rd: *v_word,
                 rs1: self.operands.rs2,
-                rs2: v_shift,
+                rs2: *v_shift,
             },
             inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
@@ -224,9 +222,9 @@ impl SW {
         let xor = XOR {
             address: self.address,
             operands: FormatR {
-                rd: v_word,
-                rs1: v_dword,
-                rs2: v_word,
+                rd: *v_word,
+                rs1: *v_dword,
+                rs2: *v_word,
             },
             inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
@@ -237,9 +235,9 @@ impl SW {
         let and = AND {
             address: self.address,
             operands: FormatR {
-                rd: v_word,
-                rs1: v_word,
-                rs2: v_mask,
+                rd: *v_word,
+                rs1: *v_word,
+                rs2: *v_mask,
             },
             inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
@@ -250,9 +248,9 @@ impl SW {
         let xor_final = XOR {
             address: self.address,
             operands: FormatR {
-                rd: v_dword,
-                rs1: v_dword,
-                rs2: v_word,
+                rd: *v_dword,
+                rs1: *v_dword,
+                rs2: *v_word,
             },
             inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
@@ -263,8 +261,8 @@ impl SW {
         let sd = SD {
             address: self.address,
             operands: FormatS {
-                rs1: v_dword_address,
-                rs2: v_dword,
+                rs1: *v_dword_address,
+                rs2: *v_dword,
                 imm: 0,
             },
             inline_sequence_remaining: Some(inline_sequence_remaining),

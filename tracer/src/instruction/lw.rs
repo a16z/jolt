@@ -18,7 +18,7 @@ use super::virtual_lw::VirtualLW;
 use super::virtual_sign_extend::VirtualSignExtend;
 use super::RAMRead;
 use super::{addi::ADDI, RV32IMInstruction};
-use common::constants::virtual_register_index;
+use crate::utils::virtual_registers::allocate_virtual_register;
 
 use super::{format::InstructionFormat, RISCVInstruction, RISCVTrace, RV32IMCycle};
 
@@ -83,12 +83,10 @@ impl LW {
 
     fn inline_sequence_64(&self) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
-        // Use high-numbered virtual registers as scratch to avoid clobbering
-        // low indices that inline builders frequently use for program values.
-        let v_address = virtual_register_index(90);
-        let v_dword_address = virtual_register_index(91);
-        let v_dword = virtual_register_index(92);
-        let v_shift = virtual_register_index(93);
+        let v_address = allocate_virtual_register();
+        let v_dword_address = allocate_virtual_register();
+        let v_dword = allocate_virtual_register();
+        let v_shift = allocate_virtual_register();
 
         let mut sequence = vec![];
 
@@ -106,7 +104,7 @@ impl LW {
         let add = ADDI {
             address: self.address,
             operands: FormatI {
-                rd: v_address,
+                rd: *v_address,
                 rs1: self.operands.rs1,
                 imm: self.operands.imm as u64,
             },
@@ -118,8 +116,8 @@ impl LW {
         let andi = ANDI {
             address: self.address,
             operands: FormatI {
-                rd: v_dword_address,
-                rs1: v_address,
+                rd: *v_dword_address,
+                rs1: *v_address,
                 imm: -8i64 as u64,
             },
             inline_sequence_remaining: Some(5),
@@ -130,8 +128,8 @@ impl LW {
         let ld = LD {
             address: self.address,
             operands: FormatLoad {
-                rd: v_dword,
-                rs1: v_dword_address,
+                rd: *v_dword,
+                rs1: *v_dword_address,
                 imm: 0,
             },
             inline_sequence_remaining: Some(4),
@@ -142,8 +140,8 @@ impl LW {
         let slli = SLLI {
             address: self.address,
             operands: FormatI {
-                rd: v_shift,
-                rs1: v_address,
+                rd: *v_shift,
+                rs1: *v_address,
                 imm: 3,
             },
             inline_sequence_remaining: Some(3),
@@ -155,8 +153,8 @@ impl LW {
             address: self.address,
             operands: FormatR {
                 rd: self.operands.rd,
-                rs1: v_dword,
-                rs2: v_shift,
+                rs1: *v_dword,
+                rs2: *v_shift,
             },
             inline_sequence_remaining: Some(2),
             is_compressed: self.is_compressed,

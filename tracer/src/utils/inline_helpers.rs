@@ -56,9 +56,6 @@ use crate::instruction::RISCVTrace;
 use crate::instruction::RV32IMCycle;
 use crate::instruction::RV32IMInstruction;
 
-#[allow(unused_imports)]
-pub use common::constants::virtual_register_index;
-
 /// Operand that can be either an immediate or a register.
 #[derive(Clone, Copy, Debug)]
 pub enum Value {
