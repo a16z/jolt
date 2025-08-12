@@ -9,11 +9,11 @@ use super::virtual_sign_extend::VirtualSignExtend;
 use super::xori::XORI;
 use super::RV32IMInstruction;
 use crate::instruction::format::format_i::FormatI;
+use crate::utils::virtual_registers::allocate_virtual_register;
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
 };
-use common::constants::virtual_register_index;
 
 use super::{
     format::{format_r::FormatR, InstructionFormat},
@@ -75,11 +75,11 @@ impl RISCVTrace for AMOMAXW {
 
 impl AMOMAXW {
     fn inline_sequence_32(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let v_rd = virtual_register_index(7);
-        let v_rs2 = virtual_register_index(8);
-        let v_sel_rs2 = virtual_register_index(9);
-        let v_sel_rd = virtual_register_index(10);
-        let v_tmp = virtual_register_index(11);
+        let v_rd = allocate_virtual_register();
+        let v_rs2 = allocate_virtual_register();
+        let v_sel_rs2 = allocate_virtual_register();
+        let v_sel_rd = allocate_virtual_register();
+        let v_tmp = allocate_virtual_register();
 
         let mut sequence = vec![];
         let mut remaining = 10;
@@ -88,14 +88,14 @@ impl AMOMAXW {
             self.address,
             self.is_compressed,
             self.operands.rs1,
-            v_rd,
+            *v_rd,
             remaining,
         );
 
         let mov = VirtualMove {
             address: self.address,
             operands: FormatI {
-                rd: v_rs2,
+                rd: *v_rs2,
                 rs1: self.operands.rs2,
                 imm: 0,
             },
@@ -108,8 +108,8 @@ impl AMOMAXW {
         let mov = VirtualMove {
             address: self.address,
             operands: FormatI {
-                rd: v_tmp,
-                rs1: v_rd,
+                rd: *v_tmp,
+                rs1: *v_rd,
                 imm: 0,
             },
             inline_sequence_remaining: Some(remaining),
@@ -121,9 +121,9 @@ impl AMOMAXW {
         let slt = SLT {
             address: self.address,
             operands: FormatR {
-                rd: v_sel_rs2,
-                rs1: v_tmp,
-                rs2: v_rs2,
+                rd: *v_sel_rs2,
+                rs1: *v_tmp,
+                rs2: *v_rs2,
             },
             inline_sequence_remaining: Some(remaining),
             is_compressed: self.is_compressed,
@@ -134,8 +134,8 @@ impl AMOMAXW {
         let xori = XORI {
             address: self.address,
             operands: FormatI {
-                rd: v_sel_rd,
-                rs1: v_sel_rs2,
+                rd: *v_sel_rd,
+                rs1: *v_sel_rs2,
                 imm: 1,
             },
             inline_sequence_remaining: Some(remaining),
@@ -147,8 +147,8 @@ impl AMOMAXW {
         let mul = MUL {
             address: self.address,
             operands: FormatR {
-                rd: v_rs2,
-                rs1: v_sel_rs2,
+                rd: *v_rs2,
+                rs1: *v_sel_rs2,
                 rs2: self.operands.rs2,
             },
             inline_sequence_remaining: Some(remaining),
@@ -160,9 +160,9 @@ impl AMOMAXW {
         let mul = MUL {
             address: self.address,
             operands: FormatR {
-                rd: v_tmp,
-                rs1: v_sel_rd,
-                rs2: v_rd,
+                rd: *v_tmp,
+                rs1: *v_sel_rd,
+                rs2: *v_rd,
             },
             inline_sequence_remaining: Some(remaining),
             is_compressed: self.is_compressed,
@@ -173,9 +173,9 @@ impl AMOMAXW {
         let add = ADD {
             address: self.address,
             operands: FormatR {
-                rd: v_rs2,
-                rs1: v_tmp,
-                rs2: v_rs2,
+                rd: *v_rs2,
+                rs1: *v_tmp,
+                rs2: *v_rs2,
             },
             inline_sequence_remaining: Some(remaining),
             is_compressed: self.is_compressed,
@@ -187,10 +187,10 @@ impl AMOMAXW {
             &mut sequence,
             self.address,
             self.is_compressed,
-            v_rs2,
+            *v_rs2,
             self.operands.rs1,
             self.operands.rd,
-            v_rd,
+            *v_rd,
             remaining,
         );
 
@@ -199,16 +199,16 @@ impl AMOMAXW {
 
     fn inline_sequence_64(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
-        let v_mask = virtual_register_index(10);
-        let v_dword_address = virtual_register_index(11);
-        let v_dword = virtual_register_index(12);
-        let v_word = virtual_register_index(13);
-        let v_shift = virtual_register_index(14);
-        let v_rd = virtual_register_index(15);
-        let v_rs2 = virtual_register_index(16);
-        let v_sel_rs2 = virtual_register_index(17);
-        let v_sel_rd = virtual_register_index(18);
-        let v_tmp = virtual_register_index(19);
+        let v_mask = allocate_virtual_register();
+        let v_dword_address = allocate_virtual_register();
+        let v_dword = allocate_virtual_register();
+        let v_word = allocate_virtual_register();
+        let v_shift = allocate_virtual_register();
+        let v_rd = allocate_virtual_register();
+        let v_rs2 = allocate_virtual_register();
+        let v_sel_rs2 = allocate_virtual_register();
+        let v_sel_rd = allocate_virtual_register();
+        let v_tmp = allocate_virtual_register();
 
         let mut sequence = vec![];
         let mut remaining = 23;
@@ -217,17 +217,17 @@ impl AMOMAXW {
             self.address,
             self.is_compressed,
             self.operands.rs1,
-            v_rd,
-            v_dword_address,
-            v_dword,
-            v_shift,
+            *v_rd,
+            *v_dword_address,
+            *v_dword,
+            *v_shift,
             remaining,
         );
 
         let signext = VirtualSignExtend {
             address: self.address,
             operands: FormatI {
-                rd: v_rs2,
+                rd: *v_rs2,
                 rs1: self.operands.rs2,
                 imm: 0,
             },
@@ -240,8 +240,8 @@ impl AMOMAXW {
         let signext = VirtualSignExtend {
             address: self.address,
             operands: FormatI {
-                rd: v_tmp,
-                rs1: v_rd,
+                rd: *v_tmp,
+                rs1: *v_rd,
                 imm: 0,
             },
             inline_sequence_remaining: Some(remaining),
@@ -253,9 +253,9 @@ impl AMOMAXW {
         let slt = SLT {
             address: self.address,
             operands: FormatR {
-                rd: v_sel_rs2,
-                rs1: v_tmp,
-                rs2: v_rs2,
+                rd: *v_sel_rs2,
+                rs1: *v_tmp,
+                rs2: *v_rs2,
             },
             inline_sequence_remaining: Some(remaining),
             is_compressed: self.is_compressed,
@@ -266,8 +266,8 @@ impl AMOMAXW {
         let xori = XORI {
             address: self.address,
             operands: FormatI {
-                rd: v_sel_rd,
-                rs1: v_sel_rs2,
+                rd: *v_sel_rd,
+                rs1: *v_sel_rs2,
                 imm: 1,
             },
             inline_sequence_remaining: Some(remaining),
@@ -279,8 +279,8 @@ impl AMOMAXW {
         let mul = MUL {
             address: self.address,
             operands: FormatR {
-                rd: v_rs2,
-                rs1: v_sel_rs2,
+                rd: *v_rs2,
+                rs1: *v_sel_rs2,
                 rs2: self.operands.rs2,
             },
             inline_sequence_remaining: Some(remaining),
@@ -292,9 +292,9 @@ impl AMOMAXW {
         let mul = MUL {
             address: self.address,
             operands: FormatR {
-                rd: v_tmp,
-                rs1: v_sel_rd,
-                rs2: v_rd,
+                rd: *v_tmp,
+                rs1: *v_sel_rd,
+                rs2: *v_rd,
             },
             inline_sequence_remaining: Some(remaining),
             is_compressed: self.is_compressed,
@@ -305,9 +305,9 @@ impl AMOMAXW {
         let add = ADD {
             address: self.address,
             operands: FormatR {
-                rd: v_rs2,
-                rs1: v_tmp,
-                rs2: v_rs2,
+                rd: *v_rs2,
+                rs1: *v_tmp,
+                rs2: *v_rs2,
             },
             inline_sequence_remaining: Some(remaining),
             is_compressed: self.is_compressed,
@@ -319,14 +319,14 @@ impl AMOMAXW {
             &mut sequence,
             self.address,
             self.is_compressed,
-            v_rs2,
-            v_dword_address,
-            v_dword,
-            v_shift,
-            v_mask,
-            v_word,
+            *v_rs2,
+            *v_dword_address,
+            *v_dword,
+            *v_shift,
+            *v_mask,
+            *v_word,
             self.operands.rd,
-            v_rd,
+            *v_rd,
             remaining,
         );
 

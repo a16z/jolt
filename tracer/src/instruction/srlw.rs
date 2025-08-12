@@ -1,4 +1,4 @@
-use common::constants::virtual_register_index;
+use crate::utils::virtual_registers::allocate_virtual_register;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -50,15 +50,15 @@ impl RISCVTrace for SRLW {
 
     fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
-        let v_bitmask = virtual_register_index(6);
-        let v_rs1 = virtual_register_index(5);
+        let v_bitmask = allocate_virtual_register();
+        let v_rs1 = allocate_virtual_register();
 
         let mut sequence = vec![];
 
         let slli = SLLI {
             address: self.address,
             operands: FormatI {
-                rd: v_rs1,
+                rd: *v_rs1,
                 rs1: self.operands.rs1,
                 imm: 32,
             },
@@ -70,7 +70,7 @@ impl RISCVTrace for SRLW {
         let ori = ORI {
             address: self.address,
             operands: FormatI {
-                rd: v_bitmask,
+                rd: *v_bitmask,
                 rs1: self.operands.rs2,
                 imm: 32,
             },
@@ -82,8 +82,8 @@ impl RISCVTrace for SRLW {
         let bitmask = VirtualShiftRightBitmask {
             address: self.address,
             operands: FormatI {
-                rd: v_bitmask,
-                rs1: v_bitmask,
+                rd: *v_bitmask,
+                rs1: *v_bitmask,
                 imm: 0,
             },
             inline_sequence_remaining: Some(2),
@@ -95,8 +95,8 @@ impl RISCVTrace for SRLW {
             address: self.address,
             operands: FormatVirtualRightShiftR {
                 rd: self.operands.rd,
-                rs1: v_rs1,
-                rs2: v_bitmask,
+                rs1: *v_rs1,
+                rs2: *v_bitmask,
             },
             inline_sequence_remaining: Some(1),
             is_compressed: self.is_compressed,

@@ -1,10 +1,13 @@
 use tracer::{
     emulator::cpu::Xlen,
-    inline_helpers::{
-        virtual_register_index, InstrAssembler,
-        Value::{self, Imm, Reg},
-    },
     instruction::{andn::ANDN, lw::LW, sw::SW, RV32IMInstruction},
+    utils::{
+        inline_helpers::{
+            InstrAssembler,
+            Value::{self, Imm, Reg},
+        },
+        virtual_registers::allocate_virtual_register,
+    },
 };
 
 /// SHA-256 initial hash values
@@ -309,10 +312,11 @@ pub fn sha2_inline_sequence_builder(
     rs2: u8,
 ) -> Vec<RV32IMInstruction> {
     // Virtual registers used as a scratch space
+    let guards: Vec<_> = (0..32).map(|_| allocate_virtual_register()).collect();
     let mut vr = [0u8; 32];
-    (0..32).for_each(|i| {
-        vr[i] = virtual_register_index(i as u8);
-    });
+    for (i, guard) in guards.iter().enumerate() {
+        vr[i] = **guard;
+    }
     let builder = Sha256SequenceBuilder::new(
         address,
         is_compressed,
@@ -334,10 +338,11 @@ pub fn sha2_init_inline_sequence_builder(
     rs2: u8,
 ) -> Vec<RV32IMInstruction> {
     // Virtual registers used as a scratch space
+    let guards: Vec<_> = (0..32).map(|_| allocate_virtual_register()).collect();
     let mut vr = [0u8; 32];
-    (0..32).for_each(|i| {
-        vr[i] = virtual_register_index(i as u8);
-    });
+    for (i, guard) in guards.iter().enumerate() {
+        vr[i] = **guard;
+    }
     let builder = Sha256SequenceBuilder::new(
         address,
         is_compressed,

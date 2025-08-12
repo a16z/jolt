@@ -22,7 +22,6 @@ use instruction::{RV32IMCycle, RV32IMInstruction};
 use object::{Object, ObjectSection, SectionKind};
 
 pub mod emulator;
-pub mod inline_helpers;
 pub mod instruction;
 pub mod utils;
 

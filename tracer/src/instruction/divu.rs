@@ -1,4 +1,4 @@
-use common::constants::virtual_register_index;
+use crate::utils::virtual_registers::allocate_virtual_register;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -82,17 +82,17 @@ impl RISCVTrace for DIVU {
 
     fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
-        let v_0 = virtual_register_index(0);
-        let v_q = virtual_register_index(1);
-        let v_r = virtual_register_index(2);
-        let v_qy = virtual_register_index(3);
+        let v_0 = allocate_virtual_register();
+        let v_q = allocate_virtual_register();
+        let v_r = allocate_virtual_register();
+        let v_qy = allocate_virtual_register();
 
         let mut sequence = vec![];
         let mut inline_sequence_remaining = self.inline_sequence_remaining.unwrap_or(7);
 
         let advice = VirtualAdvice {
             address: self.address,
-            operands: FormatJ { rd: v_q, imm: 0 },
+            operands: FormatJ { rd: *v_q, imm: 0 },
             inline_sequence_remaining: Some(inline_sequence_remaining),
             advice: 0,
             is_compressed: self.is_compressed,
@@ -102,7 +102,7 @@ impl RISCVTrace for DIVU {
 
         let advice = VirtualAdvice {
             address: self.address,
-            operands: FormatJ { rd: v_r, imm: 0 },
+            operands: FormatJ { rd: *v_r, imm: 0 },
             inline_sequence_remaining: Some(inline_sequence_remaining),
             advice: 0,
             is_compressed: self.is_compressed,
@@ -113,7 +113,7 @@ impl RISCVTrace for DIVU {
         let is_valid = VirtualAssertValidUnsignedRemainder {
             address: self.address,
             operands: FormatB {
-                rs1: v_r,
+                rs1: *v_r,
                 rs2: self.operands.rs2,
                 imm: 0,
             },
@@ -127,7 +127,7 @@ impl RISCVTrace for DIVU {
             address: self.address,
             operands: FormatB {
                 rs1: self.operands.rs2,
-                rs2: v_q,
+                rs2: *v_q,
                 imm: 0,
             },
             inline_sequence_remaining: Some(inline_sequence_remaining),
@@ -139,8 +139,8 @@ impl RISCVTrace for DIVU {
         let mul = MUL {
             address: self.address,
             operands: FormatR {
-                rd: v_qy,
-                rs1: v_q,
+                rd: *v_qy,
+                rs1: *v_q,
                 rs2: self.operands.rs2,
             },
             inline_sequence_remaining: Some(inline_sequence_remaining),
@@ -152,9 +152,9 @@ impl RISCVTrace for DIVU {
         let add = ADD {
             address: self.address,
             operands: FormatR {
-                rd: v_0,
-                rs1: v_qy,
-                rs2: v_r,
+                rd: *v_0,
+                rs1: *v_qy,
+                rs2: *v_r,
             },
             inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
@@ -165,7 +165,7 @@ impl RISCVTrace for DIVU {
         let assert_eq = VirtualAssertEQ {
             address: self.address,
             operands: FormatB {
-                rs1: v_0,
+                rs1: *v_0,
                 rs2: self.operands.rs1,
                 imm: 0,
             },
@@ -179,7 +179,7 @@ impl RISCVTrace for DIVU {
             address: self.address,
             operands: FormatI {
                 rd: self.operands.rd,
-                rs1: v_q,
+                rs1: *v_q,
                 imm: 0,
             },
             inline_sequence_remaining: Some(inline_sequence_remaining),

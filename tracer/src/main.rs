@@ -4,11 +4,7 @@ use std::process::exit;
 
 use clap::Parser;
 
-use emulator::{default_terminal::DefaultTerminal, Emulator};
-
-mod emulator;
-mod inline_helpers;
-mod instruction;
+use tracer::emulator::{default_terminal::DefaultTerminal, Emulator};
 
 /// RISC-V emulator for Jolt
 #[derive(Parser, Debug)]

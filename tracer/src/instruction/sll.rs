@@ -1,6 +1,6 @@
-use common::constants::virtual_register_index;
 use serde::{Deserialize, Serialize};
 
+use crate::utils::virtual_registers::allocate_virtual_register;
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
@@ -46,7 +46,7 @@ impl RISCVTrace for SLL {
 
     fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
-        let v_pow2 = virtual_register_index(6);
+        let v_pow2 = allocate_virtual_register();
 
         let mut sequence = vec![];
         let mut inline_sequence_remaining = self.inline_sequence_remaining.unwrap_or(1);
@@ -54,7 +54,7 @@ impl RISCVTrace for SLL {
         let pow2 = RV32IMInstruction::VirtualPow2(VirtualPow2 {
             address: self.address,
             operands: FormatI {
-                rd: v_pow2,
+                rd: *v_pow2,
                 rs1: self.operands.rs2,
                 imm: 0,
             },
@@ -69,7 +69,7 @@ impl RISCVTrace for SLL {
             operands: FormatR {
                 rd: self.operands.rd,
                 rs1: self.operands.rs1,
-                rs2: v_pow2,
+                rs2: *v_pow2,
             },
             inline_sequence_remaining: Some(inline_sequence_remaining),
             is_compressed: self.is_compressed,
