@@ -1,11 +1,13 @@
 use common::constants::{RISCV_REGISTER_COUNT, VIRTUAL_REGISTER_COUNT};
+use core::cell::RefCell;
 use std::ops::Deref;
-use std::sync::Mutex;
 
 const NUM_VIRTUAL_REGISTERS: usize = VIRTUAL_REGISTER_COUNT as usize;
 const RISCV_REGISTER_BASE: u8 = RISCV_REGISTER_COUNT;
 
-static ALLOCATOR: Mutex<VirtualRegisterAllocator> = Mutex::new(VirtualRegisterAllocator::new());
+thread_local! {
+    static ALLOCATOR: RefCell<VirtualRegisterAllocator> = const { RefCell::new(VirtualRegisterAllocator::new()) };
+}
 
 struct VirtualRegisterAllocator {
     allocated: [bool; NUM_VIRTUAL_REGISTERS],
@@ -50,21 +52,20 @@ impl Deref for VirtualRegisterGuard {
 
 impl Drop for VirtualRegisterGuard {
     fn drop(&mut self) {
-        ALLOCATOR.lock().unwrap().deallocate(self.index);
+        ALLOCATOR.with(|allocator| {
+            allocator.borrow_mut().deallocate(self.index);
+        });
     }
 }
 
 pub fn allocate_virtual_register() -> VirtualRegisterGuard {
-    let mut allocator = ALLOCATOR.lock().unwrap();
-    if let Some(index) = allocator
-        .allocate()
-        .map(|index| VirtualRegisterGuard { index })
-    {
-        index
-    } else {
-        drop(allocator);
-        panic!("Failed to allocate virtual register: all registers in use");
-    }
+    ALLOCATOR.with(|allocator| {
+        if let Some(index) = allocator.borrow_mut().allocate() {
+            VirtualRegisterGuard { index }
+        } else {
+            panic!("Failed to allocate virtual register: all registers in use");
+        }
+    })
 }
 
 #[cfg(test)]
