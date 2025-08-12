@@ -440,7 +440,7 @@ pub fn prove_generic_core_shout_pip_d_greater_than_one_with_gruen<
 
         // d + 2 evaluations of t are sufficient to construct the polynomial
         let t_x = UniPoly::from_evals(&evals_of_t);
-        //We need this to evaluate t @ d+2 which we don't hae right now
+        //We need this to evaluate t @ d+2 which we don't have right now
         // but this will only take d mults instead of 2^{\log T - round_i}
 
         let d_plus_two_evaluations: Vec<F> = (0..(d + 2))
