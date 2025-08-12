@@ -117,24 +117,14 @@ impl Sha256SequenceBuilder {
                 self.asm
                     .emit_ld::<LW>(self.vr[24 + i as usize], self.operand_rs2, i * 4)
             });
-            // Resolve concrete VRs for A..H at the end and add IV words directly.
-            let a = self.vr('A');
-            let b = self.vr('B');
-            let c = self.vr('C');
-            let d = self.vr('D');
-            let e = self.vr('E');
-            let f = self.vr('F');
-            let g = self.vr('G');
-            let h = self.vr('H');
-            // Perform G first to avoid any subtle overlap issues
-            self.asm.add(Reg(g), Reg(self.vr[30]), g);
-            self.asm.add(Reg(a), Reg(self.vr[24]), a);
-            self.asm.add(Reg(b), Reg(self.vr[25]), b);
-            self.asm.add(Reg(c), Reg(self.vr[26]), c);
-            self.asm.add(Reg(d), Reg(self.vr[27]), d);
-            self.asm.add(Reg(e), Reg(self.vr[28]), e);
-            self.asm.add(Reg(f), Reg(self.vr[29]), f);
-            self.asm.add(Reg(h), Reg(self.vr[31]), h);
+            self.asm.add(self.vri('A'), Reg(self.vr[24]), self.vr('A'));
+            self.asm.add(self.vri('B'), Reg(self.vr[25]), self.vr('B'));
+            self.asm.add(self.vri('C'), Reg(self.vr[26]), self.vr('C'));
+            self.asm.add(self.vri('D'), Reg(self.vr[27]), self.vr('D'));
+            self.asm.add(self.vri('E'), Reg(self.vr[28]), self.vr('E'));
+            self.asm.add(self.vri('F'), Reg(self.vr[29]), self.vr('F'));
+            self.asm.add(self.vri('G'), Reg(self.vr[30]), self.vr('G'));
+            self.asm.add(self.vri('H'), Reg(self.vr[31]), self.vr('H'));
         } else {
             // We are using constants for final addition round
             self.asm.add(self.vri('A'), Imm(BLOCK[0]), self.vr('A'));
