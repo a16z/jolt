@@ -173,8 +173,7 @@ impl Sha256SequenceBuilder {
         let add_ch = self.asm.add(add_sigma_1, ch, t1);
         self.update_w([ss, ss2]);
         // Add W_(rid)
-        let t1 = self.asm.add(add_ch, Reg(self.w(0)), t1);
-        t1
+        self.asm.add(add_ch, Reg(self.w(0)), t1)
     }
 
     /// Compute T2 into the provided `t2` register and return it as a Value.
@@ -184,8 +183,7 @@ impl Sha256SequenceBuilder {
         // Put Maj(A_0, B_0, C_0) into register ss
         let maj = self.sha_maj(self.vri('A'), self.vri('B'), self.vri('C'), ss, ss2);
         // Add Maj to t2
-        let t2 = self.asm.add(sigma_0, maj, t2);
-        t2
+        self.asm.add(sigma_0, maj, t2)
     }
 
     /// Apply A/E updates for the current round using computed T1/T2 and then advance the round.
@@ -379,9 +377,10 @@ pub fn sha2_init_inline_sequence_builder(
 ///
 /// Steps supported:
 /// - "t1_t2": compute T1 and T2 into vr[24] and vr[25] respectively for the current `round`,
-///             but do not write the updated A/E.
+///   but do not write the updated A/E.
 /// - "after_round": perform a full `round()` at the target round (equivalent to calling round())
-///                  after executing previous rounds.
+///   after executing previous rounds.
+#[allow(clippy::too_many_arguments)]
 pub fn sha2_build_up_to_step(
     address: u64,
     is_compressed: bool,
