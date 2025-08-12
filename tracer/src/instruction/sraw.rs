@@ -1,4 +1,4 @@
-use common::constants::virtual_register_index;
+use crate::utils::virtual_registers::allocate_virtual_register;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -47,15 +47,15 @@ impl RISCVTrace for SRAW {
     }
 
     fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let v_rs1 = virtual_register_index(5);
-        let v_bitmask = virtual_register_index(6);
+        let v_rs1 = allocate_virtual_register();
+        let v_bitmask = allocate_virtual_register();
 
         let mut sequence = vec![];
 
         let signext = VirtualSignExtend {
             address: self.address,
             operands: FormatI {
-                rd: v_rs1,
+                rd: *v_rs1,
                 rs1: self.operands.rs1,
                 imm: 0,
             },
@@ -67,7 +67,7 @@ impl RISCVTrace for SRAW {
         let bitmask = VirtualShiftRightBitmask {
             address: self.address,
             operands: FormatI {
-                rd: v_bitmask,
+                rd: *v_bitmask,
                 rs1: self.operands.rs2,
                 imm: 0,
             },
@@ -80,8 +80,8 @@ impl RISCVTrace for SRAW {
             address: self.address,
             operands: FormatVirtualRightShiftR {
                 rd: self.operands.rd,
-                rs1: v_rs1,
-                rs2: v_bitmask,
+                rs1: *v_rs1,
+                rs2: *v_bitmask,
             },
             inline_sequence_remaining: Some(1),
             is_compressed: self.is_compressed,

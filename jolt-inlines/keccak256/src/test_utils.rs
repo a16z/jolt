@@ -32,7 +32,10 @@ impl KeccakCpuHarness {
 
     /// Create a new harness with initialized memory.
     pub fn new() -> Self {
-        let vr = core::array::from_fn(|i| tracer::inline_helpers::virtual_register_index(i as u8));
+        let guards: Vec<_> = (0..96)
+            .map(|_| tracer::utils::virtual_registers::allocate_virtual_register())
+            .collect();
+        let vr: [u8; 96] = core::array::from_fn(|i| *guards[i]);
 
         Self {
             harness: CpuTestHarness::new(),

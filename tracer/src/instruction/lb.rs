@@ -1,4 +1,4 @@
-use common::constants::virtual_register_index;
+use crate::utils::virtual_registers::allocate_virtual_register;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -66,17 +66,17 @@ impl RISCVTrace for LB {
 impl LB {
     fn inline_sequence_32(&self) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
-        let v_address = virtual_register_index(0);
-        let v_word_address = virtual_register_index(1);
-        let v_word = virtual_register_index(2);
-        let v_shift = virtual_register_index(3);
+        let v_address = allocate_virtual_register();
+        let v_word_address = allocate_virtual_register();
+        let v_word = allocate_virtual_register();
+        let v_shift = allocate_virtual_register();
 
         let mut sequence = vec![];
 
         let add = ADDI {
             address: self.address,
             operands: FormatI {
-                rd: v_address,
+                rd: *v_address,
                 rs1: self.operands.rs1,
                 imm: self.operands.imm as u64,
             },
@@ -88,8 +88,8 @@ impl LB {
         let andi = ANDI {
             address: self.address,
             operands: FormatI {
-                rd: v_word_address,
-                rs1: v_address,
+                rd: *v_word_address,
+                rs1: *v_address,
                 imm: -4i64 as u64,
             },
             inline_sequence_remaining: Some(6),
@@ -100,8 +100,8 @@ impl LB {
         let lw = VirtualLW {
             address: self.address,
             operands: FormatI {
-                rd: v_word,
-                rs1: v_word_address,
+                rd: *v_word,
+                rs1: *v_word_address,
                 imm: 0,
             },
             inline_sequence_remaining: Some(5),
@@ -112,8 +112,8 @@ impl LB {
         let xori = XORI {
             address: self.address,
             operands: FormatI {
-                rd: v_shift,
-                rs1: v_address,
+                rd: *v_shift,
+                rs1: *v_address,
                 imm: 3,
             },
             inline_sequence_remaining: Some(4),
@@ -124,8 +124,8 @@ impl LB {
         let slli = SLLI {
             address: self.address,
             operands: FormatI {
-                rd: v_shift,
-                rs1: v_shift,
+                rd: *v_shift,
+                rs1: *v_shift,
                 imm: 3,
             },
             inline_sequence_remaining: Some(3),
@@ -137,8 +137,8 @@ impl LB {
             address: self.address,
             operands: FormatR {
                 rd: self.operands.rd,
-                rs1: v_word,
-                rs2: v_shift,
+                rs1: *v_word,
+                rs2: *v_shift,
             },
             inline_sequence_remaining: Some(2),
             is_compressed: self.is_compressed,
@@ -162,17 +162,17 @@ impl LB {
 
     fn inline_sequence_64(&self) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
-        let v_address = virtual_register_index(6);
-        let v_dword_address = virtual_register_index(7);
-        let v_dword = virtual_register_index(8);
-        let v_shift = virtual_register_index(9);
+        let v_address = allocate_virtual_register();
+        let v_dword_address = allocate_virtual_register();
+        let v_dword = allocate_virtual_register();
+        let v_shift = allocate_virtual_register();
 
         let mut sequence = vec![];
 
         let add = ADDI {
             address: self.address,
             operands: FormatI {
-                rd: v_address,
+                rd: *v_address,
                 rs1: self.operands.rs1,
                 imm: self.operands.imm as u64,
             },
@@ -184,8 +184,8 @@ impl LB {
         let andi = ANDI {
             address: self.address,
             operands: FormatI {
-                rd: v_dword_address,
-                rs1: v_address,
+                rd: *v_dword_address,
+                rs1: *v_address,
                 imm: -8i64 as u64,
             },
             inline_sequence_remaining: Some(6),
@@ -196,8 +196,8 @@ impl LB {
         let ld = LD {
             address: self.address,
             operands: FormatLoad {
-                rd: v_dword,
-                rs1: v_dword_address,
+                rd: *v_dword,
+                rs1: *v_dword_address,
                 imm: 0,
             },
             inline_sequence_remaining: Some(5),
@@ -208,8 +208,8 @@ impl LB {
         let xori = XORI {
             address: self.address,
             operands: FormatI {
-                rd: v_shift,
-                rs1: v_address,
+                rd: *v_shift,
+                rs1: *v_address,
                 imm: 7,
             },
             inline_sequence_remaining: Some(4),
@@ -220,8 +220,8 @@ impl LB {
         let slli = SLLI {
             address: self.address,
             operands: FormatI {
-                rd: v_shift,
-                rs1: v_shift,
+                rd: *v_shift,
+                rs1: *v_shift,
                 imm: 3,
             },
             inline_sequence_remaining: Some(3),
@@ -233,8 +233,8 @@ impl LB {
             address: self.address,
             operands: FormatR {
                 rd: self.operands.rd,
-                rs1: v_dword,
-                rs2: v_shift,
+                rs1: *v_dword,
+                rs2: *v_shift,
             },
             inline_sequence_remaining: Some(2),
             is_compressed: self.is_compressed,

@@ -14,7 +14,7 @@ use super::{
     format::{format_i::FormatI, InstructionFormat},
     RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
-use common::constants::virtual_register_index;
+use crate::utils::virtual_registers::allocate_virtual_register;
 
 declare_riscv_instr!(
     name   = SRLIW,
@@ -46,13 +46,13 @@ impl RISCVTrace for SRLIW {
     }
 
     fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let v_rs1 = virtual_register_index(0);
+        let v_rs1 = allocate_virtual_register();
         let mut sequence = vec![];
 
         let slli = SLLI {
             address: self.address,
             operands: FormatI {
-                rd: v_rs1,
+                rd: *v_rs1,
                 rs1: self.operands.rs1,
                 imm: 32,
             },
@@ -72,7 +72,7 @@ impl RISCVTrace for SRLIW {
             address: self.address,
             operands: FormatVirtualRightShiftI {
                 rd: self.operands.rd,
-                rs1: v_rs1,
+                rs1: *v_rs1,
                 imm: bitmask,
             },
             inline_sequence_remaining: Some(1),

@@ -7,7 +7,7 @@ use super::ld::LD;
 use super::sd::SD;
 use super::virtual_move::VirtualMove;
 use super::RV32IMInstruction;
-use common::constants::virtual_register_index;
+use crate::utils::virtual_registers::allocate_virtual_register;
 
 use crate::instruction::format::format_load::FormatLoad;
 use crate::{
@@ -62,14 +62,14 @@ impl RISCVTrace for AMOADDD {
     }
 
     fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let v_rs2 = virtual_register_index(6);
-        let v_rd = virtual_register_index(7);
+        let v_rs2 = allocate_virtual_register();
+        let v_rd = allocate_virtual_register();
         let mut sequence = vec![];
 
         let ld = LD {
             address: self.address,
             operands: FormatLoad {
-                rd: v_rd,
+                rd: *v_rd,
                 rs1: self.operands.rs1,
                 imm: 0,
             },
@@ -81,8 +81,8 @@ impl RISCVTrace for AMOADDD {
         let add = ADD {
             address: self.address,
             operands: FormatR {
-                rd: v_rs2,
-                rs1: v_rd,
+                rd: *v_rs2,
+                rs1: *v_rd,
                 rs2: self.operands.rs2,
             },
             inline_sequence_remaining: Some(2),
@@ -94,7 +94,7 @@ impl RISCVTrace for AMOADDD {
             address: self.address,
             operands: FormatS {
                 rs1: self.operands.rs1,
-                rs2: v_rs2,
+                rs2: *v_rs2,
                 imm: 0,
             },
             inline_sequence_remaining: Some(1),
@@ -106,7 +106,7 @@ impl RISCVTrace for AMOADDD {
             address: self.address,
             operands: FormatI {
                 rd: self.operands.rd,
-                rs1: v_rd,
+                rs1: *v_rd,
                 imm: 0,
             },
             inline_sequence_remaining: Some(0),

@@ -13,11 +13,11 @@ use super::{
     format::{format_load::FormatLoad, InstructionFormat},
     RISCVInstruction, RISCVTrace, RV32IMCycle,
 };
+use crate::utils::virtual_registers::allocate_virtual_register;
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
 };
-use common::constants::virtual_register_index;
 use serde::{Deserialize, Serialize};
 
 declare_riscv_instr!(
@@ -67,10 +67,10 @@ impl RISCVTrace for LWU {
 impl LWU {
     fn inline_sequence_64(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
-        let v_address = virtual_register_index(6);
-        let v_dword_address = virtual_register_index(7);
-        let v_dword = virtual_register_index(8);
-        let v_shift = virtual_register_index(9);
+        let v_address = allocate_virtual_register();
+        let v_dword_address = allocate_virtual_register();
+        let v_dword = allocate_virtual_register();
+        let v_shift = allocate_virtual_register();
 
         let mut sequence = vec![];
 
@@ -88,7 +88,7 @@ impl LWU {
         let add = ADDI {
             address: self.address,
             operands: FormatI {
-                rd: v_address,
+                rd: *v_address,
                 rs1: self.operands.rs1,
                 imm: self.operands.imm as u64,
             },
@@ -100,8 +100,8 @@ impl LWU {
         let andi = ANDI {
             address: self.address,
             operands: FormatI {
-                rd: v_dword_address,
-                rs1: v_address,
+                rd: *v_dword_address,
+                rs1: *v_address,
                 imm: -8i64 as u64,
             },
             inline_sequence_remaining: Some(6),
@@ -112,8 +112,8 @@ impl LWU {
         let ld = LD {
             address: self.address,
             operands: FormatLoad {
-                rd: v_dword,
-                rs1: v_dword_address,
+                rd: *v_dword,
+                rs1: *v_dword_address,
                 imm: 0,
             },
             inline_sequence_remaining: Some(5),
@@ -124,8 +124,8 @@ impl LWU {
         let xori = XORI {
             address: self.address,
             operands: FormatI {
-                rd: v_shift,
-                rs1: v_address,
+                rd: *v_shift,
+                rs1: *v_address,
                 imm: 4,
             },
             inline_sequence_remaining: Some(4),
@@ -136,8 +136,8 @@ impl LWU {
         let slli = SLLI {
             address: self.address,
             operands: FormatI {
-                rd: v_shift,
-                rs1: v_shift,
+                rd: *v_shift,
+                rs1: *v_shift,
                 imm: 3,
             },
             inline_sequence_remaining: Some(3),
@@ -149,8 +149,8 @@ impl LWU {
             address: self.address,
             operands: FormatR {
                 rd: self.operands.rd,
-                rs1: v_dword,
-                rs2: v_shift,
+                rs1: *v_dword,
+                rs2: *v_shift,
             },
             inline_sequence_remaining: Some(2),
             is_compressed: self.is_compressed,

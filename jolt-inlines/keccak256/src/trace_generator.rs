@@ -14,14 +14,15 @@
 //! Keccak256 differs from SHA3-256 (not implemented here) in the padding scheme.
 
 use tracer::emulator::cpu::Xlen;
-use tracer::inline_helpers::{
-    InstrAssembler,
-    Value::{Imm, Reg},
-};
 use tracer::instruction::andn::ANDN;
 use tracer::instruction::ld::LD;
 use tracer::instruction::sd::SD;
 use tracer::instruction::RV32IMInstruction;
+use tracer::utils::inline_helpers::{
+    InstrAssembler,
+    Value::{Imm, Reg},
+};
+use tracer::utils::virtual_registers::allocate_virtual_register;
 
 use crate::{Keccak256State, NUM_LANES};
 
@@ -443,10 +444,13 @@ pub fn keccak256_inline_sequence_builder(
     operand_rs2: u8,
 ) -> Vec<RV32IMInstruction> {
     // Virtual registers used as a scratch space
+    let guards: Vec<_> = (0..NEEDED_REGISTERS)
+        .map(|_| allocate_virtual_register())
+        .collect();
     let mut vr = [0; NEEDED_REGISTERS];
-    (0..NEEDED_REGISTERS).for_each(|i| {
-        vr[i] = tracer::inline_helpers::virtual_register_index(i as u8);
-    });
+    for (i, guard) in guards.iter().enumerate() {
+        vr[i] = **guard;
+    }
     let builder =
         Keccak256SequenceBuilder::new(address, is_compressed, xlen, vr, operand_rs1, operand_rs2);
     builder.build()

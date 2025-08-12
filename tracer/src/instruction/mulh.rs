@@ -1,4 +1,4 @@
-use common::constants::virtual_register_index;
+use crate::utils::virtual_registers::allocate_virtual_register;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -50,19 +50,19 @@ impl RISCVTrace for MULH {
 
     fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
-        let v_sx = virtual_register_index(0);
-        let v_sy = virtual_register_index(1);
-        let v_0 = virtual_register_index(2);
-        let v_1 = virtual_register_index(3);
-        let v_2 = virtual_register_index(4);
-        let v_3 = virtual_register_index(5);
+        let v_sx = allocate_virtual_register();
+        let v_sy = allocate_virtual_register();
+        let v_0 = allocate_virtual_register();
+        let v_1 = allocate_virtual_register();
+        let v_2 = allocate_virtual_register();
+        let v_3 = allocate_virtual_register();
 
         let mut sequence = vec![];
 
         let movsign_x = VirtualMovsign {
             address: self.address,
             operands: FormatI {
-                rd: v_sx,
+                rd: *v_sx,
                 rs1: self.operands.rs1,
                 imm: 0,
             },
@@ -74,7 +74,7 @@ impl RISCVTrace for MULH {
         let movsign_y = VirtualMovsign {
             address: self.address,
             operands: FormatI {
-                rd: v_sy,
+                rd: *v_sy,
                 rs1: self.operands.rs2,
                 imm: 0,
             },
@@ -86,7 +86,7 @@ impl RISCVTrace for MULH {
         let mulhu = MULHU {
             address: self.address,
             operands: FormatR {
-                rd: v_0,
+                rd: *v_0,
                 rs1: self.operands.rs1,
                 rs2: self.operands.rs2,
             },
@@ -98,8 +98,8 @@ impl RISCVTrace for MULH {
         let mulu_sx_y = MUL {
             address: self.address,
             operands: FormatR {
-                rd: v_1,
-                rs1: v_sx,
+                rd: *v_1,
+                rs1: *v_sx,
                 rs2: self.operands.rs2,
             },
             inline_sequence_remaining: Some(3),
@@ -110,8 +110,8 @@ impl RISCVTrace for MULH {
         let mulu_sy_x = MUL {
             address: self.address,
             operands: FormatR {
-                rd: v_2,
-                rs1: v_sy,
+                rd: *v_2,
+                rs1: *v_sy,
                 rs2: self.operands.rs1,
             },
             inline_sequence_remaining: Some(2),
@@ -122,9 +122,9 @@ impl RISCVTrace for MULH {
         let add_1 = ADD {
             address: self.address,
             operands: FormatR {
-                rd: v_3,
-                rs1: v_0,
-                rs2: v_1,
+                rd: *v_3,
+                rs1: *v_0,
+                rs2: *v_1,
             },
             inline_sequence_remaining: Some(1),
             is_compressed: self.is_compressed,
@@ -135,8 +135,8 @@ impl RISCVTrace for MULH {
             address: self.address,
             operands: FormatR {
                 rd: self.operands.rd,
-                rs1: v_3,
-                rs2: v_2,
+                rs1: *v_3,
+                rs2: *v_2,
             },
             inline_sequence_remaining: Some(0),
             is_compressed: self.is_compressed,
