@@ -11,6 +11,7 @@ use ark_serialize::{
 use num::FromPrimitive;
 use tracer::JoltDevice;
 
+use crate::zkvm::witness::AllCommittedPolynomials;
 use crate::{
     field::JoltField,
     poly::{
@@ -28,7 +29,6 @@ use crate::{
         JoltVerifierPreprocessing,
     },
 };
-use crate::zkvm::witness::AllCommittedPolynomials;
 
 pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
     opening_claims: Claims<F>,
