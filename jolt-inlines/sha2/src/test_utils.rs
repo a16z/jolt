@@ -4,6 +4,7 @@
 // functions to reduce code duplication in the test suite. It relies on the
 // generic `CpuTestHarness` for the underlying emulator setup.
 use crate::trace_generator::NEEDED_REGISTERS;
+use tracer::emulator::cpu::Xlen;
 use tracer::emulator::mmu::DRAM_BASE;
 use tracer::emulator::test_harness::CpuTestHarness;
 use tracer::instruction::format::format_r::FormatR;
@@ -24,12 +25,6 @@ pub struct Sha256CpuHarness {
     pub vr: [u8; NEEDED_REGISTERS as usize],
 }
 
-impl Default for Sha256CpuHarness {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Sha256CpuHarness {
     /// Memory layout for tests.
     const BLOCK_ADDR: u64 = DRAM_BASE;
@@ -38,16 +33,17 @@ impl Sha256CpuHarness {
     pub const RS2: u8 = 11;
 
     /// Create a new harness.
-    pub fn new() -> Self {
+    pub fn new(xlen: Xlen) -> Self {
         let guards: Vec<_> = (0..32)
             .map(|_| tracer::utils::virtual_registers::allocate_virtual_register())
             .collect();
         let vr: [u8; 32] = std::array::from_fn(|i| *guards[i]);
         Self {
-            // RV32.
-            // harness: CpuTestHarness::new_32(),
-            // TODO: Fix RV64 failure (below)
-            harness: CpuTestHarness::new(),
+            harness: if xlen == Xlen::Bit32 {
+                CpuTestHarness::new_32()
+            } else {
+                CpuTestHarness::new()
+            },
             vr,
         }
     }
@@ -128,9 +124,9 @@ pub mod sverify {
     }
 
     /// Assert that direct `exec` and virtual-sequence `trace` paths match for `SHA256INIT`.
-    pub fn assert_exec_trace_equiv_initial(block: &Sha256Block, desc: &str) {
-        let mut harness_exec = Sha256CpuHarness::new();
-        let mut harness_trace = Sha256CpuHarness::new();
+    pub fn assert_exec_trace_equiv_initial(block: &Sha256Block, desc: &str, xlen: Xlen) {
+        let mut harness_exec = Sha256CpuHarness::new(xlen);
+        let mut harness_trace = Sha256CpuHarness::new(xlen);
 
         // Set up both CPUs identically
         harness_exec.load_block(block);
@@ -156,9 +152,14 @@ pub mod sverify {
     }
 
     /// Assert that direct `exec` and virtual-sequence `trace` paths match for `SHA256`.
-    pub fn assert_exec_trace_equiv_custom(block: &Sha256Block, state: &Sha256State, desc: &str) {
-        let mut harness_exec = Sha256CpuHarness::new();
-        let mut harness_trace = Sha256CpuHarness::new();
+    pub fn assert_exec_trace_equiv_custom(
+        block: &Sha256Block,
+        state: &Sha256State,
+        desc: &str,
+        xlen: Xlen,
+    ) {
+        let mut harness_exec = Sha256CpuHarness::new(xlen);
+        let mut harness_trace = Sha256CpuHarness::new(xlen);
 
         // Set up both CPUs identically
         harness_exec.load_block(block);
