@@ -1,6 +1,6 @@
+use crate::host::TOOLCHAIN_VERSION;
 use crate::field::JoltField;
 use crate::host::analyze::ProgramSummary;
-use crate::host::toolchain::TOOLCHAIN_VERSION;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host::toolchain::{install_no_std_toolchain, install_toolchain};
 use crate::host::{Program, DEFAULT_TARGET_DIR, LINKER_SCRIPT_TEMPLATE};

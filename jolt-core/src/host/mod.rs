@@ -9,6 +9,8 @@ pub mod program;
 #[cfg(all(feature = "host", not(target_arch = "wasm32")))]
 pub mod toolchain;
 
+pub const TOOLCHAIN_VERSION: &str = "1.89.0";
+
 #[derive(Clone)]
 pub struct Program {
     guest: String,

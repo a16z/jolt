@@ -1,3 +1,4 @@
+use crate::host::TOOLCHAIN_VERSION;
 use std::{
     fs::{self, read_to_string, File},
     future::Future,
@@ -12,7 +13,6 @@ use reqwest::Client;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime;
 
-pub const TOOLCHAIN_VERSION: &str = "1.89.0";
 const TOOLCHAIN_TAG: &str = include_str!("../../../guest-toolchain-tag");
 const DOWNLOAD_RETRIES: usize = 5;
 const DELAY_BASE_MS: u64 = 500;
