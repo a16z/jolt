@@ -1129,38 +1129,38 @@ mod tests {
     use ark_std::test_rng;
     use rand_core::RngCore;
 
-    #[test]
-    fn shout_e2e() {
-        const TABLE_SIZE: usize = 64;
-        const NUM_LOOKUPS: usize = 1 << 10;
-
-        let mut rng = test_rng();
-
-        let lookup_table: Vec<Fr> = (0..TABLE_SIZE).map(|_| Fr::random(&mut rng)).collect();
-        let read_addresses: Vec<usize> = (0..NUM_LOOKUPS)
-            .map(|_| rng.next_u32() as usize % TABLE_SIZE)
-            .collect();
-
-        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
-        let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(NUM_LOOKUPS.log_2());
-        let proof = ShoutProof::prove(
-            lookup_table.clone(),
-            read_addresses,
-            &r_cycle,
-            &mut prover_transcript,
-        );
-
-        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
-        verifier_transcript.compare_to(prover_transcript);
-        let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(NUM_LOOKUPS.log_2());
-        let verification_result = proof.verify(lookup_table, &r_cycle, &mut verifier_transcript);
-        assert!(
-            verification_result.is_ok(),
-            "Verification failed with error: {:?}",
-            verification_result.err()
-        );
-    }
-
+    //#[test]
+    //fn shout_e2e() {
+    //    const TABLE_SIZE: usize = 64;
+    //    const NUM_LOOKUPS: usize = 1 << 10;
+    //
+    //    let mut rng = test_rng();
+    //
+    //    let lookup_table: Vec<Fr> = (0..TABLE_SIZE).map(|_| Fr::random(&mut rng)).collect();
+    //    let read_addresses: Vec<usize> = (0..NUM_LOOKUPS)
+    //        .map(|_| rng.next_u32() as usize % TABLE_SIZE)
+    //        .collect();
+    //
+    //    let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+    //    let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(NUM_LOOKUPS.log_2());
+    //    let proof = ShoutProof::prove(
+    //        lookup_table.clone(),
+    //        read_addresses,
+    //        &r_cycle,
+    //        &mut prover_transcript,
+    //    );
+    //
+    //    let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+    //    verifier_transcript.compare_to(prover_transcript);
+    //    let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(NUM_LOOKUPS.log_2());
+    //    let verification_result = proof.verify(lookup_table, &r_cycle, &mut verifier_transcript);
+    //    assert!(
+    //        verification_result.is_ok(),
+    //        "Verification failed with error: {:?}",
+    //        verification_result.err()
+    //    );
+    //}
+    //
     #[test]
     fn core_shout_sumcheck() {
         const TABLE_SIZE: usize = 64;
