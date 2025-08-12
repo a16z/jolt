@@ -21,7 +21,6 @@ pub type Sha256State = [u32; 8];
 pub struct Sha256CpuHarness {
     pub harness: CpuTestHarness,
     // This is needed to pull out the virtual registers in case we need them for tests.
-    #[allow(dead_code)]
     pub vr: [u8; NEEDED_REGISTERS as usize],
 }
 

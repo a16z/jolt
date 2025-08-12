@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use crate::field::JoltField;
 use std::cmp::Ordering;
 use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign, Sub};

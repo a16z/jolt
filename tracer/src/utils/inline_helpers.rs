@@ -1,4 +1,3 @@
-#![allow(dead_code)] // temporary while we have this file as module binary
 //! InstrAssembler
 //!
 //! Builds and owns a vector of virtual RISC-V instructions (`RV32IMInstruction`).

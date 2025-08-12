@@ -50,7 +50,6 @@ lazy_static! {
 /// * `name` - Human-readable name for the inline
 /// * `exec_fn` - Function to execute during CPU simulation
 /// * `inline_sequence_fn` - Function to generate virtual instruction sequence
-#[allow(dead_code)]
 pub fn register_inline(
     opcode: u32,
     funct3: u32,
@@ -97,7 +96,6 @@ pub fn register_inline(
 /// A vector of tuples containing:
 /// - `(opcode, funct3, funct7)` tuple
 /// - Inline name
-#[allow(dead_code)]
 pub fn list_registered_inlines() -> Vec<((u32, u32, u32), String)> {
     match INLINE_REGISTRY.read() {
         Ok(registry) => registry
@@ -112,7 +110,6 @@ pub fn list_registered_inlines() -> Vec<((u32, u32, u32), String)> {
 }
 
 /// Checks if a inline is registered for the given opcode, funct3 and funct7 values.
-#[allow(dead_code)]
 pub fn is_inline_registered(opcode: u32, funct3: u32, funct7: u32) -> bool {
     match INLINE_REGISTRY.read() {
         Ok(registry) => registry.contains_key(&(opcode, funct3, funct7)),
