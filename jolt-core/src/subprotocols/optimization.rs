@@ -47,13 +47,13 @@ pub fn compute_eq_mle_product_univariate<F: JoltField>(
         .par_iter()
         .map(|x| *x * eq_coeffs[0])
         .collect::<Vec<_>>();
-    let mul_by_evals_1 = mle_product_coeffs[..mle_product_coeffs.len()]
+    let mul_by_evals_1 = mle_product_coeffs[..mle_product_coeffs.len() - 1]
         .par_iter()
         .map(|x| *x * eq_coeffs[1])
         .collect::<Vec<_>>();
 
     univariate_evals.extend(
-        (0..mle_product_coeffs.len())
+        (0..mle_product_coeffs.len() - 1)
             .into_par_iter()
             .map(|i| mul_by_evals_0[i] + mul_by_evals_1[i])
             .collect::<Vec<_>>(),

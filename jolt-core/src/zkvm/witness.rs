@@ -25,6 +25,11 @@ use super::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
 
 /// K^{1/d}
 pub const DTH_ROOT_OF_K: usize = 1 << 8;
+
+pub fn compute_d_parameter_from_log_K(log_K: usize) -> usize {
+    log_K.div_ceil(DTH_ROOT_OF_K.log_2())
+}
+
 pub fn compute_d_parameter(K: usize) -> usize {
     // Calculate D dynamically such that 2^8 = K^(1/D)
     let log_K = K.log_2();

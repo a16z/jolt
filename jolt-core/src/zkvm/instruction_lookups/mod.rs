@@ -87,7 +87,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        let ra_virtual = RASumCheck::new_prover(LOG_K.pow2(), sm);
+        let ra_virtual = RASumCheck::new_prover(LOG_K, sm);
 
         vec![Box::new(ra_virtual)]
     }
@@ -96,7 +96,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        let ra_virtual = RASumCheck::new_verifier(LOG_K.pow2(), sm);
+        let ra_virtual = RASumCheck::new_verifier(LOG_K, sm);
 
         vec![Box::new(ra_virtual)]
     }

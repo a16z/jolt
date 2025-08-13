@@ -18,7 +18,9 @@ use crate::{
     zkvm::{
         dag::state_manager::StateManager,
         ram::remap_address,
-        witness::{compute_d_parameter, CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K},
+        witness::{
+            compute_d_parameter_from_log_K, CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K,
+        },
     },
 };
 
@@ -39,11 +41,10 @@ pub struct RAProverState<F: JoltField> {
 
 impl<F: JoltField> RASumCheck<F> {
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        K: usize,
+        log_K: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let d = compute_d_parameter(K);
-        let log_K = K.log_2();
+        let d = compute_d_parameter_from_log_K(log_K);
 
         let (preprocessing, trace, _, _) = state_manager.get_prover_data();
         let T = trace.len();
@@ -122,11 +123,10 @@ impl<F: JoltField> RASumCheck<F> {
     }
 
     pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        K: usize,
+        log_K: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let d = compute_d_parameter(K);
-        let log_K = K.log_2();
+        let d = compute_d_parameter_from_log_K(log_K);
 
         let (_, _, T) = state_manager.get_verifier_data();
 

@@ -94,7 +94,8 @@ impl<F: JoltField> RASumcheck<F> {
         let (r_address_raf, r_cycle_raf) = r.split_at_r(log_K);
         assert_eq!(r_address, r_address_raf);
 
-        // TODO: create a helper function for this
+        // TODO: create a helper function for this 
+
         let r_address = if r_address.len().is_multiple_of(DTH_ROOT_OF_K.log_2()) {
             r_address.to_vec()
         } else {

@@ -284,11 +284,23 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
 
     #[tracing::instrument(skip_all, name = "InstructionReadRafSumcheck::compute_prover_message")]
     fn compute_prover_message(&mut self, round: usize, _previous_claim: F) -> Vec<F> {
-        let ps = self.prover_state.as_ref().unwrap();
+        let ps = self.prover_state.as_mut().unwrap();
         if round < LOG_K {
             // Phase 1: First log(K) rounds
             self.compute_prefix_suffix_prover_message(round).to_vec()
         } else {
+            if ps.ra.is_none() {
+                let ra_acc = ps.ra_acc.take().unwrap();
+                ps.ra = Some(MultilinearPolynomial::from(ra_acc));
+            }
+
+            assert_eq!(
+                ps.eq_r_cycle.len(),
+                ps.ra.as_ref().unwrap().len(),
+                "eq_r_cycle and ra have different lengths where ra is {:?} and eq_r_cycle is {:?}",
+                ps.ra.as_ref().unwrap().len(),
+                ps.eq_r_cycle.len()
+            );
             (0..ps.eq_r_cycle.len() / 2)
                 .into_par_iter()
                 .map(|i| {
@@ -365,10 +377,17 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
             }
         } else {
             // log(T) rounds
-            ps.ra
-                .as_mut()
-                .unwrap()
-                .bind_parallel(r_j, BindingOrder::HighToLow);
+            rayon::join(
+                || {
+                    ps.ra
+                        .as_mut()
+                        .unwrap()
+                        .bind_parallel(r_j, BindingOrder::HighToLow);
+                },
+                || {
+                    ps.eq_r_cycle.bind_parallel(r_j, BindingOrder::HighToLow);
+                },
+            );
         }
     }
 
@@ -626,6 +645,7 @@ impl<F: JoltField> ReadRafProverState<F> {
             .into_iter()
             .for_each(|ra| {
                 if let Some(ra_acc) = self.ra_acc.as_mut() {
+                    assert_eq!(ra_acc.len(), ra.len());
                     ra_acc
                         .par_iter_mut()
                         .zip(ra.into_par_iter())
