@@ -128,6 +128,11 @@ impl<F: JoltField> WitnessData<F> {
 pub struct AllCommittedPolynomials();
 impl AllCommittedPolynomials {
     pub fn initialize(ram_d: usize, bytecode_d: usize) -> Self {
+        unsafe {
+            if ALL_COMMITTED_POLYNOMIALS.get().is_some() {
+                return AllCommittedPolynomials();
+            }
+        };
         let mut polynomials = vec![
             CommittedPolynomial::LeftInstructionInput,
             CommittedPolynomial::RightInstructionInput,
@@ -190,16 +195,17 @@ impl AllCommittedPolynomials {
     }
 }
 
-impl Drop for AllCommittedPolynomials {
-    fn drop(&mut self) {
-        unsafe {
-            ALL_COMMITTED_POLYNOMIALS
-                .take()
-                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized");
-        }
-    }
-}
-
+// impl Drop for AllCommittedPolynomials {
+//     fn drop(&mut self) {
+//         println!("Uninitializing ALL_COMMITTED_POLYNOMIALS");
+//         unsafe {
+//             ALL_COMMITTED_POLYNOMIALS
+//                 .take()
+//                 .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized");
+//         }
+//     }
+// }
+//
 impl CommittedPolynomial {
     pub fn len() -> usize {
         unsafe {
