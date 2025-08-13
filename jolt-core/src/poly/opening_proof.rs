@@ -38,7 +38,7 @@ pub const LITTLE_ENDIAN: Endianness = true;
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct OpeningPoint<const E: Endianness, F: JoltField> {
     pub r: Vec<F>,
-}
+    }
 
 impl<const E: Endianness, F: JoltField> std::ops::Index<usize> for OpeningPoint<E, F> {
     type Output = F;

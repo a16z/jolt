@@ -32,14 +32,8 @@ pub trait FieldMulSmall: JoltField {
     /// Multiply by an unsigned 64-bit constant efficiently.
     fn mul_u64(self, n: u64) -> Self;
 
-    /// Multiply by a signed 64-bit constant efficiently.
-    fn mul_i64(self, n: i64) -> Self;
-
     /// Multiply by an unsigned 128-bit constant efficiently.
     fn mul_u128(self, n: u128) -> Self;
-
-    /// Multiply by a signed 128-bit constant efficiently.
-    fn mul_i128(self, n: i128) -> Self;
 }
 
 // Efficient backend in arkworks for BN254.
@@ -51,21 +45,9 @@ impl FieldMulSmall for ark_bn254::Fr {
     }
 
     #[inline(always)]
-    fn mul_i64(self, n: i64) -> Self {
-        // `Fp` impl is in ark-ff; call through via inherent method.
-        ark_ff::Fp::mul_i64(self, n)
-    }
-
-    #[inline(always)]
     fn mul_u128(self, n: u128) -> Self {
         // `Fp` impl is in ark-ff; call through via inherent method.
         ark_ff::Fp::mul_u128(self, n)
-    }
-
-    #[inline(always)]
-    fn mul_i128(self, n: i128) -> Self {
-        // `Fp` impl is in ark-ff; call through via inherent method.
-        ark_ff::Fp::mul_i128(self, n)
     }
 }
 

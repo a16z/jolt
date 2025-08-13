@@ -484,11 +484,14 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
             );
         });
 
+        let eq_ra_claim =
+            ps.eq_r_cycle.final_sumcheck_claim() * EqPolynomial::mle(&r_cycle.r, &self.r_cycle);
+
         accumulator.borrow_mut().append_virtual(
-            VirtualPolynomial::InstructionRa,
+            VirtualPolynomial::InstructionEqRa,
             SumcheckId::InstructionReadRaf,
             r_sumcheck,
-            ps.ra.as_ref().unwrap().final_sumcheck_claim(),
+            eq_ra_claim,
         );
 
         // for i in 0..D {
@@ -644,6 +647,9 @@ impl<F: JoltField> ReadRafProverState<F> {
             .collect::<Vec<_>>()
             .into_iter()
             .for_each(|ra| {
+                println!("ReadRaf ra first ele: {:?}", ra[0]);
+                println!("ReadRaf ra 3rd ele: {:?}", ra[2]);
+                println!("ReadRaf ra last ele: {:?}", ra[ra.len() - 1]);
                 if let Some(ra_acc) = self.ra_acc.as_mut() {
                     assert_eq!(ra_acc.len(), ra.len());
                     ra_acc
