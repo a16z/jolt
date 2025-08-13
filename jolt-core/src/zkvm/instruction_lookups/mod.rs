@@ -8,13 +8,13 @@ use crate::{
         opening_proof::SumcheckId,
     },
     subprotocols::sumcheck::SumcheckInstance,
-    utils::{thread::unsafe_allocate_zero_vec, transcript::Transcript},
+    utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
     zkvm::{
         dag::{stage::SumcheckStages, state_manager::StateManager},
         instruction::LookupQuery,
         instruction_lookups::{
             booleanity::BooleanitySumcheck, hamming_weight::HammingWeightSumcheck,
-            read_raf_checking::ReadRafSumcheck,
+            ra_virtual::RASumCheck, read_raf_checking::ReadRafSumcheck,
         },
         witness::VirtualPolynomial,
     },
@@ -81,6 +81,24 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             Box::new(booleanity),
             Box::new(hamming_weight),
         ]
+    }
+
+    fn stage4_prover_instances(
+        &mut self,
+        sm: &mut StateManager<'_, F, T, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+        let ra_virtual = RASumCheck::new_prover(LOG_K.pow2(), sm);
+
+        vec![Box::new(ra_virtual)]
+    }
+
+    fn stage4_verifier_instances(
+        &mut self,
+        sm: &mut StateManager<'_, F, T, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+        let ra_virtual = RASumCheck::new_verifier(LOG_K.pow2(), sm);
+
+        vec![Box::new(ra_virtual)]
     }
 }
 

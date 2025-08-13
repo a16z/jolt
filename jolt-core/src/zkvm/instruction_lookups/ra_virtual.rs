@@ -11,10 +11,12 @@ use crate::{
         opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN},
     },
     subprotocols::{
-        karatsuba, optimization::{
+        karatsuba,
+        optimization::{
             compute_eq_mle_product_univariate, compute_mle_product_coeffs_katatsuba,
             compute_mle_product_coeffs_toom,
-        }, sumcheck::SumcheckInstance
+        },
+        sumcheck::SumcheckInstance,
     },
     utils::{math::Math, transcript::Transcript},
     zkvm::{
@@ -120,6 +122,50 @@ impl<F: JoltField> RASumCheck<F> {
             d,
             T,
             prover_state: Some(prover_state),
+        }
+    }
+
+    pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+        K: usize,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Self {
+        let d = compute_d_parameter(K);
+        let log_K = K.log_2();
+
+        let (_, _, T) = state_manager.get_verifier_data();
+
+        let (r, ra_claim) = state_manager.get_virtual_polynomial_opening(
+            VirtualPolynomial::InstructionRa,
+            SumcheckId::InstructionRaVirtualization,
+        );
+
+        // TODO: create a helper function for this
+        let (r_address, r_cycle) = r.split_at_r(log_K);
+
+        let r_address = if r_address.len().is_multiple_of(DTH_ROOT_OF_K.log_2()) {
+            r_address.to_vec()
+        } else {
+            // Pad with zeros
+            [
+                &vec![F::zero(); DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())],
+                r_address,
+            ]
+            .concat()
+        };
+        // Split r_address into d chunks of variable sizes
+        let r_address_chunks: Vec<Vec<F>> = r_address
+            .chunks(DTH_ROOT_OF_K.log_2())
+            .map(|chunk| chunk.to_vec())
+            .collect();
+        debug_assert_eq!(r_address_chunks.len(), d);
+
+        Self {
+            r_cycle: r_cycle.to_vec(),
+            r_address_chunks,
+            ra_claim,
+            d,
+            T,
+            prover_state: None,
         }
     }
 }
