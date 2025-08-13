@@ -164,7 +164,7 @@ fn get_sha3_chain_iterations(scale: usize) -> u32 {
 
 fn get_btreemap_ops(scale: usize) -> u32 {
     let scale_factor = 1 << (scale - 18);
-    175u32 * scale_factor as u32
+    150u32 * scale_factor as u32
 }
 
 fn create_benchmark_plot(
