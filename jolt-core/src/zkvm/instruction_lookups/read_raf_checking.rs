@@ -29,8 +29,8 @@ use crate::{
         thread::{unsafe_allocate_zero_vec, unsafe_zero_slice},
         transcript::Transcript,
     },
-    zkvm::dag::state_manager::StateManager,
     zkvm::{
+        dag::state_manager::{self, StateManager},
         instruction::{InstructionFlags, InstructionLookup, InterleavedBitsMarker, LookupQuery},
         lookup_table::{
             prefixes::{PrefixCheckpoint, PrefixEval, Prefixes},
@@ -408,17 +408,16 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
         let eq_eval_cycle = EqPolynomial::mle(&self.r_cycle, r_cycle_prime);
 
         let accumulator = accumulator.as_ref().unwrap();
-        let prod_ra_claims: F = (0..D)
-            .map(|i| {
-                let accumulator = accumulator.borrow();
-                accumulator
-                    .get_committed_polynomial_opening(
-                        CommittedPolynomial::InstructionRa(i),
-                        SumcheckId::InstructionReadRaf,
-                    )
-                    .1
-            })
-            .product();
+
+        let eq_ra_claim = accumulator
+            .borrow()
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::InstructionEqRa,
+                SumcheckId::InstructionReadRaf,
+            )
+            .1;
+        println!("ReadRaf ra claim: {:?}", eq_ra_claim);
+
         let table_flag_claims: Vec<F> = (0..LookupTables::<WORD_SIZE>::COUNT)
             .map(|i| {
                 let accumulator = accumulator.borrow();
@@ -449,7 +448,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
             + (F::one() - raf_flag_claim)
                 * (self.gamma * left_operand_eval + self.gamma_squared * right_operand_eval)
             + raf_flag_claim * self.gamma_squared * identity_poly_eval;
-        eq_eval_cycle * prod_ra_claims * val_eval
+        eq_ra_claim * val_eval
     }
 
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
@@ -462,7 +461,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
         r_sumcheck: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let ps = self.prover_state.as_ref().unwrap();
-        let (_r_address, r_cycle) = r_sumcheck.clone().split_at(LOG_K);
+        let (r_address, r_cycle) = r_sumcheck.clone().split_at(LOG_K);
         let eq_r_cycle_prime = EqPolynomial::evals(&r_cycle.r);
 
         let flag_claims = ps
@@ -485,7 +484,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
         });
 
         let eq_ra_claim =
-            ps.eq_r_cycle.final_sumcheck_claim() * EqPolynomial::mle(&r_cycle.r, &self.r_cycle);
+            ps.eq_r_cycle.final_sumcheck_claim() * ps.ra.as_ref().unwrap().final_sumcheck_claim();
 
         accumulator.borrow_mut().append_virtual(
             VirtualPolynomial::InstructionEqRa,
@@ -493,18 +492,6 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
             r_sumcheck,
             eq_ra_claim,
         );
-
-        // for i in 0..D {
-        //     let r_address = &r_address.r[LOG_K_CHUNK * i..LOG_K_CHUNK * (i + 1)];
-
-        //     // accumulator.borrow_mut().append_virtual(
-        //     //     vec![VirtualPolynomial::InstructionRaVirtualization(i)],
-        //     //     SumcheckId::InstructionReadRaf,
-        //     //    r_sumcheck,
-        //     //     r_cycle.clone().into(),
-        //     //     vec![ps.ra[i].final_sumcheck_claim()],
-        //     // );
-        // }
 
         let raf_flag_claim = ps
             .lookup_indices_identity
@@ -531,15 +518,6 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
                 VirtualPolynomial::LookupTableFlag(i),
                 SumcheckId::InstructionReadRaf,
                 r_cycle.clone(),
-            );
-        });
-
-        (0..D).for_each(|i| {
-            let r_address = &r_address.r[LOG_K_CHUNK * i..LOG_K_CHUNK * (i + 1)];
-            accumulator.borrow_mut().append_sparse(
-                vec![CommittedPolynomial::InstructionRa(i)],
-                SumcheckId::InstructionReadRaf,
-                [r_address, &r_cycle.r].concat(),
             );
         });
 
