@@ -18,10 +18,11 @@ declare_riscv_instr!(
 impl JALR {
     fn exec(&self, cpu: &mut Cpu, _: &mut <JALR as RISCVInstruction>::RAMAccess) {
         let tmp = cpu.sign_extend(cpu.pc as i64);
-        cpu.pc =
-            ((cpu.x[self.operands.rs1] as u64).wrapping_add(self.operands.imm as i32 as u64)) & !1;
+        cpu.pc = ((cpu.x[self.operands.rs1 as usize] as u64)
+            .wrapping_add(self.operands.imm as i32 as u64))
+            & !1;
         if self.operands.rd != 0 {
-            cpu.x[self.operands.rd] = tmp;
+            cpu.x[self.operands.rd as usize] = tmp;
         }
     }
 }

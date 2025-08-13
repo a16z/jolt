@@ -9,6 +9,7 @@ use ark_bn254::{Fr, G1Projective};
 use ark_ec::CurveGroup;
 use num_traits::MulAdd;
 use rayon::prelude::*;
+use std::sync::Arc;
 use tracing::trace_span;
 
 /// `RLCPolynomial` represents a multilinear polynomial comprised of a
@@ -23,7 +24,7 @@ pub struct RLCPolynomial<F: JoltField> {
     /// as we do for `dense_rlc`, we store a vector of (coefficient, polynomial)
     /// pairs and lazily handle the linear combination in `commit_rows`
     /// and `vector_matrix_product`.
-    one_hot_rlc: Vec<(F, OneHotPolynomial<F>)>,
+    pub one_hot_rlc: Vec<(F, Arc<OneHotPolynomial<F>>)>,
 }
 
 impl<F: JoltField> RLCPolynomial<F> {
@@ -149,7 +150,7 @@ impl<F: JoltField> MulAdd<F, RLCPolynomial<F>> for &OneHotPolynomial<F> {
     type Output = RLCPolynomial<F>;
 
     fn mul_add(self, a: F, mut b: RLCPolynomial<F>) -> RLCPolynomial<F> {
-        b.one_hot_rlc.push((a, self.clone())); // TODO(moodlezoup): avoid clone
+        b.one_hot_rlc.push((a, Arc::new(self.clone())));
         b
     }
 }

@@ -22,8 +22,9 @@ impl ADDIW {
         // ignored and the result is the low 32 bits of the result sign-extended to 64 bits. Note,
         // ADDIW rd, rs1, 0 writes the sign extension of the lower 32 bits of register rs1 into
         // register rd (assembler pseudoinstruction SEXT.W).
-        cpu.x[self.operands.rd] =
-            cpu.x[self.operands.rs1].wrapping_add(normalize_imm(self.operands.imm)) as i32 as i64;
+        cpu.x[self.operands.rd as usize] = cpu.x[self.operands.rs1 as usize]
+            .wrapping_add(normalize_imm(self.operands.imm))
+            as i32 as i64;
     }
 }
 

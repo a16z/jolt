@@ -17,8 +17,8 @@ declare_riscv_instr!(
 
 impl SCW {
     fn exec(&self, cpu: &mut Cpu, ram_access: &mut <SCW as RISCVInstruction>::RAMAccess) {
-        let address = cpu.x[self.operands.rs1] as u64;
-        let value = cpu.x[self.operands.rs2] as u32;
+        let address = cpu.x[self.operands.rs1 as usize] as u64;
+        let value = cpu.x[self.operands.rs2 as usize] as u32;
 
         // Check if reservation is set and matches the address
         if cpu.has_reservation(address) {
@@ -31,13 +31,13 @@ impl SCW {
                     // Clear the reservation
                     cpu.clear_reservation();
                     // Return 0 to indicate success
-                    cpu.x[self.operands.rd] = 0;
+                    cpu.x[self.operands.rd as usize] = 0;
                 }
                 Err(_) => panic!("MMU store error"),
             }
         } else {
             // Reservation failed, return 1 to indicate failure
-            cpu.x[self.operands.rd] = 1;
+            cpu.x[self.operands.rd as usize] = 1;
         }
     }
 }

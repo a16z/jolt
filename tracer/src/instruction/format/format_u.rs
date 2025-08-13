@@ -11,7 +11,7 @@ use super::{
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatU {
-    pub rd: usize,
+    pub rd: u8,
     pub imm: u64,
 }
 
@@ -37,7 +37,7 @@ impl InstructionFormat for FormatU {
 
     fn parse(word: u32) -> Self {
         FormatU {
-            rd: ((word >> 7) & 0x1f) as usize, // [11:7]
+            rd: ((word >> 7) & 0x1f) as u8, // [11:7]
             imm: (
                 match word & 0x80000000 {
 				0x80000000 => 0xffffffff00000000,
@@ -50,16 +50,16 @@ impl InstructionFormat for FormatU {
     }
 
     fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
-        state.rd.0 = normalize_register_value(cpu.x[self.rd], &cpu.xlen);
+        state.rd.0 = normalize_register_value(cpu.x[self.rd as usize], &cpu.xlen);
     }
 
     fn capture_post_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
-        state.rd.1 = normalize_register_value(cpu.x[self.rd], &cpu.xlen);
+        state.rd.1 = normalize_register_value(cpu.x[self.rd as usize], &cpu.xlen);
     }
 
     fn random(rng: &mut StdRng) -> Self {
         Self {
-            rd: (rng.next_u64() % REGISTER_COUNT) as usize,
+            rd: (rng.next_u64() as u8 % REGISTER_COUNT),
             imm: rng.next_u64(),
         }
     }

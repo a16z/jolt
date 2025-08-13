@@ -19,7 +19,7 @@ use ark_bn254::{G1Affine, G1Projective};
 use ark_ec::CurveGroup;
 use rayon::prelude::*;
 use std::mem;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 /// Represents a one-hot multilinear polynomial (ra/wa) used
 /// in Twist/Shout. Perhaps somewhat unintuitively, the implementation
@@ -91,12 +91,12 @@ impl<F: JoltField> OneHotSumcheckState<F> {
 #[derive(Clone)]
 pub struct OneHotPolynomialProverOpening<F: JoltField> {
     pub polynomial: OneHotPolynomial<F>,
-    pub eq_state: Arc<Mutex<OneHotSumcheckState<F>>>,
+    pub eq_state: Arc<RwLock<OneHotSumcheckState<F>>>,
 }
 
 impl<F: JoltField> OneHotPolynomialProverOpening<F> {
     #[tracing::instrument(skip_all, name = "OneHotPolynomialProverOpening::new")]
-    pub fn new(eq_state: Arc<Mutex<OneHotSumcheckState<F>>>) -> Self {
+    pub fn new(eq_state: Arc<RwLock<OneHotSumcheckState<F>>>) -> Self {
         Self {
             polynomial: OneHotPolynomial {
                 K: 1,
@@ -115,7 +115,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = (T / num_chunks).max(1);
 
-        let eq = self.eq_state.lock().unwrap();
+        let eq = self.eq_state.read().unwrap();
         let D_coeffs_for_G = &eq.D_coeffs_for_G;
 
         // Compute G as described in Section 6.3
@@ -153,7 +153,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
         name = "OneHotPolynomialProverOpening::compute_prover_message"
     )]
     pub fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
-        let shared_eq = self.eq_state.lock().unwrap();
+        let shared_eq = self.eq_state.read().unwrap();
         let polynomial = &self.polynomial;
 
         if round < polynomial.K.log_2() {
@@ -244,7 +244,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
 
     #[tracing::instrument(skip_all, name = "OneHotPolynomialProverOpening::bind")]
     pub fn bind(&mut self, r: F, round: usize) {
-        let mut shared_eq = self.eq_state.lock().unwrap();
+        let mut shared_eq = self.eq_state.write().unwrap();
         let polynomial = &mut self.polynomial;
         let num_variables_bound = shared_eq.num_variables_bound;
 
@@ -279,9 +279,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
 
             let g = mem::take(&mut polynomial.G);
             drop_in_background_thread(g);
-            drop(shared_eq);
-            let mut eq_state = self.eq_state.lock().unwrap();
-            let d_coeffs = mem::take(&mut eq_state.D_coeffs_for_G);
+            let d_coeffs = mem::take(&mut shared_eq.D_coeffs_for_G);
             drop_in_background_thread(d_coeffs);
         } else if round > polynomial.K.log_2() {
             // Bind H for subsequent T rounds
@@ -546,7 +544,7 @@ mod tests {
 
         let one_hot_sumcheck_state = OneHotSumcheckState::new(&r_address, &r_cycle);
         let mut one_hot_opening =
-            OneHotPolynomialProverOpening::new(Arc::new(Mutex::new(one_hot_sumcheck_state)));
+            OneHotPolynomialProverOpening::new(Arc::new(RwLock::new(one_hot_sumcheck_state)));
         one_hot_opening.initialize(one_hot_poly.clone());
 
         let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();

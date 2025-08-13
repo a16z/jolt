@@ -17,8 +17,9 @@ declare_riscv_instr!(
 
 impl MUL {
     fn exec(&self, cpu: &mut Cpu, _: &mut <MUL as RISCVInstruction>::RAMAccess) {
-        cpu.x[self.operands.rd] =
-            cpu.sign_extend(cpu.x[self.operands.rs1].wrapping_mul(cpu.x[self.operands.rs2]));
+        cpu.x[self.operands.rd as usize] = cpu.sign_extend(
+            cpu.x[self.operands.rs1 as usize].wrapping_mul(cpu.x[self.operands.rs2 as usize]),
+        );
     }
 }
 

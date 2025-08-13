@@ -19,9 +19,9 @@ impl VirtualROTRI {
         // Extract rotation amount from bitmask: trailing zeros = rotation amount
         let shift = self.operands.imm.trailing_zeros();
         // Extract 32-bit value and rotate only within 32 bits
-        let val_32 = cpu.x[self.operands.rs1] as u32;
+        let val_32 = cpu.x[self.operands.rs1 as usize] as u32;
         let rotated_32 = val_32.rotate_right(shift);
-        cpu.x[self.operands.rd] = cpu.sign_extend(rotated_32 as i64);
+        cpu.x[self.operands.rd as usize] = cpu.sign_extend(rotated_32 as i64);
     }
 }
 

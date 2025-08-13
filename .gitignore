@@ -29,3 +29,5 @@ temp_file
 *.patch
 
 /perfetto_traces/
+# Spike tarballs
+/prebuilt-files/
