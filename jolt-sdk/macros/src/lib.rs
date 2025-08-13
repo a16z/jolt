@@ -436,7 +436,7 @@ impl MacroBuilder {
                 let mut input_bytes = vec![];
                 #(#set_program_args;)*
 
-                let (jolt_proof, io_device, _) = JoltRV32IM::prove(
+                let (jolt_proof, io_device, _, _) = JoltRV32IM::prove(
                     &preprocessing,
                     &mut program,
                     &input_bytes,

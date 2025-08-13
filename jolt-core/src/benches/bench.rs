@@ -6,6 +6,7 @@ use crate::utils::transcript::{KeccakTranscript, Transcript};
 use crate::zkvm::JoltVerifierPreprocessing;
 use crate::zkvm::{Jolt, JoltRV32IM};
 use ark_bn254::Fr;
+use ark_serialize::CanonicalSerialize;
 use ark_std::test_rng;
 use plotly::{Layout, Plot, Scatter};
 use rand_core::RngCore;
@@ -14,7 +15,6 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io::Write;
-use std::time::Instant;
 use tracing_chrome::ChromeLayerBuilder;
 use tracing_subscriber::prelude::*;
 
@@ -29,6 +29,7 @@ pub enum BenchType {
     Shout,
     Twist,
     MasterBenchmark,
+    Plot,
 }
 
 pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
@@ -42,7 +43,59 @@ pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()
         BenchType::Shout => shout(),
         BenchType::Twist => twist::<Fr, KeccakTranscript>(),
         BenchType::MasterBenchmark => master_benchmark(),
+        BenchType::Plot => plot_from_csv(),
     }
+}
+
+fn plot_from_csv() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    let task = move || {
+        let mut benchmark_data: HashMap<String, Vec<(usize, f64, usize)>> = HashMap::new();
+
+        // Load existing data from CSV
+        if let Ok(contents) = fs::read_to_string("perfetto_traces/timings.csv") {
+            for line in contents.lines() {
+                let parts: Vec<&str> = line.split(',').collect();
+                if parts.len() == 4 {
+                    if let (Ok(scale), Ok(time), Ok(proof_size)) = (
+                        parts[1].parse::<usize>(),
+                        parts[2].parse::<f64>(),
+                        parts[3].parse::<usize>(),
+                    ) {
+                        let bench_name = match parts[0] {
+                            "fib" => "Fibonacci",
+                            "sha2" | "sha2-chain" => "SHA2-chain",
+                            "sha3" | "sha3-chain" => "SHA3-chain",
+                            "btreemap" => "BTreeMap",
+                            other => other,
+                        };
+                        benchmark_data
+                            .entry(bench_name.to_string())
+                            .or_default()
+                            .push((scale, time, proof_size));
+                    }
+                }
+            }
+
+            if benchmark_data.is_empty() {
+                eprintln!("No data found in perfetto_traces/timings.csv");
+            } else {
+                println!("Loaded {} benchmark types from CSV", benchmark_data.len());
+                if let Err(e) = create_benchmark_plot(&benchmark_data) {
+                    eprintln!("Failed to create clock speed plot: {e}");
+                }
+                if let Err(e) = create_proof_size_plot(&benchmark_data) {
+                    eprintln!("Failed to create proof size plot: {e}");
+                }
+            }
+        } else {
+            eprintln!("Could not read perfetto_traces/timings.csv. Run benchmarks first to generate data.");
+        }
+    };
+
+    vec![(
+        tracing::info_span!("PlotFromCSV"),
+        Box::new(task) as Box<dyn FnOnce()>,
+    )]
 }
 
 fn shout() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
@@ -168,112 +221,56 @@ fn get_btreemap_ops(scale: usize) -> u32 {
 }
 
 fn create_benchmark_plot(
-    data: &HashMap<String, Vec<(usize, f64)>>,
+    data: &HashMap<String, Vec<(usize, f64, usize)>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut plot = Plot::new();
 
     // Define colors for different benchmarks
     let colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"];
-    let mut color_idx = 0;
 
-    for (bench_name, points) in data.iter() {
+    for (color_idx, (bench_name, points)) in data.iter().enumerate() {
         let mut sorted_points = points.clone();
-        sorted_points.sort_by_key(|(scale, _)| *scale);
+        sorted_points.sort_by_key(|(scale, _, _)| *scale);
 
         let color = colors[color_idx % colors.len()];
-        color_idx += 1;
 
-        // Create sawtooth pattern with linear increasing segments
+        // Collect data points at scale n positions
         let mut x_values: Vec<f64> = Vec::new();
         let mut y_values: Vec<f64> = Vec::new();
 
-        // Markers for bottom (filled) and top (hollow) points
-        let mut bottom_x: Vec<f64> = Vec::new();
-        let mut bottom_y: Vec<f64> = Vec::new();
-        let mut top_x: Vec<f64> = Vec::new();
-        let mut top_y: Vec<f64> = Vec::new();
+        for (scale, time, _) in sorted_points.iter() {
+            // For benchmark at scale n, plot at position n
+            let cycles = (1 << *scale) as f64;
 
-        for (scale, time) in sorted_points.iter() {
-            // For benchmark at scale n, plot from 2^(n-1) to 2^n
-            let cycles_start = if *scale > 0 {
-                (1 << (*scale - 1)) as f64
-            } else {
-                0.5 // Handle edge case for scale = 0
-            };
-            let cycles_end = (1 << *scale) as f64;
+            // Clock speed in KHz (cycles per millisecond)
+            let clock_speed = cycles / (*time * 1000.0);
 
-            // Clock speeds at start and end
-            let clock_speed_start = cycles_start / (*time * 1000.0);
-            let clock_speed_end = cycles_end / (*time * 1000.0);
-
-            // Convert to millions for x-axis
-            let x_start = cycles_start / 1_000_000.0;
-            let x_end = cycles_end / 1_000_000.0;
-
-            // Add bottom point (filled)
-            bottom_x.push(x_start);
-            bottom_y.push(clock_speed_start);
-
-            // Add top point (hollow)
-            top_x.push(x_end);
-            top_y.push(clock_speed_end);
-
-            // Linear interpolation for this segment
-            let num_points = 50;
-            for j in 0..=num_points {
-                let t = j as f64 / num_points as f64;
-                let x = x_start + t * (x_end - x_start);
-                let clock_speed = clock_speed_start + t * (clock_speed_end - clock_speed_start);
-                x_values.push(x);
-                y_values.push(clock_speed);
-            }
-
-            // Add NaN to create discontinuity before next segment
-            x_values.push(f64::NAN);
-            y_values.push(f64::NAN);
+            // Use the scale value (n) for x-axis
+            x_values.push(*scale as f64);
+            y_values.push(clock_speed);
         }
 
-        // Add the line trace
-        let line_trace = Scatter::new(x_values, y_values)
+        // Add only markers, no lines
+        let trace = Scatter::new(x_values, y_values)
             .name(bench_name)
-            .mode(plotly::common::Mode::Lines)
-            .line(plotly::common::Line::new().color(color))
-            .show_legend(true);
-
-        plot.add_trace(line_trace);
-
-        // Add filled markers at bottom points
-        let bottom_markers = Scatter::new(bottom_x, bottom_y)
-            .name(format!("{bench_name} (bottom)"))
             .mode(plotly::common::Mode::Markers)
-            .marker(plotly::common::Marker::new().size(8).color(color))
-            .show_legend(false);
+            .marker(plotly::common::Marker::new().size(10).color(color));
 
-        plot.add_trace(bottom_markers);
-
-        // Add hollow markers at top points (white fill with colored outline)
-        let top_markers = Scatter::new(top_x, top_y)
-            .name(format!("{bench_name} (top)"))
-            .mode(plotly::common::Mode::Markers)
-            .marker(
-                plotly::common::Marker::new()
-                    .size(8)
-                    .color("white")
-                    .line(plotly::common::Line::new().color(color).width(2.0)),
-            )
-            .show_legend(false);
-
-        plot.add_trace(top_markers);
+        plot.add_trace(trace);
     }
 
     let layout = Layout::new()
-        .title("Jolt zkVM Benchmark Results - Clock Speed")
+        .title("Jolt zkVM Benchmark Results")
         .x_axis(
             plotly::layout::Axis::new()
-                .title("Cycle Count (millions)")
-                .type_(plotly::layout::AxisType::Linear),
+                .title("RISCV32IM Cycles (2^n)")
+                .type_(plotly::layout::AxisType::Linear)
+                .dtick(1.0) // Tick at every integer
+                .tick_mode(plotly::common::TickMode::Linear),
         )
-        .y_axis(plotly::layout::Axis::new().title("Clock Speed (KHz)"))
+        .y_axis(
+            plotly::layout::Axis::new().title("Prover Clock Speed (Cycles per millisecond, KHz)"),
+        )
         .width(1200)
         .height(800);
 
@@ -282,6 +279,64 @@ fn create_benchmark_plot(
     let html_path = "perfetto_traces/benchmark_plot.html";
     plot.write_html(html_path);
     println!("Interactive plot saved to {html_path}");
+
+    Ok(())
+}
+
+fn create_proof_size_plot(
+    data: &HashMap<String, Vec<(usize, f64, usize)>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut plot = Plot::new();
+
+    // Define colors for different benchmarks
+    let colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"];
+
+    for (color_idx, (bench_name, points)) in data.iter().enumerate() {
+        let mut sorted_points = points.clone();
+        sorted_points.sort_by_key(|(scale, _, _)| *scale);
+
+        let color = colors[color_idx % colors.len()];
+
+        // Collect data points
+        let mut x_values: Vec<f64> = Vec::new();
+        let mut y_values: Vec<f64> = Vec::new();
+
+        for (scale, _, proof_size) in sorted_points.iter() {
+            // Convert 2^scale to millions of cycles for x-axis
+            let cycles_millions = (1 << *scale) as f64 / 1_000_000.0;
+
+            // Convert proof size from bytes to KB
+            let proof_size_kb = *proof_size as f64 / 1024.0;
+
+            x_values.push(cycles_millions);
+            y_values.push(proof_size_kb);
+        }
+
+        // Add only markers, no lines
+        let trace = Scatter::new(x_values, y_values)
+            .name(bench_name)
+            .mode(plotly::common::Mode::Markers)
+            .marker(plotly::common::Marker::new().size(10).color(color));
+
+        plot.add_trace(trace);
+    }
+
+    let layout = Layout::new()
+        .title("Jolt zkVM Proof Size")
+        .x_axis(
+            plotly::layout::Axis::new()
+                .title("RISCV32IM Cycles (millions)")
+                .type_(plotly::layout::AxisType::Linear),
+        )
+        .y_axis(plotly::layout::Axis::new().title("Proof Size (KB)"))
+        .width(1200)
+        .height(800);
+
+    plot.set_layout(layout);
+
+    let html_path = "perfetto_traces/proof_size_plot.html";
+    plot.write_html(html_path);
+    println!("Proof size plot saved to {html_path}");
 
     Ok(())
 }
@@ -309,16 +364,18 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     }
 
     let task = move || {
-        let mut benchmark_data: HashMap<String, Vec<(usize, f64)>> = HashMap::new();
+        let mut benchmark_data: HashMap<String, Vec<(usize, f64, usize)>> = HashMap::new();
 
         // Load existing data from CSV if available
         if let Ok(contents) = fs::read_to_string("perfetto_traces/timings.csv") {
             for line in contents.lines() {
                 let parts: Vec<&str> = line.split(',').collect();
-                if parts.len() == 3 {
-                    if let (Ok(scale), Ok(time)) =
-                        (parts[1].parse::<usize>(), parts[2].parse::<f64>())
-                    {
+                if parts.len() == 4 {
+                    if let (Ok(scale), Ok(time), Ok(proof_size)) = (
+                        parts[1].parse::<usize>(),
+                        parts[2].parse::<f64>(),
+                        parts[3].parse::<usize>(),
+                    ) {
                         let bench_name = match parts[0] {
                             "fib" => "Fibonacci",
                             "sha2" | "sha2-chain" => "SHA2-chain",
@@ -329,7 +386,7 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                         benchmark_data
                             .entry(bench_name.to_string())
                             .or_default()
-                            .push((scale, time));
+                            .push((scale, time, proof_size));
                     }
                 }
             }
@@ -346,7 +403,7 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             let max_trace_length = 1 << bench_scale;
 
             for current_bench in &benchmarks_to_run {
-                let duration = match *current_bench {
+                let (duration, proof_size) = match *current_bench {
                     "fib" => {
                         println!("Running Fibonacci benchmark at scale 2^{bench_scale}");
                         let (chrome_layer, _guard) = ChromeLayerBuilder::new()
@@ -440,13 +497,14 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                 benchmark_data
                     .entry(bench_name.to_string())
                     .or_default()
-                    .push((bench_scale, duration.as_secs_f64()));
+                    .push((bench_scale, duration.as_secs_f64(), proof_size));
 
                 let summary_line = format!(
-                    "{},{},{:.2}\n",
+                    "{},{},{:.2},{}\n",
                     current_bench,
                     bench_scale,
-                    duration.as_secs_f64()
+                    duration.as_secs_f64(),
+                    proof_size
                 );
                 if let Err(e) = fs::OpenOptions::new()
                     .create(true)
@@ -461,7 +519,10 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 
         if !benchmark_data.is_empty() {
             if let Err(e) = create_benchmark_plot(&benchmark_data) {
-                eprintln!("Failed to create plot: {e}");
+                eprintln!("Failed to create clock speed plot: {e}");
+            }
+            if let Err(e) = create_proof_size_plot(&benchmark_data) {
+                eprintln!("Failed to create proof size plot: {e}");
             }
         }
     };
@@ -489,7 +550,7 @@ fn prove_example(
             1 << 24,
         );
 
-        let (jolt_proof, program_io, _) =
+        let (jolt_proof, program_io, _, _) =
             JoltRV32IM::prove(&preprocessing, &mut program, &serialized_input);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
@@ -514,9 +575,9 @@ fn prove_example_with_trace(
     example_name: &str,
     serialized_input: Vec<u8>,
     max_trace_length: usize,
-    bench_name: &str,
-    scale: usize,
-) -> std::time::Duration {
+    _bench_name: &str,
+    _scale: usize,
+) -> (std::time::Duration, usize) {
     let mut program = host::Program::new(example_name);
     let (bytecode, init_memory_state, _) = program.decode();
     let (_, _, program_io) = program.trace(&serialized_input);
@@ -528,11 +589,11 @@ fn prove_example_with_trace(
         max_trace_length,
     );
 
-    let span = tracing::info_span!("{}_2^{}", bench_name, scale);
-    let start = Instant::now();
-    let (jolt_proof, program_io, _) =
+    let span = tracing::info_span!("E2E");
+    let (jolt_proof, program_io, _, start) =
         span.in_scope(|| JoltRV32IM::prove(&preprocessing, &mut program, &serialized_input));
     let prove_duration = start.elapsed();
+    let proof_size = jolt_proof.serialized_size(ark_serialize::Compress::Yes);
 
     let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
     let verification_result =
@@ -543,5 +604,5 @@ fn prove_example_with_trace(
         verification_result.err()
     );
 
-    prove_duration
+    (prove_duration, proof_size)
 }

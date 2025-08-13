@@ -203,6 +203,7 @@ where
         JoltProof<F, PCS, FS>,
         JoltDevice,
         Option<ProverDebugInfo<F, FS, PCS>>,
+        std::time::Instant,
     ) {
         use crate::zkvm::dag::state_manager::StateManager;
         use rayon::prelude::*;
@@ -244,11 +245,12 @@ where
                 .map_or(0, |pos| pos + 1),
         );
 
+        let instant = std::time::Instant::now();
         let state_manager =
             StateManager::new_prover(preprocessing, trace, program_io.clone(), final_memory_state);
         let (proof, debug_info) = JoltDAG::prove(state_manager).ok().unwrap();
 
-        (proof, program_io, debug_info)
+        (proof, program_io, debug_info, instant)
     }
 
     fn verify(
@@ -383,7 +385,7 @@ mod tests {
             init_memory_state,
             1 << 16,
         );
-        let (jolt_proof, io_device, debug_info) =
+        let (jolt_proof, io_device, debug_info, _) =
             JoltRV32IMMockPCS::prove(&preprocessing, &mut program, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
@@ -410,7 +412,7 @@ mod tests {
             init_memory_state,
             1 << 16,
         );
-        let (jolt_proof, io_device, debug_info) =
+        let (jolt_proof, io_device, debug_info, _) =
             JoltRV32IM::prove(&preprocessing, &mut program, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
@@ -437,7 +439,7 @@ mod tests {
             init_memory_state,
             1 << 16,
         );
-        let (jolt_proof, io_device, debug_info) =
+        let (jolt_proof, io_device, debug_info, _) =
             JoltRV32IM::prove(&preprocessing, &mut program, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
@@ -469,7 +471,7 @@ mod tests {
             init_memory_state,
             1 << 16,
         );
-        let (jolt_proof, io_device, debug_info) =
+        let (jolt_proof, io_device, debug_info, _) =
             JoltRV32IM::prove(&preprocessing, &mut program, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
@@ -495,7 +497,7 @@ mod tests {
             init_memory_state,
             1 << 16,
         );
-        let (jolt_proof, io_device, debug_info) =
+        let (jolt_proof, io_device, debug_info, _) =
             JoltRV32IM::prove(&preprocessing, &mut program, &[]);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
@@ -521,7 +523,7 @@ mod tests {
             init_memory_state,
             1 << 16,
         );
-        let (jolt_proof, io_device, debug_info) =
+        let (jolt_proof, io_device, debug_info, _) =
             JoltRV32IM::prove(&preprocessing, &mut program, &[50]);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
