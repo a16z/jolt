@@ -4,9 +4,12 @@ use criterion::Criterion;
 use jolt_core::{
     field::JoltField,
     poly::multilinear_polynomial::MultilinearPolynomial,
-    subprotocols::optimization::{
-        compute_initial_eval_claim, AppendixCSumCheckProof, LargeDMulSumCheckProof,
-        NaiveSumCheckProof,
+    subprotocols::{
+        optimization::{
+            compute_initial_eval_claim, AppendixCSumCheckProof, LargeDMulSumCheckProof,
+            NaiveSumCheckProof,
+        },
+        toom::FieldMulSmall,
     },
     utils::{
         math::Math,
@@ -17,13 +20,13 @@ use jolt_core::{
 use rand_core::RngCore;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
-fn test_func_data(d: usize, t: usize) -> Vec<MultilinearPolynomial<Fr>> {
+fn test_func_data<F: JoltField>(d: usize, t: usize) -> Vec<MultilinearPolynomial<F>> {
     let mut rng = test_rng();
-    let mut val_vec: Vec<Vec<Fr>> = vec![unsafe_allocate_zero_vec(t); d];
+    let mut val_vec: Vec<Vec<F>> = vec![unsafe_allocate_zero_vec(t); d];
 
     for j in 0..t {
         for i in 0..d {
-            val_vec[i][j] = Fr::from_u32(rng.next_u32());
+            val_vec[i][j] = F::from_u32(rng.next_u32());
         }
     }
 
@@ -67,11 +70,11 @@ fn benchmark_large_d_sumcheck<const D1: usize>(c: &mut Criterion, d: usize, t: u
     );
 }
 
-fn benchmark_karatsuba_sumcheck<F: JoltField>(c: &mut Criterion, d: usize, t: usize) {
+fn benchmark_karatsuba_sumcheck<F: FieldMulSmall>(c: &mut Criterion, d: usize, t: usize) {
     let ra = test_func_data(d, t);
 
     let mut transcript = KeccakTranscript::new(b"test_transcript");
-    let r_cycle: Vec<Fr> = transcript.challenge_vector(t.log_2());
+    let r_cycle: Vec<F> = transcript.challenge_vector(t.log_2());
     let previous_claim =
         compute_initial_eval_claim(&ra.iter().map(|x| &*x).collect::<Vec<_>>(), &r_cycle);
 
@@ -82,7 +85,7 @@ fn benchmark_karatsuba_sumcheck<F: JoltField>(c: &mut Criterion, d: usize, t: us
                 || (ra.clone(), transcript.clone(), previous_claim.clone()),
                 |(mut ra, mut transcript, mut previous_claim)| {
                     criterion::black_box(LargeDMulSumCheckProof::prove(
-                        &mut ra.iter_mut().collect::<Vec<_>>(),
+                        &mut ra,
                         &r_cycle,
                         &mut previous_claim,
                         &mut transcript,
