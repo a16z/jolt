@@ -233,7 +233,12 @@ pub fn modify_cargo_toml(name: &str) -> Result<()> {
             lib_section["crate-type"] = Item::Value(toml_edit::Value::Array(array));
             lib_section["path"] = value("guest/src/lib.rs");
         }
-        let dependencies = doc["dependencies"].as_table_mut().unwrap();
+        if !doc["dependencies"].is_table() {
+            doc["dependencies"] = Item::Table(Table::new());
+        }
+        let dependencies = doc["dependencies"]
+            .as_table_mut()
+            .expect("`dependencies` must be a table");
         add_dependencies(dependencies);
 
         fs::write(cargo_toml_path, doc.to_string())?;
@@ -270,7 +275,7 @@ pub fn build_wasm() {
     println!("Building the project with wasm-pack...");
     let functions = extract_provable_functions();
     let function_names: Vec<String> = functions.iter().map(|f| f.func_name.clone()).collect();
-    let is_std = is_std().expect("Failed to check if std feature is enabled");
+    let is_std = is_std().unwrap_or(false);
     for function in functions {
         preprocess_and_save(&function.func_name, &function.attributes, is_std)
             .expect("Failed to preprocess functions");
