@@ -345,7 +345,7 @@ fn create_proof_size_plot(
 
         // Add uncompressed proof size with filled markers
         let trace_uncompressed = Scatter::new(x_values, y_values)
-            .name(bench_name)
+            .name(format!("{bench_name} (uncompressed)"))
             .mode(plotly::common::Mode::Markers)
             .marker(plotly::common::Marker::new().size(10).color(color));
 
@@ -360,8 +360,7 @@ fn create_proof_size_plot(
                     .size(10)
                     .color("white")
                     .line(plotly::common::Line::new().color(color).width(2.0)),
-            )
-            .show_legend(false);
+            );
 
         plot.add_trace(trace_compressed);
     }
