@@ -30,9 +30,9 @@ impl SRL {
             Xlen::Bit32 => 0x1f,
             Xlen::Bit64 => 0x3f,
         };
-        cpu.x[self.operands.rd] = cpu.sign_extend(
-            cpu.unsigned_data(cpu.x[self.operands.rs1])
-                .wrapping_shr(cpu.x[self.operands.rs2] as u32 & mask) as i64,
+        cpu.x[self.operands.rd as usize] = cpu.sign_extend(
+            cpu.unsigned_data(cpu.x[self.operands.rs1 as usize])
+                .wrapping_shr(cpu.x[self.operands.rs2 as usize] as u32 & mask) as i64,
         );
     }
 }
@@ -51,7 +51,7 @@ impl RISCVTrace for SRL {
 impl VirtualInstructionSequence for SRL {
     fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
-        let v_bitmask = virtual_register_index(6) as usize;
+        let v_bitmask = virtual_register_index(6);
 
         let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(1);
         let mut sequence = vec![];

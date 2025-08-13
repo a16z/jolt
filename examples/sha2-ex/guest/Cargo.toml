@@ -7,4 +7,5 @@ edition = "2021"
 guest = []
 
 [dependencies]
-jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = ["sha256"] }
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [] }
+inlines = { package = "jolt-inlines-sha2", path = "../../../jolt-inlines/sha2" }

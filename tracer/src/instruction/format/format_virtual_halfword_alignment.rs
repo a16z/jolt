@@ -13,7 +13,7 @@ use super::{
 /// uses `rs1` and `imm` but does not write to a destination register.
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct HalfwordAlignFormat {
-    pub rs1: usize,
+    pub rs1: u8,
     pub imm: i64,
 }
 
@@ -42,7 +42,7 @@ impl InstructionFormat for HalfwordAlignFormat {
     }
 
     fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
-        state.rs1 = normalize_register_value(cpu.x[self.rs1], &cpu.xlen);
+        state.rs1 = normalize_register_value(cpu.x[self.rs1 as usize], &cpu.xlen);
     }
 
     fn capture_post_execution_state(&self, _: &mut Self::RegisterState, _: &mut Cpu) {
@@ -51,7 +51,7 @@ impl InstructionFormat for HalfwordAlignFormat {
 
     fn random(rng: &mut StdRng) -> Self {
         Self {
-            rs1: (rng.next_u64() % REGISTER_COUNT) as usize,
+            rs1: (rng.next_u64() as u8 % REGISTER_COUNT),
             imm: rng.next_u64() as i64,
         }
     }

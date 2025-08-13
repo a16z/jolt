@@ -21,12 +21,12 @@ impl LRD {
             println!("LRD: Reservation is already set");
         }
 
-        let address = cpu.x[self.operands.rs1] as u64;
+        let address = cpu.x[self.operands.rs1 as usize] as u64;
 
         // Load the doubleword from memory
         let value = cpu.mmu.load_doubleword(address);
 
-        cpu.x[self.operands.rd] = match value {
+        cpu.x[self.operands.rd as usize] = match value {
             Ok((doubleword, memory_read)) => {
                 *ram_access = memory_read;
 

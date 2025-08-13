@@ -28,6 +28,10 @@ pub fn main() {
         .write_to_file("fib_10.txt".into())
         .expect("should write");
 
+    let trace_file = "/tmp/fib_trace.bin";
+    guest::trace_fib_to_file(trace_file, 50);
+    println!("Trace file written to: {trace_file}.");
+
     let now = Instant::now();
     let (output, proof, io_device) = prove_fib(50);
     println!("Prover runtime: {} s", now.elapsed().as_secs_f64());

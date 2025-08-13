@@ -17,8 +17,8 @@ declare_riscv_instr!(
 
 impl XORI {
     fn exec(&self, cpu: &mut Cpu, _: &mut <XORI as RISCVInstruction>::RAMAccess) {
-        cpu.x[self.operands.rd] =
-            cpu.sign_extend(cpu.x[self.operands.rs1] ^ normalize_imm(self.operands.imm));
+        cpu.x[self.operands.rd as usize] =
+            cpu.sign_extend(cpu.x[self.operands.rs1 as usize] ^ normalize_imm(self.operands.imm));
     }
 }
 

@@ -21,12 +21,12 @@ impl LRW {
             println!("LRW: Reservation is already set");
         }
 
-        let address = cpu.x[self.operands.rs1] as u64;
+        let address = cpu.x[self.operands.rs1 as usize] as u64;
 
         // Load the word from memory
         let value = cpu.mmu.load_word(address);
 
-        cpu.x[self.operands.rd] = match value {
+        cpu.x[self.operands.rd as usize] = match value {
             Ok((word, memory_read)) => {
                 *ram_access = memory_read;
 

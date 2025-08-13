@@ -63,6 +63,7 @@ impl MacroBuilder {
         let build_prover_fn = self.make_build_prover_fn();
         let build_verifier_fn = self.make_build_verifier_fn();
         let analyze_fn = self.make_analyze_function();
+        let trace_to_file_fn = self.make_trace_to_file_func();
         let compile_fn = self.make_compile_func();
         let preprocess_prover_fn = self.make_preprocess_prover_func();
         let preprocess_verifier_fn = self.make_preprocess_verifier_func();
@@ -90,6 +91,7 @@ impl MacroBuilder {
             #build_verifier_fn
             #execute_fn
             #analyze_fn
+            #trace_to_file_fn
             #compile_fn
             #preprocess_prover_fn
             #preprocess_verifier_fn
@@ -167,7 +169,7 @@ impl MacroBuilder {
                         max_output_size: preprocessing.shared.memory_layout.max_output_size,
                         stack_size: preprocessing.shared.memory_layout.stack_size,
                         memory_size: preprocessing.shared.memory_layout.memory_size,
-                        bytecode_size: Some(preprocessing.shared.memory_layout.bytecode_size),
+                        program_size: Some(preprocessing.shared.memory_layout.program_size),
                     };
                     let mut io_device = JoltDevice::new(&memory_config);
 
@@ -232,6 +234,40 @@ impl MacroBuilder {
         }
     }
 
+    fn make_trace_to_file_func(&self) -> TokenStream2 {
+        let imports = self.make_imports();
+        let guest_name = self.get_guest_name();
+        let set_mem_size = self.make_set_linker_parameters();
+        let set_std = self.make_set_std();
+
+        let fn_name = self.get_func_name();
+        let fn_name_str = fn_name.to_string();
+        let trace_to_file_fn_name = Ident::new(&format!("trace_{fn_name}_to_file"), fn_name.span());
+        let inputs = &self.func.sig.inputs;
+        let set_program_args = self.func_args.iter().map(|(name, _)| {
+            quote! {
+                input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
+            }
+        });
+        quote! {
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
+            pub fn #trace_to_file_fn_name(target_dir: &str, #inputs) {
+                #imports
+
+                let mut program = Program::new(#guest_name);
+                let path = std::path::PathBuf::from(target_dir);
+                program.set_func(#fn_name_str);
+                #set_std
+                #set_mem_size
+
+                let mut input_bytes = vec![];
+                #(#set_program_args;)*
+
+                program.trace_to_file(&input_bytes, &path);
+            }
+        }
+    }
+
     fn make_compile_func(&self) -> TokenStream2 {
         let imports = self.make_imports();
         let guest_name = self.get_guest_name();
@@ -276,13 +312,13 @@ impl MacroBuilder {
             {
                 #imports
 
-                let (bytecode, memory_init, bytecode_size) = program.decode();
+                let (bytecode, memory_init, program_size) = program.decode();
                 let memory_config = MemoryConfig {
                     max_input_size: #max_input_size,
                     max_output_size: #max_output_size,
                     stack_size: #stack_size,
                     memory_size: #memory_size,
-                    bytecode_size: Some(bytecode_size),
+                    program_size: Some(program_size),
                 };
                 let memory_layout = MemoryLayout::new(&memory_config);
 
@@ -319,13 +355,13 @@ impl MacroBuilder {
             {
                 #imports
 
-                let (bytecode, memory_init, bytecode_size) = program.decode();
+                let (bytecode, memory_init, program_size) = program.decode();
                 let memory_config = MemoryConfig {
                     max_input_size: #max_input_size,
                     max_output_size: #max_output_size,
                     stack_size: #stack_size,
                     memory_size: #memory_size,
-                    bytecode_size: Some(bytecode_size),
+                    program_size: Some(program_size),
                 };
                 let memory_layout = MemoryLayout::new(&memory_config);
 
@@ -421,7 +457,7 @@ impl MacroBuilder {
             stack_size: attributes.stack_size,
             memory_size: attributes.memory_size,
             // Not needed for the main function, but we need the io region information from MemoryLayout.
-            bytecode_size: Some(0),
+            program_size: Some(0),
         });
         let input_start = memory_layout.input_start;
         let output_start = memory_layout.output_start;

@@ -25,8 +25,9 @@ impl SLLI {
             Xlen::Bit32 => 0x1f,
             Xlen::Bit64 => 0x3f,
         };
-        cpu.x[self.operands.rd] =
-            cpu.sign_extend(cpu.x[self.operands.rs1].wrapping_shl(self.operands.imm as u32 & mask));
+        cpu.x[self.operands.rd as usize] = cpu.sign_extend(
+            cpu.x[self.operands.rs1 as usize].wrapping_shl(self.operands.imm as u32 & mask),
+        );
     }
 }
 

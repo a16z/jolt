@@ -25,13 +25,15 @@ declare_riscv_instr!(
 
 impl MULHSU {
     fn exec(&self, cpu: &mut Cpu, _: &mut <MULHSU as RISCVInstruction>::RAMAccess) {
-        cpu.x[self.operands.rd] = match cpu.xlen {
+        cpu.x[self.operands.rd as usize] = match cpu.xlen {
             Xlen::Bit32 => cpu.sign_extend(
-                cpu.x[self.operands.rs1].wrapping_mul(cpu.x[self.operands.rs2] as u32 as i64) >> 32,
+                cpu.x[self.operands.rs1 as usize]
+                    .wrapping_mul(cpu.x[self.operands.rs2 as usize] as u32 as i64)
+                    >> 32,
             ),
             Xlen::Bit64 => {
-                ((cpu.x[self.operands.rs1] as u128)
-                    .wrapping_mul(cpu.x[self.operands.rs2] as u64 as u128)
+                ((cpu.x[self.operands.rs1 as usize] as u128)
+                    .wrapping_mul(cpu.x[self.operands.rs2 as usize] as u64 as u128)
                     >> 64) as i64
             }
         };
@@ -65,9 +67,9 @@ impl VirtualInstructionSequence for MULHSU {
         // So: MULHSU(rs1, rs2) = MULHU(rs1_unsigned, rs2) - rs2
 
         // Virtual registers used in sequence
-        let v_sx = virtual_register_index(0) as usize;
-        let v_1 = virtual_register_index(1) as usize;
-        let v_2 = virtual_register_index(2) as usize;
+        let v_sx = virtual_register_index(0);
+        let v_1 = virtual_register_index(1);
+        let v_2 = virtual_register_index(2);
 
         let mut sequence = vec![];
 
