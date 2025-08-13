@@ -9,8 +9,8 @@ use crate::{
     },
     subprotocols::sumcheck::SumcheckInstance,
     utils::{thread::unsafe_allocate_zero_vec, transcript::Transcript},
-    zkvm::dag::{stage::SumcheckStages, state_manager::StateManager},
     zkvm::{
+        dag::{stage::SumcheckStages, state_manager::StateManager},
         instruction::LookupQuery,
         instruction_lookups::{
             booleanity::BooleanitySumcheck, hamming_weight::HammingWeightSumcheck,

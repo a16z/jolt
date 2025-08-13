@@ -3,13 +3,11 @@ use ark_ff::UniformRand;
 use criterion::Criterion;
 use jolt_core::{
     field::JoltField,
-    poly::unipoly::UniPoly,
     subprotocols::{
         karatsuba::{coeff_kara_16, coeff_kara_32, coeff_kara_4, coeff_kara_8, coeff_naive},
         toom::{eval_toom16, eval_toom4, eval_toom8, FieldMulSmall},
     },
 };
-use num::Integer;
 use rand_core::SeedableRng;
 
 fn toom_branch<F: FieldMulSmall, const D: usize>(polys: &[(F, F); D]) {
