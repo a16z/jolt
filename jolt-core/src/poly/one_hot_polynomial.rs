@@ -15,6 +15,7 @@ use crate::utils::expanding_table::ExpandingTable;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::thread::unsafe_allocate_zero_vec;
+use allocative::Allocative;
 use ark_bn254::{G1Affine, G1Projective};
 use ark_ec::CurveGroup;
 use rayon::prelude::*;
@@ -25,7 +26,7 @@ use std::sync::{Arc, RwLock};
 /// in Twist/Shout. Perhaps somewhat unintuitively, the implementation
 /// in this file is currently only used to compute the Dory
 /// commitment and in the opening proof reduction sumcheck.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Allocative)]
 pub struct OneHotPolynomial<F: JoltField> {
     /// The size of the "address" space for this polynomial.
     pub K: usize,
@@ -52,7 +53,7 @@ pub struct OneHotPolynomial<F: JoltField> {
 ///   \sum eq(k, r_address) * eq(j, r_cycle) * ra(k, j)
 /// so we use a simplified version of the prover algorithm for the
 /// Booleanity sumcheck described in Section 6.3 of the Twist/Shout paper.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Allocative)]
 pub struct OneHotSumcheckState<F: JoltField> {
     /// B stores eq(r, k), see Equation (53)
     pub B: MultilinearPolynomial<F>,
@@ -88,7 +89,7 @@ impl<F: JoltField> OneHotSumcheckState<F> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Allocative)]
 pub struct OneHotPolynomialProverOpening<F: JoltField> {
     pub polynomial: OneHotPolynomial<F>,
     pub eq_state: Arc<RwLock<OneHotSumcheckState<F>>>,

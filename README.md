@@ -71,15 +71,31 @@ Examples in the [`examples`](./examples/) directory can be run using e.g.
 
 ## Performance profiling
 
-Jolt uses [tracing_chrome](https://crates.io/crates/tracing-chrome) for performance profiling.
+### Execution profiling
+
+Jolt uses [tracing_chrome](https://crates.io/crates/tracing-chrome) for execution profiling.
 
 To generate a trace, run:
 
 ```cargo run --release -p jolt-core profile --name sha3 --format chrome```
 
-Where `--name` can be `sha2`, `sha3`, `sha2-chain`, or `fibonacci`. The corresponding guest programs can be found in the [`examples`](./examples/) directory. The benchmark inputs are provided in [`bench.rs`](./jolt-core/src/benches/bench.rs).
+Where `--name` can be `sha2`, `sha3`, `sha2-chain`, `fibonacci`, or `btreemap`. The corresponding guest programs can be found in the [`examples`](./examples/) directory. The benchmark inputs are provided in [`bench.rs`](./jolt-core/src/benches/bench.rs).
 
 The above command will output a JSON file, e.g. `trace-1712455107389520.json`, which can be viewed in [Perfetto](https://ui.perfetto.dev/).
+
+### Memory profiling
+
+Jolt uses [allocative](https://github.com/facebookexperimental/allocative) for memory profiling.
+Allocative allows you to (recursively) measure the total heap space occupied by a data structure implementing the `Allocative` trait, and optionally generate a flamegraph.
+In Jolt, most sumcheck data structures implement the `Allocative` trait, and we generate a flamegraph at the start and end of stages 2-5 (see [`jolt_dag.rs`](https://github.com/a16z/jolt/blob/main/jolt-core/src/zkvm/dag/jolt_dag.rs)).
+
+To generate allocative output, run:
+
+```RUST_LOG=debug cargo run --release --features allocative -p jolt-core profile --name sha3 --format chrome```
+
+Where, as above, `--name` can be `sha2`, `sha3`, `sha2-chain`, `fibonacci`, or `btreemap`.
+
+The above command will log memory usage info to the command line and output multiple SVG files, e.g. `stage3_start_flamechart.svg`, which can be viewed in a web browser of your choosing.
 
 ## CI Benchmarking
 

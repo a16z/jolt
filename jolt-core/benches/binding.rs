@@ -152,8 +152,7 @@ fn main() {
     benchmark_dense_parallel::<Fr>(&mut criterion, 22, BindingOrder::HighToLow);
     benchmark_dense_parallel::<Fr>(&mut criterion, 24, BindingOrder::HighToLow);
     benchmark_dense_parallel::<Fr>(&mut criterion, 26, BindingOrder::HighToLow);
-    // Lookup table initialization is needed for compact benchmarks
-    Fr::initialize_lookup_tables(Fr::compute_lookup_tables());
+
     benchmark_compact::<Fr>(&mut criterion, 22, BindingOrder::LowToHigh);
     benchmark_compact::<Fr>(&mut criterion, 24, BindingOrder::LowToHigh);
     benchmark_compact::<Fr>(&mut criterion, 26, BindingOrder::LowToHigh);

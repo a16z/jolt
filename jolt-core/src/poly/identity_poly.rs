@@ -1,5 +1,6 @@
 use std::sync::{Arc, RwLock};
 
+use allocative::Allocative;
 use num::Integer;
 
 use crate::field::JoltField;
@@ -12,7 +13,7 @@ use crate::utils::uninterleave_bits;
 
 use super::multilinear_polynomial::{BindingOrder, PolynomialBinding, PolynomialEvaluation};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Allocative)]
 pub struct IdentityPolynomial<F: JoltField> {
     num_vars: usize,
     num_bound_vars: usize,
@@ -365,6 +366,7 @@ impl<F: JoltField> PrefixPolynomial<F> for OperandPolynomial<F> {
 }
 
 /// Polynomial that unmaps RAM addresses: k -> (k-1)*4 + start_address
+#[derive(Allocative)]
 pub struct UnmapRamAddressPolynomial<F: JoltField> {
     start_address: u64,
     int_poly: IdentityPolynomial<F>,

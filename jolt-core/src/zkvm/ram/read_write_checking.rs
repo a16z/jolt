@@ -21,6 +21,9 @@ use crate::{
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 use tracer::instruction::RAMAccess;
@@ -28,6 +31,7 @@ use tracer::instruction::RAMAccess;
 /// A collection of vectors that are used in each of the first log(T / num_chunks)
 /// rounds of sumcheck. There is one `DataBuffers` struct per thread/chunk, reused
 /// across all log(T / num_chunks) rounds.
+#[derive(Allocative)]
 struct DataBuffers<F: JoltField> {
     /// Contains
     ///     Val(k, j', 0, ..., 0)
@@ -48,6 +52,7 @@ struct DataBuffers<F: JoltField> {
     dirty_indices: Vec<usize>,
 }
 
+#[derive(Allocative)]
 struct ReadWriteCheckingProverState<F: JoltField> {
     ram_addresses: Vec<Option<u64>>,
     chunk_size: usize,
@@ -301,6 +306,7 @@ pub struct ReadWriteSumcheckClaims<F: JoltField> {
     inc_claim: F,
 }
 
+#[derive(Allocative)]
 pub struct RamReadWriteChecking<F: JoltField> {
     K: usize,
     T: usize,
@@ -1100,5 +1106,10 @@ impl<F: JoltField> SumcheckInstance<F> for RamReadWriteChecking<F> {
             SumcheckId::RamReadWriteChecking,
             r_cycle.r,
         );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
     }
 }

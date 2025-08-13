@@ -40,10 +40,6 @@ impl JoltField for ark_bn254::Fr {
         lookup_tables
     }
 
-    fn initialize_lookup_tables(_init: Self::SmallValueLookupTables) {
-        // no-op
-    }
-
     #[inline]
     fn from_u8(n: u8) -> Self {
         <Self as ark_ff::PrimeField>::from_u64(n as u64).unwrap()
