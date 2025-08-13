@@ -172,104 +172,98 @@ fn create_benchmark_plot(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut plot = Plot::new();
 
+    // Define colors for different benchmarks
+    let colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"];
+    let mut color_idx = 0;
+
     for (bench_name, points) in data.iter() {
         let mut sorted_points = points.clone();
         sorted_points.sort_by_key(|(scale, _)| *scale);
 
-        // Create linearly increasing clock speed data points
+        let color = colors[color_idx % colors.len()];
+        color_idx += 1;
+
+        // Create sawtooth pattern with linear increasing segments
         let mut x_values: Vec<f64> = Vec::new();
         let mut y_values: Vec<f64> = Vec::new();
 
-        for (i, (scale, time)) in sorted_points.iter().enumerate() {
-            // Benchmark at scale n runs 2^n cycles in time t
-            // We plot it at position 2^(n-1) on x-axis
-            let cycles_plot_position = if *scale > 0 {
+        // Markers for bottom (filled) and top (hollow) points
+        let mut bottom_x: Vec<f64> = Vec::new();
+        let mut bottom_y: Vec<f64> = Vec::new();
+        let mut top_x: Vec<f64> = Vec::new();
+        let mut top_y: Vec<f64> = Vec::new();
+
+        for (scale, time) in sorted_points.iter() {
+            // For benchmark at scale n, plot from 2^(n-1) to 2^n
+            let cycles_start = if *scale > 0 {
                 (1 << (*scale - 1)) as f64
             } else {
                 0.5 // Handle edge case for scale = 0
             };
+            let cycles_end = (1 << *scale) as f64;
 
-            // Clock speed at plot position (2^(n-1))
-            // Since benchmark ran 2^n cycles in time t, at 2^(n-1) the speed would be:
-            let clock_speed_at_position = cycles_plot_position / (*time * 1000.0);
+            // Clock speeds at start and end
+            let clock_speed_start = cycles_start / (*time * 1000.0);
+            let clock_speed_end = cycles_end / (*time * 1000.0);
 
             // Convert to millions for x-axis
-            let x_position = cycles_plot_position / 1_000_000.0;
+            let x_start = cycles_start / 1_000_000.0;
+            let x_end = cycles_end / 1_000_000.0;
 
-            // Add the point at 2^(n-1)
-            if i == 0 {
-                // For first point, just add it
-                x_values.push(x_position);
-                y_values.push(clock_speed_at_position);
+            // Add bottom point (filled)
+            bottom_x.push(x_start);
+            bottom_y.push(clock_speed_start);
+
+            // Add top point (hollow)
+            top_x.push(x_end);
+            top_y.push(clock_speed_end);
+
+            // Linear interpolation for this segment
+            let num_points = 50;
+            for j in 0..=num_points {
+                let t = j as f64 / num_points as f64;
+                let x = x_start + t * (x_end - x_start);
+                let clock_speed = clock_speed_start + t * (clock_speed_end - clock_speed_start);
+                x_values.push(x);
+                y_values.push(clock_speed);
             }
 
-            // If there's a next benchmark, connect to its plot position
-            if i < sorted_points.len() - 1 {
-                let (next_scale, next_time) = sorted_points[i + 1];
-                let next_plot_position = (1 << (next_scale - 1)) as f64;
-                let clock_speed_at_next = next_plot_position / (next_time * 1000.0);
-                let x_next = next_plot_position / 1_000_000.0;
-
-                // Linear interpolation from current position to next position
-                let num_points = 50;
-                for j in 0..=num_points {
-                    let t = j as f64 / num_points as f64;
-                    let x = x_position + t * (x_next - x_position);
-                    let clock_speed = clock_speed_at_position
-                        + t * (clock_speed_at_next - clock_speed_at_position);
-                    x_values.push(x);
-                    y_values.push(clock_speed);
-                }
-            } else {
-                // Last segment: extend from 2^(n-1) to 2^n with linear extrapolation
-                // The benchmark ran 2^n cycles, so at 2^n the clock speed would be:
-                let cycles_end = (1 << *scale) as f64;
-                let clock_speed_at_end = cycles_end / (*time * 1000.0);
-                let x_end = cycles_end / 1_000_000.0;
-
-                // Linear extrapolation from 2^(n-1) to 2^n
-                let num_points = 50;
-                for j in 0..=num_points {
-                    let t = j as f64 / num_points as f64;
-                    let x = x_position + t * (x_end - x_position);
-                    let clock_speed = clock_speed_at_position
-                        + t * (clock_speed_at_end - clock_speed_at_position);
-                    x_values.push(x);
-                    y_values.push(clock_speed);
-                }
-            }
+            // Add NaN to create discontinuity before next segment
+            x_values.push(f64::NAN);
+            y_values.push(f64::NAN);
         }
 
         // Add the line trace
-        let line_trace = Scatter::new(x_values.clone(), y_values.clone())
+        let line_trace = Scatter::new(x_values, y_values)
             .name(bench_name)
             .mode(plotly::common::Mode::Lines)
+            .line(plotly::common::Line::new().color(color))
             .show_legend(true);
 
         plot.add_trace(line_trace);
 
-        // Add marker points at each benchmark position
-        let mut marker_x: Vec<f64> = Vec::new();
-        let mut marker_y: Vec<f64> = Vec::new();
-
-        for (scale, time) in sorted_points.iter() {
-            let cycles_plot_position = if *scale > 0 {
-                (1 << (*scale - 1)) as f64
-            } else {
-                0.5
-            };
-            let clock_speed = cycles_plot_position / (*time * 1000.0);
-            marker_x.push(cycles_plot_position / 1_000_000.0);
-            marker_y.push(clock_speed);
-        }
-
-        let marker_trace = Scatter::new(marker_x, marker_y)
-            .name(format!("{bench_name} (data points)"))
+        // Add filled markers at bottom points
+        let bottom_markers = Scatter::new(bottom_x, bottom_y)
+            .name(format!("{bench_name} (bottom)"))
             .mode(plotly::common::Mode::Markers)
-            .marker(plotly::common::Marker::new().size(8))
+            .marker(plotly::common::Marker::new().size(8).color(color))
             .show_legend(false);
 
-        plot.add_trace(marker_trace);
+        plot.add_trace(bottom_markers);
+
+        // Add hollow markers at top points (white fill with colored outline)
+        let top_markers = Scatter::new(top_x, top_y)
+            .name(format!("{bench_name} (top)"))
+            .mode(plotly::common::Mode::Markers)
+            .marker(
+                plotly::common::Marker::new()
+                    .size(8)
+                    .color("white")
+                    .line(plotly::common::Line::new().color(color).width(2.0)),
+            )
+            .show_legend(false);
+
+        plot.add_trace(top_markers);
     }
 
     let layout = Layout::new()
