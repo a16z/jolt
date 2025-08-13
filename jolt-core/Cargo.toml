@@ -84,16 +84,17 @@ alloy-sol-types = "0.7.6"
 once_cell = "1.19.0"
 rand_distr = "0.4.3"
 anyhow = "1.0.97"
+plotly = "0.9.0"
 derive_more = { version = "2.0.1", features = ["from"] }
 paste = "1.0.15"
 dory = { git = "https://github.com/spaceandtimefdn/sxt-dory", branch = "feat/return_row_commitments" }
 lazy_static = "1.5.0"
+sha2_inline = { package = "jolt-inlines-sha2", path = "../jolt-inlines/sha2", features = ["host"] }
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
 iai-callgrind = "0.10.2"
 serial_test = "3.2.0"
-sha2_inline = { package = "jolt-inlines-sha2", path = "../jolt-inlines/sha2", features = ["host"] }
 
 [build-dependencies]
 common = { path = "../common" }
