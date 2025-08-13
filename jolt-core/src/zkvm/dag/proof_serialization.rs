@@ -32,8 +32,8 @@ use crate::{
 
 pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
     opening_claims: Claims<F>,
-    commitments: Vec<PCS::Commitment>,
-    proofs: Proofs<F, PCS, FS>,
+    pub commitments: Vec<PCS::Commitment>,
+    pub proofs: Proofs<F, PCS, FS>,
     pub trace_length: usize,
     ram_K: usize,
     bytecode_d: usize,

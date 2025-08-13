@@ -3,6 +3,7 @@ use crate::host;
 use crate::subprotocols::twist::{TwistAlgorithm, TwistProof};
 use crate::utils::math::Math;
 use crate::utils::transcript::{KeccakTranscript, Transcript};
+use crate::zkvm::dag::state_manager::ProofKeys;
 use crate::zkvm::JoltVerifierPreprocessing;
 use crate::zkvm::{Jolt, JoltRV32IM};
 use ark_bn254::Fr;
@@ -49,17 +50,18 @@ pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()
 
 fn plot_from_csv() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     let task = move || {
-        let mut benchmark_data: HashMap<String, Vec<(usize, f64, usize)>> = HashMap::new();
+        let mut benchmark_data: HashMap<String, Vec<(usize, f64, usize, usize)>> = HashMap::new();
 
         // Load existing data from CSV
         if let Ok(contents) = fs::read_to_string("perfetto_traces/timings.csv") {
             for line in contents.lines() {
                 let parts: Vec<&str> = line.split(',').collect();
-                if parts.len() == 4 {
-                    if let (Ok(scale), Ok(time), Ok(proof_size)) = (
+                if parts.len() == 5 {
+                    if let (Ok(scale), Ok(time), Ok(proof_size), Ok(proof_size_comp)) = (
                         parts[1].parse::<usize>(),
                         parts[2].parse::<f64>(),
                         parts[3].parse::<usize>(),
+                        parts[4].parse::<usize>(),
                     ) {
                         let bench_name = match parts[0] {
                             "fib" => "Fibonacci",
@@ -71,7 +73,7 @@ fn plot_from_csv() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                         benchmark_data
                             .entry(bench_name.to_string())
                             .or_default()
-                            .push((scale, time, proof_size));
+                            .push((scale, time, proof_size, proof_size_comp));
                     }
                 }
             }
@@ -221,7 +223,7 @@ fn get_btreemap_ops(scale: usize) -> u32 {
 }
 
 fn create_benchmark_plot(
-    data: &HashMap<String, Vec<(usize, f64, usize)>>,
+    data: &HashMap<String, Vec<(usize, f64, usize, usize)>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut plot = Plot::new();
 
@@ -230,7 +232,7 @@ fn create_benchmark_plot(
 
     for (color_idx, (bench_name, points)) in data.iter().enumerate() {
         let mut sorted_points = points.clone();
-        sorted_points.sort_by_key(|(scale, _, _)| *scale);
+        sorted_points.sort_by_key(|(scale, _, _, _)| *scale);
 
         let color = colors[color_idx % colors.len()];
 
@@ -238,7 +240,7 @@ fn create_benchmark_plot(
         let mut x_values: Vec<f64> = Vec::new();
         let mut y_values: Vec<f64> = Vec::new();
 
-        for (scale, time, _) in sorted_points.iter() {
+        for (scale, time, _, _) in sorted_points.iter() {
             // For benchmark at scale n, plot at position n
             let cycles = (1 << *scale) as f64;
 
@@ -259,17 +261,38 @@ fn create_benchmark_plot(
         plot.add_trace(trace);
     }
 
+    // Create custom tick labels
+    let mut tick_vals: Vec<f64> = Vec::new();
+    let mut tick_text: Vec<String> = Vec::new();
+
+    // Add ticks for all scale values from 16 to 30
+    for n in 16..=30 {
+        tick_vals.push(n as f64);
+
+        // Special formatting for specific values
+        let label = match n {
+            20 => "2^20 (1 million)".to_string(),
+            24 => "2^24 (16.8 millions)".to_string(),
+            26 => "2^26 (67 millions)".to_string(),
+            27 => "2^27 (134 millions)".to_string(),
+            28 => "2^28 (268 millions)".to_string(),
+            _ => format!("2^{n}"),
+        };
+        tick_text.push(label);
+    }
+
     let layout = Layout::new()
         .title("Jolt zkVM Benchmark Results")
         .x_axis(
             plotly::layout::Axis::new()
-                .title("RISCV32IM Cycles (2^n)")
+                .title("RISCV32IM Cycles")
                 .type_(plotly::layout::AxisType::Linear)
-                .dtick(1.0) // Tick at every integer
-                .tick_mode(plotly::common::TickMode::Linear),
+                .tick_values(tick_vals)
+                .tick_text(tick_text),
         )
         .y_axis(
-            plotly::layout::Axis::new().title("Prover Clock Speed (Cycles per millisecond, KHz)"),
+            plotly::layout::Axis::new()
+                .title("Prover Speed (Cycles proved per millisecond, aka KHz)"),
         )
         .width(1200)
         .height(800);
@@ -284,7 +307,7 @@ fn create_benchmark_plot(
 }
 
 fn create_proof_size_plot(
-    data: &HashMap<String, Vec<(usize, f64, usize)>>,
+    data: &HashMap<String, Vec<(usize, f64, usize, usize)>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut plot = Plot::new();
 
@@ -293,40 +316,85 @@ fn create_proof_size_plot(
 
     for (color_idx, (bench_name, points)) in data.iter().enumerate() {
         let mut sorted_points = points.clone();
-        sorted_points.sort_by_key(|(scale, _, _)| *scale);
+        sorted_points.sort_by_key(|(scale, _, _, _)| *scale);
 
         let color = colors[color_idx % colors.len()];
 
-        // Collect data points
+        // Collect data points for uncompressed proof size
         let mut x_values: Vec<f64> = Vec::new();
         let mut y_values: Vec<f64> = Vec::new();
 
-        for (scale, _, proof_size) in sorted_points.iter() {
+        // Collect data points for compressed proof size
+        let mut x_values_comp: Vec<f64> = Vec::new();
+        let mut y_values_comp: Vec<f64> = Vec::new();
+
+        for (scale, _, proof_size, proof_size_comp) in sorted_points.iter() {
             // Convert 2^scale to millions of cycles for x-axis
             let cycles_millions = (1 << *scale) as f64 / 1_000_000.0;
 
-            // Convert proof size from bytes to KB
+            // Convert proof sizes from bytes to KB
             let proof_size_kb = *proof_size as f64 / 1024.0;
+            let proof_size_comp_kb = *proof_size_comp as f64 / 1024.0;
 
             x_values.push(cycles_millions);
             y_values.push(proof_size_kb);
+
+            x_values_comp.push(cycles_millions);
+            y_values_comp.push(proof_size_comp_kb);
         }
 
-        // Add only markers, no lines
-        let trace = Scatter::new(x_values, y_values)
+        // Add uncompressed proof size with filled markers
+        let trace_uncompressed = Scatter::new(x_values, y_values)
             .name(bench_name)
             .mode(plotly::common::Mode::Markers)
             .marker(plotly::common::Marker::new().size(10).color(color));
 
-        plot.add_trace(trace);
+        plot.add_trace(trace_uncompressed);
+
+        // Add compressed proof size with hollow markers (white fill with colored outline)
+        let trace_compressed = Scatter::new(x_values_comp, y_values_comp)
+            .name(format!("{bench_name} (compressed)"))
+            .mode(plotly::common::Mode::Markers)
+            .marker(
+                plotly::common::Marker::new()
+                    .size(10)
+                    .color("white")
+                    .line(plotly::common::Line::new().color(color).width(2.0)),
+            )
+            .show_legend(false);
+
+        plot.add_trace(trace_compressed);
+    }
+
+    // Create custom tick labels for x-axis (in millions, but labeled as 2^n)
+    let mut tick_vals: Vec<f64> = Vec::new();
+    let mut tick_text: Vec<String> = Vec::new();
+
+    // Add ticks for powers of 2 from 2^16 to 2^30
+    for n in 16..=30 {
+        let cycles_millions = (1_u64 << n) as f64 / 1_000_000.0;
+        tick_vals.push(cycles_millions);
+
+        // Special formatting for specific values
+        let label = match n {
+            20 => "2^20 (1 million)".to_string(),
+            24 => "2^24 (16.8 millions)".to_string(),
+            26 => "2^26 (67 millions)".to_string(),
+            27 => "2^27 (134 millions)".to_string(),
+            28 => "2^28 (268 millions)".to_string(),
+            _ => format!("2^{n}"),
+        };
+        tick_text.push(label);
     }
 
     let layout = Layout::new()
         .title("Jolt zkVM Proof Size")
         .x_axis(
             plotly::layout::Axis::new()
-                .title("RISCV32IM Cycles (millions)")
-                .type_(plotly::layout::AxisType::Linear),
+                .title("RISCV32IM Cycles")
+                .type_(plotly::layout::AxisType::Linear)
+                .tick_values(tick_vals)
+                .tick_text(tick_text),
         )
         .y_axis(plotly::layout::Axis::new().title("Proof Size (KB)"))
         .width(1200)
@@ -364,17 +432,18 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     }
 
     let task = move || {
-        let mut benchmark_data: HashMap<String, Vec<(usize, f64, usize)>> = HashMap::new();
+        let mut benchmark_data: HashMap<String, Vec<(usize, f64, usize, usize)>> = HashMap::new();
 
         // Load existing data from CSV if available
         if let Ok(contents) = fs::read_to_string("perfetto_traces/timings.csv") {
             for line in contents.lines() {
                 let parts: Vec<&str> = line.split(',').collect();
-                if parts.len() == 4 {
-                    if let (Ok(scale), Ok(time), Ok(proof_size)) = (
+                if parts.len() == 5 {
+                    if let (Ok(scale), Ok(time), Ok(proof_size), Ok(proof_size_comp)) = (
                         parts[1].parse::<usize>(),
                         parts[2].parse::<f64>(),
                         parts[3].parse::<usize>(),
+                        parts[4].parse::<usize>(),
                     ) {
                         let bench_name = match parts[0] {
                             "fib" => "Fibonacci",
@@ -386,7 +455,7 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                         benchmark_data
                             .entry(bench_name.to_string())
                             .or_default()
-                            .push((scale, time, proof_size));
+                            .push((scale, time, proof_size, proof_size_comp));
                     }
                 }
             }
@@ -403,7 +472,7 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             let max_trace_length = 1 << bench_scale;
 
             for current_bench in &benchmarks_to_run {
-                let (duration, proof_size) = match *current_bench {
+                let (duration, proof_size, proof_size_comp) = match *current_bench {
                     "fib" => {
                         println!("Running Fibonacci benchmark at scale 2^{bench_scale}");
                         let (chrome_layer, _guard) = ChromeLayerBuilder::new()
@@ -497,14 +566,20 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                 benchmark_data
                     .entry(bench_name.to_string())
                     .or_default()
-                    .push((bench_scale, duration.as_secs_f64(), proof_size));
+                    .push((
+                        bench_scale,
+                        duration.as_secs_f64(),
+                        proof_size,
+                        proof_size_comp,
+                    ));
 
                 let summary_line = format!(
-                    "{},{},{:.2},{}\n",
+                    "{},{},{:.2},{},{}\n",
                     current_bench,
                     bench_scale,
                     duration.as_secs_f64(),
-                    proof_size
+                    proof_size,
+                    proof_size_comp,
                 );
                 if let Err(e) = fs::OpenOptions::new()
                     .create(true)
@@ -577,7 +652,7 @@ fn prove_example_with_trace(
     max_trace_length: usize,
     _bench_name: &str,
     _scale: usize,
-) -> (std::time::Duration, usize) {
+) -> (std::time::Duration, usize, usize) {
     let mut program = host::Program::new(example_name);
     let (bytecode, init_memory_state, _) = program.decode();
     let (_, _, program_io) = program.trace(&serialized_input);
@@ -594,6 +669,19 @@ fn prove_example_with_trace(
         span.in_scope(|| JoltRV32IM::prove(&preprocessing, &mut program, &serialized_input));
     let prove_duration = start.elapsed();
     let proof_size = jolt_proof.serialized_size(ark_serialize::Compress::Yes);
+    let proof_size_full_compressed = proof_size
+        - jolt_proof.proofs[&ProofKeys::ReducedOpeningProof]
+            .serialized_size(ark_serialize::Compress::Yes)
+        + (jolt_proof.proofs[&ProofKeys::ReducedOpeningProof]
+            .serialized_size(ark_serialize::Compress::No)
+            / 3)
+        - jolt_proof
+            .commitments
+            .serialized_size(ark_serialize::Compress::Yes)
+        + (jolt_proof
+            .commitments
+            .serialized_size(ark_serialize::Compress::No)
+            / 3);
 
     let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
     let verification_result =
@@ -604,5 +692,5 @@ fn prove_example_with_trace(
         verification_result.err()
     );
 
-    (prove_duration, proof_size)
+    (prove_duration, proof_size, proof_size_full_compressed)
 }
