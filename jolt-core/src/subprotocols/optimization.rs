@@ -342,6 +342,14 @@ impl<F: FieldMulSmall, ProofTranscript: Transcript> LargeDMulSumCheckProof<F, Pr
             compressed_poly.append_to_transcript(transcript);
             compressed_polys.push(compressed_poly);
 
+            #[cfg(test)]
+            {
+                assert_eq!(
+                    univariate_poly.evaluate(&F::one()) + univariate_poly.evaluate(&F::zero()),
+                    previous_claim.clone()
+                );
+            }
+
             let r_j = transcript.challenge_scalar::<F>();
             *previous_claim = univariate_poly.evaluate(&r_j);
             r.push(r_j);
