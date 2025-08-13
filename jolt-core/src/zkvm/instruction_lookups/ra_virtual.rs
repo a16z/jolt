@@ -3,7 +3,7 @@ use rayon::iter::{
 };
 
 use crate::{
-    field::OptimizedMul,
+    field::{JoltField, OptimizedMul},
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
@@ -11,12 +11,10 @@ use crate::{
         opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN},
     },
     subprotocols::{
-        optimization::{
+        karatsuba, optimization::{
             compute_eq_mle_product_univariate, compute_mle_product_coeffs_katatsuba,
             compute_mle_product_coeffs_toom,
-        },
-        sumcheck::SumcheckInstance,
-        toom::FieldMulSmall,
+        }, sumcheck::SumcheckInstance
     },
     utils::{math::Math, transcript::Transcript},
     zkvm::{
@@ -26,7 +24,7 @@ use crate::{
     },
 };
 
-pub struct RASumCheck<F: FieldMulSmall> {
+pub struct RASumCheck<F: JoltField> {
     r_cycle: Vec<F>,
     r_address_chunks: Vec<Vec<F>>,
     ra_claim: F,
@@ -35,13 +33,13 @@ pub struct RASumCheck<F: FieldMulSmall> {
     prover_state: Option<RAProverState<F>>,
 }
 
-pub struct RAProverState<F: FieldMulSmall> {
+pub struct RAProverState<F: JoltField> {
     ra_i_polys: Vec<MultilinearPolynomial<F>>,
     E_table: Vec<Vec<F>>,
     eq_factor: F,
 }
 
-impl<F: FieldMulSmall> RASumCheck<F> {
+impl<F: JoltField> RASumCheck<F> {
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         K: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
@@ -126,7 +124,7 @@ impl<F: FieldMulSmall> RASumCheck<F> {
     }
 }
 
-impl<F: FieldMulSmall> SumcheckInstance<F> for RASumCheck<F> {
+impl<F: JoltField> SumcheckInstance<F> for RASumCheck<F> {
     fn degree(&self) -> usize {
         self.d + 1
     }
@@ -146,15 +144,16 @@ impl<F: FieldMulSmall> SumcheckInstance<F> for RASumCheck<F> {
             .expect("Prover state not initialized");
         let ra_i_polys = &prover_state.ra_i_polys;
 
+        // TODO: we should really use Toom-Cook for d = 4 and 8 but that requiers F to implement the SmallFieldMul trait. Need to rethink the interface.
         let mle_product_coeffs = match self.d {
-            4 => compute_mle_product_coeffs_toom::<F, 4, 5>(
+            4 => compute_mle_product_coeffs_katatsuba::<F, 4, 5>(
                 ra_i_polys,
                 round,
                 self.T.log_2(),
                 &prover_state.eq_factor,
                 &prover_state.E_table,
             ),
-            8 => compute_mle_product_coeffs_toom::<F, 8, 9>(
+            8 => compute_mle_product_coeffs_katatsuba::<F, 8, 9>(
                 ra_i_polys,
                 round,
                 self.T.log_2(),
