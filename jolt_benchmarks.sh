@@ -3,7 +3,7 @@
 # Usage: ./run_benchmarks.sh [TRACE_LENGTH]
 # Default TRACE_LENGTH is 24
 
-TRACE_LENGTH=${1:-24}
+TRACE_LENGTH=${1:-21}
 echo "Running benchmarks with TRACE_LENGTH=$TRACE_LENGTH"
 
 if [ -d "perfetto_traces" ]; then
@@ -15,7 +15,7 @@ mkdir -p perfetto_traces
 
 echo "type,scale,time" >perfetto_traces/timings.csv
 
-for scale in $(seq 20 $TRACE_LENGTH); do
+for scale in $(seq 18 $TRACE_LENGTH); do
     echo "================================================"
     echo "Running benchmarks at scale 2^$scale"
     echo "================================================"

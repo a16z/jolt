@@ -7,8 +7,10 @@ use crate::zkvm::JoltVerifierPreprocessing;
 use crate::zkvm::{Jolt, JoltRV32IM};
 use ark_bn254::Fr;
 use ark_std::test_rng;
+use plotly::{Layout, Plot, Scatter};
 use rand_core::RngCore;
 use rand_distr::{Distribution, Zipf};
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -132,6 +134,8 @@ fn btreemap() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 }
 
 fn sha2_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    #[cfg(feature = "host")]
+    extern crate sha2_inline;
     let mut inputs = vec![];
     inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
     inputs.append(&mut postcard::to_stdvec(&50u32).unwrap());
@@ -146,135 +150,325 @@ fn sha3_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 }
 
 fn get_fib_input(scale: usize) -> u32 {
-    let scale_factor = 1 << (scale - 20);
-    70000u32 * scale_factor as u32
+    let scale_factor = 1 << (scale - 18);
+    20000u32 * scale_factor as u32
 }
 
 fn get_sha2_chain_iterations(scale: usize) -> u32 {
-    400 * (1 << (scale - 20)) as u32
+    200 * (1 << (scale - 18)) as u32
 }
 
 fn get_sha3_chain_iterations(scale: usize) -> u32 {
-    let iterations = 200 * (1 << (scale - 20)) as u32;
-    println!("number of sha3 iterations: {:?}", iterations);
-    iterations
+    20 * (1 << (scale - 18)) as u32
 }
 
 fn get_btreemap_ops(scale: usize) -> u32 {
-    let scale_factor = 1 << (scale - 20);
-    800u32 * scale_factor as u32
+    let scale_factor = 1 << (scale - 18);
+    350u32 * scale_factor as u32
+}
+
+fn create_benchmark_plot(
+    data: &HashMap<String, Vec<(usize, f64)>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut plot = Plot::new();
+
+    for (bench_name, points) in data.iter() {
+        let mut sorted_points = points.clone();
+        sorted_points.sort_by_key(|(scale, _)| *scale);
+
+        // Create linearly increasing clock speed data points
+        let mut x_values: Vec<f64> = Vec::new();
+        let mut y_values: Vec<f64> = Vec::new();
+
+        for (i, (scale, time)) in sorted_points.iter().enumerate() {
+            // Benchmark at scale n runs 2^n cycles in time t
+            // We plot it at position 2^(n-1) on x-axis
+            let cycles_plot_position = if *scale > 0 {
+                (1 << (*scale - 1)) as f64
+            } else {
+                0.5 // Handle edge case for scale = 0
+            };
+
+            // Clock speed at plot position (2^(n-1))
+            // Since benchmark ran 2^n cycles in time t, at 2^(n-1) the speed would be:
+            let clock_speed_at_position = cycles_plot_position / (*time * 1000.0);
+
+            // Convert to millions for x-axis
+            let x_position = cycles_plot_position / 1_000_000.0;
+
+            // Add the point at 2^(n-1)
+            if i == 0 {
+                // For first point, just add it
+                x_values.push(x_position);
+                y_values.push(clock_speed_at_position);
+            }
+
+            // If there's a next benchmark, connect to its plot position
+            if i < sorted_points.len() - 1 {
+                let (next_scale, next_time) = sorted_points[i + 1];
+                let next_plot_position = (1 << (next_scale - 1)) as f64;
+                let clock_speed_at_next = next_plot_position / (next_time * 1000.0);
+                let x_next = next_plot_position / 1_000_000.0;
+
+                // Linear interpolation from current position to next position
+                let num_points = 50;
+                for j in 0..=num_points {
+                    let t = j as f64 / num_points as f64;
+                    let x = x_position + t * (x_next - x_position);
+                    let clock_speed = clock_speed_at_position
+                        + t * (clock_speed_at_next - clock_speed_at_position);
+                    x_values.push(x);
+                    y_values.push(clock_speed);
+                }
+            } else {
+                // Last segment: extend from 2^(n-1) to 2^n with linear extrapolation
+                // The benchmark ran 2^n cycles, so at 2^n the clock speed would be:
+                let cycles_end = (1 << *scale) as f64;
+                let clock_speed_at_end = cycles_end / (*time * 1000.0);
+                let x_end = cycles_end / 1_000_000.0;
+
+                // Linear extrapolation from 2^(n-1) to 2^n
+                let num_points = 50;
+                for j in 0..=num_points {
+                    let t = j as f64 / num_points as f64;
+                    let x = x_position + t * (x_end - x_position);
+                    let clock_speed = clock_speed_at_position
+                        + t * (clock_speed_at_end - clock_speed_at_position);
+                    x_values.push(x);
+                    y_values.push(clock_speed);
+                }
+            }
+        }
+
+        // Add the line trace
+        let line_trace = Scatter::new(x_values.clone(), y_values.clone())
+            .name(bench_name)
+            .mode(plotly::common::Mode::Lines)
+            .show_legend(true);
+
+        plot.add_trace(line_trace);
+
+        // Add marker points at each benchmark position
+        let mut marker_x: Vec<f64> = Vec::new();
+        let mut marker_y: Vec<f64> = Vec::new();
+
+        for (scale, time) in sorted_points.iter() {
+            let cycles_plot_position = if *scale > 0 {
+                (1 << (*scale - 1)) as f64
+            } else {
+                0.5
+            };
+            let clock_speed = cycles_plot_position / (*time * 1000.0);
+            marker_x.push(cycles_plot_position / 1_000_000.0);
+            marker_y.push(clock_speed);
+        }
+
+        let marker_trace = Scatter::new(marker_x, marker_y)
+            .name(format!("{bench_name} (data points)"))
+            .mode(plotly::common::Mode::Markers)
+            .marker(plotly::common::Marker::new().size(8))
+            .show_legend(false);
+
+        plot.add_trace(marker_trace);
+    }
+
+    let layout = Layout::new()
+        .title("Jolt zkVM Benchmark Results - Clock Speed")
+        .x_axis(
+            plotly::layout::Axis::new()
+                .title("Cycle Count (millions)")
+                .type_(plotly::layout::AxisType::Linear),
+        )
+        .y_axis(plotly::layout::Axis::new().title("Clock Speed (KHz)"))
+        .width(1200)
+        .height(800);
+
+    plot.set_layout(layout);
+
+    let html_path = "perfetto_traces/benchmark_plot.html";
+    plot.write_html(html_path);
+    println!("Interactive plot saved to {html_path}");
+
+    Ok(())
 }
 
 fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    // Ensure SHA2 inline library is linked and auto-registered
+    #[cfg(feature = "host")]
+    extern crate sha2_inline;
     let bench_type = env::var("BENCH_TYPE").unwrap_or_else(|_| "all".to_string());
-    let bench_scale = env::var("BENCH_SCALE")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(20);
+    let bench_scales_str = env::var("BENCH_SCALES").unwrap_or_else(|_| {
+        env::var("BENCH_SCALE")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "18".to_string())
+    });
+
+    let bench_scales: Vec<usize> = bench_scales_str
+        .split(',')
+        .filter_map(|s| s.trim().parse::<usize>().ok())
+        .collect();
 
     if let Err(e) = fs::create_dir_all("perfetto_traces") {
         eprintln!("Warning: Failed to create perfetto_traces directory: {e}");
     }
 
     let task = move || {
-        let max_trace_length = 1 << bench_scale;
+        let mut benchmark_data: HashMap<String, Vec<(usize, f64)>> = HashMap::new();
 
-        let duration = match bench_type.as_str() {
-            "fib" => {
-                println!("Running Fibonacci benchmark at scale 2^{bench_scale}");
-                let (chrome_layer, _guard) = ChromeLayerBuilder::new()
-                    .file(format!("perfetto_traces/fib_{bench_scale}.json"))
-                    .build();
-                let subscriber = tracing_subscriber::registry().with(chrome_layer);
-                let _guard = tracing::subscriber::set_default(subscriber);
+        // Load existing data from CSV if available
+        if let Ok(contents) = fs::read_to_string("perfetto_traces/timings.csv") {
+            for line in contents.lines() {
+                let parts: Vec<&str> = line.split(',').collect();
+                if parts.len() == 3 {
+                    if let (Ok(scale), Ok(time)) =
+                        (parts[1].parse::<usize>(), parts[2].parse::<f64>())
+                    {
+                        let bench_name = match parts[0] {
+                            "fib" => "Fibonacci",
+                            "sha2" | "sha2-chain" => "SHA2-chain",
+                            "sha3" | "sha3-chain" => "SHA3-chain",
+                            "btreemap" => "BTreeMap",
+                            other => other,
+                        };
+                        benchmark_data
+                            .entry(bench_name.to_string())
+                            .or_default()
+                            .push((scale, time));
+                    }
+                }
+            }
+        }
 
-                let fib_input = get_fib_input(bench_scale);
-                prove_example_with_trace(
-                    "fibonacci-guest",
-                    postcard::to_stdvec(&fib_input).unwrap(),
-                    max_trace_length,
-                    "Fibonacci",
-                    bench_scale,
-                )
-            }
-            "sha2" | "sha2-chain" => {
-                println!("Running SHA2-chain benchmark at scale 2^{bench_scale}");
-                let (chrome_layer, _guard) = ChromeLayerBuilder::new()
-                    .file(format!("perfetto_traces/sha2_chain_{bench_scale}.json"))
-                    .build();
-                let subscriber = tracing_subscriber::registry().with(chrome_layer);
-                let _guard = tracing::subscriber::set_default(subscriber);
-
-                let iterations = get_sha2_chain_iterations(bench_scale);
-                let mut inputs = vec![];
-                inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
-                inputs.append(&mut postcard::to_stdvec(&iterations).unwrap());
-                prove_example_with_trace(
-                    "sha2-chain-guest",
-                    inputs,
-                    max_trace_length,
-                    "SHA2_chain",
-                    bench_scale,
-                )
-            }
-            "sha3" | "sha3-chain" => {
-                println!("Running SHA3-chain benchmark at scale 2^{bench_scale}");
-                let (chrome_layer, _guard) = ChromeLayerBuilder::new()
-                    .file(format!("perfetto_traces/sha3_chain_{bench_scale}.json"))
-                    .build();
-                let subscriber = tracing_subscriber::registry().with(chrome_layer);
-                let _guard = tracing::subscriber::set_default(subscriber);
-
-                let iterations = get_sha3_chain_iterations(bench_scale);
-                let mut inputs = vec![];
-                inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
-                inputs.append(&mut postcard::to_stdvec(&iterations).unwrap());
-                prove_example_with_trace(
-                    "sha3-chain-guest",
-                    inputs,
-                    max_trace_length,
-                    "SHA3_chain",
-                    bench_scale,
-                )
-            }
-            "btreemap" => {
-                println!("Running BTreeMap benchmark at scale 2^{bench_scale}");
-                let (chrome_layer, _guard) = ChromeLayerBuilder::new()
-                    .file(format!("perfetto_traces/btreemap_{bench_scale}.json"))
-                    .build();
-                let subscriber = tracing_subscriber::registry().with(chrome_layer);
-                let _guard = tracing::subscriber::set_default(subscriber);
-
-                let btreemap_ops = get_btreemap_ops(bench_scale);
-                prove_example_with_trace(
-                    "btreemap-guest",
-                    postcard::to_stdvec(&btreemap_ops).unwrap(),
-                    max_trace_length,
-                    "BTreeMap",
-                    bench_scale,
-                )
-            }
-            _ => {
-                eprintln!("Unknown benchmark type: {bench_type}. Use fib, sha2, sha2-chain, sha3, sha3-chain, or btreemap");
-                return;
-            }
+        let benchmarks_to_run = if bench_type == "all" {
+            vec!["fib", "sha2-chain", "sha3-chain", "btreemap"]
+        } else {
+            vec![bench_type.as_str()]
         };
 
-        println!("  Prover completed in {:.2}s", duration.as_secs_f64());
+        for bench_scale in bench_scales {
+            println!("\n=== Running benchmarks at scale 2^{bench_scale} ===");
+            let max_trace_length = 1 << bench_scale;
 
-        let summary_line = format!(
-            "{},{},{:.2}\n",
-            bench_type,
-            bench_scale,
-            duration.as_secs_f64()
-        );
-        if let Err(e) = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("perfetto_traces/timings.csv")
-            .and_then(|mut f| f.write_all(summary_line.as_bytes()))
-        {
-            eprintln!("Failed to write timing: {e}");
+            for current_bench in &benchmarks_to_run {
+                let duration = match *current_bench {
+                    "fib" => {
+                        println!("Running Fibonacci benchmark at scale 2^{bench_scale}");
+                        let (chrome_layer, _guard) = ChromeLayerBuilder::new()
+                            .file(format!("perfetto_traces/fib_{bench_scale}.json"))
+                            .build();
+                        let subscriber = tracing_subscriber::registry().with(chrome_layer);
+                        let _guard = tracing::subscriber::set_default(subscriber);
+
+                        let fib_input = get_fib_input(bench_scale);
+                        prove_example_with_trace(
+                            "fibonacci-guest",
+                            postcard::to_stdvec(&fib_input).unwrap(),
+                            max_trace_length,
+                            "Fibonacci",
+                            bench_scale,
+                        )
+                    }
+                    "sha2" | "sha2-chain" => {
+                        println!("Running SHA2-chain benchmark at scale 2^{bench_scale}");
+                        let (chrome_layer, _guard) = ChromeLayerBuilder::new()
+                            .file(format!("perfetto_traces/sha2_chain_{bench_scale}.json"))
+                            .build();
+                        let subscriber = tracing_subscriber::registry().with(chrome_layer);
+                        let _guard = tracing::subscriber::set_default(subscriber);
+
+                        let iterations = get_sha2_chain_iterations(bench_scale);
+                        let mut inputs = vec![];
+                        inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
+                        inputs.append(&mut postcard::to_stdvec(&iterations).unwrap());
+                        prove_example_with_trace(
+                            "sha2-chain-guest",
+                            inputs,
+                            max_trace_length,
+                            "SHA2_chain",
+                            bench_scale,
+                        )
+                    }
+                    "sha3" | "sha3-chain" => {
+                        println!("Running SHA3-chain benchmark at scale 2^{bench_scale}");
+                        let (chrome_layer, _guard) = ChromeLayerBuilder::new()
+                            .file(format!("perfetto_traces/sha3_chain_{bench_scale}.json"))
+                            .build();
+                        let subscriber = tracing_subscriber::registry().with(chrome_layer);
+                        let _guard = tracing::subscriber::set_default(subscriber);
+
+                        let iterations = get_sha3_chain_iterations(bench_scale);
+                        let mut inputs = vec![];
+                        inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
+                        inputs.append(&mut postcard::to_stdvec(&iterations).unwrap());
+                        prove_example_with_trace(
+                            "sha3-chain-guest",
+                            inputs,
+                            max_trace_length,
+                            "SHA3_chain",
+                            bench_scale,
+                        )
+                    }
+                    "btreemap" => {
+                        println!("Running BTreeMap benchmark at scale 2^{bench_scale}");
+                        let (chrome_layer, _guard) = ChromeLayerBuilder::new()
+                            .file(format!("perfetto_traces/btreemap_{bench_scale}.json"))
+                            .build();
+                        let subscriber = tracing_subscriber::registry().with(chrome_layer);
+                        let _guard = tracing::subscriber::set_default(subscriber);
+
+                        let btreemap_ops = get_btreemap_ops(bench_scale);
+                        prove_example_with_trace(
+                            "btreemap-guest",
+                            postcard::to_stdvec(&btreemap_ops).unwrap(),
+                            max_trace_length,
+                            "BTreeMap",
+                            bench_scale,
+                        )
+                    }
+                    _ => {
+                        eprintln!("Unknown benchmark type: {current_bench}");
+                        continue;
+                    }
+                };
+
+                println!("  Prover completed in {:.2}s", duration.as_secs_f64());
+
+                let bench_name = match *current_bench {
+                    "fib" => "Fibonacci",
+                    "sha2" | "sha2-chain" => "SHA2-chain",
+                    "sha3" | "sha3-chain" => "SHA3-chain",
+                    "btreemap" => "BTreeMap",
+                    _ => *current_bench,
+                };
+
+                benchmark_data
+                    .entry(bench_name.to_string())
+                    .or_default()
+                    .push((bench_scale, duration.as_secs_f64()));
+
+                let summary_line = format!(
+                    "{},{},{:.2}\n",
+                    current_bench,
+                    bench_scale,
+                    duration.as_secs_f64()
+                );
+                if let Err(e) = fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open("perfetto_traces/timings.csv")
+                    .and_then(|mut f| f.write_all(summary_line.as_bytes()))
+                {
+                    eprintln!("Failed to write timing: {e}");
+                }
+            }
+        }
+
+        if !benchmark_data.is_empty() {
+            if let Err(e) = create_benchmark_plot(&benchmark_data) {
+                eprintln!("Failed to create plot: {e}");
+            }
         }
     };
 
