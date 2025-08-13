@@ -362,6 +362,7 @@ where
 
             if let Some(polynomials_map) = polynomials_map {
                 for (label, claim) in self.polynomials.iter().zip(self.input_claims.iter()) {
+                    println!("Evaluating at {:?}", self.opening_point);
                     let poly = polynomials_map.get(label).unwrap();
                     debug_assert_eq!(
                         poly.evaluate(&self.opening_point),

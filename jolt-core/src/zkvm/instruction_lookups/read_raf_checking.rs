@@ -647,9 +647,20 @@ impl<F: JoltField> ReadRafProverState<F> {
             .collect::<Vec<_>>()
             .into_iter()
             .for_each(|ra| {
-                println!("ReadRaf ra first ele: {:?}", ra[0]);
-                println!("ReadRaf ra 3rd ele: {:?}", ra[2]);
-                println!("ReadRaf ra last ele: {:?}", ra[ra.len() - 1]);
+                // println!("ReadRaf ra first ele: {:?}", ra[0]);
+                // println!("ReadRaf ra 3rd ele: {:?}", ra[2]);
+                // println!("ReadRaf ra last ele: {:?}", ra[ra.len() - 1]);
+                let ra_mle = MultilinearPolynomial::from(ra.clone());
+                println!("ra_mle num vars: {:?}", ra_mle.get_num_vars());
+
+                println!(
+                    "ReadRaf ra evaluate at 1: {:?}",
+                    ra_mle.evaluate(
+                        &(0..ra_mle.get_num_vars())
+                            .map(|_| F::one())
+                            .collect::<Vec<_>>()
+                    )
+                );
                 if let Some(ra_acc) = self.ra_acc.as_mut() {
                     assert_eq!(ra_acc.len(), ra.len());
                     ra_acc

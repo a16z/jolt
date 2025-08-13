@@ -12,12 +12,13 @@ use crate::{
     field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
-        multilinear_polynomial::MultilinearPolynomial, one_hot_polynomial::OneHotPolynomial,
+        multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
+        one_hot_polynomial::OneHotPolynomial,
     },
     utils::math::Math,
     zkvm::{
-        lookup_table::LookupTables,
-        {instruction_lookups, ram::remap_address, JoltProverPreprocessing},
+        instruction_lookups, lookup_table::LookupTables, ram::remap_address,
+        JoltProverPreprocessing,
     },
 };
 
@@ -350,10 +351,22 @@ impl CommittedPolynomial {
                         Some(k as usize)
                     })
                     .collect();
-                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
+                let ret = MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
                     addresses,
                     instruction_lookups::K_CHUNK,
-                ))
+                ));
+                println!("one hot {:?} num vars: {:?}", i, ret.get_num_vars());
+                println!(
+                    "one hot {:?} evaluate at 1: {:?}",
+                    i,
+                    ret.evaluate(
+                        &(0..ret.get_num_vars())
+                            .map(|_| F::one())
+                            .collect::<Vec<_>>()
+                    )
+                );
+
+                ret
             }
         }
     }
