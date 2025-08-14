@@ -63,7 +63,7 @@ impl<F: JoltField> RASumCheck<F> {
 
         // Retrieve the random address variables generated in ReadRafSumcheck.
         let (r, _claim) = state_manager.get_virtual_polynomial_opening(
-            VirtualPolynomial::InstructionEqRa,
+            VirtualPolynomial::InstructionRa,
             SumcheckId::InstructionReadRaf,
         );
         let (r_address, _r_cycle) = r.split_at_r(LOG_K);
@@ -119,7 +119,7 @@ impl<F: JoltField> RASumCheck<F> {
         let T = trace.len();
 
         let (r, ra_claim) = state_manager.get_virtual_polynomial_opening(
-            VirtualPolynomial::InstructionEqRa,
+            VirtualPolynomial::InstructionRa,
             SumcheckId::InstructionReadRaf,
         );
 
@@ -171,7 +171,7 @@ impl<F: JoltField> RASumCheck<F> {
         let (_, _, T) = state_manager.get_verifier_data();
 
         let (r, eq_ra_claim) = state_manager.get_virtual_polynomial_opening(
-            VirtualPolynomial::InstructionEqRa,
+            VirtualPolynomial::InstructionRa,
             SumcheckId::InstructionReadRaf,
         );
 

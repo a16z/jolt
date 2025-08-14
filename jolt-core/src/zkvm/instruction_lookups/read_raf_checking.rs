@@ -405,7 +405,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
         let ra_claim = accumulator
             .borrow()
             .get_virtual_polynomial_opening(
-                VirtualPolynomial::InstructionEqRa,
+                VirtualPolynomial::InstructionRa,
                 SumcheckId::InstructionReadRaf,
             )
             .1;
@@ -476,7 +476,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
         });
 
         accumulator.borrow_mut().append_virtual(
-            VirtualPolynomial::InstructionEqRa,
+            VirtualPolynomial::InstructionRa,
             SumcheckId::InstructionReadRaf,
             r_sumcheck,
             ps.ra.as_ref().unwrap().final_sumcheck_claim(),
@@ -516,7 +516,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
         );
 
         accumulator.borrow_mut().append_virtual(
-            VirtualPolynomial::InstructionEqRa,
+            VirtualPolynomial::InstructionRa,
             SumcheckId::InstructionReadRaf,
             r_sumcheck,
         );
