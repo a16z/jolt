@@ -272,20 +272,20 @@ fn create_benchmark_plot(
         // Special formatting for specific values
         let label = match n {
             20 => "2^20 (1 million)".to_string(),
-            24 => "2^24 (16.8 millions)".to_string(),
-            26 => "2^26 (67 millions)".to_string(),
-            27 => "2^27 (134 millions)".to_string(),
-            28 => "2^28 (268 millions)".to_string(),
+            24 => "2^24 (16.8 million)".to_string(),
+            26 => "2^26 (67 million)".to_string(),
+            27 => "2^27 (134 million)".to_string(),
+            28 => "2^28 (268 million)".to_string(),
             _ => format!("2^{n}"),
         };
         tick_text.push(label);
     }
 
     let layout = Layout::new()
-        .title("Jolt zkVM Benchmark Results")
+        .title("Jolt zkVM Benchmark<br><sub>Hardware: Macbook M4 Max, 16 core CPU, 128GB RAM</sub>")
         .x_axis(
             plotly::layout::Axis::new()
-                .title("RISCV32IM Cycles")
+                .title("Trace length (RISCV32IM Cycles)")
                 .type_(plotly::layout::AxisType::Linear)
                 .tick_values(tick_vals)
                 .tick_text(tick_text),
@@ -370,18 +370,18 @@ fn create_proof_size_plot(
     let mut tick_text: Vec<String> = Vec::new();
 
     // Add only specific ticks: 2^18, 2^22, 2^24, and 2^25 through 2^30
-    let tick_scales = vec![18, 22, 24, 25, 26, 27, 28, 29, 30];
+    let tick_scales = vec![18, 22, 23, 24, 25, 26, 27, 28, 29, 30];
     for n in tick_scales {
         let cycles_millions = (1_u64 << n) as f64 / 1_000_000.0;
         tick_vals.push(cycles_millions);
 
         // Special formatting for specific values
         let label = match n {
-            20 => "2^20 (1M)".to_string(),
-            24 => "2^24 (16.8M)".to_string(),
-            26 => "2^26 (67M)".to_string(),
-            27 => "2^27 (134M)".to_string(),
-            28 => "2^28 (268M)".to_string(),
+            20 => "2^20 (1 million)".to_string(),
+            24 => "2^24 (16.8 million)".to_string(),
+            26 => "2^26 (67 million)".to_string(),
+            27 => "2^27 (134 million)".to_string(),
+            28 => "2^28 (268 million)".to_string(),
             _ => format!("2^{n}"),
         };
         tick_text.push(label);
@@ -391,7 +391,7 @@ fn create_proof_size_plot(
         .title("Jolt zkVM Proof Size")
         .x_axis(
             plotly::layout::Axis::new()
-                .title("RISCV32IM Cycles")
+                .title("Trace length (RISCV32IM Cycles)")
                 .type_(plotly::layout::AxisType::Linear)
                 .tick_values(tick_vals)
                 .tick_text(tick_text),
