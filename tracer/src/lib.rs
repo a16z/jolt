@@ -1,6 +1,4 @@
 #![cfg_attr(not(feature = "std"), no_std)]
-#![allow(dead_code)]
-#![allow(clippy::legacy_numeric_constants)]
 
 #[cfg(not(feature = "std"))]
 extern crate alloc;

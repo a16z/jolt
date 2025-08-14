@@ -1,5 +1,3 @@
-#![allow(clippy::useless_format, clippy::type_complexity, dead_code)]
-
 #[cfg(feature = "std")]
 extern crate fnv;
 
@@ -7,8 +5,6 @@ extern crate fnv;
 use self::fnv::FnvHashMap;
 #[cfg(not(feature = "std"))]
 use alloc::collections::btree_map::BTreeMap as FnvHashMap;
-use core::convert::TryInto;
-
 use common::constants::REGISTER_COUNT;
 
 use crate::instruction::{uncompress_instruction, RV32IMCycle, RV32IMInstruction};
@@ -42,6 +38,7 @@ const CSR_SEPC_ADDRESS: u16 = 0x141;
 const CSR_SCAUSE_ADDRESS: u16 = 0x142;
 const CSR_STVAL_ADDRESS: u16 = 0x143;
 const CSR_SIP_ADDRESS: u16 = 0x144;
+#[allow(dead_code)]
 const CSR_SATP_ADDRESS: u16 = 0x180;
 const CSR_MSTATUS_ADDRESS: u16 = 0x300;
 const CSR_MISA_ADDRESS: u16 = 0x301;
@@ -90,6 +87,7 @@ pub struct Cpu {
     // using only lower 32bits of x, pc, and csr registers
     // for 32-bit mode
     pub x: [i64; REGISTER_COUNT as usize],
+    #[allow(dead_code)]
     f: [f64; 32],
     pub(crate) pc: u64,
     csr: [u64; CSR_CAPACITY],
@@ -111,7 +109,6 @@ pub enum Xlen {
 }
 
 #[derive(Clone)]
-#[allow(dead_code)]
 pub enum PrivilegeMode {
     User,
     Supervisor,
@@ -125,7 +122,6 @@ pub struct Trap {
     pub value: u64, // Trap type specific value
 }
 
-#[allow(dead_code)]
 #[derive(Debug)]
 pub enum TrapType {
     InstructionAddressMisaligned,
@@ -754,11 +750,13 @@ impl Cpu {
         Ok(word)
     }
 
+    #[allow(dead_code)]
     fn has_csr_access_privilege(&self, address: u16) -> bool {
         let privilege = (address >> 8) & 0x3; // the lowest privilege level that can access the CSR
         privilege as u8 <= get_privilege_encoding(&self.privilege_mode)
     }
 
+    #[allow(dead_code)]
     fn read_csr(&mut self, address: u16) -> Result<u64, Trap> {
         match self.has_csr_access_privilege(address) {
             true => Ok(self.read_csr_raw(address)),
@@ -769,6 +767,7 @@ impl Cpu {
         }
     }
 
+    #[allow(dead_code)]
     fn write_csr(&mut self, address: u16, value: u64) -> Result<(), Trap> {
         match self.has_csr_access_privilege(address) {
             true => {
@@ -851,6 +850,7 @@ impl Cpu {
         self.csr[CSR_FCSR_ADDRESS as usize] |= 0x10;
     }
 
+    #[allow(dead_code)]
     fn set_fcsr_dz(&mut self) {
         self.csr[CSR_FCSR_ADDRESS as usize] |= 0x8;
     }
@@ -867,6 +867,7 @@ impl Cpu {
         self.csr[CSR_FCSR_ADDRESS as usize] |= 0x1;
     }
 
+    #[allow(dead_code)]
     fn update_addressing_mode(&mut self, value: u64) {
         let addressing_mode = match self.xlen {
             Xlen::Bit32 => match value & 0x80000000 {
@@ -948,7 +949,7 @@ impl Cpu {
         let name: &'static str = inst.into();
         let mut s = format!("PC:{:016x} ", self.unsigned_data(self.pc as i64));
         s += &format!("{original_word:08x} ");
-        s += &format!("{name}");
+        s += name;
         // s += &format!("{}", (inst.disassemble)(self, word, self.pc, true));
         s
     }
@@ -1037,6 +1038,7 @@ impl Drop for Cpu {
     }
 }
 
+#[allow(dead_code)]
 fn get_register_name(num: usize) -> &'static str {
     match num {
         0 => "zero",
@@ -1080,10 +1082,6 @@ fn normalize_u64(value: u64, width: &Xlen) -> u64 {
         Xlen::Bit32 => value as u32 as u64,
         Xlen::Bit64 => value,
     }
-}
-
-fn normalize_register(value: usize) -> u64 {
-    value.try_into().unwrap()
 }
 
 #[cfg(test)]

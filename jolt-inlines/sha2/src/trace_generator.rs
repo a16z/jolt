@@ -97,10 +97,12 @@ impl Sha256SequenceBuilder {
         (0..64).for_each(|_| self.round());
         self.final_add_iv();
         // Store output values to rs2 location
-        (0..8).for_each(|i| {
-            self.asm
-                .emit_s::<SW>(self.operand_rs2, self.vr[i as usize], i * 4)
-        });
+        // Store output A..H in-order using the current VR mapping after all rotations
+        let outs = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+        for (i, ch) in outs.iter().enumerate() {
+            let src = self.vr(*ch);
+            self.asm.emit_s::<SW>(self.operand_rs2, src, (i as i64) * 4);
+        }
         self.asm.finalize()
     }
 
@@ -145,10 +147,18 @@ impl Sha256SequenceBuilder {
         // scratch space
         let ss = self.vr[26];
         let ss2 = self.vr[27];
-        // Put T_1 into register t1
+        let t1_val = self.compute_t1(t1, ss, ss2);
+        let t2_val = self.compute_t2(t2, ss, ss2);
+        let old_d = self.vri('D');
+        self.apply_round_update(t1_val, t2_val, old_d);
+    }
+
+    /// Compute T1 into the provided `t1` register and return it as a Value.
+    fn compute_t1(&mut self, t1: u8, ss: u8, ss2: u8) -> Value {
         // Put H + K
         // We do this first because H is going to be Imm the longest of all inputs
         let h_add_k = self.asm.add(Imm(K[self.round as usize]), self.vri('H'), t1);
+        // Put Sigma_1(E_0) into register t1
         let sigma_1 = self.sha_sigma_1(self.vri('E'), ss, ss2);
         let add_sigma_1 = self.asm.add(h_add_k, sigma_1, t1);
         // Put Ch(E_0, F_0, G_0) into register t2
@@ -156,19 +166,21 @@ impl Sha256SequenceBuilder {
         let add_ch = self.asm.add(add_sigma_1, ch, t1);
         self.update_w([ss, ss2]);
         // Add W_(rid)
-        let t1 = self.asm.add(add_ch, Reg(self.w(0)), t1);
-        // Done with T_1
+        self.asm.add(add_ch, Reg(self.w(0)), t1)
+    }
 
-        // Put T_2 into register t2
+    /// Compute T2 into the provided `t2` register and return it as a Value.
+    fn compute_t2(&mut self, t2: u8, ss: u8, ss2: u8) -> Value {
         // Put Sigma_0(A_0) into register t2
         let sigma_0 = self.sha_sigma_0(self.vri('A'), t2, ss);
         // Put Maj(A_0, B_0, C_0) into register ss
         let maj = self.sha_maj(self.vri('A'), self.vri('B'), self.vri('C'), ss, ss2);
         // Add Maj to t2
-        let t2 = self.asm.add(sigma_0, maj, t2);
-        // Done with T_2
+        self.asm.add(sigma_0, maj, t2)
+    }
 
-        let old_d = self.vri('D');
+    /// Apply A/E updates for the current round using computed T1/T2 and then advance the round.
+    fn apply_round_update(&mut self, t1: Value, t2: Value, old_d: Value) {
         self.round += 1;
         // Overwrite new A with T_1 + T_2
         self.asm.add(t1, t2, self.vr('A'));
