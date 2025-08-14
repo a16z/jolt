@@ -201,10 +201,10 @@ jolt-sdk = { git = "https://github.com/a16z/jolt", features = ["host"] }
 guest = { path = "./guest" }
 
 [patch.crates-io]
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "feat/fewer-reductions" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "feat/fewer-reductions" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "feat/fewer-reductions" }
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "feat/fewer-reductions" }
 "#;
 
 const HOST_MAIN: &str = r#"pub fn main() {

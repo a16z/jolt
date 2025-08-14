@@ -1,0 +1,3 @@
+build.rustdocflags = [ "--html-in-header", "katex-header.html", "-D", "warnings" ]
+alias.f = "fmt -- --config imports_granularity=Module,group_imports=StdExternalCrate"
+alias.d = "doc --no-deps"
