@@ -226,24 +226,6 @@ impl<F: JoltField> SumcheckInstance<F> for RASumCheck<F> {
             .expect("Prover state not initialized");
         let ra_i_polys = &prover_state.ra_i_polys;
 
-        #[cfg(test)]
-        {
-            if round == 0 {
-                // First round check.
-                let eq_r_cycle = MultilinearPolynomial::from(EqPolynomial::evals(&self.r_cycle));
-                let sum = (0..eq_r_cycle.len())
-                    .into_par_iter()
-                    .map(|i| {
-                        let ra_prod = ra_i_polys
-                            .iter()
-                            .map(|p| p.get_bound_coeff(i))
-                            .product::<F>();
-                        eq_r_cycle.get_bound_coeff(i) * ra_prod
-                    })
-                    .sum::<F>();
-            }
-        }
-
         // TODO: we should really use Toom-Cook for d = 4 and 8 but that requiers F to implement the SmallFieldMul trait. Need to rethink the interface.
         let mle_product_coeffs = match self.d {
             4 => compute_mle_product_coeffs_katatsuba::<F, 4, 5>(
