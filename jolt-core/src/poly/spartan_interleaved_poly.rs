@@ -251,8 +251,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
                         let mut current_x_in_constraint_val = 0;
 
-                        let mut binary_az_block = [F::zero(); Y_SVO_SPACE_SIZE];
-                        let mut binary_bz_block = [F::zero(); Y_SVO_SPACE_SIZE];
+                        let mut binary_az_block = vec![F::zero(); Y_SVO_SPACE_SIZE];
+                        let mut binary_bz_block = vec![F::zero(); Y_SVO_SPACE_SIZE];
 
                         // Process Uniform Constraints
                         for (uniform_chunk_iter_idx, uniform_svo_chunk) in uniform_constraints.chunks(Y_SVO_SPACE_SIZE).enumerate() {
@@ -322,8 +322,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                 );
 
                                 current_x_in_constraint_val += 1;
-                                binary_az_block = [F::zero(); Y_SVO_SPACE_SIZE];
-                                binary_bz_block = [F::zero(); Y_SVO_SPACE_SIZE];
+                                binary_az_block = vec![F::zero(); Y_SVO_SPACE_SIZE];
+                                binary_bz_block = vec![F::zero(); Y_SVO_SPACE_SIZE];
                             }
                         }
 
