@@ -132,6 +132,11 @@ impl SingleSumcheck {
 
         if output_claim != sumcheck_instance.expected_output_claim(opening_accumulator.clone(), &r)
         {
+            println!(
+                "Sumcheck verification failed output_claim: {:?}, expected_output_claim: {:?}",
+                output_claim,
+                sumcheck_instance.expected_output_claim(opening_accumulator.clone(), &r)
+            );
             return Err(ProofVerifyError::SumcheckVerificationError);
         }
 
@@ -237,6 +242,7 @@ impl BatchedSumcheck {
             compressed_poly.append_to_transcript(transcript);
             let r_j = transcript.challenge_scalar();
             r_sumcheck.push(r_j);
+            println!("r_j: {:?}", r_j);
 
             // Cache individual claims for this round
             individual_claims
@@ -328,12 +334,15 @@ impl BatchedSumcheck {
         let claim: F = sumcheck_instances
             .iter()
             .zip(batching_coeffs.iter())
-            .map(|(sumcheck, coeff)| {
+            .enumerate()
+            .map(|(i, (sumcheck, coeff))| {
                 let num_rounds = sumcheck.num_rounds();
-                sumcheck
+                let claim = sumcheck
                     .input_claim()
                     .mul_pow_2(max_num_rounds - num_rounds)
-                    * coeff
+                    * coeff;
+                println!("Input claim for sumcheck {:?}: {:?}", i, claim);
+                claim
             })
             .sum();
 
@@ -343,7 +352,8 @@ impl BatchedSumcheck {
         let expected_output_claim = sumcheck_instances
             .iter()
             .zip(batching_coeffs.iter())
-            .map(|(sumcheck, coeff)| {
+            .enumerate()
+            .map(|(i, (sumcheck, coeff))| {
                 // If a sumcheck instance has fewer than `max_num_rounds`,
                 // we wait until there are <= `sumcheck.num_rounds()` left
                 // before binding its variables.
@@ -359,12 +369,22 @@ impl BatchedSumcheck {
                         sumcheck.normalize_opening_point(r_slice),
                     );
                 }
+                let claim = sumcheck.expected_output_claim(opening_accumulator.clone(), r_slice);
+                println!(
+                    "Expected output claim for sumcheck {:?}: {:?}",
+                    i,
+                    claim * coeff
+                );
 
-                sumcheck.expected_output_claim(opening_accumulator.clone(), r_slice) * coeff
+                claim * coeff
             })
             .sum();
 
         if output_claim != expected_output_claim {
+            println!(
+                "Batched Sumcheck verification failed output_claim: {:?}, expected_output_claim: {:?}",
+                output_claim, expected_output_claim
+            );
             return Err(ProofVerifyError::SumcheckVerificationError);
         }
 

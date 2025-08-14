@@ -256,6 +256,7 @@ impl<F: JoltField> SumcheckInstance<F> for RASumCheck<F> {
     }
 
     fn input_claim(&self) -> F {
+        println!("RA virtual input claim: {:?}", self.eq_ra_claim);
         self.eq_ra_claim
     }
 
@@ -391,7 +392,7 @@ impl<F: JoltField> SumcheckInstance<F> for RASumCheck<F> {
         for i in 0..self.d {
             let opening_point =
                 [self.r_address_chunks[i].as_slice(), r_cycle.r.as_slice()].concat();
-                // [r_cycle.r.as_slice(), self.r_address_chunks[i].as_slice()].concat();
+            // [r_cycle.r.as_slice(), self.r_address_chunks[i].as_slice()].concat();
 
             println!(
                 "Append opening point {:?} for ra_i_polys {}",

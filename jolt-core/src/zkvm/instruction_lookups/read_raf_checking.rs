@@ -294,6 +294,26 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
                 ps.ra = Some(MultilinearPolynomial::from(ra_acc));
             }
 
+            #[cfg(test)]
+            {
+                let sum = (0..ps.eq_r_cycle.len())
+                    .into_par_iter()
+                    .map(|i| {
+                        ps.eq_r_cycle.get_bound_coeff(i)
+                            * ps.ra.as_ref().unwrap().get_bound_coeff(i)
+                            * ps.combined_val_polynomial
+                                .as_ref()
+                                .unwrap()
+                                .get_bound_coeff(i)
+                    })
+                    .sum::<F>();
+                assert_eq!(
+                    sum, _previous_claim,
+                    "round: {:?}, sum: {:?}, previous_claim: {:?}",
+                    round, sum, _previous_claim
+                );
+            }
+
             assert_eq!(
                 ps.eq_r_cycle.len(),
                 ps.ra.as_ref().unwrap().len(),
@@ -318,7 +338,8 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
                         .unwrap()
                         .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
 
-                    std::array::from_fn(|i| eq_evals[i] * ra_evals[i] * val_evals[i])
+                    let evals = std::array::from_fn(|i| eq_evals[i] * ra_evals[i] * val_evals[i]);
+                    evals
                 })
                 .reduce(
                     || [F::zero(); DEGREE],
@@ -377,17 +398,33 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
             }
         } else {
             // log(T) rounds
-            rayon::join(
-                || {
-                    ps.ra
-                        .as_mut()
-                        .unwrap()
-                        .bind_parallel(r_j, BindingOrder::HighToLow);
-                },
-                || {
-                    ps.eq_r_cycle.bind_parallel(r_j, BindingOrder::HighToLow);
-                },
-            );
+            println!("Binding read raf, r_j: {:?}", r_j);
+
+            [
+                ps.ra.as_mut().unwrap(),
+                &mut ps.eq_r_cycle,
+                ps.combined_val_polynomial.as_mut().unwrap(),
+            ]
+            .par_iter_mut()
+            .for_each(|poly| {
+                poly.bind_parallel(r_j, BindingOrder::HighToLow);
+            });
+
+            #[cfg(test)]
+            {
+                let sum = (0..ps.eq_r_cycle.len())
+                    .into_par_iter()
+                    .map(|i| {
+                        ps.eq_r_cycle.get_bound_coeff(i)
+                            * ps.ra.as_ref().unwrap().get_bound_coeff(i)
+                            * ps.combined_val_polynomial
+                                .as_ref()
+                                .unwrap()
+                                .get_bound_coeff(i)
+                    })
+                    .sum::<F>();
+                println!("New prev claim: {:?}", sum);
+            }
         }
     }
 
@@ -405,7 +442,6 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
         let val_evals: Vec<_> = LookupTables::<WORD_SIZE>::iter()
             .map(|table| table.evaluate_mle(r_address_prime))
             .collect();
-        let eq_eval_cycle = EqPolynomial::mle(&self.r_cycle, r_cycle_prime);
 
         let accumulator = accumulator.as_ref().unwrap();
 
@@ -448,6 +484,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
             + (F::one() - raf_flag_claim)
                 * (self.gamma * left_operand_eval + self.gamma_squared * right_operand_eval)
             + raf_flag_claim * self.gamma_squared * identity_poly_eval;
+        println!("ReadRaf claim: {:?}", eq_ra_claim * val_eval);
         eq_ra_claim * val_eval
     }
 
@@ -492,6 +529,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
             r_sumcheck,
             eq_ra_claim,
         );
+        println!("ReadRaf append eq_ra_claim: {:?}", eq_ra_claim);
 
         let raf_flag_claim = ps
             .lookup_indices_identity
@@ -625,11 +663,7 @@ impl<F: JoltField> ReadRafProverState<F> {
             .collect::<Vec<_>>()
             .into_iter()
             .for_each(|ra| {
-                // println!("ReadRaf ra first ele: {:?}", ra[0]);
-                // println!("ReadRaf ra 3rd ele: {:?}", ra[2]);
-                // println!("ReadRaf ra last ele: {:?}", ra[ra.len() - 1]);
                 let ra_mle = MultilinearPolynomial::from(ra.clone());
-                println!("ra_mle num vars: {:?}", ra_mle.get_num_vars());
 
                 println!(
                     "ReadRaf ra evaluate at 1: {:?}",
@@ -819,6 +853,7 @@ mod tests {
                 .next()
                 .unwrap()
         });
+        println!("Random instruction: {:?}", instruction);
 
         match instruction {
             RV32IMCycle::ADD(cycle) => cycle.random(rng).into(),
