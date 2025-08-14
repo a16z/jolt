@@ -287,6 +287,7 @@ impl MacroBuilder {
                 let memory_layout = MemoryLayout::new(&memory_config);
 
                 // TODO(moodlezoup): Feed in size parameters via macro
+                println!("|||||||||||||||||||||||> prover_preprocess called by make_preprocess_prover_func");
                 let preprocessing: JoltProverPreprocessing<jolt::F, jolt::PCS> =
                     JoltRV32IM::prover_preprocess(
                         bytecode,
@@ -330,6 +331,7 @@ impl MacroBuilder {
                 let memory_layout = MemoryLayout::new(&memory_config);
 
                 // TODO(moodlezoup): Feed in size parameters via macro
+                println!("|||||||||||||||||||||||> prover_preprocess called by make_preprocess_verifier_func");
                 let prover_preprocessing: JoltProverPreprocessing<jolt::F, jolt::PCS> =
                     JoltRV32IM::prover_preprocess(
                         bytecode,

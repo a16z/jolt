@@ -324,7 +324,8 @@ impl<F: JoltField> StreamWitness<F> for RamRa {
     ) -> Self::WitnessType
     where PCS: CommitmentScheme<Field = F> {
         let i = self.0;
-        let d = preprocessing.ram_d;
+        let d = preprocessing.ram_d;// AZ: ramd
+        // let d = self.ram_d;
         debug_assert!(i < d, "Invalid index for ram ra: {i}");
         let v = {
             remap_address(
@@ -407,7 +408,7 @@ impl AllCommittedPolynomials {
                 .len()
         }
     }
-
+    // AZ: ramd
     pub fn ram_d() -> usize {
         // this is kind of jank but fine for now ig
         unsafe {
@@ -460,6 +461,18 @@ impl CommittedPolynomial {
                 .find_position(|poly| *poly == self)
                 .unwrap()
                 .0
+        }
+    }
+
+    fn ram_d(&self) -> usize {
+        // this is kind of jank but fine for now ig
+        unsafe {
+            ALL_COMMITTED_POLYNOMIALS
+                .get()
+                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")
+                .iter()
+                .filter(|poly| matches!(poly, CommittedPolynomial::RamRa(_)))
+                .count()
         }
     }
 
@@ -567,7 +580,10 @@ impl CommittedPolynomial {
                 MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(addresses, K_chunk))
             }
             CommittedPolynomial::RamRa(i) => {
+                //AZ: ramd
                 let d = preprocessing.ram_d;
+                // let d = self.ram_d();
+
                 debug_assert!(*i < d);
                 let addresses: Vec<_> = trace
                     .par_iter()
@@ -683,6 +699,7 @@ impl CommittedPolynomial {
         where
             PCS::State<'a>: StreamingProcessChunk<T::WitnessType>,
         {
+            println!("--> generate_witness_and_commit_row");
             let row: Vec<_> = row_cycles
                 .iter()
                 .map(|(cycle, next_cycle)| witness_type.generate_streaming_witness(preprocessing, &cycle, &next_cycle))

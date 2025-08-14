@@ -41,6 +41,7 @@ impl JoltDAG {
         ),
         anyhow::Error,
     > {
+        println!("Prove called");
         state_manager.fiat_shamir_preamble();
 
         // Initialize DoryGlobals at the beginning to keep it alive for the entire proof
@@ -56,6 +57,7 @@ impl JoltDAG {
             DoryGlobals::initialize(DTH_ROOT_OF_K, padded_trace_length),
             AllCommittedPolynomials::initialize(compute_d_parameter(ram_K), bytecode_d),
         );
+        println!("Initialized DoryGlobals and AllCommittedPolynomials");
 
         // Generate and commit to all witness polynomials
         let opening_proof_hints = Self::generate_and_commit_polynomials(&mut state_manager)?;
