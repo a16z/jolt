@@ -15,10 +15,8 @@ pub mod benches;
 pub mod host;
 
 pub mod field;
-pub mod jolt;
-pub mod lasso;
 pub mod msm;
 pub mod poly;
-pub mod r1cs;
 pub mod subprotocols;
 pub mod utils;
+pub mod zkvm;

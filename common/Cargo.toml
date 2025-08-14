@@ -14,9 +14,14 @@ std = [
 ]
 
 [dependencies]
-ark-serialize = { version = "0.5.0", features = ["derive"], default-features = false }
+derive_more = { version = "2.0.1", features = ["from"] }
+ark-serialize = { version = "0.5.0", features = [
+    "derive",
+], default-features = false }
 serde = { version = "1.0.193", features = ["derive"], default-features = false }
-serde_json = { version = "1.0.108", features = ["alloc"], default-features = false }
+serde_json = { version = "1.0.108", features = [
+    "alloc",
+], default-features = false }
 strum_macros = "0.26.4"
 strum = { version = "0.26.3", default-features = false }
 syn = { version = "1.0", optional = true }

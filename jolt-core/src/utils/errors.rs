@@ -7,6 +7,10 @@ pub enum ProofVerifyError {
     InvalidInputLength(usize, usize),
     #[error("Input too large")]
     InputTooLarge,
+    #[error("Output too large")]
+    OutputTooLarge,
+    #[error("Memory layout mismatch")]
+    MemoryLayoutMismatch,
     #[error("Proof verification failed")]
     #[default]
     InternalError,
@@ -18,4 +22,10 @@ pub enum ProofVerifyError {
     KeyLengthError(usize, usize),
     #[error("Invalid key length: {0}, expected power of 2")]
     InvalidKeyLength(usize),
+    #[error("Invalid opening proof -- the proof failed to verify")]
+    InvalidOpeningProof,
+    #[error("Dory proof verification failed: {0}")]
+    DoryError(String),
+    #[error("Sumcheck verification failed")]
+    SumcheckVerificationError,
 }

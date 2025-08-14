@@ -4,7 +4,10 @@ use std::process::exit;
 
 use clap::Parser;
 
-use tracer::emulator::{default_terminal::DefaultTerminal, Emulator};
+use emulator::{default_terminal::DefaultTerminal, Emulator};
+
+mod emulator;
+mod instruction;
 
 /// RISC-V emulator for Jolt
 #[derive(Parser, Debug)]
@@ -16,6 +19,14 @@ struct Args {
     /// Path to write the signature file
     #[arg(short, long)]
     signature: Option<String>,
+
+    /// Signature granularity in bytes (must be a power of 2)
+    #[arg(long, default_value = "4")]
+    signature_granularity: usize,
+
+    /// Execute the program in trace mode
+    #[arg(short, long, value_name = "true|false")]
+    trace: Option<bool>,
 }
 
 fn main() {
@@ -31,12 +42,12 @@ fn main() {
     // Create and run the emulator
     let mut emulator = Emulator::new(Box::new(DefaultTerminal::default()));
     emulator.setup_program(elf_content);
-    emulator.run();
+    emulator.run_test(args.trace.unwrap_or(false));
 
-    // If signature file is specified, write the signature with 4-byte granularity
+    // If signature file is specified, write the signature with specified granularity
     if let Some(sig_path) = args.signature {
         let mut file = File::create(sig_path).expect("Failed to create signature file");
-        if let Err(e) = emulator.write_signature(&mut file, 4) {
+        if let Err(e) = emulator.write_signature(&mut file, args.signature_granularity) {
             eprintln!("Failed to write signature file: {e}");
             exit(1);
         }

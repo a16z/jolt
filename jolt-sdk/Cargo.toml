@@ -25,7 +25,6 @@ guest-std = [
     "postcard/use-std",
     "jolt-sdk-macros/guest-std",
 ]
-icicle = ["host", "jolt-core?/icicle"]
 
 [dependencies]
 postcard = { version = "1.0.8", default-features = false }
