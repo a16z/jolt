@@ -226,7 +226,7 @@ impl<F: JoltField> SumcheckInstance<F> for RASumCheck<F> {
             .expect("Prover state not initialized");
         let ra_i_polys = &prover_state.ra_i_polys;
 
-        // TODO: we should really use Toom-Cook for d = 4 and 8 but that requiers F to implement the SmallFieldMul trait. Need to rethink the interface.
+        // TODO: we should really use Toom-Cook for d = 4 and 8 but that requires F to implement the SmallFieldMul trait. Need to rethink the interface.
         let mle_product_coeffs = match self.d {
             4 => compute_mle_product_coeffs_katatsuba::<F, 4, 5>(
                 ra_i_polys,
