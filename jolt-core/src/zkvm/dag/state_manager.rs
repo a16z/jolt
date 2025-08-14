@@ -90,7 +90,7 @@ where
         let transcript = Rc::new(RefCell::new(ProofTranscript::new(b"Jolt")));
         let proofs = Rc::new(RefCell::new(BTreeMap::new()));
         let commitments = Rc::new(RefCell::new(vec![]));
-
+        //AZ: calculate ram_K
         // Calculate K for DoryGlobals initialization
         let ram_K = trace
             .par_iter()

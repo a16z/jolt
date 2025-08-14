@@ -1265,35 +1265,124 @@ pub struct StreamingDoryCommitment<'a, E: DoryPairing> {
     // K (if a OneHot polynomial).
     K: Option<usize>,
 }
+impl<'a, E: DoryPairing> StreamingDoryCommitment<'a, E> {
+    // fn get_bases_from_setup(
+    //     setup: &'a ProverSetup<E>,
+    // ) -> Vec<_> {
+    //     setup.g1_vec().iter().map(|g: | g.0.into_affine()).collect()
+    // }
+    fn get_row_from_chunk(
+        chunk: &[StreamingDenseWitness<Fr>],
+    ) -> Vec<Fr> {
+        chunk.iter().map(|w| w.value).collect()
+    }
+}
+
 
 impl<'a> StreamingProcessChunk<StreamingDenseWitness<Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
-    fn process_chunk(self, chunk: &[StreamingDenseWitness<Fr>]) -> Self {
-        todo!()
+    fn process_chunk(mut self, chunk: &[StreamingDenseWitness<Fr>]) -> Self {
+        // JP: TODO: Do this upfront
+        let bases = self.setup.g1_vec().iter().map(|g| g.0.into_affine()).collect::<Vec<_>>();
+        
+        let row = chunk
+            .iter()
+            .map(|w| w.value)
+            .collect::<Vec<_>>();
+        let row_commitment = JoltGroupWrapper(
+            VariableBaseMSM::msm_field_elements(&bases[..chunk.len()], &row, None)
+                .unwrap(),
+        );
+        
+        self.row_commitments.push(row_commitment);
+        self
     }
 }
 impl<'a> StreamingProcessChunk<StreamingCompactWitness<u8, Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
-    fn process_chunk(self, chunk: &[StreamingCompactWitness<u8, Fr>]) -> Self {
-        todo!()
+    fn process_chunk(mut self, chunk: &[StreamingCompactWitness<u8, Fr>]) -> Self {
+        let bases = self.setup.g1_vec().iter().map(|g| g.0.into_affine()).collect::<Vec<_>>();
+        
+        let row = chunk
+            .iter()
+            .map(|w| w.value)
+            .collect::<Vec<_>>();
+        let row_commitment = JoltGroupWrapper(
+            VariableBaseMSM::msm_u8(&bases[..chunk.len()], &row)
+                .unwrap(),
+        );
+        
+        self.row_commitments.push(row_commitment);
+        self
     }
 }
 impl<'a> StreamingProcessChunk<StreamingCompactWitness<u16, Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
-    fn process_chunk(self, chunk: &[StreamingCompactWitness<u16, Fr>]) -> Self {
-        todo!()
+    fn process_chunk(mut self, chunk: &[StreamingCompactWitness<u16, Fr>]) -> Self {
+        let bases = self.setup.g1_vec().iter().map(|g| g.0.into_affine()).collect::<Vec<_>>();
+        
+        let row = chunk
+            .iter()
+            .map(|w| w.value)
+            .collect::<Vec<_>>();
+        let row_commitment = JoltGroupWrapper(
+            VariableBaseMSM::msm_u16(&bases[..chunk.len()], &row)
+                .unwrap(),
+        );
+        
+        self.row_commitments.push(row_commitment);
+        self
     }
 }
 impl<'a> StreamingProcessChunk<StreamingCompactWitness<u32, Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
-    fn process_chunk(self, chunk: &[StreamingCompactWitness<u32, Fr>]) -> Self {
-        todo!()
+    fn process_chunk(mut self, chunk: &[StreamingCompactWitness<u32, Fr>]) -> Self {
+        let bases = self.setup.g1_vec().iter().map(|g| g.0.into_affine()).collect::<Vec<_>>();
+        
+        let row = chunk
+            .iter()
+            .map(|w| w.value)
+            .collect::<Vec<_>>();
+        let row_commitment = JoltGroupWrapper(
+            VariableBaseMSM::msm_u32(&bases[..chunk.len()], &row)
+                .unwrap(),
+        );
+        
+        self.row_commitments.push(row_commitment);
+        self
     }
 }
 impl<'a> StreamingProcessChunk<StreamingCompactWitness<u64, Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
-    fn process_chunk(self, chunk: &[StreamingCompactWitness<u64, Fr>]) -> Self {
-        todo!()
+    fn process_chunk(mut self, chunk: &[StreamingCompactWitness<u64, Fr>]) -> Self {
+        let bases = self.setup.g1_vec().iter().map(|g| g.0.into_affine()).collect::<Vec<_>>();
+        
+        let row = chunk
+            .iter()
+            .map(|w| w.value)
+            .collect::<Vec<_>>();
+        let row_commitment = JoltGroupWrapper(
+            VariableBaseMSM::msm_u64(&bases[..chunk.len()], &row)
+                .unwrap(),
+        );
+        
+        self.row_commitments.push(row_commitment);
+        self
     }
 }
 impl<'a> StreamingProcessChunk<StreamingCompactWitness<i64, Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
-    fn process_chunk(self, chunk: &[StreamingCompactWitness<i64, Fr>]) -> Self {
-        todo!()
+    fn process_chunk(mut self, chunk: &[StreamingCompactWitness<i64, Fr>]) -> Self {
+        let bases = self.setup.g1_vec().iter().map(|g| g.0.into_affine()).collect::<Vec<_>>();
+        
+        let row = chunk
+            .iter()
+            .map(|w| w.value)
+            .collect::<Vec<_>>();
+        let scalars: Vec<_> = row.iter().map(|x| <Fr as JoltField>::from_i64(*x)).collect();
+        // let scalars: Vec<_> = row.iter().map(|x| <Fr as DoryField>::from_i64(*x)).collect();
+
+        let row_commitment = JoltGroupWrapper(
+            VariableBaseMSM::msm_field_elements(&bases[..chunk.len()], &scalars, None)
+                .unwrap(),
+        );
+        
+        self.row_commitments.push(row_commitment);
+        self
     }
 }
 impl<'a> StreamingProcessChunk<StreamingOneHotWitness<Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
