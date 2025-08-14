@@ -9,3 +9,4 @@ guest = []
 [dependencies]
 jolt = { package = "jolt-sdk", path = "../../../jolt-sdk" }
 ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-bn254 = "0.5.0"
