@@ -212,7 +212,7 @@ impl<F: JoltField> RASumCheck<F> {
 
         let (r, eq_ra_claim) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionEqRa,
-            SumcheckId::InstructionRaVirtualization,
+            SumcheckId::InstructionReadRaf,
         );
 
         // TODO: create a helper function for this
@@ -267,6 +267,49 @@ impl<F: JoltField> SumcheckInstance<F> for RASumCheck<F> {
             .expect("Prover state not initialized");
         let ra_i_polys = &prover_state.ra_i_polys;
 
+        #[cfg(test)]
+        {
+            if round == 0 {
+                // First round check.
+                let eq_r_cycle = MultilinearPolynomial::from(EqPolynomial::evals(&self.r_cycle));
+                let sum = (0..eq_r_cycle.len())
+                    .into_par_iter()
+                    .map(|i| {
+                        let ra_prod = ra_i_polys
+                            .iter()
+                            .map(|p| p.get_bound_coeff(i))
+                            .product::<F>();
+                        eq_r_cycle.get_bound_coeff(i) * ra_prod
+                    })
+                    .sum::<F>();
+                println!("Check on ra sumcheck");
+                println!("R_cycle len: {:?} : {:?}", self.r_cycle.len(), self.r_cycle);
+                println!("sum: {:?}", sum);
+                println!(
+                    "ra sum: {:?}",
+                    (0..ra_i_polys[0].len())
+                        .into_par_iter()
+                        .map(|i| ra_i_polys
+                            .iter()
+                            .map(|p| p.get_bound_coeff(i))
+                            .product::<F>())
+                        .sum::<F>()
+                );
+                println!(
+                    "eq_r_cycle sum: {:?}",
+                    (0..eq_r_cycle.len())
+                        .into_par_iter()
+                        .map(|i| eq_r_cycle.get_bound_coeff(i))
+                        .sum::<F>()
+                );
+                // assert_eq!(
+                // sum, _previous_claim,
+                // "Round 0 check in ra sum check, sum: {:?}, previous_claim: {:?}, ra_claim: {:?}, round: {:?}",
+                //     sum, _previous_claim, self.eq_ra_claim, round
+                // );
+            }
+        }
+
         // TODO: we should really use Toom-Cook for d = 4 and 8 but that requiers F to implement the SmallFieldMul trait. Need to rethink the interface.
         let mle_product_coeffs = match self.d {
             4 => compute_mle_product_coeffs_katatsuba::<F, 4, 5>(
@@ -299,8 +342,22 @@ impl<F: JoltField> SumcheckInstance<F> for RASumCheck<F> {
         let univariate_poly =
             compute_eq_mle_product_univariate(mle_product_coeffs, round, &self.r_cycle);
 
+        // #[cfg(test)]
+        // {
+        //     let sum = [0, 1]
+        //         .iter()
+        //         .map(|i| univariate_poly.evaluate(&F::from_u32(*i as u32)))
+        //         .sum::<F>();
+        //     assert_eq!(
+        //         sum, _previous_claim,
+        //         "Check in ra sum check, sum: {:?}, previous_claim: {:?}, round: {:?}",
+        //         sum, _previous_claim, round
+        //     );
+        // }
+
         // Turning into eval points.
         (0..univariate_poly.coeffs.len())
+            .filter(|i| *i != 1)
             .map(|i| univariate_poly.evaluate(&F::from_u32(i as u32)))
             .collect()
     }
@@ -346,7 +403,6 @@ impl<F: JoltField> SumcheckInstance<F> for RASumCheck<F> {
             })
             .product();
 
-        panic!("ra_claim_prod is {:?}", ra_claim_prod);
         eq_eval * ra_claim_prod
     }
 
