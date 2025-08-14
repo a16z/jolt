@@ -132,11 +132,6 @@ impl SingleSumcheck {
 
         if output_claim != sumcheck_instance.expected_output_claim(opening_accumulator.clone(), &r)
         {
-            println!(
-                "Sumcheck verification failed output_claim: {:?}, expected_output_claim: {:?}",
-                output_claim,
-                sumcheck_instance.expected_output_claim(opening_accumulator.clone(), &r)
-            );
             return Err(ProofVerifyError::SumcheckVerificationError);
         }
 
@@ -242,7 +237,6 @@ impl BatchedSumcheck {
             compressed_poly.append_to_transcript(transcript);
             let r_j = transcript.challenge_scalar();
             r_sumcheck.push(r_j);
-            println!("r_j: {:?}", r_j);
 
             // Cache individual claims for this round
             individual_claims
@@ -341,7 +335,6 @@ impl BatchedSumcheck {
                     .input_claim()
                     .mul_pow_2(max_num_rounds - num_rounds)
                     * coeff;
-                println!("Input claim for sumcheck {:?}: {:?}", i, claim);
                 claim
             })
             .sum();
@@ -370,21 +363,12 @@ impl BatchedSumcheck {
                     );
                 }
                 let claim = sumcheck.expected_output_claim(opening_accumulator.clone(), r_slice);
-                println!(
-                    "Expected output claim for sumcheck {:?}: {:?}",
-                    i,
-                    claim * coeff
-                );
 
                 claim * coeff
             })
             .sum();
 
         if output_claim != expected_output_claim {
-            println!(
-                "Batched Sumcheck verification failed output_claim: {:?}, expected_output_claim: {:?}",
-                output_claim, expected_output_claim
-            );
             return Err(ProofVerifyError::SumcheckVerificationError);
         }
 

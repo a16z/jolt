@@ -355,16 +355,6 @@ impl CommittedPolynomial {
                     addresses,
                     instruction_lookups::K_CHUNK,
                 ));
-                println!("one hot {:?} num vars: {:?}", i, ret.get_num_vars());
-                println!(
-                    "one hot {:?} evaluate at 1: {:?}",
-                    i,
-                    ret.evaluate(
-                        &(0..ret.get_num_vars())
-                            .map(|_| F::one())
-                            .collect::<Vec<_>>()
-                    )
-                );
 
                 ret
             }

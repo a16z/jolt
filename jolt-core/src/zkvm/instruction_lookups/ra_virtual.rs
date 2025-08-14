@@ -110,42 +110,6 @@ impl<F: JoltField> RASumCheck<F> {
             }
         }
 
-        println!(
-            "ra_i_polys first ele: {:?}",
-            ra_i_polys
-                .iter()
-                .map(|p| p.get_coeff(0))
-                .collect::<Vec<_>>()
-        );
-        println!(
-            "ra_i_polys 3rd ele: {:?}",
-            ra_i_polys
-                .iter()
-                .map(|p| p.get_coeff(2))
-                .collect::<Vec<_>>()
-        );
-        println!(
-            "ra_i_polys last ele: {:?}",
-            ra_i_polys
-                .iter()
-                .map(|p| p.get_coeff(p.len() - 1))
-                .collect::<Vec<_>>()
-        );
-        println!(
-            "ra_i_polys num vars: {:?}",
-            ra_i_polys
-                .iter()
-                .map(|p| p.get_num_vars())
-                .collect::<Vec<_>>()
-        );
-        println!(
-            "ra_i_polys evaluate at 1: {:?}",
-            ra_i_polys
-                .iter()
-                .map(|p| p.evaluate(&(0..p.get_num_vars()).map(|_| F::one()).collect::<Vec<_>>()))
-                .collect::<Vec<_>>()
-        );
-
         ra_i_polys
     }
 
@@ -155,7 +119,7 @@ impl<F: JoltField> RASumCheck<F> {
     ) -> Self {
         let d = compute_d_parameter_from_log_K(log_K);
 
-        let (preprocessing, trace, _, _) = state_manager.get_prover_data();
+        let (_preprocessing, trace, _, _) = state_manager.get_prover_data();
         let T = trace.len();
 
         let (r, ra_claim) = state_manager.get_virtual_polynomial_opening(
@@ -256,7 +220,6 @@ impl<F: JoltField> SumcheckInstance<F> for RASumCheck<F> {
     }
 
     fn input_claim(&self) -> F {
-        println!("RA virtual input claim: {:?}", self.eq_ra_claim);
         self.eq_ra_claim
     }
 
@@ -282,31 +245,6 @@ impl<F: JoltField> SumcheckInstance<F> for RASumCheck<F> {
                         eq_r_cycle.get_bound_coeff(i) * ra_prod
                     })
                     .sum::<F>();
-                println!("Check on ra sumcheck");
-                println!("R_cycle len: {:?} : {:?}", self.r_cycle.len(), self.r_cycle);
-                println!("sum: {:?}", sum);
-                println!(
-                    "ra sum: {:?}",
-                    (0..ra_i_polys[0].len())
-                        .into_par_iter()
-                        .map(|i| ra_i_polys
-                            .iter()
-                            .map(|p| p.get_bound_coeff(i))
-                            .product::<F>())
-                        .sum::<F>()
-                );
-                println!(
-                    "eq_r_cycle sum: {:?}",
-                    (0..eq_r_cycle.len())
-                        .into_par_iter()
-                        .map(|i| eq_r_cycle.get_bound_coeff(i))
-                        .sum::<F>()
-                );
-                // assert_eq!(
-                // sum, _previous_claim,
-                // "Round 0 check in ra sum check, sum: {:?}, previous_claim: {:?}, ra_claim: {:?}, round: {:?}",
-                //     sum, _previous_claim, self.eq_ra_claim, round
-                // );
             }
         }
 
@@ -341,19 +279,6 @@ impl<F: JoltField> SumcheckInstance<F> for RASumCheck<F> {
 
         let univariate_poly =
             compute_eq_mle_product_univariate(mle_product_coeffs, round, &self.r_cycle);
-
-        // #[cfg(test)]
-        // {
-        //     let sum = [0, 1]
-        //         .iter()
-        //         .map(|i| univariate_poly.evaluate(&F::from_u32(*i as u32)))
-        //         .sum::<F>();
-        //     assert_eq!(
-        //         sum, _previous_claim,
-        //         "Check in ra sum check, sum: {:?}, previous_claim: {:?}, round: {:?}",
-        //         sum, _previous_claim, round
-        //     );
-        // }
 
         // Turning into eval points.
         (0..univariate_poly.coeffs.len())
@@ -431,10 +356,6 @@ impl<F: JoltField> SumcheckInstance<F> for RASumCheck<F> {
                 r_cycle.r.clone(),
                 vec![claim],
             );
-            println!(
-                "Append claim {} and r_cycle {:?} for ra_i_polys {}",
-                claim, r_cycle.r, i
-            );
         }
     }
 
@@ -448,12 +369,7 @@ impl<F: JoltField> SumcheckInstance<F> for RASumCheck<F> {
         for i in 0..self.d {
             let opening_point =
                 [self.r_address_chunks[i].as_slice(), r_cycle.r.as_slice()].concat();
-            // [r_cycle.r.as_slice(), self.r_address_chunks[i].as_slice()].concat();
 
-            println!(
-                "Append opening point {:?} for ra_i_polys {}",
-                opening_point, i
-            );
             accumulator.borrow_mut().append_sparse(
                 vec![CommittedPolynomial::InstructionRa(i)],
                 SumcheckId::InstructionRaVirtualization,

@@ -285,7 +285,6 @@ impl JoltDAG {
         spartan_dag
             .stage1_verify(&mut state_manager)
             .context("Stage 1")?;
-        println!("Stage 1 verified");
 
         // Stage 2:
         let stage2_instances: Vec<_> = std::iter::empty()
@@ -316,7 +315,6 @@ impl JoltDAG {
             &mut *transcript.borrow_mut(),
         )
         .context("Stage 2")?;
-        println!("Stage 2 verified");
 
         drop(proofs);
 
@@ -348,7 +346,6 @@ impl JoltDAG {
             &mut *transcript.borrow_mut(),
         )
         .context("Stage 3")?;
-        println!("Stage 3 verified");
 
         drop(proofs);
 
