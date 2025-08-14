@@ -228,7 +228,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
     }
 
     fn alloc_Q(m: usize) -> [DensePolynomial<F>; ORDER] {
-        rayon::iter::repeatn(0, ORDER)
+        rayon::iter::repeat_n(0, ORDER)
             .map(|_| DensePolynomial::new(unsafe_allocate_zero_vec(m)))
             .collect::<Vec<_>>()
             .try_into()
