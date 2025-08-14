@@ -1052,7 +1052,7 @@ mod test {
 
         let start_time = Instant::now();
         let (proof, r_prime) = LargeDMulSumCheckProof::<Fr, KeccakTranscript>::prove(
-            &mut ra_copy.iter().cloned().collect::<Vec<_>>(),
+            &mut ra_copy,
             &r_cycle,
             &mut previous_claim_copy,
             &mut prover_transcript,
@@ -1142,7 +1142,7 @@ mod test {
 
         let start_time = Instant::now();
         let (proof, r_prime) = LargeDMulSumCheckProof::<Fr, KeccakTranscript>::prove(
-            &mut ra_copy_2.iter().cloned().collect::<Vec<_>>(),
+            &mut ra_copy_2,
             &r_cycle,
             &mut previous_claim_copy_2,
             &mut prover_transcript,
