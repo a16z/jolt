@@ -1,6 +1,5 @@
 use rayon::iter::{
-    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
-    IntoParallelRefMutIterator, ParallelIterator,
+    IndexedParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator,
 };
 use tracer::instruction::RV32IMCycle;
 
@@ -9,9 +8,7 @@ use crate::{
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
-        multilinear_polynomial::{
-            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-        },
+        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN},
     },
     subprotocols::{
@@ -28,7 +25,6 @@ use crate::{
         instruction_lookups::{
             K_CHUNK, LOG_K, LOG_K_CHUNK, LOG_M, M, PHASES, RA_PER_LOG_M, WORD_SIZE,
         },
-        ram::remap_address,
         witness::{
             compute_d_parameter_from_log_K, CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K,
         },
@@ -332,7 +328,7 @@ impl<F: JoltField> SumcheckInstance<F> for RASumCheck<F> {
     }
 
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
-        OpeningPoint::new(opening_point.iter().copied().collect())
+        OpeningPoint::new(opening_point.to_vec())
     }
 
     fn cache_openings_prover(

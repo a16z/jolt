@@ -3,7 +3,7 @@ use std::{cell::RefCell, rc::Rc};
 use strum::{EnumCount, IntoEnumIterator};
 use tracer::instruction::RV32IMCycle;
 
-use super::{D, K_CHUNK, LOG_K, LOG_K_CHUNK, LOG_M, M, PHASES, RA_PER_LOG_M, WORD_SIZE};
+use super::{K_CHUNK, LOG_K, LOG_K_CHUNK, LOG_M, M, PHASES, RA_PER_LOG_M, WORD_SIZE};
 
 use crate::{
     field::JoltField,
@@ -30,13 +30,13 @@ use crate::{
         transcript::Transcript,
     },
     zkvm::{
-        dag::state_manager::{self, StateManager},
+        dag::state_manager::StateManager,
         instruction::{InstructionFlags, InstructionLookup, InterleavedBitsMarker, LookupQuery},
         lookup_table::{
             prefixes::{PrefixCheckpoint, PrefixEval, Prefixes},
             LookupTables,
         },
-        witness::{CommittedPolynomial, VirtualPolynomial},
+        witness::VirtualPolynomial,
     },
 };
 
@@ -311,8 +311,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
                         .unwrap()
                         .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
 
-                    let evals = std::array::from_fn(|i| eq_evals[i] * ra_evals[i] * val_evals[i]);
-                    evals
+                    std::array::from_fn(|i| eq_evals[i] * ra_evals[i] * val_evals[i])
                 })
                 .reduce(
                     || [F::zero(); DEGREE],
@@ -454,7 +453,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
         r_sumcheck: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let ps = self.prover_state.as_ref().unwrap();
-        let (r_address, r_cycle) = r_sumcheck.clone().split_at(LOG_K);
+        let (_r_address, r_cycle) = r_sumcheck.clone().split_at(LOG_K);
         let eq_r_cycle_prime = EqPolynomial::evals(&r_cycle.r);
 
         let flag_claims = ps
@@ -620,7 +619,6 @@ impl<F: JoltField> ReadRafProverState<F> {
             .collect::<Vec<_>>()
             .into_iter()
             .for_each(|ra| {
-                let ra_mle = MultilinearPolynomial::from(ra.clone());
                 if let Some(ra_acc) = self.ra_acc.as_mut() {
                     assert_eq!(ra_acc.len(), ra.len());
                     ra_acc

@@ -328,14 +328,12 @@ impl BatchedSumcheck {
         let claim: F = sumcheck_instances
             .iter()
             .zip(batching_coeffs.iter())
-            .enumerate()
-            .map(|(i, (sumcheck, coeff))| {
+            .map(|(sumcheck, coeff)| {
                 let num_rounds = sumcheck.num_rounds();
-                let claim = sumcheck
+                sumcheck
                     .input_claim()
                     .mul_pow_2(max_num_rounds - num_rounds)
-                    * coeff;
-                claim
+                    * coeff
             })
             .sum();
 
@@ -345,8 +343,7 @@ impl BatchedSumcheck {
         let expected_output_claim = sumcheck_instances
             .iter()
             .zip(batching_coeffs.iter())
-            .enumerate()
-            .map(|(i, (sumcheck, coeff))| {
+            .map(|(sumcheck, coeff)| {
                 // If a sumcheck instance has fewer than `max_num_rounds`,
                 // we wait until there are <= `sumcheck.num_rounds()` left
                 // before binding its variables.

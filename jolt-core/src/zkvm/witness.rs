@@ -12,8 +12,7 @@ use crate::{
     field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
-        multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
-        one_hot_polynomial::OneHotPolynomial,
+        multilinear_polynomial::MultilinearPolynomial, one_hot_polynomial::OneHotPolynomial,
     },
     utils::math::Math,
     zkvm::{
@@ -351,12 +350,10 @@ impl CommittedPolynomial {
                         Some(k as usize)
                     })
                     .collect();
-                let ret = MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
+                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
                     addresses,
                     instruction_lookups::K_CHUNK,
-                ));
-
-                ret
+                ))
             }
         }
     }
