@@ -406,7 +406,7 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
     // that the prover sends to the verifier in each round. Specifically, I stores data of
     // the form (j, k, INC * LT, INC), where j indexes the instruction cycle, k is the
     // the memory location written, and INC * LT represents the sum of elements
-    // Inc(k, j, j') * Lt(j', r) as j' ranges over {0, 1}^(log(chunk_size) - i).
+    // Inc(k, j, j') * Lt(j', r) as j' ranges over {0, 1}^i.
     // for round i, where r = (r_1, ..., r_i) is the vector of committed cycle variables in F.
     // Similarly, INC represents the sum of Inc(k, j, j') over the same range of j'.
     // Table I in round i has size T / 2^i.
