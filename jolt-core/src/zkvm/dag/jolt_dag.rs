@@ -49,7 +49,7 @@ impl JoltDAG {
         ),
         anyhow::Error,
     > {
-        println!("Prove called");
+        println!("|||||||||||||||||||||||> Prove called");
         state_manager.fiat_shamir_preamble();
 
         // Initialize DoryGlobals at the beginning to keep it alive for the entire proof
@@ -61,14 +61,15 @@ impl JoltDAG {
 
         let ram_K = state_manager.ram_K;
         let bytecode_d = preprocessing.shared.bytecode.d;
+        let ram_d = compute_d_parameter(ram_K);
         let _guard = (
             DoryGlobals::initialize(DTH_ROOT_OF_K, padded_trace_length),
-            AllCommittedPolynomials::initialize(compute_d_parameter(ram_K), bytecode_d),
+            AllCommittedPolynomials::initialize(ram_d, bytecode_d),
         );
-        println!("Initialized DoryGlobals and AllCommittedPolynomials");
+        println!("|||||||||||||||||||||||> Initialized DoryGlobals and AllCommittedPolynomials");
 
         // Generate and commit to all witness polynomials
-        let opening_proof_hints = Self::generate_and_commit_polynomials(&mut state_manager)?;
+        let opening_proof_hints = Self::generate_and_commit_polynomials(&mut state_manager, ram_d)?;
 
         // Append commitments to transcript
         let commitments = state_manager.get_commitments();
@@ -94,7 +95,7 @@ impl JoltDAG {
 
         tracing::info!("Stage 1 proving");
         spartan_dag
-            .stage1_prove(&mut state_manager)
+            .stage1_prove(&mut state_manager, ram_d)
             .context("Stage 1")?;
 
         drop(_guard);
@@ -162,10 +163,10 @@ impl JoltDAG {
         let _guard = span.enter();
 
         let mut stage3_instances: Vec<_> = std::iter::empty()
-            .chain(spartan_dag.stage3_prover_instances(&mut state_manager))
-            .chain(registers_dag.stage3_prover_instances(&mut state_manager))
-            .chain(lookups_dag.stage3_prover_instances(&mut state_manager))
-            .chain(ram_dag.stage3_prover_instances(&mut state_manager))
+            .chain(spartan_dag.stage3_prover_instances(&mut state_manager, ram_d))
+            .chain(registers_dag.stage3_prover_instances(&mut state_manager, ram_d))
+            .chain(lookups_dag.stage3_prover_instances(&mut state_manager, ram_d))
+            .chain(ram_dag.stage3_prover_instances(&mut state_manager, ram_d))
             .collect();
 
         #[cfg(feature = "allocative")]
@@ -485,7 +486,9 @@ impl JoltDAG {
         PCS: StreamingCommitmentScheme<Field = F>,
     >(
         prover_state_manager: &mut StateManager<'a, F, ProofTranscript, PCS>,
+        ram_d: usize,
     ) -> Result<HashMap<CommittedPolynomial, PCS::OpeningProofHint>, anyhow::Error> {
+        println!("|||||||||||||||||||||||> generate_and_commit_polynomials");
         let (preprocessing, lazy_trace, trace, _program_io, _final_memory_state) =
             prover_state_manager.get_prover_data();
 
@@ -496,7 +499,7 @@ impl JoltDAG {
         let polys : Vec<_> = AllCommittedPolynomials::iter().collect();
         let init_pcss: Vec<_> = polys
             .iter()
-            .map(|poly| PCS::initialize(poly.to_polynomial_type(&preprocessing), size, &preprocessing.generators))
+            .map(|poly| PCS::initialize(poly.to_polynomial_type(&preprocessing), size, &preprocessing.generators))//AZ: Add ram_d here
             .collect();
         let row_len = DoryGlobals::get_num_columns();
         let chunks = lazy_trace.clone() // TODO(JP): More efficient way to zip_with_self_next and chunkify in parallel
@@ -514,7 +517,7 @@ impl JoltDAG {
                     .enumerate()
                     .map(|(i, pcs)| {
                         let poly = polys[i];
-                        poly.generate_witness_and_commit_row::<_, PCS>(pcs, preprocessing, &row_cycles) // TODO: Don't pass preprocessing here. Instead pass precomputed constants.
+                        poly.generate_witness_and_commit_row::<_, PCS>(pcs, preprocessing, &row_cycles, ram_d) // TODO: Don't pass preprocessing here. Instead pass precomputed constants.
                     })
                     .collect()
             });
@@ -532,7 +535,7 @@ impl JoltDAG {
         #[cfg(test)]
         {
             let committed_polys: Vec<_> = AllCommittedPolynomials::par_iter()
-                .map(|poly| poly.generate_witness(preprocessing, trace))
+                .map(|poly| poly.generate_witness(preprocessing, trace, ram_d))
                 .collect();
 
             let commitments_non_streaming: Vec<_> = committed_polys

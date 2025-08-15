@@ -84,6 +84,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         preprocessing: &JoltProverPreprocessing<F, PCS>,
         trace: &[Cycle],
         r_prime: &[F],
+        ram_d: usize,
     ) -> Self {
         let T = trace.len();
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
@@ -178,7 +179,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         drop(span);
 
         let gruens_eq_r_prime = GruenSplitEqPolynomial::new(r_prime, BindingOrder::LowToHigh);
-        let inc_cycle = CommittedPolynomial::RdInc.generate_witness(preprocessing, trace);
+        let inc_cycle = CommittedPolynomial::RdInc.generate_witness(preprocessing, trace, ram_d);
 
         let data_buffers: Vec<DataBuffers<F>> = (0..num_chunks)
             .into_par_iter()
@@ -228,6 +229,7 @@ pub struct RegistersReadWriteChecking<F: JoltField> {
 impl<F: JoltField> RegistersReadWriteChecking<F> {
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        ram_d: usize,
     ) -> Self {
         let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
         let accumulator = state_manager.get_prover_accumulator();
@@ -248,7 +250,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
         let input_claim = rd_wv_claim + gamma * rs1_rv_claim + gamma.square() * rs2_rv_claim;
 
         let prover_state =
-            ReadWriteCheckingProverState::initialize(preprocessing, trace, &r_cycle.r);
+            ReadWriteCheckingProverState::initialize(preprocessing, trace, &r_cycle.r, ram_d);
 
         Self {
             T: trace.len(),

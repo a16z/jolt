@@ -361,6 +361,7 @@ pub struct ValFinalSumcheck<F: JoltField> {
 impl<F: JoltField> ValFinalSumcheck<F> {
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        ram_d: usize,
     ) -> Self {
         let (preprocessing, _, trace, program_io, _) = state_manager.get_prover_data();
         let memory_layout = &program_io.memory_layout;
@@ -395,7 +396,7 @@ impl<F: JoltField> ValFinalSumcheck<F> {
         drop(_guard);
         drop(span);
 
-        let inc = CommittedPolynomial::RamInc.generate_witness(preprocessing, trace);
+        let inc = CommittedPolynomial::RamInc.generate_witness(preprocessing, trace, ram_d);
 
         // #[cfg(test)]
         // {

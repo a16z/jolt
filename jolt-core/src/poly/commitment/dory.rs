@@ -1282,6 +1282,7 @@ impl<'a, E: DoryPairing> StreamingDoryCommitment<'a, E> {
 impl<'a> StreamingProcessChunk<StreamingDenseWitness<Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
     fn process_chunk(mut self, chunk: &[StreamingDenseWitness<Fr>]) -> Self {
         // JP: TODO: Do this upfront
+        //AZ : encapsulate this in a struct that gets passed to PCS::initialize along with ram_d -- streaming specific
         let bases = self.setup.g1_vec().iter().map(|g| g.0.into_affine()).collect::<Vec<_>>();
         
         let row = chunk
