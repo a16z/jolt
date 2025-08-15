@@ -70,7 +70,7 @@ use crate::emulator::memory::Memory;
 ///
 #[tracing::instrument(skip_all)]
 pub fn trace(
-    elf_contents: Vec<u8>,
+    elf_contents: &[u8],
     inputs: &[u8],
     memory_config: &MemoryConfig,
 ) -> (Vec<RV32IMCycle>, Memory, JoltDevice) {
@@ -83,7 +83,7 @@ pub fn trace(
 use crate::utils::trace_writer::{TraceBatchCollector, TraceWriter, TraceWriterConfig};
 
 pub fn trace_to_file(
-    elf_contents: Vec<u8>,
+    elf_contents: &[u8],
     inputs: &[u8],
     memory_config: &MemoryConfig,
     out_path: &std::path::PathBuf,
@@ -111,7 +111,7 @@ pub fn trace_to_file(
 
 #[tracing::instrument(skip_all)]
 pub fn trace_lazy(
-    elf_contents: Vec<u8>,
+    elf_contents: &[u8],
     inputs: &[u8],
     memory_config: &MemoryConfig,
 ) -> LazyTraceIterator {
@@ -120,7 +120,7 @@ pub fn trace_lazy(
 
 #[tracing::instrument(skip_all)]
 pub fn trace_checkpoints(
-    elf_contents: Vec<u8>,
+    elf_contents: &[u8],
     inputs: &[u8],
     memory_config: &MemoryConfig,
     checkpoint_interval: usize,
@@ -153,7 +153,7 @@ fn step_emulator(emulator: &mut Emulator, prev_pc: &mut u64, trace: Option<&mut 
 }
 
 #[tracing::instrument(skip_all)]
-fn setup_emulator(elf_contents: Vec<u8>, inputs: &[u8], memory_config: &MemoryConfig) -> Emulator {
+fn setup_emulator(elf_contents: &[u8], inputs: &[u8], memory_config: &MemoryConfig) -> Emulator {
     let term = DefaultTerminal::default();
     let mut emulator = Emulator::new(Box::new(term));
     emulator.update_xlen(get_xlen());
@@ -772,8 +772,8 @@ mod test {
             program_size: Some(elf.len() as u64),
             ..Default::default()
         };
-        let (execution_trace, _, _) = trace(elf.clone(), &INPUTS, &memory_config);
-        let (checkpoints, _) = trace_checkpoints(elf, &INPUTS, &memory_config, n);
+        let (execution_trace, _, _) = trace(&elf, &INPUTS, &memory_config);
+        let (checkpoints, _) = trace_checkpoints(&elf, &INPUTS, &memory_config, n);
         assert_eq!(execution_trace.len(), expected_trace_length);
         assert_eq!(checkpoints.len(), 10);
 
@@ -795,8 +795,8 @@ mod test {
             ..Default::default()
         };
 
-        let (execution_trace, _, _) = trace(ELF_CONTENTS.to_vec(), &INPUTS, &memory_config);
-        let mut emulator = setup_emulator(ELF_CONTENTS.to_vec(), &INPUTS, &memory_config);
+        let (execution_trace, _, _) = trace(&elf, &INPUTS, &memory_config);
+        let mut emulator = setup_emulator(&elf, &INPUTS, &memory_config);
         let mut prev_pc: u64 = 0;
         let mut trace = vec![];
         let mut prev_trace_len = 0;
