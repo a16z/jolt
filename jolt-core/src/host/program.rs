@@ -167,7 +167,7 @@ impl Program {
             max_output_size: self.max_output_size,
             program_size: Some(program_size),
         };
-        tracer::trace(elf_contents, inputs, &memory_config)
+        tracer::trace(&elf_contents, inputs, &memory_config)
     }
 
     #[tracing::instrument(skip_all, name = "Program::trace_to_file")]
@@ -187,7 +187,7 @@ impl Program {
             max_output_size: self.max_output_size,
             program_size: Some(program_size),
         };
-        tracer::trace_to_file(elf_contents, inputs, &memory_config, trace_file)
+        tracer::trace_to_file(&elf_contents, inputs, &memory_config, trace_file)
     }
 
     pub fn trace_analyze<F: JoltField>(mut self, inputs: &[u8]) -> ProgramSummary {

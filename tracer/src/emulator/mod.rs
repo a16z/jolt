@@ -162,7 +162,7 @@ impl Emulator {
     /// * `data` Program binary
     // @TODO: Make ElfAnalyzer and move the core logic there.
     // @TODO: Returns `Err` if the passed contend doesn't seem ELF file
-    pub fn setup_program(&mut self, data: Vec<u8>) {
+    pub fn setup_program(&mut self, data: &[u8]) {
         let analyzer = ElfAnalyzer::new(data);
 
         if !analyzer.validate() {
