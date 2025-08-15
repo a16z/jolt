@@ -212,7 +212,7 @@ impl Transcript for Blake2bTranscript {
         self.challenge_bytes(&mut buf);
 
         buf = buf.into_iter().rev().collect();
-        F::from_bytes_128_bits(&buf)
+        F::from_bytes(&buf)
     }
 
     fn challenge_vector<F: JoltField>(&mut self, len: usize) -> Vec<F> {
