@@ -750,13 +750,13 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
         // Bind I
 
         // Update I according to the recursive formula
-        // INC * TL(I(j, k))
+        // INC * LT(I(j, k))
         // = sum Inc(k, j, (j', b)) * Lt((j', b), (r_1, ..., r_i, r_{i+1}))
         // by (73) where (j', b) is a bounded cycle vector in the hypercube that we are summing over
         // = sum Inc(k, j, (j', b)) * (eq(b), r_{i+1}) * Lt(j', (r_1, ..., r_i)) + (1 - b) * r_{i+1})
         // Expand b \in {0, 1} and use that eq(b, r) = rb + (1 - b) * (1 - r)
-        // = (1 - r_{i+1}) * INC_TL(k, (j', 0)) + r_{i+1} * INC(k, (j',0)) + r_{i+1} * INC_TL(k, (j', 1))
-        // where by INC_TL and INC we mean the corresponding sums
+        // = (1 - r_{i+1}) * INC_LT(k, (j', 0)) + r_{i+1} * INC(k, (j',0)) + r_{i+1} * INC_LT(k, (j', 1))
+        // where by INC_LT and INC we mean the corresponding sums
         I.par_iter_mut().for_each(|I_chunk| {
             // Note: A given row in an I_chunk may not be ordered by k after binding
             let mut next_bound_index = 0;
