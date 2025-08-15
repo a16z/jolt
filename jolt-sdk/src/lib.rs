@@ -16,9 +16,9 @@ pub use alloc::*;
 pub mod random;
 #[cfg(any(feature = "host", feature = "guest-std"))]
 pub use random::*;
-#[cfg(feature = "guest-std")]
+#[cfg(any(feature = "host", feature = "guest-std"))]
 pub mod print;
-#[cfg(feature = "guest-std")]
+#[cfg(any(feature = "host", feature = "guest-std"))]
 pub use print::*;
 
 pub mod cycle_tracking;

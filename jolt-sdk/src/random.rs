@@ -1,3 +1,4 @@
+use crate::jolt_println;
 use getrandom::Error;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use std::slice;
@@ -11,6 +12,8 @@ static mut RNG: Option<StdRng> = None;
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
 pub unsafe fn sys_rand(dest: *mut u8, len: usize) {
+    jolt_println!("Warning: sys_rand is a deterministic PRNG, not a cryptographically secure RNG. Use with caution.");
+
     let rng_ptr: *mut Option<StdRng> = &raw mut RNG;
 
     unsafe {
