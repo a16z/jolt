@@ -105,14 +105,14 @@ fn main() {
         .warm_up_time(std::time::Duration::from_secs(5));
     // let num_layers = 50;
     // let layer_size = 1 << 10;
-    // benchmark_commit::<Zeromorph<Bn254>, Fr, KeccakTranscript>(
+    // benchmark_commit::<Zeromorph<Bn254>, Fr, Blake2bTranscript>(
     //     &mut criterion,
     //     "Zeromorph",
     //     num_layers,
     //     layer_size,
     //     90,
     // );
-    // benchmark_commit::<HyperKZG<Bn254>, Fr, KeccakTranscript>(
+    // benchmark_commit::<HyperKZG<Bn254>, Fr, Blake2bTranscript>(
     //     &mut criterion,
     //     "HyperKZG",
     //     num_layers,

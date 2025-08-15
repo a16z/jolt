@@ -9,8 +9,8 @@ use crate::poly::opening_proof::{
     VerifierOpeningAccumulator, BIG_ENDIAN,
 };
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
+use crate::transcripts::Transcript;
 use crate::utils::math::Math;
-use crate::utils::transcript::Transcript;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::zkvm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
 use num_derive::FromPrimitive;

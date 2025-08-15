@@ -6,7 +6,7 @@ use crate::{
     field::JoltField,
     poly::commitment::commitment_scheme::CommitmentScheme,
     subprotocols::sumcheck::SumcheckInstance,
-    utils::transcript::Transcript,
+    transcripts::Transcript,
     zkvm::dag::{stage::SumcheckStages, state_manager::StateManager},
     zkvm::ram::{
         booleanity::BooleanitySumcheck,

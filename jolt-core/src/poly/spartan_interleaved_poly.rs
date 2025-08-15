@@ -5,10 +5,10 @@ use super::{
 use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
 use crate::{
     field::{JoltField, OptimizedMul},
+    transcripts::Transcript,
     utils::{
         math::Math,
         small_value::{svo_helpers, NUM_SVO_ROUNDS},
-        transcript::Transcript,
     },
     zkvm::r1cs::builder::Constraint,
 };

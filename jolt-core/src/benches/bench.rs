@@ -1,8 +1,8 @@
 use crate::field::JoltField;
 use crate::host;
 use crate::subprotocols::twist::{TwistAlgorithm, TwistProof};
+use crate::transcripts::{Blake2bTranscript, Transcript};
 use crate::utils::math::Math;
-use crate::utils::transcript::{KeccakTranscript, Transcript};
 use crate::zkvm::JoltVerifierPreprocessing;
 use crate::zkvm::{Jolt, JoltRV32IM};
 use ark_bn254::Fr;
@@ -29,7 +29,7 @@ pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()
         BenchType::Sha2Chain => sha2_chain(),
         BenchType::Fibonacci => fibonacci(),
         BenchType::Shout => shout(),
-        BenchType::Twist => twist::<Fr, KeccakTranscript>(),
+        BenchType::Twist => twist::<Fr, Blake2bTranscript>(),
     }
 }
 
