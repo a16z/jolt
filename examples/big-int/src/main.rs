@@ -47,7 +47,7 @@ fn print_cycles_and_bytecode() {
     println!("Trace length is: {}", summary.trace_len());
     
     // Write comprehensive trace analysis to file
-    let filename = "mul_assign_montgomery_arkworks2.txt";
+    let filename = "mul_assign_fr.txt";
     match summary.write_trace_analysis_ecalls::<Fr>(&filename) {
         Ok(_) => println!("✅ Saved comprehensive trace analysis to: {}", filename),
         Err(e) => println!("❌ Failed to save trace analysis: {}", e),
@@ -94,62 +94,62 @@ fn print_cycles_and_bytecode() {
 pub fn main() {
     print_cycles_and_bytecode();
     
-    let target_dir = "/tmp/jolt-guest-targets";
-    let mut program = guest::compile_benchmark_mul_assign(target_dir);
+    // let target_dir = "/tmp/jolt-guest-targets";
+    // let mut program = guest::compile_benchmark_mul_assign(target_dir);
 
-    let prover_preprocessing = guest::preprocess_prover_benchmark_mul_assign(&mut program);
-    let verifier_preprocessing =
-        guest::verifier_preprocessing_from_prover_benchmark_mul_assign(&prover_preprocessing);
+    // let prover_preprocessing = guest::preprocess_prover_benchmark_mul_assign(&mut program);
+    // let verifier_preprocessing =
+    //     guest::verifier_preprocessing_from_prover_benchmark_mul_assign(&prover_preprocessing);
 
-    let prove_mul_assign = guest::build_prover_benchmark_mul_assign(program, prover_preprocessing);
-    let verify_mul_assign = guest::build_verifier_benchmark_mul_assign(verifier_preprocessing);
+    // let prove_mul_assign = guest::build_prover_benchmark_mul_assign(program, prover_preprocessing);
+    // let verify_mul_assign = guest::build_verifier_benchmark_mul_assign(verifier_preprocessing);
 
-    println!("=== Benchmarking Montgomery mul_assign ===");
-    println!("Input A limbs: {:016x}, {:016x}, {:016x}, {:016x}", 
-             A_LIMBS[0], A_LIMBS[1], A_LIMBS[2], A_LIMBS[3]);
-    println!("Input B limbs: {:016x}, {:016x}, {:016x}, {:016x}", 
-             B_LIMBS[0], B_LIMBS[1], B_LIMBS[2], B_LIMBS[3]);
+    // println!("=== Benchmarking Montgomery mul_assign ===");
+    // println!("Input A limbs: {:016x}, {:016x}, {:016x}, {:016x}", 
+    //          A_LIMBS[0], A_LIMBS[1], A_LIMBS[2], A_LIMBS[3]);
+    // println!("Input B limbs: {:016x}, {:016x}, {:016x}, {:016x}", 
+    //          B_LIMBS[0], B_LIMBS[1], B_LIMBS[2], B_LIMBS[3]);
     
-    let now = Instant::now();
-    let ((res0, res1, res2, res3), proof, program_io) = prove_mul_assign(
-        A_LIMBS[0], A_LIMBS[1], A_LIMBS[2], A_LIMBS[3],
-        B_LIMBS[0], B_LIMBS[1], B_LIMBS[2], B_LIMBS[3]
-    );
-    println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
+    // let now = Instant::now();
+    // let ((res0, res1, res2, res3), proof, program_io) = prove_mul_assign(
+    //     A_LIMBS[0], A_LIMBS[1], A_LIMBS[2], A_LIMBS[3],
+    //     B_LIMBS[0], B_LIMBS[1], B_LIMBS[2], B_LIMBS[3]
+    // );
+    // println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
 
-    let is_valid = verify_mul_assign(
-        A_LIMBS[0], A_LIMBS[1], A_LIMBS[2], A_LIMBS[3],
-        B_LIMBS[0], B_LIMBS[1], B_LIMBS[2], B_LIMBS[3],
-        (res0, res1, res2, res3), 
-        program_io.panic, 
-        proof
-    );
+    // let is_valid = verify_mul_assign(
+    //     A_LIMBS[0], A_LIMBS[1], A_LIMBS[2], A_LIMBS[3],
+    //     B_LIMBS[0], B_LIMBS[1], B_LIMBS[2], B_LIMBS[3],
+    //     (res0, res1, res2, res3), 
+    //     program_io.panic, 
+    //     proof
+    // );
 
-    println!("=== Result (4 u64 limbs) ===");
-    println!("res0: 0x{:016x}", res0);
-    println!("res1: 0x{:016x}", res1);
-    println!("res2: 0x{:016x}", res2);
-    println!("res3: 0x{:016x}", res3);
+    // println!("=== Result (4 u64 limbs) ===");
+    // println!("res0: 0x{:016x}", res0);
+    // println!("res1: 0x{:016x}", res1);
+    // println!("res2: 0x{:016x}", res2);
+    // println!("res3: 0x{:016x}", res3);
     
-    // Convert result back to Fr to verify correctness
-    let result_bigint = BigInt::<4>::new([res0, res1, res2, res3]);
-    let result_fr = Fr::from(result_bigint);
+    // // Convert result back to Fr to verify correctness
+    // let result_bigint = BigInt::<4>::new([res0, res1, res2, res3]);
+    // let result_fr = Fr::from(result_bigint);
     
-    // Also compute expected result for verification
-    let a_bigint = BigInt::<4>::new(A_LIMBS);
-    let a_fr = Fr::from(a_bigint);
-    let b_bigint = BigInt::<4>::new(B_LIMBS);
-    let b_fr = Fr::from(b_bigint);
-    let expected = a_fr * b_fr;
+    // // Also compute expected result for verification
+    // let a_bigint = BigInt::<4>::new(A_LIMBS);
+    // let a_fr = Fr::from(a_bigint);
+    // let b_bigint = BigInt::<4>::new(B_LIMBS);
+    // let b_fr = Fr::from(b_bigint);
+    // let expected = a_fr * b_fr;
     
-    println!("\nValid proof: {}", is_valid);
-    println!("Result matches expected: {}", result_fr == expected);
+    // println!("\nValid proof: {}", is_valid);
+    // println!("Result matches expected: {}", result_fr == expected);
     
-    if result_fr == expected {
-        println!("✓ mul_assign benchmark verification passed!");
-    } else {
-        println!("✗ Result mismatch!");
-        println!("Expected: {:?}", expected);
-        println!("Got: {:?}", result_fr);
-    }
+    // if result_fr == expected {
+    //     println!("✓ mul_assign benchmark verification passed!");
+    // } else {
+    //     println!("✗ Result mismatch!");
+    //     println!("Expected: {:?}", expected);
+    //     println!("Got: {:?}", result_fr);
+    // }
 }

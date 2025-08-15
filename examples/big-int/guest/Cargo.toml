@@ -10,3 +10,4 @@ guest = []
 jolt = { package = "jolt-sdk", path = "../../../jolt-sdk" }
 ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-bn254 = "0.5.0"
+ruint = { version = "1.12", default-features = false }

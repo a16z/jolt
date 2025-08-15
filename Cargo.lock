@@ -325,7 +325,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-asm"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#b41cf110459a4f971d6d71780a8d17f018f58159"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#44143c847c8657196a5b9b23d165958f8fe51224"
 dependencies = [
  "quote",
  "syn 2.0.104",
@@ -359,7 +359,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-macros"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#b41cf110459a4f971d6d71780a8d17f018f58159"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#44143c847c8657196a5b9b23d165958f8fe51224"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -371,7 +371,7 @@ dependencies = [
 [[package]]
 name = "ark-poly"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#b41cf110459a4f971d6d71780a8d17f018f58159"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#44143c847c8657196a5b9b23d165958f8fe51224"
 dependencies = [
  "ahash",
  "ark-ff 0.5.0",
@@ -430,7 +430,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize-derive"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#b41cf110459a4f971d6d71780a8d17f018f58159"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#44143c847c8657196a5b9b23d165958f8fe51224"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -538,6 +538,7 @@ dependencies = [
  "ark-ff 0.5.0",
  "big-int-guest",
  "jolt-sdk",
+ "ruint",
 ]
 
 [[package]]
@@ -547,6 +548,7 @@ dependencies = [
  "ark-bn254",
  "ark-ff 0.5.0",
  "jolt-sdk",
+ "ruint",
 ]
 
 [[package]]
