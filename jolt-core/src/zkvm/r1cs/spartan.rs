@@ -630,6 +630,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     fn stage1_prove(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        ram_d: usize,
     ) -> Result<(), anyhow::Error> {
         /* Sumcheck 1: Outer sumcheck
            Proves: \sum_x eq(tau, x) * (Az(x) * Bz(x) - Cz(x)) = 0
@@ -646,7 +647,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         // Create input polynomials from trace
         let input_polys: Vec<MultilinearPolynomial<F>> = ALL_R1CS_INPUTS
             .par_iter()
-            .map(|var| var.generate_witness(trace, preprocessing))
+            .map(|var| var.generate_witness(trace, preprocessing, ram_d))
             .collect();
 
         let num_rounds_x = key.num_rows_bits();
@@ -877,6 +878,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     fn stage2_prover_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        ram_d: usize,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         /* Sumcheck 2: Inner sumcheck
             Proves: claim_Az + r * claim_Bz + r^2 * claim_Cz =
@@ -973,6 +975,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     fn stage3_prover_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        ram_d: usize,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         /*  Sumcheck 3: Batched sumcheck for NextUnexpandedPC and NextPC verification
             Proves: NextUnexpandedPC(r_cycle) + r * NextPC(r_cycle) =
@@ -987,13 +990,12 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             state_manager.get_prover_data();
 
         let key = self.key.clone();
-
         // We need only pc and unexpanded pc for the next sumcheck
-        let pc_poly = JoltR1CSInputs::PC.generate_witness(trace, preprocessing);
+        let pc_poly = JoltR1CSInputs::PC.generate_witness(trace, preprocessing, ram_d);
         let unexpanded_pc_poly =
-            JoltR1CSInputs::UnexpandedPC.generate_witness(trace, preprocessing);
+            JoltR1CSInputs::UnexpandedPC.generate_witness(trace, preprocessing, ram_d);
         let is_noop_poly =
-            JoltR1CSInputs::OpFlags(CircuitFlags::IsNoop).generate_witness(trace, preprocessing);
+            JoltR1CSInputs::OpFlags(CircuitFlags::IsNoop).generate_witness(trace, preprocessing, ram_d);
 
         let num_cycles = key.num_steps;
         let num_cycles_bits = num_cycles.ilog2() as usize;

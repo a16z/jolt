@@ -15,11 +15,7 @@ use crate::{
     },
     subprotocols::sumcheck::SumcheckInstance,
     utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
-    zkvm::dag::state_manager::StateManager,
-    zkvm::{
-        ram::remap_address,
-        witness::{CommittedPolynomial, VirtualPolynomial},
-    },
+    zkvm::{dag::state_manager::StateManager, ram::{self, remap_address}, witness::{CommittedPolynomial, VirtualPolynomial}},
 };
 use rayon::prelude::*;
 
@@ -48,6 +44,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         K: usize,
         initial_ram_state: &[u32],
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        ram_d: usize,
     ) -> Self {
         let (preprocessing, _, trace, program_io, _) = state_manager.get_prover_data();
         let memory_layout = &program_io.memory_layout;
@@ -82,8 +79,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
 
         drop(_guard);
         drop(span);
-
-        let inc = CommittedPolynomial::RamInc.generate_witness(preprocessing, trace);
+        let inc = CommittedPolynomial::RamInc.generate_witness(preprocessing, trace, ram_d);
 
         let span = tracing::span!(tracing::Level::INFO, "compute LT(j, r_cycle)");
         let _guard = span.enter();

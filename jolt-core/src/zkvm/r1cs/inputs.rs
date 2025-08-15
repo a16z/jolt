@@ -197,6 +197,7 @@ impl JoltR1CSInputs {
         &self,
         trace: &[RV32IMCycle],
         preprocessing: &JoltProverPreprocessing<F, PCS>,
+        ram_d: usize,
     ) -> MultilinearPolynomial<F>
     where
         F: JoltField,
@@ -288,10 +289,10 @@ impl JoltR1CSInputs {
                 coeffs.into()
             }
             JoltR1CSInputs::LeftInstructionInput => {
-                CommittedPolynomial::LeftInstructionInput.generate_witness(preprocessing, trace)
+                CommittedPolynomial::LeftInstructionInput.generate_witness(preprocessing, trace, ram_d)
             }
             JoltR1CSInputs::RightInstructionInput => {
-                CommittedPolynomial::RightInstructionInput.generate_witness(preprocessing, trace)
+                CommittedPolynomial::RightInstructionInput.generate_witness(preprocessing, trace, ram_d)
             }
             JoltR1CSInputs::LeftLookupOperand => {
                 let coeffs: Vec<u64> = trace
@@ -308,13 +309,13 @@ impl JoltR1CSInputs {
                 coeffs.into()
             }
             JoltR1CSInputs::Product => {
-                CommittedPolynomial::Product.generate_witness(preprocessing, trace)
+                CommittedPolynomial::Product.generate_witness(preprocessing, trace, ram_d)
             }
             JoltR1CSInputs::WriteLookupOutputToRD => {
-                CommittedPolynomial::WriteLookupOutputToRD.generate_witness(preprocessing, trace)
+                CommittedPolynomial::WriteLookupOutputToRD.generate_witness(preprocessing, trace, ram_d)
             }
             JoltR1CSInputs::WritePCtoRD => {
-                CommittedPolynomial::WritePCtoRD.generate_witness(preprocessing, trace)
+                CommittedPolynomial::WritePCtoRD.generate_witness(preprocessing, trace, ram_d)
             }
             JoltR1CSInputs::LookupOutput => {
                 let coeffs: Vec<u64> = trace
@@ -361,10 +362,10 @@ impl JoltR1CSInputs {
                 coeffs.into()
             }
             JoltR1CSInputs::ShouldBranch => {
-                CommittedPolynomial::ShouldBranch.generate_witness(preprocessing, trace)
+                CommittedPolynomial::ShouldBranch.generate_witness(preprocessing, trace, ram_d)
             }
             JoltR1CSInputs::ShouldJump => {
-                CommittedPolynomial::ShouldJump.generate_witness(preprocessing, trace)
+                CommittedPolynomial::ShouldJump.generate_witness(preprocessing, trace, ram_d)
             }
             JoltR1CSInputs::NextIsNoop => {
                 // TODO(moodlezoup): Boolean polynomial

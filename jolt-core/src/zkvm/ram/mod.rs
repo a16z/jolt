@@ -276,6 +276,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     fn stage2_prover_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        ram_d: usize,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let raf_evaluation = RafEvaluationSumcheck::new_prover(self.K, self.T, state_manager);
 
@@ -284,6 +285,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             self.T,
             self.initial_memory_state.as_ref().unwrap(),
             state_manager,
+            ram_d,
         );
 
         let output_check = OutputSumcheck::new_prover(
@@ -317,13 +319,15 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     fn stage3_prover_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        ram_d: usize,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let val_evaluation = ValEvaluationSumcheck::new_prover(
             self.K,
             self.initial_memory_state.as_ref().unwrap(),
             state_manager,
+            ram_d,
         );
-        let val_final_evaluation = ValFinalSumcheck::new_prover(state_manager);
+        let val_final_evaluation = ValFinalSumcheck::new_prover(state_manager, ram_d);
         let hamming_booleanity = HammingBooleanitySumcheck::new_prover(state_manager);
 
         vec![
