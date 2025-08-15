@@ -1,3 +1,4 @@
+use common::constants::XLEN;
 use serde::{Deserialize, Serialize};
 
 use crate::instruction::format::format_virtual_right_shift_i::FormatVirtualRightShiftI;
@@ -5,6 +6,7 @@ use crate::{declare_riscv_instr, emulator::cpu::Cpu, emulator::cpu::Xlen};
 
 use super::{format::InstructionFormat, RISCVInstruction, RISCVTrace};
 
+// Note, unlike ROTIW from Zbb extension of RiscV, ROTRIW does not sign extend the result
 declare_riscv_instr!(
     name = VirtualROTRIW,
     mask = 0,
@@ -17,7 +19,7 @@ declare_riscv_instr!(
 impl VirtualROTRIW {
     fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualROTRIW as RISCVInstruction>::RAMAccess) {
         // Extract rotation amount from bitmask: trailing zeros = rotation amount
-        let shift = self.operands.imm.trailing_zeros();
+        let shift = self.operands.imm.trailing_zeros().min(XLEN as u32 / 2);
 
         // Rotate right by `shift` in lower 32bits width (matches ROTRI semantics)
         let rotated = match cpu.xlen {
@@ -30,7 +32,7 @@ impl VirtualROTRIW {
             }
         };
 
-        cpu.x[self.operands.rd as usize] = cpu.sign_extend(rotated as i64);
+        cpu.x[self.operands.rd as usize] = rotated as i64;
     }
 }
 

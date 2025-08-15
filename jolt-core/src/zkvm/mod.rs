@@ -456,7 +456,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     #[serial]
     fn sha2_e2e_dory() {
         // Ensure SHA2 inline library is linked and auto-registered

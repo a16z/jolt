@@ -10,6 +10,7 @@ use pow2::Pow2Prefix;
 use pow2_w::Pow2WPrefix;
 use rayon::prelude::*;
 use right_shift::RightShiftPrefix;
+use right_shift_w::RightShiftWPrefix;
 use sign_extension::SignExtensionPrefix;
 use sign_extension_right_operand::SignExtensionRightOperandPrefix;
 use sign_extension_upper_half::SignExtensionUpperHalfPrefix;
@@ -27,6 +28,8 @@ use left_is_zero::LeftOperandIsZeroPrefix;
 use left_msb::LeftMsbPrefix;
 use left_shift::LeftShiftPrefix;
 use left_shift_helper::LeftShiftHelperPrefix;
+use left_shift_w::LeftShiftWPrefix;
+use left_shift_w_helper::LeftShiftWHelperPrefix;
 use lower_half_word::LowerHalfWordPrefix;
 use lower_word::LowerWordPrefix;
 use lt::LessThanPrefix;
@@ -50,6 +53,8 @@ pub mod left_is_zero;
 pub mod left_msb;
 pub mod left_shift;
 pub mod left_shift_helper;
+pub mod left_shift_w;
+pub mod left_shift_w_helper;
 pub mod lower_half_word;
 pub mod lower_word;
 pub mod lsb;
@@ -67,6 +72,7 @@ pub mod right_msb;
 pub mod right_operand;
 pub mod right_operand_w;
 pub mod right_shift;
+pub mod right_shift_w;
 pub mod sign_extension;
 pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
@@ -148,6 +154,9 @@ pub enum Prefixes {
     RightOperand,
     RightOperandW,
     SignExtensionRightOperand,
+    RightShiftW,
+    LeftShiftWHelper,
+    LeftShiftW,
 }
 
 #[derive(Clone, Copy)]
@@ -275,6 +284,15 @@ impl Prefixes {
             }
             Prefixes::SignExtensionRightOperand => {
                 SignExtensionRightOperandPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::RightShiftW => {
+                RightShiftWPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::LeftShiftWHelper => {
+                LeftShiftWHelperPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::LeftShiftW => {
+                LeftShiftWPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
             }
         };
         PrefixEval(eval)
@@ -457,6 +475,20 @@ impl Prefixes {
                     r_y,
                     j,
                 )
+            }
+            Prefixes::RightShiftW => {
+                RightShiftWPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::LeftShiftWHelper => {
+                LeftShiftWHelperPrefix::<WORD_SIZE>::update_prefix_checkpoint(
+                    checkpoints,
+                    r_x,
+                    r_y,
+                    j,
+                )
+            }
+            Prefixes::LeftShiftW => {
+                LeftShiftWPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
         }
     }

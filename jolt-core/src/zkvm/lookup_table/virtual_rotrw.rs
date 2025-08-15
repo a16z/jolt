@@ -6,6 +6,7 @@ use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
 use crate::field::JoltField;
 use crate::utils::uninterleave_bits;
+use crate::zkvm::lookup_table::prefixes::Prefixes;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct VirtualRotrWTable<const WORD_SIZE: usize>;
@@ -61,23 +62,21 @@ impl<const WORD_SIZE: usize> JoltLookupTable for VirtualRotrWTable<WORD_SIZE> {
 
 impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for VirtualRotrWTable<WORD_SIZE> {
     fn suffixes(&self) -> Vec<Suffixes> {
-        todo!()
-        // vec![
-        //     Suffixes::RightShiftHelper,
-        //     Suffixes::RightShift,
-        //     Suffixes::LeftShift,
-        //     Suffixes::One,
-        // ]
+        vec![
+            Suffixes::RightShiftWHelper,
+            Suffixes::RightShiftW,
+            Suffixes::LeftShiftW,
+            Suffixes::One,
+        ]
     }
 
-    fn combine<F: JoltField>(&self, _prefixes: &[PrefixEval<F>], _suffixes: &[SuffixEval<F>]) -> F {
-        todo!()
-        // debug_assert_eq!(self.suffixes().len(), suffixes.len());
-        // let [right_shift_helper, right_shift, left_shift, one] = suffixes.try_into().unwrap();
-        // prefixes[Prefixes::RightShift] * right_shift_helper
-        //     + right_shift
-        //     + prefixes[Prefixes::LeftShiftHelper] * left_shift
-        //     + prefixes[Prefixes::LeftShift] * one
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        debug_assert_eq!(self.suffixes().len(), suffixes.len());
+        let [right_shift_w_helper, right_shift_w, left_shift_w, one] = suffixes.try_into().unwrap();
+        prefixes[Prefixes::RightShiftW] * right_shift_w_helper
+            + right_shift_w
+            + prefixes[Prefixes::LeftShiftWHelper] * left_shift_w
+            + prefixes[Prefixes::LeftShiftW] * one
     }
 
     #[cfg(test)]
@@ -107,7 +106,6 @@ mod test {
     }
 
     #[test]
-    #[ignore] // temp while lookup table is missing
     fn prefix_suffix() {
         prefix_suffix_test::<XLEN, Fr, VirtualRotrWTable<XLEN>>();
     }

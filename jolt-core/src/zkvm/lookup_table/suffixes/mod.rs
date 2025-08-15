@@ -1,6 +1,8 @@
 use crate::zkvm::lookup_table::suffixes::change_divisor::ChangeDivisorSuffix;
 use crate::zkvm::lookup_table::suffixes::change_divisor_w::ChangeDivisorWSuffix;
 use crate::zkvm::lookup_table::suffixes::left_shift::LeftShiftSuffix;
+use crate::zkvm::lookup_table::suffixes::left_shift_w::LeftShiftWSuffix;
+use crate::zkvm::lookup_table::suffixes::left_shift_w_helper::LeftShiftWHelperSuffix;
 use crate::zkvm::lookup_table::suffixes::right_operand::RightOperandSuffix;
 use crate::zkvm::lookup_table::suffixes::right_operand_w::RightOperandWSuffix;
 use crate::zkvm::lookup_table::suffixes::sign_extension_right_operand::SignExtensionRightOperandSuffix;
@@ -19,6 +21,8 @@ use right_is_zero::RightOperandIsZeroSuffix;
 use right_shift::RightShiftSuffix;
 use right_shift_helper::RightShiftHelperSuffix;
 use right_shift_padding::RightShiftPaddingSuffix;
+use right_shift_w::RightShiftWSuffix;
+use right_shift_w_helper::RightShiftWHelperSuffix;
 use sign_extension::SignExtensionSuffix;
 use sign_extension_upper_half::SignExtensionUpperHalfSuffix;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
@@ -40,6 +44,8 @@ pub mod eq;
 pub mod gt;
 pub mod left_is_zero;
 pub mod left_shift;
+pub mod left_shift_w;
+pub mod left_shift_w_helper;
 pub mod lower_half_word;
 pub mod lower_word;
 pub mod lsb;
@@ -55,6 +61,8 @@ pub mod right_operand_w;
 pub mod right_shift;
 pub mod right_shift_helper;
 pub mod right_shift_padding;
+pub mod right_shift_w;
+pub mod right_shift_w_helper;
 pub mod sign_extension;
 pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
@@ -101,6 +109,10 @@ pub enum Suffixes {
     TwoLsb,
     SignExtensionUpperHalf,
     SignExtensionRightOperand,
+    RightShiftW,
+    RightShiftWHelper,
+    LeftShiftWHelper,
+    LeftShiftW,
 }
 
 pub type SuffixEval<F: JoltField> = F;
@@ -143,6 +155,10 @@ impl Suffixes {
             Suffixes::SignExtensionRightOperand => {
                 SignExtensionRightOperandSuffix::<WORD_SIZE>::suffix_mle(b)
             }
+            Suffixes::RightShiftW => RightShiftWSuffix::suffix_mle(b),
+            Suffixes::RightShiftWHelper => RightShiftWHelperSuffix::suffix_mle(b),
+            Suffixes::LeftShiftWHelper => LeftShiftWHelperSuffix::suffix_mle(b),
+            Suffixes::LeftShiftW => LeftShiftWSuffix::suffix_mle(b),
         }
     }
 }

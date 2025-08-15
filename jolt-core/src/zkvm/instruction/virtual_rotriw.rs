@@ -1,12 +1,12 @@
 use tracer::instruction::{virtual_rotriw::VirtualROTRIW, RISCVCycle};
 
-use crate::zkvm::lookup_table::LookupTables;
+use crate::zkvm::lookup_table::{virtual_rotrw::VirtualRotrWTable, LookupTables};
 
 use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
 impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for VirtualROTRIW {
     fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
-        todo!()
+        Some(VirtualRotrWTable.into())
     }
 }
 
@@ -41,8 +41,8 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualROTRIW
                 let (x, y) = (x as u8, (y as u8).trailing_zeros());
                 (((x & 0x0F) >> (y % 4)) | (((x & 0x0F) << (4 - (y % 4))) & 0x0F)) as u64
             }
-            32 => (x as u16).rotate_right((y as u32).trailing_zeros()) as u64,
-            64 => (x as u32).rotate_right((y as u64).trailing_zeros()) as u64,
+            32 => (x as u16).rotate_right((y as u32).trailing_zeros().min(16)) as u64,
+            64 => (x as u32).rotate_right((y as u64).trailing_zeros().min(32)) as u64,
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }
@@ -56,7 +56,6 @@ mod test {
     use ark_bn254::Fr;
 
     #[test]
-    #[ignore] // temp while lookup table is missing
     fn materialize_entry() {
         materialize_entry_test::<Fr, VirtualROTRIW>();
     }
