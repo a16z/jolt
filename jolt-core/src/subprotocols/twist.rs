@@ -1,9 +1,6 @@
-use core::panic;
-
 use super::sumcheck::SumcheckInstanceProof;
 use crate::{
     field::{JoltField, OptimizedMul},
-    jolt::vm::{rv32i_vm::C, Jolt},
     poly::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{
@@ -18,8 +15,6 @@ use crate::{
         transcript::{AppendToTranscript, Transcript},
     },
 };
-use itertools::Itertools;
-use num::zero;
 use rayon::prelude::*;
 
 /// Implement the algorithm in Lemma 1 to compute the table of Eq(r, x) in 2m field operations where
@@ -215,7 +210,8 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             )
             .unwrap();
 
-        let (r_cycle, r_address) = if let Some(sumcheck_switch_index) = self.sumcheck_switch_index {
+        let (r_cycle, r_address) = if let Some(_sumcheck_switch_index) = self.sumcheck_switch_index
+        {
             // The high-order cycle variables are bound after the switch
             let mut r_cycle = r_sumcheck[self.sumcheck_switch_index.unwrap()..T.log_2()].to_vec();
             // First `sumcheck_switch_index` rounds bind cycle variables from low to high
@@ -1100,7 +1096,6 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
     // Implementation of the alternative algorithm following p70-71 of the Twist+Shout paper.
 
     const DEGREE: usize = 3;
-    const D: usize = 2;
 
     let K = r.len().pow2();
     let T = r_prime.len().pow2();
@@ -1118,8 +1113,6 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
     let mut r_cycle: Vec<F> = Vec::with_capacity(T.log_2());
     let mut r_address: Vec<F> = Vec::with_capacity(K.log_2());
 
-    let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
-    let chunk_size = T / num_chunks;
     let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
     let rv = MultilinearPolynomial::from(read_values);
@@ -1274,7 +1267,7 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
     }
 
     // For now just implement D = 1
-    let mut A = EqTable::<F>::new(K);
+    let A = EqTable::<F>::new(K);
 
     // C_k_0 stores C(k, 0) for all k \in {0, 1}^log K. The original paper does not mention this, but it seems to be implied to maintain this table at the beginning of every round, which takes time O(K) throughout all rounds.
     let mut C_k: Vec<F> = unsafe_allocate_zero_vec(K);
@@ -1531,13 +1524,13 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
     let mut eq_r = MultilinearPolynomial::from(B.0.clone());
     let z_eq_r = z_eq_r.get_coeff(0);
 
-    for round in 0..num_rounds - K.log_2() {
+    for _round in 0..num_rounds - K.log_2() {
         let inner_span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
         let _inner_guard = inner_span.enter();
 
         #[cfg(test)]
         {
-            assert_eq!(T / (round + 1).pow2(), eq_r.len() / 2);
+            assert_eq!(T / (_round + 1).pow2(), eq_r.len() / 2);
             (0..eq_r.len() / 2)
                 .into_par_iter()
                 .for_each(|j| assert_eq!(test_val.get_bound_coeff(j), val_j.get_bound_coeff(j)));
@@ -1582,7 +1575,7 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
 
         #[cfg(test)]
         {
-            let test_evals = (0..T / (round + 1).pow2())
+            let test_evals = (0..T / (_round + 1).pow2())
                 .into_par_iter()
                 .map(|j| {
                     let test_eq_r_evals = eq_r.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
