@@ -22,7 +22,7 @@ use crate::{
         commitment::kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG, G2},
         unipoly::UniPoly,
     },
-    utils::transcript::Transcript,
+    transcripts::Transcript,
 };
 
 /// Calculates KZG opening in G2
@@ -239,7 +239,7 @@ mod tests {
     };
     use crate::{
         poly::commitment::{bmmtv::mipp_k::Field, kzg::SRS},
-        utils::transcript::KeccakTranscript,
+        transcripts::Blake2bTranscript,
     };
 
     type BnAfghoG1 = AfghoCommitment<Bn254>;
@@ -278,11 +278,11 @@ mod tests {
         let com_a = BnAfghoG1::commit(&ck_a, &m_a).unwrap();
         let com_t = MultiexponentiationInnerProduct::inner_product(&m_a, &m_b).unwrap();
 
-        let mut transcript = KeccakTranscript::new(b"TipaTest");
+        let mut transcript = Blake2bTranscript::new(b"TipaTest");
 
         let proof = MultiExpTipa::prove(&p_srs, (m_a, m_b), &mut transcript).unwrap();
 
-        let mut transcript = KeccakTranscript::new(b"TipaTest");
+        let mut transcript = Blake2bTranscript::new(b"TipaTest");
 
         assert!(MultiExpTipa::verify(&v_srs, (com_a, com_t), b, &proof, &mut transcript,).unwrap());
     }

@@ -7,7 +7,7 @@ use jolt_core::poly::commitment::hyperkzg::HyperKZG;
 use jolt_core::poly::commitment::zeromorph::Zeromorph;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::utils::math::Math;
-use jolt_core::utils::transcript::{KeccakTranscript, Transcript};
+use jolt_core::utils::transcripts::{Blake2bTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 use rayon::iter::IntoParallelIterator;
@@ -115,14 +115,14 @@ fn main() {
         .warm_up_time(std::time::Duration::from_secs(5));
     // let num_layers = 50;
     // let layer_size = 1 << 10;
-    // benchmark_commit::<Zeromorph<Bn254>, Fr, KeccakTranscript>(
+    // benchmark_commit::<Zeromorph<Bn254>, Fr, Blake2bTranscript>(
     //     &mut criterion,
     //     "Zeromorph",
     //     num_layers,
     //     layer_size,
     //     90,
     // );
-    // benchmark_commit::<HyperKZG<Bn254>, Fr, KeccakTranscript>(
+    // benchmark_commit::<HyperKZG<Bn254>, Fr, Blake2bTranscript>(
     //     &mut criterion,
     //     "HyperKZG",
     //     num_layers,
@@ -130,10 +130,10 @@ fn main() {
     //     90,
     // );
 
-    benchmark_dory_dense::<Fr, KeccakTranscript>(&mut criterion, "Dory T = 2^20", 1 << 8, 1 << 20);
-    benchmark_dory_dense::<Fr, KeccakTranscript>(&mut criterion, "Dory T = 2^22", 1 << 8, 1 << 22);
-    benchmark_dory_dense::<Fr, KeccakTranscript>(&mut criterion, "Dory T = 2^24", 1 << 8, 1 << 24);
-    benchmark_dory_dense::<Fr, KeccakTranscript>(&mut criterion, "Dory T = 2^26", 1 << 8, 1 << 26);
+    benchmark_dory_dense::<Fr, Blake2bTranscript>(&mut criterion, "Dory T = 2^20", 1 << 8, 1 << 20);
+    benchmark_dory_dense::<Fr, Blake2bTranscript>(&mut criterion, "Dory T = 2^22", 1 << 8, 1 << 22);
+    benchmark_dory_dense::<Fr, Blake2bTranscript>(&mut criterion, "Dory T = 2^24", 1 << 8, 1 << 24);
+    benchmark_dory_dense::<Fr, Blake2bTranscript>(&mut criterion, "Dory T = 2^26", 1 << 8, 1 << 26);
 
     criterion.final_summary();
 }

@@ -4,10 +4,8 @@
 use crate::msm::VariableBaseMSM;
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use crate::poly::{dense_mlpoly::DensePolynomial, unipoly::UniPoly};
-use crate::utils::{
-    errors::ProofVerifyError,
-    transcript::{AppendToTranscript, Transcript},
-};
+use crate::transcripts::{AppendToTranscript, Transcript};
+use crate::utils::errors::ProofVerifyError;
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::batch_inversion;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -513,8 +511,8 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::transcripts::{Blake2bTranscript, Transcript};
     use crate::utils::math::Math;
-    use crate::utils::transcript::{KeccakTranscript, Transcript};
     use ark_bn254::{Bn254, Fr};
     use ark_ff::{BigInt, Field, Zero};
     use ark_std::{test_rng, UniformRand};
@@ -777,14 +775,14 @@ mod test {
             let (pk, vk) = srs.trim(1 << num_vars);
             let commitment = Zeromorph::<Bn254>::commit(&pk, &poly).unwrap();
 
-            let mut prover_transcript = KeccakTranscript::new(b"TestEval");
+            let mut prover_transcript = Blake2bTranscript::new(b"TestEval");
             let proof = Zeromorph::<Bn254>::open(&pk, &poly, &point, &eval, &mut prover_transcript)
                 .unwrap();
             let p_transcript_squeeze: <Bn254 as Pairing>::ScalarField =
                 prover_transcript.challenge_scalar();
 
             // Verify proof.
-            let mut verifier_transcript = KeccakTranscript::new(b"TestEval");
+            let mut verifier_transcript = Blake2bTranscript::new(b"TestEval");
             Zeromorph::<Bn254>::verify(
                 &vk,
                 &commitment,
@@ -805,7 +803,7 @@ mod test {
                 .map(|s| *s + <Bn254 as Pairing>::ScalarField::one())
                 .collect::<Vec<_>>();
             let altered_verifier_eval = poly.evaluate(&altered_verifier_point);
-            let mut verifier_transcript = KeccakTranscript::new(b"TestEval");
+            let mut verifier_transcript = Blake2bTranscript::new(b"TestEval");
             assert!(Zeromorph::<Bn254>::verify(
                 &vk,
                 &commitment,
