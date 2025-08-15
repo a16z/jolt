@@ -19,11 +19,8 @@ use crate::{
         sumcheck::SumcheckInstanceProof,
         toom::{eval_toom16, eval_toom4, eval_toom8, FieldMulSmall},
     },
-    utils::{
-        errors::ProofVerifyError,
-        math::Math,
-        transcript::{AppendToTranscript, Transcript},
-    },
+    transcripts::{AppendToTranscript, Transcript},
+    utils::{errors::ProofVerifyError, math::Math},
 };
 
 pub fn compute_eq_mle_product_univariate<F: JoltField>(
@@ -814,11 +811,8 @@ mod test {
             compute_initial_eval_claim, AppendixCSumCheckProof, LargeDMulSumCheckProof,
             NaiveSumCheckProof,
         },
-        utils::{
-            math::Math,
-            thread::unsafe_allocate_zero_vec,
-            transcript::{KeccakTranscript, Transcript},
-        },
+        transcripts::{KeccakTranscript, Transcript},
+        utils::{math::Math, thread::unsafe_allocate_zero_vec},
     };
 
     const MAX_NUM_BITS: u32 = 32;

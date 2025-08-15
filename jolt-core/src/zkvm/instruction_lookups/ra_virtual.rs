@@ -15,10 +15,8 @@ use crate::{
         optimization::{compute_eq_mle_product_univariate, compute_mle_product_coeffs_katatsuba},
         sumcheck::SumcheckInstance,
     },
-    utils::{
-        expanding_table::ExpandingTable, lookup_bits::LookupBits, math::Math,
-        transcript::Transcript,
-    },
+    transcripts::Transcript,
+    utils::{expanding_table::ExpandingTable, lookup_bits::LookupBits, math::Math},
     zkvm::{
         dag::state_manager::StateManager,
         instruction::LookupQuery,
