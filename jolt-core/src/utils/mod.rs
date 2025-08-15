@@ -1,19 +1,16 @@
-#![allow(dead_code)]
 use crate::field::JoltField;
 
-use ark_std::test_rng;
 use rayon::prelude::*;
 
+pub mod counters;
 pub mod errors;
+pub mod expanding_table;
 pub mod gaussian_elimination;
-pub mod instruction_utils;
+pub mod lookup_bits;
 pub mod math;
 pub mod profiling;
 pub mod small_value;
-pub mod sol_types;
 pub mod thread;
-pub mod transcript;
-
 /// Macros that determine the optimal iterator type based on the feature flags.
 ///
 /// For some cases (ex. offloading to GPU), we may not want to use a parallel iterator.
@@ -145,45 +142,6 @@ pub fn mul_0_optimized<F: JoltField>(likely_zero: &F, x: &F) -> F {
     }
 }
 
-/// Checks if `num` is a power of 2.
-pub fn is_power_of_two(num: usize) -> bool {
-    num != 0 && num.is_power_of_two()
-}
-
-/// Take the first two `num_bits` chunks of `item` (from the right / LSB) and return them as a tuple `(high_chunk, low_chunk)`.
-///
-/// If `item` is shorter than `2 * num_bits`, the remaining bits are zero-padded.
-///
-/// If `item` is longer than `2 * num_bits`, the remaining bits are discarded.
-///
-/// # Examples
-///
-/// ```
-/// use jolt_core::utils::split_bits;
-///
-/// assert_eq!(split_bits(0b101000, 2), (0b10, 0b00));
-/// assert_eq!(split_bits(0b101000, 3), (0b101, 0b000));
-/// assert_eq!(split_bits(0b101000, 4), (0b0010, 0b1000));
-/// ```
-pub fn split_bits(item: usize, num_bits: usize) -> (usize, usize) {
-    let max_value = (1 << num_bits) - 1; // Calculate the maximum value that can be represented with num_bits
-
-    let low_chunk = item & max_value; // Extract the lower bits
-    let high_chunk = (item >> num_bits) & max_value; // Shift the item to the right and extract the next set of bits
-
-    (high_chunk, low_chunk)
-}
-
-/// Generate a random point with `memory_bits` field elements.
-pub fn gen_random_point<F: JoltField>(memory_bits: usize) -> Vec<F> {
-    let mut rng = test_rng();
-    let mut r_i: Vec<F> = Vec::with_capacity(memory_bits);
-    for _ in 0..memory_bits {
-        r_i.push(F::random(&mut rng));
-    }
-    r_i
-}
-
 /// Splits a 64-bit value into two 32-bit values by separating even and odd bits.
 /// The even bits (indices 0,2,4,...) go into the first returned value, and odd bits (indices 1,3,5,...) into the second.
 ///
@@ -235,7 +193,7 @@ pub fn uninterleave_bits(val: u64) -> (u32, u32) {
 ///
 /// ```
 /// # use jolt_core::utils::interleave_bits;
-/// assert_eq!(interleave_bits(0b01, 0b10), 0b100);
+/// assert_eq!(interleave_bits(0b01, 0b10), 0b110);
 /// ```
 pub fn interleave_bits(even_bits: u32, odd_bits: u32) -> u64 {
     // Insert zeros between each bit of `x_bits`
@@ -259,6 +217,7 @@ pub fn interleave_bits(even_bits: u32, odd_bits: u32) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use ark_std::test_rng;
     use rand_core::RngCore;
 
     use super::*;
@@ -277,11 +236,5 @@ mod tests {
             let odd = rng.next_u32();
             assert_eq!((even, odd), uninterleave_bits(interleave_bits(even, odd)));
         }
-    }
-
-    #[test]
-    fn split() {
-        assert_eq!(split_bits(0b00_01, 2), (0, 1));
-        assert_eq!(split_bits(0b10_01, 2), (2, 1));
     }
 }

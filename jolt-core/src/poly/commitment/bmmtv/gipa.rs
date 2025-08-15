@@ -4,13 +4,12 @@
 use std::marker::PhantomData;
 
 use super::Error;
-use crate::msm::Icicle;
 use crate::{
     field::JoltField,
     poly::commitment::bmmtv::{
         afgho::AfghoCommitment, inner_products::MultiexponentiationInnerProduct,
     },
-    utils::transcript::Transcript,
+    transcripts::Transcript,
 };
 use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -39,7 +38,6 @@ pub struct GipaProof<P: Pairing, ProofTranscript> {
 impl<P, ProofTranscript> GipaProof<P, ProofTranscript>
 where
     P: Pairing,
-    P::G1: Icicle,
     P::ScalarField: JoltField,
     ProofTranscript: Transcript,
 {
@@ -226,8 +224,8 @@ mod tests {
         super::inner_products::MultiexponentiationInnerProduct,
         *,
     };
-    use crate::msm::{use_icicle, Icicle, VariableBaseMSM};
-    use crate::utils::transcript::KeccakTranscript;
+    use crate::msm::VariableBaseMSM;
+    use crate::transcripts::Blake2bTranscript;
     use ark_bn254::Bn254;
     use ark_ec::pairing::Pairing;
     use ark_ec::CurveGroup;
@@ -243,8 +241,6 @@ mod tests {
     impl<P, ProofTranscript> GipaProof<P, ProofTranscript>
     where
         P: Pairing,
-        P::G1: Icicle,
-        P::G2: Icicle,
         P::ScalarField: JoltField,
         ProofTranscript: Transcript,
     {
@@ -267,10 +263,8 @@ mod tests {
             assert_eq!(ck_a_agg_challenge_exponents.len(), l_params.len());
             let ck_a_base = <P::G2 as VariableBaseMSM>::msm_field_elements(
                 &P::G2::normalize_batch(l_params),
-                None,
                 &ck_a_agg_challenge_exponents,
                 None,
-                use_icicle(),
             )?;
             Ok(ck_a_base)
         }
@@ -294,7 +288,7 @@ mod tests {
 
     #[test]
     fn multiexponentiation_inner_product_test() {
-        type MultiExpGIPA = GipaProof<Bn254, KeccakTranscript>;
+        type MultiExpGIPA = GipaProof<Bn254, Blake2bTranscript>;
 
         let mut rng = StdRng::seed_from_u64(0u64);
 
@@ -307,11 +301,11 @@ mod tests {
         let l_commit = AfghoBn245::commit(&params, &m_a).unwrap();
         let ip_commit = MultiexponentiationInnerProduct::inner_product(&m_a, &m_b).unwrap();
 
-        let mut transcript = KeccakTranscript::new(b"test");
+        let mut transcript = Blake2bTranscript::new(b"test");
 
         let proof = MultiExpGIPA::prove(m_a, params.clone(), m_b, &mut transcript).unwrap();
 
-        let mut transcript = KeccakTranscript::new(b"test");
+        let mut transcript = Blake2bTranscript::new(b"test");
 
         // Calculate base commitment and transcript
         let (base_com, transcript) = MultiExpGIPA::verify(

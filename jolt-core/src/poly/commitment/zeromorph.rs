@@ -1,13 +1,11 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
-use crate::msm::{use_icicle, Icicle, VariableBaseMSM};
+use crate::msm::VariableBaseMSM;
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use crate::poly::{dense_mlpoly::DensePolynomial, unipoly::UniPoly};
-use crate::utils::{
-    errors::ProofVerifyError,
-    transcript::{AppendToTranscript, Transcript},
-};
+use crate::transcripts::{AppendToTranscript, Transcript};
+use crate::utils::errors::ProofVerifyError;
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::batch_inversion;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -26,14 +24,9 @@ use super::{
 use crate::field::JoltField;
 use rayon::prelude::*;
 
-pub struct ZeromorphSRS<P: Pairing>(Arc<SRS<P>>)
-where
-    P::G1: Icicle;
+pub struct ZeromorphSRS<P: Pairing>(Arc<SRS<P>>);
 
-impl<P: Pairing> ZeromorphSRS<P>
-where
-    P::G1: Icicle,
-{
+impl<P: Pairing> ZeromorphSRS<P> {
     pub fn setup<R: RngCore + CryptoRng>(rng: &mut R, max_degree: usize) -> Self
     where
         P::ScalarField: JoltField,
@@ -58,10 +51,7 @@ where
 
 //TODO: adapt interface to have prover and verifier key
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct ZeromorphProverKey<P: Pairing>
-where
-    P::G1: Icicle,
-{
+pub struct ZeromorphProverKey<P: Pairing> {
     pub commit_pp: KZGProverKey<P>,
     pub open_pp: KZGProverKey<P>,
 }
@@ -72,7 +62,21 @@ pub struct ZeromorphVerifierKey<P: Pairing> {
     pub tau_N_max_sub_2_N: P::G2Affine,
 }
 
-#[derive(Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+impl<P: Pairing> From<&ZeromorphProverKey<P>> for ZeromorphVerifierKey<P> {
+    fn from(prover_key: &ZeromorphProverKey<P>) -> Self {
+        let kzg_vk = KZGVerifierKey::from(&prover_key.commit_pp);
+        let max_degree = prover_key.commit_pp.supported_size - 1;
+        let offset = prover_key.commit_pp.srs.g1_powers.len() - max_degree;
+
+        let tau_N_max_sub_2_N = prover_key.commit_pp.srs.g2_powers[offset];
+        ZeromorphVerifierKey {
+            kzg_vk,
+            tau_N_max_sub_2_N,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize, Clone)]
 pub struct ZeromorphCommitment<P: Pairing>(P::G1Affine);
 
 impl<P: Pairing> Default for ZeromorphCommitment<P> {
@@ -231,16 +235,14 @@ where
 }
 
 #[derive(Clone)]
-pub struct Zeromorph<P: Pairing, ProofTranscript: Transcript> {
-    _phantom: PhantomData<(P, ProofTranscript)>,
+pub struct Zeromorph<P: Pairing> {
+    _phantom: PhantomData<P>,
 }
 
-impl<P, ProofTranscript> Zeromorph<P, ProofTranscript>
+impl<P> Zeromorph<P>
 where
     <P as Pairing>::ScalarField: JoltField,
-    <P as Pairing>::G1: Icicle,
     P: Pairing,
-    ProofTranscript: Transcript,
 {
     pub fn protocol_name() -> &'static [u8] {
         b"Zeromorph"
@@ -262,7 +264,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "Zeromorph::open")]
-    pub fn open(
+    pub fn open<ProofTranscript: Transcript>(
         pp: &ZeromorphProverKey<P>,
         poly: &MultilinearPolynomial<P::ScalarField>,
         point: &[P::ScalarField],
@@ -345,7 +347,7 @@ where
         })
     }
 
-    pub fn verify(
+    pub fn verify<ProofTranscript: Transcript>(
         vk: &ZeromorphVerifierKey<P>,
         comm: &ZeromorphCommitment<P>,
         point: &[P::ScalarField],
@@ -390,14 +392,9 @@ where
             proof.q_k_com.clone(),
         ]
         .concat();
-        let zeta_z_com = <P::G1 as VariableBaseMSM>::msm_field_elements(
-            &bases,
-            None,
-            &scalars,
-            Some(256),
-            use_icicle(),
-        )?
-        .into_affine();
+        let zeta_z_com =
+            <P::G1 as VariableBaseMSM>::msm_field_elements(&bases, &scalars, Some(256))?
+                .into_affine();
 
         // e(pi, [tau]_2 - x * [1]_2) == e(C_{\zeta,Z}, -[X^(N_max - 2^n - 1)]_2) <==> e(C_{\zeta,Z} - x * pi, [X^{N_max - 2^n - 1}]_2) * e(-pi, [tau_2]) == 1
         let pairing = P::multi_pairing(
@@ -415,95 +412,95 @@ where
     }
 }
 
-impl<P: Pairing, ProofTranscript: Transcript> CommitmentScheme<ProofTranscript>
-    for Zeromorph<P, ProofTranscript>
+impl<P: Pairing> CommitmentScheme for Zeromorph<P>
 where
     <P as Pairing>::ScalarField: JoltField,
-    <P as Pairing>::G1: Icicle,
 {
     type Field = P::ScalarField;
-    type Setup = (ZeromorphProverKey<P>, ZeromorphVerifierKey<P>);
+    type ProverSetup = ZeromorphProverKey<P>;
+    type VerifierSetup = ZeromorphVerifierKey<P>;
     type Commitment = ZeromorphCommitment<P>;
     type Proof = ZeromorphProof<P>;
     type BatchedProof = ZeromorphProof<P>;
+    type OpeningProofHint = ();
 
-    fn setup(max_poly_len: usize) -> Self::Setup
+    fn setup_prover(max_num_vars: usize) -> Self::ProverSetup
     where
         P::ScalarField: JoltField,
-        P::G1: Icicle,
     {
+        let max_len = 1 << max_num_vars;
         ZeromorphSRS(Arc::new(SRS::setup(
             &mut ChaCha20Rng::from_seed(*b"ZEROMORPH_POLY_COMMITMENT_SCHEME"),
-            max_poly_len,
-            max_poly_len,
+            max_len,
+            max_len,
         )))
-        .trim(max_poly_len)
+        .trim(max_len)
+        .0
     }
 
-    fn srs_size(setup: &Self::Setup) -> usize {
-        setup.0.commit_pp.g1_powers().len()
+    fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup {
+        ZeromorphVerifierKey::from(setup)
     }
 
-    fn commit(poly: &MultilinearPolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
+    fn commit(
+        poly: &MultilinearPolynomial<Self::Field>,
+        setup: &Self::ProverSetup,
+    ) -> (Self::Commitment, Self::OpeningProofHint) {
         assert!(
-            setup.0.commit_pp.g1_powers().len() > poly.len(),
+            setup.commit_pp.g1_powers().len() > poly.len(),
             "COMMIT KEY LENGTH ERROR {}, {}",
-            setup.0.commit_pp.g1_powers().len(),
+            setup.commit_pp.g1_powers().len(),
             poly.len()
         );
-        ZeromorphCommitment(UnivariateKZG::commit_as_univariate(&setup.0.commit_pp, poly).unwrap())
+        let commitment = ZeromorphCommitment(
+            UnivariateKZG::commit_as_univariate(&setup.commit_pp, poly).unwrap(),
+        );
+        (commitment, ())
     }
 
-    fn batch_commit<U>(polys: &[U], gens: &Self::Setup) -> Vec<Self::Commitment>
+    fn batch_commit<U>(polys: &[U], gens: &Self::ProverSetup) -> Vec<Self::Commitment>
     where
         U: Borrow<MultilinearPolynomial<Self::Field>> + Sync,
     {
-        UnivariateKZG::commit_batch(&gens.0.commit_pp, polys)
+        UnivariateKZG::commit_batch(&gens.commit_pp, polys)
             .unwrap()
             .into_iter()
             .map(|c| ZeromorphCommitment(c))
             .collect()
     }
 
-    fn prove(
-        setup: &Self::Setup,
-        poly: &MultilinearPolynomial<Self::Field>,
-        opening_point: &[Self::Field], // point at which the polynomial is evaluated
-        transcript: &mut ProofTranscript,
-    ) -> Self::Proof {
-        let eval = poly.evaluate(opening_point);
-        Zeromorph::<P, ProofTranscript>::open(&setup.0, poly, opening_point, &eval, transcript)
-            .unwrap()
-    }
-
-    fn combine_commitments(
-        commitments: &[&Self::Commitment],
+    fn combine_commitments<C: Borrow<Self::Commitment>>(
+        commitments: &[C],
         coeffs: &[Self::Field],
     ) -> Self::Commitment {
         let combined_commitment: P::G1 = commitments
             .iter()
             .zip(coeffs.iter())
-            .map(|(commitment, coeff)| commitment.0 * coeff)
+            .map(|(commitment, coeff)| commitment.borrow().0 * coeff)
             .sum();
         ZeromorphCommitment(combined_commitment.into_affine())
     }
 
-    fn verify(
+    fn prove<ProofTranscript: Transcript>(
+        setup: &Self::ProverSetup,
+        poly: &MultilinearPolynomial<Self::Field>,
+        opening_point: &[Self::Field], // point at which the polynomial is evaluated
+        _: Self::OpeningProofHint,
+        transcript: &mut ProofTranscript,
+    ) -> Self::Proof {
+        let eval = poly.evaluate(opening_point);
+        Zeromorph::<P>::open(setup, poly, opening_point, &eval, transcript).unwrap()
+    }
+
+    fn verify<ProofTranscript: Transcript>(
         proof: &Self::Proof,
-        setup: &Self::Setup,
+        setup: &Self::VerifierSetup,
         transcript: &mut ProofTranscript,
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
         opening: &Self::Field,         // evaluation \widetilde{Z}(r)
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
-        Zeromorph::<P, ProofTranscript>::verify(
-            &setup.1,
-            commitment,
-            opening_point,
-            opening,
-            proof,
-            transcript,
-        )
+        Zeromorph::<P>::verify(setup, commitment, opening_point, opening, proof, transcript)
     }
 
     fn protocol_name() -> &'static [u8] {
@@ -514,8 +511,8 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::transcripts::{Blake2bTranscript, Transcript};
     use crate::utils::math::Math;
-    use crate::utils::transcript::{KeccakTranscript, Transcript};
     use ark_bn254::{Bn254, Fr};
     use ark_ff::{BigInt, Field, Zero};
     use ark_std::{test_rng, UniformRand};
@@ -561,7 +558,7 @@ mod test {
             "The constant term equal to the evaluation of the polynomial at challenge point."
         );
 
-        //To demonstrate that q_k was properly constructd we show that the identity holds at a random multilinear challenge
+        //To demonstrate that q_k was properly constructed we show that the identity holds at a random multilinear challenge
         // i.e. 𝑓(𝑧) − 𝑣 − ∑ₖ₌₀ᵈ⁻¹ (𝑧ₖ − 𝑢ₖ)𝑞ₖ(𝑧) = 0
         let z_challenge = (0..num_vars)
             .map(|_| Fr::rand(&mut rng))
@@ -776,23 +773,17 @@ mod test {
 
             let srs = ZeromorphSRS::<Bn254>::setup(&mut rng, 1 << num_vars);
             let (pk, vk) = srs.trim(1 << num_vars);
-            let commitment = Zeromorph::<Bn254, KeccakTranscript>::commit(&pk, &poly).unwrap();
+            let commitment = Zeromorph::<Bn254>::commit(&pk, &poly).unwrap();
 
-            let mut prover_transcript = KeccakTranscript::new(b"TestEval");
-            let proof = Zeromorph::<Bn254, KeccakTranscript>::open(
-                &pk,
-                &poly,
-                &point,
-                &eval,
-                &mut prover_transcript,
-            )
-            .unwrap();
+            let mut prover_transcript = Blake2bTranscript::new(b"TestEval");
+            let proof = Zeromorph::<Bn254>::open(&pk, &poly, &point, &eval, &mut prover_transcript)
+                .unwrap();
             let p_transcript_squeeze: <Bn254 as Pairing>::ScalarField =
                 prover_transcript.challenge_scalar();
 
             // Verify proof.
-            let mut verifier_transcript = KeccakTranscript::new(b"TestEval");
-            Zeromorph::<Bn254, KeccakTranscript>::verify(
+            let mut verifier_transcript = Blake2bTranscript::new(b"TestEval");
+            Zeromorph::<Bn254>::verify(
                 &vk,
                 &commitment,
                 &point,
@@ -812,8 +803,8 @@ mod test {
                 .map(|s| *s + <Bn254 as Pairing>::ScalarField::one())
                 .collect::<Vec<_>>();
             let altered_verifier_eval = poly.evaluate(&altered_verifier_point);
-            let mut verifier_transcript = KeccakTranscript::new(b"TestEval");
-            assert!(Zeromorph::<Bn254, KeccakTranscript>::verify(
+            let mut verifier_transcript = Blake2bTranscript::new(b"TestEval");
+            assert!(Zeromorph::<Bn254>::verify(
                 &vk,
                 &commitment,
                 &altered_verifier_point,

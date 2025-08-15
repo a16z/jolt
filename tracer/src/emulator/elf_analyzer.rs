@@ -46,6 +46,7 @@ pub struct _ProgramHeader {
 /// ELF section header
 #[derive(Debug)]
 pub struct SectionHeader {
+    #[allow(dead_code)]
     sh_name: u32,
     pub sh_type: u32,
     _sh_flags: u64,

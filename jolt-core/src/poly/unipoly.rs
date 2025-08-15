@@ -3,8 +3,8 @@ use crate::field::JoltField;
 use std::cmp::Ordering;
 use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign, Sub};
 
+use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::utils::gaussian_elimination::gaussian_elimination;
-use crate::utils::transcript::{AppendToTranscript, Transcript};
 use ark_serialize::*;
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
@@ -27,7 +27,6 @@ pub struct CompressedUniPoly<F: JoltField> {
 }
 
 impl<F: JoltField> UniPoly<F> {
-    #[allow(dead_code)]
     pub fn from_coeff(coeffs: Vec<F>) -> Self {
         UniPoly { coeffs }
     }
@@ -193,6 +192,7 @@ impl<F: JoltField> UniPoly<F> {
                 }
                 eval
             }
+            _ => unimplemented!("Unsupported MultilinearPolynomial variant"),
         }
     }
 
@@ -298,6 +298,14 @@ impl<F: JoltField> Mul<&F> for UniPoly<F> {
     fn mul(self, rhs: &F) -> Self {
         let iter = self.coeffs.into_par_iter();
         Self::from_coeff(iter.map(|c| c * *rhs).collect::<Vec<_>>())
+    }
+}
+
+impl<F: JoltField> Mul<&F> for &UniPoly<F> {
+    type Output = UniPoly<F>;
+
+    fn mul(self, rhs: &F) -> UniPoly<F> {
+        UniPoly::from_coeff(self.coeffs.iter().map(|c| *c * *rhs).collect::<Vec<_>>())
     }
 }
 

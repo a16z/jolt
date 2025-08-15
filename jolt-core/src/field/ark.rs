@@ -143,7 +143,6 @@ impl JoltField for ark_bn254::Fr {
     }
 
     fn from_bytes(bytes: &[u8]) -> Self {
-        assert_eq!(bytes.len(), Self::NUM_BYTES);
         ark_bn254::Fr::from_le_bytes_mod_order(bytes)
     }
 
@@ -153,12 +152,28 @@ impl JoltField for ark_bn254::Fr {
 
     #[inline(always)]
     fn mul_u64(&self, n: u64) -> Self {
-        ark_ff::Fp::mul_u64(*self, n)
+        if n == 0 || self.is_zero() {
+            Self::zero()
+        } else if n == 1 {
+            *self
+        } else if self.is_one() {
+            <Self as JoltField>::from_u64(n)
+        } else {
+            ark_ff::Fp::mul_u64(*self, n)
+        }
     }
 
     #[inline(always)]
     fn mul_i128(&self, n: i128) -> Self {
-        ark_ff::Fp::mul_i128(*self, n)
+        if n == 0 || self.is_zero() {
+            Self::zero()
+        } else if n == 1 {
+            *self
+        } else if self.is_one() {
+            <Self as JoltField>::from_i128(n)
+        } else {
+            ark_ff::Fp::mul_i128(*self, n)
+        }
     }
 }
 

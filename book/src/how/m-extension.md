@@ -79,7 +79,7 @@ Jolt paper in the following ways.
 
 ## R1CS constraints
 
-### Ciruict flags
+### Circuit flags
 
 With the M extension we introduce the following circuit flags:
 

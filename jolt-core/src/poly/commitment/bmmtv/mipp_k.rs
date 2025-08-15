@@ -18,12 +18,11 @@ use super::{
 };
 use crate::{
     field::JoltField,
-    msm::Icicle,
     poly::{
         commitment::kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG, G2},
         unipoly::UniPoly,
     },
-    utils::transcript::Transcript,
+    transcripts::Transcript,
 };
 
 /// Calculates KZG opening in G2
@@ -35,7 +34,6 @@ pub fn prove_commitment_key_kzg_opening<P: Pairing>(
 ) -> Result<P::G2, Error>
 where
     P::ScalarField: JoltField,
-    P::G2: Icicle,
 {
     let ck_polynomial =
         UniPoly::from_coeff(polynomial_coefficients_from_transcript(transcript, r_shift));
@@ -47,9 +45,7 @@ where
     let poly = ck_polynomial - UniPoly::from_coeff(vec![ck_polynomial_c_eval]);
     let powers = P::G2::normalize_batch(srs_powers);
 
-    Ok(UnivariateKZG::<P, G2>::generic_open(
-        &powers, None, &poly, point,
-    )?)
+    Ok(UnivariateKZG::<P, G2>::generic_open(&powers, &poly, point)?)
 }
 
 pub fn verify_kzg_g2<P: Pairing>(
@@ -102,9 +98,8 @@ fn polynomial_coefficients_from_transcript<F: Field>(transcript: &[F], r_shift: 
 ///
 /// In the MIPPk protocol a prover demonstrates knowledge of [A] ∈ [G1] such
 /// that A commits to pairing commitment T under *v* and U = A^b for a public vector [b] ∈ [F].
-pub struct MippK<P, Transcript> {
+pub struct MippK<P> {
     _pair: PhantomData<P>,
-    _transcript: PhantomData<Transcript>,
 }
 
 /// Proof of [`MippK`]
@@ -119,16 +114,13 @@ where
     final_ck_proof: P::G2,
 }
 
-impl<P, ProofTranscript> MippK<P, ProofTranscript>
+impl<P> MippK<P>
 where
     P: Pairing,
-    P::G1: Icicle,
-    P::G2: Icicle,
     P::ScalarField: JoltField,
-    ProofTranscript: Transcript,
 {
     #[tracing::instrument(name = "MippK::prove", skip_all)]
-    pub fn prove(
+    pub fn prove<ProofTranscript: Transcript>(
         p_srs: &KZGProverKey<P>,
         values: (Vec<P::G1>, Vec<P::ScalarField>),
         transcript: &mut ProofTranscript,
@@ -181,7 +173,7 @@ where
         })
     }
 
-    pub fn verify(
+    pub fn verify<ProofTranscript: Transcript>(
         v_srs: &KZGVerifierKey<P>,
         com: (PairingOutput<P>, P::G1),
         scalar_b: P::ScalarField,
@@ -247,7 +239,7 @@ mod tests {
     };
     use crate::{
         poly::commitment::{bmmtv::mipp_k::Field, kzg::SRS},
-        utils::transcript::KeccakTranscript,
+        transcripts::Blake2bTranscript,
     };
 
     type BnAfghoG1 = AfghoCommitment<Bn254>;
@@ -265,7 +257,7 @@ mod tests {
 
     #[test]
     fn tipa_ssm_multiexponentiation_inner_product_test() {
-        type MultiExpTipa = MippK<Bn254, KeccakTranscript>;
+        type MultiExpTipa = MippK<Bn254>;
 
         let mut rng = StdRng::seed_from_u64(0u64);
         let srs = SRS::setup(&mut rng, 2 * (TEST_SIZE - 1), 2 * (TEST_SIZE - 1));
@@ -286,11 +278,11 @@ mod tests {
         let com_a = BnAfghoG1::commit(&ck_a, &m_a).unwrap();
         let com_t = MultiexponentiationInnerProduct::inner_product(&m_a, &m_b).unwrap();
 
-        let mut transcript = KeccakTranscript::new(b"TipaTest");
+        let mut transcript = Blake2bTranscript::new(b"TipaTest");
 
         let proof = MultiExpTipa::prove(&p_srs, (m_a, m_b), &mut transcript).unwrap();
 
-        let mut transcript = KeccakTranscript::new(b"TipaTest");
+        let mut transcript = Blake2bTranscript::new(b"TipaTest");
 
         assert!(MultiExpTipa::verify(&v_srs, (com_a, com_t), b, &proof, &mut transcript,).unwrap());
     }

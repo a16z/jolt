@@ -4,11 +4,9 @@
 //! Univariate Polynomial Evaluations (UPE), that allows committing to multilinear polynomials
 //! using normal Bmmtv
 
-use std::{borrow::Borrow, marker::PhantomData, sync::Arc};
-
+use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::{
     field::JoltField,
-    msm::Icicle,
     poly::{
         commitment::{
             bmmtv::poly_commit::{OpeningProof, UnivariatePolynomialCommitment},
@@ -18,10 +16,7 @@ use crate::{
         multilinear_polynomial::MultilinearPolynomial,
         unipoly::UniPoly,
     },
-    utils::{
-        errors::ProofVerifyError,
-        transcript::{AppendToTranscript, Transcript},
-    },
+    utils::errors::ProofVerifyError,
 };
 use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -29,10 +24,11 @@ use ark_std::{One, Zero};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 use rayon::prelude::*;
+use std::{borrow::Borrow, marker::PhantomData, sync::Arc};
 
 #[derive(Clone)]
-pub struct HyperBmmtv<P: Pairing, ProofTranscript: Transcript> {
-    _phantom: PhantomData<(P, ProofTranscript)>,
+pub struct HyperBmmtv<P: Pairing> {
+    _phantom: PhantomData<P>,
 }
 
 #[derive(PartialEq, Eq, Clone, CanonicalSerialize, CanonicalDeserialize, Debug)]
@@ -85,69 +81,65 @@ pub struct SubProof<P: Pairing> {
     y: P::ScalarField,
 }
 
-impl<P: Pairing, ProofTranscript: Transcript> CommitmentScheme<ProofTranscript>
-    for HyperBmmtv<P, ProofTranscript>
+impl<P: Pairing> CommitmentScheme for HyperBmmtv<P>
 where
     PairingOutput<P>: CanonicalSerialize,
     P::ScalarField: JoltField,
-    P::G1: Icicle,
-    P::G2: Icicle,
 {
     type Field = P::ScalarField;
-
-    type Setup = (KZGProverKey<P>, KZGVerifierKey<P>);
-
+    type ProverSetup = KZGProverKey<P>;
+    type VerifierSetup = KZGVerifierKey<P>;
     type Commitment = HyperBmmtvCommitment<P>;
-
     type Proof = HyperBmmtvProof<P>;
-
     type BatchedProof = ();
+    type OpeningProofHint = ();
 
     #[tracing::instrument(skip_all, name = "HyperBmmtv::setup")]
-    fn setup(max_len: usize) -> Self::Setup {
+    fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
         let mut rng = ChaCha20Rng::from_seed(*b"HyperBMMTV_POLY_COMMITMENTSCHEME");
         let srs =
-            UnivariatePolynomialCommitment::<P, ProofTranscript>::setup(&mut rng, max_len - 1)
-                .unwrap();
+            UnivariatePolynomialCommitment::<P>::setup(&mut rng, (1 << max_num_vars) - 1).unwrap();
         let powers_len = srs.g1_powers.len();
 
-        SRS::trim(Arc::new(srs), powers_len - 1)
+        SRS::trim(Arc::new(srs), powers_len - 1).0
     }
 
-    fn srs_size(setup: &Self::Setup) -> usize {
-        setup.0.g1_powers().len()
+    #[tracing::instrument(skip_all, name = "HyperBmmtv::setup_verifier")]
+    fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup {
+        KZGVerifierKey::<P>::from(setup)
     }
 
     #[tracing::instrument(skip_all, name = "HyperBmmtv::commit")]
     fn commit(
         poly: &MultilinearPolynomial<Self::Field>,
-        (p_srs, _): &Self::Setup,
-    ) -> Self::Commitment {
+        setup: &Self::ProverSetup,
+    ) -> (Self::Commitment, Self::OpeningProofHint) {
         let unipoly: UniPoly<Self::Field> = poly.into();
-        let commitment =
-            UnivariatePolynomialCommitment::<P, ProofTranscript>::commit(p_srs, &unipoly).unwrap();
-        HyperBmmtvCommitment(commitment.0, commitment.1)
+        let commitment = UnivariatePolynomialCommitment::<P>::commit(setup, &unipoly).unwrap();
+        let commitment = HyperBmmtvCommitment(commitment.0, commitment.1);
+        (commitment, ())
     }
 
     #[tracing::instrument(skip_all, name = "HyperBmmtv::batch_commit")]
-    fn batch_commit<U>(polys: &[U], gens: &Self::Setup) -> Vec<Self::Commitment>
+    fn batch_commit<U>(polys: &[U], gens: &Self::ProverSetup) -> Vec<Self::Commitment>
     where
         U: Borrow<MultilinearPolynomial<Self::Field>> + Sync,
     {
         polys
             .par_iter()
-            .map(|poly| Self::commit(poly.borrow(), gens))
+            .map(|poly| Self::commit(poly.borrow(), gens).0)
             .collect()
     }
 
     #[tracing::instrument(skip_all, name = "HyperBmmtv::prove")]
-    fn prove(
-        (p_srs, _): &Self::Setup,
+    fn prove<ProofTranscript: Transcript>(
+        setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
-        point: &[Self::Field], // point at which the polynomial is evaluated
+        opening_point: &[Self::Field], // point at which the polynomial is evaluated
+        _: Self::OpeningProofHint,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
-        let ell = point.len();
+        let ell = opening_point.len();
         let n = poly.len();
         assert_eq!(n, 1 << ell); // Below we assume that n is a power of two
 
@@ -162,7 +154,7 @@ where
             let previous_poly: &UniPoly<P::ScalarField> = &polys[i];
             let Pi_len = previous_poly.coeffs.len() / 2;
             let mut Pi = vec![P::ScalarField::zero(); Pi_len];
-            let x = point[ell - i - 1];
+            let x = opening_point[ell - i - 1];
 
             Pi.par_iter_mut().enumerate().for_each(|(j, Pi_j)| {
                 let Peven = previous_poly[2 * j + 1];
@@ -181,9 +173,7 @@ where
         // Todo: Batch commit
         let com_list: Vec<_> = polys[1..]
             .par_iter()
-            .map(|poly| {
-                UnivariatePolynomialCommitment::<P, ProofTranscript>::commit(p_srs, poly).unwrap()
-            })
+            .map(|poly| UnivariatePolynomialCommitment::<P>::commit(setup, poly).unwrap())
             .collect();
 
         // Phase 2
@@ -199,8 +189,7 @@ where
         // open all commits
 
         // TODO Get this from the Commitment
-        let (_, kzg_comms) =
-            UnivariatePolynomialCommitment::<P, ProofTranscript>::commit(p_srs, &polys[0]).unwrap();
+        let (_, kzg_comms) = UnivariatePolynomialCommitment::<P>::commit(setup, &polys[0]).unwrap();
 
         let (sub_polynomials_commitments, com_list): (Vec<_>, Vec<_>) =
             com_list.into_iter().unzip();
@@ -215,7 +204,7 @@ where
                 let y = polynomial.evaluate(&r.square());
                 SubProof {
                     proof: UnivariatePolynomialCommitment::open(
-                        p_srs, polynomial, comm, &r, transcript,
+                        setup, polynomial, comm, &r, transcript,
                     )
                     .unwrap(), // opening
                     y,
@@ -232,15 +221,15 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "HyperBmmtv::verify")]
-    fn verify(
+    fn verify<ProofTranscript: Transcript>(
         proof: &Self::Proof,
-        (_, v_srs): &Self::Setup,
+        setup: &Self::VerifierSetup,
         transcript: &mut ProofTranscript,
-        point: &[Self::Field], // point at which the polynomial is evaluated
-        opening: &Self::Field, // evaluation \widetilde{Z}(r)
+        opening_point: &[Self::Field], // point at which the polynomial is evaluated
+        opening: &Self::Field,         // evaluation \widetilde{Z}(r)
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
-        let ell = point.len();
+        let ell = opening_point.len();
 
         if proof.polynomials_proof.len() != ell {
             return Err(ProofVerifyError::InternalError);
@@ -272,7 +261,7 @@ where
 
         let two = P::ScalarField::from(2u64);
         for (i, SubProof { y_pos, y_neg, .. }) in proof.polynomials_proof.iter().enumerate() {
-            let x = point[ell - i - 1];
+            let x = opening_point[ell - i - 1];
             let y_pos = *y_pos;
             let y_neg = *y_neg;
             let y_next = Y[i + 1];
@@ -302,7 +291,7 @@ where
                 )| {
                     let n = 1 << (ell - i);
                     UnivariatePolynomialCommitment::verify(
-                        v_srs,
+                        setup,
                         n - 1, // degree = len(coeff) - 1
                         *commitment,
                         r,
@@ -334,8 +323,8 @@ mod tests {
     };
     use crate::poly::multilinear_polynomial::MultilinearPolynomial;
     use crate::poly::multilinear_polynomial::PolynomialEvaluation;
-    use crate::utils::transcript::KeccakTranscript;
-    use crate::utils::transcript::Transcript;
+    use crate::transcripts::Blake2bTranscript;
+    use crate::transcripts::Transcript;
     use ark_bn254::Bn254;
     use ark_ec::pairing::Pairing;
     use ark_std::UniformRand;
@@ -343,7 +332,7 @@ mod tests {
 
     #[test]
     fn test_hyper_bmmtv() {
-        type HyperTest = HyperBmmtv<Bn254, KeccakTranscript>;
+        type HyperTest = HyperBmmtv<Bn254>;
         let ell = 4;
         let n = 1 << ell; // n = 2^ell
         let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(0);
@@ -353,25 +342,26 @@ mod tests {
 
         let poly = MultilinearPolynomial::from(poly_raw.clone());
 
-        let setup = HyperTest::setup(poly.len());
+        let setup = HyperTest::setup_prover(poly.len());
+        let verifier_setup = HyperTest::setup_verifier(&setup);
 
-        let commit = HyperTest::commit(&poly, &setup);
+        let commit = HyperTest::commit(&poly, &setup).0;
 
         let point = (0..ell)
             .map(|_| <Bn254 as Pairing>::ScalarField::rand(&mut rng))
             .collect::<Vec<_>>();
 
-        let mut prover_transcript = KeccakTranscript::new(b"TestEval");
+        let mut prover_transcript = Blake2bTranscript::new(b"TestEval");
 
-        let proof = HyperTest::prove(&setup, &poly, &point, &mut prover_transcript);
+        let proof = HyperTest::prove(&setup, &poly, &point, (), &mut prover_transcript);
 
-        let mut verifier_transcript = KeccakTranscript::new(b"TestEval");
+        let mut verifier_transcript = Blake2bTranscript::new(b"TestEval");
         verifier_transcript.compare_to(prover_transcript);
 
         let opening = poly.evaluate(&point);
         HyperTest::verify(
             &proof,
-            &setup,
+            &verifier_setup,
             &mut verifier_transcript,
             &point,
             &opening,

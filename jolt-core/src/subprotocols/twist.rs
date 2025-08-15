@@ -8,11 +8,11 @@ use crate::{
         },
         unipoly::{CompressedUniPoly, UniPoly},
     },
+    transcripts::{AppendToTranscript, Transcript},
     utils::{
         errors::ProofVerifyError,
         math::Math,
         thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
-        transcript::{AppendToTranscript, Transcript},
     },
 };
 use rayon::prelude::*;
@@ -232,9 +232,9 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         };
 
         // eq(r', r_cycle)
-        let eq_eval_cycle = EqPolynomial::new(r_prime).evaluate(&r_cycle);
+        let eq_eval_cycle = EqPolynomial::mle(&r_prime, &r_cycle);
         // eq(r, r_address)
-        let eq_eval_address = EqPolynomial::new(r).evaluate(&r_address);
+        let eq_eval_address = EqPolynomial::mle(&r, &r_address);
 
         assert_eq!(
             eq_eval_cycle * self.ra_claim * self.val_claim
@@ -464,6 +464,7 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
 
     // Linear combination of the read-checking claim (which is rv(r')) and the
     // write-checking claim (which is Inc(r, r'))
+    // rv(r') + z * Inc(r, r')
     let mut previous_claim = rv_eval + inc_eval;
     let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
@@ -775,7 +776,6 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
                 }
 
                 // First time this k has been encountered
-
                 let bound_value = if j_prime % 2 == 0 {
                     // (1 - r_j) * inc_lt + r_j * inc
                     inc_lt + r_j * (inc - inc_lt)
@@ -1838,7 +1838,7 @@ impl<F: JoltField> EqTable<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::transcript::KeccakTranscript;
+    use crate::transcripts::Blake2bTranscript;
     use ark_bn254::Fr;
     use ark_std::test_rng;
     use rand_core::RngCore;
@@ -1875,7 +1875,7 @@ mod tests {
             registers[write_address] = write_value;
         }
 
-        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+        let mut prover_transcript = Blake2bTranscript::new(b"test_transcript");
         let r: Vec<Fr> = prover_transcript.challenge_vector(K.log_2());
         let r_prime: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
 
@@ -1891,7 +1891,7 @@ mod tests {
             TwistAlgorithm::Local,
         );
 
-        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+        let mut verifier_transcript = Blake2bTranscript::new(b"test_transcript");
         verifier_transcript.compare_to(prover_transcript);
         let r: Vec<Fr> = verifier_transcript.challenge_vector(K.log_2());
         let r_prime: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
@@ -1930,7 +1930,7 @@ mod tests {
         }
         let val = MultilinearPolynomial::from(val);
 
-        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+        let mut prover_transcript = Blake2bTranscript::new(b"test_transcript");
         let r_address: Vec<Fr> = prover_transcript.challenge_vector(K.log_2());
         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
 
@@ -1944,7 +1944,7 @@ mod tests {
             &mut prover_transcript,
         );
 
-        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+        let mut verifier_transcript = Blake2bTranscript::new(b"test_transcript");
         verifier_transcript.compare_to(prover_transcript);
         let _r_address: Vec<Fr> = verifier_transcript.challenge_vector(K.log_2());
         let _r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
@@ -1992,7 +1992,7 @@ mod tests {
             registers[write_address] = write_value;
         }
 
-        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+        let mut prover_transcript = Blake2bTranscript::new(b"test_transcript");
         let r: Vec<Fr> = prover_transcript.challenge_vector(K.log_2());
         let r_prime: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
 
@@ -2007,7 +2007,7 @@ mod tests {
             &mut prover_transcript,
         );
 
-        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+        let mut verifier_transcript = Blake2bTranscript::new(b"test_transcript");
         verifier_transcript.compare_to(prover_transcript);
         let _r: Vec<Fr> = verifier_transcript.challenge_vector(K.log_2());
         let _r_prime: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());

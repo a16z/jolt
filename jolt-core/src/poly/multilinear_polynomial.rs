@@ -1,7 +1,9 @@
-use crate::utils::{compute_dotproduct, math::Math};
-use ark_serialize::{
-    CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
+use crate::{
+    poly::{one_hot_polynomial::OneHotPolynomial, rlc_polynomial::RLCPolynomial},
+    utils::compute_dotproduct,
 };
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
+use num_traits::MulAdd;
 use rayon::prelude::*;
 use strum_macros::EnumIter;
 
@@ -25,6 +27,38 @@ pub enum MultilinearPolynomial<F: JoltField> {
     U32Scalars(CompactPolynomial<u32, F>),
     U64Scalars(CompactPolynomial<u64, F>),
     I64Scalars(CompactPolynomial<i64, F>),
+    RLC(RLCPolynomial<F>),
+    OneHot(OneHotPolynomial<F>),
+}
+
+impl<F: JoltField> Valid for MultilinearPolynomial<F> {
+    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+        unimplemented!("Only here to satisfy trait bounds")
+    }
+}
+
+impl<F: JoltField> CanonicalDeserialize for MultilinearPolynomial<F> {
+    fn deserialize_with_mode<R: std::io::Read>(
+        _reader: R,
+        _compress: ark_serialize::Compress,
+        _validate: ark_serialize::Validate,
+    ) -> Result<Self, ark_serialize::SerializationError> {
+        unimplemented!("Only here to satisfy trait bounds")
+    }
+}
+
+impl<F: JoltField> CanonicalSerialize for MultilinearPolynomial<F> {
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        _writer: W,
+        _compress: ark_serialize::Compress,
+    ) -> Result<(), ark_serialize::SerializationError> {
+        unimplemented!("Only here to satisfy trait bounds")
+    }
+
+    fn serialized_size(&self, _compress: ark_serialize::Compress) -> usize {
+        unimplemented!("Only here to satisfy trait bounds")
+    }
 }
 
 /// The order in which polynomial variables are bound in sumcheck
@@ -50,6 +84,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.coeffs.len(),
             MultilinearPolynomial::U64Scalars(poly) => poly.coeffs.len(),
             MultilinearPolynomial::I64Scalars(poly) => poly.coeffs.len(),
+            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
 
@@ -62,6 +97,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.len(),
             MultilinearPolynomial::U64Scalars(poly) => poly.len(),
             MultilinearPolynomial::I64Scalars(poly) => poly.len(),
+            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
 
@@ -73,42 +109,37 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.get_num_vars(),
             MultilinearPolynomial::U64Scalars(poly) => poly.get_num_vars(),
             MultilinearPolynomial::I64Scalars(poly) => poly.get_num_vars(),
-        }
-    }
-
-    /// The maximum number of bits occupied by one of the polynomial's coefficients.
-    #[tracing::instrument(skip_all)]
-    pub fn max_num_bits(&self) -> usize {
-        match self {
-            MultilinearPolynomial::LargeScalars(poly) => poly
-                .evals_ref()
-                .par_iter()
-                .map(|s| s.num_bits())
-                .max()
-                .unwrap() as usize,
-            MultilinearPolynomial::U8Scalars(poly) => {
-                (*poly.coeffs.iter().max().unwrap() as usize).num_bits()
-            }
-            MultilinearPolynomial::U16Scalars(poly) => {
-                (*poly.coeffs.iter().max().unwrap() as usize).num_bits()
-            }
-            MultilinearPolynomial::U32Scalars(poly) => {
-                (*poly.coeffs.iter().max().unwrap() as usize).num_bits()
-            }
-            MultilinearPolynomial::U64Scalars(poly) => {
-                (*poly.coeffs.iter().max().unwrap() as usize).num_bits()
-            }
-            MultilinearPolynomial::I64Scalars(_) => {
-                // HACK(moodlezoup): i64 coefficients are converted into full-width field
-                // elements before computing the MSM
-                F::NUM_BYTES * 8
-            }
+            MultilinearPolynomial::OneHot(poly) => poly.get_num_vars(),
+            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
 
     #[tracing::instrument(skip_all)]
     pub fn linear_combination(polynomials: &[&Self], coefficients: &[F]) -> Self {
         debug_assert_eq!(polynomials.len(), coefficients.len());
+
+        // If there's at least one sparse polynomial in `polynomials`, the linear
+        // combination will be represented by an `RLCPolynomial`. Otherwise, it will
+        // be represented by a `DensePolynomial`.
+        if polynomials
+            .iter()
+            .any(|poly| matches!(poly, MultilinearPolynomial::OneHot(_)))
+        {
+            let mut result = RLCPolynomial::<F>::new();
+            for (coeff, polynomial) in coefficients.iter().zip(polynomials.iter()) {
+                result = match polynomial {
+                    MultilinearPolynomial::LargeScalars(poly) => poly.mul_add(*coeff, result),
+                    MultilinearPolynomial::U8Scalars(poly) => poly.mul_add(*coeff, result),
+                    MultilinearPolynomial::U16Scalars(poly) => poly.mul_add(*coeff, result),
+                    MultilinearPolynomial::U32Scalars(poly) => poly.mul_add(*coeff, result),
+                    MultilinearPolynomial::U64Scalars(poly) => poly.mul_add(*coeff, result),
+                    MultilinearPolynomial::I64Scalars(poly) => poly.mul_add(*coeff, result),
+                    MultilinearPolynomial::OneHot(poly) => poly.mul_add(*coeff, result),
+                    _ => unimplemented!("Unexpected polynomial type"),
+                };
+            }
+            return MultilinearPolynomial::RLC(result);
+        }
 
         let max_length = polynomials
             .iter()
@@ -170,6 +201,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                                 *rlc += poly_eval.field_mul(*coeff);
                             }
                         }
+                        _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
                     }
                 }
                 chunk
@@ -188,6 +220,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => F::from_u32(poly.coeffs[index]),
             MultilinearPolynomial::U64Scalars(poly) => F::from_u64(poly.coeffs[index]),
             MultilinearPolynomial::I64Scalars(poly) => F::from_i64(poly.coeffs[index]),
+            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
 
@@ -195,14 +228,12 @@ impl<F: JoltField> MultilinearPolynomial<F> {
     /// Panics if the polynomial is a large-scalar polynomial.
     pub fn get_coeff_i64(&self, index: usize) -> i64 {
         match self {
-            MultilinearPolynomial::LargeScalars(_) => {
-                panic!("Unexpected large-scalar polynomial")
-            }
             MultilinearPolynomial::U8Scalars(poly) => i64::from(poly.coeffs[index]),
             MultilinearPolynomial::U16Scalars(poly) => i64::from(poly.coeffs[index]),
             MultilinearPolynomial::U32Scalars(poly) => i64::from(poly.coeffs[index]),
             MultilinearPolynomial::U64Scalars(poly) => i64::try_from(poly.coeffs[index]).unwrap(),
             MultilinearPolynomial::I64Scalars(poly) => poly.coeffs[index],
+            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
 
@@ -210,14 +241,12 @@ impl<F: JoltField> MultilinearPolynomial<F> {
     /// Panics if the polynomial is a large-scalar polynomial.
     pub fn get_coeff_i128(&self, index: usize) -> i128 {
         match self {
-            MultilinearPolynomial::LargeScalars(_) => {
-                panic!("Unexpected large-scalar polynomial")
-            }
             MultilinearPolynomial::U8Scalars(poly) => i128::from(poly.coeffs[index]),
             MultilinearPolynomial::U16Scalars(poly) => i128::from(poly.coeffs[index]),
             MultilinearPolynomial::U32Scalars(poly) => i128::from(poly.coeffs[index]),
             MultilinearPolynomial::U64Scalars(poly) => i128::from(poly.coeffs[index]),
             MultilinearPolynomial::I64Scalars(poly) => i128::from(poly.coeffs[index]),
+            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
 
@@ -262,6 +291,23 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                     F::from_i64(poly.coeffs[index])
                 }
             }
+            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
+        }
+    }
+
+    // This is the old polynomial evaluation code that uses
+    // the dot product with langrange bases as the algorithm
+    // This might be eventually removed from the code base
+    pub fn evaluate_dot_product(&self, r: &[F]) -> F {
+        match self {
+            MultilinearPolynomial::LargeScalars(poly) => poly.evaluate(r),
+            MultilinearPolynomial::RLC(_) => {
+                unimplemented!("Unexpected RLC polynomial")
+            }
+            _ => {
+                let chis = EqPolynomial::evals(r);
+                self.dot_product(&chis)
+            }
         }
     }
 
@@ -300,29 +346,47 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                 .zip_eq(other.par_iter())
                 .map(|(a, b)| a.field_mul(*b))
                 .sum(),
+            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
 
-    /// Multiplies the polynomial's coefficient at `index` by a field element.
-    pub fn scale_coeff(&self, index: usize, scaling_factor: F, scaling_factor_r2_adjusted: F) -> F {
-        match self {
-            MultilinearPolynomial::LargeScalars(poly) => poly.Z[index] * scaling_factor,
-            MultilinearPolynomial::U8Scalars(poly) => {
-                poly.coeffs[index].field_mul(scaling_factor_r2_adjusted)
+    #[inline]
+    pub fn sumcheck_evals_array<const DEGREE: usize>(
+        &self,
+        index: usize,
+        order: BindingOrder,
+    ) -> [F; DEGREE] {
+        debug_assert!(DEGREE > 0);
+        debug_assert!(index < self.len() / 2);
+
+        let mut evals = [F::zero(); DEGREE];
+        match order {
+            BindingOrder::HighToLow => {
+                evals[0] = self.get_bound_coeff(index);
+                if DEGREE == 1 {
+                    return evals;
+                }
+                let mut eval = self.get_bound_coeff(index + self.len() / 2);
+                let m = eval - evals[0];
+                for i in 1..DEGREE {
+                    eval += m;
+                    evals[i] = eval;
+                }
             }
-            MultilinearPolynomial::U16Scalars(poly) => {
-                poly.coeffs[index].field_mul(scaling_factor_r2_adjusted)
+            BindingOrder::LowToHigh => {
+                evals[0] = self.get_bound_coeff(2 * index);
+                if DEGREE == 1 {
+                    return evals;
+                }
+                let mut eval = self.get_bound_coeff(2 * index + 1);
+                let m = eval - evals[0];
+                for i in 1..DEGREE {
+                    eval += m;
+                    evals[i] = eval;
+                }
             }
-            MultilinearPolynomial::U32Scalars(poly) => {
-                poly.coeffs[index].field_mul(scaling_factor_r2_adjusted)
-            }
-            MultilinearPolynomial::U64Scalars(poly) => {
-                poly.coeffs[index].field_mul(scaling_factor_r2_adjusted)
-            }
-            MultilinearPolynomial::I64Scalars(poly) => {
-                poly.coeffs[index].field_mul(scaling_factor_r2_adjusted)
-            }
-        }
+        };
+        evals
     }
 }
 
@@ -434,112 +498,6 @@ impl<'a, F: JoltField> TryFrom<&'a MultilinearPolynomial<F>> for &'a CompactPoly
     }
 }
 
-impl<F: JoltField> CanonicalSerialize for MultilinearPolynomial<F> {
-    fn serialize_with_mode<W: std::io::Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        // TODO(protoben) Can we use strum for this?
-        match self {
-            MultilinearPolynomial::LargeScalars(dense_polynomial) => {
-                (0_u8).serialize_with_mode(&mut writer, compress)?;
-                dense_polynomial.serialize_with_mode(&mut writer, compress)?;
-            }
-            MultilinearPolynomial::U8Scalars(compact_polynomial) => {
-                (1_u8).serialize_with_mode(&mut writer, compress)?;
-                compact_polynomial.serialize_with_mode(&mut writer, compress)?;
-            }
-            MultilinearPolynomial::U16Scalars(compact_polynomial) => {
-                (2_u8).serialize_with_mode(&mut writer, compress)?;
-                compact_polynomial.serialize_with_mode(&mut writer, compress)?;
-            }
-            MultilinearPolynomial::U32Scalars(compact_polynomial) => {
-                (3_u8).serialize_with_mode(&mut writer, compress)?;
-                compact_polynomial.serialize_with_mode(&mut writer, compress)?;
-            }
-            MultilinearPolynomial::U64Scalars(compact_polynomial) => {
-                (4_u8).serialize_with_mode(&mut writer, compress)?;
-                compact_polynomial.serialize_with_mode(&mut writer, compress)?;
-            }
-            MultilinearPolynomial::I64Scalars(compact_polynomial) => {
-                (5_u8).serialize_with_mode(&mut writer, compress)?;
-                compact_polynomial.serialize_with_mode(&mut writer, compress)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        match self {
-            MultilinearPolynomial::LargeScalars(dense_polynomial) => {
-                (0_u8).serialized_size(compress) + dense_polynomial.serialized_size(compress)
-            }
-            MultilinearPolynomial::U8Scalars(compact_polynomial) => {
-                (1_u8).serialized_size(compress) + compact_polynomial.serialized_size(compress)
-            }
-            MultilinearPolynomial::U16Scalars(compact_polynomial) => {
-                (2_u8).serialized_size(compress) + compact_polynomial.serialized_size(compress)
-            }
-            MultilinearPolynomial::U32Scalars(compact_polynomial) => {
-                (3_u8).serialized_size(compress) + compact_polynomial.serialized_size(compress)
-            }
-            MultilinearPolynomial::U64Scalars(compact_polynomial) => {
-                (4_u8).serialized_size(compress) + compact_polynomial.serialized_size(compress)
-            }
-            MultilinearPolynomial::I64Scalars(compact_polynomial) => {
-                (5_u8).serialized_size(compress) + compact_polynomial.serialized_size(compress)
-            }
-        }
-    }
-}
-
-impl<F: JoltField> CanonicalDeserialize for MultilinearPolynomial<F> {
-    fn deserialize_with_mode<R: std::io::Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-    ) -> Result<Self, SerializationError> {
-        // TODO(protoben) Can we use strum for this?
-        let discriminant = u8::deserialize_with_mode(&mut reader, compress, validate)?;
-        let res = match discriminant {
-            0 => MultilinearPolynomial::LargeScalars(DensePolynomial::deserialize_with_mode(
-                reader, compress, validate,
-            )?),
-            1 => MultilinearPolynomial::U8Scalars(CompactPolynomial::deserialize_with_mode(
-                reader, compress, validate,
-            )?),
-            2 => MultilinearPolynomial::U16Scalars(CompactPolynomial::deserialize_with_mode(
-                reader, compress, validate,
-            )?),
-            3 => MultilinearPolynomial::U32Scalars(CompactPolynomial::deserialize_with_mode(
-                reader, compress, validate,
-            )?),
-            4 => MultilinearPolynomial::U64Scalars(CompactPolynomial::deserialize_with_mode(
-                reader, compress, validate,
-            )?),
-            5 => MultilinearPolynomial::I64Scalars(CompactPolynomial::deserialize_with_mode(
-                reader, compress, validate,
-            )?),
-            _ => Err(SerializationError::InvalidData)?,
-        };
-        Ok(res)
-    }
-}
-
-impl<F: JoltField> Valid for MultilinearPolynomial<F> {
-    fn check(&self) -> Result<(), SerializationError> {
-        match self {
-            MultilinearPolynomial::LargeScalars(dense_polynomial) => dense_polynomial.check(),
-            MultilinearPolynomial::U8Scalars(compact_polynomial) => compact_polynomial.check(),
-            MultilinearPolynomial::U16Scalars(compact_polynomial) => compact_polynomial.check(),
-            MultilinearPolynomial::U32Scalars(compact_polynomial) => compact_polynomial.check(),
-            MultilinearPolynomial::U64Scalars(compact_polynomial) => compact_polynomial.check(),
-            MultilinearPolynomial::I64Scalars(compact_polynomial) => compact_polynomial.check(),
-        }
-    }
-}
-
 pub trait PolynomialBinding<F: JoltField> {
     /// Returns whether or not the polynomial has been bound (in a sumcheck)
     fn is_bound(&self) -> bool;
@@ -554,12 +512,17 @@ pub trait PolynomialBinding<F: JoltField> {
 
 pub trait PolynomialEvaluation<F: JoltField> {
     /// Returns the final sumcheck claim about the polynomial.
+    /// This uses the algorithm in Lemma 4.3 in Thaler, Proofs and
+    /// Arguments -- the inside out processing
     fn evaluate(&self, r: &[F]) -> F;
+
     /// Evaluates a batch of polynomials on the same point `r`.
     /// Returns: (evals, EQ table)
     /// where EQ table is EQ(x, r) for x \in {0, 1}^|r|. This is used for
     /// batched opening proofs (see opening_proof.rs)
-    fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<F>, Vec<F>);
+    fn batch_evaluate(polys: &[&Self], r: &[F]) -> Vec<F>
+    where
+        Self: Sized;
     /// Computes this polynomial's contribution to the computation of a prover
     /// sumcheck message (i.e. a univariate polynomial of the given `degree`).
     /// Returns the values of the polynomial at points 1, 2, ... , degree
@@ -576,6 +539,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.is_bound(),
             MultilinearPolynomial::U64Scalars(poly) => poly.is_bound(),
             MultilinearPolynomial::I64Scalars(poly) => poly.is_bound(),
+            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
 
@@ -588,6 +552,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.bind(r, order),
             MultilinearPolynomial::U64Scalars(poly) => poly.bind(r, order),
             MultilinearPolynomial::I64Scalars(poly) => poly.bind(r, order),
+            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
 
@@ -600,6 +565,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.bind_parallel(r, order),
             MultilinearPolynomial::U64Scalars(poly) => poly.bind_parallel(r, order),
             MultilinearPolynomial::I64Scalars(poly) => poly.bind_parallel(r, order),
+            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
 
@@ -614,6 +580,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.final_sumcheck_claim(),
             MultilinearPolynomial::U64Scalars(poly) => poly.final_sumcheck_claim(),
             MultilinearPolynomial::I64Scalars(poly) => poly.final_sumcheck_claim(),
+            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
 }
@@ -622,42 +589,134 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::evaluate")]
     fn evaluate(&self, r: &[F]) -> F {
         match self {
-            MultilinearPolynomial::LargeScalars(poly) => poly.evaluate(r),
-            _ => {
-                let chis = EqPolynomial::evals(r);
-                self.dot_product(&chis)
+            MultilinearPolynomial::LargeScalars(poly) => {
+                let m = r.len() / 2;
+                let (r2, r1) = r.split_at(m);
+                let (eq_one, eq_two) =
+                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+
+                poly.split_eq_evaluate(r, &eq_one, &eq_two)
             }
+            MultilinearPolynomial::U8Scalars(poly) => {
+                let m = r.len() / 2;
+                let (r2, r1) = r.split_at(m);
+                let (eq_one, eq_two) =
+                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+
+                poly.split_eq_evaluate(r, &eq_one, &eq_two)
+            }
+            MultilinearPolynomial::U16Scalars(poly) => {
+                let m = r.len() / 2;
+                let (r2, r1) = r.split_at(m);
+                let (eq_one, eq_two) =
+                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+
+                poly.split_eq_evaluate(r, &eq_one, &eq_two)
+            }
+            MultilinearPolynomial::U32Scalars(poly) => {
+                let m = r.len() / 2;
+                let (r2, r1) = r.split_at(m);
+                let (eq_one, eq_two) =
+                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+
+                poly.split_eq_evaluate(r, &eq_one, &eq_two)
+            }
+            MultilinearPolynomial::U64Scalars(poly) => {
+                let m = r.len() / 2;
+                let (r2, r1) = r.split_at(m);
+                let (eq_one, eq_two) =
+                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+
+                poly.split_eq_evaluate(r, &eq_one, &eq_two)
+            }
+            MultilinearPolynomial::I64Scalars(poly) => {
+                let m = r.len() / 2;
+                let (r2, r1) = r.split_at(m);
+                let (eq_one, eq_two) =
+                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+
+                poly.split_eq_evaluate(r, &eq_one, &eq_two)
+            }
+            MultilinearPolynomial::OneHot(poly) => poly.evaluate(r),
+            _ => unimplemented!("Unsupported MultilinearPolynomial variant"),
         }
     }
 
     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::batch_evaluate")]
-    fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<F>, Vec<F>) {
-        let eq = EqPolynomial::evals(r);
+    fn batch_evaluate(polys: &[&Self], r: &[F]) -> Vec<F> {
+        let num_polys = polys.len();
+        let m = r.len() / 2;
+        let (r2, r1) = r.split_at(m);
+        let (eq_one, eq_two) = rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
 
-        if polys
-            .iter()
-            .any(|poly| !matches!(poly, MultilinearPolynomial::LargeScalars(_)))
-        {
-            let evals: Vec<F> = polys
-                .into_par_iter()
-                .map(|&poly| match poly {
-                    MultilinearPolynomial::LargeScalars(poly) => {
-                        poly.evaluate_at_chi_low_optimized(&eq)
+        let evals = (0..eq_one.len())
+            .into_par_iter()
+            .map(|x1| {
+                let eq1_val = eq_one[x1];
+                // computing agg[x1]
+                let inner_sums = (0..eq_two.len())
+                    .into_par_iter()
+                    .filter_map(|x2| {
+                        let eq2_val = eq_two[x2];
+                        let idx = x1 * eq_two.len() + x2;
+                        let partial: Vec<F> = polys
+                            .iter()
+                            .map(|poly| match poly {
+                                MultilinearPolynomial::LargeScalars(poly) => {
+                                    let z = poly.Z[idx];
+                                    OptimizedMul::mul_01_optimized(eq2_val, z)
+                                }
+                                MultilinearPolynomial::U8Scalars(poly) => {
+                                    let z = poly.coeffs[idx];
+                                    z.field_mul(eq2_val)
+                                }
+                                MultilinearPolynomial::U16Scalars(poly) => {
+                                    let z = poly.coeffs[idx];
+                                    z.field_mul(eq2_val)
+                                }
+                                MultilinearPolynomial::U32Scalars(poly) => {
+                                    let z = poly.coeffs[idx];
+                                    z.field_mul(eq2_val)
+                                }
+                                MultilinearPolynomial::U64Scalars(poly) => {
+                                    let z = poly.coeffs[idx];
+                                    z.field_mul(eq2_val)
+                                }
+                                MultilinearPolynomial::I64Scalars(poly) => {
+                                    let z = poly.coeffs[idx];
+                                    z.field_mul(eq2_val)
+                                }
+                                _ => unimplemented!(),
+                            })
+                            .collect();
+
+                        Some(partial)
+                    })
+                    .reduce(
+                        || vec![F::zero(); num_polys],
+                        |mut acc, item| {
+                            for i in 0..num_polys {
+                                acc[i] += item[i];
+                            }
+                            acc
+                        },
+                    );
+                // now inner_sums[i] = eq1[x1]*\sum_{x_2} eq2[x2]*f(x1||x2)
+                inner_sums
+                    .into_iter()
+                    .map(|s| OptimizedMul::mul_01_optimized(eq1_val, s))
+                    .collect::<Vec<_>>()
+            })
+            .reduce(
+                || vec![F::zero(); num_polys],
+                |mut acc, item| {
+                    for i in 0..num_polys {
+                        acc[i] += item[i];
                     }
-                    _ => poly.dot_product(&eq),
-                })
-                .collect();
-            (evals, eq)
-        } else {
-            let evals: Vec<F> = polys
-                .into_par_iter()
-                .map(|&poly| {
-                    let poly: &DensePolynomial<F> = poly.try_into().unwrap();
-                    poly.evaluate_at_chi_low_optimized(&eq)
-                })
-                .collect();
-            (evals, eq)
-        }
+                    acc
+                },
+            );
+        evals
     }
 
     #[inline]

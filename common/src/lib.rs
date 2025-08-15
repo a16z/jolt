@@ -5,4 +5,4 @@ extern crate alloc;
 
 pub mod attributes;
 pub mod constants;
-pub mod rv_trace;
+pub mod jolt_device;

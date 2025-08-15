@@ -1,4 +1,4 @@
-use jolt_core::jolt::{subtable::LassoSubtable, vm::rv32i_vm::RV32ISubtables};
+use jolt_core::jolt::{subtable::LassoSubtable, vm::rv32im_vm::RV32ISubtables};
 use strum::IntoEnumIterator as _;
 
 use crate::{
