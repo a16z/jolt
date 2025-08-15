@@ -3,8 +3,8 @@ use crate::field::JoltField;
 use std::cmp::Ordering;
 use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign, Sub};
 
+use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::utils::gaussian_elimination::gaussian_elimination;
-use crate::utils::transcript::{AppendToTranscript, Transcript};
 use ark_serialize::*;
 use num::Integer;
 use rand_core::{CryptoRng, RngCore};

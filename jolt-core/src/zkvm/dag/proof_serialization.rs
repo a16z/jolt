@@ -22,7 +22,7 @@ use crate::{
         },
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::transcript::Transcript,
+    transcripts::Transcript,
     zkvm::{
         dag::state_manager::{ProofData, ProofKeys, Proofs, StateManager, VerifierState},
         witness::{CommittedPolynomial, VirtualPolynomial},

@@ -18,10 +18,10 @@ use crate::{
         opening_proof::ProverOpeningAccumulator,
     },
     subprotocols::sumcheck::SumcheckInstance,
+    transcripts::Transcript,
     utils::{
         math::Math,
         thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
-        transcript::Transcript,
     },
 };
 use rayon::prelude::*;

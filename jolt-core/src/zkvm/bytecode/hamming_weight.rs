@@ -11,7 +11,8 @@ use crate::{
         },
     },
     subprotocols::sumcheck::SumcheckInstance,
-    utils::{math::Math, transcript::Transcript},
+    transcripts::Transcript,
+    utils::math::Math,
     zkvm::dag::state_manager::StateManager,
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };

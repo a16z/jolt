@@ -22,12 +22,12 @@ use crate::{
         prefix_suffix::{Prefix, PrefixRegistry, PrefixSuffixDecomposition},
     },
     subprotocols::sumcheck::SumcheckInstance,
+    transcripts::Transcript,
     utils::{
         expanding_table::ExpandingTable,
         lookup_bits::LookupBits,
         math::Math,
         thread::{unsafe_allocate_zero_vec, unsafe_zero_slice},
-        transcript::Transcript,
     },
     zkvm::{
         dag::state_manager::StateManager,
@@ -769,7 +769,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
 mod tests {
     use super::*;
     use crate::subprotocols::sumcheck::BatchedSumcheck;
-    use crate::utils::transcript::KeccakTranscript;
+    use crate::transcripts::Blake2bTranscript;
     use crate::{
         poly::commitment::mock::MockCommitScheme,
         zkvm::{
@@ -885,13 +885,13 @@ mod tests {
         };
         let final_memory_state = Memory::default();
 
-        let mut prover_sm = StateManager::<'_, Fr, KeccakTranscript, _>::new_prover(
+        let mut prover_sm = StateManager::<'_, Fr, Blake2bTranscript, _>::new_prover(
             &prover_preprocessing,
             trace.clone(),
             program_io.clone(),
             final_memory_state,
         );
-        let mut verifier_sm = StateManager::<'_, Fr, KeccakTranscript, _>::new_verifier(
+        let mut verifier_sm = StateManager::<'_, Fr, Blake2bTranscript, _>::new_verifier(
             &verifier_preprocessing,
             program_io,
             trace.len(),

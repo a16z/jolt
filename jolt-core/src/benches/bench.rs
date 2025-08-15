@@ -6,6 +6,7 @@ use crate::subprotocols::optimization::{
 };
 use crate::subprotocols::toom::FieldMulSmall;
 use crate::subprotocols::twist::{TwistAlgorithm, TwistProof};
+use crate::transcripts::{Blake2bTranscript, Transcript};
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::transcript::{KeccakTranscript, Transcript};
