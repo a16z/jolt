@@ -1,10 +1,23 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
+use super::add::ADD;
+use super::amo::{amo_post32, amo_post64, amo_pre32, amo_pre64};
+use super::mul::MUL;
+use super::slt::SLT;
+use super::virtual_move::VirtualMove;
+use super::virtual_sign_extend::VirtualSignExtend;
+use super::xori::XORI;
+use super::RV32IMInstruction;
+use crate::instruction::format::format_i::FormatI;
+use crate::utils::virtual_registers::allocate_virtual_register;
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+};
 
 use super::{
     format::{format_r::FormatR, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
+    RISCVInstruction, RISCVTrace, RV32IMCycle,
 };
 
 declare_riscv_instr!(
@@ -42,4 +55,281 @@ impl AMOMAXW {
     }
 }
 
-impl RISCVTrace for AMOMAXW {}
+impl RISCVTrace for AMOMAXW {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+        let inline_sequence = self.inline_sequence(cpu.xlen);
+        let mut trace = trace;
+        for instr in inline_sequence {
+            // In each iteration, create a new Option containing a re-borrowed reference
+            instr.trace(cpu, trace.as_deref_mut());
+        }
+    }
+
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+        match xlen {
+            Xlen::Bit32 => self.inline_sequence_32(xlen),
+            Xlen::Bit64 => self.inline_sequence_64(xlen),
+        }
+    }
+}
+
+impl AMOMAXW {
+    fn inline_sequence_32(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+        let v_rd = allocate_virtual_register();
+        let v_rs2 = allocate_virtual_register();
+        let v_sel_rs2 = allocate_virtual_register();
+        let v_sel_rd = allocate_virtual_register();
+        let v_tmp = allocate_virtual_register();
+
+        let mut sequence = vec![];
+        let mut remaining = 10;
+        remaining = amo_pre32(
+            &mut sequence,
+            self.address,
+            self.is_compressed,
+            self.operands.rs1,
+            *v_rd,
+            remaining,
+        );
+
+        let mov = VirtualMove {
+            address: self.address,
+            operands: FormatI {
+                rd: *v_rs2,
+                rs1: self.operands.rs2,
+                imm: 0,
+            },
+            inline_sequence_remaining: Some(remaining),
+            is_compressed: self.is_compressed,
+        };
+        sequence.push(mov.into());
+        remaining -= 1;
+
+        let mov = VirtualMove {
+            address: self.address,
+            operands: FormatI {
+                rd: *v_tmp,
+                rs1: *v_rd,
+                imm: 0,
+            },
+            inline_sequence_remaining: Some(remaining),
+            is_compressed: self.is_compressed,
+        };
+        sequence.push(mov.into());
+        remaining -= 1;
+
+        let slt = SLT {
+            address: self.address,
+            operands: FormatR {
+                rd: *v_sel_rs2,
+                rs1: *v_tmp,
+                rs2: *v_rs2,
+            },
+            inline_sequence_remaining: Some(remaining),
+            is_compressed: self.is_compressed,
+        };
+        sequence.push(slt.into());
+        remaining -= 1;
+
+        let xori = XORI {
+            address: self.address,
+            operands: FormatI {
+                rd: *v_sel_rd,
+                rs1: *v_sel_rs2,
+                imm: 1,
+            },
+            inline_sequence_remaining: Some(remaining),
+            is_compressed: self.is_compressed,
+        };
+        sequence.push(xori.into());
+        remaining -= 1;
+
+        let mul = MUL {
+            address: self.address,
+            operands: FormatR {
+                rd: *v_rs2,
+                rs1: *v_sel_rs2,
+                rs2: self.operands.rs2,
+            },
+            inline_sequence_remaining: Some(remaining),
+            is_compressed: self.is_compressed,
+        };
+        sequence.push(mul.into());
+        remaining -= 1;
+
+        let mul = MUL {
+            address: self.address,
+            operands: FormatR {
+                rd: *v_tmp,
+                rs1: *v_sel_rd,
+                rs2: *v_rd,
+            },
+            inline_sequence_remaining: Some(remaining),
+            is_compressed: self.is_compressed,
+        };
+        sequence.push(mul.into());
+        remaining -= 1;
+
+        let add = ADD {
+            address: self.address,
+            operands: FormatR {
+                rd: *v_rs2,
+                rs1: *v_tmp,
+                rs2: *v_rs2,
+            },
+            inline_sequence_remaining: Some(remaining),
+            is_compressed: self.is_compressed,
+        };
+        sequence.push(add.into());
+        remaining -= 1;
+
+        amo_post32(
+            &mut sequence,
+            self.address,
+            self.is_compressed,
+            *v_rs2,
+            self.operands.rs1,
+            self.operands.rd,
+            *v_rd,
+            remaining,
+        );
+
+        sequence
+    }
+
+    fn inline_sequence_64(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+        // Virtual registers used in sequence
+        let v_mask = allocate_virtual_register();
+        let v_dword_address = allocate_virtual_register();
+        let v_dword = allocate_virtual_register();
+        let v_word = allocate_virtual_register();
+        let v_shift = allocate_virtual_register();
+        let v_rd = allocate_virtual_register();
+        let v_rs2 = allocate_virtual_register();
+        let v_sel_rs2 = allocate_virtual_register();
+        let v_sel_rd = allocate_virtual_register();
+        let v_tmp = allocate_virtual_register();
+
+        let mut sequence = vec![];
+        let mut remaining = 23;
+        remaining = amo_pre64(
+            &mut sequence,
+            self.address,
+            self.is_compressed,
+            self.operands.rs1,
+            *v_rd,
+            *v_dword_address,
+            *v_dword,
+            *v_shift,
+            remaining,
+        );
+
+        let signext = VirtualSignExtend {
+            address: self.address,
+            operands: FormatI {
+                rd: *v_rs2,
+                rs1: self.operands.rs2,
+                imm: 0,
+            },
+            inline_sequence_remaining: Some(remaining),
+            is_compressed: self.is_compressed,
+        };
+        sequence.push(signext.into());
+        remaining -= 1;
+
+        let signext = VirtualSignExtend {
+            address: self.address,
+            operands: FormatI {
+                rd: *v_tmp,
+                rs1: *v_rd,
+                imm: 0,
+            },
+            inline_sequence_remaining: Some(remaining),
+            is_compressed: self.is_compressed,
+        };
+        sequence.push(signext.into());
+        remaining -= 1;
+
+        let slt = SLT {
+            address: self.address,
+            operands: FormatR {
+                rd: *v_sel_rs2,
+                rs1: *v_tmp,
+                rs2: *v_rs2,
+            },
+            inline_sequence_remaining: Some(remaining),
+            is_compressed: self.is_compressed,
+        };
+        sequence.push(slt.into());
+        remaining -= 1;
+
+        let xori = XORI {
+            address: self.address,
+            operands: FormatI {
+                rd: *v_sel_rd,
+                rs1: *v_sel_rs2,
+                imm: 1,
+            },
+            inline_sequence_remaining: Some(remaining),
+            is_compressed: self.is_compressed,
+        };
+        sequence.push(xori.into());
+        remaining -= 1;
+
+        let mul = MUL {
+            address: self.address,
+            operands: FormatR {
+                rd: *v_rs2,
+                rs1: *v_sel_rs2,
+                rs2: self.operands.rs2,
+            },
+            inline_sequence_remaining: Some(remaining),
+            is_compressed: self.is_compressed,
+        };
+        sequence.push(mul.into());
+        remaining -= 1;
+
+        let mul = MUL {
+            address: self.address,
+            operands: FormatR {
+                rd: *v_tmp,
+                rs1: *v_sel_rd,
+                rs2: *v_rd,
+            },
+            inline_sequence_remaining: Some(remaining),
+            is_compressed: self.is_compressed,
+        };
+        sequence.push(mul.into());
+        remaining -= 1;
+
+        let add = ADD {
+            address: self.address,
+            operands: FormatR {
+                rd: *v_rs2,
+                rs1: *v_tmp,
+                rs2: *v_rs2,
+            },
+            inline_sequence_remaining: Some(remaining),
+            is_compressed: self.is_compressed,
+        };
+        sequence.push(add.into());
+        remaining -= 1;
+
+        amo_post64(
+            &mut sequence,
+            self.address,
+            self.is_compressed,
+            *v_rs2,
+            *v_dword_address,
+            *v_dword,
+            *v_shift,
+            *v_mask,
+            *v_word,
+            self.operands.rd,
+            *v_rd,
+            remaining,
+        );
+
+        sequence
+    }
+}

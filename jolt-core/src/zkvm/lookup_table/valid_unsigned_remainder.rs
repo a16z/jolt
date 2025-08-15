@@ -10,7 +10,7 @@ use crate::{field::JoltField, utils::uninterleave_bits};
 pub struct ValidUnsignedRemainderTable<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for ValidUnsignedRemainderTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+    fn materialize_entry(&self, index: u128) -> u64 {
         let (remainder, divisor) = uninterleave_bits(index);
         (divisor == 0 || remainder < divisor).into()
     }
@@ -60,6 +60,7 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
+    use common::constants::XLEN;
 
     use super::ValidUnsignedRemainderTable;
 
@@ -70,11 +71,11 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, ValidUnsignedRemainderTable<32>>();
+        lookup_table_mle_random_test::<Fr, ValidUnsignedRemainderTable<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, ValidUnsignedRemainderTable<32>>();
+        prefix_suffix_test::<XLEN, Fr, ValidUnsignedRemainderTable<XLEN>>();
     }
 }

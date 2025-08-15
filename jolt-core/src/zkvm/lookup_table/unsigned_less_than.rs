@@ -11,7 +11,7 @@ use super::{
 pub struct UnsignedLessThanTable<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for UnsignedLessThanTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+    fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
         (x < y).into()
     }
@@ -53,12 +53,13 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
+    use common::constants::XLEN;
 
     use super::UnsignedLessThanTable;
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, UnsignedLessThanTable<32>>();
+        prefix_suffix_test::<XLEN, Fr, UnsignedLessThanTable<XLEN>>();
     }
 
     #[test]
@@ -68,6 +69,6 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, UnsignedLessThanTable<32>>();
+        lookup_table_mle_random_test::<Fr, UnsignedLessThanTable<XLEN>>();
     }
 }

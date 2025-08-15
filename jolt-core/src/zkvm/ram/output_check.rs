@@ -54,8 +54,8 @@ struct OutputSumcheckProverState<F: JoltField> {
 impl<F: JoltField> OutputSumcheckProverState<F> {
     #[tracing::instrument(skip_all, name = "OutputSumcheckProverState::initialize")]
     fn new(
-        initial_ram_state: Vec<u32>,
-        final_ram_state: Vec<u32>,
+        initial_ram_state: Vec<u64>,
+        final_ram_state: Vec<u64>,
         program_io: &JoltDevice,
         r_address: &[F],
     ) -> Self {
@@ -130,8 +130,8 @@ pub struct OutputSumcheck<F: JoltField> {
 impl<F: JoltField> OutputSumcheck<F> {
     #[tracing::instrument(skip_all, name = "OutputSumcheck")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        initial_ram_state: Vec<u32>,
-        final_ram_state: Vec<u32>,
+        initial_ram_state: Vec<u64>,
+        final_ram_state: Vec<u64>,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         let (_, _, program_io, _) = state_manager.get_prover_data();
@@ -282,8 +282,11 @@ impl<F: JoltField> SumcheckInstance<F> for OutputSumcheck<F> {
                 program_io.memory_layout.input_start,
                 &program_io.memory_layout,
             )
-            .unwrap(),
-            remap_address(RAM_START_ADDRESS, &program_io.memory_layout).unwrap(),
+            .unwrap()
+            .into(),
+            remap_address(RAM_START_ADDRESS, &program_io.memory_layout)
+                .unwrap()
+                .into(),
         );
         let val_io = ProgramIOPolynomial::new(program_io);
 
@@ -446,7 +449,7 @@ impl<F: JoltField> ValFinalSumcheck<F> {
     }
 
     pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        initial_ram_state: &[u32],
+        initial_ram_state: &[u64],
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         let (_, _, T) = state_manager.get_verifier_data();

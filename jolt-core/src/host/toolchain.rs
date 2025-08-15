@@ -45,7 +45,7 @@ pub fn install_toolchain() -> Result<()> {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn install_no_std_toolchain() -> Result<()> {
     std::process::Command::new("rustup")
-        .args(["target", "add", "riscv32im-unknown-none-elf"])
+        .args(["target", "add", "riscv64imac-unknown-none-elf"])
         .output()?;
     std::process::Command::new("rustup")
         .args(["target", "add", "riscv64imac-unknown-none-elf"])
@@ -183,7 +183,7 @@ fn toolchain_url(channel: &str) -> String {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn uninstall_no_std_toolchain() -> Result<()> {
     std::process::Command::new("rustup")
-        .args(["target", "remove", "riscv32im-unknown-none-elf"])
+        .args(["target", "remove", "riscv64imac-unknown-none-elf"])
         .output()?;
     std::process::Command::new("rustup")
         .args(["target", "remove", "riscv64imac-unknown-none-elf"])

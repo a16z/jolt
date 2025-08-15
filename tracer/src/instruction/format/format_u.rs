@@ -45,7 +45,7 @@ impl InstructionFormat for FormatU {
 			} | // imm[63:32] = [31]
 			((word as u64) & 0xfffff000)
                 // imm[31:12] = [31:12]
-            ) as i32 as u32 as u64,
+            ) as i32 as i64 as u64,
         }
     }
 
@@ -63,13 +63,24 @@ impl InstructionFormat for FormatU {
             imm: rng.next_u64(),
         }
     }
+}
 
-    fn normalize(&self) -> NormalizedOperands {
-        NormalizedOperands {
+impl From<NormalizedOperands> for FormatU {
+    fn from(operands: NormalizedOperands) -> Self {
+        Self {
+            rd: operands.rd,
+            imm: operands.imm as u64,
+        }
+    }
+}
+
+impl From<FormatU> for NormalizedOperands {
+    fn from(format: FormatU) -> Self {
+        Self {
             rs1: 0,
             rs2: 0,
-            rd: self.rd,
-            imm: self.imm as i64,
+            rd: format.rd,
+            imm: format.imm as i128,
         }
     }
 }

@@ -20,35 +20,39 @@ impl InstructionFlags for VirtualAssertHalfwordAlignment {
         flags[CircuitFlags::RightOperandIsImm as usize] = true;
         flags[CircuitFlags::AddOperands as usize] = true;
         flags[CircuitFlags::InlineSequenceInstruction as usize] =
-            self.virtual_sequence_remaining.is_some();
+            self.inline_sequence_remaining.is_some();
         flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
-            self.virtual_sequence_remaining.unwrap_or(0) != 0;
+            self.inline_sequence_remaining.unwrap_or(0) != 0;
+        flags[CircuitFlags::IsCompressed as usize] = self.is_compressed;
         flags
     }
 }
 
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualAssertHalfwordAlignment> {
-    fn to_lookup_operands(&self) -> (u64, u64) {
+    fn to_lookup_operands(&self) -> (u64, u128) {
         let (address, offset) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
-        (0, (address as i64 + offset) as u64)
+        (0, (address as i128 + offset) as u128)
     }
 
-    fn to_lookup_index(&self) -> u64 {
+    fn to_lookup_index(&self) -> u128 {
         LookupQuery::<WORD_SIZE>::to_lookup_operands(self).1
     }
 
-    fn to_instruction_inputs(&self) -> (u64, i64) {
+    fn to_instruction_inputs(&self) -> (u64, i128) {
         match WORD_SIZE {
             #[cfg(test)]
             8 => (
                 self.register_state.rs1 as u8 as u64,
-                self.instruction.operands.imm as u8 as i64,
+                self.instruction.operands.imm as u8 as i128,
             ),
             32 => (
                 self.register_state.rs1 as u32 as u64,
-                self.instruction.operands.imm as u32 as i64,
+                self.instruction.operands.imm as u32 as i128,
             ),
-            64 => (self.register_state.rs1, self.instruction.operands.imm),
+            64 => (
+                self.register_state.rs1,
+                self.instruction.operands.imm as i128,
+            ),
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }

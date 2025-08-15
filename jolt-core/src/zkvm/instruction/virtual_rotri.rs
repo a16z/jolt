@@ -17,18 +17,19 @@ impl InstructionFlags for VirtualROTRI {
         flags[CircuitFlags::RightOperandIsImm as usize] = true;
         flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
         flags[CircuitFlags::InlineSequenceInstruction as usize] =
-            self.virtual_sequence_remaining.is_some();
+            self.inline_sequence_remaining.is_some();
         flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
-            self.virtual_sequence_remaining.unwrap_or(0) != 0;
+            self.inline_sequence_remaining.unwrap_or(0) != 0;
+        flags[CircuitFlags::IsCompressed as usize] = self.is_compressed;
         flags
     }
 }
 
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualROTRI> {
-    fn to_instruction_inputs(&self) -> (u64, i64) {
+    fn to_instruction_inputs(&self) -> (u64, i128) {
         (
             self.register_state.rs1,
-            self.instruction.operands.imm as i64,
+            self.instruction.operands.imm as i128,
         )
     }
 

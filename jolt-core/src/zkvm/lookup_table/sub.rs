@@ -10,8 +10,8 @@ use super::JoltLookupTable;
 pub struct SubTable<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for SubTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
-        index % (1 << WORD_SIZE)
+    fn materialize_entry(&self, index: u128) -> u64 {
+        (index % (1u128 << WORD_SIZE)) as u64
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
@@ -43,12 +43,13 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
+    use common::constants::XLEN;
 
     use super::SubTable;
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, SubTable<32>>();
+        prefix_suffix_test::<XLEN, Fr, SubTable<XLEN>>();
     }
 
     #[test]
@@ -58,6 +59,6 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, SubTable<32>>();
+        lookup_table_mle_random_test::<Fr, SubTable<XLEN>>();
     }
 }

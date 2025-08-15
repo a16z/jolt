@@ -11,9 +11,9 @@ use crate::utils::uninterleave_bits;
 pub struct OrTable<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for OrTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+    fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
-        (x | y) as u64
+        x | y
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
@@ -48,12 +48,13 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
+    use common::constants::XLEN;
 
     use super::OrTable;
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, OrTable<32>>();
+        prefix_suffix_test::<XLEN, Fr, OrTable<XLEN>>();
     }
 
     #[test]
@@ -63,6 +64,6 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, OrTable<32>>();
+        lookup_table_mle_random_test::<Fr, OrTable<XLEN>>();
     }
 }

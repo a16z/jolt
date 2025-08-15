@@ -455,7 +455,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
     }
 }
 
-#[allow(dead_code)]
 pub fn serialize_and_print_size(
     item_name: &str,
     file_name: &str,

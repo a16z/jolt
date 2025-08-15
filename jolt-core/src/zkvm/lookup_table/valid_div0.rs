@@ -11,12 +11,12 @@ use crate::{field::JoltField, utils::uninterleave_bits};
 pub struct ValidDiv0Table<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for ValidDiv0Table<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+    fn materialize_entry(&self, index: u128) -> u64 {
         let (divisor, quotient) = uninterleave_bits(index);
         if divisor == 0 {
             match WORD_SIZE {
-                8 => (quotient == u8::MAX as u32).into(),
-                32 => (quotient == u32::MAX).into(),
+                8 => (quotient == u8::MAX as u64).into(),
+                32 => (quotient == u32::MAX as u64).into(),
                 _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
             }
         } else {
@@ -70,6 +70,7 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
+    use common::constants::XLEN;
 
     use super::ValidDiv0Table;
 
@@ -80,11 +81,11 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, ValidDiv0Table<32>>();
+        lookup_table_mle_random_test::<Fr, ValidDiv0Table<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, ValidDiv0Table<32>>();
+        prefix_suffix_test::<XLEN, Fr, ValidDiv0Table<XLEN>>();
     }
 }

@@ -14,7 +14,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for Pow2Prefix<W
         b: LookupBits,
         j: usize,
     ) -> F {
-        if current_suffix_len(2 * WORD_SIZE, j) != 0 {
+        if current_suffix_len(j) != 0 {
             // Handled by suffix
             return F::one();
         }
@@ -26,8 +26,8 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for Pow2Prefix<W
 
         let mut result = F::from_u64(1 << (b % WORD_SIZE));
         let mut num_bits = b.len();
-        let mut shift = 1 << (1 << num_bits);
-        result *= F::from_u32(1 + (shift - 1) * c);
+        let mut shift = 1u64 << (1u64 << num_bits);
+        result *= F::from_u64(1 + (shift - 1) * c as u64);
 
         // Shift amount is [c, b]
         if b.len() == WORD_SIZE.log_2() - 1 {
@@ -38,7 +38,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for Pow2Prefix<W
         num_bits += 1;
         shift = 1 << (1 << num_bits);
         if let Some(r_x) = r_x {
-            result *= F::one() + F::from_u32(shift - 1) * r_x;
+            result *= F::one() + F::from_u64(shift - 1) * r_x;
         }
 
         result *= checkpoints[Prefixes::Pow2].unwrap_or(F::one());
@@ -51,7 +51,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for Pow2Prefix<W
         r_y: F,
         j: usize,
     ) -> PrefixCheckpoint<F> {
-        if current_suffix_len(2 * WORD_SIZE, j) != 0 {
+        if current_suffix_len(j) != 0 {
             return Some(F::one()).into();
         }
 

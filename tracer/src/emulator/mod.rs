@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 // @TODO: temporal
 const TEST_MEMORY_CAPACITY: u64 = 1024 * 512 * 100;
 const PROGRAM_MEMORY_CAPACITY: u64 = EMULATOR_MEMORY_CAPACITY; // big enough to run Linux and xv6
@@ -28,6 +26,7 @@ pub mod elf_analyzer;
 pub mod memory;
 pub mod mmu;
 pub mod terminal;
+pub mod test_harness;
 
 use self::cpu::{Cpu, Xlen};
 use self::elf_analyzer::ElfAnalyzer;
@@ -163,7 +162,7 @@ impl Emulator {
     /// * `data` Program binary
     // @TODO: Make ElfAnalyzer and move the core logic there.
     // @TODO: Returns `Err` if the passed contend doesn't seem ELF file
-    pub fn setup_program(&mut self, data: Vec<u8>) {
+    pub fn setup_program(&mut self, data: &[u8]) {
         let analyzer = ElfAnalyzer::new(data);
 
         if !analyzer.validate() {

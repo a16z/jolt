@@ -47,3 +47,5 @@ common = { path = "../common", default-features = false }
 postcard = { version = "1.0.8", default-features = false }
 lazy_static = "1.4"
 
+[dev-dependencies]
+hex-literal = "0.4.1"

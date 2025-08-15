@@ -1,13 +1,14 @@
 use crate::{field::JoltField, zkvm::instruction::LookupQuery};
+use common::constants::XLEN;
 use rand::prelude::*;
 use tracer::instruction::{RISCVCycle, RISCVInstruction};
 
 use super::InstructionLookup;
 
-pub fn materialize_entry_test<F: JoltField, T: RISCVInstruction + Default>()
+pub fn materialize_entry_test<F: JoltField, T>()
 where
-    RISCVCycle<T>: LookupQuery<32>,
-    T: InstructionLookup<32>,
+    RISCVCycle<T>: LookupQuery<XLEN>,
+    T: InstructionLookup<XLEN> + RISCVInstruction + Default,
 {
     let cycle: RISCVCycle<T> = Default::default();
     let table = cycle.instruction.lookup_table().unwrap();

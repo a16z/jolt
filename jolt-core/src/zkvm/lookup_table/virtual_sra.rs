@@ -13,10 +13,10 @@ use crate::zkvm::lookup_table::prefixes::Prefixes;
 pub struct VirtualSRATable<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for VirtualSRATable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+    fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
-        let mut x = LookupBits::new(x as u64, WORD_SIZE);
-        let mut y = LookupBits::new(y as u64, WORD_SIZE);
+        let mut x = LookupBits::new(x as u128, WORD_SIZE);
+        let mut y = LookupBits::new(y as u128, WORD_SIZE);
 
         let sign_bit = if x.leading_ones() == 0 { 0 } else { 1 };
         let mut entry = 0;
@@ -70,7 +70,7 @@ impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for VirtualSRA
     }
 
     #[cfg(test)]
-    fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u64 {
+    fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u128 {
         super::test::gen_bitmask_lookup_index(rng)
     }
 }
@@ -83,6 +83,7 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
+    use common::constants::XLEN;
 
     #[test]
     fn mle_full_hypercube() {
@@ -91,11 +92,11 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, VirtualSRATable<32>>();
+        lookup_table_mle_random_test::<Fr, VirtualSRATable<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, VirtualSRATable<32>>();
+        prefix_suffix_test::<XLEN, Fr, VirtualSRATable<XLEN>>();
     }
 }
