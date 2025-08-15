@@ -173,19 +173,9 @@ impl<F: JoltField> RASumCheck<F> {
             SumcheckId::InstructionReadRaf,
         );
 
-        // TODO: create a helper function for this
         let (r_address, r_cycle) = r.split_at_r(log_K);
+        assert!(r_address.len().is_multiple_of(DTH_ROOT_OF_K.log_2()));
 
-        let r_address = if r_address.len().is_multiple_of(DTH_ROOT_OF_K.log_2()) {
-            r_address.to_vec()
-        } else {
-            // Pad with zeros
-            [
-                &vec![F::zero(); DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())],
-                r_address,
-            ]
-            .concat()
-        };
         // Split r_address into d chunks of variable sizes
         let r_address_chunks: Vec<Vec<F>> = r_address
             .chunks(DTH_ROOT_OF_K.log_2())
