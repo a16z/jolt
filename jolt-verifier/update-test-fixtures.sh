@@ -12,7 +12,7 @@ FIXTURES_DIR="$SCRIPT_DIR/tests/fixtures"
 
 cd "$PROJECT_ROOT"
 
-cargo run --release -p fibonacci -- --save
+cargo run --profile build-fast -p fibonacci -- --save
 
 cp /tmp/jolt_verifier_preprocessing.dat "$FIXTURES_DIR/"
 cp /tmp/fib_proof.bin "$FIXTURES_DIR/"
