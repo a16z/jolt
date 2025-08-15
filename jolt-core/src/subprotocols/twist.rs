@@ -409,7 +409,8 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
     // Inc(k, j, j') * Lt(j', r) as j' ranges over {0, 1}^i.
     // for round i, where r = (r_1, ..., r_i) is the vector of committed cycle variables in F.
     // Similarly, INC represents the sum of Inc(k, j, j') over the same range of j'.
-    // Table I in round i has size T / 2^i.
+    // The number of (nonzero) elements in I shrinks by ≤2 in each round, depending on locality.
+    // If you view I as a matrix, however, the number of rows in round i is T / 2^i.
 
     // Note this I differs from the data structure described in Equation (72)
     let mut I: Vec<Vec<(usize, usize, F, F)>> = write_addresses
@@ -477,7 +478,7 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
     /// A collection of vectors that are used in each of the first log(T / num_chunks)
     /// rounds of sumcheck. There is one `DataBuffers` struct per thread/chunk, reused
     /// across all log(T / num_chunks) rounds. Each vector has length K.
-    /// In the documentation below, by we (j'', j', r_i, ..., r_1) we mean the the
+    /// In the documentation below, by we (j'', j', r_i, ..., r_1) we mean the
     /// concatenation of the vectors j'', j', (r_i, ..., r_1), where the (r_j)s
     /// correspond to the i least significant bits. Notice this is different from
     /// the endianness used in the paper.
