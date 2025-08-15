@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755107184463,
+  "lastUpdate": 1755265743755,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -12202,6 +12202,150 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 589968,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "53157953+markosg04@users.noreply.github.com",
+            "name": "Markos",
+            "username": "markosg04"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "35a4df4df70e82408b899478e531ad6328405c86",
+          "message": "Feat: transcript optimizations (#859)\n\n* feat: 128 bit transcript scalars\n\n* testing 128 bit scalars\n\n* remove powers in prepare_sumcheck\n\n* feat: blake2b transcript\n\n* style: transcript -> transcripts\n\n* tests passing\n\n* feat: KeccakTranscript -> Blake2bTranscript\n\n* fix: clippy\n\n* fix: fixtures\n\n* fix: bench fib number\n\n* fix: delete old transcript file\n\n* fix: from_bytes PR comment",
+          "timestamp": "2025-08-15T06:15:33-07:00",
+          "tree_id": "dcbe2ba44e571d4b1960f524c91df0fc45c0a81d",
+          "url": "https://github.com/a16z/jolt/commit/35a4df4df70e82408b899478e531ad6328405c86"
+        },
+        "date": 1755265742973,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 3.4042,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 453440,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 3941168,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 2.8574,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 474268,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 2.488,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 476224,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 2.4778,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 473508,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 1.6983,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 624984,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 110.2791,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 9239252,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 3.5316,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 484628,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 9.5497,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 493312,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 4.1927,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 581364,
             "unit": "KB",
             "extra": ""
           }
