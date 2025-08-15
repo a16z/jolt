@@ -1838,7 +1838,7 @@ impl<F: JoltField> EqTable<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transcripts::Blake2bTranscript;
+    use crate::transcripts::{Blake2bTranscript, KeccakTranscript};
     use ark_bn254::Fr;
     use ark_std::test_rng;
     use rand_core::RngCore;
