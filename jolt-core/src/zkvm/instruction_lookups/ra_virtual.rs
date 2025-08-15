@@ -1,5 +1,9 @@
-use rayon::iter::{
-    IndexedParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator,
+use rayon::{
+    iter::{
+        IndexedParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator,
+        ParallelIterator,
+    },
+    slice::ParallelSlice,
 };
 use tracer::instruction::RV32IMCycle;
 
@@ -46,14 +50,9 @@ pub struct RAProverState<F: JoltField> {
 
 impl<F: JoltField> RASumCheck<F> {
     fn compute_ra_i_polys(
-        d: usize,
         trace: &[RV32IMCycle],
         state_manager: &StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Vec<MultilinearPolynomial<F>> {
-        // Compute ra_i_polys for each i
-        let mut ra_i_polys: Vec<MultilinearPolynomial<F>> = Vec::with_capacity(d);
-
-        // TODO: This really needs cleaning up. For now, I follow the relevant code in instruction read_raf_checking.rs that materializes ra as the address variables are bounded.
         let lookup_indices: Vec<_> = trace
             .par_iter()
             .map(|cycle| LookupBits::new(LookupQuery::<WORD_SIZE>::to_lookup_index(cycle), LOG_K))
@@ -73,38 +72,25 @@ impl<F: JoltField> RASumCheck<F> {
 
         assert!(r_address.len().is_multiple_of(LOG_M));
 
-        for (round, r_j) in r_address.iter().enumerate() {
-            v[(round % LOG_M) / LOG_K_CHUNK].update(*r_j);
-
-            // If this is the last round in the phase.
-            if (round + 1).is_multiple_of(LOG_M) {
-                let phase = round / LOG_M;
-                // Materialize two RAs.
-                let new_ra_arr = v
+        r_address
+            .par_chunks(LOG_K_CHUNK)
+            .enumerate()
+            .map(|(i, chunk)| {
+                let eq = EqPolynomial::evals(chunk);
+                let phase = i / 2;
+                let ra = lookup_indices
                     .par_iter()
-                    .enumerate()
-                    .map(|(i, v)| {
-                        let ra = lookup_indices
-                            .par_iter()
-                            .map(|k| {
-                                let (prefix, _) = k.split((PHASES - 1 - phase) * LOG_M);
-                                let k_bound: usize = ((prefix % M)
-                                    >> (LOG_K_CHUNK * (RA_PER_LOG_M - 1 - i)))
-                                    % K_CHUNK;
-                                v[k_bound]
-                            })
-                            .collect::<Vec<F>>();
-                        MultilinearPolynomial::from(ra)
+                    .map(|k| {
+                        let (prefix, _) = k.split((PHASES - 1 - phase) * LOG_M);
+                        let k_bound: usize = ((prefix % M)
+                            >> (LOG_K_CHUNK * (RA_PER_LOG_M - 1 - (i % 2))))
+                            % K_CHUNK;
+                        eq[k_bound]
                     })
-                    .collect::<Vec<_>>();
-
-                ra_i_polys.extend(new_ra_arr);
-
-                v.iter_mut().for_each(|v| v.reset(F::one()));
-            }
-        }
-
-        ra_i_polys
+                    .collect::<Vec<F>>();
+                MultilinearPolynomial::from(ra)
+            })
+            .collect()
     }
 
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
@@ -140,7 +126,7 @@ impl<F: JoltField> RASumCheck<F> {
             .collect();
         debug_assert_eq!(r_address_chunks.len(), d);
 
-        let ra_i_polys = Self::compute_ra_i_polys(d, trace, state_manager);
+        let ra_i_polys = Self::compute_ra_i_polys(trace, state_manager);
         let E_table = (1..=T.log_2() - 1)
             .map(|i| EqPolynomial::evals(&r_cycle[i..]))
             .collect::<Vec<_>>();
