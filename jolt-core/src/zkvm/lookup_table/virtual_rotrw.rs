@@ -81,7 +81,7 @@ impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for VirtualRot
 
     #[cfg(test)]
     fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u128 {
-        super::test::gen_bitmask_lookup_index_half(rng)
+        super::test::gen_bitmask_lookup_index(rng)
     }
 }
 

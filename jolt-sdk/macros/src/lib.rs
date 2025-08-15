@@ -269,11 +269,17 @@ impl MacroBuilder {
     }
 
     fn make_compile_func(&self) -> TokenStream2 {
+        let attributes = parse_attributes(&self.attr);
         let imports = self.make_imports();
         let guest_name = self.get_guest_name();
         let set_mem_size = self.make_set_linker_parameters();
         let set_std = self.make_set_std();
 
+        let channel = if attributes.nightly {
+            quote! { "nightly" }
+        } else {
+            quote! { "stable" }
+        };
         let fn_name = self.get_func_name();
         let fn_name_str = fn_name.to_string();
         let compile_fn_name = Ident::new(&format!("compile_{fn_name}"), fn_name.span());
@@ -286,7 +292,7 @@ impl MacroBuilder {
                 program.set_func(#fn_name_str);
                 #set_std
                 #set_mem_size
-                program.build(target_dir);
+                program.build_with_channel(target_dir, #channel);
 
                 program
             }

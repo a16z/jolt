@@ -39,18 +39,9 @@ pub fn lookup_table_mle_full_hypercube_test<F: JoltField, T: JoltLookupTable + D
 }
 
 /// Generates a lookup index where right operand is 111..000
-pub fn gen_bitmask_lookup_index(rng: &mut rand::rngs::StdRng) -> u128 {
+pub fn gen_bitmask_lookup_index(rng: &mut StdRng) -> u128 {
     let x = rng.next_u64();
-    let zeros = rng.gen_range(0, XLEN + 1);
-    let y = (!0u64).wrapping_shl(zeros as u32);
-    interleave_bits(x, y)
-}
-
-/// Generates a lookup index where right operand is 111..000
-/// And number of zeros is at most XLEN / 2
-pub fn gen_bitmask_lookup_index_half(rng: &mut rand::rngs::StdRng) -> u128 {
-    let x = rng.next_u64();
-    let zeros = rng.gen_range(0, XLEN / 2 + 1);
+    let zeros = rng.gen_range(0..=XLEN);
     let y = (!0u64).wrapping_shl(zeros as u32);
     interleave_bits(x, y)
 }

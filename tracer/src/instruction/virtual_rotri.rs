@@ -188,9 +188,9 @@ mod tests {
 
         // choose a random rotation amount within word size
         let shift = if xlen_64 {
-            rng.gen_range(0, 64)
+            rng.gen_range(0..64)
         } else {
-            rng.gen_range(0, 32)
+            rng.gen_range(0..32)
         } as u32;
         let word_size = if xlen_64 { 64 } else { 32 };
 

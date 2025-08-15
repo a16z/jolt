@@ -21,10 +21,14 @@ host = [
     "dep:ark-bn254",
     "postcard/use-std",
     "dep:sha3",
+    "dep:getrandom",
+    "dep:rand",
 ]
 guest-std = [
     "postcard/use-std",
     "jolt-sdk-macros/guest-std",
+    "dep:getrandom",
+    "dep:rand",
 ]
 
 [dependencies]
@@ -39,6 +43,8 @@ jolt-sdk-macros = { path = "./macros" }
 common = { path = "../common", optional = true }
 jolt-core = { path = "../jolt-core", optional = true }
 tracer = { path = "../tracer", optional = true }
+getrandom = { version = "0.2.16", features = ["custom"], optional = true }
+rand = { version = "0.8.5", optional = true }
 
 [dev-dependencies]
 hex-literal = "0.4.1"
