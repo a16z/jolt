@@ -132,7 +132,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         // } else {
         //     assert!(RamAddress == 0)
         // }
-        // A: OpFlag + OpFlag -> [0, 2] -> i8
+        // A: OpFlag + OpFlag -> [0, 1] -> i8 (mutually exclusive)
         // B: (Rs1Value(u64) + Imm(i64)) - 0 -> i65 -> i128
         // C: RamAddress (u64) - 0 -> u64
         let is_load_or_store = JoltR1CSInputs::OpFlags(CircuitFlags::Load)
@@ -206,7 +206,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         // } else {
         //     assert!(LeftLookupOperand == LeftInstructionInput)
         // }
-        // A: OpFlag + OpFlag + OpFlag -> [0, 3] -> i8
+        // A: OpFlag + OpFlag + OpFlag -> [0, 1] -> i8 (exclusive)
         // B: 0 - LeftInstructionInput (u64) -> i65 -> U64AndSign
         // C: LeftLookupOperand (u64) - LeftInstructionInput (u64) -> i65 -> U64AndSign
         cs.constrain_if_else(

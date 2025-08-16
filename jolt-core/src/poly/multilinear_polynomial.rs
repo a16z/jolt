@@ -307,6 +307,20 @@ impl<F: JoltField> MultilinearPolynomial<F> {
         U64AndSign::from(val)
     }
 
+    /// Gets the polynomial coefficient at the given `index`, as a `u128`.
+    /// Accepts unsigned scalar polynomials up to 128 bits (u8, u16, u32, u64, u128).
+    /// Panics for other polynomial types.
+    pub fn get_coeff_u128(&self, index: usize) -> u128 {
+        match self {
+            MultilinearPolynomial::U8Scalars(poly) => poly.coeffs[index] as u128,
+            MultilinearPolynomial::U16Scalars(poly) => poly.coeffs[index] as u128,
+            MultilinearPolynomial::U32Scalars(poly) => poly.coeffs[index] as u128,
+            MultilinearPolynomial::U64Scalars(poly) => poly.coeffs[index] as u128,
+            MultilinearPolynomial::U128Scalars(poly) => poly.coeffs[index],
+            _ => panic!("get_coeff_u128 called on non-unsigned polynomial type"),
+        }
+    }
+
     /// Gets the polynomial coefficient at the given `index`. The polynomial may have
     /// been bound over the course of sumcheck.
     #[inline]
