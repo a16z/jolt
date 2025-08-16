@@ -79,6 +79,9 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         );
 
         // if RightOperandIsRs2Value { assert!(RightInstructionInput == Rs2Value) }
+        // A: OpFlag (boolean)
+        // B: RightInstructionInput (i64) - Rs2Value (u64) -> i128
+        // C: 0
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsRs2Value),
             JoltR1CSInputs::RightInstructionInput,
@@ -92,7 +95,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
 
         // if RightOperandIsImm { assert!(RightInstructionInput == Imm) }
         // A: OpFlag (boolean)
-        // B: RightInstructionInput (u64) - Imm (i64) -> i128 (can exceed u64::MAX)
+        // B: RightInstructionInput (i64) - Imm (i64) -> i128
         // C: 0
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm),
@@ -110,7 +113,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         // }
         // Note that RightOperandIsRs2Value and RightOperandIsImm are mutually exclusive flags
         // A: 1 - OpFlag - OpFlag -> [0, 1] -> i8 (mutually exclusive)
-        // B: RightInstructionInput (u64) - 0 -> u64
+        // B: RightInstructionInput (i64) - 0 -> i128 (just to be safe)
         // C: 0
         cs.constrain_eq_conditional(
             1 - JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsRs2Value)
@@ -119,7 +122,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             0i128,
             ConstraintType {
                 a_type: AzType::I8,
-                b_type: BzType::U64,
+                b_type: BzType::I128,
                 c_type: CzType::Zero,
             },
         );
@@ -129,6 +132,9 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         // } else {
         //     assert!(RamAddress == 0)
         // }
+        // A: OpFlag + OpFlag -> [0, 2] -> i8
+        // B: (Rs1Value(u64) + Imm(i64)) - 0 -> i65 -> i128
+        // C: RamAddress (u64) - 0 -> u64
         let is_load_or_store = JoltR1CSInputs::OpFlags(CircuitFlags::Load)
             + JoltR1CSInputs::OpFlags(CircuitFlags::Store);
         cs.constrain_if_else(
@@ -146,13 +152,16 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         // if Load {
         //     assert!(RamReadValue == RamWriteValue)
         // }
+        // A: OpFlag (boolean)
+        // B: RamReadValue (u64) - RamWriteValue (u64) -> i65 -> U64AndSign
+        // C: 0
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::Load),
             JoltR1CSInputs::RamReadValue,
             JoltR1CSInputs::RamWriteValue,
             ConstraintType {
                 a_type: AzType::I8,
-                b_type: BzType::I128,
+                b_type: BzType::U64AndSign,
                 c_type: CzType::Zero,
             },
         );
@@ -160,13 +169,16 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         // if Load {
         //     assert!(RamReadValue == RdWriteValue)
         // }
+        // A: OpFlag (boolean)
+        // B: RamReadValue (u64) - RdWriteValue (u64) -> i65 -> U64AndSign
+        // C: 0
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::Load),
             JoltR1CSInputs::RamReadValue,
             JoltR1CSInputs::RdWriteValue,
             ConstraintType {
                 a_type: AzType::I8,
-                b_type: BzType::I128,
+                b_type: BzType::U64AndSign,
                 c_type: CzType::Zero,
             },
         );
@@ -174,13 +186,16 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         // if Store {
         //     assert!(Rs2Value == RamWriteValue)
         // }
+        // A: OpFlag (boolean)
+        // B: Rs2Value (u64) - RamWriteValue (u64) -> i65 -> U64AndSign
+        // C: 0
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::Store),
             JoltR1CSInputs::Rs2Value,
             JoltR1CSInputs::RamWriteValue,
             ConstraintType {
                 a_type: AzType::I8,
-                b_type: BzType::I128,
+                b_type: BzType::U64AndSign,
                 c_type: CzType::Zero,
             },
         );
@@ -191,6 +206,9 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         // } else {
         //     assert!(LeftLookupOperand == LeftInstructionInput)
         // }
+        // A: OpFlag + OpFlag + OpFlag -> [0, 3] -> i8
+        // B: 0 - LeftInstructionInput (u64) -> i65 -> U64AndSign
+        // C: LeftLookupOperand (u64) - LeftInstructionInput (u64) -> i65 -> U64AndSign
         cs.constrain_if_else(
             JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands)
                 + JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands)
@@ -200,14 +218,17 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::LeftLookupOperand,
             ConstraintType {
                 a_type: AzType::I8,
-                b_type: BzType::I128,
-                c_type: CzType::U64, // TODO(should be U64AndSign)
+                b_type: BzType::U64AndSign,
+                c_type: CzType::U64AndSign,
             },
         );
 
         // If AddOperands {
         //     assert!(RightLookupOperand == LeftInstructionInput + RightInstructionInput)
         // }
+        // A: OpFlag (boolean)
+        // B: RightLookupOperand (u128) - (L(u64) + R(i64)) -> i129 -> U128AndSign
+        // C: 0
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands),
             JoltR1CSInputs::RightLookupOperand,
@@ -222,6 +243,9 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         // If SubtractOperands {
         //     assert!(RightLookupOperand == LeftInstructionInput - RightInstructionInput)
         // }
+        // A: OpFlag (boolean)
+        // B: RightLookupOperand (u128) - (L(u64) - R(i64) + 2^64) -> i129 -> U128AndSign
+        // C: 0
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands),
             JoltR1CSInputs::RightLookupOperand,
@@ -238,16 +262,24 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         // if MultiplyOperands {
         //     assert!(RightLookupOperand == Rs1Value * Rs2Value)
         // }
+        // Constraint 1: Product = L * R
+        // A: LeftInstructionInput (u64)
+        // B: RightInstructionInput (i64)
+        // C: Product (u128)
         cs.constrain_prod(
-            JoltR1CSInputs::RightInstructionInput,
             JoltR1CSInputs::LeftInstructionInput,
+            JoltR1CSInputs::RightInstructionInput,
             JoltR1CSInputs::Product,
             ConstraintType {
                 a_type: AzType::U64,
-                b_type: BzType::U64,
-                c_type: CzType::U128,
+                b_type: BzType::U64AndSign,
+                c_type: CzType::U128AndSign,
             },
         );
+        // Constraint 2: if Mul { RLookup == Product }
+        // A: OpFlag (boolean)
+        // B: RightLookupOperand (u128) - Product (u128) -> i129 -> U128AndSign
+        // C: 0
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands),
             JoltR1CSInputs::RightLookupOperand,
@@ -262,6 +294,9 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         // if !(AddOperands || SubtractOperands || MultiplyOperands || Advice) {
         //     assert!(RightLookupOperand == RightInstructionInput)
         // }
+        // A: 1 - Flags... -> [-3, 1] -> i8
+        // B: RightLookupOperand (u128) - RightInstructionInput (i64) -> i129 -> U128AndSign
+        // C: 0
         cs.constrain_eq_conditional(
             1 - JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands)
                 - JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands)
@@ -280,6 +315,9 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         // if Assert {
         //     assert!(LookupOutput == 1)
         // }
+        // A: OpFlag (boolean)
+        // B: LookupOutput (u64) - 1 -> i65 -> U64AndSign (if LookupOutput=0, result is -1)
+        // C: 0
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::Assert),
             JoltR1CSInputs::LookupOutput,
@@ -294,6 +332,10 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         // if Rd != 0 && WriteLookupOutputToRD {
         //     assert!(RdWriteValue == LookupOutput)
         // }
+        // Constraint 1: WriteLookupOutputToRD = OpFlag * Rd
+        // A: OpFlag (boolean)
+        // B: Rd (u5) -> i8
+        // C: WriteLookupOutputToRD (u5) -> i8
         cs.constrain_prod(
             JoltR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD),
             JoltR1CSInputs::Rd,
@@ -304,6 +346,10 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
                 c_type: CzType::I8,
             },
         );
+        // Constraint 2: if WriteLookupOutputToRD { RdWriteValue == LookupOutput }
+        // A: WriteLookupOutputToRD (u5) -> i8
+        // B: RdWriteValue (u64) - LookupOutput (u64) -> i65 -> U64AndSign
+        // C: 0
         cs.constrain_eq_conditional(
             JoltR1CSInputs::WriteLookupOutputToRD,
             JoltR1CSInputs::RdWriteValue,
@@ -322,6 +368,10 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         //          assert!(RdWriteValue == UnexpandedPC + 2)
         //     }
         // }
+        // Constraint 1: WritePCtoRD = OpFlag * Rd
+        // A: OpFlag (boolean)
+        // B: Rd (u5) -> i8
+        // C: WritePCtoRD (u5) -> i8
         cs.constrain_prod(
             JoltR1CSInputs::OpFlags(CircuitFlags::Jump),
             JoltR1CSInputs::Rd,
@@ -332,6 +382,10 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
                 c_type: CzType::I8,
             },
         );
+        // Constraint 2: if WritePCtoRD { RdWriteValue == PC + ... }
+        // A: WritePCtoRD (u5) -> i8
+        // B: RdWriteValue(u64) - (UnexpandedPC(u64) + const) -> i65 -> i128
+        // C: 0
         cs.constrain_eq_conditional(
             JoltR1CSInputs::WritePCtoRD,
             JoltR1CSInputs::RdWriteValue,
@@ -347,6 +401,10 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         // if Jump && !NextIsNoop {
         //     assert!(NextUnexpandedPC == LookupOutput)
         // }
+        // Constraint 1: ShouldJump = OpFlag * (1 - OpFlag)
+        // A: OpFlag (boolean)
+        // B: 1 - OpFlag (boolean) -> i8
+        // C: ShouldJump (boolean) -> i8
         cs.constrain_prod(
             JoltR1CSInputs::OpFlags(CircuitFlags::Jump),
             1 - JoltR1CSInputs::NextIsNoop,
@@ -357,6 +415,10 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
                 c_type: CzType::I8,
             },
         );
+        // Constraint 2: if ShouldJump { NextUnexpandedPC == LookupOutput }
+        // A: ShouldJump (boolean) -> i8
+        // B: NextUnexpandedPC (u64) - LookupOutput (u64) -> i65 -> U64AndSign
+        // C: 0
         cs.constrain_eq_conditional(
             JoltR1CSInputs::ShouldJump,
             JoltR1CSInputs::NextUnexpandedPC,
@@ -371,6 +433,10 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         // if Branch && LookupOutput {
         //     assert!(NextUnexpandedPC == UnexpandedPC + Imm)
         // }
+        // Constraint 1: ShouldBranch = OpFlag * LookupOutput
+        // A: OpFlag (boolean)
+        // B: LookupOutput (u64)
+        // C: ShouldBranch (u64)
         cs.constrain_prod(
             JoltR1CSInputs::OpFlags(CircuitFlags::Branch),
             JoltR1CSInputs::LookupOutput,
@@ -381,6 +447,10 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
                 c_type: CzType::U64,
             },
         );
+        // Constraint 2: if ShouldBranch { NextUnexpandedPC == UnexpandedPC + Imm }
+        // A: ShouldBranch (u64)
+        // B: NextUnexpandedPC(u64) - (UnexpandedPC(u64) + Imm(i64)) -> i65 -> i128
+        // C: 0
         cs.constrain_eq_conditional(
             JoltR1CSInputs::ShouldBranch,
             JoltR1CSInputs::NextUnexpandedPC,
@@ -402,6 +472,10 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         //     }
         // }
         // Note that ShouldBranch and Jump instructions are mutually exclusive
+        // Constraint 1: CompressedDoNotUpdateUnexpPC = isCompressed * DoNotUpdateUnexpandedPC
+        // A: OpFlag (boolean)
+        // B: OpFlag (boolean)
+        // C: CompressedDoNotUpdateUnexpPC (boolean) -> i8
         cs.constrain_prod(
             JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed),
             JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC),
@@ -412,6 +486,10 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
                 c_type: CzType::I8,
             },
         );
+        // Constraint 2: if !(ShouldBranch || Jump) { NextUnexpandedPC == PC + ... }
+        // A: 1 - ShouldBranch(u64) - Jump(flag) -> i64 -> U64AndSign
+        // B: NextUnexpandedPC(u64) - (UnexpandedPC(u64) + consts) -> i65 -> i128
+        // C: 0
         cs.constrain_eq_conditional(
             1 - JoltR1CSInputs::ShouldBranch - JoltR1CSInputs::OpFlags(CircuitFlags::Jump),
             JoltR1CSInputs::NextUnexpandedPC,
@@ -420,7 +498,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
                 - 2 * JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed)
                 + 2 * JoltR1CSInputs::CompressedDoNotUpdateUnexpPC,
             ConstraintType {
-                a_type: AzType::I128,
+                a_type: AzType::U64AndSign,
                 b_type: BzType::I128,
                 c_type: CzType::Zero,
             },
@@ -429,6 +507,9 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         // if Inline {
         //     assert!(NextPC == PC + 1)
         // }
+        // A: OpFlag (boolean)
+        // B: NextPC(u64) - (PC(u64) + 1) -> i65 -> i128
+        // C: 0
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::InlineSequenceInstruction),
             JoltR1CSInputs::NextPC,

@@ -1,6 +1,4 @@
-use super::ops::{
-    AzType, AzValue, BzType, BzValue, CzType, CzValue, Term, Variable, LC,
-};
+use super::ops::{AzType, AzValue, BzType, BzValue, CzType, CzValue, Term, Variable, LC};
 use crate::zkvm::r1cs::inputs::JoltR1CSInputs;
 use crate::{
     field::JoltField,

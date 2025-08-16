@@ -33,31 +33,31 @@ pub struct R1CSProof<F: JoltField, ProofTranscript: Transcript> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum JoltR1CSInputs {
-    PC,                          // u64 - Virtual (bytecode raf)
-    UnexpandedPC,                // u64 - Virtual (bytecode rv)
-    Rd,                          // u5, fits in i8 - Virtual (bytecode rv)
-    Imm,                         // i64, witness generated as i128 but fits in i64 - Virtual (bytecode rv)
-    RamAddress,                  // u64 - Virtual (RAM raf)
-    Rs1Value,                    // u64 - Virtual (registers rv)
-    Rs2Value,                    // u64 - Virtual (registers rv)
-    RdWriteValue,                // u64 - Virtual (registers wv)
-    RamReadValue,                // u64 - Virtual (RAM rv)
-    RamWriteValue,               // u64 - Virtual (RAM wv)
-    LeftInstructionInput,        // u64 - to_lookup_query -> to_instruction_operands
-    RightInstructionInput,       // i128 - to_lookup_query -> to_instruction_operands
-    LeftLookupOperand,           // u64 - Virtual (instruction raf)
-    RightLookupOperand,          // u128 - Virtual (instruction raf)
-    Product,                     // u128 - LeftInstructionOperand * RightInstructionOperand
-    WriteLookupOutputToRD,       // u5, fits in u8
-    WritePCtoRD,                 // u5, fits in u8
-    ShouldBranch,                // u64
-    NextUnexpandedPC,            // u64 - Virtual (spartan shift sumcheck)
-    NextPC,                      // u64 - Virtual (spartan shift sumcheck)
-    LookupOutput,                // u64 - Virtual (instruction rv)
-    NextIsNoop,                  // bool, fits in u8 - Virtual (spartan shift sumcheck)
-    ShouldJump,                  // bool, fits in u8
+    PC,                           // u64 - Virtual (bytecode raf)
+    UnexpandedPC,                 // u64 - Virtual (bytecode rv)
+    Rd,                           // u5, fits in i8 - Virtual (bytecode rv)
+    Imm,           // i64, witness generated as i128 but fits in i64 - Virtual (bytecode rv)
+    RamAddress,    // u64 - Virtual (RAM raf)
+    Rs1Value,      // u64 - Virtual (registers rv)
+    Rs2Value,      // u64 - Virtual (registers rv)
+    RdWriteValue,  // u64 - Virtual (registers wv)
+    RamReadValue,  // u64 - Virtual (RAM rv)
+    RamWriteValue, // u64 - Virtual (RAM wv)
+    LeftInstructionInput, // u64 - to_lookup_query -> to_instruction_operands
+    RightInstructionInput, // i128 - to_lookup_query -> to_instruction_operands
+    LeftLookupOperand, // u64 - Virtual (instruction raf)
+    RightLookupOperand, // u128 - Virtual (instruction raf)
+    Product,       // u128 - LeftInstructionOperand * RightInstructionOperand
+    WriteLookupOutputToRD, // u5, fits in u8
+    WritePCtoRD,   // u5, fits in u8
+    ShouldBranch,  // u64
+    NextUnexpandedPC, // u64 - Virtual (spartan shift sumcheck)
+    NextPC,        // u64 - Virtual (spartan shift sumcheck)
+    LookupOutput,  // u64 - Virtual (instruction rv)
+    NextIsNoop,    // bool, fits in u8 - Virtual (spartan shift sumcheck)
+    ShouldJump,    // bool, fits in u8
     CompressedDoNotUpdateUnexpPC, // bool, fits in u8
-    OpFlags(CircuitFlags),       // bool, fits in u8
+    OpFlags(CircuitFlags), // bool, fits in u8
 }
 
 impl TryFrom<JoltR1CSInputs> for CommittedPolynomial {

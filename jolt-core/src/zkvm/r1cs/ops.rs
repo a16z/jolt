@@ -13,7 +13,7 @@ use std::hash::Hash;
 pub enum AzType {
     I8,
     U64,
-    I128,
+    U64AndSign,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,7 +31,7 @@ pub enum CzType {
     I8,
     U64,
     U64AndSign,
-    U128,
+    U128AndSign,
 }
 
 // --- LEVEL 1 VALUES (RUNTIME) ---
@@ -57,7 +57,7 @@ pub enum CzValue {
     I8(i8),
     U64(u64),
     U64AndSign { magnitude: u64, is_positive: bool },
-    U128(u128),
+    U128AndSign { magnitude: u128, is_positive: bool },
 }
 
 // --- LEVEL 2 AND BEYOND (SVO) ---
@@ -143,7 +143,7 @@ impl LC {
             }
         } else {
             BzValue::U128AndSign {
-                magnitude: value.abs() as u128,
+                magnitude: value.unsigned_abs(),
                 is_positive: false,
             }
         }
@@ -163,14 +163,19 @@ impl LC {
             CzValue::U64(value as u64)
         } else if value.abs() <= u64::MAX as i128 {
             CzValue::U64AndSign {
-                magnitude: value.abs() as u64,
+                magnitude: value.unsigned_abs() as u64,
                 is_positive: value >= 0,
             }
         } else if value >= 0 {
-            CzValue::U128(value as u128)
+            CzValue::U128AndSign {
+                magnitude: value as u128,
+                is_positive: true,
+            }
         } else {
-            // Cz should not be a signed 128-bit value.
-            panic!("Cz value overflowed expectations")
+            CzValue::U128AndSign {
+                magnitude: value.unsigned_abs(),
+                is_positive: false,
+            }
         }
     }
 
