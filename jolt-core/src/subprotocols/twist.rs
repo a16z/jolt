@@ -17,6 +17,11 @@ use crate::{
 };
 use rayon::prelude::*;
 
+/// Implement the algorithm in Lemma 1 to compute the table of Eq(r, x) in 2m field operations where
+/// m \in F^{log(m)}
+#[derive(Clone)]
+struct EqTable<F: JoltField>(Vec<F>);
+
 /// The Twist+Shout paper gives two different prover algorithms for the read-checking
 /// and write-checking algorithms in Twist, called the "local algorithm" and
 /// "alternative algorithm". The local algorithm has worse dependence on the parameter
@@ -62,7 +67,7 @@ pub struct ReadWriteCheckingProof<F: JoltField, ProofTranscript: Transcript> {
     inc_claim: F,
     /// The sumcheck round index at which we switch from binding cycle variables
     /// to binding address variables.
-    sumcheck_switch_index: usize,
+    sumcheck_switch_index: Option<usize>,
 }
 
 pub struct ValEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
@@ -177,7 +182,16 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                 &r_prime,
                 transcript,
             ),
-            TwistAlgorithm::Alternative => unimplemented!(),
+            TwistAlgorithm::Alternative => prove_read_write_checking_alternative(
+                read_addresses,
+                read_values,
+                write_addresses,
+                write_values,
+                write_increments,
+                &r,
+                &r_prime,
+                transcript,
+            ),
         }
     }
 
@@ -196,12 +210,26 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             )
             .unwrap();
 
-        // The high-order cycle variables are bound after the switch
-        let mut r_cycle = r_sumcheck[self.sumcheck_switch_index..T.log_2()].to_vec();
-        // First `sumcheck_switch_index` rounds bind cycle variables from low to high
-        r_cycle.extend(r_sumcheck[..self.sumcheck_switch_index].iter().rev());
-        // Final log(K) rounds bind address variables
-        let r_address = r_sumcheck[T.log_2()..].to_vec();
+        let (r_cycle, r_address) = if let Some(_sumcheck_switch_index) = self.sumcheck_switch_index
+        {
+            // The high-order cycle variables are bound after the switch
+            let mut r_cycle = r_sumcheck[self.sumcheck_switch_index.unwrap()..T.log_2()].to_vec();
+            // First `sumcheck_switch_index` rounds bind cycle variables from low to high
+            r_cycle.extend(
+                r_sumcheck[..self.sumcheck_switch_index.unwrap()]
+                    .iter()
+                    .rev(),
+            );
+            // Final log(K) rounds bind address variables
+            let r_address = r_sumcheck[T.log_2()..].to_vec();
+            (r_cycle, r_address)
+        } else {
+            // TODO:  figure out whether the alternative algorithm binds variables low to high.
+            let (r_address, r_cycle) = r_sumcheck.split_at(K.log_2());
+            let r_address = r_address.iter().rev().cloned().collect();
+            let r_cycle = r_cycle.iter().rev().cloned().collect();
+            (r_cycle, r_address)
+        };
 
         // eq(r', r_cycle)
         let eq_eval_cycle = EqPolynomial::mle(&r_prime, &r_cycle);
@@ -374,7 +402,17 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
     );
     let _guard = span.enter();
 
-    // Data structure described in Equation (72)
+    // The table I is used to update the Val table efficiently when we compute the univariate polynomial
+    // that the prover sends to the verifier in each round. Specifically, I stores data of
+    // the form (j, k, INC * LT, INC), where j indexes the instruction cycle, k is the
+    // the memory location written, and INC * LT represents the sum of elements
+    // Inc(k, j, j') * Lt(j', r) as j' ranges over {0, 1}^i.
+    // for round i, where r = (r_1, ..., r_i) is the vector of committed cycle variables in F.
+    // Similarly, INC represents the sum of Inc(k, j, j') over the same range of j'.
+    // The number of (nonzero) elements in I shrinks by ≤2 in each round, depending on locality.
+    // If you view I as a matrix, however, the number of rows in round i is T / 2^i.
+
+    // Note this I differs from the data structure described in Equation (72)
     let mut I: Vec<Vec<(usize, usize, F, F)>> = write_addresses
         .par_chunks(chunk_size)
         .zip(write_increments.par_chunks(chunk_size))
@@ -439,30 +477,33 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
 
     /// A collection of vectors that are used in each of the first log(T / num_chunks)
     /// rounds of sumcheck. There is one `DataBuffers` struct per thread/chunk, reused
-    /// across all log(T / num_chunks) rounds.
+    /// across all log(T / num_chunks) rounds. Each vector has length K.
+    /// In the documentation below, by we (j'', j', r_i, ..., r_1) we mean the
+    /// concatenation of the vectors j'', j', (r_i, ..., r_1), where the (r_j)s
+    /// correspond to the i least significant bits. Notice this is different from
+    /// the endianness used in the paper.
     struct DataBuffers<F: JoltField> {
         /// Contains
-        ///     Val(k, j', 0, ..., 0)
-        /// as we iterate over rows j' \in {0, 1}^(log(T) - i)
+        ///     Val(k, j'', j', 0, ..., 0)
+        /// as we iterate over rows j' \in {0, 1}^(log(chunk_size) - i).
         val_j_0: Vec<F>,
         /// `val_j_r[0]` contains
-        ///     Val(k, j'', 0, r_i, ..., r_1)
+        ///     Val(k, j'', j', 0, r_i, ..., r_1)
         /// `val_j_r[1]` contains
-        ///     Val(k, j'', 1, r_i, ..., r_1)
-        /// as we iterate over rows j' \in {0, 1}^(log(T) - i)
+        ///     Val(k, j'', j', 1, r_i, ..., r_1)
+        /// as we iterate over rows j' \in {0, 1}^(log(chunk_size) - i - 1)
         val_j_r: [Vec<F>; 2],
         /// `ra[0]` contains
-        ///     ra(k, j'', 0, r_i, ..., r_1)
+        ///     ra(k, j'', j', 0, r_i, ..., r_1)
         /// `ra[1]` contains
-        ///     ra(k, j'', 1, r_i, ..., r_1)
-        /// as we iterate over rows j' \in {0, 1}^(log(T) - i),
+        ///     ra(k, j'', j', 1, r_i, ..., r_1)
+        /// as we iterate over rows j' \in {0, 1}^(log(chunk_size) - i - 1),
         ra: [Vec<F>; 2],
         /// `wa[0]` contains
-        ///     wa(k, j'', 0, r_i, ..., r_1)
+        ///     wa(k, j'', j', 0, r_i, ..., r_1)
         /// `wa[1]` contains
-        ///     wa(k, j'', 1, r_i, ..., r_1)
-        /// as we iterate over rows j' \in {0, 1}^(log(T) - i),
-        /// where j'' are the higher (log(T) - i - 1) bits of j'
+        ///     wa(k, j'', j', 1, r_i, ..., r_1)
+        /// as we iterate over rows j' \in {0, 1}^(log(chunk_size) - i - 1),
         wa: [Vec<F>; 2],
         dirty_indices: Vec<usize>,
     }
@@ -481,6 +522,7 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
     for round in 0..chunk_size.log_2() {
         #[cfg(test)]
         {
+            // Sanity check the write-checking sum-check that commits Inc(r, r') on figure 9 of p46.
             let mut expected_claim = F::zero();
             for j in 0..(T >> round) {
                 let mut inner_sum = F::zero();
@@ -509,6 +551,8 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
             .zip(data_buffers.par_iter_mut())
             .zip(val_checkpoints.par_chunks(K))
             .map(|((I_chunk, buffers), checkpoint)| {
+                // There are num_chunks many chunks in the loop.
+
                 let mut evals = [F::zero(), F::zero(), F::zero()];
 
                 let DataBuffers {
@@ -525,42 +569,55 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
                 I_chunk
                     .chunk_by(|a, b| a.0 / 2 == b.0 / 2)
                     .for_each(|inc_chunk| {
+                        // Iterate over chunks that get mapped to the same address. This corresponds
+                        // to incrementing j' in the description of the DataBuffer struct.
                         let j_prime = inc_chunk[0].0; // row index
 
-                        for j in j_prime << round..(j_prime + 1) << round {
-                            let j_bound = j % (1 << round);
-                            let k = read_addresses[j];
-                            if ra[0][k].is_zero() && wa[0][k].is_zero() {
-                                dirty_indices.push(k);
-                            }
-                            ra[0][k] += A[j_bound];
-                            let k = write_addresses[j];
-                            if ra[0][k].is_zero() && wa[0][k].is_zero() {
-                                dirty_indices.push(k);
-                            }
-                            wa[0][k] += A[j_bound];
-                        }
+                        // We have
+                        // j_prime = (y_1, y_2, ... y_i, x_{i+1}, ..., x_n)
+                        // j runs from (x_{i+1}, ..., x_n, 0, ..., 0) to (x_{i+1}, ..., x_n, 1, ..., 1)
+                        // j_bound runs from (0, ..., 0) to (1, ..., 1)
 
-                        for j in (j_prime + 1) << round..(j_prime + 2) << round {
-                            let j_bound = j % (1 << round);
-                            let k = read_addresses[j];
-                            if ra[0][k].is_zero()
-                                && wa[0][k].is_zero()
-                                && ra[1][k].is_zero()
-                                && wa[1][k].is_zero()
-                            {
-                                dirty_indices.push(k);
+                        {
+                            // Update the arrays in ra and wa and the dirty indices.
+
+                            for j in j_prime << round..(j_prime + 1) << round {
+                                let j_bound = j % (1 << round);
+                                let k = read_addresses[j];
+                                if ra[0][k].is_zero() && wa[0][k].is_zero() {
+                                    dirty_indices.push(k);
+                                }
+                                ra[0][k] += A[j_bound];
+
+                                let k = write_addresses[j];
+                                if ra[0][k].is_zero() && wa[0][k].is_zero() {
+                                    dirty_indices.push(k);
+                                }
+                                wa[0][k] += A[j_bound];
                             }
-                            ra[1][k] += A[j_bound];
-                            let k = write_addresses[j];
-                            if ra[0][k].is_zero()
-                                && wa[0][k].is_zero()
-                                && ra[1][k].is_zero()
-                                && wa[1][k].is_zero()
-                            {
-                                dirty_indices.push(k);
+
+                            for j in (j_prime + 1) << round..(j_prime + 2) << round {
+                                let j_bound = j % (1 << round);
+                                let k = read_addresses[j];
+                                if ra[0][k].is_zero()
+                                    && wa[0][k].is_zero()
+                                    && ra[1][k].is_zero()
+                                    && wa[1][k].is_zero()
+                                {
+                                    dirty_indices.push(k);
+                                }
+                                ra[1][k] += A[j_bound];
+
+                                let k = write_addresses[j];
+                                if ra[0][k].is_zero()
+                                    && wa[0][k].is_zero()
+                                    && ra[1][k].is_zero()
+                                    && wa[1][k].is_zero()
+                                {
+                                    dirty_indices.push(k);
+                                }
+                                wa[1][k] += A[j_bound];
                             }
-                            wa[1][k] += A[j_bound];
                         }
 
                         for &k in dirty_indices.iter() {
@@ -692,6 +749,15 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
         let _inner_guard = inner_span.enter();
 
         // Bind I
+
+        // Update I according to the recursive formula
+        // INC * LT(I(j, k))
+        // = sum Inc(k, j, (j', b)) * Lt((j', b), (r_1, ..., r_i, r_{i+1}))
+        // by (73) where (j', b) is a bounded cycle vector in the hypercube that we are summing over
+        // = sum Inc(k, j, (j', b)) * (eq(b), r_{i+1}) * Lt(j', (r_1, ..., r_i)) + (1 - b) * r_{i+1})
+        // Expand b \in {0, 1} and use that eq(b, r) = rb + (1 - b) * (1 - r)
+        // = (1 - r_{i+1}) * INC_LT(k, (j', 0)) + r_{i+1} * INC(k, (j',0)) + r_{i+1} * INC_LT(k, (j', 1))
+        // where by INC_LT and INC we mean the corresponding sums
         I.par_iter_mut().for_each(|I_chunk| {
             // Note: A given row in an I_chunk may not be ordered by k after binding
             let mut next_bound_index = 0;
@@ -699,6 +765,7 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
 
             for i in 0..I_chunk.len() {
                 let (j_prime, k, inc_lt, inc) = I_chunk[i];
+
                 if let Some(bound_index) = bound_indices[k] {
                     if I_chunk[bound_index].0 == j_prime / 2 {
                         // Neighbor was already processed
@@ -708,8 +775,9 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
                         continue;
                     }
                 }
+
                 // First time this k has been encountered
-                let bound_value = if j_prime.is_multiple_of(2) {
+                let bound_value = if j_prime % 2 == 0 {
                     // (1 - r_j) * inc_lt + r_j * inc
                     inc_lt + r_j * (inc - inc_lt)
                 } else {
@@ -719,6 +787,7 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
                 bound_indices[k] = Some(next_bound_index);
                 next_bound_index += 1;
             }
+
             I_chunk.truncate(next_bound_index);
         });
 
@@ -752,6 +821,26 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
         let _inner_guard = inner_span.enter();
 
         // Update A for this round (see Equation 55)
+        // Recall that A has capacity 2 ^ chunk_size and at this point has size 2 ^ round and contains A_left the values of
+        // eq(k_1, ..., k_{round}, r_1, ..., r_{round}) for all 2 ^ round values of
+        // k = (k_1, ..., k_{round}) \in {0, 1}^(round).
+        //
+        // Update A by the rule
+        // eq(k_1, ..., k_m, k_{m+1}, r_1, ..., r_m, r_{m+1})
+        //  = eq(k_1, ..., k_m, r_1, ..., r_m) * eq(k_{m+1}, r_{m+1})
+        //  = eq(k_1, ..., k_m, r_1, ..., r_m) * (r_{m+1} * k_{m+1} + (1 - r_{m+1}) * (1 - k_{m+1}))
+        //
+        // so in particular
+        //
+        // eq(k_1, ..., k_m, 1, r_1, ..., r_m, r_{m+1}) = q(k_1, ..., k_m, r_1, ..., r_m) * r_{m+1}
+        //
+        // and
+        //
+        // eq(k_1, ..., k_m, 0, r_1, ..., r_m, r_{m+1})
+        //  = q(k_1, ..., k_m, r_1, ..., r_m) * r_{m+1}
+        //  = eq(k_1, ..., k_m, r_1, ..., r_m) * (1 - r_{m+1})
+        //  = eq(k_1, ..., k_m, r_2, ..., r_m, r_{m+1}) - eq(k_1, ..., k_m, 1, r_1, ..., r_m, r_{m+1})
+
         let (A_left, A_right) = A.split_at_mut(1 << round);
         A_left
             .par_iter_mut()
@@ -986,7 +1075,7 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
         wv_claim: wv.final_sumcheck_claim(),
         val_claim: val.final_sumcheck_claim(),
         inc_claim: inc_eval * z.inverse().unwrap(),
-        sumcheck_switch_index: chunk_size.log_2(),
+        sumcheck_switch_index: Some(chunk_size.log_2()),
     };
 
     drop_in_background_thread((ra, wa, wv, val, data_buffers, z_eq_r, eq_r_prime, A));
@@ -994,6 +1083,583 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
     (proof, r_address, r_cycle)
 }
 
+/// Implement the "alternative algorithm" for the read-checking and write-checking sumchecks described in section 8.2.5 of the Twist+Shout paper. Currently only supports d = 1.
+fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcript>(
+    read_addresses: Vec<usize>,
+    read_values: Vec<u32>,
+    write_addresses: &[usize],
+    write_values: Vec<u32>,
+    write_increments: &[i64],
+    r: &[F],
+    r_prime: &[F],
+    transcript: &mut ProofTranscript,
+) -> (ReadWriteCheckingProof<F, ProofTranscript>, Vec<F>, Vec<F>) {
+    // Implementation of the alternative algorithm following p70-71 of the Twist+Shout paper.
+
+    const DEGREE: usize = 3;
+
+    let K = r.len().pow2();
+    let T = r_prime.len().pow2();
+
+    debug_assert_eq!(read_addresses.len(), T);
+    debug_assert_eq!(read_values.len(), T);
+    debug_assert_eq!(write_addresses.len(), T);
+    debug_assert_eq!(write_values.len(), T);
+    debug_assert_eq!(write_increments.len(), T);
+
+    // Used to batch the read-checking and write-checking sumcheck
+    // (see Section 4.2.1)
+
+    let num_rounds = K.log_2() + T.log_2();
+    let mut r_cycle: Vec<F> = Vec::with_capacity(T.log_2());
+    let mut r_address: Vec<F> = Vec::with_capacity(K.log_2());
+
+    let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
+
+    let rv = MultilinearPolynomial::from(read_values);
+    // rv(r')
+    let rv_eval = rv.evaluate(r_prime);
+
+    #[cfg(test)]
+    let mut test_val = {
+        let test_val: MultilinearPolynomial<F> = {
+            // Compute Val in cycle-major order, where the higher bits of test_val represent register variables.
+            let mut old_val: Vec<u32> = vec![0; K * T];
+            old_val
+                .par_chunks_mut(T)
+                .enumerate()
+                .for_each(|(k, val_k)| {
+                    let mut current_val = 0;
+                    for j in 0..T {
+                        val_k[j] = current_val;
+                        if write_addresses[j] == k {
+                            current_val = write_values[j].clone();
+                        }
+                    }
+                });
+
+            // Make sure the higher bits represent cycle variables
+            let mut val: Vec<u32> = vec![0; K * T];
+            val.par_chunks_mut(K).enumerate().for_each(|(t, val_t)| {
+                for k in 0..K {
+                    val_t[k] = old_val[k * T + t];
+                }
+            });
+
+            let mut register_content_inc = vec![0; K];
+            let mut register_content_val = vec![0; K];
+            for j in 0..T - 1 {
+                register_content_inc[write_addresses[j]] += write_increments[j];
+                register_content_val[write_addresses[j]] = write_values[j];
+            }
+            for k in 0..K {
+                assert_eq!(register_content_inc[k] as u32, register_content_val[k]);
+                assert_eq!(
+                    register_content_val[k],
+                    old_val[(k + 1) * T - 1],
+                    "k: {:?}, register_content_val: {:?}, old_val: {:?}",
+                    k,
+                    register_content_val,
+                    old_val
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| i % T == T - 1)
+                        .map(|(_, v)| *v)
+                        .collect::<Vec<u32>>(),
+                );
+            }
+            for k in 0..K {
+                assert_eq!(register_content_inc[k] as u32, register_content_val[k]);
+                assert_eq!(
+                    register_content_val[k],
+                    val[val.len() - K + k],
+                    "k: {:?}, register_content_val: {:?}, test_val: {:?}",
+                    k,
+                    register_content_val,
+                    val,
+                );
+            }
+            let val = MultilinearPolynomial::from(val);
+            for k in 0..K {
+                assert_eq!(register_content_inc[k] as u32, register_content_val[k]);
+                assert_eq!(
+                    F::from_u32(register_content_val[k]),
+                    val.get_coeff(val.len() - K + k),
+                    "k: {:?}, register_content_val: {:?}, test_val: {:?}",
+                    k,
+                    register_content_val,
+                    val,
+                );
+            }
+            val
+        };
+        test_val
+    };
+
+    #[cfg(test)]
+    let mut test_ra = {
+        // Higher bits represent cycle variables.
+        let mut test_ra: Vec<F> = unsafe_allocate_zero_vec(T * K);
+        for (j, addr) in read_addresses.iter().enumerate() {
+            test_ra[j * K + addr] = F::from_u16(1);
+        }
+        let test_ra = MultilinearPolynomial::from(test_ra);
+        test_ra
+    };
+
+    #[cfg(test)]
+    let mut test_wa = {
+        let mut test_wa: Vec<F> = unsafe_allocate_zero_vec(T * K);
+        for (j, addr) in write_addresses.iter().enumerate() {
+            test_wa[j * K + addr] = F::from_u16(1);
+        }
+        let test_wa = MultilinearPolynomial::from(test_wa);
+        test_wa
+    };
+
+    let mut wv = MultilinearPolynomial::<F>::from(write_values);
+
+    let z: F = transcript.challenge_scalar();
+    let mut eq_r_k = EqTable::<F>::new(K);
+    let mut z_eq_r = MultilinearPolynomial::from(EqPolynomial::evals_parallel(r, Some(z)));
+
+    let span = tracing::span!(tracing::Level::INFO, "compute Inc(r, r')");
+    let _guard = span.enter();
+
+    // TODO: do we need to do this for alternative algorithm?
+    let eq_r_prime = MultilinearPolynomial::from(EqPolynomial::evals(r_prime));
+    // z * Inc(r, r')
+    let inc_eval: F = write_addresses
+        .par_iter()
+        .zip(write_increments.par_iter())
+        .enumerate()
+        .map(|(cycle, (address, increment))| {
+            z_eq_r.get_coeff(*address) * eq_r_prime.get_coeff(cycle) * F::from_i64(*increment)
+        })
+        .sum();
+
+    drop(_guard);
+    drop(span);
+
+    #[cfg(test)]
+    {
+        let test_sum = (0..T * K)
+            .into_par_iter()
+            .map(|idx| {
+                let t = idx >> K.log_2();
+                let k = idx & !(!0 << K.log_2());
+                let eq_r_prime_eval = eq_r_prime.get_coeff(t);
+                let z_eq_r_eval = z_eq_r.get_coeff(k);
+                let wv_eval = wv.get_coeff(t);
+                let val_eval = test_val.get_coeff(idx);
+                let wa_eval = test_wa.get_coeff(idx);
+
+                eq_r_prime_eval * z_eq_r_eval * wa_eval * (wv_eval - val_eval)
+            })
+            .reduce(|| F::zero(), |running, new| running + new);
+        assert_eq!(test_sum, inc_eval);
+    }
+
+    let mut prev_claim: F = rv_eval + inc_eval;
+
+    let mut B = EqTable::<F>::new(T);
+    for (round, r_i) in r_prime.iter().rev().enumerate() {
+        B.update(r_i, &round);
+    }
+
+    // For now just implement D = 1
+    let A = EqTable::<F>::new(K);
+
+    // C_k_0 stores C(k, 0) for all k \in {0, 1}^log K. The original paper does not mention this, but it seems to be implied to maintain this table at the beginning of every round, which takes time O(K) throughout all rounds.
+    let mut C_k: Vec<F> = unsafe_allocate_zero_vec(K);
+
+    for round in 0..K.log_2() {
+        // Evaluation of the sum-check polynomial at 1.
+        #[cfg(test)]
+        let mut eval_1 = F::zero();
+        // Evaluation of the sum-check polynomial at 0, 2, and 3.
+        let mut acc = [F::zero(); DEGREE];
+
+        for j in 0..T {
+            let read_arr = read_addresses[j];
+            let read_addr_unbounded = read_arr >> round;
+            // Lowest round digits of addr
+            let read_addr_bounded = read_arr & !(!0 << round);
+
+            let write_arr = write_addresses[j];
+            let write_addr_unbounded = write_arr >> round;
+            let write_addr_bounded = write_arr & !(!0 << round);
+
+            let ra_eval_0 = if read_addr_unbounded % 2 == 0 {
+                eq_r_k.0[read_addr_bounded]
+            } else {
+                F::zero()
+            };
+            let ra_eval_1 = if read_addr_unbounded % 2 != 0 {
+                eq_r_k.0[read_addr_bounded]
+            } else {
+                F::zero()
+            };
+
+            let wa_eval_0 = if write_addr_unbounded % 2 == 0 {
+                eq_r_k.0[write_addr_bounded]
+            } else {
+                F::zero()
+            };
+            let wa_eval_1 = if write_addr_unbounded % 2 != 0 {
+                eq_r_k.0[write_addr_bounded]
+            } else {
+                F::zero()
+            };
+
+            let z_eq_r_eval_0 = if write_addr_unbounded % 2 == 0 {
+                z_eq_r.get_coeff(write_addr_unbounded)
+            } else {
+                z_eq_r.get_coeff(write_addr_unbounded - 1)
+            };
+            let z_eq_r_eval_1 = if write_addr_unbounded % 2 != 0 {
+                z_eq_r.get_coeff(write_addr_unbounded)
+            } else {
+                z_eq_r.get_coeff(write_addr_unbounded + 1)
+            };
+
+            let val_eval_0 = if read_addr_unbounded % 2 == 0 {
+                C_k[read_addr_unbounded]
+            } else {
+                C_k[read_addr_unbounded - 1]
+            };
+            let val_eval_1 = if read_addr_unbounded % 2 != 0 {
+                C_k[read_addr_unbounded]
+            } else {
+                C_k[read_addr_unbounded + 1]
+            };
+
+            let write_val_eval_0 = if write_addr_unbounded % 2 == 0 {
+                C_k[write_addr_unbounded]
+            } else {
+                C_k[write_addr_unbounded - 1]
+            };
+            let write_val_eval_1 = if write_addr_unbounded % 2 != 0 {
+                C_k[write_addr_unbounded]
+            } else {
+                C_k[write_addr_unbounded + 1]
+            };
+
+            #[cfg(test)]
+            {
+                eval_1 += ra_eval_1 * val_eval_1 * B.0[j];
+                eval_1 += z_eq_r_eval_1
+                    * eq_r_prime.get_coeff(j)
+                    * wa_eval_1
+                    * (wv.get_coeff(j) - write_val_eval_1);
+            }
+
+            let ra_evals = compute_evals::<F, DEGREE>(ra_eval_0, ra_eval_1);
+            let wa_evals = compute_evals::<F, DEGREE>(wa_eval_0, wa_eval_1);
+            let z_eq_r_evals = compute_evals::<F, DEGREE>(z_eq_r_eval_0, z_eq_r_eval_1);
+            let val_evals = compute_evals::<F, DEGREE>(val_eval_0, val_eval_1);
+            let write_val_evals = compute_evals::<F, DEGREE>(write_val_eval_0, write_val_eval_1);
+
+            // p.46 equation (33)
+            // Read-checking sumcheck.
+            for i in 0..=DEGREE {
+                let k = if i < 1 { i } else { i - 1 };
+                if i != 1 {
+                    acc[k] += ra_evals[k] * val_evals[k] * B.0[j];
+                }
+            }
+
+            // p.46 equation (34)
+            // Write-checking sumcheck.
+            for i in 0..=DEGREE {
+                let k = if i < 1 { i } else { i - 1 };
+                if i != 1 {
+                    acc[k] += z_eq_r_evals[k]
+                        * eq_r_prime.get_coeff(j)
+                        * wa_evals[k]
+                        * (wv.get_coeff(j) - write_val_evals[k]);
+                }
+            }
+
+            C_k[write_addr_unbounded] +=
+                eq_r_k.0[write_addr_bounded] * F::from_i64(write_increments[j]);
+        }
+
+        #[cfg(test)]
+        {
+            assert_eq!(eval_1 + acc[0], prev_claim);
+        }
+
+        #[cfg(test)]
+        let test_univariate_poly = {
+            let test_evals = (0..T * (K / (round + 1).pow2()))
+                .into_par_iter()
+                .map(|idx| {
+                    let t = idx >> (K.log_2() - round - 1);
+                    let B_val = B.0[t];
+                    let ra_evals = test_ra
+                        .sumcheck_evals(idx, DEGREE, BindingOrder::LowToHigh)
+                        .into_iter()
+                        .map(|val| val)
+                        .collect::<Vec<F>>();
+                    let val_evals = test_val.sumcheck_evals(idx, DEGREE, BindingOrder::LowToHigh);
+
+                    let wa_evals = test_wa.sumcheck_evals(idx, DEGREE, BindingOrder::LowToHigh);
+
+                    let k_idx = idx & !(!0 << (K.log_2() - round - 1));
+                    let z_eq_r_evals =
+                        z_eq_r.sumcheck_evals(k_idx, DEGREE, BindingOrder::LowToHigh);
+
+                    [
+                        B_val * ra_evals[0] * val_evals[0]
+                            + B_val
+                                * z_eq_r_evals[0]
+                                * wa_evals[0]
+                                * (wv.get_coeff(t) - val_evals[0]),
+                        B_val * ra_evals[1] * val_evals[1]
+                            + B_val
+                                * z_eq_r_evals[1]
+                                * wa_evals[1]
+                                * (wv.get_coeff(t) - val_evals[1]),
+                        B_val * ra_evals[2] * val_evals[2]
+                            + B_val
+                                * z_eq_r_evals[2]
+                                * wa_evals[2]
+                                * (wv.get_coeff(t) - val_evals[2]),
+                    ]
+                })
+                .reduce(
+                    || [F::zero(); DEGREE],
+                    |running, new| {
+                        [
+                            running[0] + new[0],
+                            running[1] + new[1],
+                            running[2] + new[2],
+                        ]
+                    },
+                );
+            let test_univariate_poly = UniPoly::from_evals(&[
+                test_evals[0],
+                prev_claim - test_evals[0],
+                test_evals[1],
+                test_evals[2],
+            ]);
+            assert_eq!(test_evals, acc);
+            test_univariate_poly
+        };
+
+        let univariate_poly = UniPoly::from_evals(&[acc[0], prev_claim - acc[0], acc[1], acc[2]]);
+        let compressed_poly: CompressedUniPoly<F> = univariate_poly.compress();
+        compressed_poly.append_to_transcript(transcript);
+        compressed_polys.push(compressed_poly);
+
+        let r_j = transcript.challenge_scalar::<F>();
+        prev_claim = univariate_poly.evaluate(&r_j);
+
+        // Update tables and bind variables.
+        // TODO: need to change to tables A to support D > 1.
+        eq_r_k.update(&r_j, &round);
+
+        // TODO: not sure if should do this to zero out C_k..
+        C_k = unsafe_allocate_zero_vec(C_k.len() / 2);
+
+        // For the write-`checking sumcheck.
+        z_eq_r.bind_parallel(r_j, BindingOrder::LowToHigh);
+        r_address.push(r_j);
+
+        #[cfg(test)]
+        {
+            test_ra.bind_parallel(r_j, BindingOrder::LowToHigh);
+            test_wa.bind_parallel(r_j, BindingOrder::LowToHigh);
+            test_val.bind_parallel(r_j, BindingOrder::LowToHigh);
+
+            let size = T * K / (round + 1).pow2();
+            let test_prev_claim = (0..size)
+                .into_par_iter()
+                .map(|idx| {
+                    let t = idx >> (K.log_2() - (round + 1));
+                    let k = idx & !(!0 << (K.log_2() - (round + 1)));
+
+                    let ra_eval = test_ra.get_coeff(idx);
+                    let wa_eval = test_wa.get_coeff(idx);
+                    let val_eval = test_val.get_bound_coeff(idx);
+                    let z_eq_r_eval = z_eq_r.get_bound_coeff(k);
+                    let wv_eval = wv.get_coeff(t);
+                    ra_eval * val_eval * B.0[t]
+                        + z_eq_r_eval * wa_eval * (wv_eval - val_eval) * B.0[t]
+                })
+                .reduce(|| F::zero(), |running, new| running + new);
+
+            assert_eq!(test_univariate_poly.evaluate(&r_j), prev_claim);
+            assert_eq!(test_prev_claim, prev_claim);
+        }
+    }
+
+    // TODO: remaining rounds.
+    let span = tracing::span!(tracing::Level::INFO, "Remaining rounds of sumcheck");
+    let _guard = span.enter();
+
+    // By this time eq(r_j, t) has been bounded for all {r_j}s, so .
+    let mut val_j: Vec<F> = unsafe_allocate_zero_vec(T);
+    for j in 0..(T - 1) {
+        let addr = write_addresses[j];
+        val_j[j + 1] = val_j[j] + F::from_i64(write_increments[j]) * eq_r_k.0[addr];
+    }
+    let mut val_j = MultilinearPolynomial::from(val_j);
+
+    // Compute ra and wa using equation (46) once all the cycle variables have been bounded.
+    let mut ra = MultilinearPolynomial::from(
+        read_addresses
+            .par_iter()
+            .map(|addr| eq_r_k.0[*addr])
+            .collect::<Vec<F>>(),
+    );
+
+    let mut wa = MultilinearPolynomial::from(
+        write_addresses
+            .par_iter()
+            .map(|addr| eq_r_k.0[*addr])
+            .collect::<Vec<F>>(),
+    );
+
+    let mut eq_r = MultilinearPolynomial::from(B.0.clone());
+    let z_eq_r = z_eq_r.get_coeff(0);
+
+    for _round in 0..num_rounds - K.log_2() {
+        let inner_span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
+        let _inner_guard = inner_span.enter();
+
+        #[cfg(test)]
+        {
+            assert_eq!(T / (_round + 1).pow2(), eq_r.len() / 2);
+            (0..eq_r.len() / 2)
+                .into_par_iter()
+                .for_each(|j| assert_eq!(test_val.get_bound_coeff(j), val_j.get_bound_coeff(j)));
+        }
+
+        let univariate_poly_evals: [F; 3] = (0..eq_r.len() / 2)
+            .into_par_iter()
+            .map(|j| {
+                let eq_r_evals = eq_r.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+
+                let ra_evals = ra.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+                let wa_evals = wa.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+                let wv_evals = wv.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+                let val_j_evals = val_j.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+
+                [
+                    eq_r_evals[0] * ra_evals[0] * val_j_evals[0]
+                        + z_eq_r * eq_r_evals[0] * wa_evals[0] * (wv_evals[0] - val_j_evals[0]),
+                    eq_r_evals[1] * ra_evals[1] * val_j_evals[1]
+                        + z_eq_r * eq_r_evals[1] * wa_evals[1] * (wv_evals[1] - val_j_evals[1]),
+                    eq_r_evals[2] * ra_evals[2] * val_j_evals[2]
+                        + z_eq_r * eq_r_evals[2] * wa_evals[2] * (wv_evals[2] - val_j_evals[2]),
+                ]
+            })
+            .reduce(
+                || [F::zero(); DEGREE],
+                |running, new| {
+                    [
+                        running[0] + new[0],
+                        running[1] + new[1],
+                        running[2] + new[2],
+                    ]
+                },
+            );
+
+        let univariate_poly = UniPoly::from_evals(&[
+            univariate_poly_evals[0],
+            prev_claim - univariate_poly_evals[0],
+            univariate_poly_evals[1],
+            univariate_poly_evals[2],
+        ]);
+
+        #[cfg(test)]
+        {
+            let test_evals = (0..T / (_round + 1).pow2())
+                .into_par_iter()
+                .map(|j| {
+                    let test_eq_r_evals = eq_r.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+                    let test_ra_evals = test_ra.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+                    let test_wa_evals = test_wa.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+                    let test_wv_evals = wv.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+                    let test_val_evals =
+                        test_val.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+
+                    [
+                        test_eq_r_evals[0] * test_ra_evals[0] * test_val_evals[0]
+                            + z_eq_r
+                                * test_eq_r_evals[0]
+                                * test_wa_evals[0]
+                                * (test_wv_evals[0] - test_val_evals[0]),
+                        test_eq_r_evals[1] * test_ra_evals[1] * test_val_evals[1]
+                            + z_eq_r
+                                * test_eq_r_evals[1]
+                                * test_wa_evals[1]
+                                * (test_wv_evals[1] - test_val_evals[1]),
+                        test_eq_r_evals[2] * test_ra_evals[2] * test_val_evals[2]
+                            + z_eq_r
+                                * test_eq_r_evals[2]
+                                * test_wa_evals[2]
+                                * (test_wv_evals[2] - test_val_evals[2]),
+                    ]
+                })
+                .reduce(
+                    || [F::zero(); DEGREE],
+                    |running, new| {
+                        [
+                            running[0] + new[0],
+                            running[1] + new[1],
+                            running[2] + new[2],
+                        ]
+                    },
+                );
+
+            assert_eq!(test_evals, univariate_poly_evals);
+        }
+
+        drop(_inner_guard);
+        drop(inner_span);
+
+        let compressed_poly = univariate_poly.compress();
+        compressed_poly.append_to_transcript(transcript);
+        compressed_polys.push(compressed_poly);
+
+        let r_j = transcript.challenge_scalar::<F>();
+        prev_claim = univariate_poly.evaluate(&r_j);
+        r_cycle.push(r_j);
+
+        // Bind polynomials
+        [&mut eq_r, &mut ra, &mut wa, &mut wv, &mut val_j]
+            .iter_mut()
+            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
+
+        #[cfg(test)]
+        {
+            test_ra.bind_parallel(r_j, BindingOrder::LowToHigh);
+            test_wa.bind_parallel(r_j, BindingOrder::LowToHigh);
+            test_val.bind_parallel(r_j, BindingOrder::LowToHigh);
+        }
+    }
+
+    drop(_guard);
+    drop(span);
+
+    let proof = ReadWriteCheckingProof {
+        sumcheck_proof: SumcheckInstanceProof::new(compressed_polys),
+        ra_claim: ra.final_sumcheck_claim(),
+        rv_claim: rv_eval,
+        wa_claim: wa.final_sumcheck_claim(),
+        wv_claim: wv.final_sumcheck_claim(),
+        val_claim: val_j.final_sumcheck_claim(),
+        inc_claim: inc_eval * z.inverse().unwrap(),
+        sumcheck_switch_index: None,
+    };
+
+    drop_in_background_thread((ra, wa, wv, val_j, z_eq_r, eq_r_prime, A, B, C_k));
+
+    (proof, r_address, r_cycle)
+}
 /// Implements the sumcheck prover for the Val-evaluation sumcheck described in
 /// Section 8.1 and Appendix B of the Twist+Shout paper
 /// TODO(moodlezoup): incorporate optimization from Appendix B.2
@@ -1118,10 +1784,62 @@ pub fn prove_val_evaluation<F: JoltField, ProofTranscript: Transcript>(
     (proof, r_cycle_prime)
 }
 
+fn compute_evals<F: JoltField, const DEGREE: usize>(eval0: F, eval1: F) -> [F; DEGREE] {
+    assert!(DEGREE > 2);
+    let mut ret = [F::zero(); DEGREE];
+    ret[0] = eval0;
+    let m = eval1 - eval0;
+    let mut last = eval1;
+    for i in 1..DEGREE {
+        last += m;
+        ret[i] = last;
+    }
+    ret
+}
+
+impl<F: JoltField> EqTable<F> {
+    fn new(size: usize) -> Self {
+        assert!(size > 0);
+        let mut data = unsafe_allocate_zero_vec(size);
+        data[0] = F::one();
+        Self(data)
+    }
+
+    fn update(&mut self, r: &F, round: &usize) {
+        // Update for this round (see Equation 55)
+        // Recall that A has capacity 2 ^ chunk_size and at this point has size 2 ^ round and contains A_left the values of
+        // eq(k_1, ..., k_{round}, r_1, ..., r_{round}) for all 2 ^ round values of
+        // k = (k_1, ..., k_{round}) \in {0, 1}^(round).
+        //
+        // Update by the rule
+        // eq(k_1, ..., k_m, k_{m+1}, r_1, ..., r_m, r_{m+1})
+        //  = eq(k_1, ..., k_m, r_1, ..., r_m) * eq(k_{m+1}, r_{m+1})
+        //  = eq(k_1, ..., k_m, r_1, ..., r_m) * (r_{m+1} * k_{m+1} + (1 - r_{m+1}) * (1 - k_{m+1}))
+        //
+        // so in particular
+        //
+        // eq(k_1, ..., k_m, 1, r_1, ..., r_m, r_{m+1}) = q(k_1, ..., k_m, r_1, ..., r_m) * r_{m+1}
+        //
+        // and
+        //
+        // eq(k_1, ..., k_m, 0, r_1, ..., r_m, r_{m+1})
+        //  = q(k_1, ..., k_m, r_1, ..., r_m) * r_{m+1}
+        //  = eq(k_1, ..., k_m, r_1, ..., r_m) * (1 - r_{m+1})
+        //  = eq(k_1, ..., k_m, r_2, ..., r_m, r_{m+1}) - eq(k_1, ..., k_m, 1, r_1, ..., r_m, r_{m+1})
+        let (left, right) = self.0.split_at_mut(1 << round);
+        left.par_iter_mut()
+            .zip(right.par_iter_mut())
+            .for_each(|(x, y)| {
+                *y = *x * r;
+                *x -= *y;
+            });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transcripts::Blake2bTranscript;
+    use crate::transcripts::{Blake2bTranscript, KeccakTranscript};
     use ark_bn254::Fr;
     use ark_std::test_rng;
     use rand_core::RngCore;
@@ -1296,5 +2014,71 @@ mod tests {
         let _r_prime: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
 
         proof.verify(r, r_prime, &mut verifier_transcript);
+    }
+
+    #[test]
+    fn read_write_checking_sumcheck_alternative() {
+        const K: usize = 16;
+        const T: usize = 1 << 8;
+
+        let mut rng = test_rng();
+
+        let mut registers = [0u32; K];
+        let mut read_addresses: Vec<usize> = Vec::with_capacity(T);
+        let mut read_values: Vec<u32> = Vec::with_capacity(T);
+        let mut write_addresses: Vec<usize> = Vec::with_capacity(T);
+        let mut write_values: Vec<u32> = Vec::with_capacity(T);
+        let mut write_increments: Vec<i64> = Vec::with_capacity(T);
+        for _ in 0..T {
+            // Random read register
+            let read_address = rng.next_u32() as usize % K;
+            // Random write register
+            let write_address = rng.next_u32() as usize % K;
+            read_addresses.push(read_address);
+            write_addresses.push(write_address);
+            // Read the value currently in the read register
+            read_values.push(registers[read_address]);
+            // Random write value
+            let write_value = rng.next_u32();
+            write_values.push(write_value);
+            // The increment is the difference between the new value and the old value
+            let write_increment = (write_value as i64) - (registers[write_address] as i64);
+            write_increments.push(write_increment);
+            // Write the new value to the write register
+            registers[write_address] = write_value;
+        }
+
+        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+        let r: Vec<Fr> = prover_transcript.challenge_vector(K.log_2());
+        let r_prime: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
+
+        let (proof, _, _) = prove_read_write_checking_alternative(
+            read_addresses,
+            read_values,
+            &write_addresses,
+            write_values,
+            &write_increments,
+            &r,
+            &r_prime,
+            &mut prover_transcript,
+        );
+
+        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+        verifier_transcript.compare_to(prover_transcript);
+        let _r: Vec<Fr> = verifier_transcript.challenge_vector(K.log_2());
+        let _r_prime: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
+
+        proof.verify(r, r_prime, &mut verifier_transcript);
+    }
+
+    #[test]
+    fn compute_evals_test() {
+        let eval_0 = Fr::from_u64(0);
+        let eval_1 = Fr::from_u64(1);
+        let evals = compute_evals::<Fr, 4>(eval_0, eval_1);
+        assert_eq!(
+            evals,
+            [eval_0, Fr::from_u16(2), Fr::from_u16(3), Fr::from_u16(4)]
+        );
     }
 }
