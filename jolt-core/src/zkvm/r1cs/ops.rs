@@ -1,82 +1,21 @@
 //! Defines the Linear Combination (LC) object and associated operations.
 //! A LinearCombination is a vector of Terms, where each Term is a pair of a Variable and a coefficient.
 
-use crate::{field::JoltField, poly::multilinear_polynomial::MultilinearPolynomial};
-use ark_ff::BigInt;
+use crate::{
+    field::JoltField,
+    poly::multilinear_polynomial::MultilinearPolynomial,
+    zkvm::r1cs::{
+        inputs::{JoltR1CSInputs, WitnessPolyType},
+        types::{
+            AzType, AzValue, BzType, BzValue, CzType, CzValue
+        },
+    },
+    utils::u64_and_sign::{U128AndSign, U64AndSign},
+};
 use std::fmt::Debug;
 #[cfg(test)]
 use std::fmt::Write as _;
 use std::hash::Hash;
-
-// --- LEVEL 1 TYPES (STATIC) ---
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AzType {
-    I8,
-    U64,
-    U64AndSign,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BzType {
-    I8,
-    U64,
-    U64AndSign,
-    I128,
-    U128AndSign,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CzType {
-    Zero,
-    I8,
-    U64,
-    U64AndSign,
-    U128AndSign,
-}
-
-// --- LEVEL 1 VALUES (RUNTIME) ---
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AzValue {
-    I8(i8),
-    U64(u64),
-    I128(i128),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BzValue {
-    I8(i8),
-    U64(u64),
-    U64AndSign { magnitude: u64, is_positive: bool },
-    I128(i128),
-    U128AndSign { magnitude: u128, is_positive: bool },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CzValue {
-    Zero,
-    I8(i8),
-    U64(u64),
-    U64AndSign { magnitude: u64, is_positive: bool },
-    U128AndSign { magnitude: u128, is_positive: bool },
-}
-
-// --- LEVEL 2 AND BEYOND (SVO) ---
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SVOEvalValue {
-    L1 { val: u64, is_positive: bool },
-    L2 { val: [u64; 2], is_positive: bool },
-    L3 { val: [u64; 3], is_positive: bool },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SVOProductValue {
-    L1 { val: u64, is_positive: bool },
-    L2 { val: [u64; 2], is_positive: bool },
-    L3 { val: [u64; 3], is_positive: bool },
-    L4 { val: [u64; 4], is_positive: bool },
-}
-
-pub type UnreducedProduct = BigInt<8>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Variable {
@@ -106,77 +45,102 @@ impl Term {
 pub struct LC(Vec<Term>);
 
 impl LC {
-    pub fn evaluate_as_az<F: JoltField>(
+    pub fn evaluate_az_typed<F: JoltField>(
         &self,
         flattened_polynomials: &[MultilinearPolynomial<F>],
         row: usize,
+        az_type: AzType,
     ) -> AzValue {
-        let value = self.evaluate_row_i128(flattened_polynomials, row);
-        if value >= i8::MIN as i128 && value <= i8::MAX as i128 {
-            AzValue::I8(value as i8)
-        } else if value >= 0 && value <= u64::MAX as i128 {
-            AzValue::U64(value as u64)
-        } else {
-            AzValue::I128(value)
+        match az_type {
+            AzType::U5 => {
+                let mut accumulator: i128 = 0;
+                for term in self.terms() {
+                    let witness_val: i128 = match term.0 {
+                        Variable::Input(var_index) => {
+                            let input = JoltR1CSInputs::from_index(var_index);
+                            let poly = &flattened_polynomials[var_index];
+                            // For U5 constraints, all inputs must be small, fitting in a u8.
+                            match input.get_witness_poly_type() {
+                                WitnessPolyType::U8 => poly.get_coeff_u8(row) as i128,
+                                _ => panic!("Unexpected witness poly type for a U5 constraint. Expected U8."),
+                            }
+                        }
+                        Variable::Constant => term.1,
+                    };
+                    accumulator += witness_val * term.1;
+                }
+                debug_assert!(accumulator.abs() <= 31, "AzValue::U5 overflow");
+                AzValue::U5(accumulator as i8)
+            }
+            AzType::U64 => {
+                let mut accumulator: i128 = 0;
+                for term in self.terms() {
+                    let witness_val: i128 = match term.0 {
+                        Variable::Input(var_index) => {
+                            let input = JoltR1CSInputs::from_index(var_index);
+                            let poly = &flattened_polynomials[var_index];
+                            match input.get_witness_poly_type() {
+                                WitnessPolyType::U8 => poly.get_coeff_u8(row) as i128,
+                                WitnessPolyType::U64 => poly.get_coeff_u64(row) as i128,
+                                 _ => panic!("Unexpected witness poly type for a U64 constraint. Expected U8 or U64."),
+                            }
+                        }
+                        Variable::Constant => term.1,
+                    };
+                    accumulator += witness_val * term.1;
+                }
+                debug_assert!(accumulator >= 0 && accumulator <= u64::MAX as i128, "AzValue::U64 overflow");
+                AzValue::U64(accumulator as u64)
+            }
+            AzType::U64AndSign => {
+                // This path is for more complex constraints that can result in a signed 64-bit value.
+                // We still use the typed getters for efficiency.
+                let mut accumulator: i128 = 0;
+                for term in self.terms() {
+                    let witness_val: i128 = match term.0 {
+                        Variable::Input(var_index) => {
+                            let input = JoltR1CSInputs::from_index(var_index);
+                            let poly = &flattened_polynomials[var_index];
+                            match input.get_witness_poly_type() {
+                                WitnessPolyType::U8 => poly.get_coeff_u8(row) as i128,
+                                WitnessPolyType::U64 => poly.get_coeff_u64(row) as i128,
+                                WitnessPolyType::U64AndSign => {
+                                    let u64_and_sign = poly.get_coeff_u64_and_sign(row);
+                                    if u64_and_sign.is_positive {
+                                        u64_and_sign.magnitude as i128
+                                    } else {
+                                        -(u64_and_sign.magnitude as i128)
+                                    }
+                                }
+                                 _ => panic!("Unexpected witness poly type for a U64AndSign constraint."),
+                            }
+                        }
+                        Variable::Constant => term.1,
+                    };
+                    accumulator += witness_val * term.1;
+                }
+                debug_assert!(accumulator.abs() <= u64::MAX as i128, "AzValue::U64AndSign overflow");
+                AzValue::U64AndSign(U64AndSign::from(accumulator))
+            }
         }
     }
 
-    pub fn evaluate_as_bz<F: JoltField>(
+    pub fn evaluate_bz_typed<F: JoltField>(
         &self,
-        flattened_polynomials: &[MultilinearPolynomial<F>],
-        row: usize,
+        _flattened_polynomials: &[MultilinearPolynomial<F>],
+        _row: usize,
+        _bz_type: BzType,
     ) -> BzValue {
-        let value = self.evaluate_row_i128(flattened_polynomials, row);
-        if value >= i8::MIN as i128 && value <= i8::MAX as i128 {
-            BzValue::I8(value as i8)
-        } else if value >= 0 && value <= u64::MAX as i128 {
-            BzValue::U64(value as u64)
-        } else if value >= i64::MIN as i128 && value <= i64::MAX as i128 {
-            BzValue::U64AndSign {
-                magnitude: value.abs() as u64,
-                is_positive: value >= 0,
-            }
-        } else if value >= 0 {
-            BzValue::U128AndSign {
-                magnitude: value as u128,
-                is_positive: true,
-            }
-        } else {
-            BzValue::U128AndSign {
-                magnitude: value.unsigned_abs(),
-                is_positive: false,
-            }
-        }
+        unimplemented!()
     }
 
-    pub fn evaluate_as_cz<F: JoltField>(
+    pub fn evaluate_cz_typed<F: JoltField>(
         &self,
-        flattened_polynomials: &[MultilinearPolynomial<F>],
-        row: usize,
+        _flattened_polynomials: &[MultilinearPolynomial<F>],
+        _row: usize,
+        _cz_type: CzType,
     ) -> CzValue {
-        let value = self.evaluate_row_i128(flattened_polynomials, row);
-        if value == 0 {
-            CzValue::Zero
-        } else if value >= i8::MIN as i128 && value <= i8::MAX as i128 {
-            CzValue::I8(value as i8)
-        } else if value >= 0 && value <= u64::MAX as i128 {
-            CzValue::U64(value as u64)
-        } else if value.abs() <= u64::MAX as i128 {
-            CzValue::U64AndSign {
-                magnitude: value.unsigned_abs() as u64,
-                is_positive: value >= 0,
-            }
-        } else if value >= 0 {
-            CzValue::U128AndSign {
-                magnitude: value as u128,
-                is_positive: true,
-            }
-        } else {
-            CzValue::U128AndSign {
-                magnitude: value.unsigned_abs(),
-                is_positive: false,
-            }
-        }
+        unimplemented!()
     }
 
     pub fn new(terms: Vec<Term>) -> Self {

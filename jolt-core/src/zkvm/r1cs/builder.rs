@@ -1,8 +1,11 @@
-use super::ops::{AzType, AzValue, BzType, BzValue, CzType, CzValue, Term, Variable, LC};
-use crate::zkvm::r1cs::inputs::JoltR1CSInputs;
+use super::ops::{Term, Variable, LC};
 use crate::{
     field::JoltField,
-    zkvm::r1cs::{key::SparseConstraints, key::UniformR1CS},
+    zkvm::r1cs::{
+    inputs::JoltR1CSInputs,
+    key::{SparseConstraints, UniformR1CS},
+    types::{AzType, AzValue, BzType, BzValue, CzType, CzValue},
+    }
 };
 use std::marker::PhantomData;
 
@@ -26,11 +29,15 @@ impl Constraint {
         &self,
         flattened_polynomials: &[crate::poly::multilinear_polynomial::MultilinearPolynomial<F>],
         step_index: usize,
+        type_info: &ConstraintType,
     ) -> (AzValue, BzValue, CzValue) {
         (
-            self.a.evaluate_as_az(flattened_polynomials, step_index),
-            self.b.evaluate_as_bz(flattened_polynomials, step_index),
-            self.c.evaluate_as_cz(flattened_polynomials, step_index),
+            self.a
+                .evaluate_az_typed(flattened_polynomials, step_index, type_info.a_type),
+            self.b
+                .evaluate_bz_typed(flattened_polynomials, step_index, type_info.b_type),
+            self.c
+                .evaluate_cz_typed(flattened_polynomials, step_index, type_info.c_type),
         )
     }
 
@@ -87,6 +94,20 @@ impl Constraint {
 pub struct TypedConstraint {
     pub lc: Constraint,
     pub type_info: ConstraintType,
+}
+
+impl TypedConstraint {
+    pub fn evaluate_typed<F: JoltField>(
+        &self,
+        flattened_polynomials: &[crate::poly::multilinear_polynomial::MultilinearPolynomial<F>],
+        step_index: usize,
+    ) -> (AzValue, BzValue, CzValue) {
+        (
+            self.lc.a.evaluate_az_typed(flattened_polynomials, step_index, self.type_info.a_type),
+            self.lc.b.evaluate_bz_typed(flattened_polynomials, step_index, self.type_info.b_type),
+            self.lc.c.evaluate_cz_typed(flattened_polynomials, step_index, self.type_info.c_type),
+        )
+    }
 }
 
 #[derive(Default)]

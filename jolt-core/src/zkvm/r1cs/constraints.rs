@@ -4,7 +4,7 @@ use crate::{
         instruction::CircuitFlags,
         r1cs::{
             builder::{ConstraintType, R1CSBuilder},
-            ops::{AzType, BzType, CzType},
+            types::{AzType, BzType, CzType},
         },
     },
 };
@@ -38,7 +38,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::LeftInstructionInput,
             JoltR1CSInputs::Rs1Value,
             ConstraintType {
-                a_type: AzType::I8,
+                a_type: AzType::U5,
                 b_type: BzType::U64AndSign,
                 c_type: CzType::Zero,
             },
@@ -53,7 +53,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::LeftInstructionInput,
             JoltR1CSInputs::UnexpandedPC,
             ConstraintType {
-                a_type: AzType::I8,
+                a_type: AzType::U5,
                 b_type: BzType::U64AndSign,
                 c_type: CzType::Zero,
             },
@@ -72,7 +72,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::LeftInstructionInput,
             0i128,
             ConstraintType {
-                a_type: AzType::I8,
+                a_type: AzType::U5,
                 b_type: BzType::U64,
                 c_type: CzType::Zero,
             },
@@ -87,7 +87,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::RightInstructionInput,
             JoltR1CSInputs::Rs2Value,
             ConstraintType {
-                a_type: AzType::I8,
+                a_type: AzType::U5,
                 b_type: BzType::I128,
                 c_type: CzType::Zero,
             },
@@ -102,7 +102,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::RightInstructionInput,
             JoltR1CSInputs::Imm,
             ConstraintType {
-                a_type: AzType::I8,
+                a_type: AzType::U5,
                 b_type: BzType::I128,
                 c_type: CzType::Zero,
             },
@@ -121,7 +121,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::RightInstructionInput,
             0i128,
             ConstraintType {
-                a_type: AzType::I8,
+                a_type: AzType::U5,
                 b_type: BzType::I128,
                 c_type: CzType::Zero,
             },
@@ -143,7 +143,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             0i128,
             JoltR1CSInputs::RamAddress,
             ConstraintType {
-                a_type: AzType::I8,
+                a_type: AzType::U5,
                 b_type: BzType::I128,
                 c_type: CzType::U64,
             },
@@ -160,7 +160,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::RamReadValue,
             JoltR1CSInputs::RamWriteValue,
             ConstraintType {
-                a_type: AzType::I8,
+                a_type: AzType::U5,
                 b_type: BzType::U64AndSign,
                 c_type: CzType::Zero,
             },
@@ -177,7 +177,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::RamReadValue,
             JoltR1CSInputs::RdWriteValue,
             ConstraintType {
-                a_type: AzType::I8,
+                a_type: AzType::U5,
                 b_type: BzType::U64AndSign,
                 c_type: CzType::Zero,
             },
@@ -194,7 +194,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::Rs2Value,
             JoltR1CSInputs::RamWriteValue,
             ConstraintType {
-                a_type: AzType::I8,
+                a_type: AzType::U5,
                 b_type: BzType::U64AndSign,
                 c_type: CzType::Zero,
             },
@@ -217,7 +217,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::LeftInstructionInput,
             JoltR1CSInputs::LeftLookupOperand,
             ConstraintType {
-                a_type: AzType::I8,
+                a_type: AzType::U5,
                 b_type: BzType::U64AndSign,
                 c_type: CzType::U64AndSign,
             },
@@ -234,7 +234,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::RightLookupOperand,
             JoltR1CSInputs::LeftInstructionInput + JoltR1CSInputs::RightInstructionInput,
             ConstraintType {
-                a_type: AzType::I8,
+                a_type: AzType::U5,
                 b_type: BzType::U128AndSign,
                 c_type: CzType::Zero,
             },
@@ -253,7 +253,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::LeftInstructionInput - JoltR1CSInputs::RightInstructionInput
                 + (0xffffffffffffffffi128 + 1),
             ConstraintType {
-                a_type: AzType::I8,
+                a_type: AzType::U5,
                 b_type: BzType::U128AndSign,
                 c_type: CzType::Zero,
             },
@@ -285,7 +285,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::RightLookupOperand,
             JoltR1CSInputs::Product,
             ConstraintType {
-                a_type: AzType::I8,
+                a_type: AzType::U5,
                 b_type: BzType::U128AndSign,
                 c_type: CzType::Zero,
             },
@@ -306,7 +306,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::RightLookupOperand,
             JoltR1CSInputs::RightInstructionInput,
             ConstraintType {
-                a_type: AzType::I8,
+                a_type: AzType::U5,
                 b_type: BzType::U128AndSign,
                 c_type: CzType::Zero,
             },
@@ -323,7 +323,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::LookupOutput,
             1i128,
             ConstraintType {
-                a_type: AzType::I8,
+                a_type: AzType::U5,
                 b_type: BzType::U64AndSign,
                 c_type: CzType::Zero,
             },
@@ -341,7 +341,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::Rd,
             JoltR1CSInputs::WriteLookupOutputToRD,
             ConstraintType {
-                a_type: AzType::I8,
+                a_type: AzType::U5,
                 b_type: BzType::I8,
                 c_type: CzType::I8,
             },
@@ -355,7 +355,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::RdWriteValue,
             JoltR1CSInputs::LookupOutput,
             ConstraintType {
-                a_type: AzType::I8,
+                a_type: AzType::U5,
                 b_type: BzType::U64AndSign,
                 c_type: CzType::Zero,
             },
@@ -377,7 +377,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::Rd,
             JoltR1CSInputs::WritePCtoRD,
             ConstraintType {
-                a_type: AzType::I8,
+                a_type: AzType::U5,
                 b_type: BzType::I8,
                 c_type: CzType::I8,
             },
@@ -392,7 +392,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::UnexpandedPC + 4i128
                 - 2 * JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed),
             ConstraintType {
-                a_type: AzType::I8,
+                a_type: AzType::U5,
                 b_type: BzType::I128,
                 c_type: CzType::Zero,
             },
@@ -410,7 +410,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             1 - JoltR1CSInputs::NextIsNoop,
             JoltR1CSInputs::ShouldJump,
             ConstraintType {
-                a_type: AzType::I8,
+                a_type: AzType::U5,
                 b_type: BzType::I8,
                 c_type: CzType::I8,
             },
@@ -424,7 +424,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::NextUnexpandedPC,
             JoltR1CSInputs::LookupOutput,
             ConstraintType {
-                a_type: AzType::I8,
+                a_type: AzType::U5,
                 b_type: BzType::U64AndSign,
                 c_type: CzType::Zero,
             },
@@ -442,7 +442,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::LookupOutput,
             JoltR1CSInputs::ShouldBranch,
             ConstraintType {
-                a_type: AzType::I8,
+                a_type: AzType::U5,
                 b_type: BzType::U64,
                 c_type: CzType::U64,
             },
@@ -481,7 +481,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC),
             JoltR1CSInputs::CompressedDoNotUpdateUnexpPC,
             ConstraintType {
-                a_type: AzType::I8,
+                a_type: AzType::U5,
                 b_type: BzType::I8,
                 c_type: CzType::I8,
             },
@@ -515,7 +515,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::NextPC,
             JoltR1CSInputs::PC + 1i128,
             ConstraintType {
-                a_type: AzType::I8,
+                a_type: AzType::U5,
                 b_type: BzType::I128,
                 c_type: CzType::Zero,
             },

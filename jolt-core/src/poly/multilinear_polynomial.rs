@@ -1,6 +1,6 @@
 use crate::{
     poly::{one_hot_polynomial::OneHotPolynomial, rlc_polynomial::RLCPolynomial},
-    utils::compute_dotproduct,
+    utils::{compute_dotproduct, u64_and_sign::U64AndSign},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
 use num_traits::MulAdd;
@@ -276,6 +276,35 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U128Scalars(poly) => i128::try_from(poly.coeffs[index]).unwrap(),
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
+    }
+
+    /// Gets the polynomial coefficient at the given `index`, as a `u8`.
+    /// Panics if the polynomial is not a U8Scalars polynomial.
+    pub fn get_coeff_u8(&self, index: usize) -> u8 {
+        match self {
+            MultilinearPolynomial::U8Scalars(poly) => poly.coeffs[index],
+            _ => panic!("get_coeff_u8 called on non-u8 polynomial"),
+        }
+    }
+
+    /// Gets the polynomial coefficient at the given `index`, as a `u64`.
+    /// Panics if the polynomial is not a U64Scalars polynomial.
+    pub fn get_coeff_u64(&self, index: usize) -> u64 {
+        match self {
+            MultilinearPolynomial::U8Scalars(poly) => u64::from(poly.coeffs[index]),
+            MultilinearPolynomial::U16Scalars(poly) => u64::from(poly.coeffs[index]),
+            MultilinearPolynomial::U32Scalars(poly) => u64::from(poly.coeffs[index]),
+            MultilinearPolynomial::U64Scalars(poly) => poly.coeffs[index],
+            _ => panic!("get_coeff_u64 called on types that do not fit in u64"),
+        }
+    }
+
+    /// Gets the polynomial coefficient at the given `index`, as a `U64AndSign`.
+    /// Panics if the polynomial's values do not fit in a signed 64-bit integer.
+    pub fn get_coeff_u64_and_sign(&self, index: usize) -> U64AndSign {
+        let val = self.get_coeff_i128(index);
+        debug_assert!(val.abs() <= i64::MAX as i128);
+        U64AndSign::from(val)
     }
 
     /// Gets the polynomial coefficient at the given `index`. The polynomial may have

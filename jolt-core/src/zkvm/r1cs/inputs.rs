@@ -44,7 +44,7 @@ pub enum JoltR1CSInputs {
     RamReadValue,  // u64 - Virtual (RAM rv)
     RamWriteValue, // u64 - Virtual (RAM wv)
     LeftInstructionInput, // u64 - to_lookup_query -> to_instruction_operands
-    RightInstructionInput, // i128 - to_lookup_query -> to_instruction_operands
+    RightInstructionInput, // u64 or i64 (encoded as i128) - to_lookup_query -> to_instruction_operands
     LeftLookupOperand, // u64 - Virtual (instruction raf)
     RightLookupOperand, // u128 - Virtual (instruction raf)
     Product,       // u128 - LeftInstructionOperand * RightInstructionOperand
@@ -58,6 +58,32 @@ pub enum JoltR1CSInputs {
     ShouldJump,    // bool, fits in u8
     CompressedDoNotUpdateUnexpPC, // bool, fits in u8
     OpFlags(CircuitFlags), // bool, fits in u8
+}
+
+pub enum WitnessPolyType {
+    U8,
+    U64,
+    U64AndSign,
+    U128,
+}
+
+impl JoltR1CSInputs {
+    pub fn get_witness_poly_type(&self) -> WitnessPolyType {
+        use JoltR1CSInputs::*;
+        match self {
+            Rd | WriteLookupOutputToRD | WritePCtoRD | NextIsNoop | ShouldJump
+            | CompressedDoNotUpdateUnexpPC | OpFlags(_) => WitnessPolyType::U8,
+
+            // Note: these are actually either u64 or i64
+            // i128 is the least native type that can fit both values
+            // However, we also have the `U64AndSign` type, which may be better here
+            Imm | RightInstructionInput => WitnessPolyType::U64AndSign,
+
+            RightLookupOperand | Product => WitnessPolyType::U128,
+
+            _ => WitnessPolyType::U64,
+        }
+    }
 }
 
 impl TryFrom<JoltR1CSInputs> for CommittedPolynomial {
