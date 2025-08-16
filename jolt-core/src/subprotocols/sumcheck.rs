@@ -15,7 +15,7 @@ use crate::utils::mul_0_optimized;
 use crate::utils::small_value::svo_helpers::process_svo_sumcheck_rounds;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
-use crate::zkvm::r1cs::builder::Constraint;
+use crate::zkvm::r1cs::builder::TypedConstraint;
 use ark_serialize::*;
 use rayon::prelude::*;
 use std::cell::RefCell;
@@ -377,7 +377,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
     pub fn prove_spartan_outer<const NUM_SVO_ROUNDS: usize>(
         num_rounds: usize,
         padded_num_constraints: usize,
-        r1cs_constraints: &[Constraint],
+        r1cs_constraints: &[TypedConstraint],
         input_polys: &[MultilinearPolynomial<F>],
         tau: &[F],
         transcript: &mut ProofTranscript,
@@ -530,7 +530,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                 let W_iter = (0..len).into_par_iter().map(witness_value);
                 let Z_iter = W_iter
                     .chain(one.into_par_iter())
-                    .chain(rayon::iter::repeatn(zero, len));
+                    .chain(rayon::iter::repeat_n(zero, len));
                 let left_iter = Z_iter.clone().take(len);
                 let right_iter = Z_iter.skip(len).take(len);
                 let B = left_iter

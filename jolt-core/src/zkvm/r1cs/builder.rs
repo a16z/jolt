@@ -1,20 +1,41 @@
-use super::ops::{Term, Variable, LC};
+use super::ops::{
+    AzType, AzValue, BzType, BzValue, CzType, CzValue, Term, Variable, LC,
+};
 use crate::zkvm::r1cs::inputs::JoltR1CSInputs;
 use crate::{
     field::JoltField,
-    zkvm::r1cs::key::{SparseConstraints, UniformR1CS},
+    zkvm::r1cs::{key::SparseConstraints, key::UniformR1CS},
 };
 use std::marker::PhantomData;
 
 /// Constraints over a single row. Each variable points to a single item in Z and the corresponding coefficient.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Constraint {
     pub a: LC,
     pub b: LC,
     pub c: LC,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ConstraintType {
+    pub a_type: AzType,
+    pub b_type: BzType,
+    pub c_type: CzType,
+}
+
 impl Constraint {
+    pub fn evaluate_typed<F: JoltField>(
+        &self,
+        flattened_polynomials: &[crate::poly::multilinear_polynomial::MultilinearPolynomial<F>],
+        step_index: usize,
+    ) -> (AzValue, BzValue, CzValue) {
+        (
+            self.a.evaluate_as_az(flattened_polynomials, step_index),
+            self.b.evaluate_as_bz(flattened_polynomials, step_index),
+            self.c.evaluate_as_cz(flattened_polynomials, step_index),
+        )
+    }
+
     #[cfg(test)]
     pub(crate) fn pretty_fmt<F: JoltField>(
         &self,
@@ -64,9 +85,15 @@ impl Constraint {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct TypedConstraint {
+    pub lc: Constraint,
+    pub type_info: ConstraintType,
+}
+
 #[derive(Default)]
 pub struct R1CSBuilder {
-    pub(crate) constraints: Vec<Constraint>,
+    pub(crate) constraints: Vec<TypedConstraint>,
 }
 
 impl R1CSBuilder {
@@ -74,7 +101,12 @@ impl R1CSBuilder {
         Self::default()
     }
 
-    pub fn constrain_eq(&mut self, left: impl Into<LC>, right: impl Into<LC>) {
+    pub fn constrain_eq(
+        &mut self,
+        left: impl Into<LC>,
+        right: impl Into<LC>,
+        type_annotation: ConstraintType,
+    ) {
         // left - right == 0
         let left: LC = left.into();
         let right: LC = right.into();
@@ -86,7 +118,10 @@ impl R1CSBuilder {
             b,
             c: LC::zero(),
         };
-        self.constraints.push(constraint);
+        self.constraints.push(TypedConstraint {
+            lc: constraint,
+            type_info: type_annotation,
+        });
     }
 
     pub fn constrain_eq_conditional(
@@ -94,6 +129,7 @@ impl R1CSBuilder {
         condition: impl Into<LC>,
         left: impl Into<LC>,
         right: impl Into<LC>,
+        type_annotation: ConstraintType,
     ) {
         // condition  * (left - right) == 0
         let condition: LC = condition.into();
@@ -104,10 +140,13 @@ impl R1CSBuilder {
         let b = left - right;
         let c = LC::zero();
         let constraint = Constraint { a, b, c }; // TODO(sragss): Can do better on middle term.
-        self.constraints.push(constraint);
+        self.constraints.push(TypedConstraint {
+            lc: constraint,
+            type_info: type_annotation,
+        });
     }
 
-    pub fn constrain_binary(&mut self, value: impl Into<LC>) {
+    pub fn constrain_binary(&mut self, value: impl Into<LC>, type_annotation: ConstraintType) {
         let one: LC = Variable::Constant.into();
         let a: LC = value.into();
         let b = one - a.clone();
@@ -117,7 +156,10 @@ impl R1CSBuilder {
             b,
             c: LC::zero(),
         };
-        self.constraints.push(constraint);
+        self.constraints.push(TypedConstraint {
+            lc: constraint,
+            type_info: type_annotation,
+        });
     }
 
     pub fn constrain_if_else(
@@ -126,6 +168,7 @@ impl R1CSBuilder {
         result_true: impl Into<LC>,
         result_false: impl Into<LC>,
         alleged_result: impl Into<LC>,
+        type_annotation: ConstraintType,
     ) {
         let condition: LC = condition.into();
         let result_true: LC = result_true.into();
@@ -140,7 +183,10 @@ impl R1CSBuilder {
             b: (result_true - result_false.clone()),
             c: (alleged_result - result_false),
         };
-        self.constraints.push(constraint);
+        self.constraints.push(TypedConstraint {
+            lc: constraint,
+            type_info: type_annotation,
+        });
     }
 
     pub fn pack_le(unpacked: Vec<Variable>, operand_bits: usize) -> LC {
@@ -167,6 +213,7 @@ impl R1CSBuilder {
         unpacked: Vec<Variable>,
         result: impl Into<LC>,
         operand_bits: usize,
+        type_annotation: ConstraintType,
     ) {
         // Pack unpacked via a simple weighted linear combination
         // A + 2 * B + 4 * C + 8 * D, ...
@@ -175,7 +222,7 @@ impl R1CSBuilder {
             .enumerate()
             .map(|(idx, unpacked)| Term(unpacked, 1 << (idx * operand_bits)))
             .collect();
-        self.constrain_eq(packed, result);
+        self.constrain_eq(packed, result, type_annotation);
     }
 
     pub fn constrain_pack_be(
@@ -183,6 +230,7 @@ impl R1CSBuilder {
         unpacked: Vec<Variable>,
         result: impl Into<LC>,
         operand_bits: usize,
+        type_annotation: ConstraintType,
     ) {
         // Pack unpacked via a simple weighted linear combination
         // A + 2 * B + 4 * C + 8 * D, ...
@@ -193,23 +241,32 @@ impl R1CSBuilder {
             .enumerate()
             .map(|(idx, unpacked)| Term(unpacked, 1 << (idx * operand_bits)))
             .collect();
-        self.constrain_eq(packed, result);
+        self.constrain_eq(packed, result, type_annotation);
     }
 
     /// Constrain x * y == z
-    pub fn constrain_prod(&mut self, x: impl Into<LC>, y: impl Into<LC>, z: impl Into<LC>) {
+    pub fn constrain_prod(
+        &mut self,
+        x: impl Into<LC>,
+        y: impl Into<LC>,
+        z: impl Into<LC>,
+        type_annotation: ConstraintType,
+    ) {
         let constraint = Constraint {
             a: x.into(),
             b: y.into(),
             c: z.into(),
         };
-        self.constraints.push(constraint);
+        self.constraints.push(TypedConstraint {
+            lc: constraint,
+            type_info: type_annotation,
+        });
     }
 
     fn materialize<F: JoltField>(&self) -> UniformR1CS<F> {
-        let a_len: usize = self.constraints.iter().map(|c| c.a.num_vars()).sum();
-        let b_len: usize = self.constraints.iter().map(|c| c.b.num_vars()).sum();
-        let c_len: usize = self.constraints.iter().map(|c| c.c.num_vars()).sum();
+        let a_len: usize = self.constraints.iter().map(|c| c.lc.a.num_vars()).sum();
+        let b_len: usize = self.constraints.iter().map(|c| c.lc.b.num_vars()).sum();
+        let c_len: usize = self.constraints.iter().map(|c| c.lc.c.num_vars()).sum();
         let mut a_sparse = SparseConstraints::empty_with_capacity(a_len, self.constraints.len());
         let mut b_sparse = SparseConstraints::empty_with_capacity(b_len, self.constraints.len());
         let mut c_sparse = SparseConstraints::empty_with_capacity(c_len, self.constraints.len());
@@ -229,9 +286,9 @@ impl R1CSBuilder {
         };
 
         for (row_index, constraint) in self.constraints.iter().enumerate() {
-            update_sparse(row_index, &constraint.a, &mut a_sparse);
-            update_sparse(row_index, &constraint.b, &mut b_sparse);
-            update_sparse(row_index, &constraint.c, &mut c_sparse);
+            update_sparse(row_index, &constraint.lc.a, &mut a_sparse);
+            update_sparse(row_index, &constraint.lc.b, &mut b_sparse);
+            update_sparse(row_index, &constraint.lc.c, &mut c_sparse);
         }
 
         assert_eq!(a_sparse.vars.len(), a_len);
@@ -247,7 +304,7 @@ impl R1CSBuilder {
         }
     }
 
-    pub fn get_constraints(&self) -> Vec<Constraint> {
+    pub fn get_constraints(&self) -> Vec<TypedConstraint> {
         self.constraints.clone()
     }
 }

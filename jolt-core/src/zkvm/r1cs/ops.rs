@@ -2,10 +2,81 @@
 //! A LinearCombination is a vector of Terms, where each Term is a pair of a Variable and a coefficient.
 
 use crate::{field::JoltField, poly::multilinear_polynomial::MultilinearPolynomial};
+use ark_ff::BigInt;
 use std::fmt::Debug;
 #[cfg(test)]
 use std::fmt::Write as _;
 use std::hash::Hash;
+
+// --- LEVEL 1 TYPES (STATIC) ---
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AzType {
+    I8,
+    U64,
+    I128,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BzType {
+    I8,
+    U64,
+    U64AndSign,
+    I128,
+    U128AndSign,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CzType {
+    Zero,
+    I8,
+    U64,
+    U64AndSign,
+    U128,
+}
+
+// --- LEVEL 1 VALUES (RUNTIME) ---
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AzValue {
+    I8(i8),
+    U64(u64),
+    I128(i128),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BzValue {
+    I8(i8),
+    U64(u64),
+    U64AndSign { magnitude: u64, is_positive: bool },
+    I128(i128),
+    U128AndSign { magnitude: u128, is_positive: bool },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CzValue {
+    Zero,
+    I8(i8),
+    U64(u64),
+    U64AndSign { magnitude: u64, is_positive: bool },
+    U128(u128),
+}
+
+// --- LEVEL 2 AND BEYOND (SVO) ---
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SVOEvalValue {
+    L1 { val: u64, is_positive: bool },
+    L2 { val: [u64; 2], is_positive: bool },
+    L3 { val: [u64; 3], is_positive: bool },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SVOProductValue {
+    L1 { val: u64, is_positive: bool },
+    L2 { val: [u64; 2], is_positive: bool },
+    L3 { val: [u64; 3], is_positive: bool },
+    L4 { val: [u64; 4], is_positive: bool },
+}
+
+pub type UnreducedProduct = BigInt<8>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Variable {
@@ -35,6 +106,74 @@ impl Term {
 pub struct LC(Vec<Term>);
 
 impl LC {
+    pub fn evaluate_as_az<F: JoltField>(
+        &self,
+        flattened_polynomials: &[MultilinearPolynomial<F>],
+        row: usize,
+    ) -> AzValue {
+        let value = self.evaluate_row_i128(flattened_polynomials, row);
+        if value >= i8::MIN as i128 && value <= i8::MAX as i128 {
+            AzValue::I8(value as i8)
+        } else if value >= 0 && value <= u64::MAX as i128 {
+            AzValue::U64(value as u64)
+        } else {
+            AzValue::I128(value)
+        }
+    }
+
+    pub fn evaluate_as_bz<F: JoltField>(
+        &self,
+        flattened_polynomials: &[MultilinearPolynomial<F>],
+        row: usize,
+    ) -> BzValue {
+        let value = self.evaluate_row_i128(flattened_polynomials, row);
+        if value >= i8::MIN as i128 && value <= i8::MAX as i128 {
+            BzValue::I8(value as i8)
+        } else if value >= 0 && value <= u64::MAX as i128 {
+            BzValue::U64(value as u64)
+        } else if value >= i64::MIN as i128 && value <= i64::MAX as i128 {
+            BzValue::U64AndSign {
+                magnitude: value.abs() as u64,
+                is_positive: value >= 0,
+            }
+        } else if value >= 0 {
+            BzValue::U128AndSign {
+                magnitude: value as u128,
+                is_positive: true,
+            }
+        } else {
+            BzValue::U128AndSign {
+                magnitude: value.abs() as u128,
+                is_positive: false,
+            }
+        }
+    }
+
+    pub fn evaluate_as_cz<F: JoltField>(
+        &self,
+        flattened_polynomials: &[MultilinearPolynomial<F>],
+        row: usize,
+    ) -> CzValue {
+        let value = self.evaluate_row_i128(flattened_polynomials, row);
+        if value == 0 {
+            CzValue::Zero
+        } else if value >= i8::MIN as i128 && value <= i8::MAX as i128 {
+            CzValue::I8(value as i8)
+        } else if value >= 0 && value <= u64::MAX as i128 {
+            CzValue::U64(value as u64)
+        } else if value.abs() <= u64::MAX as i128 {
+            CzValue::U64AndSign {
+                magnitude: value.abs() as u64,
+                is_positive: value >= 0,
+            }
+        } else if value >= 0 {
+            CzValue::U128(value as u128)
+        } else {
+            // Cz should not be a signed 128-bit value.
+            panic!("Cz value overflowed expectations")
+        }
+    }
+
     pub fn new(terms: Vec<Term>) -> Self {
         #[cfg(test)]
         Self::assert_no_duplicate_terms(&terms);

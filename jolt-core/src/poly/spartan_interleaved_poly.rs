@@ -12,7 +12,7 @@ use crate::{
     },
     zkvm::{
         instruction::CircuitFlags,
-        r1cs::{builder::Constraint, inputs::JoltR1CSInputs},
+        r1cs::{builder::TypedConstraint, inputs::JoltR1CSInputs},
     },
 };
 use rayon::prelude::*;
@@ -108,7 +108,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
     )]
     pub fn new_with_precompute(
         padded_num_constraints: usize,
-        r1cs_constraints: &[Constraint],
+        r1cs_constraints: &[TypedConstraint],
         input_polys: &[MultilinearPolynomial<F>],
         tau: &[F],
     ) -> ([F; NUM_ACCUMS_EVAL_ZERO], [F; NUM_ACCUMS_EVAL_INFTY], Self) {
@@ -274,9 +274,9 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
                                 let global_r1cs_idx = current_step_idx * padded_num_constraints + constraint_idx_in_step;
 
-                                if !constraint.a.terms().is_empty() {
+                                if !constraint.lc.a.terms().is_empty() {
                                     let az = constraint
-                                        .a
+                                        .lc.a
                                         .evaluate_row_i128(input_polys, current_step_idx);
                                     if az != 0 {
                                         binary_az_block[idx_in_svo_block] = az;
@@ -284,9 +284,9 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                     }
                                 }
 
-                                if !constraint.b.terms().is_empty() {
+                                if !constraint.lc.b.terms().is_empty() {
                                     let bz = constraint
-                                        .b
+                                        .lc.b
                                         .evaluate_row(input_polys, current_step_idx);
                                     if !bz.is_zero() {
                                         binary_bz_block[idx_in_svo_block] = bz;
@@ -296,17 +296,17 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
                                 #[cfg(test)] {
                                     let az = constraint
-                                        .a
+                                        .lc.a
                                         .evaluate_row(input_polys, current_step_idx);
                                     let bz = constraint
-                                        .b
+                                        .lc.b
                                         .evaluate_row(input_polys, current_step_idx);
                                     let cz = constraint
-                                        .c
+                                        .lc.c
                                         .evaluate_row(input_polys, current_step_idx);
                                     let mut constraint_string = String::new();
                                     let _ = constraint
-                                        .pretty_fmt(
+                                        .lc.pretty_fmt(
                                             &mut constraint_string,
                                             input_polys,
                                             current_step_idx,

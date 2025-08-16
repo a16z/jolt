@@ -16,7 +16,7 @@ use crate::utils::math::Math;
 use crate::zkvm::dag::stage::SumcheckStages;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::zkvm::instruction::CircuitFlags;
-use crate::zkvm::r1cs::builder::Constraint;
+use crate::zkvm::r1cs::builder::TypedConstraint;
 use crate::zkvm::r1cs::constraints::{JoltRV32IMConstraints, R1CSConstraints};
 use crate::zkvm::r1cs::inputs::JoltR1CSInputs;
 use crate::zkvm::r1cs::inputs::ALL_R1CS_INPUTS;
@@ -106,7 +106,7 @@ where
     fn prove_outer_sumcheck(
         num_rounds_x: usize,
         r1cs_constraints_only_padded: usize,
-        r1cs_constraints: &[Constraint],
+        r1cs_constraints: &[TypedConstraint],
         input_polys: &[MultilinearPolynomial<F>],
         tau: &[F],
         transcript: &mut ProofTranscript,
