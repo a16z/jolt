@@ -56,7 +56,7 @@ impl<F: JoltField> Index<usize> for ExpandingTable<F> {
     type Output = F;
 
     fn index(&self, index: usize) -> &F {
-        assert!(index < self.len);
+        assert!(index < self.len, "index: {}, len: {}", index, self.len);
         &self.values[index]
     }
 }
