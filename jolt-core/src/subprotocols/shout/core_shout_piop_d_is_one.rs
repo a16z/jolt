@@ -389,7 +389,7 @@ pub fn prove_generic_core_shout_piop_d_is_one_w_gruen<F: JoltField, ProofTranscr
 mod tests {
 
     use super::*;
-    use crate::transcripts::KeccakTranscript;
+    use crate::transcripts::Blake2bTranscript;
     //use ark_bn254::Fr;
     use crate::field::tracked_ark::TrackedFr as Fr;
     use ark_ff::UniformRand;
@@ -433,7 +433,7 @@ mod tests {
         //-------------------------------------------------------------------------------
 
         reset_mult_count();
-        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+        let mut prover_transcript = Blake2bTranscript::new(b"test_transcript");
         let (
             _sumcheck_proof,
             _verifier_challenges_wo_gruen,
@@ -449,7 +449,7 @@ mod tests {
 
         let linear_prover = get_mult_count();
         reset_mult_count();
-        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+        let mut prover_transcript = Blake2bTranscript::new(b"test_transcript");
         let (
             sumcheck_proof,
             _verifier_challenges,
@@ -474,7 +474,7 @@ mod tests {
         );
         // See page 51 of Twist and Shout paper for a derivation of the above asymptotics
 
-        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+        let mut verifier_transcript = Blake2bTranscript::new(b"test_transcript");
         verifier_transcript.compare_to(prover_transcript);
 
         let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(num_lookups.log_2());

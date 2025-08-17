@@ -497,7 +497,7 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
-    use crate::transcripts::KeccakTranscript;
+    use crate::transcripts::Blake2bTranscript;
     use ark_bn254::Fr;
     //use crate::field::tracked_ark::TrackedFr as Fr; // Use to track mults
     use ark_ff::UniformRand;
@@ -576,7 +576,7 @@ mod tests {
             .collect();
         let val = MultilinearPolynomial::from(lookup_table.clone());
         //-------------------------------------------------------------------------------
-        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+        let mut prover_transcript = Blake2bTranscript::new(b"test_transcript");
 
         let start = Instant::now();
         let (
@@ -596,7 +596,7 @@ mod tests {
         let end = start.elapsed().as_millis();
         println!("Took {end} ms\n");
 
-        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+        let mut prover_transcript = Blake2bTranscript::new(b"test_transcript");
         reset_mult_count();
         let start = Instant::now();
         let (
@@ -634,7 +634,7 @@ mod tests {
         let _product = ra_address_time_claim * val_tau_claim * eq_rcycle_rtime_claim;
 
         // Now we check if the verification aligns with thee opening
-        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+        let mut verifier_transcript = Blake2bTranscript::new(b"test_transcript");
         verifier_transcript.compare_to(prover_transcript);
 
         // Already in Big ENDIAN

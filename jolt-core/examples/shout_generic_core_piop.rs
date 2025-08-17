@@ -5,7 +5,7 @@ use jolt_core::subprotocols::shout::core_shout_piop_d_greater_one::{
     prove_generic_core_shout_pip_d_greater_than_one,
     prove_generic_core_shout_pip_d_greater_than_one_with_gruen,
 };
-use jolt_core::transcripts::KeccakTranscript;
+use jolt_core::transcripts::Blake2bTranscript;
 use jolt_core::transcripts::Transcript;
 use rand_core::RngCore;
 use std::time::Instant;
@@ -24,7 +24,7 @@ fn main() {
     let lookup_table: Vec<Fr> = (0..K).map(|_| Fr::rand(&mut rng1)).collect();
     let read_addresses: Vec<usize> = (0..T).map(|_| (rng1.next_u32() as usize) % K).collect();
 
-    let mut transcript = KeccakTranscript::new(b"bench");
+    let mut transcript = Blake2bTranscript::new(b"bench");
 
     let start = Instant::now();
     let (
@@ -48,7 +48,7 @@ fn main() {
         duration.as_millis()
     );
 
-    let mut transcript = KeccakTranscript::new(b"bench");
+    let mut transcript = Blake2bTranscript::new(b"bench");
     let start = Instant::now();
     let (
         _sumcheck_proof,
