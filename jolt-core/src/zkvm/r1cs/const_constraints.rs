@@ -4,9 +4,9 @@
 //! to replace the dynamic constraint building in the prover's hot path.
 
 use super::inputs::JoltR1CSInputs;
-use crate::zkvm::instruction::CircuitFlags;
 use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+use crate::zkvm::instruction::CircuitFlags;
 
 /// Helper for JoltR1CSInputs to get indices
 impl JoltR1CSInputs {
@@ -251,7 +251,7 @@ impl ConstLC {
         row: usize,
     ) -> F {
         let mut result = F::zero();
-        
+
         // Add variable terms
         for i in 0..self.num_terms() {
             if let Some(term) = self.term(i) {
@@ -261,12 +261,12 @@ impl ConstLC {
                 result += value;
             }
         }
-        
+
         // Add constant term if present
         if let Some(const_val) = self.const_term() {
             result += F::from_i128(const_val);
         }
-        
+
         result
     }
 
@@ -762,8 +762,7 @@ mod tests {
         assert_eq!(
             ground_truth_constraints.len(),
             NUM_R1CS_CONSTRAINTS,
-            "Number of constraints mismatch! Expected {}, got {}",
-            NUM_R1CS_CONSTRAINTS,
+            "Number of constraints mismatch! Expected {NUM_R1CS_CONSTRAINTS}, got {}",
             ground_truth_constraints.len()
         );
 
@@ -815,11 +814,10 @@ mod tests {
             for row in 0..flattened_polynomials[0].len() {
                 let const_result = const_lc.evaluate_row(&flattened_polynomials, row);
                 let dynamic_result = dynamic_lc.evaluate_row(&flattened_polynomials, row);
-                
+
                 assert_eq!(
                     const_result, dynamic_result,
-                    "ConstLC evaluate_row mismatch at test case {}, row {}: const={:?}, dynamic={:?}",
-                    i, row, const_result, dynamic_result
+                    "ConstLC evaluate_row mismatch at test case {i}, row {row}: const={const_result:?}, dynamic={dynamic_result:?}"
                 );
             }
         }
@@ -839,7 +837,7 @@ mod tests {
 
         // Test a few representative constraints from UNIFORM_ROWS
         let test_indices = [0, 5, 10, 15, 20, 25]; // Sample from different constraint types
-        
+
         for &constraint_idx in &test_indices {
             let const_constraint = &UNIFORM_ROWS[constraint_idx];
             let dynamic_constraint = const_constraint_to_dynamic_for_test(const_constraint);
@@ -853,15 +851,15 @@ mod tests {
 
                 assert_eq!(
                     const_a, dynamic_a,
-                    "Constraint {} A evaluation mismatch at row {}", constraint_idx, row
+                    "Constraint {constraint_idx} A evaluation mismatch at row {row}"
                 );
                 assert_eq!(
                     const_b, dynamic_b,
-                    "Constraint {} B evaluation mismatch at row {}", constraint_idx, row
+                    "Constraint {constraint_idx} B evaluation mismatch at row {row}"
                 );
                 assert_eq!(
                     const_c, dynamic_c,
-                    "Constraint {} C evaluation mismatch at row {}", constraint_idx, row
+                    "Constraint {constraint_idx} C evaluation mismatch at row {row}"
                 );
             }
         }
