@@ -5,6 +5,8 @@
 
 use super::inputs::JoltR1CSInputs;
 use crate::zkvm::instruction::CircuitFlags;
+use crate::field::JoltField;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 
 /// Helper for JoltR1CSInputs to get indices
 impl JoltR1CSInputs {
@@ -241,6 +243,33 @@ impl ConstLC {
         }
     }
 
+    /// Evaluate this linear combination at a specific row in the witness polynomials
+    #[inline]
+    pub fn evaluate_row<F: JoltField>(
+        &self,
+        flattened_polynomials: &[MultilinearPolynomial<F>],
+        row: usize,
+    ) -> F {
+        let mut result = F::zero();
+        
+        // Add variable terms
+        for i in 0..self.num_terms() {
+            if let Some(term) = self.term(i) {
+                let value = flattened_polynomials[term.input_index]
+                    .get_coeff(row)
+                    .mul_i128(term.coeff);
+                result += value;
+            }
+        }
+        
+        // Add constant term if present
+        if let Some(const_val) = self.const_term() {
+            result += F::from_i128(const_val);
+        }
+        
+        result
+    }
+
     /// Multiply this ConstLC by a constant
     pub const fn mul_by_const(self, multiplier: i128) -> ConstLC {
         match self {
@@ -440,6 +469,20 @@ pub struct ConstraintConst {
 impl ConstraintConst {
     pub const fn new(a: ConstLC, b: ConstLC, c: ConstLC) -> Self {
         Self { a, b, c }
+    }
+
+    /// Evaluate this constraint at a specific row in the witness polynomials
+    /// Returns (a_eval, b_eval, c_eval) tuple
+    #[inline]
+    pub fn evaluate_row<F: JoltField>(
+        &self,
+        flattened_polynomials: &[MultilinearPolynomial<F>],
+        row: usize,
+    ) -> (F, F, F) {
+        let a_eval = self.a.evaluate_row(flattened_polynomials, row);
+        let b_eval = self.b.evaluate_row(flattened_polynomials, row);
+        let c_eval = self.c.evaluate_row(flattened_polynomials, row);
+        (a_eval, b_eval, c_eval)
     }
 }
 
@@ -736,6 +779,113 @@ mod tests {
             let converted = const_constraint_to_dynamic_for_test(const_constraint);
             compare_constraints(&converted, ground_truth, i);
         }
+    }
+
+    #[test]
+    fn test_const_lc_evaluate_row() {
+        use ark_bn254::Fr as F;
+
+        // Create test polynomial data
+        let test_data_1 = vec![F::from(1u64), F::from(2u64), F::from(3u64), F::from(4u64)];
+        let test_data_2 = vec![F::from(5u64), F::from(6u64), F::from(7u64), F::from(8u64)];
+        let poly_1 = MultilinearPolynomial::from(test_data_1);
+        let poly_2 = MultilinearPolynomial::from(test_data_2);
+        let flattened_polynomials = vec![poly_1, poly_2];
+
+        // Test cases for different ConstLC types
+        let test_cases = vec![
+            // Zero LC
+            ConstLC::Zero,
+            // Constant only
+            ConstLC::Const(42),
+            // Single term
+            ConstLC::Terms1([ConstTerm::new(0, 3)]),
+            // Multiple terms
+            ConstLC::Terms2([ConstTerm::new(0, 2), ConstTerm::new(1, -1)]),
+            // Terms with constant
+            ConstLC::Terms1Const([ConstTerm::new(0, 1)], 10),
+            ConstLC::Terms2Const([ConstTerm::new(0, 2), ConstTerm::new(1, 3)], -5),
+        ];
+
+        for (i, const_lc) in test_cases.iter().enumerate() {
+            // Convert const LC to dynamic LC for comparison
+            let dynamic_lc = const_lc_to_dynamic_lc_for_test(const_lc);
+
+            // Test evaluation at different rows
+            for row in 0..flattened_polynomials[0].len() {
+                let const_result = const_lc.evaluate_row(&flattened_polynomials, row);
+                let dynamic_result = dynamic_lc.evaluate_row(&flattened_polynomials, row);
+                
+                assert_eq!(
+                    const_result, dynamic_result,
+                    "ConstLC evaluate_row mismatch at test case {}, row {}: const={:?}, dynamic={:?}",
+                    i, row, const_result, dynamic_result
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_constraint_const_evaluate_row() {
+        use ark_bn254::Fr as F;
+
+        // Create test polynomial data - need enough for all R1CS inputs
+        let num_inputs = crate::zkvm::r1cs::inputs::JoltR1CSInputs::num_inputs();
+        let mut test_polys = Vec::new();
+        for i in 0..num_inputs {
+            let data: Vec<F> = (0..8).map(|j| F::from((i * 8 + j + 1) as u64)).collect();
+            test_polys.push(MultilinearPolynomial::from(data));
+        }
+
+        // Test a few representative constraints from UNIFORM_ROWS
+        let test_indices = [0, 5, 10, 15, 20, 25]; // Sample from different constraint types
+        
+        for &constraint_idx in &test_indices {
+            let const_constraint = &UNIFORM_ROWS[constraint_idx];
+            let dynamic_constraint = const_constraint_to_dynamic_for_test(const_constraint);
+
+            // Test evaluation at different rows
+            for row in 0..4 {
+                let (const_a, const_b, const_c) = const_constraint.evaluate_row(&test_polys, row);
+                let dynamic_a = dynamic_constraint.a.evaluate_row(&test_polys, row);
+                let dynamic_b = dynamic_constraint.b.evaluate_row(&test_polys, row);
+                let dynamic_c = dynamic_constraint.c.evaluate_row(&test_polys, row);
+
+                assert_eq!(
+                    const_a, dynamic_a,
+                    "Constraint {} A evaluation mismatch at row {}", constraint_idx, row
+                );
+                assert_eq!(
+                    const_b, dynamic_b,
+                    "Constraint {} B evaluation mismatch at row {}", constraint_idx, row
+                );
+                assert_eq!(
+                    const_c, dynamic_c,
+                    "Constraint {} C evaluation mismatch at row {}", constraint_idx, row
+                );
+            }
+        }
+    }
+
+    /// Helper function to convert ConstLC to dynamic LC for testing
+    fn const_lc_to_dynamic_lc_for_test(const_lc: &ConstLC) -> super::super::ops::LC {
+        use super::super::ops::{Term, Variable, LC};
+
+        let mut terms = Vec::new();
+
+        // Add variable terms
+        for i in 0..const_lc.num_terms() {
+            if let Some(term) = const_lc.term(i) {
+                terms.push(Term(Variable::Input(term.input_index), term.coeff));
+            }
+        }
+
+        // Add constant term if present
+        if let Some(const_val) = const_lc.const_term() {
+            terms.push(Term(Variable::Constant, const_val));
+        }
+
+        LC::new(terms)
     }
 
     /// Test-specific conversion function that always works regardless of feature flags
