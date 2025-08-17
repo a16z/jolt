@@ -184,7 +184,7 @@ async fn download_toolchain(client: &Client, url: &str) -> Result<()> {
                 .and_then(|h| h.to_str().ok())
                 .and_then(|s| s.split('/').nth(1))
                 .and_then(|s| s.parse::<u64>().ok())
-                .unwrap_or(resume_from)
+                .unwrap_or(response.content_length().unwrap_or(0) + resume_from)
         } else {
             response.content_length().unwrap_or(0)
         };
