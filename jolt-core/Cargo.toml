@@ -32,7 +32,6 @@ parallel = [
     "rayon",
 ]
 test_incremental = []
-const_r1cs = []
 
 [dependencies]
 ark-bn254 = "0.5.0"
