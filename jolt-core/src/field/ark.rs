@@ -1,3 +1,5 @@
+use std::{char::from_u32, u128};
+
 use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
 use rayon::prelude::*;
 
@@ -94,6 +96,19 @@ impl JoltField for ark_bn254::Fr {
         }
     }
 
+    fn from_u128(n: u128) -> Self {
+        if n <= u16::MAX as u128 {
+            <Self as JoltField>::from_u16(n as u16)
+        } else if n <= u32::MAX as u128 {
+            <Self as JoltField>::from_u32(n as u32)
+        } else if n <= u64::MAX as u128 {
+            <Self as JoltField>::from_u64(n as u64)
+        } else {
+            let bigint = BigInt::new([n as u64, (n >> 64) as u64, 0, 0]);
+            <Self as ark_ff::PrimeField>::from_bigint(bigint).unwrap()
+        }
+    }
+
     fn from_i128(val: i128) -> Self {
         if val.is_negative() {
             let val = (-val) as u128;
@@ -160,6 +175,19 @@ impl JoltField for ark_bn254::Fr {
             <Self as JoltField>::from_u64(n)
         } else {
             ark_ff::Fp::mul_u64(*self, n)
+        }
+    }
+
+    #[inline(always)]
+    fn mul_u128(&self, n: u128) -> Self {
+        if n == 0 || self.is_zero() {
+            Self::zero()
+        } else if n == 1 {
+            *self
+        } else if self.is_one() {
+            <Self as JoltField>::from_u32(1 as u32)
+        } else {
+            ark_ff::Fp::mul_u128(*self, n)
         }
     }
 

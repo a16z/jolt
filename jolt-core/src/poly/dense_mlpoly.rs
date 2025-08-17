@@ -76,6 +76,12 @@ impl<F: JoltField> DensePolynomial<F> {
         }
     }
 
+    pub fn bind_small_scalar_parallel(&mut self, r: u128, order: BindingOrder) {
+        match order {
+            BindingOrder::LowToHigh => self.bound_poly_var_bot_01_small(&r),
+            BindingOrder::HighToLow => self.bound_poly_var_top_0_small(&r),
+        }
+    }
     pub fn bind_parallel(&mut self, r: F, order: BindingOrder) {
         match order {
             BindingOrder::LowToHigh => self.bound_poly_var_bot_01_optimized(&r),
@@ -212,6 +218,36 @@ impl<F: JoltField> DensePolynomial<F> {
         self.len = n;
     }
 
+    pub fn bound_poly_var_top_0_small(&mut self, _r: &u128) {}
+    pub fn bound_poly_var_bot_01_small(&mut self, r: &u128) {
+        let n = self.len() / 2;
+
+        if self.binding_scratch_space.is_none() {
+            self.binding_scratch_space = Some(unsafe_allocate_zero_vec(n));
+        }
+
+        let scratch_space = self.binding_scratch_space.as_mut().unwrap();
+
+        scratch_space
+            .par_iter_mut()
+            .take(n)
+            .enumerate()
+            .for_each(|(i, z)| {
+                let m = self.Z[2 * i + 1] - self.Z[2 * i];
+                *z = if m.is_zero() {
+                    self.Z[2 * i]
+                } else if m.is_one() {
+                    self.Z[2 * i].mul_u128(*r)
+                } else {
+                    self.Z[2 * i] + m.mul_u128(*r)
+                }
+            });
+
+        std::mem::swap(&mut self.Z, scratch_space);
+
+        self.num_vars -= 1;
+        self.len = n;
+    }
     pub fn bound_poly_var_bot_01_optimized(&mut self, r: &F) {
         let n = self.len() / 2;
 

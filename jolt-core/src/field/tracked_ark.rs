@@ -298,6 +298,9 @@ impl JoltField for TrackedFr {
     fn from_i64(n: i64) -> Self {
         TrackedFr(<ark_bn254::Fr as JoltField>::from_i64(n))
     }
+    fn from_u128(n: u128) -> Self {
+        TrackedFr(<ark_bn254::Fr as JoltField>::from_u128(n))
+    }
 
     fn from_i128(n: i128) -> Self {
         TrackedFr(<ark_bn254::Fr as JoltField>::from_i128(n))
@@ -328,6 +331,10 @@ impl JoltField for TrackedFr {
     fn mul_u64(&self, n: u64) -> Self {
         MULT_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(self.0.mul_u64(n))
+    }
+    fn mul_u128(&self, n: u128) -> Self {
+        MULT_COUNT.fetch_add(1, Ordering::Relaxed);
+        TrackedFr(self.0.mul_u128(n))
     }
 
     fn mul_i128(&self, n: i128) -> Self {
