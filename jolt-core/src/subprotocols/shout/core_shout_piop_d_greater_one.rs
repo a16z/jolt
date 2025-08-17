@@ -127,7 +127,7 @@ pub fn prove_generic_core_shout_pip_d_greater_than_one<
     E.par_iter_mut().enumerate().for_each(|(j, e_j)| {
         // for a fixed table e_j iterate through all of time stamps
         e_j.par_iter_mut().enumerate().for_each(|(y, e)| {
-            // take the memory cell to be read at time y and extrac j'th digit: addr_j
+            // take the memory cell to be read at time y and extract j'th digit: addr_j
             // (which is also the index in array e_j[y: addr_j])
             // Here when j=0 we get the MSB and when j=d-1 we get the LSB
             let addr_j = digit_j_of(read_addresses[y], j, d, N);
@@ -141,27 +141,25 @@ pub fn prove_generic_core_shout_pip_d_greater_than_one<
     let mut ra_taus: Vec<MultilinearPolynomial<F>> =
         E.into_par_iter().map(MultilinearPolynomial::from).collect();
 
-    let DEGREE_TME: usize = d + 1;
+    let DEGREE_TIME: usize = d + 1;
     for _time_round_idx in 0..T.log_2() {
         let univariate_poly_evals: Vec<F> = (0..ra_taus[0].len() / 2)
             .into_par_iter()
             .map(|index| {
                 let eq_r_cycle_evals =
-                    eq_r_cycle.sumcheck_evals(index, DEGREE_TME, BindingOrder::LowToHigh);
+                    eq_r_cycle.sumcheck_evals(index, DEGREE_TIME, BindingOrder::LowToHigh);
                 // For each of the d ra_taus we should get d sumcheck evals as the evaluation at 1
                 // is constructed from the previous claim
                 // This happens only d times so there's no need to parallelise
                 let ra_evals_per_tau: Vec<Vec<F>> = ra_taus
                     .iter()
-                    .map(|ra_tau| ra_tau.sumcheck_evals(index, DEGREE_TME, BindingOrder::LowToHigh))
+                    .map(|ra_tau| {
+                        ra_tau.sumcheck_evals(index, DEGREE_TIME, BindingOrder::LowToHigh)
+                    })
                     .collect();
 
                 // The parallelisation should be over ra_evals_per_tau which can be as
-                // large as ra_taus[0].len()/2 = T/2 initially.
-                // It shrinks by half at each round
-                // TODO: once the size of ra_taus[0] is small enough
-                // we should swtich from par_iter to iter.
-                let result: Vec<F> = (0..DEGREE_TME)
+                let result: Vec<F> = (0..DEGREE_TIME)
                     .map(|i| {
                         let col_product = ra_evals_per_tau
                             .par_iter()
@@ -174,7 +172,7 @@ pub fn prove_generic_core_shout_pip_d_greater_than_one<
                 result
             })
             .reduce(
-                || vec![F::zero(); DEGREE_TME],
+                || vec![F::zero(); DEGREE_TIME],
                 |running, new| {
                     running
                         .iter()
@@ -188,7 +186,7 @@ pub fn prove_generic_core_shout_pip_d_greater_than_one<
             &univariate_poly_evals,
             val_claim,
             previous_claim,
-            DEGREE_TME,
+            DEGREE_TIME,
         );
         let univariate_poly = UniPoly::from_evals(&d_plus_two_evaluations);
 
@@ -327,7 +325,7 @@ pub fn prove_generic_core_shout_pip_d_greater_than_one_with_gruen<
     // Filling out E involve any multiplications (Just lookups)
 
     // d is never very large : no need to parallelise over d
-    // ENDIAN STUFF -- this because extact last digits first so E[j] updates is being mapped to eq_taus[d-j-1]
+    // ENDIAN STUFF -- this because extract last digits first so E[j] updates is being mapped to eq_taus[d-j-1]
     for (j, e_j) in Es.iter_mut().rev().enumerate() {
         // each e_j has T slots and T is large so this should be parallel
         e_j.par_iter_mut().enumerate().for_each(|(y, e)| {
