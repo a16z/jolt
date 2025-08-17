@@ -730,7 +730,7 @@ mod tests {
             .zip(ground_truth_constraints.iter())
             .enumerate()
         {
-            println!("Checking constraint {}", i);
+            println!("Checking constraint {i}");
 
             // Convert const constraint to dynamic for comparison and compare
             let converted = const_constraint_to_dynamic_for_test(const_constraint);
@@ -801,20 +801,17 @@ mod tests {
 
         assert_eq!(
             converted_a, ground_truth_a,
-            "Constraint {} A terms mismatch!\nConverted: {:?}\nGround truth: {:?}",
-            constraint_index, converted_a, ground_truth_a
+            "Constraint {constraint_index} A terms mismatch!\nConverted: {converted_a:?}\nGround truth: {ground_truth_a:?}"
         );
 
         assert_eq!(
             converted_b, ground_truth_b,
-            "Constraint {} B terms mismatch!\nConverted: {:?}\nGround truth: {:?}",
-            constraint_index, converted_b, ground_truth_b
+            "Constraint {constraint_index} B terms mismatch!\nConverted: {converted_b:?}\nGround truth: {ground_truth_b:?}"
         );
 
         assert_eq!(
             converted_c, ground_truth_c,
-            "Constraint {} C terms mismatch!\nConverted: {:?}\nGround truth: {:?}",
-            constraint_index, converted_c, ground_truth_c
+            "Constraint {constraint_index} C terms mismatch!\nConverted: {converted_c:?}\nGround truth: {ground_truth_c:?}"
         );
     }
 }
