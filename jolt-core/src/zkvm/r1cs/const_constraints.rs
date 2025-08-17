@@ -885,36 +885,53 @@ pub const fn one_minus_flag(flag: CircuitFlags) -> ConstLC {
 /// Static table of all 28 R1CS uniform constraints
 /// Each constraint corresponds to one call to constrain_* in JoltRV32IMConstraints::uniform_constraints
 pub static UNIFORM_ROWS: [ConstraintConst; NUM_R1CS_CONSTRAINTS] = [
+    // if LeftOperandIsRs1Value { assert!(LeftInstructionInput == Rs1Value) }
     r1cs_eq_conditional!(
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsRs1Value) } }
         => ( { JoltR1CSInputs::LeftInstructionInput } ) == ( { JoltR1CSInputs::Rs1Value } )
     ),
 
+    // if LeftOperandIsPC { assert!(LeftInstructionInput == UnexpandedPC) }
     r1cs_eq_conditional!(
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsPC) } }
         => ( { JoltR1CSInputs::LeftInstructionInput } ) == ( { JoltR1CSInputs::UnexpandedPC } )
     ),
 
+    // if !(LeftOperandIsRs1Value || LeftOperandIsPC)  {
+    //     assert!(LeftInstructionInput == 0)
+    // }
+    // Note that LeftOperandIsRs1Value and LeftOperandIsPC are mutually exclusive flags
     r1cs_eq_conditional!(
         if { { 1i128 } - { JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsRs1Value) } - { JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsPC) } }
         => ( { JoltR1CSInputs::LeftInstructionInput } ) == ( { 0i128 } )
     ),
 
+    // if RightOperandIsRs2Value { assert!(RightInstructionInput == Rs2Value) }
     r1cs_eq_conditional!(
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsRs2Value) } }
         => ( { JoltR1CSInputs::RightInstructionInput } ) == ( { JoltR1CSInputs::Rs2Value } )
     ),
 
+    // if RightOperandIsImm { assert!(RightInstructionInput == Imm) }
     r1cs_eq_conditional!(
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm) } }
         => ( { JoltR1CSInputs::RightInstructionInput } ) == ( { JoltR1CSInputs::Imm } )
     ),
 
+    // if !(RightOperandIsRs2Value || RightOperandIsImm)  {
+    //     assert!(RightInstructionInput == 0)
+    // }
+    // Note that RightOperandIsRs2Value and RightOperandIsImm are mutually exclusive flags
     r1cs_eq_conditional!(
         if { { 1i128 } - { JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsRs2Value) } - { JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm) } }
         => ( { JoltR1CSInputs::RightInstructionInput } ) == ( { 0i128 } )
     ),
 
+    // if Load || Store {
+    //     assert!(RamAddress == Rs1Value + Imm)
+    // } else {
+    //     assert!(RamAddress == 0)
+    // }
     r1cs_if_else!(
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::Load) } + { JoltR1CSInputs::OpFlags(CircuitFlags::Store) } }
         => ( { JoltR1CSInputs::Rs1Value } + { JoltR1CSInputs::Imm } )
@@ -922,21 +939,36 @@ pub static UNIFORM_ROWS: [ConstraintConst; NUM_R1CS_CONSTRAINTS] = [
         => ( { JoltR1CSInputs::RamAddress } )
     ),
 
+    // if Load {
+    //     assert!(RamReadValue == RamWriteValue)
+    // }
     r1cs_eq_conditional!(
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::Load) } }
         => ( { JoltR1CSInputs::RamReadValue } ) == ( { JoltR1CSInputs::RamWriteValue } )
     ),
 
+    // if Load {
+    //     assert!(RamReadValue == RdWriteValue)
+    // }
     r1cs_eq_conditional!(
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::Load) } }
         => ( { JoltR1CSInputs::RamReadValue } ) == ( { JoltR1CSInputs::RdWriteValue } )
     ),
 
+    // if Store {
+    //     assert!(Rs2Value == RamWriteValue)
+    // }
     r1cs_eq_conditional!(
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::Store) } }
         => ( { JoltR1CSInputs::Rs2Value } ) == ( { JoltR1CSInputs::RamWriteValue } )
     ),
 
+    // if AddOperands || SubtractOperands || MultiplyOperands {
+    //     // Lookup query is just RightLookupOperand
+    //     assert!(LeftLookupOperand == 0)
+    // } else {
+    //     assert!(LeftLookupOperand == LeftInstructionInput)
+    // }
     r1cs_if_else!(
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) } + { JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) } + { JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) } }
         => ( { 0i128 } )
@@ -944,16 +976,26 @@ pub static UNIFORM_ROWS: [ConstraintConst; NUM_R1CS_CONSTRAINTS] = [
         => ( { JoltR1CSInputs::LeftLookupOperand } )
     ),
 
+    // If AddOperands {
+    //     assert!(RightLookupOperand == LeftInstructionInput + RightInstructionInput)
+    // }
     r1cs_eq_conditional!(
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) } }
         => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::LeftInstructionInput } + { JoltR1CSInputs::RightInstructionInput } )
     ),
 
+    // If SubtractOperands {
+    //     assert!(RightLookupOperand == LeftInstructionInput - RightInstructionInput)
+    // }
+    // Converts from unsigned to twos-complement representation
     r1cs_eq_conditional!(
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) } }
         => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::LeftInstructionInput } - { JoltR1CSInputs::RightInstructionInput } + { 0x10000000000000000i128 } )
     ),
 
+    // if MultiplyOperands {
+    //     assert!(RightLookupOperand == Rs1Value * Rs2Value)
+    // }
     r1cs_prod!(
         ( { JoltR1CSInputs::RightInstructionInput } ) * ( { JoltR1CSInputs::LeftInstructionInput } ) == ( { JoltR1CSInputs::Product } )
     ),
@@ -963,16 +1005,26 @@ pub static UNIFORM_ROWS: [ConstraintConst; NUM_R1CS_CONSTRAINTS] = [
         => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::Product } )
     ),
 
+    // if !(AddOperands || SubtractOperands || MultiplyOperands || Advice) {
+    //     assert!(RightLookupOperand == RightInstructionInput)
+    // }
+    // Arbitrary untrusted advice goes in right lookup operand
     r1cs_eq_conditional!(
         if { { 1i128 } - { JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) } - { JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) } - { JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) } - { JoltR1CSInputs::OpFlags(CircuitFlags::Advice) } }
         => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::RightInstructionInput } )
     ),
 
+    // if Assert {
+    //     assert!(LookupOutput == 1)
+    // }
     r1cs_eq_conditional!(
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::Assert) } }
         => ( { JoltR1CSInputs::LookupOutput } ) == ( { 1i128 } )
     ),
 
+    // if Rd != 0 && WriteLookupOutputToRD {
+    //     assert!(RdWriteValue == LookupOutput)
+    // }
     r1cs_prod!(
         ( { JoltR1CSInputs::Rd } ) * ( { JoltR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD) } ) == ( { JoltR1CSInputs::WriteLookupOutputToRD } )
     ),
@@ -982,17 +1034,25 @@ pub static UNIFORM_ROWS: [ConstraintConst; NUM_R1CS_CONSTRAINTS] = [
         => ( { JoltR1CSInputs::RdWriteValue } ) == ( { JoltR1CSInputs::LookupOutput } )
     ),
 
+    // if Rd != 0 && Jump {
+    //     if !isCompressed {
+    //          assert!(RdWriteValue == UnexpandedPC + 4)
+    //     } else {
+    //          assert!(RdWriteValue == UnexpandedPC + 2)
+    //     }
+    // }
     r1cs_prod!(
         ( { JoltR1CSInputs::Rd } ) * ( { JoltR1CSInputs::OpFlags(CircuitFlags::Jump) } ) == ( { JoltR1CSInputs::WritePCtoRD } )
     ),
 
-    // cs.constrain_eq_conditional(JoltR1CSInputs::WritePCtoRD, JoltR1CSInputs::RdWriteValue, JoltR1CSInputs::UnexpandedPC + 4 - 2 * IsCompressed)
     r1cs_eq_conditional!(
         if { { JoltR1CSInputs::WritePCtoRD } }
         => ( { JoltR1CSInputs::RdWriteValue } ) == ( { JoltR1CSInputs::UnexpandedPC } + { 4i128 } - { 2 * JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) } )
     ),
 
-    // cs.constrain_prod(Jump, 1 - NextIsNoop, ShouldJump)
+    // if Jump && !NextIsNoop {
+    //     assert!(NextUnexpandedPC == LookupOutput)
+    // }
     r1cs_prod!(
         ( { JoltR1CSInputs::OpFlags(CircuitFlags::Jump) } )
         * ( { 1i128 } - { JoltR1CSInputs::NextIsNoop } )
@@ -1004,6 +1064,9 @@ pub static UNIFORM_ROWS: [ConstraintConst; NUM_R1CS_CONSTRAINTS] = [
         => ( { JoltR1CSInputs::NextUnexpandedPC } ) == ( { JoltR1CSInputs::LookupOutput } )
     ),
 
+    // if Branch && LookupOutput {
+    //     assert!(NextUnexpandedPC == UnexpandedPC + Imm)
+    // }
     r1cs_prod!(
         ( { JoltR1CSInputs::OpFlags(CircuitFlags::Branch) } ) * ( { JoltR1CSInputs::LookupOutput } ) == ( { JoltR1CSInputs::ShouldBranch } )
     ),
@@ -1013,6 +1076,16 @@ pub static UNIFORM_ROWS: [ConstraintConst; NUM_R1CS_CONSTRAINTS] = [
         => ( { JoltR1CSInputs::NextUnexpandedPC } ) == ( { JoltR1CSInputs::UnexpandedPC } + { JoltR1CSInputs::Imm } )
     ),
 
+    // if !(ShouldBranch || Jump) {
+    //     if DoNotUpdatePC {
+    //         assert!(NextUnexpandedPC == UnexpandedPC)
+    //     } else if isCompressed {
+    //         assert!(NextUnexpandedPC == UnexpandedPC + 2)
+    //     } else {
+    //         assert!(NextUnexpandedPC == UnexpandedPC + 4)
+    //     }
+    // }
+    // Note that ShouldBranch and Jump instructions are mutually exclusive
     r1cs_prod!(
         ( { JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) } ) * ( { JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) } ) == ( { JoltR1CSInputs::CompressedDoNotUpdateUnexpPC } )
     ),
@@ -1026,6 +1099,9 @@ pub static UNIFORM_ROWS: [ConstraintConst; NUM_R1CS_CONSTRAINTS] = [
                 + { 2 * JoltR1CSInputs::CompressedDoNotUpdateUnexpPC } )
     ),
 
+    // if Inline {
+    //     assert!(NextPC == PC + 1)
+    // }
     r1cs_eq_conditional!(
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::InlineSequenceInstruction) } }
         => ( { JoltR1CSInputs::NextPC } ) == ( { JoltR1CSInputs::PC } + { 1i128 } )
