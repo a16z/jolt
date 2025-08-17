@@ -201,6 +201,55 @@ impl JoltR1CSInputs {
         }
     }
 
+    /// Const version of to_index() for use in const contexts.
+    /// Must be kept in sync with ALL_R1CS_INPUTS ordering.
+    pub const fn to_index_const(&self) -> usize {
+        match self {
+            JoltR1CSInputs::LeftInstructionInput => 0,
+            JoltR1CSInputs::RightInstructionInput => 1,
+            JoltR1CSInputs::Product => 2,
+            JoltR1CSInputs::WriteLookupOutputToRD => 3,
+            JoltR1CSInputs::WritePCtoRD => 4,
+            JoltR1CSInputs::ShouldBranch => 5,
+            JoltR1CSInputs::PC => 6,
+            JoltR1CSInputs::UnexpandedPC => 7,
+            JoltR1CSInputs::Rd => 8,
+            JoltR1CSInputs::Imm => 9,
+            JoltR1CSInputs::RamAddress => 10,
+            JoltR1CSInputs::Rs1Value => 11,
+            JoltR1CSInputs::Rs2Value => 12,
+            JoltR1CSInputs::RdWriteValue => 13,
+            JoltR1CSInputs::RamReadValue => 14,
+            JoltR1CSInputs::RamWriteValue => 15,
+            JoltR1CSInputs::LeftLookupOperand => 16,
+            JoltR1CSInputs::RightLookupOperand => 17,
+            JoltR1CSInputs::NextUnexpandedPC => 18,
+            JoltR1CSInputs::NextPC => 19,
+            JoltR1CSInputs::LookupOutput => 20,
+            JoltR1CSInputs::NextIsNoop => 21,
+            JoltR1CSInputs::ShouldJump => 22,
+            JoltR1CSInputs::CompressedDoNotUpdateUnexpPC => 23,
+            JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsRs1Value) => 24,
+            JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsRs2Value) => 25,
+            JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsPC) => 26,
+            JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm) => 27,
+            JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) => 28,
+            JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) => 29,
+            JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) => 30,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Load) => 31,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Store) => 32,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Jump) => 33,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Branch) => 34,
+            JoltR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD) => 35,
+            JoltR1CSInputs::OpFlags(CircuitFlags::InlineSequenceInstruction) => 36,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Assert) => 37,
+            JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) => 38,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Advice) => 39,
+            JoltR1CSInputs::OpFlags(CircuitFlags::IsNoop) => 40,
+            JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) => 41,
+        }
+    }
+
     pub fn generate_witness<F, PCS>(
         &self,
         trace: &[RV32IMCycle],
@@ -378,6 +427,21 @@ mod tests {
             assert_eq!(
                 var,
                 JoltR1CSInputs::from_index(JoltR1CSInputs::to_index(&var))
+            );
+        }
+    }
+
+    #[test]
+    fn const_to_index_consistency() {
+        // Ensure to_index_const() and to_index() return the same values
+        for var in ALL_R1CS_INPUTS {
+            assert_eq!(
+                var.to_index(),
+                var.to_index_const(),
+                "Index mismatch for variant {:?}: runtime={}, const={}",
+                var,
+                var.to_index(),
+                var.to_index_const()
             );
         }
     }
