@@ -428,6 +428,33 @@ pub fn compute_claimed_witness_evals<F: JoltField>(
     claims
 }
 
+/// Single-pass generation of UnexpandedPC(t), PC(t), and IsNoop(t) witnesses.
+/// Reduces traversals from three to one for stage-3 PC sumcheck inputs.
+pub fn generate_pc_noop_witnesses<F, PCS>(
+    preprocessing: &JoltProverPreprocessing<F, PCS>,
+    trace: &[RV32IMCycle],
+) -> (
+    MultilinearPolynomial<F>, // UnexpandedPC(t)
+    MultilinearPolynomial<F>, // PC(t)
+    MultilinearPolynomial<F>, // IsNoop(t)
+)
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+{
+    let mut unexpanded_pc: Vec<u64> = Vec::with_capacity(trace.len());
+    let mut pc: Vec<u64> = Vec::with_capacity(trace.len());
+    let mut is_noop: Vec<u8> = Vec::with_capacity(trace.len());
+
+    for cycle in trace.iter() {
+        unexpanded_pc.push(cycle.instruction().normalize().address as u64);
+        pc.push(preprocessing.shared.bytecode.get_pc(cycle) as u64);
+        is_noop.push(cycle.instruction().circuit_flags()[CircuitFlags::IsNoop] as u8);
+    }
+
+    (unexpanded_pc.into(), pc.into(), is_noop.into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

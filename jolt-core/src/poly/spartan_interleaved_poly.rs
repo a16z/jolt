@@ -263,22 +263,16 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                     binary_bz_block[idx_in_svo_block] = bz;
                                     chunk_ab_coeffs.push((global_r1cs_idx + 1, bz).into());
                                 }
-                            }
 
-                            #[cfg(test)] {
-                                let az = const_row
-                                    .a
-                                    .evaluate_row(flattened_polynomials, current_step_idx);
-                                let bz = const_row
-                                    .b
-                                    .evaluate_row(flattened_polynomials, current_step_idx);
-                                let cz = const_row
-                                    .c
-                                    .evaluate_row(flattened_polynomials, current_step_idx);
-                                if az * bz != cz {
-                                    panic!(
-                                        "Constraint violated at step {current_step_idx}",
-                                    );
+                                #[cfg(test)] {
+                                    let cz = const_row
+                                        .c
+                                        .evaluate_row_with(accessor, current_step_idx);
+                                    if az * bz != cz {
+                                        panic!(
+                                            "Constraint violated at step {current_step_idx}",
+                                        );
+                                    }
                                 }
                             }
 

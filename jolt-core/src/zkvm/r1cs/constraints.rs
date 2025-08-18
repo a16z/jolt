@@ -39,9 +39,6 @@ impl Constraint {
     }
 }
 
-/// Number of uniform R1CS constraints
-pub const NUM_R1CS_CONSTRAINTS: usize = 28;
-
 // =============================================================================
 // Streaming accessor evaluation for LC
 // =============================================================================
@@ -145,6 +142,9 @@ macro_rules! r1cs_prod {
         )
     }};
 }
+
+/// Number of uniform R1CS constraints
+pub const NUM_R1CS_CONSTRAINTS: usize = 28;
 
 /// Static table of all 28 R1CS uniform constraints.
 pub static UNIFORM_R1CS: [Constraint; NUM_R1CS_CONSTRAINTS] = [
