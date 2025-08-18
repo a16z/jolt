@@ -9,7 +9,11 @@ use crate::{
         math::Math,
         small_value::{svo_helpers, NUM_SVO_ROUNDS},
     },
-    zkvm::r1cs::{constraints::{Constraint, TypedConstraint, UNIFORM_R1CS_TYPED}, inputs::WitnessRowAccessor, types::{AzExtendedEval, BzExtendedEval, SVOProductValue, UnreducedProduct}},
+    zkvm::r1cs::{
+        constraints::{TypedConstraint, UNIFORM_R1CS_TYPED},
+        inputs::WitnessRowAccessor,
+        types::{AzExtendedEval, BzExtendedEval, SVOProductValue, UnreducedProduct},
+    },
 };
 use rayon::prelude::*;
 
@@ -102,7 +106,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         name = "NewSpartanInterleavedPolynomial::new_with_precompute"
     )]
     pub fn new_with_precompute(
-        const_rows: &'static [Constraint],
+        const_rows: &'static [TypedConstraint],
         accessor: &dyn WitnessRowAccessor<F>,
         tau: &[F],
     ) -> ([F; NUM_ACCUMS_EVAL_ZERO], [F; NUM_ACCUMS_EVAL_INFTY], Self) {
@@ -252,13 +256,19 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                     * (current_step_idx * padded_num_constraints
                                         + constraint_idx_in_step);
 
-                                let az = const_row.a.evaluate_row_with(accessor, current_step_idx);
+                                let az = const_row
+                                    .cons
+                                    .a
+                                    .evaluate_row_with(accessor, current_step_idx);
                                 if !az.is_zero() {
                                     binary_az_block[idx_in_svo_block] = az;
                                     chunk_ab_coeffs.push((global_r1cs_idx, az).into());
                                 }
 
-                                let bz = const_row.b.evaluate_row_with(accessor, current_step_idx);
+                                let bz = const_row
+                                    .cons
+                                    .b
+                                    .evaluate_row_with(accessor, current_step_idx);
                                 if !bz.is_zero() {
                                     binary_bz_block[idx_in_svo_block] = bz;
                                     chunk_ab_coeffs.push((global_r1cs_idx + 1, bz).into());
@@ -266,8 +276,10 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
                                 #[cfg(test)]
                                 {
-                                    let cz =
-                                        const_row.c.evaluate_row_with(accessor, current_step_idx);
+                                    let cz = const_row
+                                        .cons
+                                        .c
+                                        .evaluate_row_with(accessor, current_step_idx);
                                     if az * bz != cz {
                                         panic!("Constraint violated at step {current_step_idx}",);
                                     }

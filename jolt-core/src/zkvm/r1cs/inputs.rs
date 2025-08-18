@@ -13,10 +13,10 @@ use crate::zkvm::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::zkvm::JoltProverPreprocessing;
 
+use super::constraints::{AzType, BzType, ConstraintTypeInfo, CzType, TypedConstraint};
 use super::key::UniformSpartanKey;
 use super::spartan::UniformSpartanProof;
-use super::constraints::{TypedConstraint, ConstraintTypeInfo, AzType, BzType, CzType};
-use super::types::{AzValue, BzValue, CzValue, AzExtendedEval, BzExtendedEval};
+use super::types::{AzExtendedEval, AzValue, BzExtendedEval, BzValue, CzValue};
 
 use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -462,15 +462,24 @@ pub fn accum_az_ext(acc: &mut AzExtendedEval, row: AzValue, is_positive: bool) {
 #[allow(unused_variables)]
 pub fn accum_bz_ext(acc: &mut BzExtendedEval, row: BzValue, is_positive: bool) {
     match acc {
-        BzExtendedEval::L1 { val, is_positive: s } => {
+        BzExtendedEval::L1 {
+            val,
+            is_positive: s,
+        } => {
             *val = val.saturating_add(1);
             *s = *s && is_positive;
         }
-        BzExtendedEval::L2 { val, is_positive: s } => {
+        BzExtendedEval::L2 {
+            val,
+            is_positive: s,
+        } => {
             val[0] = val[0].saturating_add(1);
             *s = *s && is_positive;
         }
-        BzExtendedEval::L3 { val, is_positive: s } => {
+        BzExtendedEval::L3 {
+            val,
+            is_positive: s,
+        } => {
             val[0] = val[0].saturating_add(1);
             *s = *s && is_positive;
         }

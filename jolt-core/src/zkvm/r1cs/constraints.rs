@@ -87,16 +87,20 @@ pub enum AzType {
 
 #[derive(Clone, Copy, Debug)]
 pub enum BzType {
+    I8,
     U64,
     U64AndSign,
+    I128,
     U128AndSign,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub enum CzType {
     Zero,
+    I8,
     U64,
     U64AndSign,
+    I128,
     U128AndSign,
 }
 

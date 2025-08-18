@@ -15,7 +15,7 @@ use crate::utils::errors::ProofVerifyError;
 use crate::utils::mul_0_optimized;
 use crate::utils::small_value::svo_helpers::process_svo_sumcheck_rounds;
 use crate::utils::thread::drop_in_background_thread;
-use crate::zkvm::r1cs::{constraints::UNIFORM_R1CS, inputs::WitnessRowAccessor};
+use crate::zkvm::r1cs::{constraints::UNIFORM_R1CS_TYPED, inputs::WitnessRowAccessor};
 use ark_serialize::*;
 use rayon::prelude::*;
 use std::cell::RefCell;
@@ -388,7 +388,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             NUM_SVO_ROUNDS,
             F,
         >::new_with_precompute(
-            &UNIFORM_R1CS, accessor, tau
+            &UNIFORM_R1CS_TYPED, accessor, tau
         );
 
         let mut eq_poly = GruenSplitEqPolynomial::new(tau, BindingOrder::LowToHigh);

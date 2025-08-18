@@ -9,7 +9,7 @@ use crate::{
 
 use sha3::Digest;
 
-use super::constraints::{Constraint, LC, UNIFORM_R1CS};
+use super::constraints::{Constraint, LC, UNIFORM_R1CS_TYPED};
 use crate::utils::math::Math;
 use crate::zkvm::r1cs::inputs::JoltR1CSInputs;
 
@@ -99,7 +99,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
 
     #[inline]
     fn num_rows_per_step() -> usize {
-        UNIFORM_R1CS.len()
+        UNIFORM_R1CS_TYPED.len()
     }
 
     pub fn num_vars_uniform_padded(&self) -> usize {
@@ -151,7 +151,8 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let r_sq = r_rlc.square();
 
         // Accumulate directly: for each row, add wr * (A_terms + r*B_terms + r^2*C_terms)
-        for (row_idx, row) in UNIFORM_R1CS.iter().enumerate() {
+        for (row_idx, row) in UNIFORM_R1CS_TYPED.iter().enumerate() {
+            let row = &row.cons;
             let wr = eq_rx[row_idx];
 
             row.a.accumulate_evaluations(&mut evals, wr, num_vars);
@@ -226,11 +227,12 @@ impl<F: JoltField> UniformSpartanKey<F> {
 
         let num_vars = JoltR1CSInputs::num_inputs();
 
-        debug_assert!(UNIFORM_R1CS.len() <= eq_rx.len());
+        debug_assert!(UNIFORM_R1CS_TYPED.len() <= eq_rx.len());
         debug_assert!(num_vars < eq_ry.len());
 
         let mut acc = F::zero();
-        for (row_idx, row) in UNIFORM_R1CS.iter().enumerate() {
+        for (row_idx, row) in UNIFORM_R1CS_TYPED.iter().enumerate() {
+            let row = &row.cons;
             let wr = eq_rx[row_idx];
             let lc = select(row);
             let col_contrib = lc.dot_eq_ry::<F>(&eq_ry, num_vars);
@@ -257,7 +259,8 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let num_vars: u32 = JoltR1CSInputs::num_inputs() as u32;
         bytes.extend_from_slice(&num_vars.to_be_bytes());
 
-        for row in UNIFORM_R1CS.iter() {
+        for row in UNIFORM_R1CS_TYPED.iter() {
+            let row = &row.cons;
             row.a.serialize_canonical(b'A', &mut bytes);
             row.b.serialize_canonical(b'B', &mut bytes);
             row.c.serialize_canonical(b'C', &mut bytes);

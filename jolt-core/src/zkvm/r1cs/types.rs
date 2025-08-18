@@ -1,3 +1,4 @@
+use crate::field::JoltField;
 use ark_ff::BigInt;
 
 // =============================
@@ -115,14 +116,23 @@ pub fn mul_az_bz(az: AzExtendedEval, bz: BzExtendedEval) -> SVOProductValue {
         (AzExtendedEval::I8(v), BzExtendedEval::L1 { val, is_positive }) => {
             let sign = (v >= 0) == is_positive;
             let mag = (v as i128).unsigned_abs() as u64;
-            SVOProductValue::L1 { val: mag.saturating_mul(val), is_positive: sign }
+            SVOProductValue::L1 {
+                val: mag.saturating_mul(val),
+                is_positive: sign,
+            }
         }
-        _ => SVOProductValue::L2 { val: [0, 0], is_positive: true },
+        _ => SVOProductValue::L2 {
+            val: [0, 0],
+            is_positive: true,
+        },
     }
 }
 
 #[allow(unused_variables)]
-pub fn mul_product_by_field_le4(prod: SVOProductValue, field_le4: [u64; 4]) -> UnreducedProduct {
+pub fn field_mul_product<F: JoltField, const K: usize>(
+    field: F,
+    product: [u64; K],
+) -> UnreducedProduct {
     // Placeholder: return zero; implement proper multi-precision mul
     BigInt::from(0u8)
 }
@@ -132,5 +142,3 @@ pub fn reduce_unreduced_to_field<F>(x: &UnreducedProduct) -> F {
     // Placeholder: trait-bound conversion needed; implement via modulus of F
     unimplemented!("reduce_unreduced_to_field needs field modulus and conversion")
 }
-
-
