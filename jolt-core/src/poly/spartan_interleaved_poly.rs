@@ -265,6 +265,26 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                 }
                             }
 
+                            #[cfg(test)] {
+                                let az = const_row
+                                    .a
+                                    .evaluate_row(flattened_polynomials, current_step_idx);
+                                let bz = const_row
+                                    .b
+                                    .evaluate_row(flattened_polynomials, current_step_idx);
+                                let cz = const_row
+                                    .c
+                                    .evaluate_row(flattened_polynomials, current_step_idx);
+                                if az * bz != cz {
+                                    panic!(
+                                        "Constraint violated at step {current_step_idx}",
+                                    );
+                                }
+                            }
+
+                            // If this is a full block, compute and update tA, then reset Az, Bz blocks
+                            // (the last block may not be full, in which case we need to delay
+                            // computation of tA until after processing all constraints in the block)
                             if uniform_svo_chunk.len() == Y_SVO_SPACE_SIZE {
                                 let x_in_val = (x_in_step_val << iter_num_x_in_constraint_vars)
                                     | current_x_in_constraint_val;

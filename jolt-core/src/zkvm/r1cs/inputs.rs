@@ -132,16 +132,10 @@ impl JoltR1CSInputs {
 
     /// Converts a constraint input to its index in the canonical
     /// ordering over inputs given by `ALL_R1CS_INPUTS`.
-    pub fn to_index(&self) -> usize {
-        match ALL_R1CS_INPUTS.iter().position(|x| x == self) {
-            Some(index) => index,
-            None => panic!("Invalid variant {self:?}"),
-        }
-    }
-
-    /// Const version of to_index() for use in const contexts.
-    /// Must be kept in sync with ALL_R1CS_INPUTS ordering.
-    pub const fn to_index_const(&self) -> usize {
+    ///
+    /// This is tested to align with ALL_R1CS_INPUTS, and this is the default version
+    /// since it is simple pattern matching and not iteration over all r1cs inputs.
+    pub const fn to_index(&self) -> usize {
         match self {
             JoltR1CSInputs::LeftInstructionInput => 0,
             JoltR1CSInputs::RightInstructionInput => 1,
@@ -187,10 +181,15 @@ impl JoltR1CSInputs {
             JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) => 41,
         }
     }
+}
 
-    /// Convert to CommittedPolynomial if this input represents a committed polynomial
-    pub fn to_committed_polynomial(&self) -> Result<CommittedPolynomial, &'static str> {
-        match self {
+/// Converts a JoltR1CSInputs to a CommittedPolynomial if the input represents a committed
+/// polynomial, and returns an error otherwise.
+impl TryFrom<&JoltR1CSInputs> for CommittedPolynomial {
+    type Error = &'static str;
+
+    fn try_from(input: &JoltR1CSInputs) -> Result<Self, Self::Error> {
+        match input {
             JoltR1CSInputs::LeftInstructionInput => Ok(CommittedPolynomial::LeftInstructionInput),
             JoltR1CSInputs::RightInstructionInput => Ok(CommittedPolynomial::RightInstructionInput),
             JoltR1CSInputs::Product => Ok(CommittedPolynomial::Product),
@@ -204,10 +203,15 @@ impl JoltR1CSInputs {
             _ => Err("{value} is not a committed polynomial"),
         }
     }
+}
 
-    /// Convert to VirtualPolynomial if this input represents a virtual polynomial
-    pub fn to_virtual_polynomial(&self) -> Result<VirtualPolynomial, &'static str> {
-        match self {
+/// Converts a JoltR1CSInputs to a VirtualPolynomial if the input represents a virtual polynomial,
+/// and returns an error otherwise.
+impl TryFrom<&JoltR1CSInputs> for VirtualPolynomial {
+    type Error = &'static str;
+
+    fn try_from(input: &JoltR1CSInputs) -> Result<Self, Self::Error> {
+        match input {
             JoltR1CSInputs::PC => Ok(VirtualPolynomial::PC),
             JoltR1CSInputs::UnexpandedPC => Ok(VirtualPolynomial::UnexpandedPC),
             JoltR1CSInputs::Rd => Ok(VirtualPolynomial::Rd),
@@ -228,12 +232,17 @@ impl JoltR1CSInputs {
             _ => Err("{value} is not a virtual polynomial"),
         }
     }
+}
 
-    /// Convert to OpeningId by trying committed polynomial first, then virtual polynomial
-    pub fn to_opening_id(&self) -> Result<OpeningId, &'static str> {
-        if let Ok(poly) = self.to_virtual_polynomial() {
+/// Converts a JoltR1CSInputs to an OpeningId by determining if it is a virtual or committed
+/// polynomial, returning an error otherwise.
+impl TryFrom<&JoltR1CSInputs> for OpeningId {
+    type Error = &'static str;
+
+    fn try_from(input: &JoltR1CSInputs) -> Result<Self, Self::Error> {
+        if let Ok(poly) = VirtualPolynomial::try_from(input) {
             Ok(OpeningId::Virtual(poly, SumcheckId::SpartanOuter))
-        } else if let Ok(poly) = self.to_committed_polynomial() {
+        } else if let Ok(poly) = CommittedPolynomial::try_from(input) {
             Ok(OpeningId::Committed(poly, SumcheckId::SpartanOuter))
         } else {
             Err("Could not map {value} to an OpeningId")
@@ -419,48 +428,129 @@ pub fn compute_claimed_witness_evals<F: JoltField>(
     claims
 }
 
-/// Single-pass generation of UnexpandedPC(t), PC(t), and IsNoop(t) witnesses.
-/// Reduces traversals from three to one for stage-3 PC sumcheck inputs.
-pub fn generate_pc_noop_witnesses<F, PCS>(
-    preprocessing: &JoltProverPreprocessing<F, PCS>,
-    trace: &[RV32IMCycle],
-) -> (
-    MultilinearPolynomial<F>, // UnexpandedPC(t)
-    MultilinearPolynomial<F>, // PC(t)
-    MultilinearPolynomial<F>, // IsNoop(t)
-)
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-{
-    let mut unexpanded_pc: Vec<u64> = Vec::with_capacity(trace.len());
-    let mut pc: Vec<u64> = Vec::with_capacity(trace.len());
-    let mut is_noop: Vec<u8> = Vec::with_capacity(trace.len());
-
-    for cycle in trace.iter() {
-        unexpanded_pc.push(cycle.instruction().normalize().address as u64);
-        pc.push(preprocessing.shared.bytecode.get_pc(cycle) as u64);
-        is_noop.push(cycle.instruction().circuit_flags()[CircuitFlags::IsNoop] as u8);
-    }
-
-    (unexpanded_pc.into(), pc.into(), is_noop.into())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    impl JoltR1CSInputs {
+        /// Alternative const implementation that searches through ALL_R1CS_INPUTS array.
+        /// This is used for testing to ensure the simple pattern matching to_index()
+        /// returns the same results as searching through the array.
+        const fn find_index_via_array_search(&self) -> usize {
+            let mut i = 0;
+            while i < ALL_R1CS_INPUTS.len() {
+                if self.const_eq(&ALL_R1CS_INPUTS[i]) {
+                    return i;
+                }
+                i += 1;
+            }
+            panic!("Invalid variant")
+        }
+
+        /// Const-compatible equality check for JoltR1CSInputs
+        const fn const_eq(&self, other: &JoltR1CSInputs) -> bool {
+            match (self, other) {
+                (JoltR1CSInputs::PC, JoltR1CSInputs::PC) => true,
+                (JoltR1CSInputs::UnexpandedPC, JoltR1CSInputs::UnexpandedPC) => true,
+                (JoltR1CSInputs::Rd, JoltR1CSInputs::Rd) => true,
+                (JoltR1CSInputs::Imm, JoltR1CSInputs::Imm) => true,
+                (JoltR1CSInputs::RamAddress, JoltR1CSInputs::RamAddress) => true,
+                (JoltR1CSInputs::Rs1Value, JoltR1CSInputs::Rs1Value) => true,
+                (JoltR1CSInputs::Rs2Value, JoltR1CSInputs::Rs2Value) => true,
+                (JoltR1CSInputs::RdWriteValue, JoltR1CSInputs::RdWriteValue) => true,
+                (JoltR1CSInputs::RamReadValue, JoltR1CSInputs::RamReadValue) => true,
+                (JoltR1CSInputs::RamWriteValue, JoltR1CSInputs::RamWriteValue) => true,
+                (JoltR1CSInputs::LeftInstructionInput, JoltR1CSInputs::LeftInstructionInput) => {
+                    true
+                }
+                (JoltR1CSInputs::RightInstructionInput, JoltR1CSInputs::RightInstructionInput) => {
+                    true
+                }
+                (JoltR1CSInputs::LeftLookupOperand, JoltR1CSInputs::LeftLookupOperand) => true,
+                (JoltR1CSInputs::RightLookupOperand, JoltR1CSInputs::RightLookupOperand) => true,
+                (JoltR1CSInputs::Product, JoltR1CSInputs::Product) => true,
+                (JoltR1CSInputs::WriteLookupOutputToRD, JoltR1CSInputs::WriteLookupOutputToRD) => {
+                    true
+                }
+                (JoltR1CSInputs::WritePCtoRD, JoltR1CSInputs::WritePCtoRD) => true,
+                (JoltR1CSInputs::ShouldBranch, JoltR1CSInputs::ShouldBranch) => true,
+                (JoltR1CSInputs::NextUnexpandedPC, JoltR1CSInputs::NextUnexpandedPC) => true,
+                (JoltR1CSInputs::NextPC, JoltR1CSInputs::NextPC) => true,
+                (JoltR1CSInputs::LookupOutput, JoltR1CSInputs::LookupOutput) => true,
+                (JoltR1CSInputs::NextIsNoop, JoltR1CSInputs::NextIsNoop) => true,
+                (JoltR1CSInputs::ShouldJump, JoltR1CSInputs::ShouldJump) => true,
+                (
+                    JoltR1CSInputs::CompressedDoNotUpdateUnexpPC,
+                    JoltR1CSInputs::CompressedDoNotUpdateUnexpPC,
+                ) => true,
+                (JoltR1CSInputs::OpFlags(flag1), JoltR1CSInputs::OpFlags(flag2)) => {
+                    self.const_eq_circuit_flags(*flag1, *flag2)
+                }
+                _ => false,
+            }
+        }
+
+        /// Const-compatible equality check for CircuitFlags
+        const fn const_eq_circuit_flags(&self, flag1: CircuitFlags, flag2: CircuitFlags) -> bool {
+            matches!(
+                (flag1, flag2),
+                (
+                    CircuitFlags::LeftOperandIsRs1Value,
+                    CircuitFlags::LeftOperandIsRs1Value
+                ) | (
+                    CircuitFlags::RightOperandIsRs2Value,
+                    CircuitFlags::RightOperandIsRs2Value
+                ) | (CircuitFlags::LeftOperandIsPC, CircuitFlags::LeftOperandIsPC)
+                    | (
+                        CircuitFlags::RightOperandIsImm,
+                        CircuitFlags::RightOperandIsImm
+                    )
+                    | (CircuitFlags::AddOperands, CircuitFlags::AddOperands)
+                    | (
+                        CircuitFlags::SubtractOperands,
+                        CircuitFlags::SubtractOperands
+                    )
+                    | (
+                        CircuitFlags::MultiplyOperands,
+                        CircuitFlags::MultiplyOperands
+                    )
+                    | (CircuitFlags::Load, CircuitFlags::Load)
+                    | (CircuitFlags::Store, CircuitFlags::Store)
+                    | (CircuitFlags::Jump, CircuitFlags::Jump)
+                    | (CircuitFlags::Branch, CircuitFlags::Branch)
+                    | (
+                        CircuitFlags::WriteLookupOutputToRD,
+                        CircuitFlags::WriteLookupOutputToRD
+                    )
+                    | (
+                        CircuitFlags::InlineSequenceInstruction,
+                        CircuitFlags::InlineSequenceInstruction
+                    )
+                    | (CircuitFlags::Assert, CircuitFlags::Assert)
+                    | (
+                        CircuitFlags::DoNotUpdateUnexpandedPC,
+                        CircuitFlags::DoNotUpdateUnexpandedPC
+                    )
+                    | (CircuitFlags::Advice, CircuitFlags::Advice)
+                    | (CircuitFlags::IsNoop, CircuitFlags::IsNoop)
+                    | (CircuitFlags::IsCompressed, CircuitFlags::IsCompressed)
+            )
+        }
+    }
+
     #[test]
-    fn const_to_index_consistency() {
-        // Ensure to_index_const() and to_index() return the same values
+    fn to_index_consistency() {
+        // Ensure to_index() and find_index_via_array_search() return the same values.
+        // This validates that the simple pattern matching in to_index() correctly
+        // aligns with the ordering in ALL_R1CS_INPUTS.
         for var in ALL_R1CS_INPUTS {
             assert_eq!(
                 var.to_index(),
-                var.to_index_const(),
-                "Index mismatch for variant {:?}: runtime={}, const={}",
+                var.find_index_via_array_search(),
+                "Index mismatch for variant {:?}: pattern_match={}, array_search={}",
                 var,
                 var.to_index(),
-                var.to_index_const()
+                var.find_index_via_array_search()
             );
         }
     }

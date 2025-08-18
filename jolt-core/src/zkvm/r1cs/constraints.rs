@@ -11,46 +11,6 @@ use crate::zkvm::instruction::CircuitFlags;
 // Re-export key types from ops module for convenience
 pub use super::ops::{Term, LC};
 
-/// r1cs_eq_conditional!: verbose, condition-first equality constraint
-/// Usage: r1cs_eq_conditional!(if { COND } => { LEFT } == { RIGHT });
-#[macro_export]
-macro_rules! r1cs_eq_conditional {
-    (if { $($cond:tt)* } => ( $($left:tt)* ) == ( $($right:tt)* ) ) => {{
-        $crate::zkvm::r1cs::constraints::constraint_eq_conditional_lc(
-            $crate::lc!($($cond)*),
-            $crate::lc!($($left)*),
-            $crate::lc!($($right)*),
-        )
-    }};
-}
-
-/// r1cs_if_else!: verbose if-then-else with explicit result
-/// Usage: r1cs_if_else!(if { COND } => { TRUE } else { FALSE } => { RESULT });
-#[macro_export]
-macro_rules! r1cs_if_else {
-    (if { $($cond:tt)* } => ( $($tval:tt)* ) else ( $($fval:tt)* ) => ( $($result:tt)* ) ) => {{
-        $crate::zkvm::r1cs::constraints::constraint_if_else_lc(
-            $crate::lc!($($cond)*),
-            $crate::lc!($($tval)*),
-            $crate::lc!($($fval)*),
-            $crate::lc!($($result)*),
-        )
-    }};
-}
-
-/// r1cs_prod!: product constraint
-/// Usage: r1cs_prod!({ LEFT } * { RIGHT } == { RESULT });
-#[macro_export]
-macro_rules! r1cs_prod {
-    ( ( $($left:tt)* ) * ( $($right:tt)* ) == ( $($result:tt)* ) ) => {{
-        $crate::zkvm::r1cs::constraints::constraint_prod_lc(
-            $crate::lc!($($left)*),
-            $crate::lc!($($right)*),
-            $crate::lc!($($result)*),
-        )
-    }};
-}
-
 /// A single R1CS constraint row
 #[derive(Clone, Copy, Debug)]
 pub struct Constraint {
@@ -108,7 +68,14 @@ impl LC {
 // =============================================================================
 /// Creates: condition * (left - right) == 0
 pub const fn constraint_eq_conditional_lc(condition: LC, left: LC, right: LC) -> Constraint {
-    Constraint::new(condition, left.sub_or_zero(right), LC::zero())
+    Constraint::new(
+        condition,
+        match left.checked_sub(right) {
+            Some(b) => b,
+            None => LC::zero(),
+        },
+        LC::zero(),
+    )
 }
 
 /// Creates: left * right == result
@@ -125,9 +92,58 @@ pub const fn constraint_if_else_lc(
 ) -> Constraint {
     Constraint::new(
         condition,
-        true_val.sub_or_zero(false_val),
-        result.sub_or_zero(false_val),
+        match true_val.checked_sub(false_val) {
+            Some(b) => b,
+            None => LC::zero(),
+        },
+        match result.checked_sub(false_val) {
+            Some(c) => c,
+            None => LC::zero(),
+        },
     )
+}
+
+/// r1cs_eq_conditional!: verbose, condition-first equality constraint
+///
+/// Usage: `r1cs_eq_conditional!(if { COND } => { LEFT } == { RIGHT });`
+#[macro_export]
+macro_rules! r1cs_eq_conditional {
+    (if { $($cond:tt)* } => ( $($left:tt)* ) == ( $($right:tt)* ) ) => {{
+        $crate::zkvm::r1cs::constraints::constraint_eq_conditional_lc(
+            $crate::lc!($($cond)*),
+            $crate::lc!($($left)*),
+            $crate::lc!($($right)*),
+        )
+    }};
+}
+
+/// r1cs_if_else!: verbose if-then-else with explicit result
+///
+/// Usage: `r1cs_if_else!(if { COND } => { TRUE } else { FALSE } => { RESULT });`
+#[macro_export]
+macro_rules! r1cs_if_else {
+    (if { $($cond:tt)* } => ( $($tval:tt)* ) else ( $($fval:tt)* ) => ( $($result:tt)* ) ) => {{
+        $crate::zkvm::r1cs::constraints::constraint_if_else_lc(
+            $crate::lc!($($cond)*),
+            $crate::lc!($($tval)*),
+            $crate::lc!($($fval)*),
+            $crate::lc!($($result)*),
+        )
+    }};
+}
+
+/// r1cs_prod!: product constraint
+///
+/// Usage: `r1cs_prod!({ LEFT } * { RIGHT } == { RESULT });`
+#[macro_export]
+macro_rules! r1cs_prod {
+    ( ( $($left:tt)* ) * ( $($right:tt)* ) == ( $($result:tt)* ) ) => {{
+        $crate::zkvm::r1cs::constraints::constraint_prod_lc(
+            $crate::lc!($($left)*),
+            $crate::lc!($($right)*),
+            $crate::lc!($($result)*),
+        )
+    }};
 }
 
 /// Static table of all 28 R1CS uniform constraints.
