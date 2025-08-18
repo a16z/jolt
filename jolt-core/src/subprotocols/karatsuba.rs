@@ -11,8 +11,8 @@ fn double<F: JoltField>(a: &F) -> F {
     *a + *a
 }
 
-// given a linear polynomial (p(0), p(1)),
-// return a vector containing the evaluations of p(x) at x = 0, 1, ..., n
+/// Given a linear polynomial (p(0), p(1)),
+/// return a vector containing the evaluations of p(x) at x = 0, 1, ..., n
 #[inline(always)]
 fn eval_linear<F: JoltField>(poly: &(F, F), n: usize) -> Vec<F> {
     assert!(n >= 2, "n must be at least 2");
