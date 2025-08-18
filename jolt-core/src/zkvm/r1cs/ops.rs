@@ -523,7 +523,7 @@ impl ConstLC {
 
         match self {
             ConstLC::Zero => write!(f, "0"),
-            ConstLC::Const(c) => write!(f, "{}", c),
+            ConstLC::Const(c) => write!(f, "{c}"),
             _ => {
                 let num_terms = self.num_terms();
                 let has_const = self.const_term().is_some();
@@ -566,10 +566,10 @@ impl ConstLC {
                             if c < 0 {
                                 write!(f, " - {}", -c)?;
                             } else {
-                                write!(f, " + {}", c)?;
+                                write!(f, " + {c}")?;
                             }
                         } else {
-                            write!(f, "{}", c)?;
+                            write!(f, "{c}")?;
                         }
                     }
                 }

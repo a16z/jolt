@@ -292,7 +292,7 @@ impl JoltRV32IMConstraints {
         // Convert const constraints to dynamic constraints
         let dynamic_constraints = UNIFORM_R1CS
             .iter()
-            .map(|const_constraint| Self::convert_const_constraint_to_dynamic(const_constraint))
+            .map(Self::convert_const_constraint_to_dynamic)
             .collect();
 
         let uniform_builder = R1CSBuilder {

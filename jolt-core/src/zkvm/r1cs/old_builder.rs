@@ -14,56 +14,6 @@ pub struct Constraint {
     pub c: LC,
 }
 
-impl Constraint {
-    #[cfg(test)]
-    pub(crate) fn pretty_fmt<F: JoltField>(
-        &self,
-        f: &mut String,
-        flattened_polynomials: &[crate::poly::multilinear_polynomial::MultilinearPolynomial<F>],
-        step_index: usize,
-    ) -> std::fmt::Result {
-        use std::fmt::Write as _;
-
-        use crate::zkvm::r1cs::inputs::JoltR1CSInputs;
-
-        self.a.pretty_fmt(f)?;
-        write!(f, " ⋅ ")?;
-        self.b.pretty_fmt(f)?;
-        write!(f, " == ")?;
-        self.c.pretty_fmt(f)?;
-        writeln!(f)?;
-
-        let mut terms = Vec::new();
-        for term in self
-            .a
-            .terms()
-            .iter()
-            .chain(self.b.terms().iter())
-            .chain(self.c.terms().iter())
-        {
-            if !terms.contains(term) {
-                terms.push(*term);
-            }
-        }
-
-        for term in terms {
-            match term.0 {
-                Variable::Input(var_index) => {
-                    writeln!(
-                        f,
-                        "    {:?} = {}",
-                        JoltR1CSInputs::from_index(var_index),
-                        flattened_polynomials[var_index].get_coeff(step_index)
-                    )?;
-                }
-                Variable::Constant => {}
-            }
-        }
-
-        Ok(())
-    }
-}
-
 #[derive(Default)]
 pub struct R1CSBuilder {
     pub(crate) constraints: Vec<Constraint>,
@@ -256,9 +206,6 @@ impl R1CSBuilder {
 pub struct CombinedUniformBuilder<F: JoltField> {
     _field: PhantomData<F>,
     pub(crate) uniform_builder: R1CSBuilder,
-
-    /// Padded to the nearest power of 2
-    pub(crate) uniform_repeat: usize, // TODO(JP): Remove padding of steps
 }
 
 impl<F: JoltField> CombinedUniformBuilder<F> {
@@ -267,23 +214,9 @@ impl<F: JoltField> CombinedUniformBuilder<F> {
         Self {
             _field: PhantomData,
             uniform_builder,
-            uniform_repeat,
         }
     }
 
-    /// Number of constraint rows per step, padded to the next power of two.
-    pub(super) fn padded_rows_per_step(&self) -> usize {
-        self.uniform_builder.constraints.len().next_power_of_two()
-    }
-
-    /// Total number of rows used across all repeated constraints. Not padded to nearest power of two.
-    pub(super) fn constraint_rows(&self) -> usize {
-        self.uniform_repeat * self.padded_rows_per_step()
-    }
-
-    pub(super) fn uniform_repeat(&self) -> usize {
-        self.uniform_repeat
-    }
 
     /// Materializes the uniform constraints into sparse (value != 0) A, B, C matrices represented in (row, col, value) format.
     pub fn materialize_uniform(&self) -> UniformR1CS<F> {
