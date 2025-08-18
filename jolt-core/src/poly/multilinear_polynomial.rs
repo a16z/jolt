@@ -141,38 +141,28 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                             let poly = polynomials[poly_idx];
                             let coeff = coefficients[poly_idx];
 
-                            match poly {
-                                MultilinearPolynomial::LargeScalars(p) => {
-                                    if i < p.evals_ref().len() {
+                            if i < poly.original_len() {
+                                match poly {
+                                    MultilinearPolynomial::LargeScalars(p) => {
                                         acc += p.evals_ref()[i].mul_01_optimized(coeff);
                                     }
-                                }
-                                MultilinearPolynomial::U8Scalars(p) => {
-                                    if i < p.coeffs.len() {
+                                    MultilinearPolynomial::U8Scalars(p) => {
                                         acc += p.coeffs[i].field_mul(coeff);
                                     }
-                                }
-                                MultilinearPolynomial::U16Scalars(p) => {
-                                    if i < p.coeffs.len() {
+                                    MultilinearPolynomial::U16Scalars(p) => {
                                         acc += p.coeffs[i].field_mul(coeff);
                                     }
-                                }
-                                MultilinearPolynomial::U32Scalars(p) => {
-                                    if i < p.coeffs.len() {
+                                    MultilinearPolynomial::U32Scalars(p) => {
                                         acc += p.coeffs[i].field_mul(coeff);
                                     }
-                                }
-                                MultilinearPolynomial::U64Scalars(p) => {
-                                    if i < p.coeffs.len() {
+                                    MultilinearPolynomial::U64Scalars(p) => {
                                         acc += p.coeffs[i].field_mul(coeff);
                                     }
-                                }
-                                MultilinearPolynomial::I64Scalars(p) => {
-                                    if i < p.coeffs.len() {
+                                    MultilinearPolynomial::I64Scalars(p) => {
                                         acc += p.coeffs[i].field_mul(coeff);
                                     }
+                                    _ => unreachable!(),
                                 }
-                                _ => {}
                             }
                         }
                         acc

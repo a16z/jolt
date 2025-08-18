@@ -417,10 +417,11 @@ impl JoltDAG {
 
         let all_polys: Vec<CommittedPolynomial> =
             AllCommittedPolynomials::iter().copied().collect();
-        let mut polynomials_map =
-            CommittedPolynomial::generate_witness_batch(&all_polys, preprocessing, trace);
         let committed_polys: Vec<_> = AllCommittedPolynomials::iter()
-            .map(|poly| std::mem::take(polynomials_map.get_mut(poly).unwrap()))
+            .filter_map(|poly| {
+                CommittedPolynomial::generate_witness_batch(&all_polys, preprocessing, trace)
+                    .remove(poly)
+            })
             .collect();
 
         let (commitments, hints): (Vec<PCS::Commitment>, Vec<PCS::OpeningProofHint>) =
