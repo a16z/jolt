@@ -7,8 +7,8 @@
 #[cfg(test)]
 use crate::impl_r1cs_input_lc_conversions;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::eq_poly::EqPolynomial;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{OpeningId, SumcheckId};
 use crate::transcripts::Transcript;
 use crate::zkvm::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
@@ -424,8 +424,14 @@ pub struct TraceWitnessAccessor<'a, F: JoltField, PCS: CommitmentScheme<Field = 
 }
 
 impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> TraceWitnessAccessor<'a, F, PCS> {
-    pub fn new(preprocessing: &'a JoltProverPreprocessing<F, PCS>, trace: &'a [RV32IMCycle]) -> Self {
-        Self { preprocessing, trace }
+    pub fn new(
+        preprocessing: &'a JoltProverPreprocessing<F, PCS>,
+        trace: &'a [RV32IMCycle],
+    ) -> Self {
+        Self {
+            preprocessing,
+            trace,
+        }
     }
 }
 
@@ -437,7 +443,9 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F>
         let len = self.trace.len();
         let get = |idx: usize| -> &RV32IMCycle { &self.trace[idx] };
         match JoltR1CSInputs::from_index(input_index) {
-            JoltR1CSInputs::PC => F::from_u64(self.preprocessing.shared.bytecode.get_pc(get(t)) as u64),
+            JoltR1CSInputs::PC => {
+                F::from_u64(self.preprocessing.shared.bytecode.get_pc(get(t)) as u64)
+            }
             JoltR1CSInputs::NextPC => {
                 if t + 1 < len {
                     F::from_u64(self.preprocessing.shared.bytecode.get_pc(get(t + 1)) as u64)
@@ -457,9 +465,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F>
             }
             JoltR1CSInputs::Rd => F::from_u8(get(t).rd_write().0),
             JoltR1CSInputs::Imm => F::from_i128(get(t).instruction().normalize().operands.imm),
-            JoltR1CSInputs::RamAddress => {
-                F::from_u64(get(t).ram_access().address() as u64)
-            }
+            JoltR1CSInputs::RamAddress => F::from_u64(get(t).ram_access().address() as u64),
             JoltR1CSInputs::Rs1Value => F::from_u64(get(t).rs1_read().1),
             JoltR1CSInputs::Rs2Value => F::from_u64(get(t).rs2_read().1),
             JoltR1CSInputs::RdWriteValue => F::from_u64(get(t).rd_write().2),
@@ -481,7 +487,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F>
             }
             JoltR1CSInputs::LeftInstructionInput => {
                 let (left, _right) = LookupQuery::<XLEN>::to_instruction_inputs(get(t));
-                F::from_u64(left as u64)
+                F::from_u64(left)
             }
             JoltR1CSInputs::RightInstructionInput => {
                 let (_left, right) = LookupQuery::<XLEN>::to_instruction_inputs(get(t));

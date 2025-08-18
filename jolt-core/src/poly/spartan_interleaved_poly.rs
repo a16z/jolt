@@ -10,10 +10,7 @@ use crate::{
         math::Math,
         small_value::{svo_helpers, NUM_SVO_ROUNDS},
     },
-    zkvm::r1cs::{
-        constraints::ConstraintConst,
-        inputs::WitnessRowAccessor,
-    },
+    zkvm::r1cs::{constraints::ConstraintConst, inputs::WitnessRowAccessor},
 };
 use rayon::prelude::*;
 
@@ -529,17 +526,19 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     let mut current_x_out_svo_infty = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
 
                     for x_in_step_val in 0..num_x_in_step_vals {
-                        let current_step_idx = (x_out_val << iter_num_x_in_step_vars) | x_in_step_val;
+                        let current_step_idx =
+                            (x_out_val << iter_num_x_in_step_vars) | x_in_step_val;
                         let mut current_x_in_constraint_val = 0;
 
                         let mut binary_az_block = [F::zero(); Y_SVO_SPACE_SIZE];
                         let mut binary_bz_block = [F::zero(); Y_SVO_SPACE_SIZE];
 
-                        for (uniform_chunk_iter_idx, uniform_svo_chunk) in const_rows
-                            .chunks(Y_SVO_SPACE_SIZE)
-                            .enumerate()
+                        for (uniform_chunk_iter_idx, uniform_svo_chunk) in
+                            const_rows.chunks(Y_SVO_SPACE_SIZE).enumerate()
                         {
-                            for (idx_in_svo_block, const_row) in uniform_svo_chunk.iter().enumerate() {
+                            for (idx_in_svo_block, const_row) in
+                                uniform_svo_chunk.iter().enumerate()
+                            {
                                 let constraint_idx_in_step =
                                     (uniform_chunk_iter_idx << NUM_SVO_ROUNDS) + idx_in_svo_block;
 
@@ -547,17 +546,13 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                     * (current_step_idx * padded_num_constraints
                                         + constraint_idx_in_step);
 
-                                let az = const_row
-                                    .a
-                                    .evaluate_row_with(accessor, current_step_idx);
+                                let az = const_row.a.evaluate_row_with(accessor, current_step_idx);
                                 if !az.is_zero() {
                                     binary_az_block[idx_in_svo_block] = az;
                                     chunk_ab_coeffs.push((global_r1cs_idx, az).into());
                                 }
 
-                                let bz = const_row
-                                    .b
-                                    .evaluate_row_with(accessor, current_step_idx);
+                                let bz = const_row.b.evaluate_row_with(accessor, current_step_idx);
                                 if !bz.is_zero() {
                                     binary_bz_block[idx_in_svo_block] = bz;
                                     chunk_ab_coeffs.push((global_r1cs_idx + 1, bz).into());
@@ -565,14 +560,19 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             }
 
                             if uniform_svo_chunk.len() == Y_SVO_SPACE_SIZE {
-                                let x_in_val =
-                                    (x_in_step_val << iter_num_x_in_constraint_vars) | current_x_in_constraint_val;
+                                let x_in_val = (x_in_step_val << iter_num_x_in_constraint_vars)
+                                    | current_x_in_constraint_val;
                                 let E_in_val = &E_in_evals[x_in_val];
 
                                 svo_helpers::compute_and_update_tA_inplace_generic::<
                                     NUM_SVO_ROUNDS,
                                     F,
-                                >(&binary_az_block, &binary_bz_block, E_in_val, &mut tA_sum_for_current_x_out);
+                                >(
+                                    &binary_az_block,
+                                    &binary_bz_block,
+                                    E_in_val,
+                                    &mut tA_sum_for_current_x_out,
+                                );
 
                                 current_x_in_constraint_val += 1;
                                 binary_az_block = [F::zero(); Y_SVO_SPACE_SIZE];
@@ -581,14 +581,16 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         }
 
                         if rem_num_uniform_r1cs_constraints > 0 {
-                            let x_in_val_last =
-                                (x_in_step_val << iter_num_x_in_constraint_vars) | current_x_in_constraint_val;
+                            let x_in_val_last = (x_in_step_val << iter_num_x_in_constraint_vars)
+                                | current_x_in_constraint_val;
                             let E_in_val_last = &E_in_evals[x_in_val_last];
 
-                            svo_helpers::compute_and_update_tA_inplace_generic::<
-                                NUM_SVO_ROUNDS,
-                                F,
-                            >(&binary_az_block, &binary_bz_block, E_in_val_last, &mut tA_sum_for_current_x_out);
+                            svo_helpers::compute_and_update_tA_inplace_generic::<NUM_SVO_ROUNDS, F>(
+                                &binary_az_block,
+                                &binary_bz_block,
+                                E_in_val_last,
+                                &mut tA_sum_for_current_x_out,
+                            );
                         }
                     }
 
