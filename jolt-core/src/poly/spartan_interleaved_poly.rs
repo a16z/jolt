@@ -10,7 +10,7 @@ use crate::{
         math::Math,
         small_value::{svo_helpers, NUM_SVO_ROUNDS},
     },
-    zkvm::r1cs::builder::Constraint,
+    zkvm::r1cs::constraints::Constraint,
 };
 use rayon::prelude::*;
 
@@ -104,7 +104,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
     )]
     pub fn new_with_precompute(
         padded_num_constraints: usize,
-        uniform_constraints: &[Constraint],
+        const_rows: &'static [Constraint],
         flattened_polynomials: &[MultilinearPolynomial<F>],
         tau: &[F],
     ) -> ([F; NUM_ACCUMS_EVAL_ZERO], [F; NUM_ACCUMS_EVAL_INFTY], Self) {
@@ -168,7 +168,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         assert_eq!(num_non_svo_z_vars, iter_num_x_out_vars + iter_num_x_in_vars);
 
         // Assertions about the layout of uniform constraints
-        let num_uniform_r1cs_constraints = uniform_constraints.len();
+        let num_uniform_r1cs_constraints = const_rows.len();
         let rem_num_uniform_r1cs_constraints = num_uniform_r1cs_constraints % Y_SVO_SPACE_SIZE;
 
         // --- Setup: E_in and E_out tables ---
@@ -255,26 +255,22 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         let mut binary_bz_block = [F::zero(); Y_SVO_SPACE_SIZE];
 
                         // Process Uniform Constraints
-                        for (uniform_chunk_iter_idx, uniform_svo_chunk) in uniform_constraints.chunks(Y_SVO_SPACE_SIZE).enumerate() {
-                            for (idx_in_svo_block, constraint) in uniform_svo_chunk.iter().enumerate() {
+                        for (uniform_chunk_iter_idx, uniform_svo_chunk) in const_rows.chunks(Y_SVO_SPACE_SIZE).enumerate() {
+                            for (idx_in_svo_block, const_row) in uniform_svo_chunk.iter().enumerate() {
                                 let constraint_idx_in_step = (uniform_chunk_iter_idx << NUM_SVO_ROUNDS) + idx_in_svo_block;
 
                                 let global_r1cs_idx = 2 * (current_step_idx * padded_num_constraints + constraint_idx_in_step);
 
-                                if !constraint.a.terms().is_empty() {
-                                    let az = constraint
-                                        .a
-                                        .evaluate_row(flattened_polynomials, current_step_idx);
+                                {
+                                    let az = const_row.a.evaluate_row(flattened_polynomials, current_step_idx);
                                     if !az.is_zero() {
                                         binary_az_block[idx_in_svo_block] = az;
                                         chunk_ab_coeffs.push((global_r1cs_idx, az).into());
                                     }
                                 }
 
-                                if !constraint.b.terms().is_empty() {
-                                    let bz = constraint
-                                        .b
-                                        .evaluate_row(flattened_polynomials, current_step_idx);
+                                {
+                                    let bz = const_row.b.evaluate_row(flattened_polynomials, current_step_idx);
                                     if !bz.is_zero() {
                                         binary_bz_block[idx_in_svo_block] = bz;
                                         chunk_ab_coeffs.push((global_r1cs_idx + 1, bz).into());
@@ -282,24 +278,16 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                 }
 
                                 #[cfg(test)] {
-                                    let az = constraint
+                                    let az = const_row
                                         .a
                                         .evaluate_row(flattened_polynomials, current_step_idx);
-                                    let bz = constraint
+                                    let bz = const_row
                                         .b
                                         .evaluate_row(flattened_polynomials, current_step_idx);
-                                    let cz = constraint
+                                    let cz = const_row
                                         .c
                                         .evaluate_row(flattened_polynomials, current_step_idx);
-                                    let mut constraint_string = String::new();
-                                    let _ = constraint
-                                        .pretty_fmt(
-                                            &mut constraint_string,
-                                            flattened_polynomials,
-                                            current_step_idx,
-                                        );
                                     if az * bz != cz {
-                                        println!("{constraint_string}");
                                         panic!(
                                             "Constraint violated at step {current_step_idx}",
                                         );
