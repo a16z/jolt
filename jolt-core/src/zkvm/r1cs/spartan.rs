@@ -15,10 +15,9 @@ use crate::utils::math::Math;
 use crate::zkvm::dag::stage::SumcheckStages;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::zkvm::instruction::CircuitFlags;
-use crate::zkvm::r1cs::constraints::UNIFORM_R1CS;
 use crate::zkvm::r1cs::inputs::{
-    compute_claimed_witness_evals_streaming, JoltR1CSInputs, TraceWitnessAccessor,
-    WitnessRowAccessor, ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS,
+    compute_claimed_witness_evals, generate_pc_noop_witnesses, JoltR1CSInputs,
+    TraceWitnessAccessor, WitnessRowAccessor, ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS,
 };
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::witness::VirtualPolynomial;
@@ -95,14 +94,12 @@ where
     #[tracing::instrument(skip_all)]
     fn prove_outer_sumcheck(
         num_rounds_x: usize,
-        uniform_constraints_only_padded: usize,
         accessor: &dyn WitnessRowAccessor<F>,
         tau: &[F],
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, [F; 3]) {
-        SumcheckInstanceProof::prove_spartan_small_value_streaming::<NUM_SVO_ROUNDS>(
+        SumcheckInstanceProof::prove_spartan_small_value::<NUM_SVO_ROUNDS>(
             num_rounds_x,
-            uniform_constraints_only_padded,
             accessor,
             tau,
             transcript,
@@ -642,14 +639,10 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             .borrow_mut()
             .challenge_vector(num_rounds_x);
 
-        // Uniform constraints per-step (padded to power-of-two) from constants
-        let uniform_constraints_only_padded = UNIFORM_R1CS.len().next_power_of_two();
-
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) = {
             let mut transcript = state_manager.transcript.borrow_mut();
             UniformSpartanProof::<F, ProofTranscript>::prove_outer_sumcheck(
                 num_rounds_x,
-                uniform_constraints_only_padded,
                 &accessor,
                 &tau,
                 &mut transcript,
@@ -696,8 +689,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         let (r_cycle, _rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
         // Compute claimed witness evals at r_cycle via streaming
-        let claimed_witness_evals =
-            compute_claimed_witness_evals_streaming::<F>(r_cycle, &accessor);
+        let claimed_witness_evals = compute_claimed_witness_evals::<F>(r_cycle, &accessor);
 
         // Only non-virtual (i.e. committed) polynomials' openings are
         // proven using the PCS opening proof, which we add for future opening proof here
@@ -964,12 +956,9 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 
         let key = self.key.clone();
 
-        // We need only pc and unexpanded pc for the next sumcheck
-        let pc_poly = JoltR1CSInputs::PC.generate_witness(trace, preprocessing);
-        let unexpanded_pc_poly =
-            JoltR1CSInputs::UnexpandedPC.generate_witness(trace, preprocessing);
-        let is_noop_poly =
-            JoltR1CSInputs::OpFlags(CircuitFlags::IsNoop).generate_witness(trace, preprocessing);
+        // Stream once to generate PC, UnexpandedPC and IsNoop witnesses
+        let (unexpanded_pc_poly, pc_poly, is_noop_poly) =
+            generate_pc_noop_witnesses(preprocessing, trace);
 
         let num_cycles = key.num_steps;
         let num_cycles_bits = num_cycles.ilog2() as usize;

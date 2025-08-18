@@ -413,17 +413,23 @@ impl_r1cs_input_lc_conversions!(JoltR1CSInputs);
 // Streaming witness accessor (avoids materializing input_polys)
 // ============================================================================
 
+/// Read-only, thread-safe accessor for witness values at a given step without
+/// materializing full `MultilinearPolynomial`s. Implementations should be
+/// zero-copy and cheap per call.
 pub trait WitnessRowAccessor<F: JoltField>: Send + Sync {
     fn value_at(&self, input_index: usize, t: usize) -> F;
     fn num_steps(&self) -> usize;
 }
 
+/// Lightweight, zero-copy witness accessor backed by `preprocessing` and `trace`.
+/// Lifetime `'a` ties this accessor to the borrowed memory.
 pub struct TraceWitnessAccessor<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> {
     pub preprocessing: &'a JoltProverPreprocessing<F, PCS>,
     pub trace: &'a [RV32IMCycle],
 }
 
 impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> TraceWitnessAccessor<'a, F, PCS> {
+    /// Construct an accessor that borrows `preprocessing` and `trace`.
     pub fn new(
         preprocessing: &'a JoltProverPreprocessing<F, PCS>,
         trace: &'a [RV32IMCycle],
@@ -559,7 +565,9 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F>
     }
 }
 
-pub fn compute_claimed_witness_evals_streaming<F: JoltField>(
+/// Compute `z(r_cycle) = Σ_t eq(r_cycle, t) * P_i(t)` for all inputs i, without
+/// materializing P_i. Returns `[P_0(r_cycle), P_1(r_cycle), ...]` in input order.
+pub fn compute_claimed_witness_evals<F: JoltField>(
     r_cycle: &[F],
     accessor: &dyn WitnessRowAccessor<F>,
 ) -> Vec<F> {
@@ -577,6 +585,33 @@ pub fn compute_claimed_witness_evals_streaming<F: JoltField>(
         }
     }
     claims
+}
+
+/// Single-pass generation of UnexpandedPC(t), PC(t), and IsNoop(t) witnesses.
+/// Reduces traversals from three to one for stage-3 PC sumcheck inputs.
+pub fn generate_pc_noop_witnesses<F, PCS>(
+    preprocessing: &JoltProverPreprocessing<F, PCS>,
+    trace: &[RV32IMCycle],
+) -> (
+    MultilinearPolynomial<F>, // UnexpandedPC(t)
+    MultilinearPolynomial<F>, // PC(t)
+    MultilinearPolynomial<F>, // IsNoop(t)
+)
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+{
+    let mut unexpanded_pc: Vec<u64> = Vec::with_capacity(trace.len());
+    let mut pc: Vec<u64> = Vec::with_capacity(trace.len());
+    let mut is_noop: Vec<u8> = Vec::with_capacity(trace.len());
+
+    for cycle in trace.iter() {
+        unexpanded_pc.push(cycle.instruction().normalize().address as u64);
+        pc.push(preprocessing.shared.bytecode.get_pc(cycle) as u64);
+        is_noop.push(cycle.instruction().circuit_flags()[CircuitFlags::IsNoop] as u8);
+    }
+
+    (unexpanded_pc.into(), pc.into(), is_noop.into())
 }
 
 #[cfg(test)]

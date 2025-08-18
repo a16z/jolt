@@ -376,67 +376,6 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
     #[tracing::instrument(skip_all, name = "Spartan::prove_spartan_small_value")]
     pub fn prove_spartan_small_value<const NUM_SVO_ROUNDS: usize>(
         num_rounds: usize,
-        padded_num_constraints: usize,
-        flattened_polys: &[MultilinearPolynomial<F>],
-        tau: &[F],
-        transcript: &mut ProofTranscript,
-    ) -> (Self, Vec<F>, [F; 3]) {
-        let mut r = Vec::new();
-        let mut polys = Vec::new();
-        let mut claim = F::zero();
-
-        // First, precompute the accumulators and also the `SpartanInterleavedPolynomial`
-        let (accums_zero, accums_infty, mut az_bz_cz_poly) =
-            SpartanInterleavedPolynomial::<NUM_SVO_ROUNDS, F>::new_with_precompute(
-                padded_num_constraints,
-                &UNIFORM_R1CS,
-                flattened_polys,
-                tau,
-            );
-
-        let mut eq_poly = GruenSplitEqPolynomial::new(tau, BindingOrder::LowToHigh);
-
-        process_svo_sumcheck_rounds::<NUM_SVO_ROUNDS, F, ProofTranscript>(
-            &accums_zero,
-            &accums_infty,
-            &mut r,
-            &mut polys,
-            &mut claim,
-            transcript,
-            &mut eq_poly,
-        );
-
-        // Round NUM_SVO_ROUNDS : do the streaming sumcheck to compute cached values
-        az_bz_cz_poly.streaming_sumcheck_round(
-            &mut eq_poly,
-            transcript,
-            &mut r,
-            &mut polys,
-            &mut claim,
-        );
-
-        // Round (NUM_SVO_ROUNDS + 1)..num_rounds : do the linear time sumcheck
-        for _ in (NUM_SVO_ROUNDS + 1)..num_rounds {
-            az_bz_cz_poly.remaining_sumcheck_round(
-                &mut eq_poly,
-                transcript,
-                &mut r,
-                &mut polys,
-                &mut claim,
-            );
-        }
-
-        (
-            SumcheckInstanceProof::new(polys),
-            r,
-            az_bz_cz_poly.final_sumcheck_evals(),
-        )
-    }
-
-    #[tracing::instrument(skip_all, name = "Spartan::prove_spartan_small_value_streaming")]
-    pub fn prove_spartan_small_value_streaming<const NUM_SVO_ROUNDS: usize>(
-        num_rounds: usize,
-        padded_num_constraints: usize,
         accessor: &dyn WitnessRowAccessor<F>,
         tau: &[F],
         transcript: &mut ProofTranscript,
@@ -445,13 +384,12 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         let mut polys = Vec::new();
         let mut claim = F::zero();
 
-        let (accums_zero, accums_infty, mut az_bz_cz_poly) =
-            SpartanInterleavedPolynomial::<NUM_SVO_ROUNDS, F>::new_with_precompute_streaming(
-                padded_num_constraints,
-                &UNIFORM_R1CS,
-                accessor,
-                tau,
-            );
+        let (accums_zero, accums_infty, mut az_bz_cz_poly) = SpartanInterleavedPolynomial::<
+            NUM_SVO_ROUNDS,
+            F,
+        >::new_with_precompute(
+            &UNIFORM_R1CS, accessor, tau
+        );
 
         let mut eq_poly = GruenSplitEqPolynomial::new(tau, BindingOrder::LowToHigh);
 

@@ -754,6 +754,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
         }
     }
 
+    /// Currently unused, previously only used in Spartan.
     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::batch_evaluate")]
     fn batch_evaluate(polys: &[&Self], r: &[F]) -> Vec<F> {
         let num_polys = polys.len();
