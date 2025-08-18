@@ -19,9 +19,9 @@ use super::spartan::UniformSpartanProof;
 use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::XLEN;
+use rayon::prelude::*;
 use std::fmt::Debug;
 use std::marker::PhantomData;
-use rayon::prelude::*;
 use tracer::instruction::RV32IMCycle;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
