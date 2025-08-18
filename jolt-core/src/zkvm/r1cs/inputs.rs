@@ -21,6 +21,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::XLEN;
 use std::fmt::Debug;
 use std::marker::PhantomData;
+use rayon::prelude::*;
 use tracer::instruction::RV32IMCycle;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
@@ -413,19 +414,20 @@ pub fn compute_claimed_witness_evals<F: JoltField>(
     accessor: &dyn WitnessRowAccessor<F>,
 ) -> Vec<F> {
     let num_inputs = JoltR1CSInputs::num_inputs();
-    let mut claims = vec![F::zero(); num_inputs];
     let num_steps = accessor.num_steps();
     let eq_rx = EqPolynomial::evals(r_cycle);
-    for t in 0..num_steps {
-        let wt = eq_rx[t];
-        if wt.is_zero() {
-            continue;
-        }
-        for i in 0..num_inputs {
-            claims[i] += wt * accessor.value_at(i, t);
-        }
-    }
-    claims
+
+    // Parallelize across inputs i; each computes Σ_t eq(r_cycle, t) * P_i(t)
+    (0..num_inputs)
+        .into_par_iter()
+        .map(|i| {
+            let mut acc = F::zero();
+            for t in 0..num_steps {
+                acc += eq_rx[t] * accessor.value_at(i, t);
+            }
+            acc
+        })
+        .collect()
 }
 
 /// Single-pass generation of UnexpandedPC(t), PC(t), and IsNoop(t) witnesses.
@@ -442,15 +444,21 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    let mut unexpanded_pc: Vec<u64> = Vec::with_capacity(trace.len());
-    let mut pc: Vec<u64> = Vec::with_capacity(trace.len());
-    let mut is_noop: Vec<u8> = Vec::with_capacity(trace.len());
+    let len = trace.len();
+    let mut unexpanded_pc: Vec<u64> = vec![0; len];
+    let mut pc: Vec<u64> = vec![0; len];
+    let mut is_noop: Vec<u8> = vec![0; len];
 
-    for cycle in trace.iter() {
-        unexpanded_pc.push(cycle.instruction().normalize().address as u64);
-        pc.push(preprocessing.shared.bytecode.get_pc(cycle) as u64);
-        is_noop.push(cycle.instruction().circuit_flags()[CircuitFlags::IsNoop] as u8);
-    }
+    unexpanded_pc
+        .par_iter_mut()
+        .zip(pc.par_iter_mut())
+        .zip(is_noop.par_iter_mut())
+        .zip(trace.par_iter())
+        .for_each(|(((u, p), n), cycle)| {
+            *u = cycle.instruction().normalize().address as u64;
+            *p = preprocessing.shared.bytecode.get_pc(cycle) as u64;
+            *n = cycle.instruction().circuit_flags()[CircuitFlags::IsNoop] as u8;
+        });
 
     (unexpanded_pc.into(), pc.into(), is_noop.into())
 }
