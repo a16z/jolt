@@ -807,7 +807,7 @@ mod test {
     use crate::{
         field::JoltField,
         poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
-        subprotocols::optimization::{
+        subprotocols::large_degree_sumcheck::{
             compute_initial_eval_claim, AppendixCSumCheckProof, LargeDMulSumCheckProof,
             NaiveSumCheckProof,
         },
