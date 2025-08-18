@@ -264,14 +264,12 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                     chunk_ab_coeffs.push((global_r1cs_idx + 1, bz).into());
                                 }
 
-                                #[cfg(test)] {
-                                    let cz = const_row
-                                        .c
-                                        .evaluate_row_with(accessor, current_step_idx);
+                                #[cfg(test)]
+                                {
+                                    let cz =
+                                        const_row.c.evaluate_row_with(accessor, current_step_idx);
                                     if az * bz != cz {
-                                        panic!(
-                                            "Constraint violated at step {current_step_idx}",
-                                        );
+                                        panic!("Constraint violated at step {current_step_idx}",);
                                     }
                                 }
                             }
